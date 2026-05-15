@@ -2407,6 +2407,7 @@ where
         };
         let (text, route) = value(&boxed.borrow::<Track>());
         let label = gtk::Label::new(Some(&text));
+        label.add_css_class("table-link-label");
         label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_hexpand(true);
@@ -2421,6 +2422,18 @@ where
         button.add_css_class("table-link");
         button.set_halign(gtk::Align::Fill);
         button.set_hexpand(true);
+        button.set_cursor_from_name(Some("pointer"));
+
+        let escaped_text = glib::markup_escape_text(&text);
+        let enter_label = label.clone();
+        let enter_markup = format!("<u>{escaped_text}</u>");
+        let leave_label = label.clone();
+        let leave_text = text.clone();
+        let motion = gtk::EventControllerMotion::new();
+        motion.connect_enter(move |_, _, _| enter_label.set_markup(&enter_markup));
+        motion.connect_leave(move |_| leave_label.set_text(&leave_text));
+        button.add_controller(motion);
+
         button.set_child(Some(&label));
 
         let shell = Rc::clone(&shell);

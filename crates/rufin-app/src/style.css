@@ -138,13 +138,18 @@ window {
 }
 
 .table-link {
-  padding: 0;
+  padding: 0 4px;
   min-height: 0;
+  border-radius: 6px;
   background: transparent;
 }
 
-.table-link:hover label {
-  text-decoration-line: underline;
+.table-link:hover {
+  background: color-mix(in srgb, @accent_color 14%, transparent);
+}
+
+.table-link:hover .table-link-label {
+  color: @accent_color;
 }
 
 .cached-row {
