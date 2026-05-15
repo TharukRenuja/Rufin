@@ -18,6 +18,12 @@ struct Cli {
 
     #[arg(long)]
     smoke_exit_ms: Option<u64>,
+
+    #[arg(long)]
+    clear_cache: bool,
+
+    #[arg(long)]
+    forget_active_server: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -39,6 +45,33 @@ fn main() {
     let cli = Cli::parse();
     init_tracing();
     i18n::init();
+
+    if cli.clear_cache && cli.forget_active_server {
+        eprintln!("Use only one maintenance flag at a time.");
+        std::process::exit(2);
+    }
+
+    if cli.clear_cache {
+        match controller::AppController::clear_active_server_cache_for_app() {
+            Ok(()) => info!("cleared active Jellyfin cache"),
+            Err(error) => {
+                eprintln!("Failed to clear active Jellyfin cache: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if cli.forget_active_server {
+        match controller::AppController::forget_active_server_for_app() {
+            Ok(()) => info!("forgot active Jellyfin server"),
+            Err(error) => {
+                eprintln!("Failed to forget active Jellyfin server: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
 
     let options = ui::AppOptions {
         fake_scale: cli.fake_scale.map(Into::into),

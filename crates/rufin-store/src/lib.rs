@@ -448,6 +448,48 @@ impl Store {
         Ok(())
     }
 
+    pub fn clear_library_cache(&self, server_id: &ServerId) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            clear_library_cache_on_connection(connection, server_id)?;
+            connection.execute(
+                "
+                UPDATE sync_state
+                SET generation = 0,
+                    status = 'idle',
+                    last_started_at = NULL,
+                    last_completed_at = NULL,
+                    last_error = NULL
+                WHERE server_id = ?1
+                ",
+                params![server_id.as_str()],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn forget_server(&self, server_id: &ServerId) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            clear_library_cache_on_connection(connection, server_id)?;
+            connection.execute(
+                "DELETE FROM queue_snapshots WHERE server_id = ?1",
+                params![server_id.as_str()],
+            )?;
+            connection.execute(
+                "DELETE FROM active_server WHERE server_id = ?1",
+                params![server_id.as_str()],
+            )?;
+            connection.execute(
+                "DELETE FROM sync_state WHERE server_id = ?1",
+                params![server_id.as_str()],
+            )?;
+            connection.execute(
+                "DELETE FROM servers WHERE server_id = ?1",
+                params![server_id.as_str()],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn upsert_albums(
         &self,
         server_id: &ServerId,
@@ -1335,6 +1377,30 @@ fn collect_rows<T>(
         .map_err(StoreError::from)
 }
 
+fn clear_library_cache_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<()> {
+    for table in [
+        "playlist_tracks",
+        "playlists",
+        "genres",
+        "album_artists",
+        "artists",
+        "tracks",
+        "albums",
+        "cover_cache",
+    ] {
+        let sql = format!("DELETE FROM {table} WHERE server_id = ?1");
+        connection.execute(&sql, params![server_id.as_str()])?;
+    }
+    connection.execute(
+        "DELETE FROM library_fts WHERE server_id = ?1",
+        params![server_id.as_str()],
+    )?;
+    Ok(())
+}
+
 fn fts_query(query: &str) -> Option<String> {
     let tokens = query
         .split_whitespace()
@@ -1564,13 +1630,7 @@ mod tests {
         let store = Store::open_memory().expect("open store");
         let saved = saved_server();
         store.save_server(&saved).expect("save server");
-        let entry = CoverCacheEntry {
-            server_id: saved.server.id.clone(),
-            item_id: "album-one".to_string(),
-            image_tag: "tag-one".to_string(),
-            size: 256,
-            path: "/tmp/rufin-cover.jpg".to_string(),
-        };
+        let entry = cover_entry(&saved.server.id);
 
         store
             .save_cover_cache_entry(&entry)
@@ -1581,6 +1641,117 @@ mod tests {
                 .load_cover_cache_entry(&saved.server.id, "album-one", "tag-one", 256)
                 .expect("load cover cache"),
             Some(entry)
+        );
+    }
+
+    #[test]
+    fn clear_library_cache_removes_library_search_and_cover_rows_only() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        let settings = AppSettings {
+            theme_preference: ThemePreference::Dark,
+            ..AppSettings::default()
+        };
+        let mut queue = QueueEngine::new(saved.server.id.clone());
+        queue.append(&track(1, &album(1)));
+
+        store.save_server(&saved).expect("save server");
+        store
+            .set_active_server(&saved.server.id)
+            .expect("set active");
+        store.save_settings(&settings).expect("save settings");
+        store
+            .save_queue_snapshot(&queue.snapshot())
+            .expect("save queue");
+        seed_cached_library(&store, &saved.server.id);
+        store
+            .save_cover_cache_entry(&cover_entry(&saved.server.id))
+            .expect("save cover cache");
+
+        store
+            .clear_library_cache(&saved.server.id)
+            .expect("clear cache");
+
+        assert_eq!(store.active_server().expect("active server"), Some(saved));
+        assert_eq!(store.load_settings().expect("settings"), settings);
+        assert_eq!(
+            store
+                .load_queue_snapshot(&queue.snapshot().server_id)
+                .expect("queue"),
+            Some(queue.snapshot())
+        );
+        assert_eq!(
+            store
+                .load_albums(&queue.snapshot().server_id, 0, 10)
+                .expect("albums")
+                .total,
+            0
+        );
+        assert!(
+            store
+                .search_library(&queue.snapshot().server_id, "Album", 10)
+                .expect("search")
+                .albums
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .load_cover_cache_entry(&queue.snapshot().server_id, "album-one", "tag-one", 256)
+                .expect("cover cache"),
+            None
+        );
+        let sync_state = store
+            .sync_state(&queue.snapshot().server_id)
+            .expect("sync state");
+        assert_eq!(sync_state.generation, 0);
+        assert_eq!(sync_state.status, "idle");
+        assert_eq!(sync_state.last_error, None);
+    }
+
+    #[test]
+    fn forget_server_removes_server_local_state_but_keeps_app_settings() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        let settings = AppSettings {
+            theme_preference: ThemePreference::Dark,
+            ..AppSettings::default()
+        };
+        let mut queue = QueueEngine::new(saved.server.id.clone());
+        queue.append(&track(1, &album(1)));
+
+        store.save_server(&saved).expect("save server");
+        store
+            .set_active_server(&saved.server.id)
+            .expect("set active");
+        store.save_settings(&settings).expect("save settings");
+        store
+            .save_queue_snapshot(&queue.snapshot())
+            .expect("save queue");
+        seed_cached_library(&store, &saved.server.id);
+
+        store
+            .forget_server(&saved.server.id)
+            .expect("forget server");
+
+        assert_eq!(store.active_server().expect("active server"), None);
+        assert!(store.list_servers().expect("servers").is_empty());
+        assert_eq!(
+            store
+                .load_queue_snapshot(&saved.server.id)
+                .expect("queue snapshot"),
+            None
+        );
+        assert_eq!(store.load_settings().expect("settings"), settings);
+        assert_eq!(
+            store
+                .load_tracks(&saved.server.id, 0, 10)
+                .expect("tracks")
+                .total,
+            0
+        );
+        assert!(
+            store.sync_state(&saved.server.id).is_err(),
+            "forgotten server should not have sync state"
         );
     }
 
@@ -1623,6 +1794,31 @@ mod tests {
             duration_seconds: 360,
             favorite: number == 2,
             color_seed: number,
+        }
+    }
+
+    fn seed_cached_library(store: &Store, server_id: &ServerId) {
+        let generation = store.begin_sync(server_id).expect("begin sync");
+        let album = album(1);
+        let track = track(1, &album);
+        store
+            .upsert_albums(server_id, std::slice::from_ref(&album), generation)
+            .expect("upsert albums");
+        store
+            .upsert_tracks(server_id, std::slice::from_ref(&track), generation)
+            .expect("upsert tracks");
+        store
+            .complete_sync(server_id, generation)
+            .expect("complete sync");
+    }
+
+    fn cover_entry(server_id: &ServerId) -> CoverCacheEntry {
+        CoverCacheEntry {
+            server_id: server_id.clone(),
+            item_id: "album-one".to_string(),
+            image_tag: "tag-one".to_string(),
+            size: 256,
+            path: "/tmp/rufin-cover.jpg".to_string(),
         }
     }
 

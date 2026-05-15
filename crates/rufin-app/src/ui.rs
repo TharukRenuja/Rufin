@@ -781,7 +781,106 @@ impl Shell {
         status.set_xalign(0.0);
         wrapper.append(&status);
 
+        let server_group = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        server_group.add_css_class("settings-group");
+        let server_heading = gtk::Label::new(Some(&tr("Jellyfin Server")));
+        server_heading.add_css_class("section-heading");
+        server_heading.set_xalign(0.0);
+        server_group.append(&server_heading);
+
+        let server_url = library
+            .server
+            .as_ref()
+            .map(|server| server.base_url.clone())
+            .unwrap_or_else(|| tr("No active server"));
+        let details = gtk::Label::new(Some(&format!(
+            "{}\n{}: {}\n{}: {} {} / {} {}",
+            server_url,
+            tr("User"),
+            username,
+            tr("Cached"),
+            library.albums.len(),
+            tr("albums"),
+            library.tracks.len(),
+            tr("tracks")
+        )));
+        details.add_css_class("muted");
+        details.set_wrap(true);
+        details.set_xalign(0.0);
+        server_group.append(&details);
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let resync = text_button("view-refresh-symbolic", "Resync Library");
+        let clear_cache = text_button("edit-clear-symbolic", "Clear Cached Library");
+        let forget = text_button("user-trash-symbolic", "Forget Server");
+        forget.add_css_class("destructive-action");
+
+        let controller = self.controller.clone();
+        resync.connect_clicked(move |_| controller.resync_active_server());
+
+        let clear_shell = Rc::clone(self);
+        clear_cache.connect_clicked(move |_| clear_shell.confirm_clear_cache());
+
+        let forget_shell = Rc::clone(self);
+        forget.connect_clicked(move |_| forget_shell.confirm_forget_server());
+
+        actions.append(&resync);
+        actions.append(&clear_cache);
+        actions.append(&forget);
+        server_group.append(&actions);
+        wrapper.append(&server_group);
+
         wrapper.upcast()
+    }
+
+    fn confirm_clear_cache(self: &Rc<Self>) {
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr("Clear Cached Library"))
+            .body(tr(
+                "This removes cached Jellyfin library metadata for the active server. Login stays saved.",
+            ))
+            .build();
+        let cancel = tr("Cancel");
+        let clear = tr("Clear Cache");
+        dialog.add_responses(&[("cancel", cancel.as_str()), ("clear", clear.as_str())]);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        dialog.set_response_appearance("clear", adw::ResponseAppearance::Destructive);
+        let controller = self.controller.clone();
+        dialog.choose(
+            Some(&self.window),
+            None::<&gio::Cancellable>,
+            move |response| {
+                if response.as_str() == "clear" {
+                    controller.clear_active_server_cache();
+                }
+            },
+        );
+    }
+
+    fn confirm_forget_server(self: &Rc<Self>) {
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr("Forget Server"))
+            .body(tr(
+                "This removes the active server, cached library metadata, queue snapshot, and saved token.",
+            ))
+            .build();
+        let cancel = tr("Cancel");
+        let forget = tr("Forget Server");
+        dialog.add_responses(&[("cancel", cancel.as_str()), ("forget", forget.as_str())]);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        dialog.set_response_appearance("forget", adw::ResponseAppearance::Destructive);
+        let controller = self.controller.clone();
+        dialog.choose(
+            Some(&self.window),
+            None::<&gio::Cancellable>,
+            move |response| {
+                if response.as_str() == "forget" {
+                    controller.forget_active_server();
+                }
+            },
+        );
     }
 
     fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {

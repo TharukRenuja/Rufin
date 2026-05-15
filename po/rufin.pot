@@ -59,6 +59,39 @@ msgstr ""
 msgid "Connect"
 msgstr ""
 
+msgid "Jellyfin Server"
+msgstr ""
+
+msgid "User"
+msgstr ""
+
+msgid "Cached"
+msgstr ""
+
+msgid "Resync Library"
+msgstr ""
+
+msgid "Clear Cached Library"
+msgstr ""
+
+msgid "Clear Cache"
+msgstr ""
+
+msgid "Forget Server"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "No active server"
+msgstr ""
+
+msgid "This removes cached Jellyfin library metadata for the active server. Login stays saved."
+msgstr ""
+
+msgid "This removes the active server, cached library metadata, queue snapshot, and saved token."
+msgstr ""
+
 msgid "Queue"
 msgstr ""
 

@@ -135,6 +135,10 @@ window {
   font-weight: 700;
 }
 
+.destructive-action {
+  color: #ffb4ab;
+}
+
 .icon-button {
   border-radius: 8px;
 }

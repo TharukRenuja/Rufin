@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -69,6 +70,7 @@ pub struct AppController {
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
+    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
 }
 
 #[derive(Clone)]
@@ -137,6 +139,7 @@ impl AppController {
                 runtime,
                 secrets: Arc::new(MemorySecretStore::new()),
                 events,
+                sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             };
             return (controller, receiver, snapshot);
         }
@@ -156,6 +159,7 @@ impl AppController {
             runtime,
             secrets: Arc::new(SecretServiceStore::new()),
             events,
+            sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
         };
         (controller, receiver, snapshot)
     }
@@ -176,8 +180,38 @@ impl AppController {
             runtime,
             secrets: Arc::new(MemorySecretStore::new()),
             events,
+            sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
         };
         (controller, receiver, snapshot)
+    }
+
+    pub fn clear_active_server_cache_for_app() -> Result<(), String> {
+        let store = StoreHandle::open_for_app()?;
+        let Some(saved) = store.with_store(|store| store.active_server())? else {
+            return Err("No active server is saved.".to_string());
+        };
+        store.with_store(|store| {
+            store.clear_library_cache(&saved.server.id)?;
+            Ok(())
+        })?;
+        clear_disk_cover_cache(&saved.server.id)?;
+        Ok(())
+    }
+
+    pub fn forget_active_server_for_app() -> Result<(), String> {
+        let store = StoreHandle::open_for_app()?;
+        let Some(saved) = store.with_store(|store| store.active_server())? else {
+            return Err("No active server is saved.".to_string());
+        };
+        SecretServiceStore::new()
+            .delete_token(&saved.server.id)
+            .map_err(|error| error.to_string())?;
+        store.with_store(|store| {
+            store.forget_server(&saved.server.id)?;
+            Ok(())
+        })?;
+        clear_disk_cover_cache(&saved.server.id)?;
+        Ok(())
     }
 
     pub fn start_background_sync_for_active(&self) {
@@ -188,6 +222,111 @@ impl AppController {
         if let Some(saved) = active {
             self.start_sync(saved);
         }
+    }
+
+    pub fn resync_active_server(&self) {
+        let active = self
+            .store
+            .with_store(|store| store.active_server())
+            .unwrap_or(None);
+        if let Some(saved) = active {
+            self.start_sync(saved);
+        } else {
+            let _sent = self.events.send(ControllerEvent::Error(
+                "No active Jellyfin server is saved.".to_string(),
+            ));
+        }
+    }
+
+    pub fn clear_active_server_cache(&self) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        thread::spawn(move || {
+            let Some(saved) = store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "No active Jellyfin server is saved.".to_string(),
+                ));
+                return;
+            };
+            if sync_is_running(&sync_in_flight, &saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(
+                    "Wait for the current library sync to finish before clearing cache."
+                        .to_string(),
+                ));
+                return;
+            }
+            let result = store.with_store(|store| {
+                store.clear_library_cache(&saved.server.id)?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            let _sent = events.send(ControllerEvent::LoginStatus(
+                "Cached library cleared.".to_string(),
+            ));
+            match load_snapshot(&store) {
+                Ok(snapshot) => {
+                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                }
+            }
+        });
+    }
+
+    pub fn forget_active_server(&self) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        let secrets = Arc::clone(&self.secrets);
+        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        thread::spawn(move || {
+            let Some(saved) = store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                let _sent = events.send(ControllerEvent::Snapshot(Box::new(
+                    LibrarySnapshot::first_run(),
+                )));
+                return;
+            };
+            if sync_is_running(&sync_in_flight, &saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(
+                    "Wait for the current library sync to finish before forgetting the server."
+                        .to_string(),
+                ));
+                return;
+            }
+            if let Err(error) = secrets.delete_token(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error.to_string()));
+                return;
+            }
+            let result = store.with_store(|store| {
+                store.forget_server(&saved.server.id)?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            let _sent = events.send(ControllerEvent::Snapshot(Box::new(
+                LibrarySnapshot::first_run(),
+            )));
+        });
     }
 
     #[instrument(skip(self, password), fields(server_url = %server_url, username = %username, trust_invalid_cert = trust_invalid_cert))]
@@ -202,6 +341,7 @@ impl AppController {
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
         let events = self.events.clone();
+        let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
             let _sent = events.send(ControllerEvent::LoginStatus(
                 "Checking Jellyfin server...".to_string(),
@@ -252,7 +392,7 @@ impl AppController {
                 }
             }
 
-            start_sync_thread(store, runtime, secrets, events, saved);
+            start_sync_thread(store, runtime, secrets, events, sync_in_flight, saved);
         });
     }
 
@@ -286,6 +426,7 @@ impl AppController {
             Arc::clone(&self.runtime),
             Arc::clone(&self.secrets),
             self.events.clone(),
+            Arc::clone(&self.sync_in_flight),
             saved,
         );
     }
@@ -296,40 +437,35 @@ fn start_sync_thread(
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
+    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     saved: SavedServer,
 ) {
+    let server_id = saved.server.id.clone();
+    match sync_in_flight.lock() {
+        Ok(mut running) => {
+            if !running.insert(server_id.clone()) {
+                let _sent = events.send(ControllerEvent::LoginStatus(
+                    "Sync already running.".to_string(),
+                ));
+                return;
+            }
+        }
+        Err(_) => {
+            let _sent = events.send(ControllerEvent::Error(
+                "Sync guard lock was poisoned.".to_string(),
+            ));
+            return;
+        }
+    }
+
     thread::spawn(move || {
         let _sent = events.send(ControllerEvent::LoginStatus(
             "Syncing Jellyfin library...".to_string(),
         ));
-        let token = match secrets.load_token(&saved.server.id) {
-            Ok(Some(token)) => token,
-            Ok(None) => {
-                let _sent = events.send(ControllerEvent::Error(
-                    "No saved token found for the active server.".to_string(),
-                ));
-                return;
-            }
-            Err(error) => {
-                let _sent = events.send(ControllerEvent::Error(error.to_string()));
-                return;
-            }
-        };
-        let session = SavedProviderSession {
-            server: saved.server.clone(),
-            user_id: saved.user_id.clone(),
-            username: saved.username.clone(),
-            trust_invalid_cert: saved.trust_invalid_cert,
-            access_token: token,
-        };
-        let provider = match JellyfinProvider::from_saved_session(session) {
-            Ok(provider) => provider,
-            Err(error) => {
-                let _sent = events.send(ControllerEvent::Error(error.to_string()));
-                return;
-            }
-        };
-        let sync_result = runtime.block_on(sync_provider(&store, &saved.server.id, &provider));
+        let sync_result = run_sync_job(&store, &runtime, &secrets, &saved);
+        if let Ok(mut running) = sync_in_flight.lock() {
+            running.remove(&server_id);
+        }
         match sync_result {
             Ok(()) => {
                 let _sent = events.send(ControllerEvent::LoginStatus(
@@ -353,6 +489,28 @@ fn start_sync_thread(
             }
         }
     });
+}
+
+fn run_sync_job(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedServer,
+) -> Result<(), String> {
+    let token = secrets
+        .load_token(&saved.server.id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No saved token found for the active server.".to_string())?;
+    let session = SavedProviderSession {
+        server: saved.server.clone(),
+        user_id: saved.user_id.clone(),
+        username: saved.username.clone(),
+        trust_invalid_cert: saved.trust_invalid_cert,
+        access_token: token,
+    };
+    let provider =
+        JellyfinProvider::from_saved_session(session).map_err(|error| error.to_string())?;
+    runtime.block_on(sync_provider(store, &saved.server.id, &provider))
 }
 
 #[instrument(skip(store, provider), fields(server_id = %server_id.as_str()))]
@@ -617,9 +775,50 @@ fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.data_dir().to_path_buf())
 }
 
+fn cache_dir() -> Option<PathBuf> {
+    ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.cache_dir().to_path_buf())
+}
+
+fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
+    let Some(path) =
+        cache_dir().map(|dir| dir.join("covers").join(encode_key_part(server_id.as_str())))
+    else {
+        return Ok(());
+    };
+    remove_dir_if_exists(&path)
+}
+
+fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn encode_key_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn sync_is_running(sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>, server_id: &ServerId) -> bool {
+    sync_in_flight
+        .lock()
+        .map(|running| running.contains(server_id))
+        .unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AppController, ControllerEvent};
+    use std::sync::mpsc::Receiver;
+    use std::time::Duration;
+
+    use super::{AppController, ControllerEvent, LibrarySnapshot};
     use rufin_test_support::FakeScale;
 
     #[test]
@@ -655,8 +854,86 @@ mod tests {
     }
 
     #[test]
+    fn clear_cache_emits_empty_active_server_snapshot() {
+        let (controller, events, snapshot) = AppController::bootstrap(Some(FakeScale::Small));
+        let server = snapshot.server.expect("server");
+
+        controller.clear_active_server_cache();
+        let snapshot = wait_for_snapshot(&events);
+
+        assert!(!snapshot.first_run);
+        assert_eq!(snapshot.server.expect("server").id, server.id);
+        assert!(snapshot.albums.is_empty());
+        assert!(snapshot.tracks.is_empty());
+        assert!(snapshot.search.albums.is_empty());
+    }
+
+    #[test]
+    fn forget_server_emits_first_run_and_deletes_token() {
+        let (controller, events, snapshot) = AppController::bootstrap(Some(FakeScale::Small));
+        let server_id = snapshot.server.expect("server").id;
+        controller
+            .secrets
+            .save_token(&server_id, "token")
+            .expect("save token");
+
+        controller.forget_active_server();
+        let snapshot = wait_for_snapshot(&events);
+
+        assert!(snapshot.first_run);
+        assert_eq!(
+            controller
+                .secrets
+                .load_token(&server_id)
+                .expect("load token"),
+            None
+        );
+    }
+
+    #[test]
+    fn duplicate_resync_requests_do_not_start_another_sync() {
+        let (controller, events, snapshot) = AppController::bootstrap(Some(FakeScale::Small));
+        let server_id = snapshot.server.expect("server").id;
+        controller
+            .sync_in_flight
+            .lock()
+            .expect("sync guard")
+            .insert(server_id);
+
+        controller.resync_active_server();
+
+        assert_eq!(wait_for_status(&events), "Sync already running.");
+    }
+
+    #[test]
     fn controller_events_are_sendable() {
         fn assert_send<T: Send>() {}
         assert_send::<ControllerEvent>();
+    }
+
+    fn wait_for_snapshot(events: &Receiver<ControllerEvent>) -> LibrarySnapshot {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::Snapshot(snapshot) => return *snapshot,
+                ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
+    }
+
+    fn wait_for_status(events: &Receiver<ControllerEvent>) -> String {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::LoginStatus(status) => return status,
+                ControllerEvent::Snapshot(_) => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
     }
 }
