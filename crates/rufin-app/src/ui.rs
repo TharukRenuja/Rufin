@@ -298,7 +298,7 @@ impl Shell {
 
         let url = gtk::Entry::new();
         url.set_placeholder_text(Some(&tr("Server URL")));
-        url.set_text("https://");
+        url.set_text("http://");
         let username = gtk::Entry::new();
         username.set_placeholder_text(Some(&tr("Username")));
         let password = gtk::PasswordEntry::new();
@@ -517,7 +517,7 @@ impl Shell {
         play_album.connect_clicked(move |_| controller.play_tracks_now(album_tracks.clone()));
         actions.append(&play_album);
 
-        let play_next = text_button("media-skip-forward-symbolic", "Next");
+        let play_next = text_button("media-skip-forward-symbolic", "Play next");
         let controller = self.controller.clone();
         let next_tracks = tracks.clone();
         play_next.connect_clicked(move |_| {

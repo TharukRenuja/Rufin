@@ -347,8 +347,14 @@ fn handle_gstreamer_command(
                 )));
             }
         }
-        PlaybackCommand::Resume => play.play(),
-        PlaybackCommand::Pause => play.pause(),
+        PlaybackCommand::Resume => {
+            play.play();
+            push_event(events, PlaybackEvent::StateChanged(PlaybackState::Playing));
+        }
+        PlaybackCommand::Pause => {
+            play.pause();
+            push_event(events, PlaybackEvent::StateChanged(PlaybackState::Paused));
+        }
         PlaybackCommand::Stop => {
             play.stop();
             push_event(events, PlaybackEvent::PositionChanged(0));
