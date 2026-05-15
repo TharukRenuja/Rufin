@@ -117,6 +117,18 @@ window {
   color: #aab0c2;
 }
 
+.error-text {
+  color: #ffb4ab;
+}
+
+.cached-list {
+  background: transparent;
+}
+
+.cached-row {
+  padding: 10px 8px;
+}
+
 .pill-button {
   border-radius: 999px;
   padding: 8px 16px;

@@ -38,6 +38,27 @@ msgstr ""
 msgid "Settings"
 msgstr ""
 
+msgid "Search"
+msgstr ""
+
+msgid "Add Jellyfin Server"
+msgstr ""
+
+msgid "Server URL"
+msgstr ""
+
+msgid "Username"
+msgstr ""
+
+msgid "Password"
+msgstr ""
+
+msgid "Trust invalid certificate for this server"
+msgstr ""
+
+msgid "Connect"
+msgstr ""
+
 msgid "Queue"
 msgstr ""
 
@@ -47,5 +68,11 @@ msgstr ""
 msgid "Layout density"
 msgstr ""
 
-msgid "Fake library"
+msgid "Cached library"
+msgstr ""
+
+msgid "albums"
+msgstr ""
+
+msgid "tracks"
 msgstr ""

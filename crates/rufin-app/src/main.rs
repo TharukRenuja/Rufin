@@ -1,3 +1,4 @@
+mod controller;
 mod i18n;
 mod ui;
 
@@ -12,8 +13,8 @@ const APP_ID: &str = "io.github.screwys.Rufin.Devel";
 #[derive(Clone, Debug, Parser)]
 #[command(name = "rufin", about = "Native GTK music client shell")]
 struct Cli {
-    #[arg(long, value_enum, default_value = "small")]
-    fake_scale: FakeScaleArg,
+    #[arg(long, value_enum)]
+    fake_scale: Option<FakeScaleArg>,
 
     #[arg(long)]
     smoke_exit_ms: Option<u64>,
@@ -40,7 +41,7 @@ fn main() {
     i18n::init();
 
     let options = ui::AppOptions {
-        fake_scale: cli.fake_scale.into(),
+        fake_scale: cli.fake_scale.map(Into::into),
         smoke_exit_ms: cli.smoke_exit_ms,
     };
 

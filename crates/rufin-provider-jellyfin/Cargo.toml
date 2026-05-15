@@ -1,0 +1,23 @@
+[package]
+name = "rufin-provider-jellyfin"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+reqwest = { version = "0.13.3", features = ["json"] }
+rufin-core = { path = "../rufin-core" }
+rufin-provider = { path = "../rufin-provider" }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1.41"
+
+[dev-dependencies]
+serde_json = "1.0.145"
+wiremock = "0.6.5"
+
+[lints]
+workspace = true

@@ -1,23 +1,24 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::gio;
 use gtk::glib;
 use rufin_core::{
-    Album, AlbumId, DensityMode, EffectiveDensity, HomeSection, Route, RouteStack, ServerIdentity,
-    Track, format_duration,
+    Album, AlbumId, Artist, DensityMode, EffectiveDensity, Genre, HomeSection, Playlist, Route,
+    RouteStack, SearchKind, Track, format_duration,
 };
-use rufin_provider::{MusicProvider, PagedRequest};
-use rufin_test_support::{FakeProvider, FakeScale};
-use tracing::{debug, info};
+use rufin_test_support::FakeScale;
+use tracing::{debug, info, warn};
 
+use crate::controller::{AppController, ControllerEvent, LibrarySnapshot};
 use crate::i18n::tr;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
-    pub fake_scale: FakeScale,
+    pub fake_scale: Option<FakeScale>,
     pub smoke_exit_ms: Option<u64>,
 }
 
@@ -25,19 +26,12 @@ struct AppState {
     routes: RefCell<RouteStack>,
     density_mode: Cell<DensityMode>,
     effective_density: Cell<EffectiveDensity>,
-    library: ProviderSnapshot,
-}
-
-#[derive(Clone, Debug)]
-struct ProviderSnapshot {
-    server: ServerIdentity,
-    home_sections: Vec<HomeSection>,
-    albums: Vec<Album>,
-    tracks: Vec<Track>,
+    library: RefCell<LibrarySnapshot>,
 }
 
 struct Shell {
     state: AppState,
+    controller: AppController,
     window: adw::ApplicationWindow,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
@@ -52,20 +46,20 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     install_css();
 
     let loaded_at = std::time::Instant::now();
-    let provider = FakeProvider::new(options.fake_scale);
-    let library = load_provider_snapshot(&provider);
+    let (controller, events, library) = AppController::bootstrap(options.fake_scale);
     info!(
         albums = library.albums.len(),
         tracks = library.tracks.len(),
+        first_run = library.first_run,
         elapsed_ms = loaded_at.elapsed().as_millis(),
-        "loaded fake music library through provider boundary"
+        "loaded cached music library snapshot"
     );
 
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
         density_mode: Cell::new(DensityMode::Auto),
         effective_density: Cell::new(DensityMode::Auto.resolve(1_400)),
-        library,
+        library: RefCell::new(library),
     };
 
     let window = adw::ApplicationWindow::builder()
@@ -133,6 +127,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     let shell = Rc::new(Shell {
         state,
+        controller,
         window,
         normal_nav,
         compact_nav,
@@ -148,6 +143,11 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     connect_shell_actions(&shell, settings_button);
     shell.update_density();
     shell.render_current_route();
+    install_event_pump(&shell, events);
+
+    if options.fake_scale.is_none() {
+        shell.controller.start_background_sync_for_active();
+    }
 
     if let Some(delay_ms) = options.smoke_exit_ms {
         let app = app.clone();
@@ -158,31 +158,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
 
     shell.window.present();
-}
-
-fn load_provider_snapshot(provider: &FakeProvider) -> ProviderSnapshot {
-    let context = glib::MainContext::default();
-    let home_sections = match context.block_on(provider.home_sections()) {
-        Ok(sections) => sections,
-        Err(error) => panic!("failed to load fake home sections: {error}"),
-    };
-    let albums =
-        match context.block_on(provider.albums(PagedRequest::new(0, provider.album_count()))) {
-            Ok(response) => response.items,
-            Err(error) => panic!("failed to load fake albums: {error}"),
-        };
-    let tracks =
-        match context.block_on(provider.tracks(PagedRequest::new(0, provider.track_count()))) {
-            Ok(response) => response.items,
-            Err(error) => panic!("failed to load fake tracks: {error}"),
-        };
-
-    ProviderSnapshot {
-        server: provider.identity().server.clone(),
-        home_sections,
-        albums,
-        tracks,
-    }
 }
 
 impl Shell {
@@ -239,6 +214,16 @@ impl Shell {
             self.route_host.remove(&child);
         }
 
+        let library = self.state.library.borrow().clone();
+        if library.first_run {
+            self.route_title.set_text(&tr("Add Jellyfin Server"));
+            self.back_button.set_sensitive(false);
+            self.forward_button.set_sensitive(false);
+            let view = self.add_server_view();
+            self.route_host.append(&view);
+            return;
+        }
+
         let route = self.state.routes.borrow().current().clone();
         self.route_title.set_text(&tr(route.title()));
         self.back_button
@@ -250,43 +235,102 @@ impl Shell {
             Route::Home => self.home_view(),
             Route::Albums => self.albums_view(),
             Route::AlbumDetail(album_id) => self.album_detail_view(album_id),
-            Route::Tracks => self.tracks_view(self.state.library.tracks.clone(), &tr("Tracks")),
+            Route::Tracks => self.tracks_view(library.tracks.clone(), &tr("Tracks")),
             Route::Settings => self.settings_view(),
-            Route::Favorites => self.placeholder_view(
-                "Favorites",
-                "Favorite tracks, albums, and artists will be grouped here.",
-            ),
-            Route::Artists => {
-                self.placeholder_view("Artists", "Artist browsing uses fake rows in M0.")
-            }
+            Route::Favorites => self.tracks_view(library.favorites.clone(), &tr("Favorites")),
+            Route::Artists => self.artist_list_view(library.artists.clone(), &tr("Artists")),
             Route::ArtistDetail(_) => self.placeholder_view(
                 "Artist",
-                "Artist detail is represented by this native route.",
+                "Artist detail will use cached album and track groups.",
             ),
-            Route::AlbumArtists => self.placeholder_view(
-                "Album Artists",
-                "Album artist browsing uses fake rows in M0.",
-            ),
-            Route::Genres => {
-                self.placeholder_view("Genres", "Genre chips and counts will live here.")
+            Route::AlbumArtists => {
+                self.artist_list_view(library.album_artists.clone(), &tr("Album Artists"))
             }
+            Route::Genres => self.genre_list_view(library.genres.clone(), &tr("Genres")),
             Route::GenreDetail(_) => {
                 self.placeholder_view("Genre", "Genre detail keeps albums above tracks.")
             }
-            Route::Playlists => self.placeholder_view(
-                "Playlists",
-                "Playlist shells are native placeholders in M0.",
-            ),
+            Route::Playlists => {
+                self.playlist_list_view(library.playlists.clone(), &tr("Playlists"))
+            }
             Route::PlaylistDetail(_) => {
                 self.placeholder_view("Playlist", "Playlist detail will use the track table.")
             }
-            Route::Search { query, .. } => self.placeholder_view(
-                "Search",
-                &format!("Search route is wired. Current query: {query}"),
-            ),
+            Route::Search { query, .. } => self.search_view(&query, library),
         };
 
         self.route_host.append(&view);
+    }
+
+    fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(42);
+        wrapper.set_margin_bottom(36);
+        wrapper.set_margin_start(48);
+        wrapper.set_margin_end(48);
+        wrapper.set_width_request(520);
+        wrapper.set_halign(gtk::Align::Center);
+
+        let heading = gtk::Label::new(Some(&tr("Add Jellyfin Server")));
+        heading.add_css_class("detail-title");
+        heading.set_xalign(0.0);
+        let subtitle = gtk::Label::new(Some(&tr(
+            "Tokens are saved in native Secret Service. Cached library metadata is saved in SQLite.",
+        )));
+        subtitle.add_css_class("muted");
+        subtitle.set_wrap(true);
+        subtitle.set_xalign(0.0);
+
+        let url = gtk::Entry::new();
+        url.set_placeholder_text(Some(&tr("Server URL")));
+        url.set_text("https://");
+        let username = gtk::Entry::new();
+        username.set_placeholder_text(Some(&tr("Username")));
+        let password = gtk::PasswordEntry::new();
+        password.set_placeholder_text(Some(&tr("Password")));
+        let trust = gtk::Switch::new();
+        trust.set_active(false);
+        let trust_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        let trust_label = gtk::Label::new(Some(&tr("Trust invalid certificate for this server")));
+        trust_label.set_xalign(0.0);
+        trust_label.set_hexpand(true);
+        trust_row.append(&trust_label);
+        trust_row.append(&trust);
+
+        let status = gtk::Label::new(Some(&self.state.library.borrow().sync_status));
+        status.add_css_class("muted");
+        status.set_wrap(true);
+        status.set_xalign(0.0);
+        if let Some(error) = &self.state.library.borrow().last_error {
+            status.set_text(error);
+            status.add_css_class("error-text");
+        }
+
+        let login = text_button("network-server-symbolic", "Connect");
+        let controller = self.controller.clone();
+        let url_input = url.clone();
+        let username_input = username.clone();
+        let password_input = password.clone();
+        let trust_input = trust.clone();
+        login.connect_clicked(move |_| {
+            controller.login(
+                url_input.text().to_string(),
+                username_input.text().to_string(),
+                password_input.text().to_string(),
+                trust_input.is_active(),
+            );
+        });
+
+        wrapper.append(&heading);
+        wrapper.append(&subtitle);
+        wrapper.append(&url);
+        wrapper.append(&username);
+        wrapper.append(&password);
+        wrapper.append(&trust_row);
+        wrapper.append(&login);
+        wrapper.append(&status);
+        wrapper.upcast()
     }
 
     fn home_view(self: &Rc<Self>) -> gtk::Widget {
@@ -301,8 +345,15 @@ impl Shell {
         content.set_margin_start(28);
         content.set_margin_end(28);
 
-        for section in &self.state.library.home_sections {
+        for section in &self.state.library.borrow().home_sections {
             content.append(&self.home_album_section(section));
+        }
+
+        if self.state.library.borrow().home_sections.is_empty() {
+            content.append(&self.placeholder_view(
+                "Home",
+                "Cached library data will appear here as sync pages finish.",
+            ));
         }
 
         scroller.set_child(Some(&content));
@@ -335,7 +386,8 @@ impl Shell {
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_vexpand(true);
 
-        let model = album_model(&self.state.library.albums);
+        let albums = self.state.library.borrow().albums.clone();
+        let model = album_model(&albums);
         let selection = gtk::SingleSelection::new(Some(model));
         let factory = gtk::SignalListItemFactory::new();
         let density = self.state.effective_density.get();
@@ -376,7 +428,7 @@ impl Shell {
 
         let shell = Rc::clone(self);
         grid.connect_activate(move |_, position| {
-            if let Some(album) = shell.state.library.albums.get(position as usize) {
+            if let Some(album) = shell.state.library.borrow().albums.get(position as usize) {
                 shell.navigate(Route::AlbumDetail(album.id.clone()));
             }
         });
@@ -389,11 +441,13 @@ impl Shell {
         let Some(album) = self
             .state
             .library
+            .borrow()
             .albums
             .iter()
             .find(|album| album.id.as_str() == album_id.as_str())
+            .cloned()
         else {
-            return self.placeholder_view("Album", "The selected fake album was not found.");
+            return self.placeholder_view("Album", "The selected cached album was not found.");
         };
 
         let scroller = gtk::ScrolledWindow::new();
@@ -449,6 +503,7 @@ impl Shell {
         let tracks = self
             .state
             .library
+            .borrow()
             .tracks
             .iter()
             .filter(|track| track.album_id.as_str() == album_id.as_str())
@@ -511,6 +566,156 @@ impl Shell {
         scroller.upcast()
     }
 
+    fn artist_list_view(self: &Rc<Self>, artists: Vec<Artist>, title: &str) -> gtk::Widget {
+        let rows = artists
+            .into_iter()
+            .map(|artist| {
+                (
+                    artist.name,
+                    format!(
+                        "{} {} / {} {}",
+                        artist.album_count,
+                        tr("albums"),
+                        artist.track_count,
+                        tr("tracks")
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.simple_list_view(title, rows, "avatar-default-symbolic")
+    }
+
+    fn genre_list_view(self: &Rc<Self>, genres: Vec<Genre>, title: &str) -> gtk::Widget {
+        let rows = genres
+            .into_iter()
+            .map(|genre| {
+                (
+                    genre.name,
+                    format!(
+                        "{} {} / {} {}",
+                        genre.album_count,
+                        tr("albums"),
+                        genre.track_count,
+                        tr("tracks")
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.simple_list_view(title, rows, "flag-symbolic")
+    }
+
+    fn playlist_list_view(self: &Rc<Self>, playlists: Vec<Playlist>, title: &str) -> gtk::Widget {
+        let rows = playlists
+            .into_iter()
+            .map(|playlist| {
+                (
+                    playlist.name,
+                    format!(
+                        "{} {} • {}",
+                        playlist.track_count,
+                        tr("tracks"),
+                        format_duration(playlist.duration_seconds)
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.simple_list_view(title, rows, "folder-music-symbolic")
+    }
+
+    fn simple_list_view(
+        self: &Rc<Self>,
+        title: &str,
+        rows: Vec<(String, String)>,
+        icon_name: &str,
+    ) -> gtk::Widget {
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(24);
+        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_start(28);
+        wrapper.set_margin_end(28);
+        wrapper.set_vexpand(true);
+
+        let heading = gtk::Label::new(Some(title));
+        heading.add_css_class("section-heading");
+        heading.set_xalign(0.0);
+        wrapper.append(&heading);
+
+        if rows.is_empty() {
+            wrapper.append(&self.placeholder_view(
+                title,
+                "Cached rows will appear here after the background sync finishes.",
+            ));
+            return wrapper.upcast();
+        }
+
+        let list = gtk::ListBox::new();
+        list.add_css_class("cached-list");
+        for (name, subtitle) in rows {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            row.add_css_class("cached-row");
+            row.append(&gtk::Image::from_icon_name(icon_name));
+            let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            labels.set_hexpand(true);
+            let name_label = gtk::Label::new(Some(&name));
+            name_label.set_xalign(0.0);
+            name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            let subtitle_label = gtk::Label::new(Some(&subtitle));
+            subtitle_label.add_css_class("muted");
+            subtitle_label.set_xalign(0.0);
+            labels.append(&name_label);
+            labels.append(&subtitle_label);
+            row.append(&labels);
+            list.append(&row);
+        }
+
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_vexpand(true);
+        scroller.set_child(Some(&list));
+        wrapper.append(&scroller);
+        wrapper.upcast()
+    }
+
+    fn search_view(self: &Rc<Self>, query: &str, library: LibrarySnapshot) -> gtk::Widget {
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(24);
+        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_start(28);
+        wrapper.set_margin_end(28);
+        wrapper.set_vexpand(true);
+
+        let heading = gtk::Label::new(Some(&format!("{}: {query}", tr("Search"))));
+        heading.add_css_class("section-heading");
+        heading.set_xalign(0.0);
+        wrapper.append(&heading);
+
+        let has_albums = !library.search.albums.is_empty();
+        let has_tracks = !library.search.tracks.is_empty();
+        let has_artists = !library.search.artists.is_empty();
+        let has_playlists = !library.search.playlists.is_empty();
+        let albums = library.search.albums;
+        if !albums.is_empty() {
+            let section = HomeSection {
+                kind: rufin_core::HomeSectionKind::Explore,
+                albums,
+            };
+            wrapper.append(&self.home_album_section(&section));
+        }
+
+        if has_tracks {
+            wrapper.append(&self.tracks_table(library.search.tracks));
+        } else if !has_albums && !has_artists && !has_playlists {
+            wrapper.append(&self.placeholder_view(
+                "Search",
+                "Type a query in the sidebar search field to search the local cache.",
+            ));
+        }
+
+        wrapper.upcast()
+    }
+
     fn settings_view(self: &Rc<Self>) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
@@ -556,13 +761,21 @@ impl Shell {
         group.append(&note);
         wrapper.append(&group);
 
+        let library = self.state.library.borrow();
+        let server_name = library
+            .server
+            .as_ref()
+            .map(|server| server.name.as_str())
+            .unwrap_or("No server");
+        let username = library.username.as_deref().unwrap_or("no account");
         let status = gtk::Label::new(Some(&format!(
-            "{}: {} {} / {} {}",
-            self.state.library.server.name,
-            self.state.library.albums.len(),
+            "{} ({username}): {} {} / {} {} • {}",
+            server_name,
+            library.albums.len(),
             tr("albums"),
-            self.state.library.tracks.len(),
-            tr("tracks")
+            library.tracks.len(),
+            tr("tracks"),
+            library.sync_status
         )));
         status.add_css_class("muted");
         status.set_xalign(0.0);
@@ -627,12 +840,51 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
         });
 }
 
+fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
+    let shell = Rc::clone(shell);
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        while let Ok(event) = receiver.try_recv() {
+            match event {
+                ControllerEvent::Snapshot(snapshot) => {
+                    *shell.state.library.borrow_mut() = *snapshot;
+                    shell.render_current_route();
+                }
+                ControllerEvent::LoginStatus(status) => {
+                    shell.state.library.borrow_mut().sync_status = status;
+                    shell.render_current_route();
+                }
+                ControllerEvent::Error(error) => {
+                    warn!(%error, "controller error");
+                    let mut library = shell.state.library.borrow_mut();
+                    library.sync_status = "Action failed.".to_string();
+                    library.last_error = Some(error);
+                    drop(library);
+                    shell.render_current_route();
+                }
+            }
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
 fn build_normal_navigation(shell: &Rc<Shell>) {
     let search = gtk::SearchEntry::new();
     search.set_placeholder_text(Some(&tr("Search")));
     search.set_margin_top(18);
     search.set_margin_start(16);
     search.set_margin_end(16);
+    let search_shell = Rc::clone(shell);
+    search.connect_activate(move |entry| {
+        let query = entry.text().trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        search_shell.controller.search(query.clone());
+        search_shell.navigate(Route::Search {
+            query,
+            kind: SearchKind::All,
+        });
+    });
     shell.normal_nav.append(&search);
 
     let heading = gtk::Label::new(Some(&tr("My Library")));
@@ -665,7 +917,7 @@ fn build_normal_navigation(shell: &Rc<Shell>) {
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
     let name = gtk::Label::new(Some("Rufin"));
     name.set_xalign(0.0);
-    let subtitle = gtk::Label::new(Some(&tr("Fake library")));
+    let subtitle = gtk::Label::new(Some(&tr("Cached library")));
     subtitle.add_css_class("muted");
     subtitle.set_xalign(0.0);
     labels.append(&name);

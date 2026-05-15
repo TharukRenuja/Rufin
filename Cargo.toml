@@ -3,6 +3,7 @@ members = [
     "crates/rufin-app",
     "crates/rufin-core",
     "crates/rufin-provider",
+    "crates/rufin-provider-jellyfin",
     "crates/rufin-secrets",
     "crates/rufin-store",
     "crates/rufin-test-support",

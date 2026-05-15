@@ -11,12 +11,17 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
+directories = "6.0.0"
 gettext-rs = { version = "0.7.7", features = ["gettext-system"] }
 gtk = { package = "gtk4", version = "0.11.3", features = ["v4_22"] }
 adw = { package = "libadwaita", version = "0.9.1", features = ["v1_9", "gtk_v4_22"] }
 rufin-core = { path = "../rufin-core" }
 rufin-provider = { path = "../rufin-provider" }
+rufin-provider-jellyfin = { path = "../rufin-provider-jellyfin" }
+rufin-secrets = { path = "../rufin-secrets" }
+rufin-store = { path = "../rufin-store" }
 rufin-test-support = { path = "../rufin-test-support" }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 

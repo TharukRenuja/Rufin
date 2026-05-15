@@ -4,8 +4,8 @@ use rufin_core::{
     PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
-    AlbumDetail, MusicProvider, PagedRequest, PagedResponse, ProviderCapabilities, ProviderError,
-    ProviderIdentity, ProviderResult,
+    AlbumDetail, ImageKind, ImageMetadata, MusicProvider, PagedRequest, PagedResponse,
+    ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult, SearchResults,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,6 +157,69 @@ impl MusicProvider for FakeProvider {
             .find(|track| track.id == *track_id)
             .cloned()
             .ok_or(ProviderError::NotFound)
+    }
+
+    async fn search(&self, query: &str) -> ProviderResult<SearchResults> {
+        let query = query.to_lowercase();
+        let albums = self
+            .library
+            .albums
+            .iter()
+            .filter(|album| {
+                album.title.to_lowercase().contains(&query)
+                    || album.artist.to_lowercase().contains(&query)
+            })
+            .take(25)
+            .cloned()
+            .collect();
+        let tracks = self
+            .library
+            .tracks
+            .iter()
+            .filter(|track| {
+                track.title.to_lowercase().contains(&query)
+                    || track.album.to_lowercase().contains(&query)
+                    || track.artist.to_lowercase().contains(&query)
+            })
+            .take(50)
+            .cloned()
+            .collect();
+        let artists = self
+            .library
+            .artists
+            .iter()
+            .filter(|artist| artist.name.to_lowercase().contains(&query))
+            .take(25)
+            .cloned()
+            .collect();
+        let playlists = self
+            .library
+            .playlists
+            .iter()
+            .filter(|playlist| playlist.name.to_lowercase().contains(&query))
+            .take(25)
+            .cloned()
+            .collect();
+
+        Ok(SearchResults {
+            albums,
+            tracks,
+            artists,
+            playlists,
+        })
+    }
+
+    async fn image_metadata(
+        &self,
+        item_id: &str,
+        kind: ImageKind,
+    ) -> ProviderResult<ImageMetadata> {
+        Ok(ImageMetadata {
+            item_id: item_id.to_string(),
+            kind,
+            tag: Some(format!("fake-{}", color_seed(item_id.len() as u32))),
+            url: format!("fake://local/images/{item_id}"),
+        })
     }
 }
 
