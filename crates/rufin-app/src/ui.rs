@@ -1332,6 +1332,10 @@ impl Shell {
         let button = gtk::Button::new();
         button.add_css_class("album-button");
         button.add_css_class("flat");
+        button.set_width_request(size);
+        button.set_size_request(size, -1);
+        button.set_hexpand(false);
+        button.set_halign(gtk::Align::Start);
         button.set_child(Some(&album_card_widget_with_size(album, size)));
         button
     }
@@ -2037,22 +2041,32 @@ fn album_card_widget_with_size(album: &Album, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.add_css_class("album-card");
     card.set_width_request(size);
+    card.set_size_request(size, -1);
+    card.set_hexpand(false);
+    card.set_halign(gtk::Align::Start);
     let cover = cover_tile(album.color_seed, size);
     card.append(&cover);
 
     let title = gtk::Label::new(Some(&album.title));
     title.add_css_class("album-title");
     title.set_xalign(0.0);
+    title.set_width_request(size);
+    title.set_size_request(size, -1);
+    title.set_max_width_chars((size / 8).max(8));
     title.set_lines(2);
     title.set_wrap(true);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
     let artist = gtk::Label::new(Some(&album.artist));
     artist.add_css_class("muted");
     artist.set_xalign(0.0);
+    artist.set_width_request(size);
+    artist.set_size_request(size, -1);
+    artist.set_max_width_chars((size / 8).max(8));
     artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
     let year = gtk::Label::new(Some(&album.year.to_string()));
     year.add_css_class("muted");
     year.set_xalign(0.0);
+    year.set_width_request(size);
 
     card.append(&title);
     card.append(&artist);
@@ -2068,6 +2082,9 @@ fn cover_tile(seed: u32, size: i32) -> gtk::Widget {
     area.set_content_height(size);
     area.set_width_request(size);
     area.set_height_request(size);
+    area.set_size_request(size, size);
+    area.set_hexpand(false);
+    area.set_halign(gtk::Align::Start);
     area.set_draw_func(move |_, context, width, height| {
         let red = f64::from((seed & 0xff) as u8) / 255.0;
         let green = f64::from(((seed >> 8) & 0xff) as u8) / 255.0;
