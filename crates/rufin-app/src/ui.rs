@@ -1334,10 +1334,37 @@ impl Shell {
         lyrics_status.set_vexpand(true);
         lyrics.append(&lyrics_status);
 
-        self.right_panel.append(&queue);
-        self.right_panel
-            .append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        self.right_panel.append(&lyrics);
+        let queue_lyrics_split = gtk::Paned::new(gtk::Orientation::Vertical);
+        queue_lyrics_split.add_css_class("queue-lyrics-split");
+        queue_lyrics_split.set_vexpand(true);
+        queue_lyrics_split.set_wide_handle(true);
+        queue_lyrics_split.set_resize_start_child(true);
+        queue_lyrics_split.set_resize_end_child(true);
+        queue_lyrics_split.set_shrink_start_child(true);
+        queue_lyrics_split.set_shrink_end_child(false);
+        queue_lyrics_split.set_start_child(Some(&queue));
+        queue_lyrics_split.set_end_child(Some(&lyrics));
+        if let Some(position) = self.state.settings.borrow().queue_lyrics_position {
+            queue_lyrics_split.set_position(position.max(120));
+        }
+
+        let shell = Rc::clone(self);
+        queue_lyrics_split.connect_notify_local(Some("position"), move |split, _| {
+            let position = split.position();
+            if position <= 0 {
+                return;
+            }
+            let mut settings = shell.state.settings.borrow_mut();
+            if settings.queue_lyrics_position == Some(position) {
+                return;
+            }
+            settings.queue_lyrics_position = Some(position);
+            if let Err(error) = shell.controller.save_settings(&settings) {
+                warn!(%error, "failed to save queue lyrics split position");
+            }
+        });
+
+        self.right_panel.append(&queue_lyrics_split);
     }
 
     fn queue_row(

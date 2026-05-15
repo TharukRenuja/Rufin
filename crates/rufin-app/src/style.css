@@ -206,6 +206,10 @@ window {
   min-height: 260px;
 }
 
+.queue-lyrics-split {
+  background: transparent;
+}
+
 .queue-row {
   padding: 6px 4px;
   border-radius: 9px;

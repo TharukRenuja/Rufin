@@ -122,6 +122,8 @@ pub struct AppSettings {
     pub window_width: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_height: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_lyrics_position: Option<i32>,
     #[serde(default)]
     pub track_table: TrackTableSettings,
 }
@@ -144,6 +146,7 @@ impl Default for AppSettings {
             ],
             window_width: None,
             window_height: None,
+            queue_lyrics_position: None,
             track_table: TrackTableSettings::default(),
         }
     }
@@ -175,6 +178,7 @@ mod tests {
         let settings = AppSettings {
             window_width: Some(1180),
             window_height: Some(760),
+            queue_lyrics_position: Some(520),
             ..AppSettings::default()
         };
 
@@ -200,6 +204,7 @@ mod tests {
 
         assert_eq!(restored.window_width, None);
         assert_eq!(restored.window_height, None);
+        assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
     }
 }
