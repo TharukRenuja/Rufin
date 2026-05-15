@@ -628,6 +628,15 @@ impl Store {
 
     pub fn refresh_library_counts(&self, server_id: &ServerId) -> StoreResult<()> {
         self.write_batch(|connection| {
+            let generation = connection
+                .query_row(
+                    "SELECT generation FROM sync_state WHERE server_id = ?1",
+                    params![server_id.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .unwrap_or(0);
+            repair_linked_artists(connection, server_id, generation)?;
             connection.execute(
                 "
                 UPDATE albums
@@ -906,9 +915,6 @@ impl Store {
                 album_from_row,
             )
             .optional()?;
-        let Some(album) = album else {
-            return Ok(None);
-        };
         let mut statement = self.connection.prepare(
             "
             SELECT track_id, album_id, title, artist, artist_id, album, year,
@@ -922,6 +928,11 @@ impl Store {
             params![server_id.as_str(), album_id.as_str()],
             track_from_row,
         )?)?;
+        let album = match album {
+            Some(album) => album,
+            None if tracks.is_empty() => return Ok(None),
+            None => synthesize_album_from_tracks(album_id, &tracks),
+        };
         Ok(Some((album, tracks)))
     }
 
@@ -930,7 +941,7 @@ impl Store {
         server_id: &ServerId,
         artist_id: &ArtistId,
     ) -> StoreResult<Option<CachedArtistDetail>> {
-        let artist = if let Some(artist) = self
+        let artist = self
             .connection
             .query_row(
                 "
@@ -941,11 +952,10 @@ impl Store {
                 params![server_id.as_str(), artist_id.as_str()],
                 artist_from_row,
             )
-            .optional()?
-        {
-            artist
-        } else {
-            let Some(artist) = self
+            .optional()?;
+        let artist = match artist {
+            Some(artist) => Some(artist),
+            None => self
                 .connection
                 .query_row(
                     "
@@ -956,11 +966,7 @@ impl Store {
                     params![server_id.as_str(), artist_id.as_str()],
                     artist_from_row,
                 )
-                .optional()?
-            else {
-                return Ok(None);
-            };
-            artist
+                .optional()?,
         };
 
         let mut albums_statement = self.connection.prepare(
@@ -995,6 +1001,12 @@ impl Store {
             params![server_id.as_str(), artist_id.as_str()],
             track_from_row,
         )?)?;
+
+        let artist = match artist {
+            Some(artist) => artist,
+            None if albums.is_empty() && tracks.is_empty() => return Ok(None),
+            None => synthesize_artist_from_links(artist_id, &albums, &tracks),
+        };
 
         Ok(Some(CachedArtistDetail {
             artist,
@@ -1500,6 +1512,65 @@ fn artist_from_row(row: &Row<'_>) -> rusqlite::Result<Artist> {
     })
 }
 
+fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
+    let first = tracks
+        .first()
+        .expect("album fallback requires at least one track");
+    Album {
+        id: album_id.clone(),
+        title: first.album.clone(),
+        artist: first.artist.clone(),
+        artist_id: first.artist_id.clone(),
+        year: first.year,
+        track_count: tracks.len().min(usize::from(u16::MAX)) as u16,
+        duration_seconds: tracks
+            .iter()
+            .map(|track| track.duration_seconds)
+            .fold(0_u32, u32::saturating_add),
+        favorite: tracks.iter().any(|track| track.favorite),
+        color_seed: stable_seed(album_id.as_str()),
+    }
+}
+
+fn synthesize_artist_from_links(
+    artist_id: &ArtistId,
+    albums: &[Album],
+    tracks: &[Track],
+) -> Artist {
+    let name = tracks
+        .iter()
+        .find(|track| track.artist_id.as_ref() == Some(artist_id))
+        .map(|track| track.artist.clone())
+        .or_else(|| {
+            albums
+                .iter()
+                .find(|album| album.artist_id.as_ref() == Some(artist_id))
+                .map(|album| album.artist.clone())
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| artist_id.as_str().to_string());
+
+    let mut album_ids = Vec::new();
+    for album in albums {
+        if !album_ids.contains(&album.id) {
+            album_ids.push(album.id.clone());
+        }
+    }
+    for track in tracks {
+        if !album_ids.contains(&track.album_id) {
+            album_ids.push(track.album_id.clone());
+        }
+    }
+
+    Artist {
+        id: artist_id.clone(),
+        name,
+        album_count: album_ids.len().min(u32::MAX as usize) as u32,
+        track_count: tracks.len().min(u32::MAX as usize) as u32,
+        favorite: false,
+    }
+}
+
 fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
     Ok(Genre {
         id: GenreId::new(row.get::<_, String>(0)?),
@@ -1516,6 +1587,92 @@ fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
         track_count: u32_from_i64(row.get(2)?),
         duration_seconds: u32_from_i64(row.get(3)?),
     })
+}
+
+fn stable_seed(value: &str) -> u32 {
+    value.bytes().fold(0x811c_9dc5, |hash, byte| {
+        hash.wrapping_mul(16_777_619) ^ u32::from(byte)
+    })
+}
+
+fn repair_linked_artists(
+    connection: &Connection,
+    server_id: &ServerId,
+    generation: i64,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        INSERT INTO artists (
+            server_id, artist_id, name, album_count, track_count, favorite,
+            sync_generation
+        )
+        SELECT t.server_id,
+               t.artist_id,
+               MIN(t.artist),
+               COUNT(DISTINCT t.album_id),
+               COUNT(*),
+               MAX(t.favorite),
+               ?2
+        FROM tracks t
+        WHERE t.server_id = ?1
+          AND t.artist_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM artists a
+              WHERE a.server_id = t.server_id AND a.artist_id = t.artist_id
+          )
+        GROUP BY t.server_id, t.artist_id
+        ",
+        params![server_id.as_str(), generation],
+    )?;
+    connection.execute(
+        "
+        INSERT INTO album_artists (
+            server_id, artist_id, name, album_count, track_count, favorite,
+            sync_generation
+        )
+        SELECT a.server_id,
+               a.artist_id,
+               MIN(a.artist),
+               COUNT(*),
+               COALESCE(SUM(a.track_count), 0),
+               MAX(a.favorite),
+               ?2
+        FROM albums a
+        WHERE a.server_id = ?1
+          AND a.artist_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM album_artists aa
+              WHERE aa.server_id = a.server_id AND aa.artist_id = a.artist_id
+          )
+        GROUP BY a.server_id, a.artist_id
+        ",
+        params![server_id.as_str(), generation],
+    )?;
+    refresh_artist_fts(connection, server_id, "artists", "artist")?;
+    refresh_artist_fts(connection, server_id, "album_artists", "album_artist")?;
+    Ok(())
+}
+
+fn refresh_artist_fts(
+    connection: &Connection,
+    server_id: &ServerId,
+    table: &str,
+    item_type: &str,
+) -> StoreResult<()> {
+    connection.execute(
+        "DELETE FROM library_fts WHERE server_id = ?1 AND item_type = ?2",
+        params![server_id.as_str(), item_type],
+    )?;
+    let sql = format!(
+        "
+        INSERT INTO library_fts (server_id, item_type, item_id, title, subtitle)
+        SELECT server_id, '{item_type}', artist_id, name, ''
+        FROM {table}
+        WHERE server_id = ?1
+        "
+    );
+    connection.execute(&sql, params![server_id.as_str()])?;
+    Ok(())
 }
 
 fn collect_rows<T>(
@@ -1716,6 +1873,31 @@ mod tests {
     }
 
     #[test]
+    fn album_detail_falls_back_to_tracks_when_album_row_is_missing() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(9);
+        let tracks = vec![track(1, &album), track(2, &album)];
+
+        store
+            .upsert_tracks(&saved.server.id, &tracks, generation)
+            .expect("upsert tracks");
+
+        let detail = store
+            .load_album_detail(&saved.server.id, &album.id)
+            .expect("load album detail")
+            .expect("album detail");
+
+        assert_eq!(detail.0.id, album.id);
+        assert_eq!(detail.0.title, album.title);
+        assert_eq!(detail.0.artist, album.artist);
+        assert_eq!(detail.0.track_count, 2);
+        assert_eq!(detail.1, tracks);
+    }
+
+    #[test]
     fn refresh_library_counts_uses_cached_tracks() {
         let store = Store::open_memory().expect("open store");
         let saved = saved_server();
@@ -1788,6 +1970,48 @@ mod tests {
         assert_eq!(artist.track_count, 2);
         assert_eq!(album_artist.album_count, 1);
         assert_eq!(album_artist.track_count, 2);
+    }
+
+    #[test]
+    fn refresh_library_counts_repairs_missing_linked_artist_rows() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let tracks = vec![track(1, &album), track(2, &album)];
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, &tracks, generation)
+            .expect("upsert tracks");
+        store
+            .refresh_library_counts(&saved.server.id)
+            .expect("refresh counts");
+
+        let artist = store
+            .load_artists(&saved.server.id, false, 0, 1)
+            .expect("load artists")
+            .items
+            .remove(0);
+        let album_artist = store
+            .load_artists(&saved.server.id, true, 0, 1)
+            .expect("load album artists")
+            .items
+            .remove(0);
+        let search = store
+            .search_library(&saved.server.id, "Artist", 10)
+            .expect("search");
+
+        assert_eq!(artist.name, album.artist);
+        assert_eq!(artist.album_count, 1);
+        assert_eq!(artist.track_count, 2);
+        assert_eq!(album_artist.name, album.artist);
+        assert_eq!(album_artist.album_count, 1);
+        assert_eq!(album_artist.track_count, 2);
+        assert_eq!(search.artists, vec![artist]);
     }
 
     #[test]
@@ -1864,6 +2088,64 @@ mod tests {
             .expect("artist detail");
 
         assert_eq!(detail.artist, artist);
+        assert_eq!(detail.albums, vec![album]);
+        assert_eq!(detail.tracks, vec![track]);
+    }
+
+    #[test]
+    fn artist_detail_falls_back_to_track_links_when_artist_row_is_missing() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let tracks = vec![track(1, &album), track(2, &album)];
+        let artist_id = album.artist_id.clone().expect("artist id");
+
+        store
+            .upsert_tracks(&saved.server.id, &tracks, generation)
+            .expect("upsert tracks");
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &artist_id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(detail.artist.id, artist_id);
+        assert_eq!(detail.artist.name, album.artist);
+        assert_eq!(detail.artist.album_count, 1);
+        assert_eq!(detail.artist.track_count, 2);
+        assert!(detail.albums.is_empty());
+        assert_eq!(detail.tracks, tracks);
+    }
+
+    #[test]
+    fn artist_detail_falls_back_to_album_links_when_artist_row_is_missing() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let artist_id = album.artist_id.clone().expect("artist id");
+        let mut track = track(1, &album);
+        track.artist_id = None;
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &artist_id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(detail.artist.id, artist_id);
+        assert_eq!(detail.artist.name, album.artist);
+        assert_eq!(detail.artist.album_count, 1);
+        assert_eq!(detail.artist.track_count, 1);
         assert_eq!(detail.albums, vec![album]);
         assert_eq!(detail.tracks, vec![track]);
     }
