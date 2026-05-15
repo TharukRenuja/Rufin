@@ -10,8 +10,8 @@ use rufin_core::{
     QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
-    FakePlaybackBackend, GStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand, PlaybackEvent,
-    PlaybackState, PlaybackTrack, StreamDescriptor,
+    FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
+    PlaybackEvent, PlaybackState, PlaybackTrack, StreamDescriptor,
 };
 use rufin_provider::{
     LoginRequest, MusicProvider, PagedRequest, SavedProviderSession, SearchResults,
@@ -1403,13 +1403,7 @@ fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
     if fake {
         return Box::new(FakePlaybackBackend::new());
     }
-    match GStreamerPlaybackBackend::new() {
-        Ok(backend) => Box::new(backend),
-        Err(error) => {
-            warn!(%error, "falling back to fake playback backend");
-            Box::new(FakePlaybackBackend::new())
-        }
-    }
+    Box::new(LazyGStreamerPlaybackBackend::new())
 }
 
 fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {

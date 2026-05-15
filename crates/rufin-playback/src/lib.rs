@@ -192,6 +192,46 @@ impl PlaybackBackend for FakePlaybackBackend {
     }
 }
 
+pub struct LazyGStreamerPlaybackBackend {
+    inner: Option<Box<dyn PlaybackBackend>>,
+}
+
+impl LazyGStreamerPlaybackBackend {
+    pub fn new() -> Self {
+        Self { inner: None }
+    }
+
+    fn backend(&mut self) -> Result<&mut Box<dyn PlaybackBackend>, PlaybackError> {
+        if self.inner.is_none() {
+            debug!("initializing GStreamer playback backend");
+            self.inner = Some(Box::new(GStreamerPlaybackBackend::new()?));
+        }
+        Ok(self
+            .inner
+            .as_mut()
+            .expect("lazy playback backend was just initialized"))
+    }
+}
+
+impl Default for LazyGStreamerPlaybackBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PlaybackBackend for LazyGStreamerPlaybackBackend {
+    fn send(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
+        self.backend()?.send(command)
+    }
+
+    fn drain_events(&mut self) -> Vec<PlaybackEvent> {
+        self.inner
+            .as_mut()
+            .map(|backend| backend.drain_events())
+            .unwrap_or_default()
+    }
+}
+
 pub struct GStreamerPlaybackBackend {
     commands: Sender<PlaybackCommand>,
     events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
