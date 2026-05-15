@@ -9,4 +9,6 @@ pub use domain::{
 };
 pub use queue::{QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ShuffleState};
 pub use route::{DensityMode, EffectiveDensity, Route, RouteStack, SearchKind};
-pub use settings::{AppSettings, ThemePreference};
+pub use settings::{
+    AppSettings, ThemePreference, TrackSortKey, TrackTableColumn, TrackTableSettings,
+};

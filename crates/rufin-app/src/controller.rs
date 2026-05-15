@@ -413,18 +413,6 @@ impl AppController {
         self.persist_and_emit_queue();
     }
 
-    pub fn append_to_queue(&self, track: Track) {
-        let result = self.with_queue_mut(|queue| {
-            queue.append(&track);
-            Ok(())
-        });
-        if let Err(error) = result {
-            let _sent = self.events.send(ControllerEvent::Error(error));
-            return;
-        }
-        self.persist_and_emit_queue();
-    }
-
     pub fn remove_from_queue(&self, entry_id: QueueEntryId) {
         let mut removed_current = false;
         let mut has_current_after_remove = false;

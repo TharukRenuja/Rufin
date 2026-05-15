@@ -10,6 +10,105 @@ pub enum ThemePreference {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum TrackTableColumn {
+    TrackNumber,
+    Title,
+    Artist,
+    Album,
+    Year,
+    Duration,
+    Favorite,
+}
+
+impl TrackTableColumn {
+    pub fn all() -> [Self; 7] {
+        [
+            Self::TrackNumber,
+            Self::Title,
+            Self::Artist,
+            Self::Album,
+            Self::Year,
+            Self::Duration,
+            Self::Favorite,
+        ]
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::TrackNumber => "#",
+            Self::Title => "Title",
+            Self::Artist => "Artist",
+            Self::Album => "Album",
+            Self::Year => "Year",
+            Self::Duration => "Duration",
+            Self::Favorite => "Favorite",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum TrackSortKey {
+    TrackNumber,
+    Title,
+    Artist,
+    Album,
+    Year,
+    Duration,
+    Favorite,
+}
+
+impl TrackSortKey {
+    pub fn all() -> [Self; 7] {
+        [
+            Self::TrackNumber,
+            Self::Title,
+            Self::Artist,
+            Self::Album,
+            Self::Year,
+            Self::Duration,
+            Self::Favorite,
+        ]
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::TrackNumber => "#",
+            Self::Title => "Title",
+            Self::Artist => "Artist",
+            Self::Album => "Album",
+            Self::Year => "Year",
+            Self::Duration => "Duration",
+            Self::Favorite => "Favorite",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TrackTableSettings {
+    pub visible_columns: Vec<TrackTableColumn>,
+    pub sort_key: TrackSortKey,
+    pub descending: bool,
+}
+
+impl Default for TrackTableSettings {
+    fn default() -> Self {
+        Self {
+            visible_columns: vec![
+                TrackTableColumn::TrackNumber,
+                TrackTableColumn::Title,
+                TrackTableColumn::Artist,
+                TrackTableColumn::Album,
+                TrackTableColumn::Year,
+                TrackTableColumn::Duration,
+                TrackTableColumn::Favorite,
+            ],
+            sort_key: TrackSortKey::TrackNumber,
+            descending: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AppSettings {
     pub density_mode: DensityMode,
@@ -23,6 +122,8 @@ pub struct AppSettings {
     pub window_width: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_height: Option<i32>,
+    #[serde(default)]
+    pub track_table: TrackTableSettings,
 }
 
 impl Default for AppSettings {
@@ -43,13 +144,14 @@ impl Default for AppSettings {
             ],
             window_width: None,
             window_height: None,
+            track_table: TrackTableSettings::default(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::AppSettings;
+    use super::{AppSettings, TrackSortKey, TrackTableColumn};
 
     #[test]
     fn settings_default_to_private_external_features_off() {
@@ -59,6 +161,13 @@ mod tests {
         assert!(!settings.external_lyrics_enabled);
         assert!(!settings.discord_presence_enabled);
         assert_eq!(settings.home_sections.len(), 5);
+        assert!(
+            settings
+                .track_table
+                .visible_columns
+                .contains(&TrackTableColumn::Title)
+        );
+        assert_eq!(settings.track_table.sort_key, TrackSortKey::TrackNumber);
     }
 
     #[test]
@@ -91,5 +200,6 @@ mod tests {
 
         assert_eq!(restored.window_width, None);
         assert_eq!(restored.window_height, None);
+        assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
     }
 }

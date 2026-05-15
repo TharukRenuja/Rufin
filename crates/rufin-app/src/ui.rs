@@ -10,7 +10,8 @@ use gtk::glib;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
     HomeSection, HomeSectionKind, Playlist, QueueEntry, QueueSnapshot, RepeatMode, Route,
-    RouteStack, SearchKind, Track, format_duration,
+    RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn, TrackTableSettings,
+    format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_store::CachedArtistDetail;
@@ -50,6 +51,7 @@ struct AppState {
     seek_generation: Cell<u64>,
     split_width: Cell<i32>,
     split_position: Cell<i32>,
+    card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
 }
 
@@ -122,6 +124,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         seek_generation: Cell::new(0),
         split_width: Cell::new(0),
         split_position: Cell::new(0),
+        card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
     };
 
@@ -296,6 +299,14 @@ impl Shell {
         }
     }
 
+    fn update_track_table_settings(&self, update: impl FnOnce(&mut TrackTableSettings)) {
+        let mut settings = self.state.settings.borrow_mut();
+        update(&mut settings.track_table);
+        if let Err(error) = self.controller.save_settings(&settings) {
+            warn!(%error, "failed to save track table settings");
+        }
+    }
+
     fn update_density(self: &Rc<Self>) {
         let width = self.window.width().max(1);
         let next = self.state.density_mode.get().resolve(width);
@@ -309,7 +320,7 @@ impl Shell {
         if next != previous {
             debug!(?next, width, "effective density changed");
             self.render_current_route();
-        } else if matches!(self.state.routes.borrow().current(), Route::Home) {
+        } else if route_uses_responsive_cards(self.state.routes.borrow().current()) {
             self.render_current_route();
         }
     }
@@ -550,58 +561,33 @@ impl Shell {
 
     fn albums_view(self: &Rc<Self>) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
         let albums = self.state.library.borrow().albums.clone();
-        let model = album_model(&albums);
-        let selection = gtk::SingleSelection::new(Some(model));
-        let factory = gtk::SignalListItemFactory::new();
-        let density = self.state.effective_density.get();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        content.add_css_class("route-content");
+        content.set_margin_top(24);
+        content.set_margin_bottom(36);
+        content.set_margin_start(28);
+        content.set_margin_end(28);
 
-        factory.connect_bind(move |_, list_item| {
-            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(item) = list_item.item() else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            let album = boxed.borrow::<Album>();
-            list_item.set_child(Some(&album_card_widget(&album, density, false)));
-        });
+        let heading = gtk::Label::new(Some(&tr("Albums")));
+        heading.add_css_class("section-heading");
+        heading.set_xalign(0.0);
+        content.append(&heading);
 
-        factory.connect_unbind(|_, list_item| {
-            if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-                list_item.set_child(None::<&gtk::Widget>);
-            }
-        });
-
-        let grid = gtk::GridView::new(Some(selection), Some(factory));
-        grid.add_css_class("album-grid");
-        grid.set_margin_top(24);
-        grid.set_margin_bottom(36);
-        grid.set_margin_start(28);
-        grid.set_margin_end(28);
-        grid.set_single_click_activate(true);
-        grid.set_min_columns(1);
-        grid.set_max_columns(if density == EffectiveDensity::Compact {
-            4
+        if albums.is_empty() {
+            content.append(&self.placeholder_view(
+                "Albums",
+                "Cached albums will appear here after the background sync finishes.",
+            ));
         } else {
-            10
-        });
+            content.append(&self.album_cards_grid(&albums));
+        }
 
-        let shell = Rc::clone(self);
-        grid.connect_activate(move |_, position| {
-            if let Some(album) = shell.state.library.borrow().albums.get(position as usize) {
-                shell.navigate(Route::AlbumDetail(album.id.clone()));
-            }
-        });
-
-        scroller.set_child(Some(&grid));
+        scroller.set_child(Some(&content));
         scroller.upcast()
     }
 
@@ -695,7 +681,7 @@ impl Shell {
         header.append(&metadata);
         content.append(&header);
 
-        let table = self.tracks_table(tracks);
+        let table = self.tracks_table(tracks, "album-detail");
         content.append(&table);
 
         scroller.set_child(Some(&content));
@@ -715,46 +701,110 @@ impl Shell {
         heading.add_css_class("section-heading");
         heading.set_xalign(0.0);
         wrapper.append(&heading);
-        wrapper.append(&self.tracks_table(tracks));
+        wrapper.append(&self.tracks_table(tracks, title));
         wrapper.upcast()
     }
 
-    fn tracks_table(self: &Rc<Self>, tracks: Vec<Track>) -> gtk::Widget {
-        let model = track_model(&tracks);
-        let selection = gtk::MultiSelection::new(Some(model));
+    fn tracks_table(self: &Rc<Self>, tracks: Vec<Track>, context: &str) -> gtk::Widget {
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        wrapper.set_vexpand(true);
+
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        toolbar.add_css_class("track-toolbar");
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        toolbar.append(&search);
+
+        let settings = self.state.settings.borrow().track_table.clone();
+        let sort_button = gtk::Button::new();
+        sort_button.add_css_class("flat");
+        set_track_sort_button_content(&sort_button, &settings);
+        toolbar.append(&sort_button);
+
+        let configure = gtk::MenuButton::new();
+        configure.add_css_class("flat");
+        configure.set_icon_name("emblem-system-symbolic");
+        configure.set_tooltip_text(Some(&tr("Configure columns")));
+        toolbar.append(&configure);
+        wrapper.append(&toolbar);
+
+        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        populate_track_model(&model, &tracks, &settings, "");
+        let selection = gtk::SingleSelection::new(Some(model.clone()));
         let table = gtk::ColumnView::new(Some(selection));
         table.add_css_class("track-table");
         table.set_vexpand(true);
         table.set_hexpand(true);
+        table.set_single_click_activate(false);
+        set_track_table_columns(&table, &settings);
 
-        table.append_column(&track_actions_column(self));
-        table.append_column(&track_column("#", 54, |track| {
-            track.track_number.to_string()
-        }));
-        table.append_column(&track_column("Title", 240, |track| track.title.clone()));
-        table.append_column(&track_column("Artist", 180, |track| track.artist.clone()));
-        table.append_column(&track_column("Album", 220, |track| track.album.clone()));
-        table.append_column(&track_column("Year", 70, |track| track.year.to_string()));
-        table.append_column(&track_column("Duration", 90, |track| {
-            format_duration(track.duration_seconds)
-        }));
-        table.append_column(&track_column("Favorite", 76, |track| {
-            if track.favorite {
-                "Yes".to_string()
-            } else {
-                String::new()
-            }
-        }));
+        let controller = self.controller.clone();
+        let model_for_activate = model.clone();
+        table.connect_activate(move |_, position| {
+            let Some(item) = model_for_activate.item(position) else {
+                return;
+            };
+            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
+                return;
+            };
+            controller.play_now(boxed.borrow::<Track>().clone());
+        });
+
+        let model_for_search = model.clone();
+        let tracks_for_search = tracks.clone();
+        let shell = Rc::clone(self);
+        search.connect_search_changed(move |entry| {
+            let settings = shell.state.settings.borrow().track_table.clone();
+            populate_track_model(
+                &model_for_search,
+                &tracks_for_search,
+                &settings,
+                entry.text().as_str(),
+            );
+        });
+
+        let model_for_sort = model.clone();
+        let tracks_for_sort = tracks.clone();
+        let shell = Rc::clone(self);
+        let search_for_sort = search.clone();
+        sort_button.connect_clicked(move |button| {
+            let mut settings = shell.state.settings.borrow().track_table.clone();
+            settings.descending = !settings.descending;
+            shell.update_track_table_settings(|stored| *stored = settings.clone());
+            populate_track_model(
+                &model_for_sort,
+                &tracks_for_sort,
+                &settings,
+                search_for_sort.text().as_str(),
+            );
+            set_track_sort_button_content(button, &settings);
+        });
+
+        configure.set_popover(Some(&self.track_table_popover(
+            &table,
+            &model,
+            &tracks,
+            &search,
+            &sort_button,
+        )));
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
         scroller.set_child(Some(&table));
-        scroller.upcast()
+        wrapper.append(&scroller);
+        wrapper.set_widget_name(context);
+        wrapper.upcast()
     }
 
     fn artist_list_view(self: &Rc<Self>, artists: Vec<Artist>, title: &str) -> gtk::Widget {
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
+        scroller.set_vexpand(true);
+
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -773,51 +823,13 @@ impl Shell {
                 title,
                 "Cached rows will appear here after the background sync finishes.",
             ));
-            return wrapper.upcast();
+            scroller.set_child(Some(&wrapper));
+            return scroller.upcast();
         }
 
-        let list = gtk::ListBox::new();
-        list.add_css_class("cached-list");
-        for artist in artists {
-            let button = gtk::Button::new();
-            button.add_css_class("flat");
-            button.set_hexpand(true);
-            button.set_halign(gtk::Align::Fill);
-
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            row.add_css_class("cached-row");
-            row.append(&gtk::Image::from_icon_name("avatar-default-symbolic"));
-            let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            labels.set_hexpand(true);
-            let name_label = gtk::Label::new(Some(&artist.name));
-            name_label.set_xalign(0.0);
-            name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            let subtitle_label = gtk::Label::new(Some(&format!(
-                "{} {} / {} {}",
-                artist.album_count,
-                tr("albums"),
-                artist.track_count,
-                tr("tracks")
-            )));
-            subtitle_label.add_css_class("muted");
-            subtitle_label.set_xalign(0.0);
-            labels.append(&name_label);
-            labels.append(&subtitle_label);
-            row.append(&labels);
-            button.set_child(Some(&row));
-
-            let shell = Rc::clone(self);
-            let artist_id = artist.id.clone();
-            button.connect_clicked(move |_| shell.navigate(Route::ArtistDetail(artist_id.clone())));
-            list.append(&button);
-        }
-
-        let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroller.set_vexpand(true);
-        scroller.set_child(Some(&list));
-        wrapper.append(&scroller);
-        wrapper.upcast()
+        wrapper.append(&self.artist_cards_grid(&artists));
+        scroller.set_child(Some(&wrapper));
+        scroller.upcast()
     }
 
     fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
@@ -894,19 +906,7 @@ impl Shell {
             album_heading.add_css_class("section-heading");
             album_heading.set_xalign(0.0);
             wrapper.append(&album_heading);
-
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            for album in albums.iter().take(16) {
-                let card = self.album_card_with_size(album, 150);
-                let shell = Rc::clone(self);
-                let album_id = album.id.clone();
-                card.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
-                row.append(&card);
-            }
-            let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
-            scroller.set_child(Some(&row));
-            wrapper.append(&scroller);
+            wrapper.append(&self.album_cards_grid(&albums));
         }
 
         if tracks.is_empty() {
@@ -914,7 +914,7 @@ impl Shell {
                 &self.placeholder_view("Tracks", "No cached tracks are linked to this artist yet."),
             );
         } else {
-            wrapper.append(&self.tracks_table(tracks));
+            wrapper.append(&self.tracks_table(tracks, "artist-detail"));
         }
 
         wrapper.upcast()
@@ -1040,7 +1040,7 @@ impl Shell {
         }
 
         if has_tracks {
-            wrapper.append(&self.tracks_table(library.search.tracks));
+            wrapper.append(&self.tracks_table(library.search.tracks, "search"));
         } else if !has_albums && !has_artists && !has_playlists {
             wrapper.append(&self.placeholder_view(
                 "Search",
@@ -1473,6 +1473,53 @@ impl Shell {
         wrapper.upcast()
     }
 
+    fn album_cards_grid(self: &Rc<Self>, albums: &[Album]) -> gtk::Widget {
+        let grid = gtk::Box::new(gtk::Orientation::Vertical, HOME_ALBUM_GAP);
+        grid.set_hexpand(true);
+        let width = home_album_content_width(self);
+        let current = nonzero_usize(self.state.card_grid_columns.get());
+        let columns = home_album_page_size(width, current);
+        self.state.card_grid_columns.set(columns);
+        let card_size = home_album_card_size(width, columns);
+
+        for row_albums in albums.chunks(columns.max(1)) {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
+            row.set_hexpand(true);
+            for album in row_albums {
+                let card = self.album_card_with_size(album, card_size);
+                let shell = Rc::clone(self);
+                let album_id = album.id.clone();
+                card.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
+                row.append(&card);
+            }
+            grid.append(&row);
+        }
+
+        grid.upcast()
+    }
+
+    fn artist_cards_grid(self: &Rc<Self>, artists: &[Artist]) -> gtk::Widget {
+        let grid = gtk::Box::new(gtk::Orientation::Vertical, HOME_ALBUM_GAP);
+        grid.set_hexpand(true);
+        let width = home_album_content_width(self);
+        let current = nonzero_usize(self.state.card_grid_columns.get());
+        let columns = home_album_page_size(width, current);
+        self.state.card_grid_columns.set(columns);
+        let card_size = home_album_card_size(width, columns);
+
+        for row_artists in artists.chunks(columns.max(1)) {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
+            row.set_hexpand(true);
+            for artist in row_artists {
+                let card = self.artist_card_with_size(artist, card_size);
+                row.append(&card);
+            }
+            grid.append(&row);
+        }
+
+        grid.upcast()
+    }
+
     fn album_card_with_size(&self, album: &Album, size: i32) -> gtk::Button {
         let button = gtk::Button::new();
         button.add_css_class("album-button");
@@ -1483,6 +1530,145 @@ impl Shell {
         button.set_halign(gtk::Align::Start);
         button.set_child(Some(&album_card_widget_with_size(album, size)));
         button
+    }
+
+    fn artist_card_with_size(self: &Rc<Self>, artist: &Artist, size: i32) -> gtk::Button {
+        let button = gtk::Button::new();
+        button.add_css_class("album-button");
+        button.add_css_class("flat");
+        button.set_width_request(size);
+        button.set_size_request(size, -1);
+        button.set_hexpand(false);
+        button.set_halign(gtk::Align::Start);
+
+        let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        card.add_css_class("album-card");
+        card.set_width_request(size);
+        card.set_size_request(size, -1);
+        card.set_hexpand(false);
+        card.set_halign(gtk::Align::Start);
+        card.append(&cover_tile(stable_seed(artist.id.as_str()), size));
+
+        let name = gtk::Label::new(Some(&artist.name));
+        name.add_css_class("album-title");
+        name.set_xalign(0.0);
+        name.set_width_request(size);
+        name.set_size_request(size, -1);
+        name.set_max_width_chars((size / 8).max(8));
+        name.set_lines(2);
+        name.set_wrap(true);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let counts = gtk::Label::new(Some(&format!(
+            "{} {} / {} {}",
+            artist.album_count,
+            tr("albums"),
+            artist.track_count,
+            tr("tracks")
+        )));
+        counts.add_css_class("muted");
+        counts.set_xalign(0.0);
+        counts.set_width_request(size);
+        counts.set_size_request(size, -1);
+        counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        card.append(&name);
+        card.append(&counts);
+        button.set_child(Some(&card));
+
+        let shell = Rc::clone(self);
+        let artist_id = artist.id.clone();
+        button.connect_clicked(move |_| shell.navigate(Route::ArtistDetail(artist_id.clone())));
+        button
+    }
+
+    fn track_table_popover(
+        self: &Rc<Self>,
+        table: &gtk::ColumnView,
+        model: &gio::ListStore,
+        tracks: &[Track],
+        search: &gtk::SearchEntry,
+        sort_button: &gtk::Button,
+    ) -> gtk::Popover {
+        let popover = gtk::Popover::new();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        content.set_margin_top(12);
+        content.set_margin_bottom(12);
+        content.set_margin_start(12);
+        content.set_margin_end(12);
+
+        let sort_label = gtk::Label::new(Some(&tr("Sort by")));
+        sort_label.add_css_class("muted");
+        sort_label.set_xalign(0.0);
+        content.append(&sort_label);
+
+        let sort_titles = TrackSortKey::all()
+            .iter()
+            .map(|key| tr(key.title()))
+            .collect::<Vec<_>>();
+        let sort_title_refs = sort_titles.iter().map(String::as_str).collect::<Vec<_>>();
+        let sort_options = gtk::StringList::new(&sort_title_refs);
+        let sort_dropdown = gtk::DropDown::new(Some(sort_options), None::<gtk::Expression>);
+        let current_sort = self.state.settings.borrow().track_table.sort_key;
+        sort_dropdown.set_selected(track_sort_index(current_sort));
+        let shell = Rc::clone(self);
+        let model_for_sort = model.clone();
+        let tracks_for_sort = tracks.to_vec();
+        let search_for_sort = search.clone();
+        let sort_button_for_sort = sort_button.clone();
+        sort_dropdown.connect_selected_notify(move |dropdown| {
+            let sort_key = track_sort_from_index(dropdown.selected());
+            let mut settings = shell.state.settings.borrow().track_table.clone();
+            settings.sort_key = sort_key;
+            shell.update_track_table_settings(|stored| *stored = settings.clone());
+            populate_track_model(
+                &model_for_sort,
+                &tracks_for_sort,
+                &settings,
+                search_for_sort.text().as_str(),
+            );
+            set_track_sort_button_content(&sort_button_for_sort, &settings);
+        });
+        content.append(&sort_dropdown);
+
+        let columns_label = gtk::Label::new(Some(&tr("Columns")));
+        columns_label.add_css_class("muted");
+        columns_label.set_xalign(0.0);
+        content.append(&columns_label);
+
+        let visible = self
+            .state
+            .settings
+            .borrow()
+            .track_table
+            .visible_columns
+            .clone();
+        for column in TrackTableColumn::all() {
+            let check = gtk::CheckButton::with_label(&tr(column.title()));
+            check.set_active(visible.contains(&column));
+            let shell = Rc::clone(self);
+            let table_for_column = table.clone();
+            check.connect_toggled(move |check| {
+                shell.update_track_table_settings(|settings| {
+                    if check.is_active() {
+                        if !settings.visible_columns.contains(&column) {
+                            settings.visible_columns.push(column);
+                        }
+                    } else {
+                        settings.visible_columns.retain(|stored| *stored != column);
+                        if settings.visible_columns.is_empty() {
+                            settings.visible_columns.push(TrackTableColumn::Title);
+                        }
+                    }
+                });
+                let settings = shell.state.settings.borrow().track_table.clone();
+                set_track_table_columns(&table_for_column, &settings);
+            });
+            content.append(&check);
+        }
+
+        popover.set_child(Some(&content));
+        popover
     }
 }
 
@@ -1515,7 +1701,7 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
             } else {
                 let split_changed = resize_shell.update_content_split();
                 if split_changed
-                    || matches!(resize_shell.state.routes.borrow().current(), Route::Home)
+                    || route_uses_responsive_cards(resize_shell.state.routes.borrow().current())
                 {
                     resize_shell.render_current_route();
                 }
@@ -1527,7 +1713,9 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
         .content_split
         .connect_notify_local(Some("width"), move |_, _| {
             let split_changed = split_shell.update_content_split();
-            if split_changed || matches!(split_shell.state.routes.borrow().current(), Route::Home) {
+            if split_changed
+                || route_uses_responsive_cards(split_shell.state.routes.borrow().current())
+            {
                 split_shell.render_current_route();
             }
         });
@@ -1537,7 +1725,9 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
         .content_split
         .connect_notify_local(Some("position"), move |_, _| {
             let split_changed = split_shell.update_content_split();
-            if split_changed || matches!(split_shell.state.routes.borrow().current(), Route::Home) {
+            if split_changed
+                || route_uses_responsive_cards(split_shell.state.routes.borrow().current())
+            {
                 split_shell.render_current_route();
             }
         });
@@ -1545,7 +1735,7 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
     let split_shell = Rc::clone(shell);
     shell.content_split.add_tick_callback(move |_, _| {
         if split_shell.update_content_split()
-            && matches!(split_shell.state.routes.borrow().current(), Route::Home)
+            && route_uses_responsive_cards(split_shell.state.routes.borrow().current())
         {
             split_shell.render_current_route();
         }
@@ -1963,69 +2153,152 @@ fn playback_state_label(state: PlaybackState) -> &'static str {
     }
 }
 
-fn album_model(albums: &[Album]) -> gio::ListStore {
-    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    for album in albums {
-        model.append(&glib::BoxedAnyObject::new(album.clone()));
-    }
-    model
+fn set_track_sort_button_content(button: &gtk::Button, settings: &TrackTableSettings) {
+    let sort_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    sort_content.append(&gtk::Label::new(Some(&tr(settings.sort_key.title()))));
+    sort_content.append(&gtk::Image::from_icon_name(if settings.descending {
+        "view-sort-descending-symbolic"
+    } else {
+        "view-sort-ascending-symbolic"
+    }));
+    button.set_child(Some(&sort_content));
 }
 
-fn track_model(tracks: &[Track]) -> gio::ListStore {
-    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    for track in tracks {
-        model.append(&glib::BoxedAnyObject::new(track.clone()));
+fn set_track_table_columns(table: &gtk::ColumnView, settings: &TrackTableSettings) {
+    let columns = table.columns();
+    while columns.n_items() > 0 {
+        let Some(column) = columns
+            .item(0)
+            .and_then(|item| item.downcast::<gtk::ColumnViewColumn>().ok())
+        else {
+            break;
+        };
+        table.remove_column(&column);
     }
-    model
+
+    for column in &settings.visible_columns {
+        table.append_column(&track_table_column(*column));
+    }
 }
 
-fn track_actions_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
+fn track_table_column(column: TrackTableColumn) -> gtk::ColumnViewColumn {
+    match column {
+        TrackTableColumn::TrackNumber => {
+            track_column("#", 54, |track| track.track_number.to_string())
+        }
+        TrackTableColumn::Title => track_column("Title", 240, |track| track.title.clone()),
+        TrackTableColumn::Artist => track_column("Artist", 180, |track| track.artist.clone()),
+        TrackTableColumn::Album => track_column("Album", 220, |track| track.album.clone()),
+        TrackTableColumn::Year => track_column("Year", 70, |track| track.year.to_string()),
+        TrackTableColumn::Duration => track_column("Duration", 90, |track| {
+            format_duration(track.duration_seconds)
+        }),
+        TrackTableColumn::Favorite => track_column("Favorite", 76, |track| {
+            if track.favorite {
+                "Yes".to_string()
+            } else {
+                String::new()
+            }
+        }),
+    }
+}
 
-    factory.connect_bind(move |_, list_item| {
-        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-            return;
+fn populate_track_model(
+    model: &gio::ListStore,
+    tracks: &[Track],
+    settings: &TrackTableSettings,
+    query: &str,
+) {
+    model.remove_all();
+    let query = query.trim().to_lowercase();
+    let mut filtered = tracks
+        .iter()
+        .filter(|track| query.is_empty() || track_matches_query(track, &query))
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_tracks(&mut filtered, settings);
+    for track in filtered {
+        model.append(&glib::BoxedAnyObject::new(track));
+    }
+}
+
+fn track_matches_query(track: &Track, query: &str) -> bool {
+    track.title.to_lowercase().contains(query)
+        || track.artist.to_lowercase().contains(query)
+        || track.album.to_lowercase().contains(query)
+        || track.year.to_string().contains(query)
+}
+
+fn sort_tracks(tracks: &mut [Track], settings: &TrackTableSettings) {
+    tracks.sort_by(|left, right| {
+        let ordering = match settings.sort_key {
+            TrackSortKey::TrackNumber => left
+                .disc_number
+                .cmp(&right.disc_number)
+                .then(left.track_number.cmp(&right.track_number))
+                .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase())),
+            TrackSortKey::Title => left.title.to_lowercase().cmp(&right.title.to_lowercase()),
+            TrackSortKey::Artist => left
+                .artist
+                .to_lowercase()
+                .cmp(&right.artist.to_lowercase())
+                .then_with(|| left.album.to_lowercase().cmp(&right.album.to_lowercase()))
+                .then(left.track_number.cmp(&right.track_number)),
+            TrackSortKey::Album => left
+                .album
+                .to_lowercase()
+                .cmp(&right.album.to_lowercase())
+                .then(left.disc_number.cmp(&right.disc_number))
+                .then(left.track_number.cmp(&right.track_number)),
+            TrackSortKey::Year => left
+                .year
+                .cmp(&right.year)
+                .then_with(|| left.album.to_lowercase().cmp(&right.album.to_lowercase())),
+            TrackSortKey::Duration => left.duration_seconds.cmp(&right.duration_seconds),
+            TrackSortKey::Favorite => left.favorite.cmp(&right.favorite),
         };
-        let Some(item) = list_item.item() else {
-            return;
-        };
-        let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-            return;
-        };
-        let track = boxed.borrow::<Track>().clone();
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-
-        let play = icon_button("media-playback-start-symbolic", "Play now");
-        let controller = shell.controller.clone();
-        let track_for_play = track.clone();
-        play.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
-        actions.append(&play);
-
-        let next = icon_button("media-skip-forward-symbolic", "Play next");
-        let controller = shell.controller.clone();
-        let track_for_next = track.clone();
-        next.connect_clicked(move |_| controller.play_next(track_for_next.clone()));
-        actions.append(&next);
-
-        let append = icon_button("list-add-symbolic", "Add to queue");
-        let controller = shell.controller.clone();
-        append.connect_clicked(move |_| controller.append_to_queue(track.clone()));
-        actions.append(&append);
-
-        list_item.set_child(Some(&actions));
-    });
-
-    factory.connect_unbind(|_, list_item| {
-        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-            list_item.set_child(None::<&gtk::Widget>);
+        if settings.descending {
+            ordering.reverse()
+        } else {
+            ordering
         }
     });
+}
 
-    let column = gtk::ColumnViewColumn::new(Some(&tr("Actions")), Some(factory));
-    column.set_fixed_width(116);
-    column.set_resizable(false);
-    column
+fn track_sort_index(sort_key: TrackSortKey) -> u32 {
+    TrackSortKey::all()
+        .iter()
+        .position(|candidate| *candidate == sort_key)
+        .unwrap_or(0) as u32
+}
+
+fn track_sort_from_index(index: u32) -> TrackSortKey {
+    TrackSortKey::all()
+        .get(index as usize)
+        .copied()
+        .unwrap_or(TrackSortKey::TrackNumber)
+}
+
+fn route_uses_responsive_cards(route: &Route) -> bool {
+    matches!(
+        route,
+        Route::Home
+            | Route::Albums
+            | Route::Artists
+            | Route::AlbumArtists
+            | Route::ArtistDetail(_)
+            | Route::Search { .. }
+    )
+}
+
+fn nonzero_usize(value: usize) -> Option<usize> {
+    if value == 0 { None } else { Some(value) }
+}
+
+fn stable_seed(value: &str) -> u32 {
+    value.bytes().fold(0x811c_9dc5, |hash, byte| {
+        hash.wrapping_mul(16_777_619) ^ u32::from(byte)
+    })
 }
 
 fn track_column<F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
@@ -2196,15 +2469,6 @@ fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
     let page_size = page_size.max(1) as i32;
     let gaps = HOME_ALBUM_GAP * (page_size - 1);
     ((width - gaps).max(page_size)) / page_size
-}
-
-fn album_card_widget(album: &Album, density: EffectiveDensity, strip: bool) -> gtk::Widget {
-    let size = match (density, strip) {
-        (_, true) => 118,
-        (EffectiveDensity::Compact, false) => 146,
-        (EffectiveDensity::Normal, false) => 112,
-    };
-    album_card_widget_with_size(album, size)
 }
 
 fn album_card_widget_with_size(album: &Album, size: i32) -> gtk::Widget {
