@@ -4,14 +4,13 @@ window {
 }
 
 .app-root {
-  background: @window_bg_color;
+  background: transparent;
 }
 
 .wide-sidebar,
 .compact-rail {
-  background: @sidebar_bg_color;
-  color: @sidebar_fg_color;
-  border-right: 1px solid @borders;
+  background: transparent;
+  color: @window_fg_color;
 }
 
 .wide-sidebar {
@@ -25,21 +24,19 @@ window {
 .main-area,
 .route-content,
 .track-table {
-  background: @view_bg_color;
+  background: transparent;
 }
 
 .right-panel {
-  background: @sidebar_bg_color;
-  color: @sidebar_fg_color;
-  border-left: 1px solid @borders;
+  background: transparent;
+  color: @window_fg_color;
 }
 
 .route-header,
 .sidebar-header {
   min-height: 48px;
-  background: @headerbar_bg_color;
-  color: @headerbar_fg_color;
-  border-bottom: 1px solid @borders;
+  background: transparent;
+  color: @window_fg_color;
 }
 
 .route-title {
@@ -200,7 +197,7 @@ window {
 
 .bottom-player {
   padding: 10px;
-  background: @headerbar_bg_color;
-  color: @headerbar_fg_color;
+  background: color-mix(in srgb, @window_bg_color 92%, transparent);
+  color: @window_fg_color;
   border-top: 1px solid @borders;
 }
