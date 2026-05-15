@@ -619,6 +619,69 @@ impl Store {
         })
     }
 
+    pub fn refresh_library_counts(&self, server_id: &ServerId) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                UPDATE albums
+                SET track_count = (
+                    SELECT COUNT(*)
+                    FROM tracks
+                    WHERE tracks.server_id = albums.server_id
+                      AND tracks.album_id = albums.album_id
+                ),
+                    duration_seconds = (
+                    SELECT COALESCE(SUM(duration_seconds), 0)
+                    FROM tracks
+                    WHERE tracks.server_id = albums.server_id
+                      AND tracks.album_id = albums.album_id
+                )
+                WHERE server_id = ?1
+                ",
+                params![server_id.as_str()],
+            )?;
+            connection.execute(
+                "
+                UPDATE artists
+                SET track_count = (
+                    SELECT COUNT(*)
+                    FROM tracks
+                    WHERE tracks.server_id = artists.server_id
+                      AND tracks.artist_id = artists.artist_id
+                ),
+                    album_count = (
+                    SELECT COUNT(DISTINCT album_id)
+                    FROM tracks
+                    WHERE tracks.server_id = artists.server_id
+                      AND tracks.artist_id = artists.artist_id
+                )
+                WHERE server_id = ?1
+                ",
+                params![server_id.as_str()],
+            )?;
+            connection.execute(
+                "
+                UPDATE album_artists
+                SET track_count = (
+                    SELECT COALESCE(SUM(track_count), 0)
+                    FROM albums
+                    WHERE albums.server_id = album_artists.server_id
+                      AND albums.artist_id = album_artists.artist_id
+                ),
+                    album_count = (
+                    SELECT COUNT(*)
+                    FROM albums
+                    WHERE albums.server_id = album_artists.server_id
+                      AND albums.artist_id = album_artists.artist_id
+                )
+                WHERE server_id = ?1
+                ",
+                params![server_id.as_str()],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn upsert_artists(
         &self,
         server_id: &ServerId,
@@ -1444,7 +1507,7 @@ mod tests {
 
     use super::{CoverCacheEntry, SavedServer, Store, image_cache_key, lyrics_cache_key};
     use rufin_core::{
-        Album, AlbumId, AppSettings, ArtistId, QueueEngine, ServerId, ServerIdentity,
+        Album, AlbumId, AppSettings, Artist, ArtistId, QueueEngine, ServerId, ServerIdentity,
         ThemePreference, Track, TrackId,
     };
 
@@ -1565,6 +1628,81 @@ mod tests {
         assert_eq!(albums.items, vec![album.clone()]);
         assert_eq!(detail.0, album);
         assert_eq!(detail.1, tracks);
+    }
+
+    #[test]
+    fn refresh_library_counts_uses_cached_tracks() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(1);
+        album.track_count = 0;
+        album.duration_seconds = 0;
+        let tracks = vec![track(1, &album), track(2, &album)];
+        let artist = Artist {
+            id: ArtistId::fake(1),
+            name: "Artist".to_string(),
+            album_count: 0,
+            track_count: 0,
+            favorite: false,
+        };
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, &tracks, generation)
+            .expect("upsert tracks");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                true,
+                generation,
+            )
+            .expect("upsert album artist");
+        store
+            .refresh_library_counts(&saved.server.id)
+            .expect("refresh counts");
+
+        let album = store
+            .load_albums(&saved.server.id, 0, 1)
+            .expect("load albums")
+            .items
+            .remove(0);
+
+        assert_eq!(album.track_count, 2);
+        assert_eq!(
+            album.duration_seconds,
+            tracks
+                .iter()
+                .map(|track| track.duration_seconds)
+                .sum::<u32>()
+        );
+        let artist = store
+            .load_artists(&saved.server.id, false, 0, 1)
+            .expect("load artists")
+            .items
+            .remove(0);
+        let album_artist = store
+            .load_artists(&saved.server.id, true, 0, 1)
+            .expect("load album artists")
+            .items
+            .remove(0);
+
+        assert_eq!(artist.album_count, 1);
+        assert_eq!(artist.track_count, 2);
+        assert_eq!(album_artist.album_count, 1);
+        assert_eq!(album_artist.track_count, 2);
     }
 
     #[test]

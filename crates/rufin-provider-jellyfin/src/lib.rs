@@ -143,7 +143,7 @@ impl JellyfinProvider {
             .append_pair("IncludeItemTypes", include_types)
             .append_pair("StartIndex", &request.offset.to_string())
             .append_pair("Limit", &request.limit.to_string())
-            .append_pair("Fields", "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,UserData,ImageTags,ChildCount")
+            .append_pair("Fields", "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount")
             .append_pair("SortBy", "SortName");
 
         let response = self.get_json::<ItemQueryResult>(url).await?;
@@ -162,7 +162,11 @@ impl JellyfinProvider {
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
             .append_pair("StartIndex", &request.offset.to_string())
-            .append_pair("Limit", &request.limit.to_string());
+            .append_pair("Limit", &request.limit.to_string())
+            .append_pair(
+                "Fields",
+                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount",
+            );
 
         let response = self.get_json::<ItemQueryResult>(url).await?;
         Ok(PagedResponse::new(

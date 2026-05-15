@@ -6,7 +6,7 @@ use std::thread;
 
 use directories::ProjectDirs;
 use rufin_core::{
-    Album, Artist, Genre, HomeSection, Playlist, QueueEngine, QueueEntry, QueueEntryId,
+    Album, AlbumId, Artist, Genre, HomeSection, Playlist, QueueEngine, QueueEntry, QueueEntryId,
     QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
@@ -161,6 +161,21 @@ impl StoreHandle {
 }
 
 impl AppController {
+    pub fn cached_album_detail(
+        &self,
+        album_id: &AlbumId,
+    ) -> Result<Option<(Album, Vec<Track>)>, String> {
+        let Some(server) = self
+            .store
+            .with_store(|store| store.active_server())?
+            .map(|saved| saved.server)
+        else {
+            return Ok(None);
+        };
+        self.store
+            .with_store(|store| store.load_album_detail(&server.id, album_id))
+    }
+
     pub fn bootstrap(
         fake_scale: Option<FakeScale>,
     ) -> (
@@ -1148,6 +1163,7 @@ async fn sync_provider(
     sync_track_pages(store, server_id, provider, generation).await?;
     sync_artist_pages(store, server_id, provider, generation, false).await?;
     sync_artist_pages(store, server_id, provider, generation, true).await?;
+    store.with_store(|store| store.refresh_library_counts(server_id))?;
     sync_genre_pages(store, server_id, provider, generation).await?;
     sync_playlist_pages(store, server_id, provider, generation).await?;
     store.with_store(|store| store.complete_sync(server_id, generation))?;
@@ -1385,6 +1401,7 @@ fn seed_fake_cache(store: &StoreHandle, scale: FakeScale) -> Result<(), String> 
             store.upsert_tracks(&server.id, &tracks.items, generation)?;
             store.upsert_artists(&server.id, &artists.items, false, generation)?;
             store.upsert_artists(&server.id, &album_artists.items, true, generation)?;
+            store.refresh_library_counts(&server.id)?;
             store.upsert_genres(&server.id, &genres.items, generation)?;
             store.upsert_playlists(&server.id, &playlists.items, generation)?;
             store.complete_sync(&server.id, generation)?;

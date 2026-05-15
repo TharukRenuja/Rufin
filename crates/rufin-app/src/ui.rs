@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
@@ -7,8 +8,9 @@ use adw::prelude::*;
 use gtk::gio;
 use gtk::glib;
 use rufin_core::{
-    Album, AlbumId, Artist, DensityMode, EffectiveDensity, Genre, HomeSection, Playlist,
-    QueueEntry, QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, Track, format_duration,
+    Album, AlbumId, Artist, DensityMode, EffectiveDensity, Genre, HomeSection, HomeSectionKind,
+    Playlist, QueueEntry, QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, Track,
+    format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_test_support::FakeScale;
@@ -17,10 +19,13 @@ use tracing::{debug, info, warn};
 use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
 use crate::i18n::tr;
 
-const COMPACT_RAIL_WIDTH: i32 = 46;
+const COMPACT_RAIL_WIDTH: i32 = 92;
 const MAIN_PANEL_UNITS: i32 = 5;
 const TOTAL_PANEL_UNITS: i32 = 8;
 const NORMAL_SIDEBAR_WIDTH: i32 = 220;
+const HOME_ALBUM_GAP: i32 = 14;
+const HOME_ALBUM_MIN_SIZE: i32 = 150;
+const HOME_ALBUM_MAX_SIZE: i32 = 220;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -39,6 +44,12 @@ struct AppState {
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
     split_width: Cell<i32>,
+    home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
+}
+
+struct HomeSectionState {
+    page_start: usize,
+    page_size: usize,
 }
 
 struct Shell {
@@ -102,6 +113,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
         split_width: Cell::new(0),
+        home_section_state: RefCell::new(HashMap::new()),
     };
 
     let window = adw::ApplicationWindow::builder()
@@ -128,23 +140,23 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     main_area.set_hexpand(true);
     main_area.set_vexpand(true);
 
-    let header = adw::HeaderBar::new();
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.add_css_class("route-header");
-    header.set_show_start_title_buttons(false);
-    header.set_show_end_title_buttons(false);
+    header.set_valign(gtk::Align::Center);
 
     let back_button = icon_button("go-previous-symbolic", "Back");
     let forward_button = icon_button("go-next-symbolic", "Forward");
     let route_title = gtk::Label::new(None);
     route_title.add_css_class("route-title");
-    route_title.add_css_class("title-4");
     route_title.set_xalign(0.0);
+    route_title.set_valign(gtk::Align::Center);
+    route_title.set_hexpand(true);
     let settings_button = icon_button("emblem-system-symbolic", "Settings");
 
-    header.pack_start(&back_button);
-    header.pack_start(&forward_button);
-    header.set_title_widget(Some(&route_title));
-    header.pack_end(&settings_button);
+    header.append(&back_button);
+    header.append(&forward_button);
+    header.append(&route_title);
+    header.append(&settings_button);
 
     let route_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     route_host.set_hexpand(true);
@@ -258,15 +270,20 @@ impl Shell {
         if next != previous {
             debug!(?next, width, "effective density changed");
             self.render_current_route();
+        } else if matches!(self.state.routes.borrow().current(), Route::Home) {
+            self.render_current_route();
         }
     }
 
-    fn update_content_split(&self) {
+    fn update_content_split(&self) -> bool {
         let split_width = self.content_split.width();
         if split_width > 1 && self.state.split_width.replace(split_width) != split_width {
             let position = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
             debug!(split_width, position, "update content split");
             self.content_split.set_position(position);
+            true
+        } else {
+            false
         }
     }
 
@@ -397,7 +414,7 @@ impl Shell {
 
     fn home_view(self: &Rc<Self>) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
@@ -425,26 +442,57 @@ impl Shell {
 
     fn home_album_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        section.set_hexpand(true);
+        let section_kind = section_data.kind;
+        let albums = section_data.albums.clone();
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
         heading.add_css_class("section-heading");
         heading.set_xalign(0.0);
-        section.append(&heading);
+        heading.set_hexpand(true);
+        header.append(&heading);
 
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let previous = icon_button("go-previous-symbolic", "Previous page");
+        let next = icon_button("go-next-symbolic", "Next page");
+        header.append(&previous);
+        header.append(&next);
+        section.append(&header);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
         row.add_css_class("album-strip");
-        for album in &section_data.albums {
-            let card = self.album_card(album, true);
-            let shell = Rc::clone(self);
-            let album_id = album.id.clone();
-            card.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
-            row.append(&card);
-        }
+        row.set_hexpand(true);
+        section.append(&row);
 
-        let strip = gtk::ScrolledWindow::new();
-        strip.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
-        strip.set_min_content_width(0);
-        strip.set_child(Some(&row));
-        section.append(&strip);
+        let shell = Rc::clone(self);
+        previous.connect_clicked(move |_| {
+            let mut states = shell.state.home_section_state.borrow_mut();
+            let state = states.entry(section_kind).or_insert(HomeSectionState {
+                page_start: 0,
+                page_size: 2,
+            });
+            state.page_start = state.page_start.saturating_sub(state.page_size);
+            drop(states);
+            shell.render_current_route();
+        });
+
+        let shell = Rc::clone(self);
+        let albums_for_next = albums.clone();
+        next.connect_clicked(move |_| {
+            let mut states = shell.state.home_section_state.borrow_mut();
+            let state = states.entry(section_kind).or_insert(HomeSectionState {
+                page_start: 0,
+                page_size: 2,
+            });
+            let next_page = state.page_start.saturating_add(state.page_size);
+            if next_page < albums_for_next.len() {
+                state.page_start = next_page;
+            }
+            drop(states);
+            shell.render_current_route();
+        });
+
+        render_home_album_page(self, &row, &previous, &next, section_kind, &albums);
         section.upcast()
     }
 
@@ -506,26 +554,29 @@ impl Shell {
     }
 
     fn album_detail_view(self: &Rc<Self>, album_id: AlbumId) -> gtk::Widget {
-        let Some(album) = self
-            .state
-            .library
-            .borrow()
-            .albums
-            .iter()
-            .find(|album| album.id.as_str() == album_id.as_str())
-            .cloned()
-        else {
+        let detail = self
+            .controller
+            .cached_album_detail(&album_id)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                let library = self.state.library.borrow();
+                let album = library
+                    .albums
+                    .iter()
+                    .find(|album| album.id.as_str() == album_id.as_str())
+                    .cloned()?;
+                let tracks = library
+                    .tracks
+                    .iter()
+                    .filter(|track| track.album_id.as_str() == album_id.as_str())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                Some((album, tracks))
+            });
+        let Some((album, tracks)) = detail else {
             return self.placeholder_view("Album", "The selected cached album was not found.");
         };
-        let tracks = self
-            .state
-            .library
-            .borrow()
-            .tracks
-            .iter()
-            .filter(|track| track.album_id.as_str() == album_id.as_str())
-            .cloned()
-            .collect::<Vec<_>>();
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
@@ -1225,16 +1276,11 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn album_card(&self, album: &Album, compact: bool) -> gtk::Button {
+    fn album_card_with_size(&self, album: &Album, size: i32) -> gtk::Button {
         let button = gtk::Button::new();
         button.add_css_class("album-button");
         button.add_css_class("flat");
-        let density = if compact {
-            EffectiveDensity::Compact
-        } else {
-            self.state.effective_density.get()
-        };
-        button.set_child(Some(&album_card_widget(album, density, compact)));
+        button.set_child(Some(&album_card_widget_with_size(album, size)));
         button
     }
 }
@@ -1260,7 +1306,12 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
             if resize_shell.state.density_mode.get() == DensityMode::Auto {
                 resize_shell.update_density();
             } else {
-                resize_shell.update_content_split();
+                let split_changed = resize_shell.update_content_split();
+                if split_changed
+                    || matches!(resize_shell.state.routes.borrow().current(), Route::Home)
+                {
+                    resize_shell.render_current_route();
+                }
             }
         });
 
@@ -1268,12 +1319,19 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
     shell
         .content_split
         .connect_notify_local(Some("width"), move |_, _| {
-            split_shell.update_content_split();
+            let split_changed = split_shell.update_content_split();
+            if split_changed || matches!(split_shell.state.routes.borrow().current(), Route::Home) {
+                split_shell.render_current_route();
+            }
         });
 
     let split_shell = Rc::clone(shell);
     shell.content_split.add_tick_callback(move |_, _| {
-        split_shell.update_content_split();
+        if split_shell.update_content_split()
+            && matches!(split_shell.state.routes.borrow().current(), Route::Home)
+        {
+            split_shell.render_current_route();
+        }
         glib::ControlFlow::Continue
     });
 }
@@ -1650,7 +1708,11 @@ fn nav_button(
     let icon = gtk::Image::from_icon_name(icon_name);
     content.append(&icon);
     if compact {
-        icon.set_pixel_size(18);
+        icon.set_pixel_size(24);
+        let text = gtk::Label::new(Some(&tr(label)));
+        text.add_css_class("rail-label");
+        text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        content.append(&text);
     } else {
         let text = gtk::Label::new(Some(&tr(label)));
         text.set_xalign(0.0);
@@ -1792,13 +1854,91 @@ where
     column
 }
 
+fn render_home_album_page(
+    shell: &Rc<Shell>,
+    row: &gtk::Box,
+    previous: &gtk::Button,
+    next: &gtk::Button,
+    section_kind: HomeSectionKind,
+    albums: &[Album],
+) {
+    while let Some(child) = row.first_child() {
+        row.remove(&child);
+    }
+
+    if albums.is_empty() {
+        previous.set_sensitive(false);
+        next.set_sensitive(false);
+        return;
+    }
+
+    let width = home_album_content_width(shell);
+    let page_size = home_album_page_size(width);
+    let page_start = {
+        let mut states = shell.state.home_section_state.borrow_mut();
+        let state = states.entry(section_kind).or_insert(HomeSectionState {
+            page_start: 0,
+            page_size,
+        });
+        if state.page_size != page_size {
+            state.page_start -= state.page_start % page_size.max(1);
+            state.page_size = page_size;
+        }
+        state.page_start = clamp_home_album_page_start(state.page_start, page_size, albums.len());
+        state.page_start
+    };
+    let card_size = home_album_card_size(width, page_size);
+    let page_end = page_start.saturating_add(page_size).min(albums.len());
+
+    previous.set_sensitive(page_start > 0);
+    next.set_sensitive(page_end < albums.len());
+
+    for album in &albums[page_start..page_end] {
+        let card = shell.album_card_with_size(album, card_size);
+        let shell = Rc::clone(shell);
+        let album_id = album.id.clone();
+        card.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
+        row.append(&card);
+    }
+}
+
+fn home_album_page_size(width: i32) -> usize {
+    let width = width.max(HOME_ALBUM_MIN_SIZE);
+    let item_width = HOME_ALBUM_MIN_SIZE + HOME_ALBUM_GAP;
+    ((width + HOME_ALBUM_GAP) / item_width).clamp(2, 8) as usize
+}
+
+fn clamp_home_album_page_start(page_start: usize, page_size: usize, album_count: usize) -> usize {
+    if album_count == 0 {
+        return 0;
+    }
+    let page_size = page_size.max(1);
+    let last_page_start = ((album_count - 1) / page_size) * page_size;
+    page_start.min(last_page_start)
+}
+
+fn home_album_content_width(shell: &Shell) -> i32 {
+    let route_width = shell.route_host.width().max(1);
+    let horizontal_margins = 56;
+    (route_width - horizontal_margins).max(HOME_ALBUM_MIN_SIZE)
+}
+
+fn home_album_card_size(width: i32, page_size: usize) -> i32 {
+    let page_size = page_size.max(1) as i32;
+    let gaps = HOME_ALBUM_GAP * (page_size - 1);
+    ((width - gaps) / page_size).clamp(HOME_ALBUM_MIN_SIZE, HOME_ALBUM_MAX_SIZE)
+}
+
 fn album_card_widget(album: &Album, density: EffectiveDensity, strip: bool) -> gtk::Widget {
     let size = match (density, strip) {
         (_, true) => 118,
         (EffectiveDensity::Compact, false) => 146,
         (EffectiveDensity::Normal, false) => 112,
     };
+    album_card_widget_with_size(album, size)
+}
 
+fn album_card_widget_with_size(album: &Album, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.add_css_class("album-card");
     card.set_width_request(size);
@@ -1941,4 +2081,38 @@ fn install_css() {
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, HOME_ALBUM_MIN_SIZE, clamp_home_album_page_start,
+        home_album_card_size, home_album_page_size,
+    };
+
+    #[test]
+    fn home_album_page_size_uses_stable_content_width() {
+        let three_cards_width = HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
+        assert_eq!(home_album_page_size(three_cards_width), 3);
+        assert_eq!(home_album_page_size(three_cards_width + 1), 3);
+
+        let four_cards_width = HOME_ALBUM_MIN_SIZE * 4 + HOME_ALBUM_GAP * 3;
+        assert_eq!(home_album_page_size(four_cards_width), 4);
+        assert_eq!(home_album_page_size(1), 2);
+        assert_eq!(home_album_page_size(10_000), 8);
+    }
+
+    #[test]
+    fn home_album_page_start_stays_on_full_pages() {
+        assert_eq!(clamp_home_album_page_start(0, 3, 0), 0);
+        assert_eq!(clamp_home_album_page_start(3, 3, 10), 3);
+        assert_eq!(clamp_home_album_page_start(9, 3, 10), 9);
+        assert_eq!(clamp_home_album_page_start(12, 3, 10), 9);
+    }
+
+    #[test]
+    fn home_album_card_size_remains_bounded() {
+        assert_eq!(home_album_card_size(10_000, 2), HOME_ALBUM_MAX_SIZE);
+        assert_eq!(home_album_card_size(1, 8), HOME_ALBUM_MIN_SIZE);
+    }
 }

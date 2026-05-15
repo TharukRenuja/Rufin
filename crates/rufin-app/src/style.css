@@ -18,7 +18,7 @@ window {
 }
 
 .compact-rail {
-  padding: 8px 4px;
+  padding: 8px 6px;
 }
 
 .main-area,
@@ -60,10 +60,14 @@ window {
 }
 
 .rail-button {
-  margin: 0 3px;
-  padding: 8px;
-  min-width: 34px;
-  min-height: 34px;
+  margin: 1px 5px;
+  padding: 9px 6px;
+  min-width: 72px;
+  min-height: 58px;
+}
+
+.rail-label {
+  font-size: 11px;
 }
 
 .nav-button:hover,
