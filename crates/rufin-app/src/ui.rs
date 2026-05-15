@@ -128,21 +128,23 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     main_area.set_hexpand(true);
     main_area.set_vexpand(true);
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let header = adw::HeaderBar::new();
     header.add_css_class("route-header");
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
 
     let back_button = icon_button("go-previous-symbolic", "Back");
     let forward_button = icon_button("go-next-symbolic", "Forward");
     let route_title = gtk::Label::new(None);
     route_title.add_css_class("route-title");
+    route_title.add_css_class("title-4");
     route_title.set_xalign(0.0);
-    route_title.set_hexpand(true);
     let settings_button = icon_button("emblem-system-symbolic", "Settings");
 
-    header.append(&back_button);
-    header.append(&forward_button);
-    header.append(&route_title);
-    header.append(&settings_button);
+    header.pack_start(&back_button);
+    header.pack_start(&forward_button);
+    header.set_title_widget(Some(&route_title));
+    header.pack_end(&settings_button);
 
     let route_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     route_host.set_hexpand(true);
@@ -1001,20 +1003,13 @@ impl Shell {
 
         let queue_snapshot = self.state.queue.borrow().clone();
         let player = self.state.player.borrow().clone();
-        let queue = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        queue.add_css_class("queue-panel");
-        queue.set_vexpand(true);
-        queue.set_margin_top(16);
-        queue.set_margin_start(10);
-        queue.set_margin_end(10);
-        queue.set_margin_bottom(12);
-
-        let queue_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let sidebar_header = adw::HeaderBar::new();
+        sidebar_header.add_css_class("sidebar-header");
+        sidebar_header.set_show_start_title_buttons(false);
+        sidebar_header.set_show_end_title_buttons(false);
         let queue_title = gtk::Label::new(Some(&tr("Queue")));
         queue_title.add_css_class("panel-title");
-        queue_title.set_xalign(0.0);
-        queue_title.set_hexpand(true);
-        queue_header.append(&queue_title);
+        sidebar_header.set_title_widget(Some(&queue_title));
 
         let shuffle = icon_button(
             "media-playlist-shuffle-symbolic",
@@ -1029,7 +1024,7 @@ impl Shell {
         }
         let controller = self.controller.clone();
         shuffle.connect_clicked(move |_| controller.toggle_shuffle());
-        queue_header.append(&shuffle);
+        sidebar_header.pack_start(&shuffle);
 
         let repeat = icon_button(
             "media-playlist-repeat-symbolic",
@@ -1040,13 +1035,21 @@ impl Shell {
         }
         let controller = self.controller.clone();
         repeat.connect_clicked(move |_| controller.cycle_repeat());
-        queue_header.append(&repeat);
+        sidebar_header.pack_start(&repeat);
 
         let clear_shell = Rc::clone(self);
         let clear = icon_button("edit-clear-symbolic", "Clear queue");
         clear.connect_clicked(move |_| clear_shell.confirm_clear_queue());
-        queue_header.append(&clear);
-        queue.append(&queue_header);
+        sidebar_header.pack_end(&clear);
+        self.right_panel.append(&sidebar_header);
+
+        let queue = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        queue.add_css_class("queue-panel");
+        queue.set_vexpand(true);
+        queue.set_margin_top(10);
+        queue.set_margin_start(10);
+        queue.set_margin_end(10);
+        queue.set_margin_bottom(12);
 
         let queue_list = gtk::ListBox::new();
         queue_list.add_css_class("queue-list");
@@ -1225,6 +1228,7 @@ impl Shell {
     fn album_card(&self, album: &Album, compact: bool) -> gtk::Button {
         let button = gtk::Button::new();
         button.add_css_class("album-button");
+        button.add_css_class("flat");
         let density = if compact {
             EffectiveDensity::Compact
         } else {
@@ -1300,6 +1304,7 @@ fn build_bottom_player() -> PlayerControls {
     let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
     let previous_button = icon_button("media-skip-backward-symbolic", "Previous");
     let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
+    play_button.add_css_class("suggested-action");
     let next_button = icon_button("media-skip-forward-symbolic", "Next");
     let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
     let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
@@ -1627,6 +1632,7 @@ fn nav_button(
 ) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("nav-button");
+    button.add_css_class("flat");
     if compact {
         button.add_css_class("rail-button");
     }
@@ -1822,6 +1828,7 @@ fn album_card_widget(album: &Album, density: EffectiveDensity, strip: bool) -> g
 fn cover_tile(seed: u32, size: i32) -> gtk::Widget {
     let area = gtk::DrawingArea::new();
     area.add_css_class("cover-tile");
+    area.add_css_class("card");
     area.set_content_width(size);
     area.set_content_height(size);
     area.set_width_request(size);
@@ -1849,6 +1856,7 @@ fn player_cover_tile(size: i32) -> (gtk::DrawingArea, Rc<Cell<u32>>) {
     let seed = Rc::new(Cell::new(42));
     let area = gtk::DrawingArea::new();
     area.add_css_class("cover-tile");
+    area.add_css_class("card");
     area.set_content_width(size);
     area.set_content_height(size);
     area.set_width_request(size);
@@ -1893,6 +1901,8 @@ fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
 fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::from_icon_name(icon_name);
     button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
     button.set_tooltip_text(Some(&tr(label)));
     button
 }
@@ -1900,6 +1910,8 @@ fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
 fn icon_button_with_image(icon_name: &str, label: &str) -> (gtk::Button, gtk::Image) {
     let button = gtk::Button::new();
     button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
     button.set_tooltip_text(Some(&tr(label)));
     let image = gtk::Image::from_icon_name(icon_name);
     button.set_child(Some(&image));
@@ -1909,6 +1921,7 @@ fn icon_button_with_image(icon_name: &str, label: &str) -> (gtk::Button, gtk::Im
 fn text_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("pill-button");
+    button.add_css_class("pill");
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     content.append(&gtk::Image::from_icon_name(icon_name));
     content.append(&gtk::Label::new(Some(&tr(label))));

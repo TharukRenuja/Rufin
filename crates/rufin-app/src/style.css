@@ -1,45 +1,49 @@
 window {
-  background: #111217;
-  color: #f4f5fb;
+  background: @window_bg_color;
+  color: @window_fg_color;
 }
 
 .app-root {
-  background: #111217;
+  background: @window_bg_color;
 }
 
 .wide-sidebar,
 .compact-rail {
-  background: #0b0c10;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: @sidebar_bg_color;
+  color: @sidebar_fg_color;
+  border-right: 1px solid @borders;
+}
+
+.wide-sidebar {
+  padding-top: 6px;
 }
 
 .compact-rail {
   padding: 8px 4px;
 }
 
-.main-area {
-  background: #171923;
+.main-area,
+.route-content,
+.track-table {
+  background: @view_bg_color;
 }
 
 .right-panel {
-  background: #101116;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: @sidebar_bg_color;
+  color: @sidebar_fg_color;
+  border-left: 1px solid @borders;
 }
 
-.route-header {
-  min-height: 56px;
-  padding: 8px 14px;
-  background: #171923;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+.route-header,
+.sidebar-header {
+  min-height: 48px;
+  background: @headerbar_bg_color;
+  color: @headerbar_fg_color;
+  border-bottom: 1px solid @borders;
 }
 
 .route-title {
-  font-size: 24px;
   font-weight: 700;
-}
-
-.route-content {
-  background: #171923;
 }
 
 .nav-heading,
@@ -49,13 +53,13 @@ window {
 }
 
 .section-heading {
-  font-size: 22px;
+  font-size: 21px;
 }
 
 .nav-button {
-  margin: 0 10px;
+  margin: 1px 8px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 9px;
 }
 
 .rail-button {
@@ -67,18 +71,16 @@ window {
 
 .nav-button:hover,
 .album-button:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.rail-label {
-  font-size: 11px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
 .server-card,
 .settings-group {
   padding: 12px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: @card_bg_color;
+  color: @card_fg_color;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .album-strip {
@@ -87,8 +89,7 @@ window {
 
 .album-button {
   padding: 0;
-  border-radius: 8px;
-  background: transparent;
+  border-radius: 12px;
 }
 
 .album-card {
@@ -96,7 +97,8 @@ window {
 }
 
 .cover-tile {
-  border-radius: 8px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 8%, transparent);
 }
 
 .album-title,
@@ -105,7 +107,7 @@ window {
 }
 
 .detail-title {
-  font-size: 42px;
+  font-size: 36px;
   font-weight: 800;
 }
 
@@ -117,64 +119,63 @@ window {
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
-  color: #b6c4ff;
+  color: @accent_color;
 }
 
 .muted {
-  color: #aab0c2;
+  color: @dim_label_color;
 }
 
 .error-text {
-  color: #ffb4ab;
+  color: @error_color;
 }
 
-.cached-list {
-  background: transparent;
-}
-
-.cached-row {
-  padding: 10px 8px;
-}
-
-.pill-button {
-  border-radius: 999px;
-  padding: 8px 16px;
-  font-weight: 700;
-}
-
-.destructive-action {
-  color: #ffb4ab;
-}
-
-.icon-button {
-  border-radius: 8px;
-}
-
-.track-table {
-  background: #171923;
-}
-
-.queue-panel {
-  min-height: 310px;
-}
-
+.cached-list,
 .queue-list,
 .lyrics-lines {
   background: transparent;
 }
 
+.cached-row {
+  padding: 10px 8px;
+  border-radius: 9px;
+}
+
+.cached-row:hover,
+.queue-row:hover {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+.pill-button {
+  padding: 7px 14px;
+  font-weight: 700;
+}
+
+.destructive-action {
+  color: @destructive_color;
+}
+
+.icon-button {
+  min-width: 34px;
+  min-height: 34px;
+}
+
+.queue-panel {
+  min-height: 260px;
+}
+
 .queue-row {
   padding: 6px 4px;
+  border-radius: 9px;
 }
 
 .queue-row-current {
-  border-radius: 8px;
-  background: rgba(143, 182, 255, 0.14);
+  background: color-mix(in srgb, @accent_bg_color 20%, transparent);
 }
 
 .active-toggle {
-  color: #b6c4ff;
-  background: rgba(143, 182, 255, 0.14);
+  color: @accent_color;
+  background: color-mix(in srgb, @accent_bg_color 18%, transparent);
 }
 
 .volume-slider {
@@ -182,23 +183,24 @@ window {
 }
 
 .lyrics-panel {
-  min-height: 260px;
+  min-height: 220px;
 }
 
 .lyric-line {
-  color: #6f7483;
+  color: @dim_label_color;
   font-size: 18px;
   font-weight: 700;
 }
 
 .lyric-current {
-  color: #f4f5fb;
+  color: @accent_color;
   font-size: 20px;
   font-weight: 800;
 }
 
 .bottom-player {
-  padding: 14px 18px;
-  background: #0d0e13;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px;
+  background: @headerbar_bg_color;
+  color: @headerbar_fg_color;
+  border-top: 1px solid @borders;
 }
