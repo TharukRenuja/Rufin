@@ -137,6 +137,16 @@ window {
   background: transparent;
 }
 
+.table-link {
+  padding: 0;
+  min-height: 0;
+  background: transparent;
+}
+
+.table-link:hover label {
+  text-decoration-line: underline;
+}
+
 .cached-row {
   padding: 10px 8px;
   border-radius: 9px;
