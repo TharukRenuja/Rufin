@@ -221,6 +221,9 @@ impl Default for LazyGStreamerPlaybackBackend {
 
 impl PlaybackBackend for LazyGStreamerPlaybackBackend {
     fn send(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
+        if self.inner.is_none() && !matches!(command, PlaybackCommand::Play { .. }) {
+            return Ok(());
+        }
         self.backend()?.send(command)
     }
 

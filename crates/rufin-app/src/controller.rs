@@ -462,12 +462,23 @@ impl AppController {
                 if let Err(error) = self.send_playback_command(PlaybackCommand::Pause) {
                     let _sent = self.events.send(ControllerEvent::Error(error));
                 } else {
+                    self.update_playback_snapshot(|snapshot| {
+                        snapshot.state = PlaybackState::Paused;
+                        snapshot.buffering_percent = None;
+                    });
                     self.persist_current_queue_snapshot();
+                    self.emit_playback_snapshot();
                 }
             }
             PlaybackState::Paused => {
                 if let Err(error) = self.send_playback_command(PlaybackCommand::Resume) {
                     let _sent = self.events.send(ControllerEvent::Error(error));
+                } else {
+                    self.update_playback_snapshot(|snapshot| {
+                        snapshot.state = PlaybackState::Playing;
+                        snapshot.buffering_percent = None;
+                    });
+                    self.emit_playback_snapshot();
                 }
             }
             PlaybackState::Stopped => self.start_current_track(),
@@ -483,6 +494,11 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.state = PlaybackState::Stopped;
+            snapshot.position_seconds = 0;
+            snapshot.buffering_percent = None;
+        });
         self.persist_and_emit_queue();
     }
 
@@ -535,8 +551,14 @@ impl AppController {
     }
 
     pub fn set_volume(&self, volume: f64) {
+        let volume = volume.clamp(0.0, 1.0);
         if let Err(error) = self.send_playback_command(PlaybackCommand::SetVolume(volume)) {
             let _sent = self.events.send(ControllerEvent::Error(error));
+        } else {
+            self.update_playback_snapshot(|snapshot| {
+                snapshot.volume = volume;
+            });
+            self.emit_playback_snapshot();
         }
     }
 
@@ -548,6 +570,11 @@ impl AppController {
             .unwrap_or(true);
         if let Err(error) = self.send_playback_command(PlaybackCommand::SetMuted(muted)) {
             let _sent = self.events.send(ControllerEvent::Error(error));
+        } else {
+            self.update_playback_snapshot(|snapshot| {
+                snapshot.muted = muted;
+            });
+            self.emit_playback_snapshot();
         }
     }
 

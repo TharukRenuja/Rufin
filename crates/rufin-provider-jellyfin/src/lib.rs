@@ -414,10 +414,8 @@ fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
     let trimmed = raw.trim().trim_end_matches('/');
     let candidate = if trimmed.contains("://") {
         trimmed.to_string()
-    } else if trimmed.starts_with("localhost") || trimmed.starts_with("127.") {
-        format!("http://{trimmed}")
     } else {
-        format!("https://{trimmed}")
+        format!("http://{trimmed}")
     };
     let mut url =
         Url::parse(&candidate).map_err(|error| ProviderError::Other(error.to_string()))?;
@@ -726,6 +724,13 @@ mod tests {
         assert_eq!(session.server.name, "Music Box");
         assert_eq!(session.username, "demo");
         assert_eq!(session.access_token, "secret-token");
+    }
+
+    #[test]
+    fn bare_server_addresses_default_to_http() {
+        let url = normalize_base_url("music.local:8096").expect("normalized url");
+
+        assert_eq!(url.as_str(), "http://music.local:8096/");
     }
 
     #[tokio::test]
