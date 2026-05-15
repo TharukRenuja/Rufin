@@ -38,6 +38,7 @@ struct AppState {
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
+    split_width: Cell<i32>,
 }
 
 struct Shell {
@@ -100,6 +101,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
+        split_width: Cell::new(0),
     };
 
     let window = adw::ApplicationWindow::builder()
@@ -157,6 +159,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     content_split.set_hexpand(true);
     content_split.set_vexpand(true);
     content_split.set_wide_handle(false);
+    content_split.set_resize_start_child(true);
+    content_split.set_resize_end_child(true);
     content_split.set_shrink_start_child(true);
     content_split.set_shrink_end_child(true);
     content_split.set_start_child(Some(&main_area));
@@ -257,9 +261,10 @@ impl Shell {
 
     fn update_content_split(&self) {
         let split_width = self.content_split.width();
-        if split_width > 1 {
-            self.content_split
-                .set_position(split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS);
+        if split_width > 1 && self.state.split_width.replace(split_width) != split_width {
+            let position = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
+            debug!(split_width, position, "update content split");
+            self.content_split.set_position(position);
         }
     }
 
@@ -1261,6 +1266,12 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
         .connect_notify_local(Some("width"), move |_, _| {
             split_shell.update_content_split();
         });
+
+    let split_shell = Rc::clone(shell);
+    shell.content_split.add_tick_callback(move |_, _| {
+        split_shell.update_content_split();
+        glib::ControlFlow::Continue
+    });
 }
 
 fn build_bottom_player() -> PlayerControls {
