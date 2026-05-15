@@ -152,6 +152,14 @@ impl QueueEngine {
         &self.shuffle
     }
 
+    pub fn progress_seconds(&self) -> u32 {
+        self.progress_seconds
+    }
+
+    pub fn set_progress_seconds(&mut self, progress_seconds: u32) {
+        self.progress_seconds = progress_seconds;
+    }
+
     pub fn play_now(&mut self, track: &Track) -> QueueEntryId {
         let entry = self.entry_from_track(track);
         let id = entry.id.clone();

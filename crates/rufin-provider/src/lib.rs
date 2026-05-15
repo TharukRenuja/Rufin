@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use rufin_core::{Album, Artist, Genre, HomeSection, Playlist, ServerIdentity, Track, TrackId};
+pub use rufin_playback::StreamDescriptor;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -158,6 +159,7 @@ pub trait MusicProvider {
     async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>>;
     async fn playlists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Playlist>>;
     async fn track(&self, track_id: &TrackId) -> ProviderResult<Track>;
+    async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor>;
     async fn search(&self, query: &str) -> ProviderResult<SearchResults>;
     async fn image_metadata(&self, item_id: &str, kind: ImageKind)
     -> ProviderResult<ImageMetadata>;

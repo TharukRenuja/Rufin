@@ -7,13 +7,14 @@ use adw::prelude::*;
 use gtk::gio;
 use gtk::glib;
 use rufin_core::{
-    Album, AlbumId, Artist, DensityMode, EffectiveDensity, Genre, HomeSection, Playlist, Route,
-    RouteStack, SearchKind, Track, format_duration,
+    Album, AlbumId, Artist, DensityMode, EffectiveDensity, Genre, HomeSection, Playlist,
+    QueueEntry, QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, Track, format_duration,
 };
+use rufin_playback::PlaybackState;
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
 
-use crate::controller::{AppController, ControllerEvent, LibrarySnapshot};
+use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
 use crate::i18n::tr;
 
 #[derive(Clone, Debug)]
@@ -27,6 +28,8 @@ struct AppState {
     density_mode: Cell<DensityMode>,
     effective_density: Cell<EffectiveDensity>,
     library: RefCell<LibrarySnapshot>,
+    queue: RefCell<Option<QueueSnapshot>>,
+    player: RefCell<PlaybackSnapshot>,
 }
 
 struct Shell {
@@ -40,13 +43,14 @@ struct Shell {
     back_button: gtk::Button,
     forward_button: gtk::Button,
     right_panel: gtk::Box,
+    bottom_player: gtk::Box,
 }
 
 pub fn build(app: &adw::Application, options: AppOptions) {
     install_css();
 
     let loaded_at = std::time::Instant::now();
-    let (controller, events, library) = AppController::bootstrap(options.fake_scale);
+    let (controller, events, library, queue, player) = AppController::bootstrap(options.fake_scale);
     info!(
         albums = library.albums.len(),
         tracks = library.tracks.len(),
@@ -60,6 +64,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         density_mode: Cell::new(DensityMode::Auto),
         effective_density: Cell::new(DensityMode::Auto.resolve(1_400)),
         library: RefCell::new(library),
+        queue: RefCell::new(queue),
+        player: RefCell::new(player),
     };
 
     let window = adw::ApplicationWindow::builder()
@@ -113,8 +119,13 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     main_area.append(&header);
     main_area.append(&route_host);
 
-    let right_panel = build_right_panel();
-    let bottom_player = build_bottom_player();
+    let right_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    right_panel.add_css_class("right-panel");
+    right_panel.set_width_request(340);
+    right_panel.set_vexpand(true);
+    let bottom_player = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    bottom_player.add_css_class("bottom-player");
+    bottom_player.set_height_request(90);
 
     upper.append(&normal_nav);
     upper.append(&compact_nav);
@@ -136,6 +147,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         back_button,
         forward_button,
         right_panel,
+        bottom_player,
     });
 
     build_normal_navigation(&shell);
@@ -143,6 +155,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     connect_shell_actions(&shell, settings_button);
     shell.update_density();
     shell.render_current_route();
+    shell.render_queue_panel();
+    shell.render_bottom_player();
     install_event_pump(&shell, events);
 
     if options.fake_scale.is_none() {
@@ -449,6 +463,15 @@ impl Shell {
         else {
             return self.placeholder_view("Album", "The selected cached album was not found.");
         };
+        let tracks = self
+            .state
+            .library
+            .borrow()
+            .tracks
+            .iter()
+            .filter(|track| track.album_id.as_str() == album_id.as_str())
+            .cloned()
+            .collect::<Vec<_>>();
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
@@ -488,8 +511,22 @@ impl Shell {
         facts.set_xalign(0.0);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        actions.append(&text_button("media-playback-start-symbolic", "Play"));
-        actions.append(&text_button("media-skip-forward-symbolic", "Next"));
+        let play_album = text_button("media-playback-start-symbolic", "Play");
+        let controller = self.controller.clone();
+        let album_tracks = tracks.clone();
+        play_album.connect_clicked(move |_| controller.play_tracks_now(album_tracks.clone()));
+        actions.append(&play_album);
+
+        let play_next = text_button("media-skip-forward-symbolic", "Next");
+        let controller = self.controller.clone();
+        let next_tracks = tracks.clone();
+        play_next.connect_clicked(move |_| {
+            for track in next_tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        });
+        actions.append(&play_next);
+
         actions.append(&text_button("emblem-favorite-symbolic", "Favorite"));
 
         metadata.append(&kind);
@@ -500,15 +537,6 @@ impl Shell {
         header.append(&metadata);
         content.append(&header);
 
-        let tracks = self
-            .state
-            .library
-            .borrow()
-            .tracks
-            .iter()
-            .filter(|track| track.album_id.as_str() == album_id.as_str())
-            .cloned()
-            .collect::<Vec<_>>();
         let table = self.tracks_table(tracks);
         content.append(&table);
 
@@ -541,6 +569,7 @@ impl Shell {
         table.set_vexpand(true);
         table.set_hexpand(true);
 
+        table.append_column(&track_actions_column(self));
         table.append_column(&track_column("#", 54, |track| {
             track.track_number.to_string()
         }));
@@ -766,8 +795,13 @@ impl Shell {
             .server
             .as_ref()
             .map(|server| server.name.as_str())
-            .unwrap_or("No server");
-        let username = library.username.as_deref().unwrap_or("no account");
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| tr("No server"));
+        let username = library
+            .username
+            .as_deref()
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| tr("no account"));
         let status = gtk::Label::new(Some(&format!(
             "{} ({username}): {} {} / {} {} • {}",
             server_name,
@@ -883,6 +917,319 @@ impl Shell {
         );
     }
 
+    fn confirm_clear_queue(self: &Rc<Self>) {
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr("Clear queue"))
+            .body(tr("This removes all queued tracks and stops playback."))
+            .build();
+        let cancel = tr("Cancel");
+        let clear = tr("Clear queue");
+        dialog.add_responses(&[("cancel", cancel.as_str()), ("clear", clear.as_str())]);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        dialog.set_response_appearance("clear", adw::ResponseAppearance::Destructive);
+        let controller = self.controller.clone();
+        dialog.choose(
+            Some(&self.window),
+            None::<&gio::Cancellable>,
+            move |response| {
+                if response.as_str() == "clear" {
+                    controller.clear_queue();
+                }
+            },
+        );
+    }
+
+    fn render_queue_panel(self: &Rc<Self>) {
+        while let Some(child) = self.right_panel.first_child() {
+            self.right_panel.remove(&child);
+        }
+
+        let queue_snapshot = self.state.queue.borrow().clone();
+        let player = self.state.player.borrow().clone();
+        let queue = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        queue.add_css_class("queue-panel");
+        queue.set_vexpand(true);
+        queue.set_margin_top(16);
+        queue.set_margin_start(16);
+        queue.set_margin_end(16);
+        queue.set_margin_bottom(12);
+
+        let queue_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let queue_title = gtk::Label::new(Some(&tr("Queue")));
+        queue_title.add_css_class("panel-title");
+        queue_title.set_xalign(0.0);
+        queue_title.set_hexpand(true);
+        queue_header.append(&queue_title);
+
+        let shuffle = icon_button(
+            "media-playlist-shuffle-symbolic",
+            if player.shuffle_enabled {
+                "Shuffle on"
+            } else {
+                "Shuffle"
+            },
+        );
+        if player.shuffle_enabled {
+            shuffle.add_css_class("active-toggle");
+        }
+        let controller = self.controller.clone();
+        shuffle.connect_clicked(move |_| controller.toggle_shuffle());
+        queue_header.append(&shuffle);
+
+        let repeat = icon_button(
+            "media-playlist-repeat-symbolic",
+            repeat_label(player.repeat_mode),
+        );
+        if player.repeat_mode != RepeatMode::Off {
+            repeat.add_css_class("active-toggle");
+        }
+        let controller = self.controller.clone();
+        repeat.connect_clicked(move |_| controller.cycle_repeat());
+        queue_header.append(&repeat);
+
+        let clear_shell = Rc::clone(self);
+        let clear = icon_button("edit-clear-symbolic", "Clear queue");
+        clear.connect_clicked(move |_| clear_shell.confirm_clear_queue());
+        queue_header.append(&clear);
+        queue.append(&queue_header);
+
+        let queue_list = gtk::ListBox::new();
+        queue_list.add_css_class("queue-list");
+        if let Some(snapshot) = &queue_snapshot {
+            for (index, entry) in snapshot.entries.iter().enumerate() {
+                queue_list.append(&self.queue_row(index, entry, snapshot.current_index));
+            }
+        }
+        if queue_list.first_child().is_none() {
+            let empty = gtk::Label::new(Some(&tr("Add music to start a queue.")));
+            empty.add_css_class("muted");
+            empty.set_wrap(true);
+            empty.set_margin_top(24);
+            queue_list.append(&empty);
+        }
+        queue.append(&queue_list);
+
+        let lyrics = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        lyrics.add_css_class("lyrics-panel");
+        lyrics.set_vexpand(true);
+        lyrics.set_margin_top(12);
+        lyrics.set_margin_start(16);
+        lyrics.set_margin_end(16);
+        lyrics.set_margin_bottom(18);
+
+        let lyrics_title = gtk::Label::new(Some(&tr("Lyrics")));
+        lyrics_title.add_css_class("panel-title");
+        lyrics_title.set_xalign(0.0);
+        lyrics.append(&lyrics_title);
+
+        let lyrics_status = gtk::Label::new(Some(&tr("Lyrics arrive in a later playback slice.")));
+        lyrics_status.add_css_class("muted");
+        lyrics_status.set_wrap(true);
+        lyrics_status.set_justify(gtk::Justification::Center);
+        lyrics_status.set_valign(gtk::Align::Center);
+        lyrics_status.set_vexpand(true);
+        lyrics.append(&lyrics_status);
+
+        self.right_panel.append(&queue);
+        self.right_panel
+            .append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        self.right_panel.append(&lyrics);
+    }
+
+    fn queue_row(
+        self: &Rc<Self>,
+        index: usize,
+        entry: &QueueEntry,
+        current_index: Option<usize>,
+    ) -> gtk::Widget {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.add_css_class("queue-row");
+        if current_index == Some(index) {
+            row.add_css_class("queue-row-current");
+        }
+        let number = gtk::Label::new(Some(&(index + 1).to_string()));
+        number.add_css_class("muted");
+        number.set_width_chars(2);
+        let cover = cover_tile(index as u32 * 7 + entry.duration_seconds, 42);
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        labels.set_hexpand(true);
+        let title = gtk::Label::new(Some(&entry.title));
+        title.set_xalign(0.0);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let artist = gtk::Label::new(Some(&entry.artist));
+        artist.add_css_class("muted");
+        artist.set_xalign(0.0);
+        artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        labels.append(&title);
+        labels.append(&artist);
+        let duration = gtk::Label::new(Some(&format_duration(entry.duration_seconds)));
+        duration.add_css_class("muted");
+        let remove = icon_button("user-trash-symbolic", "Remove from queue");
+        let controller = self.controller.clone();
+        let entry_id = entry.id.clone();
+        remove.connect_clicked(move |_| controller.remove_from_queue(entry_id.clone()));
+        row.append(&number);
+        row.append(&cover);
+        row.append(&labels);
+        row.append(&duration);
+        row.append(&remove);
+        row.upcast()
+    }
+
+    fn render_bottom_player(self: &Rc<Self>) {
+        while let Some(child) = self.bottom_player.first_child() {
+            self.bottom_player.remove(&child);
+        }
+
+        let player = self.state.player.borrow().clone();
+        let cover_seed = player
+            .current
+            .as_ref()
+            .map(|entry| entry.duration_seconds)
+            .unwrap_or(42);
+        self.bottom_player.append(&cover_tile(cover_seed, 58));
+
+        let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        identity.set_width_request(230);
+        let title = gtk::Label::new(Some(
+            player
+                .current
+                .as_ref()
+                .map(|entry| entry.title.as_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| tr("Nothing playing"))
+                .as_str(),
+        ));
+        title.add_css_class("player-title");
+        title.set_xalign(0.0);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let artist = gtk::Label::new(Some(
+            player
+                .current
+                .as_ref()
+                .map(|entry| entry.artist.as_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| tr("Queue a track to begin"))
+                .as_str(),
+        ));
+        artist.set_xalign(0.0);
+        artist.add_css_class("muted");
+        artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let album = gtk::Label::new(Some(
+            player
+                .current
+                .as_ref()
+                .map(|entry| entry.album.as_str())
+                .unwrap_or(""),
+        ));
+        album.set_xalign(0.0);
+        album.add_css_class("muted");
+        album.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        identity.append(&title);
+        identity.append(&artist);
+        identity.append(&album);
+        self.bottom_player.append(&identity);
+
+        let transport = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        transport.set_hexpand(true);
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        buttons.set_halign(gtk::Align::Center);
+
+        let stop = icon_button("media-playback-stop-symbolic", "Stop");
+        let controller = self.controller.clone();
+        stop.connect_clicked(move |_| controller.stop());
+        buttons.append(&stop);
+
+        let previous = icon_button("media-skip-backward-symbolic", "Previous");
+        let controller = self.controller.clone();
+        previous.connect_clicked(move |_| controller.previous_track());
+        buttons.append(&previous);
+
+        let play_icon = match player.state {
+            PlaybackState::Playing | PlaybackState::Buffering => "media-playback-pause-symbolic",
+            PlaybackState::Paused | PlaybackState::Stopped => "media-playback-start-symbolic",
+        };
+        let play = icon_button(play_icon, playback_state_label(player.state));
+        let controller = self.controller.clone();
+        play.connect_clicked(move |_| controller.play_pause());
+        buttons.append(&play);
+
+        let next = icon_button("media-skip-forward-symbolic", "Next");
+        let controller = self.controller.clone();
+        next.connect_clicked(move |_| controller.next_track());
+        buttons.append(&next);
+
+        let shuffle = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
+        if player.shuffle_enabled {
+            shuffle.add_css_class("active-toggle");
+        }
+        let controller = self.controller.clone();
+        shuffle.connect_clicked(move |_| controller.toggle_shuffle());
+        buttons.append(&shuffle);
+
+        let repeat = icon_button(
+            "media-playlist-repeat-symbolic",
+            repeat_label(player.repeat_mode),
+        );
+        if player.repeat_mode != RepeatMode::Off {
+            repeat.add_css_class("active-toggle");
+        }
+        let controller = self.controller.clone();
+        repeat.connect_clicked(move |_| controller.cycle_repeat());
+        buttons.append(&repeat);
+
+        let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let elapsed = gtk::Label::new(Some(&format_duration(player.position_seconds)));
+        elapsed.add_css_class("muted");
+        let max = f64::from(player.duration_seconds.max(1));
+        let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, max, 1.0);
+        progress.set_value(f64::from(
+            player.position_seconds.min(player.duration_seconds),
+        ));
+        progress.set_draw_value(false);
+        progress.set_hexpand(true);
+        let controller = self.controller.clone();
+        progress.connect_value_changed(move |scale| controller.seek(scale.value() as u32));
+        let duration = gtk::Label::new(Some(&format_duration(player.duration_seconds)));
+        duration.add_css_class("muted");
+        progress_row.append(&elapsed);
+        progress_row.append(&progress);
+        progress_row.append(&duration);
+
+        transport.append(&buttons);
+        transport.append(&progress_row);
+        self.bottom_player.append(&transport);
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let queue = icon_button("view-list-symbolic", "Queue");
+        actions.append(&queue);
+        let lyrics = icon_button("insert-text-symbolic", "Lyrics");
+        actions.append(&lyrics);
+        let favorite = icon_button("emblem-favorite-symbolic", "Favorite");
+        actions.append(&favorite);
+        let mute = icon_button(
+            if player.muted {
+                "audio-volume-muted-symbolic"
+            } else {
+                "audio-volume-high-symbolic"
+            },
+            "Mute",
+        );
+        let controller = self.controller.clone();
+        mute.connect_clicked(move |_| controller.toggle_mute());
+        actions.append(&mute);
+        let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
+        volume.add_css_class("volume-slider");
+        volume.set_width_request(110);
+        volume.set_value(player.volume);
+        volume.set_draw_value(false);
+        let controller = self.controller.clone();
+        volume.connect_value_changed(move |scale| controller.set_volume(scale.value()));
+        actions.append(&volume);
+        self.bottom_player.append(&actions);
+    }
+
     fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 12);
         wrapper.add_css_class("empty-state");
@@ -942,11 +1289,21 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
 fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local(Duration::from_millis(100), move || {
+        shell.controller.poll_playback_events();
         while let Ok(event) = receiver.try_recv() {
             match event {
                 ControllerEvent::Snapshot(snapshot) => {
                     *shell.state.library.borrow_mut() = *snapshot;
                     shell.render_current_route();
+                }
+                ControllerEvent::Queue(queue) => {
+                    *shell.state.queue.borrow_mut() = *queue;
+                    shell.render_queue_panel();
+                    shell.render_bottom_player();
+                }
+                ControllerEvent::Playback(player) => {
+                    *shell.state.player.borrow_mut() = *player;
+                    shell.render_bottom_player();
                 }
                 ControllerEvent::LoginStatus(status) => {
                     shell.state.library.borrow_mut().sync_status = status;
@@ -1140,167 +1497,21 @@ fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) ->
     nav_button(shell, icon_name, label, route, true)
 }
 
-fn build_right_panel() -> gtk::Box {
-    let panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    panel.add_css_class("right-panel");
-    panel.set_width_request(340);
-    panel.set_vexpand(true);
-
-    let queue = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    queue.add_css_class("queue-panel");
-    queue.set_vexpand(true);
-    queue.set_margin_top(16);
-    queue.set_margin_start(16);
-    queue.set_margin_end(16);
-    queue.set_margin_bottom(12);
-
-    let queue_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let queue_title = gtk::Label::new(Some(&tr("Queue")));
-    queue_title.add_css_class("panel-title");
-    queue_title.set_xalign(0.0);
-    queue_title.set_hexpand(true);
-    queue_header.append(&queue_title);
-    queue_header.append(&icon_button("media-playlist-shuffle-symbolic", "Shuffle"));
-    queue_header.append(&icon_button("edit-clear-symbolic", "Clear queue"));
-    queue.append(&queue_header);
-
-    let queue_list = gtk::ListBox::new();
-    queue_list.add_css_class("queue-list");
-    for index in 1..=12 {
-        queue_list.append(&queue_row(index));
+fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
+    match repeat_mode {
+        RepeatMode::Off => "Repeat off",
+        RepeatMode::One => "Repeat one",
+        RepeatMode::All => "Repeat all",
     }
-    queue.append(&queue_list);
-
-    let lyrics = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    lyrics.add_css_class("lyrics-panel");
-    lyrics.set_vexpand(true);
-    lyrics.set_margin_top(12);
-    lyrics.set_margin_start(16);
-    lyrics.set_margin_end(16);
-    lyrics.set_margin_bottom(18);
-
-    let lyrics_title = gtk::Label::new(Some(&tr("Lyrics")));
-    lyrics_title.add_css_class("panel-title");
-    lyrics_title.set_xalign(0.0);
-    lyrics.append(&lyrics_title);
-
-    let lyrics_scroll = gtk::ScrolledWindow::new();
-    lyrics_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    lyrics_scroll.set_vexpand(true);
-    let lyrics_lines = gtk::Box::new(gtk::Orientation::Vertical, 14);
-    lyrics_lines.add_css_class("lyrics-lines");
-    for (index, line) in [
-        "I keep the signal close",
-        "A quiet room starts glowing",
-        "The chorus moves in time",
-        "This line is the live lyric",
-        "Every echo folds back home",
-        "The last light stays on",
-    ]
-    .iter()
-    .enumerate()
-    {
-        let label = gtk::Label::new(Some(line));
-        label.set_wrap(true);
-        label.set_justify(gtk::Justification::Center);
-        label.add_css_class(if index == 3 {
-            "lyric-current"
-        } else {
-            "lyric-line"
-        });
-        lyrics_lines.append(&label);
-    }
-    lyrics_scroll.set_child(Some(&lyrics_lines));
-    lyrics.append(&lyrics_scroll);
-
-    panel.append(&queue);
-    panel.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    panel.append(&lyrics);
-    panel
 }
 
-fn queue_row(index: u32) -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.add_css_class("queue-row");
-    let number = gtk::Label::new(Some(&index.to_string()));
-    number.add_css_class("muted");
-    number.set_width_chars(2);
-    let cover = cover_tile(index * 7, 42);
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    labels.set_hexpand(true);
-    let title = gtk::Label::new(Some(&format!("Queue Track {index}")));
-    title.set_xalign(0.0);
-    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let artist = gtk::Label::new(Some("Signal Park"));
-    artist.add_css_class("muted");
-    artist.set_xalign(0.0);
-    labels.append(&title);
-    labels.append(&artist);
-    let duration = gtk::Label::new(Some("3:24"));
-    duration.add_css_class("muted");
-    row.append(&number);
-    row.append(&cover);
-    row.append(&labels);
-    row.append(&duration);
-    row.upcast()
-}
-
-fn build_bottom_player() -> gtk::Box {
-    let player = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    player.add_css_class("bottom-player");
-    player.set_height_request(90);
-
-    let cover = cover_tile(42, 58);
-    player.append(&cover);
-
-    let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    identity.set_width_request(210);
-    let title = gtk::Label::new(Some("First Motion 1"));
-    title.add_css_class("player-title");
-    title.set_xalign(0.0);
-    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let artist = gtk::Label::new(Some("Astral Kin"));
-    artist.set_xalign(0.0);
-    artist.add_css_class("muted");
-    let album = gtk::Label::new(Some("Blue Rooms 1"));
-    album.set_xalign(0.0);
-    album.add_css_class("muted");
-    album.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    identity.append(&title);
-    identity.append(&artist);
-    identity.append(&album);
-    player.append(&identity);
-
-    let transport = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    transport.set_hexpand(true);
-    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    buttons.set_halign(gtk::Align::Center);
-    for (icon, label) in [
-        ("media-playback-stop-symbolic", "Stop"),
-        ("media-playlist-shuffle-symbolic", "Shuffle"),
-        ("media-skip-backward-symbolic", "Previous"),
-        ("media-playback-pause-symbolic", "Pause"),
-        ("media-skip-forward-symbolic", "Next"),
-        ("media-playlist-repeat-symbolic", "Repeat"),
-    ] {
-        buttons.append(&icon_button(icon, label));
+fn playback_state_label(state: PlaybackState) -> &'static str {
+    match state {
+        PlaybackState::Stopped => "Play",
+        PlaybackState::Paused => "Resume",
+        PlaybackState::Buffering => "Pause",
+        PlaybackState::Playing => "Pause",
     }
-    let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 205.0, 1.0);
-    progress.set_value(82.0);
-    progress.set_draw_value(false);
-    progress.set_hexpand(true);
-    transport.append(&buttons);
-    transport.append(&progress);
-    player.append(&transport);
-
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    actions.append(&icon_button("view-list-symbolic", "Queue"));
-    actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
-    actions.append(&icon_button("emblem-favorite-symbolic", "Favorite"));
-    actions.append(&icon_button("audio-volume-high-symbolic", "Volume"));
-    player.append(&actions);
-
-    player
 }
 
 fn album_model(albums: &[Album]) -> gio::ListStore {
@@ -1317,6 +1528,55 @@ fn track_model(tracks: &[Track]) -> gio::ListStore {
         model.append(&glib::BoxedAnyObject::new(track.clone()));
     }
     model
+}
+
+fn track_actions_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+
+    factory.connect_bind(move |_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(item) = list_item.item() else {
+            return;
+        };
+        let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
+            return;
+        };
+        let track = boxed.borrow::<Track>().clone();
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+
+        let play = icon_button("media-playback-start-symbolic", "Play now");
+        let controller = shell.controller.clone();
+        let track_for_play = track.clone();
+        play.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
+        actions.append(&play);
+
+        let next = icon_button("media-skip-forward-symbolic", "Play next");
+        let controller = shell.controller.clone();
+        let track_for_next = track.clone();
+        next.connect_clicked(move |_| controller.play_next(track_for_next.clone()));
+        actions.append(&next);
+
+        let append = icon_button("list-add-symbolic", "Add to queue");
+        let controller = shell.controller.clone();
+        append.connect_clicked(move |_| controller.append_to_queue(track.clone()));
+        actions.append(&append);
+
+        list_item.set_child(Some(&actions));
+    });
+
+    factory.connect_unbind(|_, list_item| {
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
+            list_item.set_child(None::<&gtk::Widget>);
+        }
+    });
+
+    let column = gtk::ColumnViewColumn::new(Some(&tr("Actions")), Some(factory));
+    column.set_fixed_width(116);
+    column.set_resizable(false);
+    column
 }
 
 fn track_column<F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn

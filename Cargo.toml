@@ -2,6 +2,7 @@
 members = [
     "crates/rufin-app",
     "crates/rufin-core",
+    "crates/rufin-playback",
     "crates/rufin-provider",
     "crates/rufin-provider-jellyfin",
     "crates/rufin-secrets",

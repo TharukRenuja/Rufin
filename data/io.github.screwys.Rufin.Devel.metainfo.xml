@@ -10,7 +10,7 @@
   <project_license>GPL-3.0-or-later</project_license>
   <url type="homepage">https://github.com/screwys/Rufin</url>
   <description>
-    <p>Rufin is a native GTK music client shell. This development build contains Jellyfin login and a cached read-only library.</p>
+    <p>Rufin is a native GTK music client shell. This development build contains Jellyfin login, a cached read-only library, and native GStreamer playback.</p>
   </description>
   <launchable type="desktop-id">io.github.screwys.Rufin.Devel.desktop</launchable>
   <content_rating type="oars-1.1" />

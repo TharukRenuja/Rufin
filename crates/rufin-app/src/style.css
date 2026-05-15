@@ -160,6 +160,20 @@ window {
   padding: 6px 4px;
 }
 
+.queue-row-current {
+  border-radius: 8px;
+  background: rgba(143, 182, 255, 0.14);
+}
+
+.active-toggle {
+  color: #b6c4ff;
+  background: rgba(143, 182, 255, 0.14);
+}
+
+.volume-slider {
+  min-width: 100px;
+}
+
 .lyrics-panel {
   min-height: 260px;
 }

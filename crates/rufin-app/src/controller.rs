@@ -5,7 +5,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use directories::ProjectDirs;
-use rufin_core::{Album, Artist, Genre, HomeSection, Playlist, ServerId, ServerIdentity, Track};
+use rufin_core::{
+    Album, Artist, Genre, HomeSection, Playlist, QueueEngine, QueueEntry, QueueEntryId,
+    QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+};
+use rufin_playback::{
+    FakePlaybackBackend, GStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand, PlaybackEvent,
+    PlaybackState, PlaybackTrack, StreamDescriptor,
+};
 use rufin_provider::{
     LoginRequest, MusicProvider, PagedRequest, SavedProviderSession, SearchResults,
 };
@@ -36,6 +43,37 @@ pub struct LibrarySnapshot {
     pub search: SearchResults,
 }
 
+#[derive(Clone, Debug)]
+pub struct PlaybackSnapshot {
+    pub current: Option<QueueEntry>,
+    pub state: PlaybackState,
+    pub position_seconds: u32,
+    pub duration_seconds: u32,
+    pub volume: f64,
+    pub muted: bool,
+    pub repeat_mode: RepeatMode,
+    pub shuffle_enabled: bool,
+    pub buffering_percent: Option<u8>,
+    pub last_error: Option<String>,
+}
+
+impl Default for PlaybackSnapshot {
+    fn default() -> Self {
+        Self {
+            current: None,
+            state: PlaybackState::Stopped,
+            position_seconds: 0,
+            duration_seconds: 0,
+            volume: 1.0,
+            muted: false,
+            repeat_mode: RepeatMode::Off,
+            shuffle_enabled: false,
+            buffering_percent: None,
+            last_error: None,
+        }
+    }
+}
+
 impl LibrarySnapshot {
     fn first_run() -> Self {
         Self {
@@ -60,6 +98,8 @@ impl LibrarySnapshot {
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
+    Queue(Box<Option<QueueSnapshot>>),
+    Playback(Box<PlaybackSnapshot>),
     LoginStatus(String),
     Error(String),
 }
@@ -69,6 +109,10 @@ pub struct AppController {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
+    queue: Arc<Mutex<Option<QueueEngine>>>,
+    playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
+    last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     events: Sender<ControllerEvent>,
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
 }
@@ -119,7 +163,13 @@ impl StoreHandle {
 impl AppController {
     pub fn bootstrap(
         fake_scale: Option<FakeScale>,
-    ) -> (Self, Receiver<ControllerEvent>, LibrarySnapshot) {
+    ) -> (
+        Self,
+        Receiver<ControllerEvent>,
+        LibrarySnapshot,
+        Option<QueueSnapshot>,
+        PlaybackSnapshot,
+    ) {
         let (events, receiver) = channel();
         let runtime = Runtime::new()
             .map(Arc::new)
@@ -134,14 +184,27 @@ impl AppController {
                 warn!(%error, "failed to load fake snapshot");
                 LibrarySnapshot::first_run()
             });
+            let queue = restore_queue(&store, snapshot.server.as_ref());
+            let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
+            let playback_snapshot = playback_snapshot_from_queue(queue.as_ref());
             let controller = Self {
                 store,
                 runtime,
                 secrets: Arc::new(MemorySecretStore::new()),
+                queue: Arc::new(Mutex::new(queue)),
+                playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
+                playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
+                last_progress_snapshot: Arc::new(Mutex::new(None)),
                 events,
                 sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             };
-            return (controller, receiver, snapshot);
+            return (
+                controller,
+                receiver,
+                snapshot,
+                queue_snapshot,
+                playback_snapshot,
+            );
         }
 
         let store = StoreHandle::open_for_app().unwrap_or_else(|error| {
@@ -154,18 +217,37 @@ impl AppController {
             warn!(%error, "failed to load app snapshot");
             LibrarySnapshot::first_run()
         });
+        let queue = restore_queue(&store, snapshot.server.as_ref());
+        let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
+        let playback_snapshot = playback_snapshot_from_queue(queue.as_ref());
         let controller = Self {
             store,
             runtime,
             secrets: Arc::new(SecretServiceStore::new()),
+            queue: Arc::new(Mutex::new(queue)),
+            playback: Arc::new(Mutex::new(playback_backend(false))),
+            playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
+            last_progress_snapshot: Arc::new(Mutex::new(None)),
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
         };
-        (controller, receiver, snapshot)
+        (
+            controller,
+            receiver,
+            snapshot,
+            queue_snapshot,
+            playback_snapshot,
+        )
     }
 
     #[cfg(test)]
-    fn bootstrap_memory_for_test() -> (Self, Receiver<ControllerEvent>, LibrarySnapshot) {
+    fn bootstrap_memory_for_test() -> (
+        Self,
+        Receiver<ControllerEvent>,
+        LibrarySnapshot,
+        Option<QueueSnapshot>,
+        PlaybackSnapshot,
+    ) {
         let (events, receiver) = channel();
         let runtime = Runtime::new()
             .map(Arc::new)
@@ -179,10 +261,20 @@ impl AppController {
             store,
             runtime,
             secrets: Arc::new(MemorySecretStore::new()),
+            queue: Arc::new(Mutex::new(None)),
+            playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
+            playback_snapshot: Arc::new(Mutex::new(PlaybackSnapshot::default())),
+            last_progress_snapshot: Arc::new(Mutex::new(None)),
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
         };
-        (controller, receiver, snapshot)
+        (
+            controller,
+            receiver,
+            snapshot,
+            None,
+            PlaybackSnapshot::default(),
+        )
     }
 
     pub fn clear_active_server_cache_for_app() -> Result<(), String> {
@@ -238,6 +330,285 @@ impl AppController {
         }
     }
 
+    pub fn play_tracks_now(&self, tracks: Vec<Track>) {
+        if tracks.is_empty() {
+            let _sent = self.events.send(ControllerEvent::Error(
+                "No tracks are available to play.".to_string(),
+            ));
+            return;
+        }
+
+        let result = self.with_queue_mut(|queue| {
+            queue.clear();
+            let mut tracks = tracks.into_iter();
+            if let Some(first) = tracks.next() {
+                queue.play_now(&first);
+            }
+            for track in tracks {
+                queue.append(&track);
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+        self.start_current_track();
+    }
+
+    pub fn play_now(&self, track: Track) {
+        self.play_tracks_now(vec![track]);
+    }
+
+    pub fn play_next(&self, track: Track) {
+        let result = self.with_queue_mut(|queue| {
+            queue.play_next(&track);
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
+    pub fn append_to_queue(&self, track: Track) {
+        let result = self.with_queue_mut(|queue| {
+            queue.append(&track);
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
+    pub fn remove_from_queue(&self, entry_id: QueueEntryId) {
+        let mut removed_current = false;
+        let mut has_current_after_remove = false;
+        let result = self.with_queue_mut(|queue| {
+            let current_id = queue.current().map(|entry| entry.id.clone());
+            let removed = queue.remove(&entry_id).is_some();
+            removed_current = removed && current_id.as_ref() == Some(&entry_id);
+            has_current_after_remove = queue.current().is_some();
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        if removed_current && !has_current_after_remove {
+            let _result = self.send_playback_command(PlaybackCommand::Stop);
+        }
+        self.persist_and_emit_queue();
+        if removed_current && has_current_after_remove {
+            self.start_current_track();
+        }
+    }
+
+    pub fn clear_queue(&self) {
+        let result = self.with_queue_mut(|queue| {
+            queue.clear();
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        let _result = self.send_playback_command(PlaybackCommand::Stop);
+        self.persist_and_emit_queue();
+    }
+
+    pub fn toggle_shuffle(&self) {
+        let result = self.with_queue_mut(|queue| {
+            let enabled = !queue.shuffle().enabled;
+            queue.set_shuffle(enabled, 7);
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
+    pub fn cycle_repeat(&self) {
+        let result = self.with_queue_mut(|queue| {
+            let next = match queue.repeat_mode() {
+                RepeatMode::Off => RepeatMode::One,
+                RepeatMode::One => RepeatMode::All,
+                RepeatMode::All => RepeatMode::Off,
+            };
+            queue.set_repeat_mode(next);
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
+    pub fn play_pause(&self) {
+        let state = self
+            .playback_snapshot
+            .lock()
+            .map(|snapshot| snapshot.state)
+            .unwrap_or(PlaybackState::Stopped);
+        match state {
+            PlaybackState::Playing | PlaybackState::Buffering => {
+                if let Err(error) = self.send_playback_command(PlaybackCommand::Pause) {
+                    let _sent = self.events.send(ControllerEvent::Error(error));
+                } else {
+                    self.persist_current_queue_snapshot();
+                }
+            }
+            PlaybackState::Paused => {
+                if let Err(error) = self.send_playback_command(PlaybackCommand::Resume) {
+                    let _sent = self.events.send(ControllerEvent::Error(error));
+                }
+            }
+            PlaybackState::Stopped => self.start_current_track(),
+        }
+    }
+
+    pub fn stop(&self) {
+        let _result = self.with_queue_mut(|queue| {
+            queue.set_progress_seconds(0);
+            Ok(())
+        });
+        if let Err(error) = self.send_playback_command(PlaybackCommand::Stop) {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
+    pub fn next_track(&self) {
+        let mut moved = false;
+        let result = self.with_queue_mut(|queue| {
+            moved = queue.next_track().is_some();
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        if !moved {
+            self.stop();
+            return;
+        }
+        self.persist_and_emit_queue();
+        self.start_current_track();
+    }
+
+    pub fn previous_track(&self) {
+        let mut moved = false;
+        let result = self.with_queue_mut(|queue| {
+            moved = queue.previous_track().is_some();
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        if !moved {
+            self.seek(0);
+            return;
+        }
+        self.persist_and_emit_queue();
+        self.start_current_track();
+    }
+
+    pub fn seek(&self, seconds: u32) {
+        let _result = self.with_queue_mut(|queue| {
+            queue.set_progress_seconds(seconds);
+            Ok(())
+        });
+        if let Err(error) = self.send_playback_command(PlaybackCommand::Seek(seconds)) {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
+    pub fn set_volume(&self, volume: f64) {
+        if let Err(error) = self.send_playback_command(PlaybackCommand::SetVolume(volume)) {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+    }
+
+    pub fn toggle_mute(&self) {
+        let muted = self
+            .playback_snapshot
+            .lock()
+            .map(|snapshot| !snapshot.muted)
+            .unwrap_or(true);
+        if let Err(error) = self.send_playback_command(PlaybackCommand::SetMuted(muted)) {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+    }
+
+    pub fn poll_playback_events(&self) {
+        let events = self
+            .playback
+            .lock()
+            .map(|mut playback| playback.drain_events())
+            .unwrap_or_default();
+        if events.is_empty() {
+            return;
+        }
+
+        for event in events {
+            match event {
+                PlaybackEvent::StateChanged(state) => {
+                    self.update_playback_snapshot(|snapshot| {
+                        snapshot.state = state;
+                        snapshot.buffering_percent = None;
+                    });
+                }
+                PlaybackEvent::PositionChanged(seconds) => {
+                    let _result = self.with_queue_mut(|queue| {
+                        queue.set_progress_seconds(seconds);
+                        Ok(())
+                    });
+                    self.update_playback_snapshot(|snapshot| {
+                        snapshot.position_seconds = seconds;
+                    });
+                    self.persist_progress_if_needed(seconds);
+                }
+                PlaybackEvent::DurationChanged(seconds) => {
+                    self.update_playback_snapshot(|snapshot| {
+                        snapshot.duration_seconds = seconds;
+                    });
+                }
+                PlaybackEvent::Buffering(percent) => {
+                    self.update_playback_snapshot(|snapshot| {
+                        snapshot.state = PlaybackState::Buffering;
+                        snapshot.buffering_percent = Some(percent);
+                    });
+                }
+                PlaybackEvent::EndOfStream => self.advance_after_end_of_stream(),
+                PlaybackEvent::VolumeChanged { volume, muted } => {
+                    self.update_playback_snapshot(|snapshot| {
+                        snapshot.volume = volume;
+                        snapshot.muted = muted;
+                    });
+                }
+                PlaybackEvent::Error(error) => {
+                    self.update_playback_snapshot(|snapshot| {
+                        snapshot.last_error = Some(error.clone());
+                        snapshot.state = PlaybackState::Stopped;
+                    });
+                    let _sent = self.events.send(ControllerEvent::Error(error));
+                }
+            }
+        }
+        self.emit_playback_snapshot();
+    }
+
     pub fn clear_active_server_cache(&self) {
         let store = self.store.clone();
         let events = self.events.clone();
@@ -289,6 +660,9 @@ impl AppController {
         let store = self.store.clone();
         let events = self.events.clone();
         let secrets = Arc::clone(&self.secrets);
+        let queue = Arc::clone(&self.queue);
+        let playback = Arc::clone(&self.playback);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
             let Some(saved) = store
@@ -323,6 +697,17 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
+            if let Ok(mut queue) = queue.lock() {
+                *queue = None;
+            }
+            if let Ok(mut playback) = playback.lock() {
+                let _result = playback.send(PlaybackCommand::Stop);
+            }
+            if let Ok(mut snapshot) = playback_snapshot.lock() {
+                *snapshot = PlaybackSnapshot::default();
+            }
+            let _sent = events.send(ControllerEvent::Queue(Box::new(None)));
+            let _sent = events.send(ControllerEvent::Playback(Box::default()));
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(
                 LibrarySnapshot::first_run(),
             )));
@@ -341,6 +726,8 @@ impl AppController {
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
         let events = self.events.clone();
+        let queue = Arc::clone(&self.queue);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
             let _sent = events.send(ControllerEvent::LoginStatus(
@@ -379,6 +766,17 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error.to_string()));
                 return;
             }
+            let queue_snapshot = QueueEngine::new(saved.server.id.clone()).snapshot();
+            if let Ok(mut queue) = queue.lock() {
+                *queue = Some(QueueEngine::restore(queue_snapshot.clone()));
+            }
+            let player =
+                playback_snapshot_from_queue(Some(&QueueEngine::restore(queue_snapshot.clone())));
+            if let Ok(mut snapshot) = playback_snapshot.lock() {
+                *snapshot = player.clone();
+            }
+            let _sent = events.send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
+            let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
 
             let _sent = events.send(ControllerEvent::LoginStatus(
                 "Connected. Loading cached library...".to_string(),
@@ -418,6 +816,204 @@ impl AppController {
             }
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
         });
+    }
+
+    fn with_queue_mut<T>(
+        &self,
+        operation: impl FnOnce(&mut QueueEngine) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut queue = self
+            .queue
+            .lock()
+            .map_err(|_| "queue lock was poisoned".to_string())?;
+        let Some(queue) = queue.as_mut() else {
+            return Err("No active queue is available.".to_string());
+        };
+        operation(queue)
+    }
+
+    fn persist_and_emit_queue(&self) {
+        let queue_snapshot = self.queue_snapshot();
+        if let Some(snapshot) = &queue_snapshot {
+            self.persist_queue_snapshot(snapshot);
+        }
+        self.sync_playback_snapshot_from_queue();
+        let _sent = self
+            .events
+            .send(ControllerEvent::Queue(Box::new(queue_snapshot)));
+        self.emit_playback_snapshot();
+    }
+
+    fn persist_current_queue_snapshot(&self) {
+        if let Some(snapshot) = self.queue_snapshot() {
+            self.persist_queue_snapshot(&snapshot);
+        }
+    }
+
+    fn persist_queue_snapshot(&self, snapshot: &QueueSnapshot) {
+        if let Err(error) = self
+            .store
+            .with_store(|store| store.save_queue_snapshot(snapshot))
+        {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+    }
+
+    fn queue_snapshot(&self) -> Option<QueueSnapshot> {
+        self.queue
+            .lock()
+            .ok()
+            .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot))
+    }
+
+    fn update_playback_snapshot(&self, operation: impl FnOnce(&mut PlaybackSnapshot)) {
+        if let Ok(mut snapshot) = self.playback_snapshot.lock() {
+            operation(&mut snapshot);
+        }
+    }
+
+    fn sync_playback_snapshot_from_queue(&self) {
+        let queue = self.queue.lock().ok();
+        let queue = queue.as_ref().and_then(|queue| queue.as_ref());
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.current = queue.and_then(|queue| queue.current().cloned());
+            snapshot.position_seconds = queue.map(QueueEngine::progress_seconds).unwrap_or(0);
+            snapshot.duration_seconds = snapshot
+                .current
+                .as_ref()
+                .map(|entry| entry.duration_seconds)
+                .unwrap_or(0);
+            snapshot.repeat_mode = queue
+                .map(QueueEngine::repeat_mode)
+                .unwrap_or(RepeatMode::Off);
+            snapshot.shuffle_enabled = queue
+                .map(|queue| queue.shuffle().enabled)
+                .unwrap_or_default();
+            if snapshot.current.is_none() {
+                snapshot.state = PlaybackState::Stopped;
+                snapshot.last_error = None;
+                snapshot.buffering_percent = None;
+            }
+        });
+    }
+
+    fn emit_playback_snapshot(&self) {
+        let snapshot = self
+            .playback_snapshot
+            .lock()
+            .map(|snapshot| snapshot.clone())
+            .unwrap_or_default();
+        let _sent = self
+            .events
+            .send(ControllerEvent::Playback(Box::new(snapshot)));
+    }
+
+    fn send_playback_command(&self, command: PlaybackCommand) -> Result<(), String> {
+        self.playback
+            .lock()
+            .map_err(|_| "playback lock was poisoned".to_string())?
+            .send(command)
+            .map_err(|error| error.to_string())
+    }
+
+    fn start_current_track(&self) {
+        let Some((server_id, entry, position_seconds)) = self.current_queue_entry() else {
+            let _sent = self
+                .events
+                .send(ControllerEvent::Error("Queue is empty.".to_string()));
+            return;
+        };
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.current = Some(entry.clone());
+            snapshot.state = PlaybackState::Buffering;
+            snapshot.position_seconds = position_seconds;
+            snapshot.duration_seconds = entry.duration_seconds;
+            snapshot.last_error = None;
+        });
+        self.emit_playback_snapshot();
+
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let playback = Arc::clone(&self.playback);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let stream =
+                match resolve_stream(&store, &runtime, &secrets, &server_id, &entry.track_id) {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        return;
+                    }
+                };
+            let command = PlaybackCommand::Play {
+                track: playback_track_from_entry(&entry),
+                stream,
+                start_position_seconds: position_seconds,
+            };
+            if let Err(error) = playback
+                .lock()
+                .map_err(|_| "playback lock was poisoned".to_string())
+                .and_then(|mut playback| playback.send(command).map_err(|error| error.to_string()))
+            {
+                if let Ok(mut snapshot) = playback_snapshot.lock() {
+                    snapshot.state = PlaybackState::Stopped;
+                    snapshot.last_error = Some(error.clone());
+                }
+                let _sent = events.send(ControllerEvent::Error(error));
+            }
+        });
+    }
+
+    fn current_queue_entry(&self) -> Option<(ServerId, QueueEntry, u32)> {
+        self.queue.lock().ok().and_then(|queue| {
+            let queue = queue.as_ref()?;
+            let snapshot = queue.snapshot();
+            let entry = queue.current()?.clone();
+            Some((snapshot.server_id, entry, snapshot.progress_seconds))
+        })
+    }
+
+    fn persist_progress_if_needed(&self, seconds: u32) {
+        let Some(snapshot) = self.queue_snapshot() else {
+            return;
+        };
+        let bucket = seconds / 10;
+        let should_save = self
+            .last_progress_snapshot
+            .lock()
+            .map(|mut last| {
+                let changed = last.as_ref() != Some(&(snapshot.server_id.clone(), bucket));
+                if changed {
+                    *last = Some((snapshot.server_id.clone(), bucket));
+                }
+                changed
+            })
+            .unwrap_or(false);
+        if should_save {
+            let _result = self
+                .store
+                .with_store(|store| store.save_queue_snapshot(&snapshot));
+        }
+    }
+
+    fn advance_after_end_of_stream(&self) {
+        let mut has_next = false;
+        let result = self.with_queue_mut(|queue| {
+            has_next = queue.next_track().is_some();
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        if has_next {
+            self.persist_and_emit_queue();
+            self.start_current_track();
+        } else {
+            self.stop();
+        }
     }
 
     fn start_sync(&self, saved: SavedServer) {
@@ -771,6 +1367,97 @@ fn seed_fake_cache(store: &StoreHandle, scale: FakeScale) -> Result<(), String> 
     Ok(())
 }
 
+fn restore_queue(store: &StoreHandle, server: Option<&ServerIdentity>) -> Option<QueueEngine> {
+    let server = server?;
+    match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
+        Ok(Some(snapshot)) => Some(QueueEngine::restore(snapshot)),
+        Ok(None) => Some(QueueEngine::new(server.id.clone())),
+        Err(error) => {
+            warn!(%error, "failed to restore queue snapshot");
+            Some(QueueEngine::new(server.id.clone()))
+        }
+    }
+}
+
+fn playback_snapshot_from_queue(queue: Option<&QueueEngine>) -> PlaybackSnapshot {
+    queue
+        .map(|queue| PlaybackSnapshot {
+            current: queue.current().cloned(),
+            state: PlaybackState::Stopped,
+            position_seconds: queue.progress_seconds(),
+            duration_seconds: queue
+                .current()
+                .map(|entry| entry.duration_seconds)
+                .unwrap_or_default(),
+            volume: 1.0,
+            muted: false,
+            repeat_mode: queue.repeat_mode(),
+            shuffle_enabled: queue.shuffle().enabled,
+            buffering_percent: None,
+            last_error: None,
+        })
+        .unwrap_or_default()
+}
+
+fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
+    if fake {
+        return Box::new(FakePlaybackBackend::new());
+    }
+    match GStreamerPlaybackBackend::new() {
+        Ok(backend) => Box::new(backend),
+        Err(error) => {
+            warn!(%error, "falling back to fake playback backend");
+            Box::new(FakePlaybackBackend::new())
+        }
+    }
+}
+
+fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {
+    PlaybackTrack {
+        id: entry.track_id.clone(),
+        title: entry.title.clone(),
+        artist: entry.artist.clone(),
+        album: entry.album.clone(),
+        duration_seconds: entry.duration_seconds,
+    }
+}
+
+fn resolve_stream(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> Result<StreamDescriptor, String> {
+    let saved = store
+        .with_store(|store| store.active_server())?
+        .filter(|saved| saved.server.id == *server_id)
+        .ok_or_else(|| "No matching active server is saved.".to_string())?;
+    if saved.server.provider == "fake" {
+        return Ok(StreamDescriptor::new(format!(
+            "fake://local/stream/{}",
+            track_id.as_str()
+        )));
+    }
+
+    let token = secrets
+        .load_token(&saved.server.id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No saved token found for the active server.".to_string())?;
+    let session = SavedProviderSession {
+        server: saved.server.clone(),
+        user_id: saved.user_id.clone(),
+        username: saved.username.clone(),
+        trust_invalid_cert: saved.trust_invalid_cert,
+        access_token: token,
+    };
+    let provider =
+        JellyfinProvider::from_saved_session(session).map_err(|error| error.to_string())?;
+    runtime
+        .block_on(provider.stream(track_id))
+        .map_err(|error| error.to_string())
+}
+
 fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.data_dir().to_path_buf())
 }
@@ -819,21 +1506,28 @@ mod tests {
     use std::time::Duration;
 
     use super::{AppController, ControllerEvent, LibrarySnapshot};
+    use rufin_playback::PlaybackState;
     use rufin_test_support::FakeScale;
 
     #[test]
     fn no_server_bootstrap_enters_first_run_state() {
-        let (_controller, _events, snapshot) = AppController::bootstrap_memory_for_test();
+        let (_controller, _events, snapshot, queue, player) =
+            AppController::bootstrap_memory_for_test();
 
         assert!(snapshot.first_run);
         assert!(snapshot.server.is_none());
+        assert!(queue.is_none());
+        assert_eq!(player.state, PlaybackState::Stopped);
     }
 
     #[test]
     fn fake_bootstrap_routes_data_through_store_cache() {
-        let (_controller, _events, snapshot) = AppController::bootstrap(Some(FakeScale::Small));
+        let (_controller, _events, snapshot, queue, player) =
+            AppController::bootstrap(Some(FakeScale::Small));
 
         assert!(!snapshot.first_run);
+        assert!(queue.expect("queue").entries.is_empty());
+        assert_eq!(player.state, PlaybackState::Stopped);
         assert_eq!(
             snapshot.albums.len(),
             500.min(FakeScale::Small.album_count())
@@ -846,7 +1540,8 @@ mod tests {
 
     #[test]
     fn large_fake_bootstrap_seeds_visible_cache_window() {
-        let (_controller, _events, snapshot) = AppController::bootstrap(Some(FakeScale::Large));
+        let (_controller, _events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Large));
 
         assert!(!snapshot.first_run);
         assert_eq!(snapshot.albums.len(), 500);
@@ -855,7 +1550,8 @@ mod tests {
 
     #[test]
     fn clear_cache_emits_empty_active_server_snapshot() {
-        let (controller, events, snapshot) = AppController::bootstrap(Some(FakeScale::Small));
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
         let server = snapshot.server.expect("server");
 
         controller.clear_active_server_cache();
@@ -870,7 +1566,8 @@ mod tests {
 
     #[test]
     fn forget_server_emits_first_run_and_deletes_token() {
-        let (controller, events, snapshot) = AppController::bootstrap(Some(FakeScale::Small));
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
         let server_id = snapshot.server.expect("server").id;
         controller
             .secrets
@@ -892,7 +1589,8 @@ mod tests {
 
     #[test]
     fn duplicate_resync_requests_do_not_start_another_sync() {
-        let (controller, events, snapshot) = AppController::bootstrap(Some(FakeScale::Small));
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
         let server_id = snapshot.server.expect("server").id;
         controller
             .sync_in_flight
@@ -903,6 +1601,80 @@ mod tests {
         controller.resync_active_server();
 
         assert_eq!(wait_for_status(&events), "Sync already running.");
+    }
+
+    #[test]
+    fn play_now_starts_fake_playback_and_persists_queue() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let track = snapshot.tracks[0].clone();
+
+        controller.play_now(track.clone());
+        let queue = wait_for_queue(&events).expect("queue");
+        assert_eq!(queue.entries.len(), 1);
+        assert_eq!(queue.entries[0].track_id, track.id);
+
+        let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+        assert_eq!(
+            playback.current.expect("current").track_id,
+            queue.entries[0].track_id
+        );
+        assert_eq!(
+            controller
+                .store
+                .with_store(|store| store.load_queue_snapshot(&queue.server_id))
+                .expect("store")
+                .expect("snapshot")
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn next_previous_and_clear_keep_queue_and_player_synchronized() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first.clone(), second.clone()]);
+        let _queue = wait_for_queue(&events).expect("queue");
+        controller.next_track();
+        let queue = wait_for_queue(&events).expect("next queue");
+        assert_eq!(
+            queue.entries[queue.current_index.expect("current")].track_id,
+            second.id
+        );
+
+        controller.previous_track();
+        let queue = wait_for_queue(&events).expect("previous queue");
+        assert_eq!(
+            queue.entries[queue.current_index.expect("current")].track_id,
+            first.id
+        );
+
+        controller.clear_queue();
+        let queue = wait_for_queue(&events).expect("clear queue");
+        assert!(queue.entries.is_empty());
+    }
+
+    #[test]
+    fn end_of_stream_advances_queue() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first, second.clone()]);
+        let _queue = wait_for_queue(&events).expect("queue");
+        controller.advance_after_end_of_stream();
+        let queue = wait_for_queue(&events).expect("next queue");
+
+        assert_eq!(
+            queue.entries[queue.current_index.expect("current")].track_id,
+            second.id
+        );
     }
 
     #[test]
@@ -918,6 +1690,7 @@ mod tests {
                 .expect("controller event")
             {
                 ControllerEvent::Snapshot(snapshot) => return *snapshot,
+                ControllerEvent::Queue(_) | ControllerEvent::Playback(_) => {}
                 ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -931,8 +1704,54 @@ mod tests {
                 .expect("controller event")
             {
                 ControllerEvent::LoginStatus(status) => return status,
-                ControllerEvent::Snapshot(_) => {}
+                ControllerEvent::Snapshot(_)
+                | ControllerEvent::Queue(_)
+                | ControllerEvent::Playback(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
+    }
+
+    fn wait_for_queue(events: &Receiver<ControllerEvent>) -> Option<rufin_core::QueueSnapshot> {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::Queue(queue) => return *queue,
+                ControllerEvent::Snapshot(_)
+                | ControllerEvent::Playback(_)
+                | ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
+    }
+
+    fn wait_for_playback_state(
+        controller: &AppController,
+        events: &Receiver<ControllerEvent>,
+        state: PlaybackState,
+    ) -> super::PlaybackSnapshot {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for playback state"
+            );
+            controller.poll_playback_events();
+            match events.recv_timeout(Duration::from_millis(50)) {
+                Ok(event) => match event {
+                    ControllerEvent::Playback(playback) if playback.state == state => {
+                        return *playback;
+                    }
+                    ControllerEvent::Playback(_) | ControllerEvent::Queue(_) => {}
+                    ControllerEvent::Snapshot(_) | ControllerEvent::LoginStatus(_) => {}
+                    ControllerEvent::Error(error) => panic!("controller error: {error}"),
+                },
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    panic!("controller event channel closed")
+                }
             }
         }
     }

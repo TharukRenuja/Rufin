@@ -159,6 +159,14 @@ impl MusicProvider for FakeProvider {
             .ok_or(ProviderError::NotFound)
     }
 
+    async fn stream(&self, track_id: &TrackId) -> ProviderResult<rufin_provider::StreamDescriptor> {
+        self.track(track_id).await?;
+        Ok(rufin_provider::StreamDescriptor::new(format!(
+            "fake://local/stream/{}",
+            track_id.as_str()
+        )))
+    }
+
     async fn search(&self, query: &str) -> ProviderResult<SearchResults> {
         let query = query.to_lowercase();
         let albums = self

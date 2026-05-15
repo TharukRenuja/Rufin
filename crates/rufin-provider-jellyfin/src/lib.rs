@@ -10,7 +10,7 @@ use rufin_core::{
 use rufin_provider::{
     AlbumDetail, ImageKind, ImageMetadata, LoginRequest, MusicProvider, PagedRequest,
     PagedResponse, ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult,
-    ProviderSession, SavedProviderSession, SearchResults,
+    ProviderSession, SavedProviderSession, SearchResults, StreamDescriptor,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::instrument;
@@ -294,6 +294,28 @@ impl MusicProvider for JellyfinProvider {
         self.get_json::<JellyfinItem>(url)
             .await
             .map(track_from_item)
+    }
+
+    async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor> {
+        let raw_track_id = raw_item_id(track_id.as_str());
+        let mut url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/stream"))?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("DeviceId", DEVICE_ID)
+            .append_pair("Static", "true")
+            .append_pair("api_key", &self.access_token);
+        let mut redacted_url = url.clone();
+        redacted_url
+            .query_pairs_mut()
+            .clear()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("DeviceId", DEVICE_ID)
+            .append_pair("Static", "true")
+            .append_pair("api_key", "<redacted>");
+        Ok(StreamDescriptor::with_redacted(
+            url.to_string(),
+            redacted_url.to_string(),
+        ))
     }
 
     async fn search(&self, query: &str) -> ProviderResult<SearchResults> {
@@ -836,6 +858,26 @@ mod tests {
             .expect_err("auth error");
 
         assert!(matches!(error, ProviderError::Auth(_)));
+    }
+
+    #[tokio::test]
+    async fn stream_url_uses_direct_audio_endpoint_and_redacts_token() {
+        let server = MockServer::start().await;
+        let provider = provider(&server, "secret-token");
+
+        let stream = provider
+            .stream(&TrackId::new("jellyfin:track:track-one"))
+            .await
+            .expect("stream");
+
+        assert!(
+            stream
+                .uri()
+                .starts_with(&format!("{}/Audio/track-one/stream?", server.uri()))
+        );
+        assert!(stream.uri().contains("api_key=secret-token"));
+        assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
+        assert!(!format!("{stream:?}").contains("secret-token"));
     }
 
     fn provider(server: &MockServer, token: &str) -> JellyfinProvider {

@@ -1,111 +1,382 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the Rufin package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: Rufin 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
-"POT-Creation-Date: 2026-05-15 00:00+0000\n"
+"POT-Creation-Date: 2026-05-15 20:40+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
-"Language-Team: English\n"
-"Language: en\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
 "MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
+#: crates/rufin-app/src/i18n.rs:21
 msgid "Home"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:22 crates/rufin-app/src/ui.rs:254
 msgid "Favorites"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:23
 msgid "Albums"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:24 crates/rufin-app/src/ui.rs:493
+msgid "Album"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:25 crates/rufin-app/src/ui.rs:252
 msgid "Tracks"
 msgstr ""
 
-msgid "Album Artists"
+#: crates/rufin-app/src/i18n.rs:26
+msgid "Artist"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:27 crates/rufin-app/src/ui.rs:255
 msgid "Artists"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:28 crates/rufin-app/src/ui.rs:261
+msgid "Album Artists"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:29
+msgid "Genre"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:30 crates/rufin-app/src/ui.rs:263
 msgid "Genres"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:31
+msgid "Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:32 crates/rufin-app/src/ui.rs:268
 msgid "Playlists"
 msgstr ""
 
-msgid "Settings"
-msgstr ""
-
+#: crates/rufin-app/src/i18n.rs:33 crates/rufin-app/src/ui.rs:718
+#: crates/rufin-app/src/ui.rs:1328
 msgid "Search"
 msgstr ""
 
-msgid "Add Jellyfin Server"
+#: crates/rufin-app/src/i18n.rs:34
+msgid "Settings"
 msgstr ""
 
-msgid "Server URL"
+#: crates/rufin-app/src/i18n.rs:35
+msgid "Explore"
 msgstr ""
 
-msgid "Username"
+#: crates/rufin-app/src/i18n.rs:36
+msgid "Most played"
 msgstr ""
 
-msgid "Password"
+#: crates/rufin-app/src/i18n.rs:37
+msgid "Newly added"
 msgstr ""
 
-msgid "Trust invalid certificate for this server"
+#: crates/rufin-app/src/i18n.rs:38
+msgid "Recently played"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:39
+msgid "Recently released"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:40
+msgid "Back"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:41
+msgid "Forward"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:42
+msgid "Menu"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:43
 msgid "Connect"
 msgstr ""
 
-msgid "Jellyfin Server"
-msgstr ""
-
-msgid "User"
-msgstr ""
-
-msgid "Cached"
-msgstr ""
-
+#: crates/rufin-app/src/i18n.rs:44
 msgid "Resync Library"
 msgstr ""
 
-msgid "Clear Cached Library"
+#: crates/rufin-app/src/i18n.rs:45
+msgid "Play"
 msgstr ""
 
-msgid "Clear Cache"
+#: crates/rufin-app/src/i18n.rs:46
+msgid "Resume"
 msgstr ""
 
-msgid "Forget Server"
+#: crates/rufin-app/src/i18n.rs:47
+msgid "Pause"
 msgstr ""
 
-msgid "Cancel"
+#: crates/rufin-app/src/i18n.rs:48
+msgid "Stop"
 msgstr ""
 
-msgid "No active server"
+#: crates/rufin-app/src/i18n.rs:49
+msgid "Previous"
 msgstr ""
 
-msgid "This removes cached Jellyfin library metadata for the active server. Login stays saved."
+#: crates/rufin-app/src/i18n.rs:50
+msgid "Next"
 msgstr ""
 
-msgid "This removes the active server, cached library metadata, queue snapshot, and saved token."
+#: crates/rufin-app/src/i18n.rs:51
+msgid "Favorite"
 msgstr ""
 
-msgid "Queue"
+#: crates/rufin-app/src/i18n.rs:52
+msgid "Shuffle"
 msgstr ""
 
-msgid "Lyrics"
+#: crates/rufin-app/src/i18n.rs:53
+msgid "Shuffle on"
 msgstr ""
 
-msgid "Layout density"
+#: crates/rufin-app/src/i18n.rs:54
+msgid "Repeat off"
 msgstr ""
 
-msgid "Cached library"
+#: crates/rufin-app/src/i18n.rs:55
+msgid "Repeat one"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:56
+msgid "Repeat all"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:57
+msgid "Remove from queue"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:58
+msgid "Mute"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:59
+msgid "Play now"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:60
+msgid "Play next"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:61
+msgid "Add to queue"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:62
+msgid "Title"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:63
+msgid "Year"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:64
+msgid "Duration"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:65
+msgid "Yes"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:66 crates/rufin-app/src/ui.rs:799
+msgid "No server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:67 crates/rufin-app/src/ui.rs:804
+msgid "no account"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:68 crates/rufin-app/src/ui.rs:1101
+msgid "Nothing playing"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:69 crates/rufin-app/src/ui.rs:1113
+msgid "Queue a track to begin"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:70
+msgid "Artist detail will use cached album and track groups."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:71
+msgid "Genre detail keeps albums above tracks."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:72
+msgid "Playlist detail will use the track table."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:73
+msgid "Cached library data will appear here as sync pages finish."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:74
+msgid "The selected cached album was not found."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:75
+msgid "Cached rows will appear here after the background sync finishes."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:76
+msgid "Type a query in the sidebar search field to search the local cache."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:233 crates/rufin-app/src/ui.rs:289
+msgid "Add Jellyfin Server"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:293
+msgid ""
+"Tokens are saved in native Secret Service. Cached library metadata is saved "
+"in SQLite."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:300
+msgid "Server URL"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:303
+msgid "Username"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:305
+msgid "Password"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:309
+msgid "Trust invalid certificate for this server"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:507 crates/rufin-app/src/ui.rs:609
+#: crates/rufin-app/src/ui.rs:628 crates/rufin-app/src/ui.rs:645
+#: crates/rufin-app/src/ui.rs:811 crates/rufin-app/src/ui.rs:839
+msgid "tracks"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:607 crates/rufin-app/src/ui.rs:626
+#: crates/rufin-app/src/ui.rs:809 crates/rufin-app/src/ui.rs:837
 msgid "albums"
 msgstr ""
 
-msgid "tracks"
+#: crates/rufin-app/src/ui.rs:759
+msgid "Layout density"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:763
+msgid "Auto"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:763
+msgid "Normal"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:763
+msgid "Compact"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:782
+msgid ""
+"M0 keeps this setting in memory so the shell can exercise adaptive layouts."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:820
+msgid "Jellyfin Server"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:829
+msgid "No active server"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:833
+msgid "User"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:835
+msgid "Cached"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:872
+msgid "Clear Cached Library"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:874
+msgid ""
+"This removes cached Jellyfin library metadata for the active server. Login "
+"stays saved."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:877 crates/rufin-app/src/ui.rs:902
+#: crates/rufin-app/src/ui.rs:925
+msgid "Cancel"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:878
+msgid "Clear Cache"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:897 crates/rufin-app/src/ui.rs:903
+msgid "Forget Server"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:899
+msgid ""
+"This removes the active server, cached library metadata, queue snapshot, and "
+"saved token."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:922 crates/rufin-app/src/ui.rs:926
+msgid "Clear queue"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:923
+msgid "This removes all queued tracks and stops playback."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:959
+msgid "Queue"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:1005
+msgid "Add music to start a queue."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:1021
+msgid "Lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:1026
+msgid "Lyrics arrive in a later playback slice."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:1346
+msgid "My Library"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:1376
+msgid "Cached library"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:1576
+msgid "Actions"
 msgstr ""
