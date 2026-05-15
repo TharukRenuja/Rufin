@@ -31,6 +31,8 @@ const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 220;
 const HOME_ALBUM_MAX_SIZE: i32 = 260;
+const CACHED_LIBRARY_STARTUP_SYNC_DELAY_MS: u64 = 8_000;
+const EMPTY_LIBRARY_STARTUP_SYNC_DELAY_MS: u64 = 500;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -233,7 +235,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     install_event_pump(&shell, events);
 
     if options.fake_scale.is_none() {
-        shell.controller.start_background_sync_for_active();
+        schedule_startup_sync(&shell);
     }
 
     if let Some(delay_ms) = options.smoke_exit_ms {
@@ -1784,6 +1786,26 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
     });
 }
 
+fn schedule_startup_sync(shell: &Rc<Shell>) {
+    let delay_ms = {
+        let library = shell.state.library.borrow();
+        if library.first_run {
+            return;
+        }
+        if library.albums.is_empty() && library.tracks.is_empty() {
+            EMPTY_LIBRARY_STARTUP_SYNC_DELAY_MS
+        } else {
+            CACHED_LIBRARY_STARTUP_SYNC_DELAY_MS
+        }
+    };
+
+    let shell = Rc::clone(shell);
+    glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
+        debug!(delay_ms, "starting deferred background sync");
+        shell.controller.start_background_sync_for_active();
+    });
+}
+
 fn build_bottom_player() -> PlayerControls {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     root.add_css_class("bottom-player");
@@ -1975,8 +1997,17 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     shell.update_bottom_player();
                 }
                 ControllerEvent::LoginStatus(status) => {
-                    shell.state.library.borrow_mut().sync_status = status;
-                    shell.render_current_route();
+                    let should_render = {
+                        let mut library = shell.state.library.borrow_mut();
+                        library.sync_status = status;
+                        route_displays_sync_status(
+                            shell.state.routes.borrow().current(),
+                            library.first_run,
+                        )
+                    };
+                    if should_render {
+                        shell.render_current_route();
+                    }
                 }
                 ControllerEvent::Error(error) => {
                     warn!(%error, "controller error");
@@ -2363,6 +2394,10 @@ fn route_uses_responsive_cards(route: &Route) -> bool {
             | Route::ArtistDetail(_)
             | Route::Search { .. }
     )
+}
+
+fn route_displays_sync_status(route: &Route, first_run: bool) -> bool {
+    first_run || matches!(route, Route::Settings)
 }
 
 fn nonzero_usize(value: usize) -> Option<usize> {
