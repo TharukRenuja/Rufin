@@ -1,37 +1,72 @@
 use std::fmt;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct AlbumId(pub u32);
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TrackId(pub u32);
+macro_rules! opaque_id {
+    ($name:ident, $prefix:literal) => {
+        #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+        pub struct $name(String);
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ArtistId(pub u32);
+        impl $name {
+            pub fn new(value: impl Into<String>) -> Self {
+                let value = value.into();
+                assert!(
+                    !value.is_empty(),
+                    concat!(stringify!($name), " cannot be empty")
+                );
+                Self(value)
+            }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct GenreId(pub u32);
+            pub fn fake(number: impl fmt::Display) -> Self {
+                Self::new(format!("{}{}", $prefix, number))
+            }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct PlaylistId(pub u32);
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
 
-impl fmt::Display for AlbumId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "album-{}", self.0)
-    }
+        impl From<&str> for $name {
+            fn from(value: &str) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(value: String) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
+            }
+        }
+    };
 }
 
-impl fmt::Display for TrackId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "track-{}", self.0)
-    }
+opaque_id!(AlbumId, "album-");
+opaque_id!(TrackId, "track-");
+opaque_id!(ArtistId, "artist-");
+opaque_id!(GenreId, "genre-");
+opaque_id!(PlaylistId, "playlist-");
+opaque_id!(ServerId, "server-");
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServerIdentity {
+    pub id: ServerId,
+    pub provider: String,
+    pub name: String,
+    pub base_url: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Album {
     pub id: AlbumId,
     pub title: String,
     pub artist: String,
+    pub artist_id: Option<ArtistId>,
     pub year: u16,
     pub track_count: u16,
     pub duration_seconds: u32,
@@ -39,18 +74,71 @@ pub struct Album {
     pub color_seed: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Track {
     pub id: TrackId,
     pub album_id: AlbumId,
     pub title: String,
     pub artist: String,
+    pub artist_id: Option<ArtistId>,
     pub album: String,
     pub year: u16,
     pub duration_seconds: u32,
     pub favorite: bool,
     pub disc_number: u16,
     pub track_number: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Artist {
+    pub id: ArtistId,
+    pub name: String,
+    pub album_count: u32,
+    pub track_count: u32,
+    pub favorite: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Genre {
+    pub id: GenreId,
+    pub name: String,
+    pub album_count: u32,
+    pub track_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Playlist {
+    pub id: PlaylistId,
+    pub name: String,
+    pub track_count: u32,
+    pub duration_seconds: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum HomeSectionKind {
+    Explore,
+    MostPlayed,
+    NewlyAdded,
+    RecentlyPlayed,
+    RecentlyReleased,
+}
+
+impl HomeSectionKind {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Explore => "Explore",
+            Self::MostPlayed => "Most played",
+            Self::NewlyAdded => "Newly added",
+            Self::RecentlyPlayed => "Recently played",
+            Self::RecentlyReleased => "Recently released",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HomeSection {
+    pub kind: HomeSectionKind,
+    pub albums: Vec<Album>,
 }
 
 pub fn format_duration(seconds: u32) -> String {
@@ -61,12 +149,29 @@ pub fn format_duration(seconds: u32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_duration;
+    use super::{AlbumId, TrackId, format_duration};
 
     #[test]
     fn formats_track_duration() {
         assert_eq!(format_duration(0), "0:00");
         assert_eq!(format_duration(185), "3:05");
         assert_eq!(format_duration(3_661), "61:01");
+    }
+
+    #[test]
+    fn opaque_ids_are_displayable_and_comparable() {
+        let album = AlbumId::new("jellyfin:album:abc");
+        let same_album = AlbumId::from("jellyfin:album:abc");
+        let track = TrackId::fake(42);
+
+        assert_eq!(album, same_album);
+        assert_eq!(album.as_str(), "jellyfin:album:abc");
+        assert_eq!(track.to_string(), "track-42");
+    }
+
+    #[test]
+    #[should_panic(expected = "AlbumId cannot be empty")]
+    fn opaque_ids_reject_empty_values() {
+        let _id = AlbumId::new("");
     }
 }

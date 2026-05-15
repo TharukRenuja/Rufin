@@ -6,9 +6,11 @@ use adw::prelude::*;
 use gtk::gio;
 use gtk::glib;
 use rufin_core::{
-    Album, AlbumId, DensityMode, EffectiveDensity, Route, RouteStack, Track, format_duration,
+    Album, AlbumId, DensityMode, EffectiveDensity, HomeSection, Route, RouteStack, ServerIdentity,
+    Track, format_duration,
 };
-use rufin_test_support::{FakeLibrary, FakeScale, generate_fake_library};
+use rufin_provider::{MusicProvider, PagedRequest};
+use rufin_test_support::{FakeProvider, FakeScale};
 use tracing::{debug, info};
 
 use crate::i18n::tr;
@@ -23,7 +25,15 @@ struct AppState {
     routes: RefCell<RouteStack>,
     density_mode: Cell<DensityMode>,
     effective_density: Cell<EffectiveDensity>,
-    library: FakeLibrary,
+    library: ProviderSnapshot,
+}
+
+#[derive(Clone, Debug)]
+struct ProviderSnapshot {
+    server: ServerIdentity,
+    home_sections: Vec<HomeSection>,
+    albums: Vec<Album>,
+    tracks: Vec<Track>,
 }
 
 struct Shell {
@@ -41,13 +51,14 @@ struct Shell {
 pub fn build(app: &adw::Application, options: AppOptions) {
     install_css();
 
-    let generated_at = std::time::Instant::now();
-    let library = generate_fake_library(options.fake_scale);
+    let loaded_at = std::time::Instant::now();
+    let provider = FakeProvider::new(options.fake_scale);
+    let library = load_provider_snapshot(&provider);
     info!(
         albums = library.albums.len(),
         tracks = library.tracks.len(),
-        elapsed_ms = generated_at.elapsed().as_millis(),
-        "generated fake music library"
+        elapsed_ms = loaded_at.elapsed().as_millis(),
+        "loaded fake music library through provider boundary"
     );
 
     let state = AppState {
@@ -147,6 +158,31 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
 
     shell.window.present();
+}
+
+fn load_provider_snapshot(provider: &FakeProvider) -> ProviderSnapshot {
+    let context = glib::MainContext::default();
+    let home_sections = match context.block_on(provider.home_sections()) {
+        Ok(sections) => sections,
+        Err(error) => panic!("failed to load fake home sections: {error}"),
+    };
+    let albums =
+        match context.block_on(provider.albums(PagedRequest::new(0, provider.album_count()))) {
+            Ok(response) => response.items,
+            Err(error) => panic!("failed to load fake albums: {error}"),
+        };
+    let tracks =
+        match context.block_on(provider.tracks(PagedRequest::new(0, provider.track_count()))) {
+            Ok(response) => response.items,
+            Err(error) => panic!("failed to load fake tracks: {error}"),
+        };
+
+    ProviderSnapshot {
+        server: provider.identity().server.clone(),
+        home_sections,
+        albums,
+        tracks,
+    }
 }
 
 impl Shell {
@@ -265,34 +301,28 @@ impl Shell {
         content.set_margin_start(28);
         content.set_margin_end(28);
 
-        for (title, offset) in [
-            ("Explore", 0_usize),
-            ("Most played", 6),
-            ("Newly added", 12),
-            ("Recently played", 18),
-            ("Recently released", 24),
-        ] {
-            content.append(&self.home_album_section(title, offset));
+        for section in &self.state.library.home_sections {
+            content.append(&self.home_album_section(section));
         }
 
         scroller.set_child(Some(&content));
         scroller.upcast()
     }
 
-    fn home_album_section(self: &Rc<Self>, title: &str, offset: usize) -> gtk::Widget {
+    fn home_album_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        let heading = gtk::Label::new(Some(&tr(title)));
+        let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
         heading.add_css_class("section-heading");
         heading.set_xalign(0.0);
         section.append(&heading);
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         row.add_css_class("album-strip");
-        for album in self.state.library.albums.iter().skip(offset).take(8) {
+        for album in &section_data.albums {
             let card = self.album_card(album, true);
             let shell = Rc::clone(self);
-            let album_id = album.id;
-            card.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id)));
+            let album_id = album.id.clone();
+            card.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
             row.append(&card);
         }
 
@@ -347,7 +377,7 @@ impl Shell {
         let shell = Rc::clone(self);
         grid.connect_activate(move |_, position| {
             if let Some(album) = shell.state.library.albums.get(position as usize) {
-                shell.navigate(Route::AlbumDetail(album.id));
+                shell.navigate(Route::AlbumDetail(album.id.clone()));
             }
         });
 
@@ -361,7 +391,7 @@ impl Shell {
             .library
             .albums
             .iter()
-            .find(|album| album.id == album_id)
+            .find(|album| album.id.as_str() == album_id.as_str())
         else {
             return self.placeholder_view("Album", "The selected fake album was not found.");
         };
@@ -421,7 +451,7 @@ impl Shell {
             .library
             .tracks
             .iter()
-            .filter(|track| track.album_id == album_id)
+            .filter(|track| track.album_id.as_str() == album_id.as_str())
             .cloned()
             .collect::<Vec<_>>();
         let table = self.tracks_table(tracks);
@@ -528,7 +558,7 @@ impl Shell {
 
         let status = gtk::Label::new(Some(&format!(
             "{}: {} {} / {} {}",
-            tr("Fake library"),
+            self.state.library.server.name,
             self.state.library.albums.len(),
             tr("albums"),
             self.state.library.tracks.len(),

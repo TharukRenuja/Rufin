@@ -1,13 +1,14 @@
 use crate::domain::{AlbumId, ArtistId, GenreId, PlaylistId};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DensityMode {
     Auto,
     Normal,
     Compact,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EffectiveDensity {
     Normal,
     Compact,
@@ -25,7 +26,7 @@ impl DensityMode {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum SearchKind {
     All,
     Tracks,
@@ -34,7 +35,7 @@ pub enum SearchKind {
     Playlists,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Route {
     Home,
     Favorites,
@@ -73,7 +74,7 @@ impl Route {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RouteStack {
     back: Vec<Route>,
     current: Route,
@@ -156,6 +157,16 @@ mod tests {
 
         assert!(!stack.can_back());
         assert_eq!(stack.current(), &Route::Home);
+    }
+
+    #[test]
+    fn route_stack_supports_opaque_string_ids() {
+        let album_route = Route::AlbumDetail(crate::domain::AlbumId::new("jellyfin:album:abc"));
+        let mut stack = RouteStack::new(Route::Home);
+
+        stack.navigate(album_route.clone());
+
+        assert_eq!(stack.current(), &album_route);
     }
 
     #[test]
