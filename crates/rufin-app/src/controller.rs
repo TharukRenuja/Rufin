@@ -6,8 +6,8 @@ use std::thread;
 
 use directories::ProjectDirs;
 use rufin_core::{
-    Album, AlbumId, Artist, Genre, HomeSection, Playlist, QueueEngine, QueueEntry, QueueEntryId,
-    QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, AppSettings, Artist, Genre, HomeSection, Playlist, QueueEngine, QueueEntry,
+    QueueEntryId, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -161,6 +161,16 @@ impl StoreHandle {
 }
 
 impl AppController {
+    pub fn load_settings(&self) -> AppSettings {
+        self.store
+            .with_store(|store| store.load_settings())
+            .unwrap_or_default()
+    }
+
+    pub fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
+        self.store.with_store(|store| store.save_settings(settings))
+    }
+
     pub fn cached_album_detail(
         &self,
         album_id: &AlbumId,

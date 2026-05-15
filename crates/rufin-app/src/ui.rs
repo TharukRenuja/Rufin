@@ -8,9 +8,9 @@ use adw::prelude::*;
 use gtk::gio;
 use gtk::glib;
 use rufin_core::{
-    Album, AlbumId, Artist, DensityMode, EffectiveDensity, Genre, HomeSection, HomeSectionKind,
-    Playlist, QueueEntry, QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, Track,
-    format_duration,
+    Album, AlbumId, AppSettings, Artist, DensityMode, EffectiveDensity, Genre, HomeSection,
+    HomeSectionKind, Playlist, QueueEntry, QueueSnapshot, RepeatMode, Route, RouteStack,
+    SearchKind, Track, format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_test_support::FakeScale;
@@ -25,7 +25,8 @@ const TOTAL_PANEL_UNITS: i32 = 8;
 const NORMAL_SIDEBAR_WIDTH: i32 = 220;
 const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
-const HOME_ALBUM_MAX_SIZE: i32 = 220;
+const HOME_ALBUM_TARGET_SIZE: i32 = 220;
+const HOME_ALBUM_MAX_SIZE: i32 = 260;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -35,6 +36,7 @@ pub struct AppOptions {
 
 struct AppState {
     routes: RefCell<RouteStack>,
+    settings: RefCell<AppSettings>,
     density_mode: Cell<DensityMode>,
     effective_density: Cell<EffectiveDensity>,
     library: RefCell<LibrarySnapshot>,
@@ -94,6 +96,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     let loaded_at = std::time::Instant::now();
     let (controller, events, library, queue, player) = AppController::bootstrap(options.fake_scale);
+    let settings = controller.load_settings();
     info!(
         albums = library.albums.len(),
         tracks = library.tracks.len(),
@@ -104,7 +107,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
-        density_mode: Cell::new(DensityMode::Auto),
+        settings: RefCell::new(settings.clone()),
+        density_mode: Cell::new(settings.density_mode),
         effective_density: Cell::new(EffectiveDensity::Compact),
         library: RefCell::new(library),
         queue: RefCell::new(queue),
@@ -120,6 +124,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         .application(app)
         .title("Rufin")
         .build();
+    if let (Some(width), Some(height)) = (settings.window_width, settings.window_height)
+        && width >= 480
+        && height >= 360
+    {
+        window.set_default_size(width, height);
+    }
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("app-root");
@@ -254,7 +264,31 @@ impl Shell {
 
     fn set_density_mode(self: &Rc<Self>, density_mode: DensityMode) {
         self.state.density_mode.set(density_mode);
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            settings.density_mode = density_mode;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save density setting");
+            }
+        }
         self.update_density();
+    }
+
+    fn save_window_geometry(&self) {
+        let width = self.window.width();
+        let height = self.window.height();
+        if width < 480 || height < 360 {
+            return;
+        }
+        let mut settings = self.state.settings.borrow_mut();
+        if settings.window_width == Some(width) && settings.window_height == Some(height) {
+            return;
+        }
+        settings.window_width = Some(width);
+        settings.window_height = Some(height);
+        if let Err(error) = self.controller.save_settings(&settings) {
+            warn!(%error, "failed to save window geometry");
+        }
     }
 
     fn update_density(self: &Rc<Self>) {
@@ -885,9 +919,7 @@ impl Shell {
             shell.set_density_mode(density);
         });
 
-        let note = gtk::Label::new(Some(&tr(
-            "M0 keeps this setting in memory so the shell can exercise adaptive layouts.",
-        )));
+        let note = gtk::Label::new(Some(&tr("Saved locally for the next launch.")));
         note.add_css_class("muted");
         note.set_wrap(true);
         note.set_xalign(0.0);
@@ -1298,6 +1330,12 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
 
     let settings_shell = Rc::clone(shell);
     settings_button.connect_clicked(move |_| settings_shell.navigate(Route::Settings));
+
+    let close_shell = Rc::clone(shell);
+    shell.window.connect_close_request(move |_| {
+        close_shell.save_window_geometry();
+        glib::Propagation::Proceed
+    });
 
     let resize_shell = Rc::clone(shell);
     shell
@@ -1903,8 +1941,8 @@ fn render_home_album_page(
 }
 
 fn home_album_page_size(width: i32) -> usize {
-    let width = width.max(HOME_ALBUM_MIN_SIZE);
-    let item_width = HOME_ALBUM_MIN_SIZE + HOME_ALBUM_GAP;
+    let width = width.max(1);
+    let item_width = HOME_ALBUM_TARGET_SIZE + HOME_ALBUM_GAP;
     ((width + HOME_ALBUM_GAP) / item_width).clamp(2, 8) as usize
 }
 
@@ -1918,7 +1956,21 @@ fn clamp_home_album_page_start(page_start: usize, page_size: usize, album_count:
 }
 
 fn home_album_content_width(shell: &Shell) -> i32 {
-    let route_width = shell.route_host.width().max(1);
+    let mut route_width = shell.route_host.width();
+    let split_position = shell.content_split.position();
+    if split_position > 1 {
+        route_width = if route_width > 1 {
+            route_width.min(split_position)
+        } else {
+            split_position
+        };
+    }
+    if route_width <= 1 {
+        let split_width = shell.content_split.width();
+        if split_width > 1 {
+            route_width = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
+        }
+    }
     let horizontal_margins = 56;
     (route_width - horizontal_margins).max(HOME_ALBUM_MIN_SIZE)
 }
@@ -1926,7 +1978,9 @@ fn home_album_content_width(shell: &Shell) -> i32 {
 fn home_album_card_size(width: i32, page_size: usize) -> i32 {
     let page_size = page_size.max(1) as i32;
     let gaps = HOME_ALBUM_GAP * (page_size - 1);
-    ((width - gaps) / page_size).clamp(HOME_ALBUM_MIN_SIZE, HOME_ALBUM_MAX_SIZE)
+    let available_per_card = ((width - gaps).max(page_size)) / page_size;
+    let lower_bound = HOME_ALBUM_MIN_SIZE.min(available_per_card);
+    available_per_card.clamp(lower_bound, HOME_ALBUM_MAX_SIZE)
 }
 
 fn album_card_widget(album: &Album, density: EffectiveDensity, strip: bool) -> gtk::Widget {
@@ -2086,17 +2140,17 @@ fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::{
-        HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, HOME_ALBUM_MIN_SIZE, clamp_home_album_page_start,
-        home_album_card_size, home_album_page_size,
+        HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, clamp_home_album_page_start, home_album_card_size,
+        home_album_page_size,
     };
 
     #[test]
     fn home_album_page_size_uses_stable_content_width() {
-        let three_cards_width = HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
+        let three_cards_width = super::HOME_ALBUM_TARGET_SIZE * 3 + HOME_ALBUM_GAP * 2;
         assert_eq!(home_album_page_size(three_cards_width), 3);
         assert_eq!(home_album_page_size(three_cards_width + 1), 3);
 
-        let four_cards_width = HOME_ALBUM_MIN_SIZE * 4 + HOME_ALBUM_GAP * 3;
+        let four_cards_width = super::HOME_ALBUM_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
         assert_eq!(home_album_page_size(four_cards_width), 4);
         assert_eq!(home_album_page_size(1), 2);
         assert_eq!(home_album_page_size(10_000), 8);
@@ -2113,6 +2167,6 @@ mod tests {
     #[test]
     fn home_album_card_size_remains_bounded() {
         assert_eq!(home_album_card_size(10_000, 2), HOME_ALBUM_MAX_SIZE);
-        assert_eq!(home_album_card_size(1, 8), HOME_ALBUM_MIN_SIZE);
+        assert_eq!(home_album_card_size(1, 8), 1);
     }
 }

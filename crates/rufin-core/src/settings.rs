@@ -19,6 +19,10 @@ pub struct AppSettings {
     pub external_lyrics_enabled: bool,
     pub discord_presence_enabled: bool,
     pub home_sections: Vec<HomeSectionKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_height: Option<i32>,
 }
 
 impl Default for AppSettings {
@@ -37,6 +41,8 @@ impl Default for AppSettings {
                 HomeSectionKind::RecentlyPlayed,
                 HomeSectionKind::RecentlyReleased,
             ],
+            window_width: None,
+            window_height: None,
         }
     }
 }
@@ -57,11 +63,33 @@ mod tests {
 
     #[test]
     fn settings_serialize_to_json() {
-        let settings = AppSettings::default();
+        let settings = AppSettings {
+            window_width: Some(1180),
+            window_height: Some(760),
+            ..AppSettings::default()
+        };
 
         let json = serde_json::to_string(&settings).expect("serialize settings");
         let restored = serde_json::from_str::<AppSettings>(&json).expect("deserialize settings");
 
         assert_eq!(restored, settings);
+    }
+
+    #[test]
+    fn settings_restore_without_window_geometry() {
+        let json = r#"{
+            "density_mode":"Auto",
+            "theme_preference":"System",
+            "private_mode":false,
+            "notifications_enabled":false,
+            "external_lyrics_enabled":false,
+            "discord_presence_enabled":false,
+            "home_sections":["Explore"]
+        }"#;
+
+        let restored = serde_json::from_str::<AppSettings>(json).expect("deserialize settings");
+
+        assert_eq!(restored.window_width, None);
+        assert_eq!(restored.window_height, None);
     }
 }
