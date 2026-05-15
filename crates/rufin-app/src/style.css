@@ -14,7 +14,7 @@ window {
 }
 
 .compact-rail {
-  padding: 10px 6px;
+  padding: 8px 4px;
 }
 
 .main-area {
@@ -56,6 +56,13 @@ window {
   margin: 0 10px;
   padding: 8px 10px;
   border-radius: 8px;
+}
+
+.rail-button {
+  margin: 0 3px;
+  padding: 8px;
+  min-width: 34px;
+  min-height: 34px;
 }
 
 .nav-button:hover,
@@ -171,7 +178,7 @@ window {
 }
 
 .volume-slider {
-  min-width: 100px;
+  min-width: 78px;
 }
 
 .lyrics-panel {

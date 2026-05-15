@@ -17,6 +17,10 @@ use tracing::{debug, info, warn};
 use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
 use crate::i18n::tr;
 
+const COMPACT_RAIL_WIDTH: i32 = 46;
+const RIGHT_PANEL_WIDTH_NORMAL: i32 = 240;
+const RIGHT_PANEL_WIDTH_COMPACT: i32 = 200;
+
 #[derive(Clone, Debug)]
 pub struct AppOptions {
     pub fake_scale: Option<FakeScale>,
@@ -87,7 +91,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
         density_mode: Cell::new(DensityMode::Auto),
-        effective_density: Cell::new(DensityMode::Auto.resolve(1_400)),
+        effective_density: Cell::new(EffectiveDensity::Compact),
         library: RefCell::new(library),
         queue: RefCell::new(queue),
         player: RefCell::new(player),
@@ -99,8 +103,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Rufin")
-        .default_width(1_080)
-        .default_height(760)
         .build();
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -115,7 +117,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 8);
     compact_nav.add_css_class("compact-rail");
-    compact_nav.set_width_request(76);
+    compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
 
     let main_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
     main_area.add_css_class("main-area");
@@ -147,7 +149,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     let right_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
     right_panel.add_css_class("right-panel");
-    right_panel.set_width_request(340);
+    right_panel.set_width_request(RIGHT_PANEL_WIDTH_COMPACT);
     right_panel.set_vexpand(true);
     let player_controls = build_bottom_player();
 
@@ -237,9 +239,9 @@ impl Shell {
             .set_visible(next == EffectiveDensity::Compact);
         self.right_panel
             .set_width_request(if next == EffectiveDensity::Compact {
-                280
+                RIGHT_PANEL_WIDTH_COMPACT
             } else {
-                320
+                RIGHT_PANEL_WIDTH_NORMAL
             });
 
         if next != previous {
@@ -308,8 +310,8 @@ impl Shell {
         wrapper.set_margin_bottom(36);
         wrapper.set_margin_start(48);
         wrapper.set_margin_end(48);
-        wrapper.set_width_request(520);
-        wrapper.set_halign(gtk::Align::Center);
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
 
         let heading = gtk::Label::new(Some(&tr("Add Jellyfin Server")));
         heading.add_css_class("detail-title");
@@ -334,6 +336,7 @@ impl Shell {
         let trust_label = gtk::Label::new(Some(&tr("Trust invalid certificate for this server")));
         trust_label.set_xalign(0.0);
         trust_label.set_hexpand(true);
+        trust_label.set_wrap(true);
         trust_row.append(&trust_label);
         trust_row.append(&trust);
 
@@ -375,6 +378,7 @@ impl Shell {
     fn home_view(self: &Rc<Self>) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 26);
@@ -418,6 +422,7 @@ impl Shell {
 
         let strip = gtk::ScrolledWindow::new();
         strip.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        strip.set_min_content_width(0);
         strip.set_child(Some(&row));
         section.append(&strip);
         section.upcast()
@@ -426,6 +431,7 @@ impl Shell {
     fn albums_view(self: &Rc<Self>) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
         let albums = self.state.library.borrow().albums.clone();
@@ -503,6 +509,7 @@ impl Shell {
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 22);
@@ -618,6 +625,7 @@ impl Shell {
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
         scroller.set_child(Some(&table));
         scroller.upcast()
@@ -979,8 +987,8 @@ impl Shell {
         queue.add_css_class("queue-panel");
         queue.set_vexpand(true);
         queue.set_margin_top(16);
-        queue.set_margin_start(16);
-        queue.set_margin_end(16);
+        queue.set_margin_start(10);
+        queue.set_margin_end(10);
         queue.set_margin_bottom(12);
 
         let queue_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -1042,8 +1050,8 @@ impl Shell {
         lyrics.add_css_class("lyrics-panel");
         lyrics.set_vexpand(true);
         lyrics.set_margin_top(12);
-        lyrics.set_margin_start(16);
-        lyrics.set_margin_end(16);
+        lyrics.set_margin_start(10);
+        lyrics.set_margin_end(10);
         lyrics.set_margin_bottom(18);
 
         let lyrics_title = gtk::Label::new(Some(&tr("Lyrics")));
@@ -1071,7 +1079,7 @@ impl Shell {
         entry: &QueueEntry,
         current_index: Option<usize>,
     ) -> gtk::Widget {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         row.add_css_class("queue-row");
         if current_index == Some(index) {
             row.add_css_class("queue-row-current");
@@ -1079,7 +1087,7 @@ impl Shell {
         let number = gtk::Label::new(Some(&(index + 1).to_string()));
         number.add_css_class("muted");
         number.set_width_chars(2);
-        let cover = cover_tile(index as u32 * 7 + entry.duration_seconds, 42);
+        let cover = cover_tile(index as u32 * 7 + entry.duration_seconds, 32);
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         labels.set_hexpand(true);
         let title = gtk::Label::new(Some(&entry.title));
@@ -1091,8 +1099,6 @@ impl Shell {
         artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
         labels.append(&title);
         labels.append(&artist);
-        let duration = gtk::Label::new(Some(&format_duration(entry.duration_seconds)));
-        duration.add_css_class("muted");
         let remove = icon_button("user-trash-symbolic", "Remove from queue");
         let controller = self.controller.clone();
         let entry_id = entry.id.clone();
@@ -1100,7 +1106,6 @@ impl Shell {
         row.append(&number);
         row.append(&cover);
         row.append(&labels);
-        row.append(&duration);
         row.append(&remove);
         row.upcast()
     }
@@ -1245,7 +1250,7 @@ fn build_bottom_player() -> PlayerControls {
     root.append(&cover);
 
     let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    identity.set_width_request(190);
+    identity.set_width_request(160);
     let title = player_label("player-title");
     let artist = player_label("muted");
     let album = player_label("muted");
@@ -1297,7 +1302,7 @@ fn build_bottom_player() -> PlayerControls {
     actions.append(&mute_button);
     let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
     volume.add_css_class("volume-slider");
-    volume.set_width_request(110);
+    volume.set_width_request(88);
     volume.set_value(1.0);
     volume.set_draw_value(false);
     actions.append(&volume);
@@ -1589,6 +1594,9 @@ fn nav_button(
 ) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("nav-button");
+    if compact {
+        button.add_css_class("rail-button");
+    }
     button.set_tooltip_text(Some(&tr(label)));
 
     let content = gtk::Box::new(
@@ -1599,13 +1607,16 @@ fn nav_button(
         },
         8,
     );
-    content.append(&gtk::Image::from_icon_name(icon_name));
-    let text = gtk::Label::new(Some(&tr(label)));
-    text.set_xalign(0.0);
+    content.set_halign(gtk::Align::Center);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    content.append(&icon);
     if compact {
-        text.add_css_class("rail-label");
+        icon.set_pixel_size(18);
+    } else {
+        let text = gtk::Label::new(Some(&tr(label)));
+        text.set_xalign(0.0);
+        content.append(&text);
     }
-    content.append(&text);
     button.set_child(Some(&content));
 
     let shell = Rc::clone(shell);
