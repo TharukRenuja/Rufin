@@ -22,6 +22,8 @@ use crate::i18n::tr;
 const COMPACT_RAIL_WIDTH: i32 = 92;
 const MAIN_PANEL_UNITS: i32 = 5;
 const TOTAL_PANEL_UNITS: i32 = 8;
+const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
+const RIGHT_PANEL_MAX_PERCENT: i32 = 50;
 const NORMAL_SIDEBAR_WIDTH: i32 = 220;
 const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
@@ -46,6 +48,7 @@ struct AppState {
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
     split_width: Cell<i32>,
+    split_position: Cell<i32>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
 }
 
@@ -117,6 +120,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
         split_width: Cell::new(0),
+        split_position: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
     };
 
@@ -311,14 +315,30 @@ impl Shell {
 
     fn update_content_split(&self) -> bool {
         let split_width = self.content_split.width();
-        if split_width > 1 && self.state.split_width.replace(split_width) != split_width {
-            let position = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
+        if split_width <= 1 {
+            return false;
+        }
+
+        let previous_width = self.state.split_width.replace(split_width);
+        let current_position = self.content_split.position();
+        let default_position = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
+        let target_position =
+            if previous_width > 1 && previous_width != split_width && current_position > 1 {
+                current_position * split_width / previous_width
+            } else if current_position > 1 {
+                current_position
+            } else {
+                default_position
+            };
+        let position = clamp_content_split_position(split_width, target_position);
+        let position_changed = self.state.split_position.replace(position) != position;
+
+        if current_position != position {
             debug!(split_width, position, "update content split");
             self.content_split.set_position(position);
-            true
-        } else {
-            false
         }
+
+        previous_width != split_width || position_changed
     }
 
     fn render_current_route(self: &Rc<Self>) {
@@ -1364,6 +1384,16 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
         });
 
     let split_shell = Rc::clone(shell);
+    shell
+        .content_split
+        .connect_notify_local(Some("position"), move |_, _| {
+            let split_changed = split_shell.update_content_split();
+            if split_changed || matches!(split_shell.state.routes.borrow().current(), Route::Home) {
+                split_shell.render_current_route();
+            }
+        });
+
+    let split_shell = Rc::clone(shell);
     shell.content_split.add_tick_callback(move |_, _| {
         if split_shell.update_content_split()
             && matches!(split_shell.state.routes.borrow().current(), Route::Home)
@@ -1946,6 +1976,17 @@ fn home_album_page_size(width: i32) -> usize {
     ((width + HOME_ALBUM_GAP) / item_width).clamp(2, 8) as usize
 }
 
+fn clamp_content_split_position(split_width: i32, position: i32) -> i32 {
+    if split_width <= 1 {
+        return position;
+    }
+    let min_right_width = split_width * RIGHT_PANEL_MIN_PERCENT / 100;
+    let max_right_width = split_width * RIGHT_PANEL_MAX_PERCENT / 100;
+    let min_position = split_width - max_right_width;
+    let max_position = split_width - min_right_width;
+    position.clamp(min_position, max_position)
+}
+
 fn clamp_home_album_page_start(page_start: usize, page_size: usize, album_count: usize) -> usize {
     if album_count == 0 {
         return 0;
@@ -2140,8 +2181,8 @@ fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::{
-        HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, clamp_home_album_page_start, home_album_card_size,
-        home_album_page_size,
+        HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, clamp_content_split_position,
+        clamp_home_album_page_start, home_album_card_size, home_album_page_size,
     };
 
     #[test]
@@ -2168,5 +2209,12 @@ mod tests {
     fn home_album_card_size_remains_bounded() {
         assert_eq!(home_album_card_size(10_000, 2), HOME_ALBUM_MAX_SIZE);
         assert_eq!(home_album_card_size(1, 8), 1);
+    }
+
+    #[test]
+    fn content_split_position_limits_right_panel() {
+        assert_eq!(clamp_content_split_position(1_000, 100), 500);
+        assert_eq!(clamp_content_split_position(1_000, 950), 900);
+        assert_eq!(clamp_content_split_position(1_000, 625), 625);
     }
 }
