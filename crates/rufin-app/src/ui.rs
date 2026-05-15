@@ -18,8 +18,9 @@ use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, Playbac
 use crate::i18n::tr;
 
 const COMPACT_RAIL_WIDTH: i32 = 46;
-const RIGHT_PANEL_WIDTH_NORMAL: i32 = 240;
-const RIGHT_PANEL_WIDTH_COMPACT: i32 = 200;
+const MAIN_PANEL_UNITS: i32 = 5;
+const TOTAL_PANEL_UNITS: i32 = 8;
+const NORMAL_SIDEBAR_WIDTH: i32 = 220;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -45,6 +46,7 @@ struct Shell {
     window: adw::ApplicationWindow,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
+    content_split: gtk::Paned,
     route_title: gtk::Label,
     route_host: gtk::Box,
     back_button: gtk::Button,
@@ -113,7 +115,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     let normal_nav = gtk::Box::new(gtk::Orientation::Vertical, 10);
     normal_nav.add_css_class("wide-sidebar");
-    normal_nav.set_width_request(220);
+    normal_nav.set_width_request(NORMAL_SIDEBAR_WIDTH);
 
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 8);
     compact_nav.add_css_class("compact-rail");
@@ -149,14 +151,21 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     let right_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
     right_panel.add_css_class("right-panel");
-    right_panel.set_width_request(RIGHT_PANEL_WIDTH_COMPACT);
     right_panel.set_vexpand(true);
+
+    let content_split = gtk::Paned::new(gtk::Orientation::Horizontal);
+    content_split.set_hexpand(true);
+    content_split.set_vexpand(true);
+    content_split.set_wide_handle(false);
+    content_split.set_shrink_start_child(true);
+    content_split.set_shrink_end_child(true);
+    content_split.set_start_child(Some(&main_area));
+    content_split.set_end_child(Some(&right_panel));
     let player_controls = build_bottom_player();
 
     upper.append(&normal_nav);
     upper.append(&compact_nav);
-    upper.append(&main_area);
-    upper.append(&right_panel);
+    upper.append(&content_split);
     root.append(&upper);
     root.append(&player_controls.root);
 
@@ -168,6 +177,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         window,
         normal_nav,
         compact_nav,
+        content_split,
         route_title,
         route_host,
         back_button,
@@ -237,16 +247,19 @@ impl Shell {
             .set_visible(next == EffectiveDensity::Normal);
         self.compact_nav
             .set_visible(next == EffectiveDensity::Compact);
-        self.right_panel
-            .set_width_request(if next == EffectiveDensity::Compact {
-                RIGHT_PANEL_WIDTH_COMPACT
-            } else {
-                RIGHT_PANEL_WIDTH_NORMAL
-            });
+        self.update_content_split();
 
         if next != previous {
             debug!(?next, width, "effective density changed");
             self.render_current_route();
+        }
+    }
+
+    fn update_content_split(&self) {
+        let split_width = self.content_split.width();
+        if split_width > 1 {
+            self.content_split
+                .set_position(split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS);
         }
     }
 
@@ -1237,7 +1250,16 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
         .connect_notify_local(Some("width"), move |_, _| {
             if resize_shell.state.density_mode.get() == DensityMode::Auto {
                 resize_shell.update_density();
+            } else {
+                resize_shell.update_content_split();
             }
+        });
+
+    let split_shell = Rc::clone(shell);
+    shell
+        .content_split
+        .connect_notify_local(Some("width"), move |_, _| {
+            split_shell.update_content_split();
         });
 }
 
