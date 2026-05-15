@@ -401,6 +401,20 @@ impl AppController {
         self.play_tracks_now(vec![track]);
     }
 
+    pub fn play_album_now(&self, album_id: AlbumId) {
+        match self.cached_album_detail(&album_id) {
+            Ok(Some((_, tracks))) => self.play_tracks_now(tracks),
+            Ok(None) => {
+                let _sent = self.events.send(ControllerEvent::Error(
+                    "The selected cached album was not found.".to_string(),
+                ));
+            }
+            Err(error) => {
+                let _sent = self.events.send(ControllerEvent::Error(error));
+            }
+        }
+    }
+
     pub fn play_next(&self, track: Track) {
         let result = self.with_queue_mut(|queue| {
             queue.play_next(&track);

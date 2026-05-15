@@ -1479,6 +1479,7 @@ impl Shell {
         self.state.card_grid_columns.set(columns);
         let card_size = home_album_card_size(width, columns);
 
+        let shell_for_factory = Rc::clone(self);
         let selection = gtk::SingleSelection::new(Some(model.clone()));
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_bind(move |_, list_item| {
@@ -1492,7 +1493,11 @@ impl Shell {
                 return;
             };
             let album = boxed.borrow::<Album>();
-            list_item.set_child(Some(&album_card_widget_with_size(&album, card_size)));
+            list_item.set_child(Some(&album_card_widget_with_size(
+                &album,
+                card_size,
+                Some(&shell_for_factory.controller),
+            )));
         });
         factory.connect_unbind(|_, list_item| {
             if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
@@ -1583,7 +1588,11 @@ impl Shell {
         button.set_size_request(size, -1);
         button.set_hexpand(false);
         button.set_halign(gtk::Align::Start);
-        button.set_child(Some(&album_card_widget_with_size(album, size)));
+        button.set_child(Some(&album_card_widget_with_size(
+            album,
+            size,
+            Some(&self.controller),
+        )));
         button
     }
 
@@ -2424,15 +2433,7 @@ where
         button.set_hexpand(true);
         button.set_cursor_from_name(Some("pointer"));
 
-        let escaped_text = glib::markup_escape_text(&text);
-        let enter_label = label.clone();
-        let enter_markup = format!("<u>{escaped_text}</u>");
-        let leave_label = label.clone();
-        let leave_text = text.clone();
-        let motion = gtk::EventControllerMotion::new();
-        motion.connect_enter(move |_, _, _| enter_label.set_markup(&enter_markup));
-        motion.connect_leave(move |_| leave_label.set_text(&leave_text));
-        button.add_controller(motion);
+        add_link_hover(button.upcast_ref(), &label, &text);
 
         button.set_child(Some(&label));
 
@@ -2451,6 +2452,24 @@ where
     column.set_fixed_width(width);
     column.set_resizable(false);
     column
+}
+
+fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
+    let escaped_text = glib::markup_escape_text(text);
+    let enter_label = label.clone();
+    let enter_markup = format!("<u>{escaped_text}</u>");
+    let leave_label = label.clone();
+    let leave_text = text.to_string();
+    let motion = gtk::EventControllerMotion::new();
+    motion.connect_enter(move |_, _, _| {
+        enter_label.add_css_class("hovered-link");
+        enter_label.set_markup(&enter_markup);
+    });
+    motion.connect_leave(move |_| {
+        leave_label.remove_css_class("hovered-link");
+        leave_label.set_text(&leave_text);
+    });
+    target.add_controller(motion);
 }
 
 fn render_home_album_page(
@@ -2580,14 +2599,18 @@ fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
     ((width - gaps).max(page_size)) / page_size
 }
 
-fn album_card_widget_with_size(album: &Album, size: i32) -> gtk::Widget {
+fn album_card_widget_with_size(
+    album: &Album,
+    size: i32,
+    controller: Option<&AppController>,
+) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.add_css_class("album-card");
     card.set_width_request(size);
     card.set_size_request(size, -1);
     card.set_hexpand(false);
     card.set_halign(gtk::Align::Start);
-    let cover = cover_tile(album.color_seed, size);
+    let cover = album_cover_tile(album, size, controller);
     card.append(&cover);
 
     let title = gtk::Label::new(Some(&album.title));
@@ -2599,6 +2622,7 @@ fn album_card_widget_with_size(album: &Album, size: i32) -> gtk::Widget {
     title.set_lines(2);
     title.set_wrap(true);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    add_link_hover(title.upcast_ref(), &title, &album.title);
     let artist = gtk::Label::new(Some(&album.artist));
     artist.add_css_class("muted");
     artist.set_xalign(0.0);
@@ -2606,6 +2630,7 @@ fn album_card_widget_with_size(album: &Album, size: i32) -> gtk::Widget {
     artist.set_size_request(size, -1);
     artist.set_max_width_chars((size / 8).max(8));
     artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    add_link_hover(artist.upcast_ref(), &artist, &album.artist);
     let year = gtk::Label::new(Some(&album.year.to_string()));
     year.add_css_class("muted");
     year.set_xalign(0.0);
@@ -2615,6 +2640,66 @@ fn album_card_widget_with_size(album: &Album, size: i32) -> gtk::Widget {
     card.append(&artist);
     card.append(&year);
     card.upcast()
+}
+
+fn album_cover_tile(album: &Album, size: i32, controller: Option<&AppController>) -> gtk::Widget {
+    let overlay = gtk::Overlay::new();
+    overlay.set_width_request(size);
+    overlay.set_height_request(size);
+    overlay.set_size_request(size, size);
+    overlay.set_hexpand(false);
+    overlay.set_halign(gtk::Align::Start);
+    overlay.set_child(Some(&cover_tile(album.color_seed, size)));
+
+    let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    shade.add_css_class("cover-hover-layer");
+    shade.set_width_request(size);
+    shade.set_height_request(size);
+    shade.set_size_request(size, size);
+    shade.set_can_target(false);
+    shade.set_visible(false);
+    overlay.add_overlay(&shade);
+
+    let play = icon_button("media-playback-start-symbolic", "Play album");
+    play.add_css_class("cover-hover-button");
+    play.add_css_class("cover-play-button");
+    play.set_halign(gtk::Align::Center);
+    play.set_valign(gtk::Align::Center);
+    play.set_visible(false);
+    if let Some(controller) = controller {
+        let controller = controller.clone();
+        let album_id = album.id.clone();
+        play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
+    }
+    overlay.add_overlay(&play);
+
+    let favorite = icon_button("emblem-favorite-symbolic", "Favorite");
+    favorite.add_css_class("cover-hover-button");
+    favorite.add_css_class("cover-favorite-button");
+    favorite.set_halign(gtk::Align::End);
+    favorite.set_valign(gtk::Align::Start);
+    favorite.set_margin_top(8);
+    favorite.set_margin_end(8);
+    favorite.set_visible(false);
+    overlay.add_overlay(&favorite);
+
+    let motion = gtk::EventControllerMotion::new();
+    let shade_for_enter = shade.clone();
+    let play_for_enter = play.clone();
+    let favorite_for_enter = favorite.clone();
+    motion.connect_enter(move |_, _, _| {
+        shade_for_enter.set_visible(true);
+        play_for_enter.set_visible(true);
+        favorite_for_enter.set_visible(true);
+    });
+    motion.connect_leave(move |_| {
+        shade.set_visible(false);
+        play.set_visible(false);
+        favorite.set_visible(false);
+    });
+    overlay.add_controller(motion);
+
+    overlay.upcast()
 }
 
 fn artist_card_widget_with_size(artist: &Artist, size: i32) -> gtk::Widget {
