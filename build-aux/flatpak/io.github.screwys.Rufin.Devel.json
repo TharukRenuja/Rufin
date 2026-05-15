@@ -1,0 +1,41 @@
+{
+  "app-id": "io.github.screwys.Rufin.Devel",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "50",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "rufin",
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin"
+  },
+  "finish-args": [
+    "--share=ipc",
+    "--share=network",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--socket=pulseaudio",
+    "--device=dri",
+    "--talk-name=org.freedesktop.secrets"
+  ],
+  "modules": [
+    {
+      "name": "rufin",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cargo build --release -p rufin-app",
+        "install -Dm755 target/release/rufin /app/bin/rufin",
+        "install -Dm644 data/io.github.screwys.Rufin.Devel.desktop /app/share/applications/io.github.screwys.Rufin.Devel.desktop",
+        "install -Dm644 data/io.github.screwys.Rufin.Devel.metainfo.xml /app/share/metainfo/io.github.screwys.Rufin.Devel.metainfo.xml",
+        "install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg /app/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../.."
+        }
+      ]
+    }
+  ]
+}

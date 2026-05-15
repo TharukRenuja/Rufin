@@ -1,0 +1,167 @@
+window {
+  background: #111217;
+  color: #f4f5fb;
+}
+
+.app-root {
+  background: #111217;
+}
+
+.wide-sidebar,
+.compact-rail {
+  background: #0b0c10;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.compact-rail {
+  padding: 10px 6px;
+}
+
+.main-area {
+  background: #171923;
+}
+
+.right-panel {
+  background: #101116;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.route-header {
+  min-height: 56px;
+  padding: 8px 14px;
+  background: #171923;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.route-title {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.route-content {
+  background: #171923;
+}
+
+.nav-heading,
+.section-heading,
+.panel-title {
+  font-weight: 700;
+}
+
+.section-heading {
+  font-size: 22px;
+}
+
+.nav-button {
+  margin: 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.nav-button:hover,
+.album-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.rail-label {
+  font-size: 11px;
+}
+
+.server-card,
+.settings-group {
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.album-strip {
+  padding-bottom: 4px;
+}
+
+.album-button {
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.album-card {
+  padding: 0;
+}
+
+.cover-tile {
+  border-radius: 8px;
+}
+
+.album-title,
+.player-title {
+  font-weight: 600;
+}
+
+.detail-title {
+  font-size: 42px;
+  font-weight: 800;
+}
+
+.detail-artist {
+  font-size: 16px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #b6c4ff;
+}
+
+.muted {
+  color: #aab0c2;
+}
+
+.pill-button {
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-weight: 700;
+}
+
+.icon-button {
+  border-radius: 8px;
+}
+
+.track-table {
+  background: #171923;
+}
+
+.queue-panel {
+  min-height: 310px;
+}
+
+.queue-list,
+.lyrics-lines {
+  background: transparent;
+}
+
+.queue-row {
+  padding: 6px 4px;
+}
+
+.lyrics-panel {
+  min-height: 260px;
+}
+
+.lyric-line {
+  color: #6f7483;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.lyric-current {
+  color: #f4f5fb;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.bottom-player {
+  padding: 14px 18px;
+  background: #0d0e13;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
