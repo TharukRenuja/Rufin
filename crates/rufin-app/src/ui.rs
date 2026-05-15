@@ -1945,9 +1945,10 @@ fn render_home_album_page(
     }
 
     let width = home_album_content_width(shell);
-    let page_size = home_album_page_size(width);
     let page_start = {
         let mut states = shell.state.home_section_state.borrow_mut();
+        let existing_page_size = states.get(&section_kind).map(|state| state.page_size);
+        let page_size = home_album_page_size(width, existing_page_size);
         let state = states.entry(section_kind).or_insert(HomeSectionState {
             page_start: 0,
             page_size,
@@ -1958,6 +1959,15 @@ fn render_home_album_page(
         }
         state.page_start = clamp_home_album_page_start(state.page_start, page_size, albums.len());
         state.page_start
+    };
+    let page_size = {
+        shell
+            .state
+            .home_section_state
+            .borrow()
+            .get(&section_kind)
+            .map(|state| state.page_size)
+            .unwrap_or_else(|| home_album_page_size(width, None))
     };
     let card_size = home_album_card_size(width, page_size);
     let page_end = page_start.saturating_add(page_size).min(albums.len());
@@ -1974,10 +1984,23 @@ fn render_home_album_page(
     }
 }
 
-fn home_album_page_size(width: i32) -> usize {
+fn home_album_page_size(width: i32, current_page_size: Option<usize>) -> usize {
     let width = width.max(1);
-    let item_width = HOME_ALBUM_TARGET_SIZE + HOME_ALBUM_GAP;
-    ((width + HOME_ALBUM_GAP) / item_width).clamp(2, 8) as usize
+    let mut page_size = current_page_size
+        .unwrap_or_else(|| {
+            let item_width = HOME_ALBUM_TARGET_SIZE + HOME_ALBUM_GAP;
+            ((width + HOME_ALBUM_GAP) / item_width).clamp(2, 8) as usize
+        })
+        .clamp(2, 8);
+
+    while page_size > 2 && home_album_raw_card_size(width, page_size) < HOME_ALBUM_MIN_SIZE {
+        page_size -= 1;
+    }
+    while page_size < 8 && home_album_raw_card_size(width, page_size) > HOME_ALBUM_MAX_SIZE {
+        page_size += 1;
+    }
+
+    page_size
 }
 
 fn clamp_content_split_position(split_width: i32, position: i32) -> i32 {
@@ -2021,11 +2044,13 @@ fn home_album_content_width(shell: &Shell) -> i32 {
 }
 
 fn home_album_card_size(width: i32, page_size: usize) -> i32 {
+    home_album_raw_card_size(width, page_size).clamp(1, HOME_ALBUM_MAX_SIZE)
+}
+
+fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
     let page_size = page_size.max(1) as i32;
     let gaps = HOME_ALBUM_GAP * (page_size - 1);
-    let available_per_card = ((width - gaps).max(page_size)) / page_size;
-    let lower_bound = HOME_ALBUM_MIN_SIZE.min(available_per_card);
-    available_per_card.clamp(lower_bound, HOME_ALBUM_MAX_SIZE)
+    ((width - gaps).max(page_size)) / page_size
 }
 
 fn album_card_widget(album: &Album, density: EffectiveDensity, strip: bool) -> gtk::Widget {
@@ -2205,13 +2230,24 @@ mod tests {
     #[test]
     fn home_album_page_size_uses_stable_content_width() {
         let three_cards_width = super::HOME_ALBUM_TARGET_SIZE * 3 + HOME_ALBUM_GAP * 2;
-        assert_eq!(home_album_page_size(three_cards_width), 3);
-        assert_eq!(home_album_page_size(three_cards_width + 1), 3);
+        assert_eq!(home_album_page_size(three_cards_width, None), 3);
+        assert_eq!(home_album_page_size(three_cards_width + 1, None), 3);
 
         let four_cards_width = super::HOME_ALBUM_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
-        assert_eq!(home_album_page_size(four_cards_width), 4);
-        assert_eq!(home_album_page_size(1), 2);
-        assert_eq!(home_album_page_size(10_000), 8);
+        assert_eq!(home_album_page_size(four_cards_width, None), 4);
+        assert_eq!(home_album_page_size(1, None), 2);
+        assert_eq!(home_album_page_size(10_000, None), 8);
+    }
+
+    #[test]
+    fn home_album_page_size_changes_only_at_size_bounds() {
+        let three_cards_width = super::HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
+        assert_eq!(home_album_page_size(three_cards_width, Some(3)), 3);
+        assert_eq!(home_album_page_size(three_cards_width - 1, Some(3)), 2);
+
+        let three_cards_max_width = HOME_ALBUM_MAX_SIZE * 3 + HOME_ALBUM_GAP * 2;
+        assert_eq!(home_album_page_size(three_cards_max_width, Some(3)), 3);
+        assert_eq!(home_album_page_size(three_cards_max_width + 3, Some(3)), 4);
     }
 
     #[test]
