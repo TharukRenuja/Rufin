@@ -8,11 +8,12 @@ use adw::prelude::*;
 use gtk::gio;
 use gtk::glib;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, DensityMode, EffectiveDensity, Genre, HomeSection,
-    HomeSectionKind, Playlist, QueueEntry, QueueSnapshot, RepeatMode, Route, RouteStack,
-    SearchKind, Track, format_duration,
+    Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
+    HomeSection, HomeSectionKind, Playlist, QueueEntry, QueueSnapshot, RepeatMode, Route,
+    RouteStack, SearchKind, Track, format_duration,
 };
 use rufin_playback::PlaybackState;
+use rufin_store::CachedArtistDetail;
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
 
@@ -371,10 +372,7 @@ impl Shell {
             Route::Settings => self.settings_view(),
             Route::Favorites => self.tracks_view(library.favorites.clone(), &tr("Favorites")),
             Route::Artists => self.artist_list_view(library.artists.clone(), &tr("Artists")),
-            Route::ArtistDetail(_) => self.placeholder_view(
-                "Artist",
-                "Artist detail will use cached album and track groups.",
-            ),
+            Route::ArtistDetail(artist_id) => self.artist_detail_view(artist_id),
             Route::AlbumArtists => {
                 self.artist_list_view(library.album_artists.clone(), &tr("Album Artists"))
             }
@@ -757,22 +755,169 @@ impl Shell {
     }
 
     fn artist_list_view(self: &Rc<Self>, artists: Vec<Artist>, title: &str) -> gtk::Widget {
-        let rows = artists
-            .into_iter()
-            .map(|artist| {
-                (
-                    artist.name,
-                    format!(
-                        "{} {} / {} {}",
-                        artist.album_count,
-                        tr("albums"),
-                        artist.track_count,
-                        tr("tracks")
-                    ),
-                )
-            })
-            .collect::<Vec<_>>();
-        self.simple_list_view(title, rows, "avatar-default-symbolic")
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(24);
+        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_start(28);
+        wrapper.set_margin_end(28);
+        wrapper.set_vexpand(true);
+
+        let heading = gtk::Label::new(Some(title));
+        heading.add_css_class("section-heading");
+        heading.set_xalign(0.0);
+        wrapper.append(&heading);
+
+        if artists.is_empty() {
+            wrapper.append(&self.placeholder_view(
+                title,
+                "Cached rows will appear here after the background sync finishes.",
+            ));
+            return wrapper.upcast();
+        }
+
+        let list = gtk::ListBox::new();
+        list.add_css_class("cached-list");
+        for artist in artists {
+            let button = gtk::Button::new();
+            button.add_css_class("flat");
+            button.set_hexpand(true);
+            button.set_halign(gtk::Align::Fill);
+
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            row.add_css_class("cached-row");
+            row.append(&gtk::Image::from_icon_name("avatar-default-symbolic"));
+            let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            labels.set_hexpand(true);
+            let name_label = gtk::Label::new(Some(&artist.name));
+            name_label.set_xalign(0.0);
+            name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            let subtitle_label = gtk::Label::new(Some(&format!(
+                "{} {} / {} {}",
+                artist.album_count,
+                tr("albums"),
+                artist.track_count,
+                tr("tracks")
+            )));
+            subtitle_label.add_css_class("muted");
+            subtitle_label.set_xalign(0.0);
+            labels.append(&name_label);
+            labels.append(&subtitle_label);
+            row.append(&labels);
+            button.set_child(Some(&row));
+
+            let shell = Rc::clone(self);
+            let artist_id = artist.id.clone();
+            button.connect_clicked(move |_| shell.navigate(Route::ArtistDetail(artist_id.clone())));
+            list.append(&button);
+        }
+
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_vexpand(true);
+        scroller.set_child(Some(&list));
+        wrapper.append(&scroller);
+        wrapper.upcast()
+    }
+
+    fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
+        let detail = self
+            .controller
+            .cached_artist_detail(&artist_id)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                let library = self.state.library.borrow();
+                let artist = library
+                    .artists
+                    .iter()
+                    .chain(library.album_artists.iter())
+                    .find(|artist| artist.id.as_str() == artist_id.as_str())
+                    .cloned()?;
+                let albums = library
+                    .albums
+                    .iter()
+                    .filter(|album| {
+                        album.artist_id.as_ref().map(ArtistId::as_str) == Some(artist_id.as_str())
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let tracks = library
+                    .tracks
+                    .iter()
+                    .filter(|track| {
+                        track.artist_id.as_ref().map(ArtistId::as_str) == Some(artist_id.as_str())
+                            || albums.iter().any(|album| album.id == track.album_id)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                Some(CachedArtistDetail {
+                    artist,
+                    albums,
+                    tracks,
+                })
+            });
+        let Some(detail) = detail else {
+            return self.placeholder_view("Artist", "The selected cached artist was not found.");
+        };
+        let artist = detail.artist;
+        let albums = detail.albums;
+        let tracks = detail.tracks;
+
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(28);
+        wrapper.set_margin_bottom(36);
+        wrapper.set_margin_start(32);
+        wrapper.set_margin_end(32);
+        wrapper.set_vexpand(true);
+
+        let title = gtk::Label::new(Some(&artist.name));
+        title.add_css_class("detail-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        wrapper.append(&title);
+
+        let summary = gtk::Label::new(Some(&format!(
+            "{} {} / {} {}",
+            artist.album_count,
+            tr("albums"),
+            artist.track_count,
+            tr("tracks")
+        )));
+        summary.add_css_class("muted");
+        summary.set_xalign(0.0);
+        wrapper.append(&summary);
+
+        if !albums.is_empty() {
+            let album_heading = gtk::Label::new(Some(&tr("Albums")));
+            album_heading.add_css_class("section-heading");
+            album_heading.set_xalign(0.0);
+            wrapper.append(&album_heading);
+
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            for album in albums.iter().take(16) {
+                let card = self.album_card_with_size(album, 150);
+                let shell = Rc::clone(self);
+                let album_id = album.id.clone();
+                card.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
+                row.append(&card);
+            }
+            let scroller = gtk::ScrolledWindow::new();
+            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+            scroller.set_child(Some(&row));
+            wrapper.append(&scroller);
+        }
+
+        if tracks.is_empty() {
+            wrapper.append(
+                &self.placeholder_view("Tracks", "No cached tracks are linked to this artist yet."),
+            );
+        } else {
+            wrapper.append(&self.tracks_table(tracks));
+        }
+
+        wrapper.upcast()
     }
 
     fn genre_list_view(self: &Rc<Self>, genres: Vec<Genre>, title: &str) -> gtk::Widget {

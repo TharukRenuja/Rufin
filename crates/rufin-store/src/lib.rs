@@ -46,6 +46,13 @@ pub struct CoverCacheEntry {
     pub path: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CachedArtistDetail {
+    pub artist: Artist,
+    pub albums: Vec<Album>,
+    pub tracks: Vec<Track>,
+}
+
 pub struct Store {
     connection: Connection,
 }
@@ -624,18 +631,18 @@ impl Store {
             connection.execute(
                 "
                 UPDATE albums
-                SET track_count = (
+                SET track_count = MAX(track_count, (
                     SELECT COUNT(*)
                     FROM tracks
                     WHERE tracks.server_id = albums.server_id
                       AND tracks.album_id = albums.album_id
-                ),
-                    duration_seconds = (
+                )),
+                    duration_seconds = MAX(duration_seconds, (
                     SELECT COALESCE(SUM(duration_seconds), 0)
                     FROM tracks
                     WHERE tracks.server_id = albums.server_id
                       AND tracks.album_id = albums.album_id
-                )
+                ))
                 WHERE server_id = ?1
                 ",
                 params![server_id.as_str()],
@@ -643,18 +650,18 @@ impl Store {
             connection.execute(
                 "
                 UPDATE artists
-                SET track_count = (
+                SET track_count = MAX(track_count, (
                     SELECT COUNT(*)
                     FROM tracks
                     WHERE tracks.server_id = artists.server_id
                       AND tracks.artist_id = artists.artist_id
-                ),
-                    album_count = (
+                )),
+                    album_count = MAX(album_count, (
                     SELECT COUNT(DISTINCT album_id)
                     FROM tracks
                     WHERE tracks.server_id = artists.server_id
                       AND tracks.artist_id = artists.artist_id
-                )
+                ))
                 WHERE server_id = ?1
                 ",
                 params![server_id.as_str()],
@@ -662,18 +669,18 @@ impl Store {
             connection.execute(
                 "
                 UPDATE album_artists
-                SET track_count = (
+                SET track_count = MAX(track_count, (
                     SELECT COALESCE(SUM(track_count), 0)
                     FROM albums
                     WHERE albums.server_id = album_artists.server_id
                       AND albums.artist_id = album_artists.artist_id
-                ),
-                    album_count = (
+                )),
+                    album_count = MAX(album_count, (
                     SELECT COUNT(*)
                     FROM albums
                     WHERE albums.server_id = album_artists.server_id
                       AND albums.artist_id = album_artists.artist_id
-                )
+                ))
                 WHERE server_id = ?1
                 ",
                 params![server_id.as_str()],
@@ -916,6 +923,84 @@ impl Store {
             track_from_row,
         )?)?;
         Ok(Some((album, tracks)))
+    }
+
+    pub fn load_artist_detail(
+        &self,
+        server_id: &ServerId,
+        artist_id: &ArtistId,
+    ) -> StoreResult<Option<CachedArtistDetail>> {
+        let artist = if let Some(artist) = self
+            .connection
+            .query_row(
+                "
+                SELECT artist_id, name, album_count, track_count, favorite
+                FROM artists
+                WHERE server_id = ?1 AND artist_id = ?2
+                ",
+                params![server_id.as_str(), artist_id.as_str()],
+                artist_from_row,
+            )
+            .optional()?
+        {
+            artist
+        } else {
+            let Some(artist) = self
+                .connection
+                .query_row(
+                    "
+                    SELECT artist_id, name, album_count, track_count, favorite
+                    FROM album_artists
+                    WHERE server_id = ?1 AND artist_id = ?2
+                    ",
+                    params![server_id.as_str(), artist_id.as_str()],
+                    artist_from_row,
+                )
+                .optional()?
+            else {
+                return Ok(None);
+            };
+            artist
+        };
+
+        let mut albums_statement = self.connection.prepare(
+            "
+            SELECT album_id, title, artist, artist_id, year, track_count,
+                   duration_seconds, favorite, color_seed
+            FROM albums
+            WHERE server_id = ?1 AND artist_id = ?2
+            ORDER BY year, title COLLATE NOCASE
+            ",
+        )?;
+        let albums = collect_rows(albums_statement.query_map(
+            params![server_id.as_str(), artist_id.as_str()],
+            album_from_row,
+        )?)?;
+
+        let mut tracks_statement = self.connection.prepare(
+            "
+            SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
+                   t.album, t.year, t.duration_seconds, t.favorite,
+                   t.disc_number, t.track_number
+            FROM tracks t
+            LEFT JOIN albums a
+                ON a.server_id = t.server_id AND a.album_id = t.album_id
+            WHERE t.server_id = ?1
+              AND (t.artist_id = ?2 OR a.artist_id = ?2)
+            ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
+                     t.title COLLATE NOCASE
+            ",
+        )?;
+        let tracks = collect_rows(tracks_statement.query_map(
+            params![server_id.as_str(), artist_id.as_str()],
+            track_from_row,
+        )?)?;
+
+        Ok(Some(CachedArtistDetail {
+            artist,
+            albums,
+            tracks,
+        }))
     }
 
     pub fn load_tracks(
@@ -1703,6 +1788,84 @@ mod tests {
         assert_eq!(artist.track_count, 2);
         assert_eq!(album_artist.album_count, 1);
         assert_eq!(album_artist.track_count, 2);
+    }
+
+    #[test]
+    fn refresh_library_counts_preserves_provider_counts_without_relationships() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let artist = Artist {
+            id: ArtistId::fake(99),
+            name: "Provider Counted".to_string(),
+            album_count: 3,
+            track_count: 18,
+            favorite: false,
+        };
+
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+        store
+            .refresh_library_counts(&saved.server.id)
+            .expect("refresh counts");
+
+        let artist = store
+            .load_artists(&saved.server.id, false, 0, 1)
+            .expect("load artists")
+            .items
+            .remove(0);
+
+        assert_eq!(artist.album_count, 3);
+        assert_eq!(artist.track_count, 18);
+    }
+
+    #[test]
+    fn artist_detail_uses_album_artist_albums_and_tracks() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let artist = Artist {
+            id: album.artist_id.clone().expect("album artist id"),
+            name: album.artist.clone(),
+            album_count: 0,
+            track_count: 0,
+            favorite: false,
+        };
+        let mut track = track(1, &album);
+        track.artist_id = None;
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                true,
+                generation,
+            )
+            .expect("upsert album artist");
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &artist.id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(detail.artist, artist);
+        assert_eq!(detail.albums, vec![album]);
+        assert_eq!(detail.tracks, vec![track]);
     }
 
     #[test]

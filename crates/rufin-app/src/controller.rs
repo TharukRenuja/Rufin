@@ -6,8 +6,8 @@ use std::thread;
 
 use directories::ProjectDirs;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, Genre, HomeSection, Playlist, QueueEngine, QueueEntry,
-    QueueEntryId, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, HomeSection, Playlist, QueueEngine,
+    QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -18,7 +18,7 @@ use rufin_provider::{
 };
 use rufin_provider_jellyfin::JellyfinProvider;
 use rufin_secrets::{MemorySecretStore, SecretServiceStore, SecretStore};
-use rufin_store::{SavedServer, Store, StoreError};
+use rufin_store::{CachedArtistDetail, SavedServer, Store, StoreError};
 use rufin_test_support::{FakeProvider, FakeScale};
 use tokio::runtime::Runtime;
 use tracing::{info, instrument, warn};
@@ -184,6 +184,21 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.load_album_detail(&server.id, album_id))
+    }
+
+    pub fn cached_artist_detail(
+        &self,
+        artist_id: &ArtistId,
+    ) -> Result<Option<CachedArtistDetail>, String> {
+        let Some(server) = self
+            .store
+            .with_store(|store| store.active_server())?
+            .map(|saved| saved.server)
+        else {
+            return Ok(None);
+        };
+        self.store
+            .with_store(|store| store.load_artist_detail(&server.id, artist_id))
     }
 
     pub fn bootstrap(
@@ -1194,8 +1209,9 @@ async fn sync_album_pages(
             .await
             .map_err(|error| error.to_string())?;
         store.with_store(|store| store.upsert_albums(server_id, &page.items, generation))?;
-        offset += page.items.len();
-        if offset >= page.total || page.items.is_empty() {
+        let item_count = page.items.len();
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
             return Ok(());
         }
     }
@@ -1214,8 +1230,9 @@ async fn sync_track_pages(
             .await
             .map_err(|error| error.to_string())?;
         store.with_store(|store| store.upsert_tracks(server_id, &page.items, generation))?;
-        offset += page.items.len();
-        if offset >= page.total || page.items.is_empty() {
+        let item_count = page.items.len();
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
             return Ok(());
         }
     }
@@ -1241,8 +1258,9 @@ async fn sync_artist_pages(
         store.with_store(|store| {
             store.upsert_artists(server_id, &page.items, album_artist, generation)
         })?;
-        offset += page.items.len();
-        if offset >= page.total || page.items.is_empty() {
+        let item_count = page.items.len();
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
             return Ok(());
         }
     }
@@ -1261,8 +1279,9 @@ async fn sync_genre_pages(
             .await
             .map_err(|error| error.to_string())?;
         store.with_store(|store| store.upsert_genres(server_id, &page.items, generation))?;
-        offset += page.items.len();
-        if offset >= page.total || page.items.is_empty() {
+        let item_count = page.items.len();
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
             return Ok(());
         }
     }
@@ -1281,11 +1300,16 @@ async fn sync_playlist_pages(
             .await
             .map_err(|error| error.to_string())?;
         store.with_store(|store| store.upsert_playlists(server_id, &page.items, generation))?;
-        offset += page.items.len();
-        if offset >= page.total || page.items.is_empty() {
+        let item_count = page.items.len();
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
             return Ok(());
         }
     }
+}
+
+fn sync_page_finished(item_count: usize, total: usize, offset: usize) -> bool {
+    item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < PAGE_SIZE)
 }
 
 fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
@@ -1553,7 +1577,7 @@ mod tests {
     use std::sync::mpsc::Receiver;
     use std::time::Duration;
 
-    use super::{AppController, ControllerEvent, LibrarySnapshot};
+    use super::{AppController, ControllerEvent, LibrarySnapshot, sync_page_finished};
     use rufin_playback::PlaybackState;
     use rufin_test_support::FakeScale;
 
@@ -1584,6 +1608,14 @@ mod tests {
             snapshot.tracks.len(),
             1_000.min(FakeScale::Small.track_count())
         );
+    }
+
+    #[test]
+    fn sync_pages_continue_when_total_is_unknown() {
+        assert!(!sync_page_finished(500, 0, 500));
+        assert!(sync_page_finished(120, 0, 620));
+        assert!(!sync_page_finished(120, 1_000, 620));
+        assert!(sync_page_finished(500, 1_000, 1_000));
     }
 
     #[test]

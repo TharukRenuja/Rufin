@@ -583,8 +583,20 @@ fn artist_from_item(item: JellyfinItem) -> Artist {
     Artist {
         id: ArtistId::new(jellyfin_id("artist", &item.id)),
         name: item.name.unwrap_or_else(|| "Unknown Artist".to_string()),
-        album_count: u32_from_option(item.album_count.or(item.child_count)),
-        track_count: u32_from_option(item.song_count),
+        album_count: u32_from_option(
+            item.album_count
+                .or_else(|| {
+                    item.item_counts
+                        .as_ref()
+                        .and_then(|counts| counts.album_count)
+                })
+                .or(item.child_count),
+        ),
+        track_count: u32_from_option(item.song_count.or_else(|| {
+            item.item_counts
+                .as_ref()
+                .and_then(|counts| counts.song_count)
+        })),
         favorite: favorite(&item.user_data),
     }
 }
@@ -593,8 +605,20 @@ fn genre_from_item(item: JellyfinItem) -> Genre {
     Genre {
         id: GenreId::new(jellyfin_id("genre", &item.id)),
         name: item.name.unwrap_or_else(|| "Unknown Genre".to_string()),
-        album_count: u32_from_option(item.album_count.or(item.child_count)),
-        track_count: u32_from_option(item.song_count),
+        album_count: u32_from_option(
+            item.album_count
+                .or_else(|| {
+                    item.item_counts
+                        .as_ref()
+                        .and_then(|counts| counts.album_count)
+                })
+                .or(item.child_count),
+        ),
+        track_count: u32_from_option(item.song_count.or_else(|| {
+            item.item_counts
+                .as_ref()
+                .and_then(|counts| counts.song_count)
+        })),
     }
 }
 
@@ -663,11 +687,19 @@ struct JellyfinItem {
     child_count: Option<i32>,
     album_count: Option<i32>,
     song_count: Option<i32>,
+    item_counts: Option<JellyfinItemCounts>,
     index_number: Option<i32>,
     parent_index_number: Option<i32>,
     user_data: Option<UserData>,
     #[allow(dead_code)]
     image_tags: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct JellyfinItemCounts {
+    album_count: Option<i32>,
+    song_count: Option<i32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -832,8 +864,10 @@ mod tests {
                 "Items": [{
                     "Id": "artist-one",
                     "Name": "Astral Kin",
-                    "AlbumCount": 4,
-                    "SongCount": 30,
+                    "ItemCounts": {
+                        "AlbumCount": 4,
+                        "SongCount": 30
+                    },
                     "UserData": { "IsFavorite": true }
                 }]
             })))
@@ -848,6 +882,7 @@ mod tests {
 
         assert_eq!(artists.items[0].id.as_str(), "jellyfin:artist:artist-one");
         assert_eq!(artists.items[0].album_count, 4);
+        assert_eq!(artists.items[0].track_count, 30);
         assert!(artists.items[0].favorite);
     }
 
