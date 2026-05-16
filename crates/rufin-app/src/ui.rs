@@ -44,14 +44,16 @@ const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
-const BOTTOM_PLAYER_HEIGHT: i32 = 76;
-const BOTTOM_PLAYER_COVER_SIZE: i32 = 68;
+const BOTTOM_PLAYER_HEIGHT: i32 = 82;
+const BOTTOM_PLAYER_COVER_SIZE: i32 = 72;
 const BOTTOM_PLAYER_IDENTITY_WIDTH: i32 = 190;
 const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 400;
 const BOTTOM_PLAYER_TRANSPORT_OFFSET: i32 = 80;
 const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 300;
 const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 40;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 44.0;
+const BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP: i32 = 6;
+const RIGHT_PANEL_FADE_MS: u64 = 160;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -91,6 +93,8 @@ struct AppState {
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
+    right_panel_visible: Cell<bool>,
+    right_panel_animation_generation: Cell<u64>,
     split_width: Cell<i32>,
     split_position: Cell<i32>,
     card_grid_columns: Cell<usize>,
@@ -283,6 +287,8 @@ struct PlayerControls {
     next_button: gtk::Button,
     shuffle_button: gtk::Button,
     repeat_button: gtk::Button,
+    queue_button: gtk::Button,
+    queue_icon: gtk::Image,
     favorite_button: gtk::Button,
     elapsed: gtk::Label,
     progress: gtk::Scale,
@@ -326,6 +332,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
+        right_panel_visible: Cell::new(true),
+        right_panel_animation_generation: Cell::new(0),
         split_width: Cell::new(0),
         split_position: Cell::new(0),
         card_grid_columns: Cell::new(0),
@@ -2939,6 +2947,37 @@ impl Shell {
         self.state.updating_player_controls.set(false);
     }
 
+    fn toggle_right_panel(self: &Rc<Self>) {
+        self.set_right_panel_visible(!self.state.right_panel_visible.get());
+    }
+
+    fn set_right_panel_visible(self: &Rc<Self>, visible: bool) {
+        if self.state.right_panel_visible.replace(visible) == visible {
+            self.update_right_panel_button();
+            return;
+        }
+
+        let generation = self
+            .state
+            .right_panel_animation_generation
+            .get()
+            .saturating_add(1);
+        self.state.right_panel_animation_generation.set(generation);
+        self.update_right_panel_button();
+        animate_right_panel_visibility(Rc::clone(self), visible, generation);
+    }
+
+    fn update_right_panel_button(&self) {
+        let visible = self.state.right_panel_visible.get();
+        self.player_controls
+            .queue_icon
+            .set_icon_name(Some("sidebar-show-right-symbolic"));
+        self.player_controls
+            .queue_button
+            .set_tooltip_text(Some(&tr(if visible { "Hide queue" } else { "Show queue" })));
+        set_active_class(&self.player_controls.queue_button, visible);
+    }
+
     fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 12);
         wrapper.add_css_class("empty-state");
@@ -3881,26 +3920,32 @@ fn build_bottom_player() -> PlayerControls {
 
     let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
     stop_button.add_css_class("player-transport-button");
-    let previous_button = icon_button("go-previous-symbolic", "Previous");
+    let previous_button = skip_icon_button(false, "Previous");
     previous_button.add_css_class("player-transport-button");
     let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
     play_button.add_css_class("player-transport-button");
     play_button.add_css_class("player-play-button");
-    let next_button = icon_button("go-next-symbolic", "Next");
+    let next_button = skip_icon_button(true, "Next");
     next_button.add_css_class("player-transport-button");
     let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
     let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
+    let dj_button = icon_button("media-optical-cd-audio-symbolic", "Auto DJ");
 
     let button_center = f64::from(BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2.0;
     let button_y = 6.0;
     let play_y = 2.0;
     buttons.put(
         &stop_button,
-        button_center - BOTTOM_PLAYER_BUTTON_STEP * 2.0 - 14.0,
+        button_center - BOTTOM_PLAYER_BUTTON_STEP * 3.0 - 14.0,
         button_y,
     );
     buttons.put(
         &previous_button,
+        button_center - BOTTOM_PLAYER_BUTTON_STEP * 2.0 - 14.0,
+        button_y,
+    );
+    buttons.put(
+        &shuffle_button,
         button_center - BOTTOM_PLAYER_BUTTON_STEP - 14.0,
         button_y,
     );
@@ -3911,12 +3956,12 @@ fn build_bottom_player() -> PlayerControls {
         button_y,
     );
     buttons.put(
-        &shuffle_button,
+        &repeat_button,
         button_center + BOTTOM_PLAYER_BUTTON_STEP * 2.0 - 14.0,
         button_y,
     );
     buttons.put(
-        &repeat_button,
+        &dj_button,
         button_center + BOTTOM_PLAYER_BUTTON_STEP * 3.0 - 14.0,
         button_y,
     );
@@ -3949,7 +3994,9 @@ fn build_bottom_player() -> PlayerControls {
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     actions.set_valign(gtk::Align::Center);
-    actions.append(&icon_button("view-list-symbolic", "Queue"));
+    let (queue_button, queue_icon) = icon_button_with_image("sidebar-show-right-symbolic", "Queue");
+    queue_button.add_css_class("active-toggle");
+    actions.append(&queue_button);
     actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
     let favorite_button = favorite_icon_button("Favorite");
     actions.append(&favorite_button);
@@ -3968,6 +4015,7 @@ fn build_bottom_player() -> PlayerControls {
         .set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH + BOTTOM_PLAYER_TRANSPORT_OFFSET);
     transport_slot.set_halign(gtk::Align::Center);
     transport_slot.set_valign(gtk::Align::Center);
+    transport_slot.set_margin_top(BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP);
     transport_slot.append(&transport);
     let offset_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     offset_spacer.set_width_request(BOTTOM_PLAYER_TRANSPORT_OFFSET);
@@ -3990,6 +4038,8 @@ fn build_bottom_player() -> PlayerControls {
         next_button,
         shuffle_button,
         repeat_button,
+        queue_button,
+        queue_icon,
         favorite_button,
         elapsed,
         progress,
@@ -4036,6 +4086,12 @@ fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .repeat_button
         .connect_clicked(move |_| controller.cycle_repeat());
+
+    let queue_shell = Rc::clone(shell);
+    shell
+        .player_controls
+        .queue_button
+        .connect_clicked(move |_| queue_shell.toggle_right_panel());
 
     let controller = shell.controller.clone();
     shell
@@ -4125,6 +4181,44 @@ fn connect_player_controls(shell: &Rc<Shell>) {
             }
             volume_shell.controller.set_volume(scale.value());
         });
+}
+
+fn animate_right_panel_visibility(shell: Rc<Shell>, visible: bool, generation: u64) {
+    let panel = shell.right_panel.clone();
+    if visible {
+        if panel.parent().is_none() {
+            shell.content_split.set_end_child(Some(&panel));
+        }
+        panel.set_opacity(0.0);
+        panel.set_visible(true);
+    }
+
+    let start_opacity = if visible { 0.0 } else { panel.opacity() };
+    let end_opacity = if visible { 1.0 } else { 0.0 };
+    let started_at = Instant::now();
+    glib::timeout_add_local(Duration::from_millis(16), move || {
+        if shell.state.right_panel_animation_generation.get() != generation {
+            return glib::ControlFlow::Break;
+        }
+
+        let progress =
+            (started_at.elapsed().as_millis() as f64 / RIGHT_PANEL_FADE_MS as f64).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
+        panel.set_opacity(start_opacity + (end_opacity - start_opacity) * eased);
+
+        if progress >= 1.0 {
+            panel.set_opacity(end_opacity);
+            if visible {
+                panel.set_visible(true);
+            } else {
+                panel.set_visible(false);
+                shell.content_split.set_end_child(None::<&gtk::Widget>);
+            }
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
 }
 
 fn install_mpris(shell: &Rc<Shell>) {
@@ -5992,6 +6086,53 @@ fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     button.add_css_class("flat");
     button.add_css_class("circular");
     button.set_tooltip_text(Some(&tr(label)));
+    button
+}
+
+fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.set_tooltip_text(Some(&tr(label)));
+
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(16);
+    icon.set_content_height(16);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(move |area, context, width, height| {
+        let color = area.color();
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            f64::from(color.alpha()),
+        );
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let center_y = height / 2.0;
+        let top = center_y - 4.5;
+        let bottom = center_y + 4.5;
+        if forward {
+            context.move_to(width * 0.30, top);
+            context.line_to(width * 0.30, bottom);
+            context.line_to(width * 0.70, center_y);
+            context.close_path();
+            let _ = context.fill();
+            context.rectangle(width * 0.76, top, 2.0, bottom - top);
+            let _ = context.fill();
+        } else {
+            context.rectangle(width * 0.20, top, 2.0, bottom - top);
+            let _ = context.fill();
+            context.move_to(width * 0.70, top);
+            context.line_to(width * 0.70, bottom);
+            context.line_to(width * 0.30, center_y);
+            context.close_path();
+            let _ = context.fill();
+        }
+    });
+    button.set_child(Some(&icon));
     button
 }
 
