@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 use rufin_core::{
@@ -36,6 +36,8 @@ const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
+const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(900);
+const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
 
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
@@ -138,6 +140,7 @@ pub struct AppController {
     queue: Arc<Mutex<Option<QueueEngine>>>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
+    pending_seek: Arc<Mutex<Option<PendingSeek>>>,
     auto_dj_enabled: Arc<Mutex<bool>>,
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
@@ -146,6 +149,12 @@ pub struct AppController {
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_in_flight: Arc<Mutex<HashSet<String>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingSeek {
+    target_millis: u64,
+    expires_at: Instant,
 }
 
 #[derive(Clone)]
@@ -530,6 +539,7 @@ impl AppController {
                 queue: Arc::new(Mutex::new(queue)),
                 playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
                 playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
+                pending_seek: Arc::new(Mutex::new(None)),
                 auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
                 last_progress_snapshot: Arc::new(Mutex::new(None)),
                 last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -570,6 +580,7 @@ impl AppController {
             queue: Arc::new(Mutex::new(queue)),
             playback: Arc::new(Mutex::new(playback_backend(false))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
+            pending_seek: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -616,6 +627,7 @@ impl AppController {
                 auto_dj_enabled: settings.auto_dj_enabled,
                 ..PlaybackSnapshot::default()
             })),
+            pending_seek: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -1064,6 +1076,7 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
+        self.remember_pending_seek(millis);
         let queue_snapshot = self.queue_snapshot();
         if let Some(snapshot) = &queue_snapshot {
             self.persist_queue_snapshot(snapshot);
@@ -1123,6 +1136,9 @@ impl AppController {
                     });
                 }
                 PlaybackEvent::PositionChanged { seconds, millis } => {
+                    if self.should_ignore_position_after_seek(millis) {
+                        continue;
+                    }
                     let _result = self.with_queue_mut(|queue| {
                         queue.set_progress_seconds(seconds);
                         Ok(())
@@ -1894,6 +1910,32 @@ impl AppController {
         }
     }
 
+    fn remember_pending_seek(&self, target_millis: u64) {
+        if let Ok(mut pending_seek) = self.pending_seek.lock() {
+            *pending_seek = Some(PendingSeek {
+                target_millis,
+                expires_at: Instant::now() + SEEK_SETTLE_WINDOW,
+            });
+        }
+    }
+
+    fn should_ignore_position_after_seek(&self, millis: u64) -> bool {
+        let now = Instant::now();
+        let Ok(mut pending_seek) = self.pending_seek.lock() else {
+            return false;
+        };
+        let Some(pending) = *pending_seek else {
+            return false;
+        };
+
+        if now >= pending.expires_at {
+            *pending_seek = None;
+            return false;
+        }
+
+        seek_position_is_stale(pending, millis, now)
+    }
+
     fn sync_playback_snapshot_from_queue(&self) {
         let queue = self.queue.lock().ok();
         let queue = queue.as_ref().and_then(|queue| queue.as_ref());
@@ -2649,6 +2691,16 @@ fn playback_snapshot_from_queue(
         })
 }
 
+fn seek_position_is_stale(pending: PendingSeek, millis: u64, now: Instant) -> bool {
+    now < pending.expires_at && !seek_position_matches_target(pending.target_millis, millis)
+}
+
+fn seek_position_matches_target(target_millis: u64, millis: u64) -> bool {
+    let lower = target_millis.saturating_sub(SEEK_POSITION_TOLERANCE_MILLIS);
+    let upper = target_millis.saturating_add(SEEK_POSITION_TOLERANCE_MILLIS);
+    (lower..=upper).contains(&millis)
+}
+
 fn shuffle_seed() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3108,15 +3160,17 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AppController, ControllerEvent, LibrarySnapshot, StoreHandle, auto_dj_candidates,
-        load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
-        refresh_home_sections, restore_queue, sync_page_finished,
+        AppController, ControllerEvent, LibrarySnapshot, PendingSeek, StoreHandle,
+        auto_dj_candidates, load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
+        refresh_home_sections, restore_queue, seek_position_is_stale, sync_page_finished,
     };
     use rufin_core::{
         AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, ImageRef, PlaylistId,
         QueueEngine, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
     };
-    use rufin_playback::PlaybackState;
+    use rufin_playback::{
+        PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
+    };
     use rufin_provider::{
         FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest,
     };
@@ -3124,6 +3178,41 @@ mod tests {
     use rufin_store::{CoverCacheEntry, SavedServer};
     use rufin_test_support::{FakeProvider, FakeScale};
     use tokio::runtime::Runtime;
+
+    struct StalePositionAfterSeekBackend {
+        stale_millis: u64,
+        events: Vec<PlaybackEvent>,
+    }
+
+    impl StalePositionAfterSeekBackend {
+        fn new(stale_millis: u64) -> Self {
+            Self {
+                stale_millis,
+                events: Vec::new(),
+            }
+        }
+    }
+
+    impl PlaybackBackend for StalePositionAfterSeekBackend {
+        fn send(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
+            if let PlaybackCommand::SeekMillis(millis) = command {
+                self.events.push(position_event_for_test(millis));
+                self.events.push(position_event_for_test(self.stale_millis));
+            }
+            Ok(())
+        }
+
+        fn drain_events(&mut self) -> Vec<PlaybackEvent> {
+            std::mem::take(&mut self.events)
+        }
+    }
+
+    fn position_event_for_test(millis: u64) -> PlaybackEvent {
+        PlaybackEvent::PositionChanged {
+            seconds: (millis / 1_000).min(u64::from(u32::MAX)) as u32,
+            millis,
+        }
+    }
 
     #[test]
     fn no_server_bootstrap_enters_first_run_state() {
@@ -3489,6 +3578,56 @@ mod tests {
 
         let playback = wait_for_playback_position(&events, 12_345);
         assert_eq!(playback.position_seconds, 12);
+    }
+
+    #[test]
+    fn poll_playback_events_ignores_stale_positions_after_seek() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        controller.play_now(snapshot.tracks[0].clone());
+        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+        {
+            let mut playback = controller.playback.lock().expect("playback");
+            *playback = Box::new(StalePositionAfterSeekBackend::new(125_000));
+        }
+
+        controller.seek_millis(42_000);
+        assert_eq!(
+            controller
+                .playback_snapshot
+                .lock()
+                .expect("playback snapshot")
+                .position_millis,
+            42_000
+        );
+
+        controller.poll_playback_events();
+
+        assert_eq!(
+            controller
+                .playback_snapshot
+                .lock()
+                .expect("playback snapshot")
+                .position_millis,
+            42_000
+        );
+    }
+
+    #[test]
+    fn pending_seek_rejects_far_positions_only_during_settle_window() {
+        let now = std::time::Instant::now();
+        let pending = PendingSeek {
+            target_millis: 42_000,
+            expires_at: now + super::SEEK_SETTLE_WINDOW,
+        };
+
+        assert!(seek_position_is_stale(pending, 125_000, now));
+        assert!(!seek_position_is_stale(pending, 43_000, now));
+        assert!(!seek_position_is_stale(
+            pending,
+            125_000,
+            pending.expires_at
+        ));
     }
 
     #[test]
@@ -3967,6 +4106,7 @@ mod tests {
                 rufin_playback::FakePlaybackBackend::new(),
             ))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot)),
+            pending_seek: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
