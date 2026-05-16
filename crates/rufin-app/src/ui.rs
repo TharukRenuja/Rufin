@@ -33,6 +33,7 @@ const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 220;
 const HOME_ALBUM_MAX_SIZE: i32 = 260;
+const GRID_ROUTE_PAGE_SIZE: usize = 96;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
@@ -76,6 +77,19 @@ struct ArtworkTile {
 struct HomeSectionState {
     page_start: usize,
     page_size: usize,
+}
+
+struct PagedGridCursor {
+    offset: Cell<usize>,
+    total: Cell<usize>,
+    loading: Cell<bool>,
+}
+
+struct PagedGridConfig {
+    route: Route,
+    offset: usize,
+    total: usize,
+    page_name: &'static str,
 }
 
 struct GroupedDetailData {
@@ -387,8 +401,8 @@ impl Shell {
             self.route_host.remove(&child);
         }
 
-        let library = self.state.library.borrow().clone();
-        if library.first_run {
+        let first_run = self.state.library.borrow().first_run;
+        if first_run {
             self.route_title.set_text(&tr("Add Jellyfin Server"));
             self.back_button.set_sensitive(false);
             self.forward_button.set_sensitive(false);
@@ -412,43 +426,25 @@ impl Shell {
                 self.controller
                     .cached_tracks_page(0, 5_000)
                     .map(|page| page.items)
-                    .unwrap_or_else(|_| library.tracks.clone()),
+                    .unwrap_or_else(|_| self.state.library.borrow().tracks.clone()),
                 &tr("Tracks"),
             ),
             Route::Settings => self.settings_view(),
-            Route::Favorites => self.tracks_view(library.favorites.clone(), &tr("Favorites")),
-            Route::Artists => self.artist_list_view(
-                self.controller
-                    .cached_artists_page(false, 0, 2_000)
-                    .map(|page| page.items)
-                    .unwrap_or_else(|_| library.artists.clone()),
-                &tr("Artists"),
-            ),
+            Route::Favorites => {
+                let favorites = self.state.library.borrow().favorites.clone();
+                self.tracks_view(favorites, &tr("Favorites"))
+            }
+            Route::Artists => self.artist_list_view(false, &tr("Artists")),
             Route::ArtistDetail(artist_id) => self.artist_detail_view(artist_id),
-            Route::AlbumArtists => self.artist_list_view(
-                self.controller
-                    .cached_artists_page(true, 0, 2_000)
-                    .map(|page| page.items)
-                    .unwrap_or_else(|_| library.album_artists.clone()),
-                &tr("Album Artists"),
-            ),
-            Route::Genres => self.genre_list_view(
-                self.controller
-                    .cached_genres_page(0, 2_000)
-                    .map(|page| page.items)
-                    .unwrap_or_else(|_| library.genres.clone()),
-                &tr("Genres"),
-            ),
+            Route::AlbumArtists => self.artist_list_view(true, &tr("Album Artists")),
+            Route::Genres => self.genre_list_view(&tr("Genres")),
             Route::GenreDetail(genre_id) => self.genre_detail_view(genre_id),
-            Route::Playlists => self.playlist_list_view(
-                self.controller
-                    .cached_playlists_page(0, 2_000)
-                    .map(|page| page.items)
-                    .unwrap_or_else(|_| library.playlists.clone()),
-                &tr("Playlists"),
-            ),
+            Route::Playlists => self.playlist_list_view(&tr("Playlists")),
             Route::PlaylistDetail(playlist_id) => self.playlist_detail_view(playlist_id),
-            Route::Search { query, .. } => self.search_view(&query, library),
+            Route::Search { query, .. } => {
+                let library = self.state.library.borrow().clone();
+                self.search_view(&query, library)
+            }
         };
 
         self.route_host.append(&view);
@@ -611,39 +607,41 @@ impl Shell {
     }
 
     fn albums_view(self: &Rc<Self>) -> gtk::Widget {
-        let albums = self
+        let page = self
             .controller
-            .cached_albums_page(0, 2_000)
-            .map(|page| page.items)
-            .unwrap_or_else(|_| self.state.library.borrow().albums.clone());
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        content.add_css_class("route-content");
-        content.set_margin_top(24);
-        content.set_margin_bottom(36);
-        content.set_margin_start(28);
-        content.set_margin_end(28);
-        content.set_vexpand(true);
-
-        let heading = gtk::Label::new(Some(&tr("Albums")));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        content.append(&heading);
-
-        if albums.is_empty() {
-            content.append(&self.placeholder_view(
-                "Albums",
-                "Cached albums will appear here after the background sync finishes.",
-            ));
-        } else {
-            let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-            scroller.set_min_content_width(0);
-            scroller.set_vexpand(true);
-            scroller.set_child(Some(&self.album_cards_grid(&albums)));
-            content.append(&scroller);
-        }
-
-        content.upcast()
+            .cached_albums_page(0, GRID_ROUTE_PAGE_SIZE)
+            .unwrap_or_else(|error| {
+                warn!(%error, "failed to load cached albums page");
+                let albums = self
+                    .state
+                    .library
+                    .borrow()
+                    .albums
+                    .iter()
+                    .take(GRID_ROUTE_PAGE_SIZE)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                rufin_provider::PagedResponse::new(albums, self.state.library.borrow().albums.len())
+            });
+        let model = album_model(&page.items);
+        let load_next = self.grid_loader(
+            model.clone(),
+            PagedGridConfig {
+                route: Route::Albums,
+                offset: page.items.len(),
+                total: page.total,
+                page_name: "albums",
+            },
+            |controller, offset, limit| controller.cached_albums_page(offset, limit),
+            append_albums_to_model,
+        );
+        self.media_grid_view(
+            &tr("Albums"),
+            page.items.is_empty(),
+            "Cached albums will appear here after the background sync finishes.",
+            self.album_cards_grid_for_model(model),
+            Some(load_next),
+        )
     }
 
     fn album_detail_view(self: &Rc<Self>, album_id: AlbumId) -> gtk::Widget {
@@ -859,35 +857,51 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn artist_list_view(self: &Rc<Self>, artists: Vec<Artist>, title: &str) -> gtk::Widget {
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(28);
-        wrapper.set_margin_end(28);
-        wrapper.set_vexpand(true);
-
-        let heading = gtk::Label::new(Some(title));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        wrapper.append(&heading);
-
-        if artists.is_empty() {
-            wrapper.append(&self.placeholder_view(
-                title,
-                "Cached rows will appear here after the background sync finishes.",
-            ));
-            return wrapper.upcast();
-        }
-
-        let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_vexpand(true);
-        scroller.set_child(Some(&self.artist_cards_grid(&artists)));
-        wrapper.append(&scroller);
-        wrapper.upcast()
+    fn artist_list_view(self: &Rc<Self>, album_artist: bool, title: &str) -> gtk::Widget {
+        let page = self
+            .controller
+            .cached_artists_page(album_artist, 0, GRID_ROUTE_PAGE_SIZE)
+            .unwrap_or_else(|error| {
+                warn!(%error, album_artist, "failed to load cached artists page");
+                let library = self.state.library.borrow();
+                let fallback = if album_artist {
+                    &library.album_artists
+                } else {
+                    &library.artists
+                };
+                let artists = fallback
+                    .iter()
+                    .take(GRID_ROUTE_PAGE_SIZE)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                rufin_provider::PagedResponse::new(artists, fallback.len())
+            });
+        let model = artist_model(&page.items);
+        let route = if album_artist {
+            Route::AlbumArtists
+        } else {
+            Route::Artists
+        };
+        let load_next = self.grid_loader(
+            model.clone(),
+            PagedGridConfig {
+                route,
+                offset: page.items.len(),
+                total: page.total,
+                page_name: "artists",
+            },
+            move |controller, offset, limit| {
+                controller.cached_artists_page(album_artist, offset, limit)
+            },
+            append_artists_to_model,
+        );
+        self.media_grid_view(
+            title,
+            page.items.is_empty(),
+            "Cached rows will appear here after the background sync finishes.",
+            self.artist_cards_grid_for_model(model),
+            Some(load_next),
+        )
     }
 
     fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
@@ -978,21 +992,82 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn genre_list_view(self: &Rc<Self>, genres: Vec<Genre>, title: &str) -> gtk::Widget {
+    fn genre_list_view(self: &Rc<Self>, title: &str) -> gtk::Widget {
+        let page = self
+            .controller
+            .cached_genres_page(0, GRID_ROUTE_PAGE_SIZE)
+            .unwrap_or_else(|error| {
+                warn!(%error, "failed to load cached genres page");
+                let genres = self
+                    .state
+                    .library
+                    .borrow()
+                    .genres
+                    .iter()
+                    .take(GRID_ROUTE_PAGE_SIZE)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                rufin_provider::PagedResponse::new(genres, self.state.library.borrow().genres.len())
+            });
+        let model = genre_model(&page.items);
+        let load_next = self.grid_loader(
+            model.clone(),
+            PagedGridConfig {
+                route: Route::Genres,
+                offset: page.items.len(),
+                total: page.total,
+                page_name: "genres",
+            },
+            |controller, offset, limit| controller.cached_genres_page(offset, limit),
+            append_genres_to_model,
+        );
         self.media_grid_view(
             title,
-            genres.is_empty(),
+            page.items.is_empty(),
             "Cached rows will appear here after the background sync finishes.",
-            self.genre_cards_grid(&genres),
+            self.genre_cards_grid_for_model(model),
+            Some(load_next),
         )
     }
 
-    fn playlist_list_view(self: &Rc<Self>, playlists: Vec<Playlist>, title: &str) -> gtk::Widget {
+    fn playlist_list_view(self: &Rc<Self>, title: &str) -> gtk::Widget {
+        let page = self
+            .controller
+            .cached_playlists_page(0, GRID_ROUTE_PAGE_SIZE)
+            .unwrap_or_else(|error| {
+                warn!(%error, "failed to load cached playlists page");
+                let playlists = self
+                    .state
+                    .library
+                    .borrow()
+                    .playlists
+                    .iter()
+                    .take(GRID_ROUTE_PAGE_SIZE)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                rufin_provider::PagedResponse::new(
+                    playlists,
+                    self.state.library.borrow().playlists.len(),
+                )
+            });
+        let model = playlist_model(&page.items);
+        let load_next = self.grid_loader(
+            model.clone(),
+            PagedGridConfig {
+                route: Route::Playlists,
+                offset: page.items.len(),
+                total: page.total,
+                page_name: "playlists",
+            },
+            |controller, offset, limit| controller.cached_playlists_page(offset, limit),
+            append_playlists_to_model,
+        );
         self.media_grid_view(
             title,
-            playlists.is_empty(),
+            page.items.is_empty(),
             "Cached rows will appear here after the background sync finishes.",
-            self.playlist_cards_grid(&playlists),
+            self.playlist_cards_grid_for_model(model),
+            Some(load_next),
         )
     }
 
@@ -1134,6 +1209,7 @@ impl Shell {
         empty: bool,
         empty_body: &str,
         grid: gtk::Widget,
+        load_next: Option<Rc<dyn Fn()>>,
     ) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
@@ -1156,6 +1232,9 @@ impl Shell {
             scroller.set_min_content_width(0);
             scroller.set_vexpand(true);
             scroller.set_child(Some(&grid));
+            if let Some(load_next) = load_next {
+                connect_paged_grid_loader(&scroller, load_next);
+            }
             wrapper.append(&scroller);
         }
         wrapper.upcast()
@@ -1774,8 +1853,62 @@ impl Shell {
         }
     }
 
+    fn grid_loader<T>(
+        self: &Rc<Self>,
+        model: gio::ListStore,
+        config: PagedGridConfig,
+        load_page: impl Fn(
+            &AppController,
+            usize,
+            usize,
+        ) -> Result<rufin_provider::PagedResponse<T>, String>
+        + 'static,
+        append_items: impl Fn(&gio::ListStore, Vec<T>) + 'static,
+    ) -> Rc<dyn Fn()> {
+        let shell = Rc::clone(self);
+        let cursor = Rc::new(PagedGridCursor {
+            offset: Cell::new(config.offset),
+            total: Cell::new(config.total),
+            loading: Cell::new(false),
+        });
+        let route = config.route;
+        let page_name = config.page_name;
+        Rc::new(move || {
+            if !shell.can_load_grid_page(&cursor, &route) {
+                return;
+            }
+            let offset = cursor.offset.get();
+            match load_page(&shell.controller, offset, GRID_ROUTE_PAGE_SIZE) {
+                Ok(page) => {
+                    let count = page.items.len();
+                    append_items(&model, page.items);
+                    finish_grid_page(&cursor, offset, count, page.total);
+                }
+                Err(error) => {
+                    warn!(%error, page = page_name, "failed to append cached grid page");
+                    cursor.loading.set(false);
+                }
+            }
+        })
+    }
+
+    fn can_load_grid_page(&self, cursor: &PagedGridCursor, route: &Route) -> bool {
+        if cursor.loading.get() || cursor.offset.get() >= cursor.total.get() {
+            return false;
+        }
+        if self.state.routes.borrow().current() != route {
+            return false;
+        }
+        cursor.loading.set(true);
+        true
+    }
+
     fn album_cards_grid(self: &Rc<Self>, albums: &[Album]) -> gtk::Widget {
         let model = album_model(albums);
+        self.album_cards_grid_for_model(model)
+    }
+
+    fn album_cards_grid_for_model(self: &Rc<Self>, model: gio::ListStore) -> gtk::Widget {
         let width = home_album_content_width(self);
         let current = nonzero_usize(self.state.card_grid_columns.get());
         let columns = home_album_page_size(width, current);
@@ -1820,8 +1953,7 @@ impl Shell {
         grid.upcast()
     }
 
-    fn artist_cards_grid(self: &Rc<Self>, artists: &[Artist]) -> gtk::Widget {
-        let model = artist_model(artists);
+    fn artist_cards_grid_for_model(self: &Rc<Self>, model: gio::ListStore) -> gtk::Widget {
         let width = home_album_content_width(self);
         let current = nonzero_usize(self.state.card_grid_columns.get());
         let columns = home_album_page_size(width, current);
@@ -1877,8 +2009,7 @@ impl Shell {
         grid.upcast()
     }
 
-    fn genre_cards_grid(self: &Rc<Self>, genres: &[Genre]) -> gtk::Widget {
-        let model = genre_model(genres);
+    fn genre_cards_grid_for_model(self: &Rc<Self>, model: gio::ListStore) -> gtk::Widget {
         let width = home_album_content_width(self);
         let current = nonzero_usize(self.state.card_grid_columns.get());
         let columns = home_album_page_size(width, current);
@@ -1933,8 +2064,7 @@ impl Shell {
         grid.upcast()
     }
 
-    fn playlist_cards_grid(self: &Rc<Self>, playlists: &[Playlist]) -> gtk::Widget {
-        let model = playlist_model(playlists);
+    fn playlist_cards_grid_for_model(self: &Rc<Self>, model: gio::ListStore) -> gtk::Widget {
         let width = home_album_content_width(self);
         let current = nonzero_usize(self.state.card_grid_columns.get());
         let columns = home_album_page_size(width, current);
@@ -2669,34 +2799,85 @@ fn playback_state_label(state: PlaybackState) -> &'static str {
 
 fn album_model(albums: &[Album]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    for album in albums {
-        model.append(&glib::BoxedAnyObject::new(album.clone()));
-    }
+    append_albums_to_model(&model, albums.iter().cloned());
     model
+}
+
+fn append_albums_to_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
+    for album in albums {
+        model.append(&glib::BoxedAnyObject::new(album));
+    }
 }
 
 fn artist_model(artists: &[Artist]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    for artist in artists {
-        model.append(&glib::BoxedAnyObject::new(artist.clone()));
-    }
+    append_artists_to_model(&model, artists.iter().cloned());
     model
+}
+
+fn append_artists_to_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
+    for artist in artists {
+        model.append(&glib::BoxedAnyObject::new(artist));
+    }
 }
 
 fn genre_model(genres: &[Genre]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    for genre in genres {
-        model.append(&glib::BoxedAnyObject::new(genre.clone()));
-    }
+    append_genres_to_model(&model, genres.iter().cloned());
     model
+}
+
+fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
+    for genre in genres {
+        model.append(&glib::BoxedAnyObject::new(genre));
+    }
 }
 
 fn playlist_model(playlists: &[Playlist]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    for playlist in playlists {
-        model.append(&glib::BoxedAnyObject::new(playlist.clone()));
-    }
+    append_playlists_to_model(&model, playlists.iter().cloned());
     model
+}
+
+fn append_playlists_to_model(
+    model: &gio::ListStore,
+    playlists: impl IntoIterator<Item = Playlist>,
+) {
+    for playlist in playlists {
+        model.append(&glib::BoxedAnyObject::new(playlist));
+    }
+}
+
+fn finish_grid_page(cursor: &PagedGridCursor, previous_offset: usize, count: usize, total: usize) {
+    let next_offset = previous_offset.saturating_add(count);
+    cursor.offset.set(next_offset);
+    cursor.total.set(if count == 0 {
+        next_offset
+    } else {
+        total.max(next_offset)
+    });
+    cursor.loading.set(false);
+}
+
+fn connect_paged_grid_loader(scroller: &gtk::ScrolledWindow, load_next: Rc<dyn Fn()>) {
+    let load_for_edge = Rc::clone(&load_next);
+    scroller.connect_edge_reached(move |_, position| {
+        if position == gtk::PositionType::Bottom {
+            load_for_edge();
+        }
+    });
+
+    let scroller_for_idle = scroller.clone();
+    glib::idle_add_local_once(move || {
+        if scroller_needs_more_items(&scroller_for_idle) {
+            load_next();
+        }
+    });
+}
+
+fn scroller_needs_more_items(scroller: &gtk::ScrolledWindow) -> bool {
+    let adjustment = scroller.vadjustment();
+    adjustment.upper() <= adjustment.page_size() + 1.0
 }
 
 fn set_track_sort_button_content(button: &gtk::Button, settings: &TrackTableSettings) {

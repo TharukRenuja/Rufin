@@ -259,10 +259,24 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS albums_server_title_idx
                 ON albums(server_id, title);
+            CREATE INDEX IF NOT EXISTS albums_server_title_nocase_idx
+                ON albums(server_id, title COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS tracks_server_title_idx
                 ON tracks(server_id, title);
+            CREATE INDEX IF NOT EXISTS artists_server_name_nocase_idx
+                ON artists(server_id, name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS album_artists_server_name_nocase_idx
+                ON album_artists(server_id, name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS genres_server_name_nocase_idx
+                ON genres(server_id, name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS playlists_server_name_nocase_idx
+                ON playlists(server_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS tracks_server_album_idx
                 ON tracks(server_id, album_id, disc_number, track_number);
+            CREATE INDEX IF NOT EXISTS album_genres_server_genre_idx
+                ON album_genres(server_id, genre_name, album_id);
+            CREATE INDEX IF NOT EXISTS track_genres_server_genre_idx
+                ON track_genres(server_id, genre_name, track_id);
             ",
         )?;
         self.ensure_column("albums", "image_item_id", "TEXT")?;
@@ -2300,6 +2314,23 @@ mod tests {
     }
 
     #[test]
+    fn migrations_create_library_route_indexes() {
+        let store = Store::open_memory().expect("open store");
+
+        for (table, index) in [
+            ("albums", "albums_server_title_nocase_idx"),
+            ("artists", "artists_server_name_nocase_idx"),
+            ("album_artists", "album_artists_server_name_nocase_idx"),
+            ("genres", "genres_server_name_nocase_idx"),
+            ("playlists", "playlists_server_name_nocase_idx"),
+            ("album_genres", "album_genres_server_genre_idx"),
+            ("track_genres", "track_genres_server_genre_idx"),
+        ] {
+            assert!(index_exists(&store, table, index), "{index} should exist");
+        }
+    }
+
+    #[test]
     fn v2_to_v3_migration_preserves_existing_rows_and_adds_image_columns() {
         let connection = rusqlite::Connection::open_in_memory().expect("open connection");
         connection
@@ -3407,6 +3438,21 @@ mod tests {
             .expect("collect columns")
             .iter()
             .any(|name| name == column)
+    }
+
+    fn index_exists(store: &Store, table: &str, index: &str) -> bool {
+        let mut statement = store
+            .connection
+            .prepare(&format!("PRAGMA index_list({table})"))
+            .expect("index list");
+        let indexes = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query indexes");
+        indexes
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect indexes")
+            .iter()
+            .any(|name| name == index)
     }
 
     fn seed_cached_library(store: &Store, server_id: &ServerId) {
