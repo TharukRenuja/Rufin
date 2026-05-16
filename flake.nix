@@ -1,0 +1,170 @@
+{
+  description = "Native GTK4 Jellyfin music client";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs =
+    { self, nixpkgs }:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+    in
+    {
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          inherit (pkgs) lib;
+          appManifest = builtins.fromTOML (builtins.readFile ./crates/rufin-app/Cargo.toml);
+          gstRuntimePlugins = with pkgs.gst_all_1; [
+            gst-plugins-base
+            gst-plugins-good
+            gst-plugins-bad
+            gst-plugins-ugly
+            gst-libav
+          ];
+        in
+        rec {
+          rufin = pkgs.rustPlatform.buildRustPackage {
+            pname = "rufin";
+            version = appManifest.package.version;
+
+            src = lib.cleanSourceWith {
+              src = ./.;
+              filter =
+                path: type:
+                lib.cleanSourceFilter path type
+                && !(lib.elem (baseNameOf path) [
+                  ".flatpak-builder"
+                  ".local"
+                  "result"
+                  "target"
+                ]);
+            };
+
+            cargoLock.lockFile = ./Cargo.lock;
+
+            strictDeps = true;
+
+            nativeBuildInputs = with pkgs; [
+              gettext
+              pkg-config
+              wrapGAppsHook4
+            ];
+
+            buildInputs =
+              with pkgs;
+              [
+                gdk-pixbuf
+                gettext
+                gtk4
+                libadwaita
+              ]
+              ++ (with gst_all_1; [
+                gstreamer
+                gst-plugins-base
+              ])
+              ++ gstRuntimePlugins;
+
+            cargoBuildFlags = [
+              "-p"
+              "rufin-app"
+            ];
+
+            cargoCheckFlags = [
+              "--workspace"
+              "--all-targets"
+            ];
+
+            postInstall = ''
+              install -Dm644 data/io.github.screwys.Rufin.Devel.desktop \
+                "$out/share/applications/io.github.screwys.Rufin.Devel.desktop"
+              install -Dm644 data/io.github.screwys.Rufin.Devel.metainfo.xml \
+                "$out/share/metainfo/io.github.screwys.Rufin.Devel.metainfo.xml"
+              install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg \
+                "$out/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg"
+
+              for po_file in po/*.po; do
+                if [ -f "$po_file" ]; then
+                  lang="$(basename "$po_file" .po)"
+                  mkdir -p "$out/share/locale/$lang/LC_MESSAGES"
+                  msgfmt "$po_file" -o "$out/share/locale/$lang/LC_MESSAGES/rufin.mo"
+                fi
+              done
+            '';
+
+            preFixup = ''
+              gappsWrapperArgs+=(
+                --set-default RUFIN_LOCALEDIR "$out/share/locale"
+                --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "$GST_PLUGIN_SYSTEM_PATH_1_0"
+              )
+            '';
+
+            meta = {
+              description = "Native GTK music client for Jellyfin";
+              homepage = "https://github.com/screwys/Rufin";
+              license = lib.licenses.gpl3Plus;
+              mainProgram = "rufin";
+              platforms = lib.platforms.linux;
+            };
+          };
+
+          default = rufin;
+        }
+      );
+
+      apps = forAllSystems (system: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.default}/bin/rufin";
+        };
+      });
+
+      checks = forAllSystems (system: {
+        default = self.packages.${system}.default;
+      });
+
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          default = pkgs.mkShell {
+            packages =
+              with pkgs;
+              [
+                cargo
+                clippy
+                desktop-file-utils
+                gettext
+                pkg-config
+                rust-analyzer
+                rustc
+                rustfmt
+              ]
+              ++ (with pkgs; [
+                gdk-pixbuf
+                gtk4
+                libadwaita
+              ])
+              ++ (with pkgs.gst_all_1; [
+                gstreamer
+                gst-plugins-base
+                gst-plugins-good
+                gst-plugins-bad
+                gst-plugins-ugly
+                gst-libav
+              ]);
+
+            RUFIN_LOCALEDIR = "po";
+          };
+        }
+      );
+
+      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-rfc-style);
+    };
+}
