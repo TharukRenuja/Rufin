@@ -303,6 +303,7 @@ impl AppController {
             .with_store(|store| store.load_playlists(&saved.server.id, offset, limit))
     }
 
+    #[cfg(test)]
     pub fn cover_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
         let server = self
             .store
@@ -318,6 +319,7 @@ impl AppController {
         ))
     }
 
+    #[cfg(test)]
     pub fn cached_cover_path(&self, image_ref: &ImageRef, size: u32) -> Option<PathBuf> {
         let saved = self
             .store
@@ -342,6 +344,7 @@ impl AppController {
         None
     }
 
+    #[cfg(test)]
     pub fn request_cover(&self, image_ref: ImageRef, size: u32) {
         let Some(saved) = self
             .store
@@ -397,6 +400,67 @@ impl AppController {
                 }
                 Err(error) => {
                     warn!(%error, "failed to fetch cover");
+                }
+            }
+        });
+    }
+
+    pub fn request_cover_for_key(&self, key: String, image_ref: ImageRef, size: u32) {
+        match self.cover_in_flight.lock() {
+            Ok(mut in_flight) => {
+                if !in_flight.insert(key.clone()) {
+                    return;
+                }
+            }
+            Err(_) => return,
+        }
+
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let events = self.events.clone();
+        let cover_in_flight = Arc::clone(&self.cover_in_flight);
+        let cover_slots = Arc::clone(&self.cover_slots);
+        thread::spawn(move || {
+            if !acquire_cover_slot(&cover_slots) {
+                if let Ok(mut in_flight) = cover_in_flight.lock() {
+                    in_flight.remove(&key);
+                }
+                return;
+            }
+
+            let result = (|| -> Result<Option<PathBuf>, String> {
+                let Some(saved) = store.with_store(|store| store.active_server())? else {
+                    return Ok(None);
+                };
+                if saved.server.provider == "fake" {
+                    return Ok(None);
+                }
+
+                let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+                let expected_key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
+                if expected_key != key {
+                    return Ok(None);
+                }
+
+                if let Some(path) = cached_cover_path_for_saved(&store, &saved, &image_ref, size)? {
+                    return Ok(Some(path));
+                }
+
+                fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size).map(Some)
+            })();
+
+            release_cover_slot(&cover_slots);
+            if let Ok(mut in_flight) = cover_in_flight.lock() {
+                in_flight.remove(&key);
+            }
+            match result {
+                Ok(Some(path)) => {
+                    let _sent = events.send(ControllerEvent::CoverReady { key, path });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    warn!(%error, "failed to prepare cover");
                 }
             }
         });
@@ -1799,6 +1863,29 @@ fn resolve_stream(
     runtime
         .block_on(provider.stream(track_id))
         .map_err(|error| error.to_string())
+}
+
+fn cached_cover_path_for_saved(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    image_ref: &ImageRef,
+    size: u32,
+) -> Result<Option<PathBuf>, String> {
+    let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+    let Some(entry) = store.with_store(|store| {
+        store.load_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
+    })?
+    else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(entry.path);
+    if path.exists() {
+        return Ok(Some(path));
+    }
+    store.with_store(|store| {
+        store.delete_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
+    })?;
+    Ok(None)
 }
 
 fn fetch_and_cache_cover(

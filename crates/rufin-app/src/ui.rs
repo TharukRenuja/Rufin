@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
@@ -16,7 +17,7 @@ use rufin_core::{
     TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
-use rufin_store::{CachedArtistDetail, CachedGenreDetail};
+use rufin_store::{CachedArtistDetail, CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
 
@@ -37,6 +38,8 @@ const GRID_ROUTE_PAGE_SIZE: usize = 96;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
+const IMAGE_TAG_UNTAGGED: &str = "untagged";
+const DECODED_COVER_CACHE_LIMIT: usize = 800;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -60,18 +63,23 @@ struct AppState {
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
+    decoded_covers: RefCell<HashMap<String, Pixbuf>>,
+    decoded_cover_order: RefCell<VecDeque<String>>,
 }
 
 #[derive(Clone)]
 struct CoverBinding {
     tile: ArtworkTile,
+    generation: u64,
 }
 
 #[derive(Clone)]
 struct ArtworkTile {
     area: gtk::DrawingArea,
+    size: i32,
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
+    generation: Rc<Cell<u64>>,
 }
 
 struct HomeSectionState {
@@ -169,6 +177,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
         cover_bindings: RefCell::new(HashMap::new()),
+        decoded_covers: RefCell::new(HashMap::new()),
+        decoded_cover_order: RefCell::new(VecDeque::new()),
     };
 
     let window = adw::ApplicationWindow::builder()
@@ -1681,36 +1691,25 @@ impl Shell {
             .as_ref()
             .and_then(|entry| entry.image_ref.as_ref())
         {
-            if let Some(key) = self.controller.cover_key(image_ref, THUMB_COVER_SIZE) {
+            if let Some(key) = self.cover_cache_key(image_ref, THUMB_COVER_SIZE) {
                 if controls.cover_key.borrow().as_deref() != Some(key.as_str()) {
-                    if let Some(path) = self
-                        .controller
-                        .cached_cover_path(image_ref, THUMB_COVER_SIZE)
-                    {
-                        controls.cover.set_path(&path);
-                    } else {
-                        controls.cover.clear_image();
-                        self.state
-                            .cover_bindings
-                            .borrow_mut()
-                            .entry(key.clone())
-                            .or_default()
-                            .push(CoverBinding {
-                                tile: controls.cover.clone(),
-                            });
-                        self.controller
-                            .request_cover(image_ref.clone(), THUMB_COVER_SIZE);
-                    }
+                    controls.cover.clear_image();
+                    let generation = controls.cover.generation();
+                    self.state
+                        .cover_bindings
+                        .borrow_mut()
+                        .entry(key.clone())
+                        .or_default()
+                        .push(CoverBinding {
+                            tile: controls.cover.clone(),
+                            generation,
+                        });
+                    self.controller.request_cover_for_key(
+                        key.clone(),
+                        image_ref.clone(),
+                        THUMB_COVER_SIZE,
+                    );
                     *controls.cover_key.borrow_mut() = Some(key);
-                }
-            } else if let Some(path) = self
-                .controller
-                .cached_cover_path(image_ref, THUMB_COVER_SIZE)
-            {
-                let path_key = path.display().to_string();
-                if controls.cover_key.borrow().as_deref() != Some(path_key.as_str()) {
-                    controls.cover.set_path(&path);
-                    *controls.cover_key.borrow_mut() = Some(path_key);
                 }
             } else {
                 let mut current_key = controls.cover_key.borrow_mut();
@@ -1827,29 +1826,93 @@ impl Shell {
     ) -> gtk::Widget {
         let tile = ArtworkTile::new(size, seed);
 
-        if let Some(image_ref) = image_ref {
-            if let Some(path) = self.controller.cached_cover_path(image_ref, fetch_size) {
-                tile.set_path(&path);
-            } else if let Some(key) = self.controller.cover_key(image_ref, fetch_size) {
+        if let Some(image_ref) = image_ref
+            && let Some(key) = self.cover_cache_key(image_ref, fetch_size)
+        {
+            if let Some(pixbuf) = self.state.decoded_covers.borrow().get(&key).cloned() {
+                tile.set_pixbuf_if_current(tile.generation(), pixbuf);
+            } else {
+                let generation = tile.generation();
                 self.state
                     .cover_bindings
                     .borrow_mut()
-                    .entry(key)
+                    .entry(key.clone())
                     .or_default()
-                    .push(CoverBinding { tile: tile.clone() });
-                self.controller.request_cover(image_ref.clone(), fetch_size);
+                    .push(CoverBinding {
+                        tile: tile.clone(),
+                        generation,
+                    });
+                self.controller
+                    .request_cover_for_key(key, image_ref.clone(), fetch_size);
             }
         }
 
         tile.widget()
     }
 
-    fn apply_cover_ready(&self, key: &str, path: &std::path::Path) {
+    fn cover_cache_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
+        let server = self.state.library.borrow().server.clone()?;
+        if server.provider == "fake" {
+            return None;
+        }
+        Some(image_cache_key(
+            &server.id,
+            &image_ref.item_id,
+            image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
+            size,
+        ))
+    }
+
+    fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
         let Some(bindings) = self.state.cover_bindings.borrow_mut().remove(key) else {
             return;
         };
-        for binding in bindings {
-            binding.tile.set_path(path);
+        if bindings.is_empty() {
+            return;
+        }
+        if let Some(pixbuf) = self.state.decoded_covers.borrow().get(key).cloned() {
+            apply_pixbuf_to_bindings(bindings, pixbuf);
+            return;
+        }
+
+        let shell = Rc::clone(self);
+        let key = key.to_string();
+        let path = path.to_path_buf();
+        let size = bindings
+            .first()
+            .map(|binding| binding.tile.size())
+            .unwrap_or(GRID_COVER_SIZE as i32);
+        glib::spawn_future_local(async move {
+            match load_cover_pixbuf(path.clone(), size).await {
+                Ok(pixbuf) => {
+                    shell.remember_decoded_cover(key, pixbuf.clone());
+                    apply_pixbuf_to_bindings(bindings, pixbuf);
+                }
+                Err(error) => {
+                    warn!(%error, path = %path.display(), "failed to load cached cover");
+                    for binding in bindings {
+                        binding.tile.clear_image_if_current(binding.generation);
+                    }
+                }
+            }
+        });
+    }
+
+    fn remember_decoded_cover(&self, key: String, pixbuf: Pixbuf) {
+        let mut covers = self.state.decoded_covers.borrow_mut();
+        if !covers.contains_key(&key) {
+            self.state
+                .decoded_cover_order
+                .borrow_mut()
+                .push_back(key.clone());
+        }
+        covers.insert(key, pixbuf);
+        let mut order = self.state.decoded_cover_order.borrow_mut();
+        while covers.len() > DECODED_COVER_CACHE_LIMIT {
+            let Some(oldest) = order.pop_front() else {
+                break;
+            };
+            covers.remove(&oldest);
         }
     }
 
@@ -2804,8 +2867,12 @@ fn album_model(albums: &[Album]) -> gio::ListStore {
 }
 
 fn append_albums_to_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
-    for album in albums {
-        model.append(&glib::BoxedAnyObject::new(album));
+    let additions = albums
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    if !additions.is_empty() {
+        model.splice(model.n_items(), 0, &additions);
     }
 }
 
@@ -2816,8 +2883,12 @@ fn artist_model(artists: &[Artist]) -> gio::ListStore {
 }
 
 fn append_artists_to_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
-    for artist in artists {
-        model.append(&glib::BoxedAnyObject::new(artist));
+    let additions = artists
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    if !additions.is_empty() {
+        model.splice(model.n_items(), 0, &additions);
     }
 }
 
@@ -2828,8 +2899,12 @@ fn genre_model(genres: &[Genre]) -> gio::ListStore {
 }
 
 fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
-    for genre in genres {
-        model.append(&glib::BoxedAnyObject::new(genre));
+    let additions = genres
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    if !additions.is_empty() {
+        model.splice(model.n_items(), 0, &additions);
     }
 }
 
@@ -2843,8 +2918,12 @@ fn append_playlists_to_model(
     model: &gio::ListStore,
     playlists: impl IntoIterator<Item = Playlist>,
 ) {
-    for playlist in playlists {
-        model.append(&glib::BoxedAnyObject::new(playlist));
+    let additions = playlists
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    if !additions.is_empty() {
+        model.splice(model.n_items(), 0, &additions);
     }
 }
 
@@ -3586,6 +3665,7 @@ impl ArtworkTile {
 
         let seed = Rc::new(Cell::new(seed));
         let pixbuf = Rc::new(RefCell::new(None::<Pixbuf>));
+        let generation = Rc::new(Cell::new(0));
         let draw_seed = Rc::clone(&seed);
         let draw_pixbuf = Rc::clone(&pixbuf);
         area.set_draw_func(move |_, context, width, height| {
@@ -3597,11 +3677,25 @@ impl ArtworkTile {
             }
         });
 
-        Self { area, seed, pixbuf }
+        Self {
+            area,
+            size,
+            seed,
+            pixbuf,
+            generation,
+        }
     }
 
     fn widget(&self) -> gtk::Widget {
         self.area.clone().upcast()
+    }
+
+    fn size(&self) -> i32 {
+        self.size
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation.get()
     }
 
     fn set_seed(&self, seed: u32) {
@@ -3609,22 +3703,41 @@ impl ArtworkTile {
         self.area.queue_draw();
     }
 
-    fn set_path(&self, path: &std::path::Path) {
-        match Pixbuf::from_file(path) {
-            Ok(pixbuf) => {
-                *self.pixbuf.borrow_mut() = Some(pixbuf);
-                self.area.queue_draw();
-            }
-            Err(error) => {
-                warn!(%error, path = %path.display(), "failed to load cached cover");
-                self.clear_image();
-            }
+    fn set_pixbuf_if_current(&self, generation: u64, pixbuf: Pixbuf) {
+        if self.generation.get() != generation {
+            return;
         }
+        *self.pixbuf.borrow_mut() = Some(pixbuf);
+        self.area.queue_draw();
     }
 
     fn clear_image(&self) {
+        self.generation.set(self.generation.get().saturating_add(1));
         *self.pixbuf.borrow_mut() = None;
         self.area.queue_draw();
+    }
+
+    fn clear_image_if_current(&self, generation: u64) {
+        if self.generation.get() != generation {
+            return;
+        }
+        self.generation.set(self.generation.get().saturating_add(1));
+        *self.pixbuf.borrow_mut() = None;
+        self.area.queue_draw();
+    }
+}
+
+async fn load_cover_pixbuf(path: PathBuf, size: i32) -> Result<Pixbuf, glib::Error> {
+    let file = gio::File::for_path(path);
+    let stream = file.read_future(glib::Priority::LOW).await?;
+    Pixbuf::from_stream_at_scale_future(&stream, size, size, true).await
+}
+
+fn apply_pixbuf_to_bindings(bindings: Vec<CoverBinding>, pixbuf: Pixbuf) {
+    for binding in bindings {
+        binding
+            .tile
+            .set_pixbuf_if_current(binding.generation, pixbuf.clone());
     }
 }
 
