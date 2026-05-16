@@ -4,20 +4,27 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::glib;
-use rufin_core::{Route, SearchKind, format_duration};
+use rufin_core::{RepeatMode, Route, SearchKind, format_duration};
 use rufin_playback::PlaybackState;
 
 use super::{
-    ArtworkTile, BOTTOM_PLAYER_BUTTON_OFFSET_Y, BOTTOM_PLAYER_BUTTON_ROW_HEIGHT,
-    BOTTOM_PLAYER_BUTTON_STEP, BOTTOM_PLAYER_COVER_SIZE, BOTTOM_PLAYER_IDENTITY_WIDTH,
-    BOTTOM_PLAYER_PLAY_BUTTON_SIZE, BOTTOM_PLAYER_PROGRESS_WIDTH, BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
-    BOTTOM_PLAYER_TRANSPORT_ICON_SIZE, BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP,
-    BOTTOM_PLAYER_TRANSPORT_OFFSET, BOTTOM_PLAYER_TRANSPORT_WIDTH, CoverBinding, Shell,
-    THUMB_COVER_SIZE, add_label_click, favorite_icon_button, icon_button, icon_button_with_image,
-    playback_state_label, player_link, queue_sidebar_button, repeat_icon_button, repeat_label,
-    seekbar_target_seconds, set_active_class, set_favorite_button_active, set_repeat_button_icon,
-    skip_icon_button, stop_icon_button,
+    ArtworkTile, CoverBinding, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
+    favorite_icon_button, icon_button, icon_button_with_image, seekbar_target_seconds,
+    set_active_class, set_favorite_button_active,
 };
+
+pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 80;
+const BOTTOM_PLAYER_COVER_SIZE: i32 = 72;
+const BOTTOM_PLAYER_IDENTITY_WIDTH: i32 = 190;
+const BOTTOM_PLAYER_IDENTITY_MAX_CHARS: i32 = 24;
+const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 360;
+const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 280;
+const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 40;
+const BOTTOM_PLAYER_SIDE_BUTTON_SIZE: i32 = 36;
+const BOTTOM_PLAYER_PLAY_BUTTON_SIZE: i32 = 34;
+const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 0.0;
+const BOTTOM_PLAYER_BUTTON_STEP: f64 = 40.0;
+const BOTTOM_PLAYER_TRANSPORT_ICON_SIZE: i32 = 17;
 
 pub(super) struct PlayerControls {
     pub(super) root: gtk::Overlay,
@@ -226,7 +233,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
     root.add_css_class("bottom-player");
     root.set_hexpand(true);
     root.set_vexpand(false);
-    root.set_height_request(super::BOTTOM_PLAYER_HEIGHT);
+    root.set_height_request(BOTTOM_PLAYER_HEIGHT);
     root.set_valign(gtk::Align::Center);
 
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -274,15 +281,10 @@ pub(super) fn build_bottom_player() -> PlayerControls {
     bar.append(&actions);
 
     let transport_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    transport_slot
-        .set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH + BOTTOM_PLAYER_TRANSPORT_OFFSET);
+    transport_slot.set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH);
     transport_slot.set_halign(gtk::Align::Center);
     transport_slot.set_valign(gtk::Align::Center);
-    transport_slot.set_margin_top(BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP);
     transport_slot.append(&transport);
-    let offset_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    offset_spacer.set_width_request(BOTTOM_PLAYER_TRANSPORT_OFFSET);
-    transport_slot.append(&offset_spacer);
 
     root.set_child(Some(&bar));
     root.add_overlay(&transport_slot);
@@ -497,6 +499,251 @@ fn put_transport_button(buttons: &gtk::Fixed, button: &gtk::Button, slot: f64, s
     let radius = f64::from(size) / 2.0;
     let y = f64::from(BOTTOM_PLAYER_BUTTON_ROW_HEIGHT - size) / 2.0 + BOTTOM_PLAYER_BUTTON_OFFSET_Y;
     buttons.put(button, center_x - radius, y);
+}
+
+fn player_link(css_class: &str) -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.add_css_class("player-link");
+    label.add_css_class(css_class);
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_chars(1);
+    label.set_max_width_chars(BOTTOM_PLAYER_IDENTITY_MAX_CHARS);
+    label.set_halign(gtk::Align::Fill);
+    label.set_hexpand(false);
+    label.set_cursor_from_name(Some("pointer"));
+    add_dynamic_link_hover(label.upcast_ref(), &label);
+    label
+}
+
+fn playback_state_label(state: PlaybackState) -> &'static str {
+    match state {
+        PlaybackState::Stopped => "Play",
+        PlaybackState::Paused => "Resume",
+        PlaybackState::Buffering => "Pause",
+        PlaybackState::Playing => "Pause",
+    }
+}
+
+fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
+    match repeat_mode {
+        RepeatMode::Off => "Repeat off",
+        RepeatMode::One => "Repeat one",
+        RepeatMode::All => "Repeat all",
+    }
+}
+
+fn set_repeat_button_icon(button: &gtk::Button, repeat_mode: RepeatMode) {
+    button.set_child(Some(&repeat_icon_area(repeat_mode)));
+}
+
+fn stop_icon_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.set_tooltip_text(Some(&crate::i18n::tr(label)));
+
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(move |area, context, width, height| {
+        let color = area.color();
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            f64::from(color.alpha()),
+        );
+        let size = 8.4;
+        context.rectangle(
+            (f64::from(width) - size) / 2.0,
+            (f64::from(height) - size) / 2.0,
+            size,
+            size,
+        );
+        let _ = context.fill();
+    });
+    button.set_child(Some(&icon));
+    button
+}
+
+fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.set_tooltip_text(Some(&crate::i18n::tr(label)));
+
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(move |area, context, width, height| {
+        let color = area.color();
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            f64::from(color.alpha()),
+        );
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let center_y = height / 2.0;
+        let top = center_y - 5.0;
+        let bottom = center_y + 5.0;
+        if forward {
+            context.move_to(width * 0.30, top);
+            context.line_to(width * 0.30, bottom);
+            context.line_to(width * 0.70, center_y);
+            context.close_path();
+            let _ = context.fill();
+            context.rectangle(width * 0.76, top, 2.1, bottom - top);
+            let _ = context.fill();
+        } else {
+            context.rectangle(width * 0.20, top, 2.1, bottom - top);
+            let _ = context.fill();
+            context.move_to(width * 0.70, top);
+            context.line_to(width * 0.70, bottom);
+            context.line_to(width * 0.30, center_y);
+            context.close_path();
+            let _ = context.fill();
+        }
+    });
+    button.set_child(Some(&icon));
+    button
+}
+
+fn repeat_icon_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.add_css_class("player-repeat-button");
+    button.set_tooltip_text(Some(&crate::i18n::tr(label)));
+    button.set_child(Some(&repeat_icon_area(RepeatMode::Off)));
+    button
+}
+
+fn repeat_icon_area(repeat_mode: RepeatMode) -> gtk::DrawingArea {
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(move |area, context, width, height| {
+        let color = area.color();
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            f64::from(color.alpha()),
+        );
+        context.set_line_width(1.6);
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_line_join(gtk::cairo::LineJoin::Round);
+
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let left = width * 0.18;
+        let right = width * 0.82;
+        let top = height * 0.28;
+        let bottom = height * 0.72;
+        let arrow = 3.0;
+
+        context.move_to(left + 1.8, top);
+        context.line_to(right - 1.2, top);
+        context.line_to(right - arrow, top - arrow);
+        context.move_to(right - 1.2, top);
+        context.line_to(right - arrow, top + arrow);
+
+        context.move_to(right - 1.8, bottom);
+        context.line_to(left + 1.2, bottom);
+        context.line_to(left + arrow, bottom - arrow);
+        context.move_to(left + 1.2, bottom);
+        context.line_to(left + arrow, bottom + arrow);
+        let _ = context.stroke();
+
+        if repeat_mode == RepeatMode::One {
+            context.set_line_width(1.35);
+            let one_x = width / 2.0;
+            let one_top = height * 0.40;
+            let one_bottom = height * 0.66;
+            context.move_to(one_x, one_top);
+            context.line_to(one_x, one_bottom);
+            context.move_to(one_x - 1.5, one_top + 1.0);
+            context.line_to(one_x, one_top);
+            let _ = context.stroke();
+        }
+    });
+    icon
+}
+
+fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    let label = crate::i18n::tr(label);
+    button.set_tooltip_text(Some(&label));
+    button.update_property(&[gtk::accessible::Property::Label(&label)]);
+
+    let open = Rc::new(Cell::new(true));
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(16);
+    icon.set_content_height(16);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+
+    let icon_open = Rc::clone(&open);
+    icon.set_draw_func(move |area, context, width, height| {
+        let color = area.color();
+        let set_source = |alpha: f64| {
+            context.set_source_rgba(
+                f64::from(color.red()),
+                f64::from(color.green()),
+                f64::from(color.blue()),
+                f64::from(color.alpha()) * alpha,
+            );
+        };
+
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let x = (width - 14.0) / 2.0;
+        let y = (height - 12.0) / 2.0;
+        let icon_width = 14.0;
+        let icon_height = 12.0;
+        let separator_x = x + icon_width - 4.5;
+        let center_y = y + icon_height / 2.0;
+
+        if icon_open.get() {
+            set_source(0.32);
+            context.rectangle(separator_x, y, icon_width - (separator_x - x), icon_height);
+            let _ = context.fill();
+        }
+
+        set_source(1.0);
+        context.set_line_width(1.4);
+        context.rectangle(x + 0.7, y + 0.7, icon_width - 1.4, icon_height - 1.4);
+        let _ = context.stroke();
+
+        context.move_to(separator_x, y + 1.2);
+        context.line_to(separator_x, y + icon_height - 1.2);
+        let _ = context.stroke();
+
+        if !icon_open.get() {
+            context.set_line_width(1.5);
+            context.move_to(separator_x + 2.6, center_y - 3.0);
+            context.line_to(separator_x + 1.0, center_y);
+            context.line_to(separator_x + 2.6, center_y + 3.0);
+            let _ = context.stroke();
+        }
+    });
+    button.set_child(Some(&icon));
+    (button, icon, open)
 }
 
 pub(super) fn connect_player_controls(shell: &Rc<Shell>) {

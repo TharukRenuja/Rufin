@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 mod navigation;
 mod player;
 mod queue;
+mod right_panel;
 
 use adw::prelude::*;
 use gdk_pixbuf::Pixbuf;
@@ -39,6 +40,7 @@ use navigation::{
 };
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use queue::connect_queue_panel_controls;
+use right_panel::{apply_right_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 
 const COMPACT_RAIL_WIDTH: i32 = 72;
 const MAIN_PANEL_UNITS: i32 = 7;
@@ -65,28 +67,10 @@ const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
-const BOTTOM_PLAYER_HEIGHT: i32 = 88;
-const BOTTOM_PLAYER_COVER_SIZE: i32 = 72;
-const BOTTOM_PLAYER_IDENTITY_WIDTH: i32 = 190;
-const BOTTOM_PLAYER_IDENTITY_MAX_CHARS: i32 = 24;
-const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 400;
-const BOTTOM_PLAYER_TRANSPORT_OFFSET: i32 = 80;
-const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 300;
-const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 48;
-const BOTTOM_PLAYER_SIDE_BUTTON_SIZE: i32 = 40;
-const BOTTOM_PLAYER_PLAY_BUTTON_SIZE: i32 = 36;
-const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 3.0;
-const BOTTOM_PLAYER_BUTTON_STEP: f64 = 44.0;
-const BOTTOM_PLAYER_TRANSPORT_ICON_SIZE: i32 = 18;
-const BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP: i32 = 9;
 const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
 const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
 const MAX_RESTORED_WINDOW_WIDTH: i32 = 1400;
 const MAX_RESTORED_WINDOW_HEIGHT: i32 = 900;
-const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
-const QUEUE_LYRICS_READY_MIN_HEIGHT: i32 = QUEUE_LYRICS_MIN_PANE_HEIGHT * 3;
-const QUEUE_LYRICS_DEFAULT_QUEUE_UNITS: i32 = 5;
-const QUEUE_LYRICS_DEFAULT_LYRICS_UNITS: i32 = 2;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -303,8 +287,6 @@ struct Shell {
     compact_forward_button: gtk::Button,
     right_panel: gtk::Box,
     queue_panel: gtk::Box,
-    queue_shuffle_button: gtk::Button,
-    queue_repeat_button: gtk::Button,
     queue_clear_button: gtk::Button,
     queue_lyrics_split: gtk::Paned,
     lyrics_pane: LyricsPane,
@@ -424,46 +406,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     main_area.append(&header);
     main_area.append(&route_host);
 
-    let right_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    right_panel.add_css_class("right-panel");
-    right_panel.set_vexpand(true);
-
-    let queue_header = adw::HeaderBar::new();
-    queue_header.add_css_class("sidebar-header");
-    queue_header.set_show_start_title_buttons(false);
-    queue_header.set_show_end_title_buttons(false);
-    let queue_title = gtk::Label::new(Some(&tr("Queue")));
-    queue_title.add_css_class("panel-title");
-    queue_header.set_title_widget(Some(&queue_title));
-
-    let queue_shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
-    let queue_repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
-    let queue_clear_button = icon_button("edit-clear-symbolic", "Clear queue");
-    queue_header.pack_start(&queue_shuffle_button);
-    queue_header.pack_start(&queue_repeat_button);
-    queue_header.pack_end(&queue_clear_button);
-    right_panel.append(&queue_header);
-
-    let queue_panel = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    queue_panel.add_css_class("queue-panel");
-    queue_panel.set_vexpand(true);
-    queue_panel.set_margin_top(10);
-    queue_panel.set_margin_start(10);
-    queue_panel.set_margin_end(10);
-    queue_panel.set_margin_bottom(12);
-
-    let lyrics_pane = LyricsPane::new(&tr("Lyrics"));
-    let queue_lyrics_split = gtk::Paned::new(gtk::Orientation::Vertical);
-    queue_lyrics_split.add_css_class("queue-lyrics-split");
-    queue_lyrics_split.set_vexpand(true);
-    queue_lyrics_split.set_wide_handle(true);
-    queue_lyrics_split.set_resize_start_child(true);
-    queue_lyrics_split.set_resize_end_child(true);
-    queue_lyrics_split.set_shrink_start_child(true);
-    queue_lyrics_split.set_shrink_end_child(true);
-    queue_lyrics_split.set_start_child(Some(&queue_panel));
-    queue_lyrics_split.set_end_child(Some(lyrics_pane.widget()));
-    right_panel.append(&queue_lyrics_split);
+    let right_panel_parts = build_right_panel();
+    let right_panel = right_panel_parts.root;
+    let queue_panel = right_panel_parts.queue_panel;
+    let queue_clear_button = right_panel_parts.queue_clear_button;
+    let queue_lyrics_split = right_panel_parts.queue_lyrics_split;
+    let lyrics_pane = right_panel_parts.lyrics_pane;
 
     let content_split = gtk::Paned::new(gtk::Orientation::Horizontal);
     content_split.set_hexpand(true);
@@ -502,8 +450,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         compact_forward_button,
         right_panel,
         queue_panel,
-        queue_shuffle_button,
-        queue_repeat_button,
         queue_clear_button,
         queue_lyrics_split,
         lyrics_pane,
@@ -1071,25 +1017,6 @@ impl Shell {
         settings.right_panel_visible = visible;
         if let Err(error) = self.controller.save_settings(&settings) {
             warn!(%error, "failed to save right panel visibility");
-        }
-    }
-
-    fn save_queue_lyrics_split_position(&self, available_height: i32, position: i32) {
-        if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT || position <= 0 {
-            return;
-        }
-        let position = clamp_queue_lyrics_position(available_height, position);
-        let ratio = queue_lyrics_position_ratio(available_height, position);
-        let mut settings = self.state.settings.borrow_mut();
-        if settings.queue_lyrics_position == Some(position)
-            && settings.queue_lyrics_ratio == Some(ratio)
-        {
-            return;
-        }
-        settings.queue_lyrics_position = Some(position);
-        settings.queue_lyrics_ratio = Some(ratio);
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save queue lyrics split position");
         }
     }
 
@@ -3621,61 +3548,6 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     });
 }
 
-fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
-    let saved_ratio = shell.state.settings.borrow().queue_lyrics_ratio;
-    shell
-        .queue_lyrics_split
-        .set_position(queue_lyrics_initial_position(
-            queue_lyrics_available_height(shell),
-            saved_ratio,
-        ));
-
-    let suppress_split_position_save = Rc::new(Cell::new(0_u32));
-    let applied_split_height = Rc::new(Cell::new(0));
-    let position_shell = Rc::clone(shell);
-    let suppress_for_tick = Rc::clone(&suppress_split_position_save);
-    let applied_height_for_tick = Rc::clone(&applied_split_height);
-    shell.queue_lyrics_split.add_tick_callback(move |split, _| {
-        let available_height = split.height();
-        if available_height >= QUEUE_LYRICS_READY_MIN_HEIGHT
-            && applied_height_for_tick.replace(available_height) != available_height
-        {
-            let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
-            set_queue_lyrics_split_position_without_saving(split, &suppress_for_tick, saved_ratio);
-        }
-        glib::ControlFlow::Continue
-    });
-
-    let split_interaction = gtk::GestureClick::new();
-    split_interaction.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let split_for_release = shell.queue_lyrics_split.clone();
-    let shell_for_release = Rc::clone(shell);
-    let suppress_for_release = Rc::clone(&suppress_split_position_save);
-    split_interaction.connect_released(move |_, _, _, _| {
-        let split = split_for_release.clone();
-        let shell = Rc::clone(&shell_for_release);
-        let suppress = Rc::clone(&suppress_for_release);
-        glib::idle_add_local_once(move || {
-            if suppress.get() > 0 {
-                return;
-            }
-            shell.save_queue_lyrics_split_position(split.height(), split.position());
-        });
-    });
-    shell.queue_lyrics_split.add_controller(split_interaction);
-
-    let shell_for_position = Rc::clone(shell);
-    let suppress_for_position = Rc::clone(&suppress_split_position_save);
-    shell
-        .queue_lyrics_split
-        .connect_notify_local(Some("position"), move |split, _| {
-            if suppress_for_position.get() > 0 {
-                return;
-            }
-            shell_for_position.save_queue_lyrics_split_position(split.height(), split.position());
-        });
-}
-
 fn install_window_actions(shell: &Rc<Shell>) {
     let preferences = gio::SimpleAction::new("preferences", None);
     let preferences_shell = Rc::clone(shell);
@@ -3773,33 +3645,6 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
         debug!(delay_ms, "starting deferred background sync");
         shell.controller.start_background_sync_for_active();
     });
-}
-
-fn apply_right_panel_visibility(shell: Rc<Shell>, visible: bool) {
-    let panel = shell.right_panel.clone();
-    if panel.parent().is_none() {
-        shell.content_split.set_end_child(Some(&panel));
-    }
-
-    let split_width = shell.content_split.width();
-    if visible {
-        panel.set_visible(true);
-    } else {
-        panel.set_visible(false);
-    }
-    panel.set_opacity(if visible { 1.0 } else { 0.0 });
-
-    if split_width > 1 {
-        let position = if visible {
-            shell.right_panel_open_position(split_width)
-        } else {
-            split_width
-        };
-        shell.content_split.set_position(position);
-    }
-
-    shell.update_content_split();
-    shell.render_responsive_route_now();
 }
 
 fn install_mpris(shell: &Rc<Shell>) {
@@ -4291,47 +4136,6 @@ fn collect_largest_scrolled_window(
     while let Some(widget) = child {
         collect_largest_scrolled_window(&widget, best);
         child = widget.next_sibling();
-    }
-}
-
-fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
-    match repeat_mode {
-        RepeatMode::Off => "Repeat off",
-        RepeatMode::One => "Repeat one",
-        RepeatMode::All => "Repeat all",
-    }
-}
-
-fn repeat_icon_name(repeat_mode: RepeatMode) -> &'static str {
-    match repeat_mode {
-        RepeatMode::One => "media-playlist-repeat-song-symbolic",
-        RepeatMode::Off | RepeatMode::All => "media-playlist-repeat-symbolic",
-    }
-}
-
-fn set_repeat_button_icon(button: &gtk::Button, repeat_mode: RepeatMode) {
-    if button.has_css_class("player-repeat-button") {
-        button.set_child(Some(&repeat_icon_area(repeat_mode)));
-        return;
-    }
-
-    let icon_name = repeat_icon_name(repeat_mode);
-    if let Some(image) = button
-        .child()
-        .and_then(|child| child.downcast::<gtk::Image>().ok())
-    {
-        image.set_icon_name(Some(icon_name));
-    } else {
-        button.set_child(Some(&gtk::Image::from_icon_name(icon_name)));
-    }
-}
-
-fn playback_state_label(state: PlaybackState) -> &'static str {
-    match state {
-        PlaybackState::Stopped => "Play",
-        PlaybackState::Paused => "Resume",
-        PlaybackState::Buffering => "Pause",
-        PlaybackState::Playing => "Pause",
     }
 }
 
@@ -5145,75 +4949,6 @@ fn restored_window_size(width: Option<i32>, height: Option<i32>) -> Option<(i32,
     ))
 }
 
-fn queue_lyrics_available_height(shell: &Shell) -> i32 {
-    let panel_height = shell.right_panel.height();
-    if panel_height > QUEUE_LYRICS_MIN_PANE_HEIGHT * 2 {
-        return panel_height;
-    }
-    let window_height = shell.window.height();
-    if window_height > MIN_RESTORED_WINDOW_HEIGHT {
-        return (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2);
-    }
-    let restored_height = shell
-        .state
-        .settings
-        .borrow()
-        .window_height
-        .filter(|height| *height >= MIN_RESTORED_WINDOW_HEIGHT)
-        .map(|height| height.clamp(MIN_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_HEIGHT))
-        .unwrap_or(MAX_RESTORED_WINDOW_HEIGHT);
-    (restored_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2)
-}
-
-fn clamp_queue_lyrics_position(available_height: i32, position: i32) -> i32 {
-    let max_position =
-        (available_height - QUEUE_LYRICS_MIN_PANE_HEIGHT).max(QUEUE_LYRICS_MIN_PANE_HEIGHT);
-    position.clamp(QUEUE_LYRICS_MIN_PANE_HEIGHT, max_position)
-}
-
-fn queue_lyrics_default_position(available_height: i32) -> i32 {
-    let total_units = QUEUE_LYRICS_DEFAULT_QUEUE_UNITS + QUEUE_LYRICS_DEFAULT_LYRICS_UNITS;
-    let position = available_height * QUEUE_LYRICS_DEFAULT_QUEUE_UNITS / total_units;
-    clamp_queue_lyrics_position(available_height, position)
-}
-
-fn queue_lyrics_position_ratio(available_height: i32, position: i32) -> f64 {
-    if available_height <= 0 {
-        return 0.0;
-    }
-    f64::from(position).clamp(0.0, f64::from(available_height)) / f64::from(available_height)
-}
-
-fn queue_lyrics_position_from_ratio(available_height: i32, ratio: f64) -> i32 {
-    let position = (f64::from(available_height) * ratio.clamp(0.0, 1.0)).round() as i32;
-    clamp_queue_lyrics_position(available_height, position)
-}
-
-fn queue_lyrics_initial_position(available_height: i32, saved_ratio: Option<f64>) -> i32 {
-    saved_ratio
-        .filter(|ratio| ratio.is_finite())
-        .map(|ratio| queue_lyrics_position_from_ratio(available_height, ratio))
-        .unwrap_or_else(|| queue_lyrics_default_position(available_height))
-}
-
-fn set_queue_lyrics_split_position_without_saving(
-    split: &gtk::Paned,
-    suppress_save: &Rc<Cell<u32>>,
-    saved_ratio: Option<f64>,
-) {
-    let available_height = split.height();
-    if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT {
-        return;
-    }
-
-    suppress_save.set(suppress_save.get().saturating_add(1));
-    split.set_position(queue_lyrics_initial_position(available_height, saved_ratio));
-    let suppress = Rc::clone(suppress_save);
-    glib::idle_add_local_once(move || {
-        suppress.set(suppress.get().saturating_sub(1));
-    });
-}
-
 fn card_label_width_chars(size: i32) -> i32 {
     (size / 8).clamp(8, 28)
 }
@@ -5739,21 +5474,6 @@ fn clip_rounded_rect(context: &gtk::cairo::Context, width: i32, height: i32, rad
     context.clip();
 }
 
-fn player_link(css_class: &str) -> gtk::Label {
-    let label = gtk::Label::new(None);
-    label.add_css_class("player-link");
-    label.add_css_class(css_class);
-    label.set_xalign(0.0);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label.set_width_chars(1);
-    label.set_max_width_chars(BOTTOM_PLAYER_IDENTITY_MAX_CHARS);
-    label.set_halign(gtk::Align::Fill);
-    label.set_hexpand(false);
-    label.set_cursor_from_name(Some("pointer"));
-    add_dynamic_link_hover(label.upcast_ref(), &label);
-    label
-}
-
 fn add_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
     let click = gtk::GestureClick::new();
     click.connect_released(move |_, _, _, _| callback());
@@ -5844,215 +5564,6 @@ fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     button
 }
 
-fn stop_icon_button(label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.set_tooltip_text(Some(&tr(label)));
-
-    let icon = gtk::DrawingArea::new();
-    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
-    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-    icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        context.set_source_rgba(
-            f64::from(color.red()),
-            f64::from(color.green()),
-            f64::from(color.blue()),
-            f64::from(color.alpha()),
-        );
-        let size = 8.8;
-        context.rectangle(
-            (f64::from(width) - size) / 2.0,
-            (f64::from(height) - size) / 2.0,
-            size,
-            size,
-        );
-        let _ = context.fill();
-    });
-    button.set_child(Some(&icon));
-    button
-}
-
-fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.set_tooltip_text(Some(&tr(label)));
-
-    let icon = gtk::DrawingArea::new();
-    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
-    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-    icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        context.set_source_rgba(
-            f64::from(color.red()),
-            f64::from(color.green()),
-            f64::from(color.blue()),
-            f64::from(color.alpha()),
-        );
-        let width = f64::from(width);
-        let height = f64::from(height);
-        let center_y = height / 2.0;
-        let top = center_y - 5.2;
-        let bottom = center_y + 5.2;
-        if forward {
-            context.move_to(width * 0.30, top);
-            context.line_to(width * 0.30, bottom);
-            context.line_to(width * 0.70, center_y);
-            context.close_path();
-            let _ = context.fill();
-            context.rectangle(width * 0.76, top, 2.2, bottom - top);
-            let _ = context.fill();
-        } else {
-            context.rectangle(width * 0.20, top, 2.2, bottom - top);
-            let _ = context.fill();
-            context.move_to(width * 0.70, top);
-            context.line_to(width * 0.70, bottom);
-            context.line_to(width * 0.30, center_y);
-            context.close_path();
-            let _ = context.fill();
-        }
-    });
-    button.set_child(Some(&icon));
-    button
-}
-
-fn repeat_icon_button(label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.add_css_class("player-repeat-button");
-    button.set_tooltip_text(Some(&tr(label)));
-    button.set_child(Some(&repeat_icon_area(RepeatMode::Off)));
-    button
-}
-
-fn repeat_icon_area(repeat_mode: RepeatMode) -> gtk::DrawingArea {
-    let icon = gtk::DrawingArea::new();
-    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
-    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-    icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        context.set_source_rgba(
-            f64::from(color.red()),
-            f64::from(color.green()),
-            f64::from(color.blue()),
-            f64::from(color.alpha()),
-        );
-        context.set_line_width(1.7);
-        context.set_line_cap(gtk::cairo::LineCap::Round);
-        context.set_line_join(gtk::cairo::LineJoin::Round);
-
-        let width = f64::from(width);
-        let height = f64::from(height);
-        let left = width * 0.18;
-        let right = width * 0.82;
-        let top = height * 0.28;
-        let bottom = height * 0.72;
-        let arrow = 3.0;
-
-        context.move_to(left + 1.8, top);
-        context.line_to(right - 1.2, top);
-        context.line_to(right - arrow, top - arrow);
-        context.move_to(right - 1.2, top);
-        context.line_to(right - arrow, top + arrow);
-
-        context.move_to(right - 1.8, bottom);
-        context.line_to(left + 1.2, bottom);
-        context.line_to(left + arrow, bottom - arrow);
-        context.move_to(left + 1.2, bottom);
-        context.line_to(left + arrow, bottom + arrow);
-        let _ = context.stroke();
-
-        if repeat_mode == RepeatMode::One {
-            context.set_line_width(1.4);
-            let one_x = width / 2.0;
-            let one_top = height * 0.40;
-            let one_bottom = height * 0.66;
-            context.move_to(one_x, one_top);
-            context.line_to(one_x, one_bottom);
-            context.move_to(one_x - 1.5, one_top + 1.0);
-            context.line_to(one_x, one_top);
-            let _ = context.stroke();
-        }
-    });
-    icon
-}
-
-fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    let label = tr(label);
-    button.set_tooltip_text(Some(&label));
-    button.update_property(&[gtk::accessible::Property::Label(&label)]);
-
-    let open = Rc::new(Cell::new(true));
-    let icon = gtk::DrawingArea::new();
-    icon.set_content_width(16);
-    icon.set_content_height(16);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-
-    let icon_open = Rc::clone(&open);
-    icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        let set_source = |alpha: f64| {
-            context.set_source_rgba(
-                f64::from(color.red()),
-                f64::from(color.green()),
-                f64::from(color.blue()),
-                f64::from(color.alpha()) * alpha,
-            );
-        };
-
-        let width = f64::from(width);
-        let height = f64::from(height);
-        let x = (width - 14.0) / 2.0;
-        let y = (height - 12.0) / 2.0;
-        let icon_width = 14.0;
-        let icon_height = 12.0;
-        let separator_x = x + icon_width - 4.5;
-        let center_y = y + icon_height / 2.0;
-
-        if icon_open.get() {
-            set_source(0.32);
-            context.rectangle(separator_x, y, icon_width - (separator_x - x), icon_height);
-            let _ = context.fill();
-        }
-
-        set_source(1.0);
-        context.set_line_width(1.4);
-        context.rectangle(x + 0.7, y + 0.7, icon_width - 1.4, icon_height - 1.4);
-        let _ = context.stroke();
-
-        context.move_to(separator_x, y + 1.2);
-        context.line_to(separator_x, y + icon_height - 1.2);
-        let _ = context.stroke();
-
-        if !icon_open.get() {
-            context.set_line_width(1.5);
-            context.move_to(separator_x + 2.6, center_y - 3.0);
-            context.line_to(separator_x + 1.0, center_y);
-            context.line_to(separator_x + 2.6, center_y + 3.0);
-            let _ = context.stroke();
-        }
-    });
-    button.set_child(Some(&icon));
-    (button, icon, open)
-}
-
 fn icon_button_with_image(icon_name: &str, label: &str) -> (gtk::Button, gtk::Image) {
     let button = gtk::Button::new();
     button.add_css_class("icon-button");
@@ -6091,15 +5602,18 @@ fn install_css() {
 
 #[cfg(test)]
 mod tests {
+    use super::right_panel::{
+        clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_initial_position,
+        queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
+    };
     use super::{
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, card_label_height,
-        clamp_content_split_position, clamp_home_album_page_start, clamp_queue_lyrics_position,
-        content_split_initial_position, content_split_position_from_right_panel_ratio,
-        content_split_target_position, current_playback_track_id, default_content_split_position,
-        home_album_card_height, home_album_card_size, home_album_content_width_for,
-        home_album_page_size, queue_lyrics_default_position, queue_lyrics_initial_position,
-        queue_lyrics_position_from_ratio, queue_lyrics_position_ratio, restored_window_size,
-        right_panel_position_ratio, seekbar_target_seconds, update_right_panel_split_settings,
+        clamp_content_split_position, clamp_home_album_page_start, content_split_initial_position,
+        content_split_position_from_right_panel_ratio, content_split_target_position,
+        current_playback_track_id, default_content_split_position, home_album_card_height,
+        home_album_card_size, home_album_content_width_for, home_album_page_size,
+        restored_window_size, right_panel_position_ratio, seekbar_target_seconds,
+        update_right_panel_split_settings,
     };
     use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
 

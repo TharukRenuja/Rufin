@@ -37,13 +37,13 @@ pub enum LyricsFollowScrollPause {
 
 impl LyricsPane {
     pub fn new(title: &str) -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
         root.add_css_class("lyrics-panel");
         root.set_vexpand(true);
-        root.set_margin_top(12);
-        root.set_margin_start(10);
-        root.set_margin_end(10);
-        root.set_margin_bottom(18);
+        root.set_margin_top(8);
+        root.set_margin_start(8);
+        root.set_margin_end(8);
+        root.set_margin_bottom(12);
 
         let title = gtk::Label::new(Some(title));
         title.add_css_class("panel-title");

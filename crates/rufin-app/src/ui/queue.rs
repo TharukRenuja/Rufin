@@ -4,15 +4,12 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use rufin_core::{QueueEntry, QueueEntryId, RepeatMode, Route, SearchKind};
+use rufin_core::{QueueEntry, QueueEntryId, Route, SearchKind};
 
 use crate::controller::AppController;
 use crate::i18n::tr;
 
-use super::{
-    Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, repeat_label, set_active_class,
-    set_repeat_button_icon,
-};
+use super::{Shell, THUMB_COVER_SIZE, add_dynamic_link_hover};
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
 
@@ -42,22 +39,6 @@ impl Shell {
 
     pub(super) fn render_queue_panel(self: &Rc<Self>) {
         let queue_snapshot = self.state.queue.borrow().clone();
-        let player = self.state.player.borrow().clone();
-
-        set_active_class(&self.queue_shuffle_button, player.shuffle_enabled);
-        self.queue_shuffle_button
-            .set_tooltip_text(Some(&tr(if player.shuffle_enabled {
-                "Shuffle on"
-            } else {
-                "Shuffle"
-            })));
-        set_active_class(
-            &self.queue_repeat_button,
-            player.repeat_mode != RepeatMode::Off,
-        );
-        set_repeat_button_icon(&self.queue_repeat_button, player.repeat_mode);
-        self.queue_repeat_button
-            .set_tooltip_text(Some(&tr(repeat_label(player.repeat_mode))));
 
         while let Some(child) = self.queue_panel.first_child() {
             self.queue_panel.remove(&child);
@@ -156,14 +137,6 @@ impl Shell {
 }
 
 pub(super) fn connect_queue_panel_controls(shell: &Rc<Shell>) {
-    let controller = shell.controller.clone();
-    shell
-        .queue_shuffle_button
-        .connect_clicked(move |_| controller.toggle_shuffle());
-    let controller = shell.controller.clone();
-    shell
-        .queue_repeat_button
-        .connect_clicked(move |_| controller.cycle_repeat());
     let clear_shell = Rc::clone(shell);
     shell
         .queue_clear_button

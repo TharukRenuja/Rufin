@@ -28,13 +28,14 @@ window {
 }
 
 .right-panel {
-  background: transparent;
+  background: color-mix(in srgb, @window_bg_color 96%, @card_bg_color);
   color: @window_fg_color;
+  border-left: 1px solid @borders;
 }
 
 .route-header,
 .sidebar-header {
-  min-height: 48px;
+  min-height: 46px;
   background: transparent;
   color: @window_fg_color;
 }
@@ -197,7 +198,11 @@ window {
 }
 
 .player-transport {
-  margin: 0 8px;
+  margin: 0 6px;
+}
+
+.player-progress-row {
+  margin-top: -3px;
 }
 
 .player-progress-row label {
@@ -381,13 +386,13 @@ scale.volume-slider trough {
 
 .icon-button.player-transport-button {
   padding: 0;
-  min-width: 40px;
-  min-height: 40px;
+  min-width: 36px;
+  min-height: 36px;
 }
 
 .icon-button.player-play-button {
-  min-width: 36px;
-  min-height: 36px;
+  min-width: 34px;
+  min-height: 34px;
 }
 
 .queue-panel {
@@ -402,9 +407,14 @@ scale.volume-slider trough {
   background: transparent;
 }
 
+.queue-lyrics-split > separator {
+  min-height: 1px;
+  background: @borders;
+}
+
 .queue-row {
-  padding: 7px 8px;
-  border-radius: 8px;
+  padding: 6px;
+  border-radius: 7px;
 }
 
 .queue-row:focus {
@@ -420,8 +430,8 @@ scale.volume-slider trough {
 }
 
 .queue-header {
-  padding: 0 0 4px;
-  border-bottom: 1px solid @borders;
+  padding: 0 0 3px;
+  border-bottom: 1px solid color-mix(in srgb, @borders 78%, transparent);
 }
 
 .queue-list row {
@@ -443,8 +453,8 @@ scale.volume-slider trough {
 }
 
 .bottom-player {
-  padding: 4px 8px;
-  background: color-mix(in srgb, @window_bg_color 92%, transparent);
+  padding: 2px 8px;
+  background: color-mix(in srgb, @window_bg_color 96%, transparent);
   color: @window_fg_color;
   border-top: 1px solid @borders;
 }
