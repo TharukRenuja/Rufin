@@ -102,6 +102,7 @@ pub(super) fn update_server_selector(selector: &ServerSelector, library: &Librar
 pub(super) fn sidebar_history_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = icon_button(icon_name, label);
     button.add_css_class("sidebar-history-button");
+    button.set_valign(gtk::Align::Center);
     button
 }
 
