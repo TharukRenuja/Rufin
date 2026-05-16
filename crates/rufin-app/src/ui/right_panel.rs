@@ -120,24 +120,6 @@ pub(super) fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
         glib::ControlFlow::Continue
     });
 
-    let split_interaction = gtk::GestureClick::new();
-    split_interaction.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let split_for_release = shell.queue_lyrics_split.clone();
-    let shell_for_release = Rc::clone(shell);
-    let suppress_for_release = Rc::clone(&suppress_split_position_save);
-    split_interaction.connect_released(move |_, _, _, _| {
-        let split = split_for_release.clone();
-        let shell = Rc::clone(&shell_for_release);
-        let suppress = Rc::clone(&suppress_for_release);
-        glib::idle_add_local_once(move || {
-            if suppress.get() > 0 {
-                return;
-            }
-            shell.save_queue_lyrics_split_position(split.height(), split.position());
-        });
-    });
-    shell.queue_lyrics_split.add_controller(split_interaction);
-
     let shell_for_position = Rc::clone(shell);
     let suppress_for_position = Rc::clone(&suppress_split_position_save);
     shell

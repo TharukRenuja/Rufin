@@ -176,9 +176,14 @@ fn install_queue_row_activation(
     let click = gtk::GestureClick::new();
     click.set_propagation_phase(gtk::PropagationPhase::Capture);
     click.set_button(1);
-    click.connect_released(move |_, press_count, _, _| {
+    click.connect_released(move |gesture, press_count, _, _| {
         if press_count == 2 {
-            controller.activate_queue_entry(entry_id.clone());
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            let controller = controller.clone();
+            let entry_id = entry_id.clone();
+            glib::idle_add_local_once(move || {
+                controller.activate_queue_entry(entry_id);
+            });
         }
     });
     row.add_controller(click);
