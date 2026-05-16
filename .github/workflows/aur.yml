@@ -114,13 +114,6 @@ jobs:
           git config --global core.sshCommand \
             "ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
 
-          ssh -i "$HOME/.ssh/aur" \
-            -o IdentitiesOnly=yes \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            aur@aur.archlinux.org help >/dev/null
-
       - name: Build packages
         run: |
           set -euo pipefail
