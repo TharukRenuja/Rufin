@@ -41,6 +41,12 @@ const HOME_ALBUM_TARGET_SIZE: i32 = 180;
 const HOME_ALBUM_MAX_SIZE: i32 = 210;
 const HOME_ALBUM_MIN_COLUMNS: usize = 2;
 const HOME_ALBUM_MAX_COLUMNS: usize = 12;
+const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = 56;
+const CARD_LABEL_LINE_HEIGHT: i32 = 18;
+const HOME_ALBUM_CARD_LABEL_GAP: i32 = 4;
+const HOME_ALBUM_TITLE_LINES: i32 = 2;
+const HOME_ALBUM_ARTIST_LINES: i32 = 2;
+const HOME_ALBUM_YEAR_LINES: i32 = 1;
 const GRID_ROUTE_PAGE_SIZE: usize = 16;
 const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 const GRID_COVER_SIZE: u32 = 256;
@@ -251,6 +257,12 @@ enum UiPerfScenario {
     FastScroll,
     Jump,
     DragSweep,
+}
+
+#[derive(Clone, Copy)]
+enum AlbumCardLabelLayout {
+    Natural,
+    StableHome,
 }
 
 impl UiPerfScenario {
@@ -993,16 +1005,15 @@ impl Shell {
         let mut settings = self.state.settings.borrow_mut();
         let mut changed = false;
 
-        if !self.window.is_maximized() && !self.window.is_fullscreen() {
-            if let Some((width, height)) =
+        if !self.window.is_maximized()
+            && !self.window.is_fullscreen()
+            && let Some((width, height)) =
                 restored_window_size(Some(self.window.width()), Some(self.window.height()))
-            {
-                if settings.window_width != Some(width) || settings.window_height != Some(height) {
-                    settings.window_width = Some(width);
-                    settings.window_height = Some(height);
-                    changed = true;
-                }
-            }
+            && (settings.window_width != Some(width) || settings.window_height != Some(height))
+        {
+            settings.window_width = Some(width);
+            settings.window_height = Some(height);
+            changed = true;
         }
 
         let split_position = if self.state.right_panel_visible.get() {
@@ -1201,13 +1212,23 @@ impl Shell {
         glib::timeout_add_local_once(
             Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
             move || {
-                shell.state.responsive_render_queued.set(false);
+                if !shell.state.responsive_render_queued.replace(false) {
+                    return;
+                }
                 shell.update_content_split();
                 if route_uses_responsive_cards(shell.state.routes.borrow().current()) {
                     shell.render_current_route();
                 }
             },
         );
+    }
+
+    fn render_responsive_route_now(self: &Rc<Self>) {
+        self.state.responsive_render_queued.set(false);
+        self.update_content_split();
+        if route_uses_responsive_cards(self.state.routes.borrow().current()) {
+            self.render_current_route();
+        }
     }
 
     fn update_mpris_player(&self) {
@@ -1573,7 +1594,7 @@ impl Shell {
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 26);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
         content.add_css_class("route-content");
         content.set_margin_top(24);
         content.set_margin_bottom(36);
@@ -1596,7 +1617,7 @@ impl Shell {
     }
 
     fn home_album_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
-        let section = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
         let section_kind = section_data.kind;
         let albums = section_data.albums.clone();
@@ -3725,6 +3746,7 @@ impl Shell {
                 &album,
                 card_size,
                 Some(&shell_for_factory.controller),
+                AlbumCardLabelLayout::Natural,
             )));
         });
         factory.connect_unbind(|_, list_item| {
@@ -3911,7 +3933,13 @@ impl Shell {
     }
 
     fn album_card_with_size(self: &Rc<Self>, album: &Album, size: i32) -> gtk::Widget {
-        album_card_widget_with_size(self, album, size, Some(&self.controller))
+        album_card_widget_with_size(
+            self,
+            album,
+            size,
+            Some(&self.controller),
+            AlbumCardLabelLayout::StableHome,
+        )
     }
 
     fn track_table_popover(
@@ -4607,6 +4635,8 @@ fn apply_right_panel_visibility(shell: Rc<Shell>, visible: bool) {
     let split_width = shell.content_split.width();
     if visible {
         panel.set_visible(true);
+    } else {
+        panel.set_visible(false);
     }
     panel.set_opacity(if visible { 1.0 } else { 0.0 });
 
@@ -4619,12 +4649,8 @@ fn apply_right_panel_visibility(shell: Rc<Shell>, visible: bool) {
         shell.content_split.set_position(position);
     }
 
-    if !visible {
-        panel.set_visible(false);
-    }
-
     shell.update_content_split();
-    shell.queue_responsive_route_render();
+    shell.render_responsive_route_now();
 }
 
 fn install_mpris(shell: &Rc<Shell>) {
@@ -6207,23 +6233,36 @@ fn clamp_home_album_page_start(page_start: usize, page_size: usize, album_count:
 }
 
 fn home_album_content_width(shell: &Shell) -> i32 {
-    let mut route_width = shell.route_host.width();
-    let split_position = shell.content_split.position();
-    if split_position > 1 {
+    home_album_content_width_for(
+        shell.route_host.width(),
+        shell.content_split.width(),
+        shell.content_split.position(),
+        shell.state.right_panel_visible.get(),
+    )
+}
+
+fn home_album_content_width_for(
+    route_width: i32,
+    split_width: i32,
+    split_position: i32,
+    right_panel_visible: bool,
+) -> i32 {
+    let mut route_width = if !right_panel_visible && split_width > 1 {
+        split_width
+    } else {
+        route_width
+    };
+    if right_panel_visible && split_position > 1 {
         route_width = if route_width > 1 {
             route_width.min(split_position)
         } else {
             split_position
         };
     }
-    if route_width <= 1 {
-        let split_width = shell.content_split.width();
-        if split_width > 1 {
-            route_width = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
-        }
+    if route_width <= 1 && split_width > 1 {
+        route_width = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
     }
-    let horizontal_margins = 56;
-    (route_width - horizontal_margins).max(HOME_ALBUM_MIN_SIZE)
+    (route_width - HOME_ALBUM_HORIZONTAL_MARGINS).max(HOME_ALBUM_MIN_SIZE)
 }
 
 fn home_album_card_size(width: i32, page_size: usize) -> i32 {
@@ -6344,6 +6383,34 @@ fn clipped_card_label(label: &gtk::Label, size: i32) -> gtk::Widget {
     clip.upcast()
 }
 
+fn clipped_card_label_with_lines(label: &gtk::Label, size: i32, lines: i32) -> gtk::Widget {
+    let clip = gtk::ScrolledWindow::new();
+    clip.add_css_class("card-label-clip");
+    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+    clip.set_width_request(size);
+    clip.set_size_request(size, card_label_height(lines));
+    clip.set_min_content_width(size);
+    clip.set_max_content_width(size);
+    clip.set_min_content_height(card_label_height(lines));
+    clip.set_max_content_height(card_label_height(lines));
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(false);
+    clip.set_hexpand(false);
+    clip.set_child(Some(label));
+    clip.upcast()
+}
+
+fn card_label_height(lines: i32) -> i32 {
+    CARD_LABEL_LINE_HEIGHT * lines.max(1)
+}
+
+fn home_album_card_height(size: i32) -> i32 {
+    size + HOME_ALBUM_CARD_LABEL_GAP * 3
+        + card_label_height(HOME_ALBUM_TITLE_LINES)
+        + card_label_height(HOME_ALBUM_ARTIST_LINES)
+        + card_label_height(HOME_ALBUM_YEAR_LINES)
+}
+
 fn constrain_wrapped_card_label(label: &gtk::Label, size: i32, lines: i32) {
     constrain_card_label(label, size);
     label.set_lines(lines);
@@ -6362,11 +6429,23 @@ fn album_card_widget_with_size(
     album: &Album,
     size: i32,
     controller: Option<&AppController>,
+    label_layout: AlbumCardLabelLayout,
 ) -> gtk::Widget {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let card = gtk::Box::new(
+        gtk::Orientation::Vertical,
+        match label_layout {
+            AlbumCardLabelLayout::Natural => 6,
+            AlbumCardLabelLayout::StableHome => HOME_ALBUM_CARD_LABEL_GAP,
+        },
+    );
     card.add_css_class("album-card");
     card.set_width_request(size);
-    card.set_size_request(size, -1);
+    match label_layout {
+        AlbumCardLabelLayout::Natural => card.set_size_request(size, -1),
+        AlbumCardLabelLayout::StableHome => {
+            card.set_size_request(size, home_album_card_height(size))
+        }
+    };
     card.set_hexpand(false);
     card.set_halign(gtk::Align::Start);
     let cover = album_cover_tile(shell, album, size, controller);
@@ -6376,19 +6455,39 @@ fn album_card_widget_with_size(
     title.add_css_class("album-title");
     title.set_xalign(0.0);
     constrain_wrapped_card_label(&title, size, 2);
-    let title_clip = clipped_card_label(&title, size);
+    let title_clip = match label_layout {
+        AlbumCardLabelLayout::Natural => clipped_card_label(&title, size),
+        AlbumCardLabelLayout::StableHome => {
+            clipped_card_label_with_lines(&title, size, HOME_ALBUM_TITLE_LINES)
+        }
+    };
     add_link_hover(&title_clip, &title, &album.title);
     let artist = gtk::Label::new(Some(&album.artist));
     artist.add_css_class("muted");
     artist.set_xalign(0.0);
-    constrain_single_line_card_label(&artist, size);
-    let artist_clip = clipped_card_label(&artist, size);
+    match label_layout {
+        AlbumCardLabelLayout::Natural => constrain_single_line_card_label(&artist, size),
+        AlbumCardLabelLayout::StableHome => {
+            constrain_wrapped_card_label(&artist, size, HOME_ALBUM_ARTIST_LINES)
+        }
+    };
+    let artist_clip = match label_layout {
+        AlbumCardLabelLayout::Natural => clipped_card_label(&artist, size),
+        AlbumCardLabelLayout::StableHome => {
+            clipped_card_label_with_lines(&artist, size, HOME_ALBUM_ARTIST_LINES)
+        }
+    };
     add_link_hover(&artist_clip, &artist, &album.artist);
     let year = gtk::Label::new(Some(&album.year.to_string()));
     year.add_css_class("muted");
     year.set_xalign(0.0);
     constrain_single_line_card_label(&year, size);
-    let year_clip = clipped_card_label(&year, size);
+    let year_clip = match label_layout {
+        AlbumCardLabelLayout::Natural => clipped_card_label(&year, size),
+        AlbumCardLabelLayout::StableHome => {
+            clipped_card_label_with_lines(&year, size, HOME_ALBUM_YEAR_LINES)
+        }
+    };
 
     card.append(&title_clip);
     card.append(&artist_clip);
@@ -7146,11 +7245,12 @@ fn install_css() {
 mod tests {
     use super::{
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, LyricsFollowScrollPause,
-        active_lyrics_line_index, clamp_content_split_position, clamp_home_album_page_start,
-        clamp_queue_lyrics_position, content_split_initial_position,
+        active_lyrics_line_index, card_label_height, clamp_content_split_position,
+        clamp_home_album_page_start, clamp_queue_lyrics_position, content_split_initial_position,
         content_split_position_from_right_panel_ratio, content_split_target_position,
-        current_playback_track_id, default_content_split_position, home_album_card_size,
-        home_album_page_size, lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
+        current_playback_track_id, default_content_split_position, home_album_card_height,
+        home_album_card_size, home_album_content_width_for, home_album_page_size,
+        lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
         next_lyrics_line_start_after, queue_lyrics_default_position, queue_lyrics_initial_position,
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio, restored_window_size,
         right_panel_position_ratio, update_right_panel_split_settings,
@@ -7209,6 +7309,28 @@ mod tests {
     fn home_album_card_size_remains_bounded() {
         assert_eq!(home_album_card_size(10_000, 2), HOME_ALBUM_MAX_SIZE);
         assert_eq!(home_album_card_size(1, 8), 1);
+    }
+
+    #[test]
+    fn home_album_width_uses_full_split_width_when_right_panel_is_hidden() {
+        let stale_route_width = 640;
+        let split_width = 1_000;
+        assert_eq!(
+            home_album_content_width_for(stale_route_width, split_width, 650, false),
+            split_width - super::HOME_ALBUM_HORIZONTAL_MARGINS
+        );
+        assert_eq!(
+            home_album_content_width_for(900, split_width, 650, true),
+            650 - super::HOME_ALBUM_HORIZONTAL_MARGINS
+        );
+    }
+
+    #[test]
+    fn home_album_card_height_reserves_five_text_rows() {
+        assert_eq!(
+            home_album_card_height(180),
+            180 + super::HOME_ALBUM_CARD_LABEL_GAP * 3 + card_label_height(5)
+        );
     }
 
     #[test]
