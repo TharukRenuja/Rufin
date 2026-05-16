@@ -4,8 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef,
-    Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ALBUM_LIMIT, HomeSection,
+    HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
     AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
@@ -242,7 +242,10 @@ impl MusicProvider for JellyfinProvider {
     }
 
     async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
-        let albums = self.albums(PagedRequest::new(0, 48)).await?.items;
+        let albums = self
+            .albums(PagedRequest::new(0, HOME_SECTION_ALBUM_LIMIT + 24))
+            .await?
+            .items;
         let sections = [
             (HomeSectionKind::Explore, 0_usize),
             (HomeSectionKind::MostPlayed, 6),
@@ -253,7 +256,12 @@ impl MusicProvider for JellyfinProvider {
         .into_iter()
         .map(|(kind, offset)| HomeSection {
             kind,
-            albums: albums.iter().skip(offset).take(8).cloned().collect(),
+            albums: albums
+                .iter()
+                .skip(offset)
+                .take(HOME_SECTION_ALBUM_LIMIT)
+                .cloned()
+                .collect(),
         })
         .filter(|section| !section.albums.is_empty())
         .collect();

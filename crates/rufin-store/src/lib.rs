@@ -1,8 +1,9 @@
 use std::{collections::HashMap, path::Path};
 
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    ImageRef, Playlist, PlaylistId, QueueSnapshot, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ALBUM_LIMIT,
+    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueSnapshot, ServerId,
+    ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
@@ -1091,7 +1092,7 @@ impl Store {
         ]
         .into_iter()
         .map(|(kind, offset)| {
-            self.load_albums(server_id, offset, 8)
+            self.load_albums(server_id, offset, HOME_SECTION_ALBUM_LIMIT)
                 .map(|response| HomeSection {
                     kind,
                     albums: response.items,

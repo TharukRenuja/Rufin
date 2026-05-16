@@ -5498,6 +5498,21 @@ fn constrain_card_label(label: &gtk::Label, size: i32) {
     label.set_hexpand(false);
 }
 
+fn clipped_card_label(label: &gtk::Label, size: i32) -> gtk::Widget {
+    let clip = gtk::ScrolledWindow::new();
+    clip.add_css_class("card-label-clip");
+    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+    clip.set_width_request(size);
+    clip.set_size_request(size, -1);
+    clip.set_min_content_width(size);
+    clip.set_max_content_width(size);
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(true);
+    clip.set_hexpand(false);
+    clip.set_child(Some(label));
+    clip.upcast()
+}
+
 fn constrain_wrapped_card_label(label: &gtk::Label, size: i32, lines: i32) {
     constrain_card_label(label, size);
     label.set_lines(lines);
@@ -5530,20 +5545,23 @@ fn album_card_widget_with_size(
     title.add_css_class("album-title");
     title.set_xalign(0.0);
     constrain_wrapped_card_label(&title, size, 2);
-    add_link_hover(title.upcast_ref(), &title, &album.title);
+    let title_clip = clipped_card_label(&title, size);
+    add_link_hover(&title_clip, &title, &album.title);
     let artist = gtk::Label::new(Some(&album.artist));
     artist.add_css_class("muted");
     artist.set_xalign(0.0);
     constrain_single_line_card_label(&artist, size);
-    add_link_hover(artist.upcast_ref(), &artist, &album.artist);
+    let artist_clip = clipped_card_label(&artist, size);
+    add_link_hover(&artist_clip, &artist, &album.artist);
     let year = gtk::Label::new(Some(&album.year.to_string()));
     year.add_css_class("muted");
     year.set_xalign(0.0);
     constrain_single_line_card_label(&year, size);
+    let year_clip = clipped_card_label(&year, size);
 
-    card.append(&title);
-    card.append(&artist);
-    card.append(&year);
+    card.append(&title_clip);
+    card.append(&artist_clip);
+    card.append(&year_clip);
     card.upcast()
 }
 
@@ -5655,6 +5673,7 @@ fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -
     name.add_css_class("album-title");
     name.set_xalign(0.0);
     constrain_wrapped_card_label(&name, size, 2);
+    let name_clip = clipped_card_label(&name, size);
 
     let counts = gtk::Label::new(Some(&format!(
         "{} {} / {} {}",
@@ -5666,9 +5685,10 @@ fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -
     counts.add_css_class("muted");
     counts.set_xalign(0.0);
     constrain_single_line_card_label(&counts, size);
+    let counts_clip = clipped_card_label(&counts, size);
 
-    card.append(&name);
-    card.append(&counts);
+    card.append(&name_clip);
+    card.append(&counts_clip);
     card.upcast()
 }
 
@@ -5690,6 +5710,7 @@ fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> g
     name.add_css_class("album-title");
     name.set_xalign(0.0);
     constrain_wrapped_card_label(&name, size, 2);
+    let name_clip = clipped_card_label(&name, size);
     let counts = gtk::Label::new(Some(&format!(
         "{} {} / {} {}",
         genre.album_count,
@@ -5700,8 +5721,9 @@ fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> g
     counts.add_css_class("muted");
     counts.set_xalign(0.0);
     constrain_single_line_card_label(&counts, size);
-    card.append(&name);
-    card.append(&counts);
+    let counts_clip = clipped_card_label(&counts, size);
+    card.append(&name_clip);
+    card.append(&counts_clip);
     card.upcast()
 }
 
@@ -5727,6 +5749,7 @@ fn playlist_card_widget_with_size(
     name.add_css_class("album-title");
     name.set_xalign(0.0);
     constrain_wrapped_card_label(&name, size, 2);
+    let name_clip = clipped_card_label(&name, size);
     let counts = gtk::Label::new(Some(&format!(
         "{} {} • {}",
         playlist.track_count,
@@ -5736,8 +5759,9 @@ fn playlist_card_widget_with_size(
     counts.add_css_class("muted");
     counts.set_xalign(0.0);
     constrain_single_line_card_label(&counts, size);
-    card.append(&name);
-    card.append(&counts);
+    let counts_clip = clipped_card_label(&counts, size);
+    card.append(&name_clip);
+    card.append(&counts_clip);
     card.upcast()
 }
 

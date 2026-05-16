@@ -155,6 +155,8 @@ pub enum HomeSectionKind {
     RecentlyReleased,
 }
 
+pub const HOME_SECTION_ALBUM_LIMIT: usize = 24;
+
 impl HomeSectionKind {
     pub fn title(self) -> &'static str {
         match self {

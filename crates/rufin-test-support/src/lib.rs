@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef,
-    Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ALBUM_LIMIT, HomeSection,
+    HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
     AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicProvider,
@@ -99,7 +99,7 @@ impl MusicProvider for FakeProvider {
                 .albums
                 .iter()
                 .skip(offset)
-                .take(8)
+                .take(HOME_SECTION_ALBUM_LIMIT)
                 .cloned()
                 .collect(),
         })
@@ -501,7 +501,7 @@ const PLAYLISTS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use futures_executor::block_on;
-    use rufin_core::AlbumId;
+    use rufin_core::{AlbumId, HOME_SECTION_ALBUM_LIMIT};
     use rufin_provider::{MusicProvider, PagedRequest, ProviderError};
 
     use super::{FakeProvider, FakeScale};
@@ -526,6 +526,20 @@ mod tests {
         assert_eq!(albums.items[0].id, AlbumId::fake(11));
         assert_eq!(tracks.total, 2_400);
         assert_eq!(tracks.items.len(), 3);
+    }
+
+    #[test]
+    fn home_sections_provide_enough_items_for_wide_rows() {
+        let provider = FakeProvider::new(FakeScale::Small);
+
+        let sections = block_on(provider.home_sections()).expect("home sections");
+
+        assert_eq!(sections.len(), 5);
+        assert!(
+            sections
+                .iter()
+                .all(|section| section.albums.len() == HOME_SECTION_ALBUM_LIMIT)
+        );
     }
 
     #[test]
