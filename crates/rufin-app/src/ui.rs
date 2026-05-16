@@ -1449,18 +1449,18 @@ impl Shell {
             Route::Home => self.home_view(),
             Route::Albums => self.albums_view(),
             Route::AlbumDetail(album_id) => self.album_detail_view(album_id),
-            Route::Tracks => self.tracks_route_view(&tr("Tracks")),
+            Route::Tracks => self.tracks_route_view(),
             Route::Settings => self.settings_view(),
             Route::Favorites => {
                 let favorites = self.state.library.borrow().favorites.clone();
-                self.tracks_view(favorites, &tr("Favorites"))
+                self.tracks_view(favorites, "favorites")
             }
-            Route::Artists => self.artist_list_view(false, &tr("Artists")),
+            Route::Artists => self.artist_list_view(false),
             Route::ArtistDetail(artist_id) => self.artist_detail_view(artist_id),
-            Route::AlbumArtists => self.artist_list_view(true, &tr("Album Artists")),
-            Route::Genres => self.genre_list_view(&tr("Genres")),
+            Route::AlbumArtists => self.artist_list_view(true),
+            Route::Genres => self.genre_list_view(),
             Route::GenreDetail(genre_id) => self.genre_detail_view(genre_id),
-            Route::Playlists => self.playlist_list_view(&tr("Playlists")),
+            Route::Playlists => self.playlist_list_view(),
             Route::PlaylistDetail(playlist_id) => self.playlist_detail_view(playlist_id),
             Route::Search { query, .. } => {
                 let library = self.state.library.borrow().clone();
@@ -4479,14 +4479,22 @@ fn connect_player_controls(shell: &Rc<Shell>) {
     shell
         .player_controls
         .progress
-        .connect_value_changed(move |scale| {
+        .connect_change_value(move |scale, _scroll, value| {
             if seek_shell.state.updating_player_controls.get() {
-                return;
+                return glib::Propagation::Proceed;
             }
+            let player = seek_shell.state.player.borrow();
+            let duration_seconds = player.duration_seconds;
+            if player.current.is_none() || duration_seconds == 0 {
+                return glib::Propagation::Stop;
+            }
+            drop(player);
+
             seek_shell.state.seeking_player_controls.set(true);
             let generation = seek_shell.state.seek_generation.get().saturating_add(1);
             seek_shell.state.seek_generation.set(generation);
-            let seconds = scale.value() as u32;
+            let seconds = seekbar_target_seconds(value, duration_seconds);
+            scale.set_value(f64::from(seconds));
             seek_shell
                 .player_controls
                 .elapsed
@@ -4498,6 +4506,7 @@ fn connect_player_controls(shell: &Rc<Shell>) {
                     seek_shell.state.seeking_player_controls.set(false);
                 }
             });
+            glib::Propagation::Stop
         });
 
     let volume_shell = Rc::clone(shell);
@@ -6510,6 +6519,13 @@ fn current_playback_track_id(snapshot: &PlaybackSnapshot) -> Option<rufin_core::
         .map(|entry| entry.track_id.clone())
 }
 
+fn seekbar_target_seconds(value: f64, duration_seconds: u32) -> u32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(0.0, f64::from(duration_seconds)) as u32
+}
+
 fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
     if active {
         widget.add_css_class("active-toggle");
@@ -6770,7 +6786,7 @@ mod tests {
         home_album_card_height, home_album_card_size, home_album_content_width_for,
         home_album_page_size, queue_lyrics_default_position, queue_lyrics_initial_position,
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio, restored_window_size,
-        right_panel_position_ratio, update_right_panel_split_settings,
+        right_panel_position_ratio, seekbar_target_seconds, update_right_panel_split_settings,
     };
     use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
 
@@ -6931,6 +6947,15 @@ mod tests {
             current_playback_track_id(&super::PlaybackSnapshot::default()),
             None
         );
+    }
+
+    #[test]
+    fn seekbar_target_seconds_uses_committed_clamped_value() {
+        assert_eq!(seekbar_target_seconds(42.4, 180), 42);
+        assert_eq!(seekbar_target_seconds(42.5, 180), 43);
+        assert_eq!(seekbar_target_seconds(-10.0, 180), 0);
+        assert_eq!(seekbar_target_seconds(220.0, 180), 180);
+        assert_eq!(seekbar_target_seconds(f64::NAN, 180), 0);
     }
 
     #[test]
