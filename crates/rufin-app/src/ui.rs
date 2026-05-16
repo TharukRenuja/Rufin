@@ -102,8 +102,11 @@ struct PlayerControls {
     cover_picture: gtk::Picture,
     cover_seed: Rc<Cell<u32>>,
     cover_key: RefCell<Option<String>>,
+    title_button: gtk::Button,
     title: gtk::Label,
+    artist_button: gtk::Button,
     artist: gtk::Label,
+    album_button: gtk::Button,
     album: gtk::Label,
     stop_button: gtk::Button,
     previous_button: gtk::Button,
@@ -1630,6 +1633,21 @@ impl Shell {
         controls.title.set_text(&title);
         controls.artist.set_text(&artist);
         controls.album.set_text(album);
+        controls
+            .title_button
+            .set_sensitive(player.current.is_some());
+        controls.artist_button.set_sensitive(
+            player
+                .current
+                .as_ref()
+                .is_some_and(|entry| !entry.artist.is_empty()),
+        );
+        controls.album_button.set_sensitive(
+            player
+                .current
+                .as_ref()
+                .is_some_and(|entry| !entry.album.is_empty()),
+        );
 
         set_active_class(&controls.shuffle_button, player.shuffle_enabled);
         set_active_class(
@@ -2160,31 +2178,38 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
 fn build_bottom_player() -> PlayerControls {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     root.add_css_class("bottom-player");
-    root.set_height_request(90);
+    root.set_height_request(78);
+    root.set_valign(gtk::Align::Center);
 
-    let (cover_stack, cover, cover_picture, cover_seed) = player_cover_tile(58);
+    let (cover_stack, cover, cover_picture, cover_seed) = player_cover_tile(48);
+    cover_stack.set_valign(gtk::Align::Center);
     root.append(&cover_stack);
 
     let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
     identity.set_width_request(160);
-    let title = player_label("player-title");
-    let artist = player_label("muted");
-    let album = player_label("muted");
-    identity.append(&title);
-    identity.append(&artist);
-    identity.append(&album);
+    identity.set_valign(gtk::Align::Center);
+    let (title_button, title) = player_link("player-title");
+    let (artist_button, artist) = player_link("muted");
+    let (album_button, album) = player_link("muted");
+    identity.append(&title_button);
+    identity.append(&artist_button);
+    identity.append(&album_button);
     root.append(&identity);
 
-    let transport = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let transport = gtk::Box::new(gtk::Orientation::Vertical, 4);
     transport.set_hexpand(true);
+    transport.set_valign(gtk::Align::Center);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::Center);
 
     let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
-    let previous_button = icon_button("media-skip-backward-symbolic", "Previous");
+    stop_button.add_css_class("player-transport-button");
+    let previous_button = icon_button("go-previous-symbolic", "Previous");
+    previous_button.add_css_class("player-transport-button");
     let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
-    play_button.add_css_class("suggested-action");
-    let next_button = icon_button("media-skip-forward-symbolic", "Next");
+    play_button.add_css_class("player-transport-button");
+    let next_button = icon_button("go-next-symbolic", "Next");
+    next_button.add_css_class("player-transport-button");
     let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
     let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
 
@@ -2196,6 +2221,7 @@ fn build_bottom_player() -> PlayerControls {
     buttons.append(&repeat_button);
 
     let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    progress_row.set_valign(gtk::Align::Center);
     let elapsed = gtk::Label::new(Some("0:00"));
     elapsed.add_css_class("muted");
     let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1.0);
@@ -2212,6 +2238,7 @@ fn build_bottom_player() -> PlayerControls {
     root.append(&transport);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_valign(gtk::Align::Center);
     actions.append(&icon_button("view-list-symbolic", "Queue"));
     actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
     actions.append(&icon_button("emblem-favorite-symbolic", "Favorite"));
@@ -2232,8 +2259,11 @@ fn build_bottom_player() -> PlayerControls {
         cover_picture,
         cover_seed,
         cover_key: RefCell::new(None),
+        title_button,
         title,
+        artist_button,
         artist,
+        album_button,
         album,
         stop_button,
         previous_button,
@@ -2287,6 +2317,56 @@ fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .repeat_button
         .connect_clicked(move |_| controller.cycle_repeat());
+
+    let title_shell = Rc::clone(shell);
+    shell
+        .player_controls
+        .title_button
+        .connect_clicked(move |_| {
+            let Some(entry) = title_shell.state.player.borrow().current.clone() else {
+                return;
+            };
+            title_shell.navigate(Route::Search {
+                query: entry.title,
+                kind: SearchKind::Tracks,
+            });
+        });
+
+    let artist_shell = Rc::clone(shell);
+    shell
+        .player_controls
+        .artist_button
+        .connect_clicked(move |_| {
+            let Some(entry) = artist_shell.state.player.borrow().current.clone() else {
+                return;
+            };
+            if let Some(artist_id) = entry.artist_id {
+                artist_shell.navigate(Route::ArtistDetail(artist_id));
+            } else if !entry.artist.trim().is_empty() {
+                artist_shell.navigate(Route::Search {
+                    query: entry.artist,
+                    kind: SearchKind::Artists,
+                });
+            }
+        });
+
+    let album_shell = Rc::clone(shell);
+    shell
+        .player_controls
+        .album_button
+        .connect_clicked(move |_| {
+            let Some(entry) = album_shell.state.player.borrow().current.clone() else {
+                return;
+            };
+            if let Some(album_id) = entry.album_id {
+                album_shell.navigate(Route::AlbumDetail(album_id));
+            } else if !entry.album.trim().is_empty() {
+                album_shell.navigate(Route::Search {
+                    query: entry.album,
+                    kind: SearchKind::Albums,
+                });
+            }
+        });
 
     let controller = shell.controller.clone();
     shell
@@ -2907,6 +2987,24 @@ fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
     target.add_controller(motion);
 }
 
+fn add_dynamic_link_hover(target: &gtk::Widget, label: &gtk::Label) {
+    let enter_label = label.clone();
+    let leave_label = label.clone();
+    let motion = gtk::EventControllerMotion::new();
+    motion.connect_enter(move |_, _, _| {
+        let text = enter_label.text();
+        let escaped_text = glib::markup_escape_text(text.as_str());
+        enter_label.add_css_class("hovered-link");
+        enter_label.set_markup(&format!("<u>{escaped_text}</u>"));
+    });
+    motion.connect_leave(move |_| {
+        let text = leave_label.text().to_string();
+        leave_label.remove_css_class("hovered-link");
+        leave_label.set_text(&text);
+    });
+    target.add_controller(motion);
+}
+
 fn render_home_album_page(
     shell: &Rc<Shell>,
     row: &gtk::Box,
@@ -3356,12 +3454,22 @@ fn player_cover_tile(size: i32) -> (gtk::Stack, gtk::DrawingArea, gtk::Picture, 
     (stack, area, picture, seed)
 }
 
-fn player_label(css_class: &str) -> gtk::Label {
+fn player_link(css_class: &str) -> (gtk::Button, gtk::Label) {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("player-link");
+    button.set_halign(gtk::Align::Fill);
+    button.set_hexpand(true);
+    button.set_cursor_from_name(Some("pointer"));
+
     let label = gtk::Label::new(None);
     label.add_css_class(css_class);
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label
+    label.set_hexpand(true);
+    add_dynamic_link_hover(button.upcast_ref(), &label);
+    button.set_child(Some(&label));
+    (button, label)
 }
 
 fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {

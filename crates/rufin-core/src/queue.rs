@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{ImageRef, ServerId, Track, TrackId};
+use crate::domain::{AlbumId, ArtistId, ImageRef, ServerId, Track, TrackId};
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct QueueEntryId(String);
@@ -49,8 +49,12 @@ impl Default for ShuffleState {
 pub struct QueueEntry {
     pub id: QueueEntryId,
     pub track_id: TrackId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_id: Option<AlbumId>,
     pub title: String,
     pub artist: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_id: Option<ArtistId>,
     pub album: String,
     pub duration_seconds: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,8 +66,10 @@ impl QueueEntry {
         Self {
             id,
             track_id: track.id.clone(),
+            album_id: Some(track.album_id.clone()),
             title: track.title.clone(),
             artist: track.artist.clone(),
+            artist_id: track.artist_id.clone(),
             album: track.album.clone(),
             duration_seconds: track.duration_seconds,
             image_ref: track.image_ref.clone(),
@@ -410,6 +416,20 @@ mod tests {
         queue.play_next(&track(2));
 
         assert_eq!(queue.entries()[1].track_id, TrackId::fake(2));
+    }
+
+    #[test]
+    fn queue_entries_keep_navigation_ids_from_tracks() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let mut track = track(1);
+        track.album_id = AlbumId::fake(9);
+        track.artist_id = Some(crate::domain::ArtistId::fake(7));
+
+        queue.play_now(&track);
+        let entry = queue.current().expect("current entry");
+
+        assert_eq!(entry.album_id, Some(AlbumId::fake(9)));
+        assert_eq!(entry.artist_id, Some(crate::domain::ArtistId::fake(7)));
     }
 
     #[test]
