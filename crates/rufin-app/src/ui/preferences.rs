@@ -5,188 +5,200 @@ use rufin_core::DensityMode;
 
 use crate::i18n::tr;
 
-use super::{Shell, text_button};
+use super::Shell;
 
 pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
-    let window = gtk::Window::builder()
+    let dialog = adw::PreferencesDialog::builder()
         .title(tr("Preferences"))
-        .default_width(520)
-        .default_height(560)
-        .modal(true)
-        .transient_for(&shell.window)
+        .search_enabled(true)
+        .content_width(560)
+        .content_height(640)
         .build();
 
-    let scroller = gtk::ScrolledWindow::new();
-    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scroller.set_min_content_width(0);
-
-    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
-    wrapper.add_css_class("route-content");
-    wrapper.set_margin_top(24);
-    wrapper.set_margin_bottom(24);
-    wrapper.set_margin_start(24);
-    wrapper.set_margin_end(24);
-
-    append_density_group(shell, &wrapper);
-    append_lyrics_group(shell, &wrapper);
-    append_server_group(shell, &wrapper);
-
-    scroller.set_child(Some(&wrapper));
-    window.set_child(Some(&scroller));
-    window.present();
+    let general_page = general_page(shell);
+    let library_page = library_page(shell, &dialog);
+    dialog.add(&general_page);
+    dialog.add(&library_page);
+    dialog.present(Some(&shell.window));
 }
 
-fn append_density_group(shell: &Rc<Shell>, wrapper: &gtk::Box) {
-    let group = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    group.add_css_class("settings-group");
+fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title(tr("General"))
+        .icon_name("preferences-system-symbolic")
+        .build();
 
-    let heading = gtk::Label::new(Some(&tr("Layout density")));
-    heading.add_css_class("section-heading");
-    heading.set_xalign(0.0);
+    let interface_group = adw::PreferencesGroup::builder()
+        .title(tr("Interface"))
+        .build();
 
-    let options = gtk::StringList::new(&[&tr("Auto"), &tr("Normal"), &tr("Compact")]);
-    let dropdown = gtk::DropDown::new(Some(options), None::<gtk::Expression>);
-    dropdown.set_selected(match shell.state.density_mode.get() {
-        DensityMode::Auto => 0,
-        DensityMode::Normal => 1,
-        DensityMode::Compact => 2,
+    let density_titles = [tr("Auto"), tr("Normal"), tr("Compact")];
+    let density_refs = density_titles
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let density_options = gtk::StringList::new(&density_refs);
+    let density_row = adw::ComboRow::builder()
+        .title(tr("Layout density"))
+        .subtitle(tr("Choose how navigation adapts to the window width."))
+        .model(&density_options)
+        .selected(density_index(shell.state.density_mode.get()))
+        .build();
+    let density_shell = Rc::clone(shell);
+    density_row.connect_selected_notify(move |row| {
+        density_shell.set_density_mode(density_from_index(row.selected()));
     });
+    interface_group.add(&density_row);
 
-    let shell = Rc::clone(shell);
-    dropdown.connect_selected_notify(move |dropdown| {
-        let density = match dropdown.selected() {
-            1 => DensityMode::Normal,
-            2 => DensityMode::Compact,
-            _ => DensityMode::Auto,
-        };
-        shell.set_density_mode(density);
+    let settings = shell.state.settings.borrow().clone();
+    let sidebar_row = adw::SwitchRow::builder()
+        .title(tr("Show sidebar"))
+        .subtitle(tr("Keep the queue sidebar visible in the main window."))
+        .active(settings.right_panel_visible)
+        .build();
+    let sidebar_shell = Rc::clone(shell);
+    sidebar_row.connect_active_notify(move |row| {
+        sidebar_shell.set_right_panel_visible(row.is_active());
     });
+    interface_group.add(&sidebar_row);
 
-    let note = gtk::Label::new(Some(&tr("Saved locally for the next launch.")));
-    note.add_css_class("muted");
-    note.set_wrap(true);
-    note.set_xalign(0.0);
+    let lyrics_panel_row = adw::SwitchRow::builder()
+        .title(tr("Show Lyrics Panel"))
+        .subtitle(tr("Keep the lyrics section visible below the queue."))
+        .active(settings.lyrics_panel_visible)
+        .build();
+    let lyrics_panel_shell = Rc::clone(shell);
+    lyrics_panel_row.connect_active_notify(move |row| {
+        lyrics_panel_shell.set_lyrics_panel_visible(row.is_active());
+    });
+    interface_group.add(&lyrics_panel_row);
 
-    group.append(&heading);
-    group.append(&dropdown);
-    group.append(&note);
-    wrapper.append(&group);
+    page.add(&interface_group);
+
+    let lyrics_group = adw::PreferencesGroup::builder().title(tr("Lyrics")).build();
+    let external_row = adw::SwitchRow::builder()
+        .title(tr("External lyric lookup"))
+        .subtitle(tr(
+            "Use Jellyfin remote lyric providers when server lyrics are unavailable.",
+        ))
+        .active(settings.external_lyrics_enabled)
+        .build();
+    let external_shell = Rc::clone(shell);
+    external_row.connect_active_notify(move |row| {
+        external_shell.set_external_lyrics_enabled(row.is_active());
+    });
+    lyrics_group.add(&external_row);
+    page.add(&lyrics_group);
+
+    page
 }
 
-fn append_lyrics_group(shell: &Rc<Shell>, wrapper: &gtk::Box) {
-    let group = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    group.add_css_class("settings-group");
-    let heading = gtk::Label::new(Some(&tr("Lyrics")));
-    heading.add_css_class("section-heading");
-    heading.set_xalign(0.0);
-    group.append(&heading);
+fn library_page(shell: &Rc<Shell>, dialog: &adw::PreferencesDialog) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title(tr("Library"))
+        .icon_name("network-server-symbolic")
+        .build();
 
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    row.set_valign(gtk::Align::Center);
-    let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
-    text.set_hexpand(true);
-    let title = gtk::Label::new(Some(&tr("External lyric lookup")));
-    title.set_xalign(0.0);
-    let note = gtk::Label::new(Some(&tr(
-        "Use Jellyfin remote lyric providers when server lyrics are unavailable.",
-    )));
-    note.add_css_class("muted");
-    note.set_wrap(true);
-    note.set_xalign(0.0);
-    text.append(&title);
-    text.append(&note);
-
-    let external_switch = gtk::Switch::new();
-    external_switch.set_active(shell.state.settings.borrow().external_lyrics_enabled);
-    let shell = Rc::clone(shell);
-    external_switch.connect_active_notify(move |switch| {
-        shell.set_external_lyrics_enabled(switch.is_active());
-    });
-
-    row.append(&text);
-    row.append(&external_switch);
-    group.append(&row);
-    wrapper.append(&group);
-}
-
-fn append_server_group(shell: &Rc<Shell>, wrapper: &gtk::Box) {
     let library = shell.state.library.borrow();
-    let server_name = library
-        .server
-        .as_ref()
-        .map(|server| server.name.as_str())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| tr("No server"));
     let username = library
         .username
         .as_deref()
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| tr("no account"));
+    let server_name = library
+        .server
+        .as_ref()
+        .map(|server| server.name.as_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| tr("No server"));
     let server_url = library
         .server
         .as_ref()
         .map(|server| server.base_url.clone())
+        .filter(|url| !url.trim().is_empty())
         .unwrap_or_else(|| tr("No active server"));
-    let album_count = library.albums.len();
-    let track_count = library.tracks.len();
-    let sync_status = library.sync_status.clone();
+
+    let server_group = adw::PreferencesGroup::builder()
+        .title(tr("Jellyfin Server"))
+        .build();
+    let server_row = adw::ActionRow::builder()
+        .title(server_name)
+        .subtitle(format!(
+            "{}\n{}: {}\n{}: {} {} / {} {}",
+            server_url,
+            tr("User"),
+            username,
+            tr("Cached"),
+            library.albums.len(),
+            tr("albums"),
+            library.tracks.len(),
+            tr("tracks")
+        ))
+        .subtitle_lines(3)
+        .build();
+    server_group.add(&server_row);
+
+    let status_row = adw::ActionRow::builder()
+        .title(tr("Sync Status"))
+        .subtitle(library.sync_status.clone())
+        .build();
+    server_group.add(&status_row);
+    page.add(&server_group);
     drop(library);
 
-    let status = gtk::Label::new(Some(&format!(
-        "{} ({username}): {} {} / {} {} - {}",
-        server_name,
-        album_count,
-        tr("albums"),
-        track_count,
-        tr("tracks"),
-        sync_status
-    )));
-    status.add_css_class("muted");
-    status.set_xalign(0.0);
-    status.set_wrap(true);
-    wrapper.append(&status);
+    let actions_group = adw::PreferencesGroup::builder()
+        .title(tr("Actions"))
+        .build();
 
-    let group = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    group.add_css_class("settings-group");
-    let heading = gtk::Label::new(Some(&tr("Jellyfin Server")));
-    heading.add_css_class("section-heading");
-    heading.set_xalign(0.0);
-    group.append(&heading);
-
-    let details = gtk::Label::new(Some(&format!(
-        "{}\n{}: {}\n{}: {} {} / {} {}",
-        server_url,
-        tr("User"),
-        username,
-        tr("Cached"),
-        album_count,
-        tr("albums"),
-        track_count,
-        tr("tracks")
-    )));
-    details.add_css_class("muted");
-    details.set_wrap(true);
-    details.set_xalign(0.0);
-    group.append(&details);
-
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let resync = text_button("view-refresh-symbolic", "Resync Library");
-    let clear_cache = text_button("edit-clear-symbolic", "Clear Cached Library");
-    let forget = text_button("user-trash-symbolic", "Forget Server");
-    forget.add_css_class("destructive-action");
-
+    let resync = button_row("Resync Library", "view-refresh-symbolic");
     let controller = shell.controller.clone();
-    resync.connect_clicked(move |_| controller.resync_active_server());
+    resync.connect_activated(move |_| controller.resync_active_server());
+    actions_group.add(&resync);
 
+    let clear_cache = button_row("Clear Cached Library", "edit-clear-symbolic");
+    let clear_dialog = dialog.clone();
     let clear_shell = Rc::clone(shell);
-    clear_cache.connect_clicked(move |_| clear_shell.confirm_clear_cache());
+    clear_cache.connect_activated(move |_| {
+        clear_dialog.close();
+        clear_shell.confirm_clear_cache();
+    });
+    actions_group.add(&clear_cache);
 
+    let forget = button_row("Forget Server", "user-trash-symbolic");
+    forget.add_css_class("destructive-action");
+    let forget_dialog = dialog.clone();
     let forget_shell = Rc::clone(shell);
-    forget.connect_clicked(move |_| forget_shell.confirm_forget_server());
+    forget.connect_activated(move |_| {
+        forget_dialog.close();
+        forget_shell.confirm_forget_server();
+    });
+    actions_group.add(&forget);
 
-    actions.append(&resync);
-    actions.append(&clear_cache);
-    actions.append(&forget);
-    group.append(&actions);
-    wrapper.append(&group);
+    page.add(&actions_group);
+    page
+}
+
+fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
+    adw::ButtonRow::builder()
+        .title(tr(title))
+        .start_icon_name(icon_name)
+        .end_icon_name("go-next-symbolic")
+        .build()
+}
+
+fn density_index(density: DensityMode) -> u32 {
+    match density {
+        DensityMode::Auto => 0,
+        DensityMode::Normal => 1,
+        DensityMode::Compact => 2,
+    }
+}
+
+fn density_from_index(index: u32) -> DensityMode {
+    match index {
+        1 => DensityMode::Normal,
+        2 => DensityMode::Compact,
+        _ => DensityMode::Auto,
+    }
 }
