@@ -56,6 +56,8 @@ const INITIAL_COVER_PRIME_LIMIT: usize = 24;
 const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
+const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 480;
+const LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS: u64 = 140;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -82,6 +84,7 @@ struct AppState {
     lyrics_rows: RefCell<Vec<LyricsRow>>,
     lyrics_scroller: RefCell<Option<gtk::ScrolledWindow>>,
     lyrics_active_index: Cell<Option<usize>>,
+    lyrics_scroll_generation: Cell<u64>,
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
@@ -316,6 +319,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         lyrics_rows: RefCell::new(Vec::new()),
         lyrics_scroller: RefCell::new(None),
         lyrics_active_index: Cell::new(None),
+        lyrics_scroll_generation: Cell::new(0),
         mpris_player: RefCell::new(None),
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
@@ -998,7 +1002,7 @@ impl Shell {
             RepeatMode::All => LoopStatus::Playlist,
         };
         let has_current = snapshot.current.is_some();
-        let position = Time::from_secs(i64::from(snapshot.position_seconds));
+        let position = Time::from_millis(snapshot.position_millis.min(i64::MAX as u64) as i64);
         let volume = snapshot.volume.clamp(0.0, 1.0);
 
         glib::spawn_future_local(async move {
@@ -1067,34 +1071,54 @@ impl Shell {
             .send_notification(Some("now-playing"), &notification);
     }
 
-    fn update_lyrics_highlight(&self) {
-        let active_index = self.state.lyrics.borrow().as_ref().and_then(|lyrics| {
-            active_lyrics_line_index(lyrics.lines.as_slice(), self.current_position_millis())
-        });
+    fn update_lyrics_highlight(self: &Rc<Self>) {
+        let position_millis = self.current_position_millis();
+        let lyrics = self.state.lyrics.borrow().clone();
+        let active_index = lyrics
+            .as_ref()
+            .and_then(|lyrics| active_lyrics_line_index(lyrics.lines.as_slice(), position_millis));
         let previous_index = self.state.lyrics_active_index.replace(active_index);
-        let rows = self.state.lyrics_rows.borrow();
-        for (index, row) in rows.iter().enumerate() {
-            let active = Some(index) == active_index;
-            if active {
-                row.row.add_css_class("lyrics-row-active");
-                row.label.add_css_class("lyrics-line-active");
-            } else {
-                row.row.remove_css_class("lyrics-row-active");
-                row.label.remove_css_class("lyrics-line-active");
+        let scroll_target = {
+            let rows = self.state.lyrics_rows.borrow();
+            for (index, row) in rows.iter().enumerate() {
+                let active = Some(index) == active_index;
+                if active {
+                    row.row.add_css_class("lyrics-row-active");
+                    row.label.add_css_class("lyrics-line-active");
+                } else {
+                    row.row.remove_css_class("lyrics-row-active");
+                    row.label.remove_css_class("lyrics-line-active");
+                }
             }
-        }
 
-        if active_index != previous_index
-            && let (Some(index), Some(scroller)) =
-                (active_index, self.state.lyrics_scroller.borrow().clone())
-            && let Some(row) = rows.get(index)
-        {
-            scroll_lyrics_row_into_view(scroller, row.row.clone().upcast());
+            active_index
+                .filter(|index| Some(*index) != previous_index)
+                .and_then(|index| {
+                    let scroller = self.state.lyrics_scroller.borrow().clone()?;
+                    let row = rows.get(index)?.row.clone().upcast::<gtk::Widget>();
+                    let duration = lyrics
+                        .as_ref()
+                        .map(|lyrics| {
+                            lyrics_scroll_animation_millis(
+                                lyrics.lines.as_slice(),
+                                index,
+                                position_millis,
+                            )
+                        })
+                        .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS);
+                    Some((scroller, row, duration))
+                })
+        };
+
+        if let Some((scroller, row, duration)) = scroll_target {
+            let generation = self.state.lyrics_scroll_generation.get().saturating_add(1);
+            self.state.lyrics_scroll_generation.set(generation);
+            scroll_lyrics_row_into_view(Rc::clone(self), scroller, row, duration, generation);
         }
     }
 
     fn current_position_millis(&self) -> u64 {
-        u64::from(self.state.player.borrow().position_seconds) * 1_000
+        self.state.player.borrow().position_millis
     }
 
     fn render_current_route(self: &Rc<Self>) {
@@ -2664,7 +2688,7 @@ impl Shell {
                 if let Some(start_millis) = line.start_millis {
                     let controller = self.controller.clone();
                     row.connect_clicked(move |_| {
-                        controller.seek(lyrics_seek_seconds(start_millis));
+                        controller.seek_millis(start_millis);
                     });
                 } else {
                     row.set_sensitive(false);
@@ -4122,18 +4146,18 @@ fn install_mpris(shell: &Rc<Shell>) {
         let controller = shell.controller.clone();
         let seek_shell = Rc::clone(&shell);
         player.connect_seek(move |_, offset| {
-            let current = seek_shell.state.player.borrow().position_seconds;
-            let offset_seconds = offset.as_micros() / 1_000_000;
-            let target = if offset_seconds.is_negative() {
-                current.saturating_sub(offset_seconds.unsigned_abs() as u32)
+            let current = seek_shell.state.player.borrow().position_millis;
+            let offset_millis = offset.as_micros() / 1_000;
+            let target = if offset_millis.is_negative() {
+                current.saturating_sub(offset_millis.unsigned_abs())
             } else {
-                current.saturating_add(offset_seconds as u32)
+                current.saturating_add(offset_millis as u64)
             };
-            controller.seek(target);
+            controller.seek_millis(target);
         });
         let controller = shell.controller.clone();
         player.connect_set_position(move |_, _, position| {
-            controller.seek((position.as_micros() / 1_000_000) as u32);
+            controller.seek_millis((position.as_micros() / 1_000).max(0) as u64);
         });
 
         let run_player = Rc::clone(&player);
@@ -5810,11 +5834,33 @@ fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option
         .map(|(index, _)| index)
 }
 
-fn lyrics_seek_seconds(start_millis: u64) -> u32 {
-    start_millis.div_ceil(1_000).min(u64::from(u32::MAX)) as u32
+fn lyrics_scroll_animation_millis(
+    lines: &[LyricLine],
+    active_index: usize,
+    position_millis: u64,
+) -> u64 {
+    let budget = lines
+        .iter()
+        .skip(active_index + 1)
+        .filter_map(|line| line.start_millis)
+        .find(|start| *start > position_millis)
+        .and_then(|next_start| {
+            next_start
+                .saturating_sub(position_millis)
+                .checked_sub(LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS)
+        });
+    budget
+        .map(|budget| budget.clamp(120, DEFAULT_LYRICS_SCROLL_ANIMATION_MS))
+        .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS)
 }
 
-fn scroll_lyrics_row_into_view(scroller: gtk::ScrolledWindow, row: gtk::Widget) {
+fn scroll_lyrics_row_into_view(
+    shell: Rc<Shell>,
+    scroller: gtk::ScrolledWindow,
+    row: gtk::Widget,
+    duration_millis: u64,
+    generation: u64,
+) {
     glib::idle_add_local_once(move || {
         let Some(bounds) = row.compute_bounds(&scroller) else {
             return;
@@ -5824,7 +5870,28 @@ fn scroll_lyrics_row_into_view(scroller: gtk::ScrolledWindow, row: gtk::Widget) 
         let row_center = adjustment.value() + f64::from(bounds.y() + bounds.height() / 2.0);
         let target = row_center - viewport_height / 2.0;
         let upper = adjustment.upper() - adjustment.page_size();
-        adjustment.set_value(target.clamp(adjustment.lower(), upper.max(adjustment.lower())));
+        let target = target.clamp(adjustment.lower(), upper.max(adjustment.lower()));
+        let start = adjustment.value();
+        let delta = target - start;
+        if duration_millis == 0 || delta.abs() < 1.0 {
+            adjustment.set_value(target);
+            return;
+        }
+        let started_at = Instant::now();
+        glib::timeout_add_local(Duration::from_millis(16), move || {
+            if shell.state.lyrics_scroll_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+            let elapsed = started_at.elapsed().as_millis() as f64;
+            let progress = (elapsed / duration_millis as f64).clamp(0.0, 1.0);
+            let eased = 1.0 - (1.0 - progress).powi(3);
+            adjustment.set_value(start + delta * eased);
+            if progress >= 1.0 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     });
 }
 
@@ -5939,7 +6006,7 @@ mod tests {
     use super::{
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, active_lyrics_line_index,
         clamp_content_split_position, clamp_home_album_page_start, home_album_card_size,
-        home_album_page_size, lyrics_seek_seconds,
+        home_album_page_size, lyrics_scroll_animation_millis,
     };
     use rufin_provider::LyricLine;
 
@@ -5996,7 +6063,7 @@ mod tests {
             },
             LyricLine {
                 text: "verse".to_string(),
-                start_millis: Some(5_000),
+                start_millis: Some(5_500),
             },
             LyricLine {
                 text: "unsynced".to_string(),
@@ -6010,29 +6077,32 @@ mod tests {
 
         assert_eq!(active_lyrics_line_index(&lines, 999), None);
         assert_eq!(active_lyrics_line_index(&lines, 1_000), Some(0));
+        assert_eq!(active_lyrics_line_index(&lines, 5_499), Some(0));
+        assert_eq!(active_lyrics_line_index(&lines, 5_500), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(3));
     }
 
     #[test]
-    fn lyrics_seek_rounds_up_for_mid_second_rows() {
+    fn lyrics_scroll_animation_finishes_before_next_line() {
         let lines = vec![
             LyricLine {
-                text: "previous".to_string(),
-                start_millis: Some(5_000),
+                text: "current".to_string(),
+                start_millis: Some(5_500),
             },
             LyricLine {
-                text: "clicked".to_string(),
-                start_millis: Some(5_500),
+                text: "next".to_string(),
+                start_millis: Some(6_000),
             },
         ];
 
-        let seek_seconds = lyrics_seek_seconds(5_500);
+        let duration = lyrics_scroll_animation_millis(&lines, 0, 5_500);
 
-        assert_eq!(seek_seconds, 6);
+        assert!(duration <= 360);
+        assert!(duration >= 120);
         assert_eq!(
-            active_lyrics_line_index(&lines, u64::from(seek_seconds) * 1_000),
-            Some(1)
+            lyrics_scroll_animation_millis(&lines, 0, 5_501),
+            duration - 1
         );
     }
 

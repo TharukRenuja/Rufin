@@ -78,6 +78,7 @@ pub enum PlaybackCommand {
     Pause,
     Stop,
     Seek(u32),
+    SeekMillis(u64),
     SetVolume(f64),
     SetMuted(bool),
 }
@@ -85,7 +86,7 @@ pub enum PlaybackCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaybackEvent {
     StateChanged(PlaybackState),
-    PositionChanged(u32),
+    PositionChanged { seconds: u32, millis: u64 },
     DurationChanged(u32),
     Buffering(u8),
     EndOfStream,
@@ -111,6 +112,7 @@ pub struct FakePlaybackBackend {
     state: PlaybackState,
     current: Option<PlaybackTrack>,
     position_seconds: u32,
+    position_millis: u64,
     duration_seconds: u32,
     volume: f64,
     muted: bool,
@@ -123,6 +125,7 @@ impl FakePlaybackBackend {
             state: PlaybackState::Stopped,
             current: None,
             position_seconds: 0,
+            position_millis: 0,
             duration_seconds: 0,
             volume: 1.0,
             muted: false,
@@ -150,24 +153,31 @@ impl PlaybackBackend for FakePlaybackBackend {
             } => {
                 self.duration_seconds = track.duration_seconds;
                 self.position_seconds = start_position_seconds.min(self.duration_seconds);
+                self.position_millis = u64::from(self.position_seconds) * 1_000;
                 self.current = Some(track);
                 self.events
                     .push_back(PlaybackEvent::DurationChanged(self.duration_seconds));
-                self.events
-                    .push_back(PlaybackEvent::PositionChanged(self.position_seconds));
+                self.events.push_back(position_event(self.position_millis));
                 self.set_state(PlaybackState::Playing);
             }
             PlaybackCommand::Resume => self.set_state(PlaybackState::Playing),
             PlaybackCommand::Pause => self.set_state(PlaybackState::Paused),
             PlaybackCommand::Stop => {
                 self.position_seconds = 0;
+                self.position_millis = 0;
                 self.set_state(PlaybackState::Stopped);
-                self.events.push_back(PlaybackEvent::PositionChanged(0));
+                self.events.push_back(position_event(0));
             }
             PlaybackCommand::Seek(seconds) => {
                 self.position_seconds = seconds.min(self.duration_seconds);
-                self.events
-                    .push_back(PlaybackEvent::PositionChanged(self.position_seconds));
+                self.position_millis = u64::from(self.position_seconds) * 1_000;
+                self.events.push_back(position_event(self.position_millis));
+            }
+            PlaybackCommand::SeekMillis(millis) => {
+                self.position_millis =
+                    millis.min(u64::from(self.duration_seconds).saturating_mul(1_000));
+                self.position_seconds = clock_seconds_from_millis(self.position_millis);
+                self.events.push_back(position_event(self.position_millis));
             }
             PlaybackCommand::SetVolume(volume) => {
                 self.volume = volume.clamp(0.0, 1.0);
@@ -306,10 +316,7 @@ fn run_gstreamer_thread(
         if last_position_tick.elapsed() >= Duration::from_millis(500) {
             last_position_tick = Instant::now();
             if let Some(position) = play.position() {
-                push_event(
-                    &events,
-                    PlaybackEvent::PositionChanged(clock_seconds(position)),
-                );
+                push_event(&events, position_event(clock_millis(position)));
             }
             if let Some(duration) = play.duration() {
                 push_event(
@@ -360,12 +367,16 @@ fn handle_gstreamer_command(
         }
         PlaybackCommand::Stop => {
             play.stop();
-            push_event(events, PlaybackEvent::PositionChanged(0));
+            push_event(events, position_event(0));
             push_event(events, PlaybackEvent::StateChanged(PlaybackState::Stopped));
         }
         PlaybackCommand::Seek(seconds) => {
             play.seek(gst::ClockTime::from_seconds(u64::from(seconds)));
-            push_event(events, PlaybackEvent::PositionChanged(seconds));
+            push_event(events, position_event(u64::from(seconds) * 1_000));
+        }
+        PlaybackCommand::SeekMillis(millis) => {
+            play.seek(gst::ClockTime::from_mseconds(millis));
+            push_event(events, position_event(millis));
         }
         PlaybackCommand::SetVolume(volume) => play.set_volume(volume.clamp(0.0, 1.0)),
         PlaybackCommand::SetMuted(muted) => play.set_mute(muted),
@@ -397,10 +408,7 @@ fn handle_gstreamer_message(
         }
         gst_play::PlayMessage::PositionUpdated(position) => {
             if let Some(position) = position.position() {
-                push_event(
-                    events,
-                    PlaybackEvent::PositionChanged(clock_seconds(position)),
-                );
+                push_event(events, position_event(clock_millis(position)));
             }
         }
         gst_play::PlayMessage::DurationChanged(duration) => {
@@ -455,8 +463,23 @@ fn push_event(events: &Arc<Mutex<VecDeque<PlaybackEvent>>>, event: PlaybackEvent
     }
 }
 
+fn position_event(millis: u64) -> PlaybackEvent {
+    PlaybackEvent::PositionChanged {
+        seconds: clock_seconds_from_millis(millis),
+        millis,
+    }
+}
+
+fn clock_seconds_from_millis(millis: u64) -> u32 {
+    (millis / 1_000).min(u64::from(u32::MAX)) as u32
+}
+
 fn clock_seconds(clock_time: gst::ClockTime) -> u32 {
     clock_time.seconds().min(u64::from(u32::MAX)) as u32
+}
+
+fn clock_millis(clock_time: gst::ClockTime) -> u64 {
+    clock_time.mseconds()
 }
 
 fn redact_sensitive_uri(uri: &str) -> String {
@@ -504,12 +527,22 @@ mod tests {
         backend.send(PlaybackCommand::Pause).expect("pause");
         backend.send(PlaybackCommand::Resume).expect("resume");
         backend.send(PlaybackCommand::Seek(42)).expect("seek");
+        backend
+            .send(PlaybackCommand::SeekMillis(42_500))
+            .expect("seek millis");
         backend.send(PlaybackCommand::Stop).expect("stop");
 
         let events = backend.drain_events();
         assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Playing)));
         assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Paused)));
-        assert!(events.contains(&PlaybackEvent::PositionChanged(42)));
+        assert!(events.contains(&PlaybackEvent::PositionChanged {
+            seconds: 42,
+            millis: 42_000,
+        }));
+        assert!(events.contains(&PlaybackEvent::PositionChanged {
+            seconds: 42,
+            millis: 42_500,
+        }));
         assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Stopped)));
     }
 

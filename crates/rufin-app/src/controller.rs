@@ -56,6 +56,7 @@ pub struct PlaybackSnapshot {
     pub current: Option<QueueEntry>,
     pub state: PlaybackState,
     pub position_seconds: u32,
+    pub position_millis: u64,
     pub duration_seconds: u32,
     pub volume: f64,
     pub muted: bool,
@@ -71,6 +72,7 @@ impl Default for PlaybackSnapshot {
             current: None,
             state: PlaybackState::Stopped,
             position_seconds: 0,
+            position_millis: 0,
             duration_seconds: 0,
             volume: 1.0,
             muted: false,
@@ -902,6 +904,7 @@ impl AppController {
         self.update_playback_snapshot(|snapshot| {
             snapshot.state = PlaybackState::Stopped;
             snapshot.position_seconds = 0;
+            snapshot.position_millis = 0;
             snapshot.buffering_percent = None;
         });
         self.persist_and_emit_queue();
@@ -944,11 +947,16 @@ impl AppController {
     }
 
     pub fn seek(&self, seconds: u32) {
+        self.seek_millis(u64::from(seconds) * 1_000);
+    }
+
+    pub fn seek_millis(&self, millis: u64) {
+        let seconds = (millis / 1_000).min(u64::from(u32::MAX)) as u32;
         let _result = self.with_queue_mut(|queue| {
             queue.set_progress_seconds(seconds);
             Ok(())
         });
-        if let Err(error) = self.send_playback_command(PlaybackCommand::Seek(seconds)) {
+        if let Err(error) = self.send_playback_command(PlaybackCommand::SeekMillis(millis)) {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
@@ -1001,13 +1009,14 @@ impl AppController {
                         snapshot.buffering_percent = None;
                     });
                 }
-                PlaybackEvent::PositionChanged(seconds) => {
+                PlaybackEvent::PositionChanged { seconds, millis } => {
                     let _result = self.with_queue_mut(|queue| {
                         queue.set_progress_seconds(seconds);
                         Ok(())
                     });
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.position_seconds = seconds;
+                        snapshot.position_millis = millis;
                     });
                     self.persist_progress_if_needed(seconds);
                     self.report_playback_progress_if_needed(seconds);
@@ -1684,6 +1693,7 @@ impl AppController {
         self.update_playback_snapshot(|snapshot| {
             snapshot.current = queue.and_then(|queue| queue.current().cloned());
             snapshot.position_seconds = queue.map(QueueEngine::progress_seconds).unwrap_or(0);
+            snapshot.position_millis = u64::from(snapshot.position_seconds) * 1_000;
             snapshot.duration_seconds = snapshot
                 .current
                 .as_ref()
@@ -1733,6 +1743,7 @@ impl AppController {
             snapshot.current = Some(entry.clone());
             snapshot.state = PlaybackState::Buffering;
             snapshot.position_seconds = position_seconds;
+            snapshot.position_millis = u64::from(position_seconds) * 1_000;
             snapshot.duration_seconds = entry.duration_seconds;
             snapshot.last_error = None;
         });
@@ -2284,6 +2295,7 @@ fn playback_snapshot_from_queue(queue: Option<&QueueEngine>) -> PlaybackSnapshot
             current: queue.current().cloned(),
             state: PlaybackState::Stopped,
             position_seconds: queue.progress_seconds(),
+            position_millis: u64::from(queue.progress_seconds()) * 1_000,
             duration_seconds: queue
                 .current()
                 .map(|entry| entry.duration_seconds)
