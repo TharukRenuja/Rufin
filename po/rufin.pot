@@ -456,6 +456,66 @@ msgstr ""
 msgid "Use Jellyfin remote lyric providers when server lyrics are unavailable."
 msgstr ""
 
+#: crates/rufin-app/src/ui/preferences.rs:117
+msgid "Prefer server lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences.rs:118
+msgid "Search Jellyfin lyrics before external providers."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:2865
+msgid "Private mode is on"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:2867
+msgid "Search lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:2869
+msgid "No track playing"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:2918
+msgid "Ready"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:2934
+msgid "Search Lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:2987
+msgid "No lyrics found."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:2993
+msgid "results"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3001
+msgid "Save"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3028
+msgid "Saved to"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3793
+msgid "Enter a search term."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3800
+msgid "Searching..."
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3840
+msgid "Synced"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3842
+msgid "Plain"
+msgstr ""
+
 #: crates/rufin-app/src/ui.rs:2771
 msgid "Jellyfin Server"
 msgstr ""

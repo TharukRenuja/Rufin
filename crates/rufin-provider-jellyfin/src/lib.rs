@@ -45,6 +45,13 @@ impl JellyfinClientConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JellyfinLyricsSearch {
+    ServerOnly,
+    ServerThenRemote,
+    RemoteThenServer,
+}
+
 #[derive(Clone, Debug)]
 pub struct JellyfinProvider {
     client: Client,
@@ -131,6 +138,28 @@ impl JellyfinProvider {
             url.query_pairs_mut().append_pair("tag", tag);
         }
         Ok(url.to_string())
+    }
+
+    pub async fn lyrics_with_search(
+        &self,
+        track_id: &TrackId,
+        search: JellyfinLyricsSearch,
+    ) -> ProviderResult<Option<Lyrics>> {
+        match search {
+            JellyfinLyricsSearch::ServerOnly => self.server_lyrics(track_id).await,
+            JellyfinLyricsSearch::ServerThenRemote => {
+                if let Some(lyrics) = self.server_lyrics(track_id).await? {
+                    return Ok(Some(lyrics));
+                }
+                self.remote_lyrics(track_id).await
+            }
+            JellyfinLyricsSearch::RemoteThenServer => {
+                if let Some(lyrics) = self.remote_lyrics(track_id).await? {
+                    return Ok(Some(lyrics));
+                }
+                self.server_lyrics(track_id).await
+            }
+        }
     }
 
     async fn item_page(
@@ -282,6 +311,49 @@ impl JellyfinProvider {
             auth_header(&config, Some(&self.access_token)),
         ))
         .await
+    }
+
+    async fn server_lyrics(&self, track_id: &TrackId) -> ProviderResult<Option<Lyrics>> {
+        let raw_track_id = raw_item_id(track_id.as_str());
+        let local_url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
+        match self.send_json::<LyricDto>(self.client.get(local_url)).await {
+            Ok(dto) => Ok(Some(lyrics_from_dto(
+                track_id.clone(),
+                LyricsSource::Server,
+                dto,
+            ))),
+            Err(ProviderError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn remote_lyrics(&self, track_id: &TrackId) -> ProviderResult<Option<Lyrics>> {
+        let raw_track_id = raw_item_id(track_id.as_str());
+        let remote_url = endpoint(
+            &self.base_url,
+            &format!("Audio/{raw_track_id}/RemoteSearch/Lyrics"),
+        )?;
+        let results = match self
+            .send_json::<Vec<RemoteLyricInfoDto>>(self.client.get(remote_url))
+            .await
+        {
+            Ok(results) => results,
+            Err(ProviderError::NotFound) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let Some(first) = results.into_iter().find(|result| !result.id.is_empty()) else {
+            return Ok(None);
+        };
+        let lyric_url = endpoint(&self.base_url, &format!("Providers/Lyrics/{}", first.id))?;
+        match self.send_json::<LyricDto>(self.client.get(lyric_url)).await {
+            Ok(dto) => Ok(Some(lyrics_from_dto(
+                track_id.clone(),
+                LyricsSource::Remote,
+                dto,
+            ))),
+            Err(ProviderError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -710,40 +782,12 @@ impl MusicProvider for JellyfinProvider {
         track_id: &TrackId,
         allow_remote: bool,
     ) -> ProviderResult<Option<Lyrics>> {
-        let raw_track_id = raw_item_id(track_id.as_str());
-        let local_url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
-        match self.send_json::<LyricDto>(self.client.get(local_url)).await {
-            Ok(dto) => {
-                return Ok(Some(lyrics_from_dto(
-                    track_id.clone(),
-                    LyricsSource::Server,
-                    dto,
-                )));
-            }
-            Err(ProviderError::NotFound) if allow_remote => {}
-            Err(ProviderError::NotFound) => return Ok(None),
-            Err(error) => return Err(error),
-        }
-
-        let remote_url = endpoint(
-            &self.base_url,
-            &format!("Audio/{raw_track_id}/RemoteSearch/Lyrics"),
-        )?;
-        let results = self
-            .send_json::<Vec<RemoteLyricInfoDto>>(self.client.get(remote_url))
-            .await?;
-        let Some(first) = results.into_iter().find(|result| !result.id.is_empty()) else {
-            return Ok(None);
+        let search = if allow_remote {
+            JellyfinLyricsSearch::ServerThenRemote
+        } else {
+            JellyfinLyricsSearch::ServerOnly
         };
-        let lyric_url = endpoint(&self.base_url, &format!("Providers/Lyrics/{}", first.id))?;
-        let dto = self
-            .send_json::<LyricDto>(self.client.get(lyric_url))
-            .await?;
-        Ok(Some(lyrics_from_dto(
-            track_id.clone(),
-            LyricsSource::Remote,
-            dto,
-        )))
+        self.lyrics_with_search(track_id, search).await
     }
 
     async fn report_playback(&self, report: PlaybackReport) -> ProviderResult<()> {
@@ -1874,6 +1918,78 @@ mod tests {
         assert_eq!(remote.source, LyricsSource::Remote);
         assert_eq!(remote.lines[0].text, "remote line");
         assert_eq!(remote.lines[0].start_millis, Some(34_000));
+    }
+
+    #[tokio::test]
+    async fn lyrics_can_search_remote_before_local() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Audio/track-prefer-remote/Lyrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Lyrics": [
+                    { "Text": "local line", "Start": 120000000i64 }
+                ]
+            })))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Audio/track-prefer-remote/RemoteSearch/Lyrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "Id": "remote-lyric-one" }
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Providers/Lyrics/remote-lyric-one"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Lyrics": [
+                    { "Text": "remote line", "Start": 340000000i64 }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Audio/track-fallback/RemoteSearch/Lyrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Audio/track-fallback/Lyrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Lyrics": [
+                    { "Text": "fallback local line", "Start": 560000000i64 }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let remote = provider
+            .lyrics_with_search(
+                &TrackId::new("jellyfin:track:track-prefer-remote"),
+                JellyfinLyricsSearch::RemoteThenServer,
+            )
+            .await
+            .expect("remote lyrics")
+            .expect("remote lyrics");
+        assert_eq!(remote.source, LyricsSource::Remote);
+        assert_eq!(remote.lines[0].text, "remote line");
+
+        let fallback = provider
+            .lyrics_with_search(
+                &TrackId::new("jellyfin:track:track-fallback"),
+                JellyfinLyricsSearch::RemoteThenServer,
+            )
+            .await
+            .expect("fallback lyrics")
+            .expect("fallback lyrics");
+        assert_eq!(fallback.source, LyricsSource::Server);
+        assert_eq!(fallback.lines[0].text, "fallback local line");
     }
 
     #[tokio::test]

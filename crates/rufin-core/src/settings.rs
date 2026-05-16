@@ -212,6 +212,8 @@ pub struct AppSettings {
     pub private_mode: bool,
     pub notifications_enabled: bool,
     pub external_lyrics_enabled: bool,
+    #[serde(default = "default_true")]
+    pub prefer_server_lyrics: bool,
     pub discord_presence_enabled: bool,
     #[serde(default = "default_discord_client_id")]
     pub discord_client_id: String,
@@ -260,6 +262,7 @@ impl Default for AppSettings {
             private_mode: false,
             notifications_enabled: false,
             external_lyrics_enabled: false,
+            prefer_server_lyrics: true,
             discord_presence_enabled: false,
             discord_client_id: default_discord_client_id(),
             discord_display_type: DiscordDisplayType::Application,
@@ -318,6 +321,7 @@ mod tests {
 
         assert!(!settings.notifications_enabled);
         assert!(!settings.external_lyrics_enabled);
+        assert!(settings.prefer_server_lyrics);
         assert!(!settings.discord_presence_enabled);
         assert_eq!(settings.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
         assert_eq!(
@@ -389,6 +393,7 @@ mod tests {
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
         assert!(!restored.auto_dj_enabled);
+        assert!(restored.prefer_server_lyrics);
         assert_eq!(restored.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
         assert_eq!(
             restored.discord_display_type,

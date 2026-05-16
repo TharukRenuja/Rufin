@@ -2431,6 +2431,7 @@ dependencies = [
  "rufin-secrets",
  "rufin-store",
  "rufin-test-support",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

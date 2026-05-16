@@ -16,6 +16,7 @@ pub struct LyricsPane {
     root: gtk::Box,
     scroller: gtk::ScrolledWindow,
     body: gtk::Box,
+    search_button: gtk::Button,
     rows: Rc<RefCell<Vec<LyricsRow>>>,
     active_index: Rc<Cell<Option<usize>>>,
     scroll_generation: Rc<Cell<u64>>,
@@ -45,10 +46,21 @@ impl LyricsPane {
         root.set_margin_end(8);
         root.set_margin_bottom(12);
 
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        header.set_valign(gtk::Align::Center);
+
         let title = gtk::Label::new(Some(title));
         title.add_css_class("panel-title");
         title.set_xalign(0.0);
-        root.append(&title);
+        title.set_hexpand(true);
+        header.append(&title);
+
+        let search_button = gtk::Button::from_icon_name("system-search-symbolic");
+        search_button.add_css_class("icon-button");
+        search_button.add_css_class("flat");
+        search_button.add_css_class("circular");
+        header.append(&search_button);
+        root.append(&header);
 
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
@@ -64,6 +76,7 @@ impl LyricsPane {
             root,
             scroller,
             body,
+            search_button,
             rows: Rc::new(RefCell::new(Vec::new())),
             active_index: Rc::new(Cell::new(None)),
             scroll_generation: Rc::new(Cell::new(0)),
@@ -75,6 +88,17 @@ impl LyricsPane {
 
     pub fn widget(&self) -> &gtk::Box {
         &self.root
+    }
+
+    pub fn connect_search_clicked(&self, search: impl Fn() + 'static) {
+        self.search_button.connect_clicked(move |_| search());
+    }
+
+    pub fn set_search_action(&self, label: &str, enabled: bool) {
+        self.search_button.set_tooltip_text(Some(label));
+        self.search_button
+            .update_property(&[gtk::accessible::Property::Label(label)]);
+        self.search_button.set_sensitive(enabled);
     }
 
     pub fn set_content(

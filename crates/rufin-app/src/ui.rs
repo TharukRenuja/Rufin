@@ -34,7 +34,9 @@ use rufin_store::{CachedArtistDetail, CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
 
-use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
+use crate::controller::{
+    AppController, ControllerEvent, LibrarySnapshot, LyricsSearchResult, PlaybackSnapshot,
+};
 use crate::i18n::tr;
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
 use discord::DiscordPresence;
@@ -102,6 +104,7 @@ struct AppState {
     player: RefCell<PlaybackSnapshot>,
     lyrics: RefCell<Option<Lyrics>>,
     lyrics_track_id: RefCell<Option<rufin_core::TrackId>>,
+    lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
@@ -124,6 +127,16 @@ struct AppState {
     decoded_cover_order: RefCell<VecDeque<String>>,
     favorite_controls: FavoriteControls,
     perf: Option<Rc<UiPerfMonitor>>,
+}
+
+#[derive(Clone)]
+struct LyricsSearchDialog {
+    dialog: adw::Dialog,
+    track_id: rufin_core::TrackId,
+    entry: gtk::SearchEntry,
+    search_button: gtk::Button,
+    list: gtk::ListBox,
+    status: gtk::Label,
 }
 
 #[derive(Clone)]
@@ -326,6 +339,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         player: RefCell::new(player),
         lyrics: RefCell::new(None),
         lyrics_track_id: RefCell::new(None),
+        lyrics_search_dialog: RefCell::new(None),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
         mpris_player: RefCell::new(None),
@@ -488,6 +502,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     connect_shell_actions(&shell, main_menu);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_split(&shell);
+    connect_lyrics_search_controls(&shell);
     connect_player_controls(&shell);
     install_mpris(&shell);
     shell.update_density();
@@ -1008,9 +1023,30 @@ impl Shell {
                 warn!(%error, "failed to save lyrics setting");
             }
         }
+        *self.state.lyrics.borrow_mut() = None;
         self.render_lyrics_panel();
-        if enabled && current_playback_track_id(&self.state.player.borrow()).is_some() {
-            self.controller.request_lyrics_for_current();
+        if current_playback_track_id(&self.state.player.borrow()).is_some() {
+            self.controller.refresh_lyrics_for_current();
+        }
+    }
+
+    pub(super) fn set_prefer_server_lyrics(self: &Rc<Self>, enabled: bool) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.prefer_server_lyrics == enabled {
+                return;
+            }
+            settings.prefer_server_lyrics = enabled;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save lyrics search setting");
+            }
+        }
+        if self.state.settings.borrow().external_lyrics_enabled
+            && current_playback_track_id(&self.state.player.borrow()).is_some()
+        {
+            *self.state.lyrics.borrow_mut() = None;
+            self.render_lyrics_panel();
+            self.controller.refresh_lyrics_for_current();
         }
     }
 
@@ -1026,12 +1062,10 @@ impl Shell {
             }
         }
         self.update_discord_presence(&self.state.player.borrow());
+        *self.state.lyrics.borrow_mut() = None;
         self.render_lyrics_panel();
-        if !enabled
-            && self.state.settings.borrow().external_lyrics_enabled
-            && current_playback_track_id(&self.state.player.borrow()).is_some()
-        {
-            self.controller.request_lyrics_for_current();
+        if current_playback_track_id(&self.state.player.borrow()).is_some() {
+            self.controller.refresh_lyrics_for_current();
         }
     }
 
@@ -2825,6 +2859,18 @@ impl Shell {
     }
 
     fn render_lyrics_panel(self: &Rc<Self>) {
+        let settings = self.state.settings.borrow();
+        let has_current_track = current_playback_track_id(&self.state.player.borrow()).is_some();
+        let (search_label, search_enabled) = if settings.private_mode {
+            (tr("Private mode is on"), false)
+        } else if has_current_track {
+            (tr("Search lyrics"), true)
+        } else {
+            (tr("No track playing"), false)
+        };
+        drop(settings);
+        self.lyrics_pane
+            .set_search_action(&search_label, search_enabled);
         let empty_status = self.lyrics_empty_status();
         let seek_shell = Rc::clone(self);
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
@@ -2835,6 +2881,152 @@ impl Shell {
             .set_content(lyrics.as_ref(), empty_status, seek);
         drop(lyrics);
         self.update_lyrics_highlight();
+    }
+
+    fn present_lyrics_search_dialog(self: &Rc<Self>) {
+        if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref() {
+            dialog.dialog.present(Some(&self.window));
+            dialog.entry.grab_focus();
+            return;
+        }
+
+        let Some(current) = self.state.player.borrow().current.clone() else {
+            return;
+        };
+        if self.state.settings.borrow().private_mode {
+            return;
+        }
+        let default_query = format!("{} {}", current.artist, current.title)
+            .trim()
+            .to_string();
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        content.set_margin_top(16);
+        content.set_margin_bottom(16);
+        content.set_margin_start(16);
+        content.set_margin_end(16);
+
+        let search_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let entry = gtk::SearchEntry::new();
+        entry.set_hexpand(true);
+        entry.set_text(&default_query);
+        let search_button = text_button("system-search-symbolic", "Search");
+        search_row.append(&entry);
+        search_row.append(&search_button);
+        content.append(&search_row);
+
+        let status = gtk::Label::new(Some(&tr("Ready")));
+        status.add_css_class("muted");
+        status.set_xalign(0.0);
+        status.set_wrap(true);
+        content.append(&status);
+
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::None);
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_vexpand(true);
+        scroller.set_child(Some(&list));
+        content.append(&scroller);
+
+        let dialog = adw::Dialog::builder()
+            .title(tr("Search Lyrics"))
+            .content_width(520)
+            .content_height(520)
+            .child(&content)
+            .build();
+        let search_dialog = LyricsSearchDialog {
+            dialog: dialog.clone(),
+            track_id: current.track_id,
+            entry: entry.clone(),
+            search_button: search_button.clone(),
+            list,
+            status,
+        };
+        *self.state.lyrics_search_dialog.borrow_mut() = Some(search_dialog.clone());
+
+        let close_shell = Rc::clone(self);
+        dialog.connect_closed(move |_| {
+            close_shell.state.lyrics_search_dialog.borrow_mut().take();
+        });
+
+        let search_shell = Rc::clone(self);
+        let search_entry = entry.clone();
+        let search_status = search_dialog.status.clone();
+        search_button.connect_clicked(move |_| {
+            submit_lyrics_search(&search_shell, &search_entry, &search_status);
+        });
+
+        let search_shell = Rc::clone(self);
+        let search_status = search_dialog.status.clone();
+        entry.connect_activate(move |entry| {
+            submit_lyrics_search(&search_shell, entry, &search_status);
+        });
+
+        dialog.present(Some(&self.window));
+        search_dialog.entry.grab_focus();
+    }
+
+    fn apply_lyrics_search_results(
+        self: &Rc<Self>,
+        track_id: rufin_core::TrackId,
+        query: String,
+        results: Vec<LyricsSearchResult>,
+    ) {
+        let Some(dialog) = self.state.lyrics_search_dialog.borrow().clone() else {
+            return;
+        };
+        if dialog.track_id != track_id {
+            return;
+        }
+        dialog.search_button.set_sensitive(true);
+        clear_list_box(&dialog.list);
+        if results.is_empty() {
+            let _unused = query;
+            dialog.status.set_text(&tr("No lyrics found."));
+            return;
+        }
+
+        dialog
+            .status
+            .set_text(&format!("{} {}", results.len(), tr("results")));
+        for result in results {
+            let title = format!("{} - {}", result.artist_name, result.track_name);
+            let subtitle = lyrics_result_subtitle(&result);
+            let row = adw::ActionRow::builder()
+                .title(title)
+                .subtitle(subtitle)
+                .build();
+            let button = gtk::Button::with_label(&tr("Save"));
+            button.set_valign(gtk::Align::Center);
+            button.add_css_class("suggested-action");
+            button.set_sensitive(lyrics_search_result_has_content(&result));
+            row.add_suffix(&button);
+            row.set_activatable_widget(Some(&button));
+
+            let save_shell = Rc::clone(self);
+            let save_track_id = track_id.clone();
+            button.connect_clicked(move |_| {
+                save_shell
+                    .controller
+                    .save_lyrics_search_result(save_track_id.clone(), result.clone());
+            });
+            dialog.list.append(&row);
+        }
+    }
+
+    fn apply_lyrics_saved(self: &Rc<Self>, path: PathBuf, lyrics: Lyrics) {
+        let track_id = lyrics.track_id.clone();
+        *self.state.lyrics.borrow_mut() = Some(lyrics);
+        self.render_lyrics_panel();
+        if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref()
+            && dialog.track_id == track_id
+        {
+            dialog
+                .status
+                .set_text(&format!("{} {}", tr("Saved to"), path.display()));
+        }
     }
 
     fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {
@@ -3585,6 +3777,73 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     });
 }
 
+fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
+    let lyrics_shell = Rc::clone(shell);
+    shell.lyrics_pane.connect_search_clicked(move || {
+        if current_playback_track_id(&lyrics_shell.state.player.borrow()).is_none() {
+            return;
+        }
+        lyrics_shell.present_lyrics_search_dialog();
+    });
+}
+
+fn submit_lyrics_search(shell: &Rc<Shell>, entry: &gtk::SearchEntry, status: &gtk::Label) {
+    let query = entry.text().trim().to_string();
+    if query.is_empty() {
+        status.set_text(&tr("Enter a search term."));
+        return;
+    }
+    if let Some(dialog) = shell.state.lyrics_search_dialog.borrow().as_ref() {
+        clear_list_box(&dialog.list);
+        dialog.search_button.set_sensitive(false);
+    }
+    status.set_text(&tr("Searching..."));
+    shell.controller.search_lyrics_for_current(query);
+}
+
+fn clear_list_box(list: &gtk::ListBox) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+}
+
+fn lyrics_search_result_has_content(result: &LyricsSearchResult) -> bool {
+    result
+        .synced_lyrics
+        .as_deref()
+        .is_some_and(|lyrics| !lyrics.trim().is_empty())
+        || result
+            .plain_lyrics
+            .as_deref()
+            .is_some_and(|lyrics| !lyrics.trim().is_empty())
+}
+
+fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
+    let mut subtitle = String::new();
+    if !result.album_name.trim().is_empty() {
+        subtitle.push_str(&result.album_name);
+    }
+    if result.duration_seconds > 0 {
+        if !subtitle.is_empty() {
+            subtitle.push_str(" - ");
+        }
+        subtitle.push_str(&format_duration(result.duration_seconds));
+    }
+    if !subtitle.is_empty() {
+        subtitle.push_str(" - ");
+    }
+    if result
+        .synced_lyrics
+        .as_deref()
+        .is_some_and(|lyrics| !lyrics.trim().is_empty())
+    {
+        subtitle.push_str(&tr("Synced"));
+    } else {
+        subtitle.push_str(&tr("Plain"));
+    }
+    subtitle
+}
+
 fn connect_auto_density_resize(shell: &Rc<Shell>) {
     let window = shell.window.clone();
     let shell = Rc::clone(shell);
@@ -3796,6 +4055,16 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 ControllerEvent::Lyrics(lyrics) => {
                     *shell.state.lyrics.borrow_mut() = *lyrics;
                     shell.render_lyrics_panel();
+                }
+                ControllerEvent::LyricsSearchResults {
+                    track_id,
+                    query,
+                    results,
+                } => {
+                    shell.apply_lyrics_search_results(track_id, query, results);
+                }
+                ControllerEvent::LyricsSaved { path, lyrics } => {
+                    shell.apply_lyrics_saved(path, lyrics);
                 }
                 ControllerEvent::CoverReady { key, path } => {
                     shell.apply_cover_ready(&key, &path);

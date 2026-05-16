@@ -111,11 +111,27 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         ))
         .active(settings.external_lyrics_enabled)
         .build();
+
+    let prefer_server_row = adw::SwitchRow::builder()
+        .title(tr("Prefer server lyrics"))
+        .subtitle(tr("Search Jellyfin lyrics before external providers."))
+        .active(settings.prefer_server_lyrics)
+        .sensitive(settings.external_lyrics_enabled)
+        .build();
+    let prefer_server_shell = Rc::clone(shell);
+    prefer_server_row.connect_active_notify(move |row| {
+        prefer_server_shell.set_prefer_server_lyrics(row.is_active());
+    });
+
     let external_shell = Rc::clone(shell);
+    let prefer_server_row_for_external = prefer_server_row.clone();
     external_row.connect_active_notify(move |row| {
-        external_shell.set_external_lyrics_enabled(row.is_active());
+        let enabled = row.is_active();
+        prefer_server_row_for_external.set_sensitive(enabled);
+        external_shell.set_external_lyrics_enabled(enabled);
     });
     lyrics_group.add(&external_row);
+    lyrics_group.add(&prefer_server_row);
     page.add(&lyrics_group);
 
     let discord_group = adw::PreferencesGroup::builder()

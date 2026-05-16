@@ -20,13 +20,14 @@ use rufin_provider::{
     FavoriteItemId, ImageKind, ImageRequest, LoginRequest, Lyrics, MusicProvider, PagedRequest,
     PlaybackReport, PlaybackReportKind, PlaylistEntry, SavedProviderSession, SearchResults,
 };
-use rufin_provider_jellyfin::JellyfinProvider;
+use rufin_provider_jellyfin::{JellyfinLyricsSearch, JellyfinProvider};
 use rufin_secrets::{MemorySecretStore, SecretServiceStore, SecretStore};
 use rufin_store::{
     CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, SavedServer, Store, StoreError,
     image_cache_key,
 };
 use rufin_test_support::{FakeProvider, FakeScale};
+use serde::Deserialize;
 use tokio::runtime::Runtime;
 use tracing::{debug, info, instrument, warn};
 
@@ -71,6 +72,17 @@ pub struct PlaybackSnapshot {
     pub auto_dj_enabled: bool,
     pub buffering_percent: Option<u8>,
     pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LyricsSearchResult {
+    pub id: u64,
+    pub track_name: String,
+    pub artist_name: String,
+    pub album_name: String,
+    pub duration_seconds: u32,
+    pub synced_lyrics: Option<String>,
+    pub plain_lyrics: Option<String>,
 }
 
 impl Default for PlaybackSnapshot {
@@ -124,6 +136,15 @@ pub enum ControllerEvent {
     Queue(Box<Option<QueueSnapshot>>),
     Playback(Box<PlaybackSnapshot>),
     Lyrics(Box<Option<Lyrics>>),
+    LyricsSearchResults {
+        track_id: TrackId,
+        query: String,
+        results: Vec<LyricsSearchResult>,
+    },
+    LyricsSaved {
+        path: PathBuf,
+        lyrics: Lyrics,
+    },
     CoverReady {
         key: String,
         path: PathBuf,
@@ -1760,26 +1781,44 @@ impl AppController {
     }
 
     pub fn request_lyrics_for_current(&self) {
+        self.request_lyrics_for_current_with_cache(true);
+    }
+
+    pub fn refresh_lyrics_for_current(&self) {
+        self.request_lyrics_for_current_with_cache(false);
+    }
+
+    fn request_lyrics_for_current_with_cache(&self, use_cache: bool) {
         let Some((server_id, entry, _position)) = self.current_queue_entry() else {
             debug!("lyrics request skipped because the queue has no current track");
             let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
             return;
         };
-        let cached = self
-            .store
-            .with_store(|store| store.load_lyrics(&server_id, &entry.track_id))
-            .unwrap_or(None);
-        if cached.is_some() {
-            debug!(track_id = %entry.track_id, "loaded lyrics from cache");
-            let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(cached)));
-            return;
-        }
-        let allow_remote = self
+        let settings = self
             .store
             .with_store(|store| store.load_settings())
-            .map(|settings| remote_lyrics_allowed(&settings))
-            .unwrap_or(false);
-        debug!(track_id = %entry.track_id, allow_remote, "requesting lyrics from provider");
+            .unwrap_or_else(|_| AppSettings::default());
+        let search = lyrics_search_for_settings(&settings);
+        let cached = use_cache.then(|| {
+            self.store
+                .with_store(|store| store.load_lyrics(&server_id, &entry.track_id))
+                .unwrap_or(None)
+        });
+        if let Some(cached) = cached
+            .flatten()
+            .filter(|lyrics| cached_lyrics_allowed(lyrics, search))
+        {
+            debug!(track_id = %entry.track_id, "loaded lyrics from cache");
+            let _sent = self
+                .events
+                .send(ControllerEvent::Lyrics(Box::new(Some(cached))));
+            return;
+        }
+        let allow_remote = matches!(
+            search,
+            JellyfinLyricsSearch::ServerThenRemote | JellyfinLyricsSearch::RemoteThenServer
+        );
+        debug!(track_id = %entry.track_id, allow_remote, ?search, "requesting lyrics from provider");
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
@@ -1800,7 +1839,7 @@ impl AppController {
             let result =
                 provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                     runtime
-                        .block_on(provider.lyrics(&entry.track_id, allow_remote))
+                        .block_on(provider.lyrics_with_search(&entry.track_id, search))
                         .map_err(|error| error.to_string())
                 });
             match result {
@@ -1819,6 +1858,67 @@ impl AppController {
                 }
             }
         });
+    }
+
+    pub fn search_lyrics_for_current(&self, query: String) {
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        let Some((_server_id, entry, _position)) = self.current_queue_entry() else {
+            let _sent = self
+                .events
+                .send(ControllerEvent::Error("No track is playing.".to_string()));
+            return;
+        };
+        let track_id = entry.track_id.clone();
+        let events = self.events.clone();
+        thread::spawn(move || match lrclib_search(&query) {
+            Ok(results) => {
+                let _sent = events.send(ControllerEvent::LyricsSearchResults {
+                    track_id,
+                    query,
+                    results,
+                });
+            }
+            Err(error) => {
+                let _sent = events.send(ControllerEvent::Error(error));
+                let _sent = events.send(ControllerEvent::LyricsSearchResults {
+                    track_id,
+                    query,
+                    results: Vec::new(),
+                });
+            }
+        });
+    }
+
+    pub fn save_lyrics_search_result(&self, track_id: TrackId, result: LyricsSearchResult) {
+        let Some((server_id, entry, _position)) = self.current_queue_entry() else {
+            let _sent = self
+                .events
+                .send(ControllerEvent::Error("No track is playing.".to_string()));
+            return;
+        };
+        if entry.track_id != track_id {
+            let _sent = self.events.send(ControllerEvent::Error(
+                "The playing track changed before lyrics were saved.".to_string(),
+            ));
+            return;
+        }
+
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(
+            move || match save_lrclib_result(&server_id, &entry, &result) {
+                Ok((path, lyrics)) => {
+                    let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
+                    let _sent = events.send(ControllerEvent::LyricsSaved { path, lyrics });
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                }
+            },
+        );
     }
 
     fn with_queue_mut<T>(
@@ -2923,8 +3023,195 @@ fn resolve_stream(
         .map_err(|error| error.to_string())
 }
 
-fn remote_lyrics_allowed(settings: &AppSettings) -> bool {
-    settings.external_lyrics_enabled && !settings.private_mode
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LrcLibLyricsDto {
+    id: u64,
+    track_name: String,
+    artist_name: String,
+    #[serde(default)]
+    album_name: Option<String>,
+    #[serde(default)]
+    duration: Option<u32>,
+    synced_lyrics: Option<String>,
+    plain_lyrics: Option<String>,
+}
+
+impl From<LrcLibLyricsDto> for LyricsSearchResult {
+    fn from(value: LrcLibLyricsDto) -> Self {
+        Self {
+            id: value.id,
+            track_name: value.track_name,
+            artist_name: value.artist_name,
+            album_name: value.album_name.unwrap_or_default(),
+            duration_seconds: value.duration.unwrap_or_default(),
+            synced_lyrics: value.synced_lyrics,
+            plain_lyrics: value.plain_lyrics,
+        }
+    }
+}
+
+fn lrclib_search(query: &str) -> Result<Vec<LyricsSearchResult>, String> {
+    let mut url =
+        reqwest::Url::parse("https://lrclib.net/api/search").map_err(|error| error.to_string())?;
+    url.query_pairs_mut().append_pair("q", query);
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let results = client
+        .get(url)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("Lyric search failed: {error}"))?
+        .json::<Vec<LrcLibLyricsDto>>()
+        .map_err(|error| format!("Lyric search returned invalid data: {error}"))?;
+    Ok(results.into_iter().map(LyricsSearchResult::from).collect())
+}
+
+fn save_lrclib_result(
+    server_id: &ServerId,
+    entry: &QueueEntry,
+    result: &LyricsSearchResult,
+) -> Result<(PathBuf, Lyrics), String> {
+    let content = lyrics_result_content(result)
+        .ok_or_else(|| "Selected lyric result has no lyrics to save.".to_string())?;
+    let path = lyrics_save_path(&entry.title)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let temp_path = path.with_extension("lrc.tmp");
+    fs::write(&temp_path, content).map_err(|error| error.to_string())?;
+    fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
+    let lyrics = lyrics_from_text(entry.track_id.clone(), result);
+    debug!(server_id = %server_id, path = %path.display(), "saved lyric file");
+    Ok((path, lyrics))
+}
+
+fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
+    result
+        .synced_lyrics
+        .as_deref()
+        .filter(|lyrics| !lyrics.trim().is_empty())
+        .or_else(|| {
+            result
+                .plain_lyrics
+                .as_deref()
+                .filter(|lyrics| !lyrics.trim().is_empty())
+        })
+}
+
+fn lyrics_save_path(track_title: &str) -> Result<PathBuf, String> {
+    let user_dirs = directories::UserDirs::new()
+        .ok_or_else(|| "Could not find the user home directory.".to_string())?;
+    // Local-library support can replace this with the audio file stem; Music is the fallback.
+    let base = user_dirs
+        .audio_dir()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| user_dirs.home_dir().join("Music"));
+    Ok(base.join(format!("{}.lrc", lyrics_file_stem(track_title))))
+}
+
+fn lyrics_file_stem(track_title: &str) -> String {
+    let stem = track_title
+        .chars()
+        .map(|character| match character {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
+            other if other.is_control() => '_',
+            other => other,
+        })
+        .collect::<String>()
+        .trim()
+        .trim_end_matches('.')
+        .to_string();
+    if stem.is_empty() {
+        "lyrics".to_string()
+    } else {
+        stem
+    }
+}
+
+fn lyrics_from_text(track_id: TrackId, result: &LyricsSearchResult) -> Lyrics {
+    let content = lyrics_result_content(result).unwrap_or_default();
+    Lyrics {
+        track_id,
+        source: rufin_provider::LyricsSource::Remote,
+        lines: content
+            .lines()
+            .filter_map(lyric_line_from_text)
+            .collect::<Vec<_>>(),
+    }
+}
+
+fn lyric_line_from_text(line: &str) -> Option<rufin_provider::LyricLine> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some((start_millis, text)) = parse_lrc_timestamp(trimmed) {
+        return Some(rufin_provider::LyricLine {
+            text: text.to_string(),
+            start_millis: Some(start_millis),
+        });
+    }
+    if trimmed.starts_with('[') && trimmed.contains(']') {
+        return None;
+    }
+    Some(rufin_provider::LyricLine {
+        text: trimmed.to_string(),
+        start_millis: None,
+    })
+}
+
+fn parse_lrc_timestamp(line: &str) -> Option<(u64, &str)> {
+    let timestamp_end = line.find(']')?;
+    let timestamp = line.get(1..timestamp_end)?;
+    let (minutes, seconds) = timestamp.split_once(':')?;
+    let minutes = minutes.parse::<u64>().ok()?;
+    let (seconds, fraction) = seconds
+        .split_once('.')
+        .map(|(seconds, fraction)| (seconds, Some(fraction)))
+        .unwrap_or((seconds, None));
+    let seconds = seconds.parse::<u64>().ok()?;
+    let fraction_millis = match fraction {
+        Some(fraction) => fraction_to_millis(fraction)?,
+        None => 0,
+    };
+    Some((
+        (minutes * 60 + seconds) * 1_000 + fraction_millis,
+        line.get(timestamp_end + 1..)?.trim(),
+    ))
+}
+
+fn fraction_to_millis(fraction: &str) -> Option<u64> {
+    let mut millis = 0_u64;
+    for (index, character) in fraction.chars().take(3).enumerate() {
+        let digit = character.to_digit(10)? as u64;
+        millis += digit
+            * match index {
+                0 => 100,
+                1 => 10,
+                _ => 1,
+            };
+    }
+    Some(millis)
+}
+
+fn lyrics_search_for_settings(settings: &AppSettings) -> JellyfinLyricsSearch {
+    if settings.private_mode || !settings.external_lyrics_enabled {
+        JellyfinLyricsSearch::ServerOnly
+    } else if settings.prefer_server_lyrics {
+        JellyfinLyricsSearch::ServerThenRemote
+    } else {
+        JellyfinLyricsSearch::RemoteThenServer
+    }
+}
+
+fn cached_lyrics_allowed(lyrics: &Lyrics, search: JellyfinLyricsSearch) -> bool {
+    match lyrics.source {
+        rufin_provider::LyricsSource::Server => true,
+        rufin_provider::LyricsSource::Remote => !matches!(search, JellyfinLyricsSearch::ServerOnly),
+    }
 }
 
 fn provider_for_saved(
@@ -3265,6 +3552,7 @@ mod tests {
     use rufin_provider::{
         FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest,
     };
+    use rufin_provider_jellyfin::JellyfinLyricsSearch;
     use rufin_secrets::MemorySecretStore;
     use rufin_store::{CoverCacheEntry, SavedServer};
     use rufin_test_support::{FakeProvider, FakeScale};
@@ -4216,19 +4504,66 @@ mod tests {
     }
 
     #[test]
-    fn remote_lyrics_are_disabled_in_private_mode() {
+    fn lyrics_search_respects_private_mode_and_preference() {
         let mut settings = AppSettings {
             external_lyrics_enabled: true,
             ..AppSettings::default()
         };
-        assert!(super::remote_lyrics_allowed(&settings));
+        assert_eq!(
+            super::lyrics_search_for_settings(&settings),
+            JellyfinLyricsSearch::ServerThenRemote
+        );
+
+        settings.prefer_server_lyrics = false;
+        assert_eq!(
+            super::lyrics_search_for_settings(&settings),
+            JellyfinLyricsSearch::RemoteThenServer
+        );
 
         settings.private_mode = true;
-        assert!(!super::remote_lyrics_allowed(&settings));
+        assert_eq!(
+            super::lyrics_search_for_settings(&settings),
+            JellyfinLyricsSearch::ServerOnly
+        );
 
         settings.private_mode = false;
         settings.external_lyrics_enabled = false;
-        assert!(!super::remote_lyrics_allowed(&settings));
+        assert_eq!(
+            super::lyrics_search_for_settings(&settings),
+            JellyfinLyricsSearch::ServerOnly
+        );
+    }
+
+    #[test]
+    fn lyrics_save_path_uses_music_dir_and_track_title() {
+        let path = super::lyrics_save_path("Song Title").expect("lyrics save path");
+        let path = path.to_string_lossy();
+
+        assert!(path.contains("Music") || path.contains("music"));
+        assert!(path.ends_with("Song Title.lrc"));
+    }
+
+    #[test]
+    fn lrclib_result_text_becomes_timed_lyrics() {
+        let result = super::LyricsSearchResult {
+            id: 7,
+            track_name: "Song".to_string(),
+            artist_name: "Artist".to_string(),
+            album_name: "Album".to_string(),
+            duration_seconds: 180,
+            synced_lyrics: Some(
+                "[00:12.34]first line\n[ar:Artist]\n[00:13.005]second line".to_string(),
+            ),
+            plain_lyrics: None,
+        };
+
+        let lyrics = super::lyrics_from_text(TrackId::new("track-one"), &result);
+
+        assert_eq!(lyrics.lines.len(), 2);
+        assert_eq!(lyrics.lines[0].text, "first line");
+        assert_eq!(lyrics.lines[0].start_millis, Some(12_340));
+        assert_eq!(lyrics.lines[1].text, "second line");
+        assert_eq!(lyrics.lines[1].start_millis, Some(13_005));
     }
 
     #[test]
@@ -4334,6 +4669,8 @@ mod tests {
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -4358,6 +4695,8 @@ mod tests {
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -4377,6 +4716,8 @@ mod tests {
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -4395,6 +4736,8 @@ mod tests {
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
                 | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -4414,6 +4757,8 @@ mod tests {
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
                 | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -4432,6 +4777,8 @@ mod tests {
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -4458,6 +4805,8 @@ mod tests {
                     ControllerEvent::Playback(_)
                     | ControllerEvent::Queue(_)
                     | ControllerEvent::Lyrics(_)
+                    | ControllerEvent::LyricsSearchResults { .. }
+                    | ControllerEvent::LyricsSaved { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
                     | ControllerEvent::FavoriteChanged { .. }
@@ -4489,6 +4838,8 @@ mod tests {
                 ControllerEvent::Playback(_)
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::FavoriteChanged { .. }
@@ -4513,6 +4864,8 @@ mod tests {
                 ControllerEvent::Playback(_)
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::FavoriteChanged { .. }
@@ -4547,6 +4900,8 @@ mod tests {
                     ControllerEvent::Playback(_)
                     | ControllerEvent::Queue(_)
                     | ControllerEvent::Lyrics(_)
+                    | ControllerEvent::LyricsSearchResults { .. }
+                    | ControllerEvent::LyricsSaved { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
                     | ControllerEvent::FavoriteChanged { .. }
