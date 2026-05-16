@@ -174,10 +174,25 @@ window {
 }
 
 scale.player-progress slider {
-  min-width: 10px;
-  min-height: 10px;
+  min-width: 11px;
+  min-height: 11px;
   margin: -4px;
   padding: 0;
+}
+
+scale.player-progress trough {
+  min-height: 4px;
+}
+
+scale.volume-slider slider {
+  min-width: 11px;
+  min-height: 11px;
+  margin: -4px;
+  padding: 0;
+}
+
+scale.volume-slider trough {
+  min-height: 3px;
 }
 
 .player-transport-button {

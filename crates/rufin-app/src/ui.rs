@@ -44,12 +44,14 @@ const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
-const BOTTOM_PLAYER_HEIGHT: i32 = 68;
-const BOTTOM_PLAYER_COVER_SIZE: i32 = 60;
+const BOTTOM_PLAYER_HEIGHT: i32 = 76;
+const BOTTOM_PLAYER_COVER_SIZE: i32 = 68;
 const BOTTOM_PLAYER_IDENTITY_WIDTH: i32 = 190;
-const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 330;
+const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 400;
 const BOTTOM_PLAYER_TRANSPORT_OFFSET: i32 = 80;
-const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 230;
+const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 300;
+const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 40;
+const BOTTOM_PLAYER_BUTTON_STEP: f64 = 44.0;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -3863,14 +3865,19 @@ fn build_bottom_player() -> PlayerControls {
     now_playing.append(&identity);
     bar.append(&now_playing);
 
-    let transport = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    let transport = gtk::Box::new(gtk::Orientation::Vertical, 5);
     transport.add_css_class("player-transport");
     transport.set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH);
     transport.set_valign(gtk::Align::Center);
-    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 18);
+
+    let buttons = gtk::Fixed::new();
     buttons.add_css_class("player-button-row");
     buttons.set_halign(gtk::Align::Center);
     buttons.set_valign(gtk::Align::Center);
+    buttons.set_size_request(
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
+        BOTTOM_PLAYER_BUTTON_ROW_HEIGHT,
+    );
 
     let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
     stop_button.add_css_class("player-transport-button");
@@ -3884,12 +3891,35 @@ fn build_bottom_player() -> PlayerControls {
     let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
     let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
 
-    buttons.append(&stop_button);
-    buttons.append(&previous_button);
-    buttons.append(&play_button);
-    buttons.append(&next_button);
-    buttons.append(&shuffle_button);
-    buttons.append(&repeat_button);
+    let button_center = f64::from(BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2.0;
+    let button_y = 6.0;
+    let play_y = 2.0;
+    buttons.put(
+        &stop_button,
+        button_center - BOTTOM_PLAYER_BUTTON_STEP * 2.0 - 14.0,
+        button_y,
+    );
+    buttons.put(
+        &previous_button,
+        button_center - BOTTOM_PLAYER_BUTTON_STEP - 14.0,
+        button_y,
+    );
+    buttons.put(&play_button, button_center - 18.0, play_y);
+    buttons.put(
+        &next_button,
+        button_center + BOTTOM_PLAYER_BUTTON_STEP - 14.0,
+        button_y,
+    );
+    buttons.put(
+        &shuffle_button,
+        button_center + BOTTOM_PLAYER_BUTTON_STEP * 2.0 - 14.0,
+        button_y,
+    );
+    buttons.put(
+        &repeat_button,
+        button_center + BOTTOM_PLAYER_BUTTON_STEP * 3.0 - 14.0,
+        button_y,
+    );
 
     let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     progress_row.add_css_class("player-progress-row");
