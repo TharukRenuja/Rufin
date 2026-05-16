@@ -39,8 +39,8 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .collect::<Vec<_>>();
     let density_options = gtk::StringList::new(&density_refs);
     let density_row = adw::ComboRow::builder()
-        .title(tr("Layout density"))
-        .subtitle(tr("Choose how navigation adapts to the window width."))
+        .title(tr("Left sidebar density"))
+        .subtitle(tr("Choose when the left sidebar uses compact navigation."))
         .model(&density_options)
         .selected(density_index(shell.state.density_mode.get()))
         .build();

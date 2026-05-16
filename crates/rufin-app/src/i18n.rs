@@ -73,7 +73,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Show Lyrics Panel");
     let _ = tr("Keep the lyrics section visible below the queue.");
     let _ = tr("Keep the queue sidebar visible in the main window.");
-    let _ = tr("Choose how navigation adapts to the window width.");
+    let _ = tr("Left sidebar density");
+    let _ = tr("Choose when the left sidebar uses compact navigation.");
     let _ = tr("Remove from queue");
     let _ = tr("Remove from Queue");
     let _ = tr("Mute");

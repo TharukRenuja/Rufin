@@ -343,7 +343,11 @@ fn nav_button(
         },
         8,
     );
-    content.set_halign(gtk::Align::Center);
+    content.set_halign(if compact {
+        gtk::Align::Center
+    } else {
+        gtk::Align::Start
+    });
     let icon = gtk::Image::from_icon_name(icon_name);
     content.append(&icon);
     if compact {
@@ -354,6 +358,7 @@ fn nav_button(
     } else {
         let text = gtk::Label::new(Some(&tr(label)));
         text.set_xalign(0.0);
+        text.set_ellipsize(gtk::pango::EllipsizeMode::End);
         content.append(&text);
     }
     button.set_child(Some(&content));

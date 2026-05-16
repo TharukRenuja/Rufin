@@ -420,8 +420,12 @@ msgstr ""
 msgid "Rename"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2680
-msgid "Layout density"
+#: crates/rufin-app/src/ui/preferences.rs:42
+msgid "Left sidebar density"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences.rs:43
+msgid "Choose when the left sidebar uses compact navigation."
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2684

@@ -9,8 +9,12 @@ use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
 
 use super::{
-    MAX_RESTORED_WINDOW_HEIGHT, MIN_RESTORED_WINDOW_HEIGHT, Shell, clamp_content_split_position,
-    content_split_initial_position, icon_button, player::BOTTOM_PLAYER_HEIGHT,
+    Shell, icon_button,
+    layout::{
+        MAX_RESTORED_WINDOW_HEIGHT, MIN_RESTORED_WINDOW_HEIGHT, clamp_content_split_position,
+        content_split_initial_position, update_right_panel_split_settings,
+    },
+    player::BOTTOM_PLAYER_HEIGHT,
 };
 
 const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
@@ -114,7 +118,7 @@ impl Shell {
             return;
         }
         let mut settings = self.state.settings.borrow_mut();
-        if !super::update_right_panel_split_settings(&mut settings, split_width, position) {
+        if !update_right_panel_split_settings(&mut settings, split_width, position) {
             return;
         }
         if let Err(error) = self.controller.save_settings(&settings) {

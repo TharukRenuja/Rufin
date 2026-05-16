@@ -7,6 +7,8 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 mod favorites;
+mod layout;
+mod mpris;
 mod navigation;
 mod player;
 mod preferences;
@@ -18,14 +20,11 @@ use gdk_pixbuf::Pixbuf;
 use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
-use mpris_server::{
-    LoopStatus, Metadata, PlaybackStatus, Player as MprisPlayer, Time, TrackId as MprisTrackId,
-};
+use mpris_server::Player as MprisPlayer;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
-    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueSnapshot,
-    RepeatMode, Route, RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn,
-    TrackTableSettings, format_duration,
+    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueSnapshot, Route, RouteStack,
+    SearchKind, Track, TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, Lyrics};
@@ -42,6 +41,16 @@ use favorites::{
     merge_favorite_snapshot, register_favorite_control, track_favorite_key,
     update_favorite_controls,
 };
+use layout::{
+    COMPACT_RAIL_WIDTH, HOME_ALBUM_ARTIST_LINES, HOME_ALBUM_CARD_LABEL_GAP, HOME_ALBUM_GAP,
+    HOME_ALBUM_TITLE_LINES, HOME_ALBUM_YEAR_LINES, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
+    PRIMARY_ROUTE_MARGIN_START, clamp_home_album_page_start, clipped_card_label,
+    clipped_card_label_with_lines, constrain_single_line_card_label, constrain_wrapped_card_label,
+    content_split_target_position, home_album_card_height, home_album_card_size,
+    home_album_content_width, home_album_page_size, restored_window_size,
+    update_right_panel_split_settings,
+};
+use mpris::install_mpris;
 use navigation::{
     ServerSelector, build_compact_navigation, build_normal_navigation, build_server_selector,
     sidebar_history_button,
@@ -54,35 +63,11 @@ use right_panel::{
     connect_queue_lyrics_split,
 };
 
-const COMPACT_RAIL_WIDTH: i32 = 72;
-const MAIN_PANEL_UNITS: i32 = 7;
-const TOTAL_PANEL_UNITS: i32 = 10;
-const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
-const RIGHT_PANEL_MAX_PERCENT: i32 = 50;
-const NORMAL_SIDEBAR_WIDTH: i32 = 220;
-const HOME_ALBUM_GAP: i32 = 14;
-const HOME_ALBUM_MIN_SIZE: i32 = 150;
-const HOME_ALBUM_TARGET_SIZE: i32 = 180;
-const HOME_ALBUM_MAX_SIZE: i32 = 210;
-const HOME_ALBUM_MIN_COLUMNS: usize = 2;
-const HOME_ALBUM_MAX_COLUMNS: usize = 12;
-const PRIMARY_ROUTE_MARGIN_START: i32 = 0;
-const PRIMARY_ROUTE_MARGIN_END: i32 = 28;
-const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
-const CARD_LABEL_LINE_HEIGHT: i32 = 18;
-const HOME_ALBUM_CARD_LABEL_GAP: i32 = 4;
-const HOME_ALBUM_TITLE_LINES: i32 = 2;
-const HOME_ALBUM_ARTIST_LINES: i32 = 2;
-const HOME_ALBUM_YEAR_LINES: i32 = 1;
 const GRID_ROUTE_PAGE_SIZE: usize = 16;
 const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
-const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
-const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
-const MAX_RESTORED_WINDOW_WIDTH: i32 = 1400;
-const MAX_RESTORED_WINDOW_HEIGHT: i32 = 900;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -1130,72 +1115,6 @@ impl Shell {
         if route_uses_responsive_cards(self.state.routes.borrow().current()) {
             self.render_current_route();
         }
-    }
-
-    fn update_mpris_player(&self) {
-        let Some(player) = self.state.mpris_player.borrow().as_ref().cloned() else {
-            return;
-        };
-        let snapshot = self.state.player.borrow().clone();
-        let metadata = self.mpris_metadata(&snapshot);
-        let playback_status = match snapshot.state {
-            PlaybackState::Playing | PlaybackState::Buffering => PlaybackStatus::Playing,
-            PlaybackState::Paused => PlaybackStatus::Paused,
-            PlaybackState::Stopped => PlaybackStatus::Stopped,
-        };
-        let loop_status = match snapshot.repeat_mode {
-            RepeatMode::Off => LoopStatus::None,
-            RepeatMode::One => LoopStatus::Track,
-            RepeatMode::All => LoopStatus::Playlist,
-        };
-        let has_current = snapshot.current.is_some();
-        let position = Time::from_millis(snapshot.position_millis.min(i64::MAX as u64) as i64);
-        let volume = snapshot.volume.clamp(0.0, 1.0);
-
-        glib::spawn_future_local(async move {
-            let _updated = player.set_playback_status(playback_status).await;
-            let _updated = player.set_loop_status(loop_status).await;
-            let _updated = player.set_shuffle(snapshot.shuffle_enabled).await;
-            let _updated = player.set_metadata(metadata).await;
-            let _updated = player.set_volume(volume).await;
-            let _updated = player.set_can_play(has_current).await;
-            let _updated = player.set_can_pause(has_current).await;
-            let _updated = player.set_can_seek(has_current).await;
-            let _updated = player.set_can_go_next(has_current).await;
-            let _updated = player.set_can_go_previous(has_current).await;
-            player.set_position(position);
-        });
-    }
-
-    fn mpris_metadata(&self, snapshot: &PlaybackSnapshot) -> Metadata {
-        let Some(entry) = snapshot.current.as_ref() else {
-            return Metadata::builder().trackid(MprisTrackId::NO_TRACK).build();
-        };
-        let mut builder = Metadata::builder()
-            .trackid(mpris_track_id(entry.track_id.as_str()))
-            .title(entry.title.clone())
-            .artist([entry.artist.clone()])
-            .album(entry.album.clone())
-            .length(Time::from_secs(i64::from(entry.duration_seconds)));
-        if let Some(art_url) = self.current_art_url(entry) {
-            builder = builder.art_url(art_url);
-        }
-        builder.build()
-    }
-
-    fn current_art_url(&self, entry: &QueueEntry) -> Option<String> {
-        let server = self.state.library.borrow().server.as_ref()?.clone();
-        let image_ref = entry.image_ref.as_ref()?;
-        let key = image_cache_key(
-            &server.id,
-            &image_ref.item_id,
-            image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
-            THUMB_COVER_SIZE,
-        );
-        let path = self.controller.cached_cover_path_for_key(&key)?;
-        glib::filename_to_uri(path, None)
-            .ok()
-            .map(|uri| uri.to_string())
     }
 
     fn notify_now_playing(&self, snapshot: &PlaybackSnapshot) {
@@ -3471,87 +3390,6 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
     });
 }
 
-fn install_mpris(shell: &Rc<Shell>) {
-    let shell = Rc::clone(shell);
-    glib::spawn_future_local(async move {
-        let player = match MprisPlayer::builder("io.github.screwys.Rufin")
-            .identity("Rufin")
-            .desktop_entry("io.github.screwys.Rufin")
-            .supported_uri_schemes(["http", "https"])
-            .supported_mime_types(["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav"])
-            .can_play(true)
-            .can_pause(true)
-            .can_go_next(true)
-            .can_go_previous(true)
-            .can_seek(true)
-            .can_control(true)
-            .build()
-            .await
-        {
-            Ok(player) => Rc::new(player),
-            Err(error) => {
-                warn!(%error, "failed to start MPRIS server");
-                return;
-            }
-        };
-
-        let controller = shell.controller.clone();
-        player.connect_play_pause(move |_| controller.play_pause());
-        let play_shell = Rc::clone(&shell);
-        player.connect_play(move |_| {
-            let state = play_shell.state.player.borrow().state;
-            if !matches!(state, PlaybackState::Playing | PlaybackState::Buffering) {
-                play_shell.controller.play_pause();
-            }
-        });
-        let pause_shell = Rc::clone(&shell);
-        player.connect_pause(move |_| {
-            let state = pause_shell.state.player.borrow().state;
-            if matches!(state, PlaybackState::Playing | PlaybackState::Buffering) {
-                pause_shell.controller.play_pause();
-            }
-        });
-        let controller = shell.controller.clone();
-        player.connect_stop(move |_| controller.stop());
-        let controller = shell.controller.clone();
-        player.connect_next(move |_| controller.next_track());
-        let controller = shell.controller.clone();
-        player.connect_previous(move |_| controller.previous_track());
-        let controller = shell.controller.clone();
-        let seek_shell = Rc::clone(&shell);
-        player.connect_seek(move |_, offset| {
-            let current = seek_shell.state.player.borrow().position_millis;
-            let offset_millis = offset.as_micros() / 1_000;
-            let target = if offset_millis.is_negative() {
-                current.saturating_sub(offset_millis.unsigned_abs())
-            } else {
-                current.saturating_add(offset_millis as u64)
-            };
-            controller.seek_millis(target);
-        });
-        let controller = shell.controller.clone();
-        player.connect_set_position(move |_, _, position| {
-            controller.seek_millis((position.as_micros() / 1_000).max(0) as u64);
-        });
-
-        let run_player = Rc::clone(&player);
-        glib::spawn_future_local(async move {
-            run_player.run().await;
-        });
-        *shell.state.mpris_player.borrow_mut() = Some(player);
-        shell.update_mpris_player();
-    });
-}
-
-fn mpris_track_id(track_id: &str) -> MprisTrackId {
-    let mut encoded = String::with_capacity(track_id.len() * 2);
-    for byte in track_id.as_bytes() {
-        let _written = write!(&mut encoded, "{byte:02x}");
-    }
-    MprisTrackId::try_from(format!("/io/github/screwys/Rufin/track/{encoded}"))
-        .unwrap_or(MprisTrackId::NO_TRACK)
-}
-
 fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local(Duration::from_millis(33), move || {
@@ -4615,238 +4453,6 @@ fn render_home_album_page(
     }
 }
 
-fn home_album_page_size(width: i32, current_page_size: Option<usize>) -> usize {
-    let width = width.max(1);
-    let mut page_size = current_page_size
-        .unwrap_or_else(|| {
-            let item_width = HOME_ALBUM_TARGET_SIZE + HOME_ALBUM_GAP;
-            ((width + HOME_ALBUM_GAP) / item_width)
-                .clamp(HOME_ALBUM_MIN_COLUMNS as i32, HOME_ALBUM_MAX_COLUMNS as i32)
-                as usize
-        })
-        .clamp(HOME_ALBUM_MIN_COLUMNS, HOME_ALBUM_MAX_COLUMNS);
-
-    while page_size > HOME_ALBUM_MIN_COLUMNS
-        && home_album_raw_card_size(width, page_size) < HOME_ALBUM_MIN_SIZE
-    {
-        page_size -= 1;
-    }
-    while page_size < HOME_ALBUM_MAX_COLUMNS
-        && home_album_raw_card_size(width, page_size) > HOME_ALBUM_MAX_SIZE
-    {
-        page_size += 1;
-    }
-
-    page_size
-}
-
-fn clamp_content_split_position(split_width: i32, position: i32) -> i32 {
-    if split_width <= 1 {
-        return position;
-    }
-    let min_right_width = split_width * RIGHT_PANEL_MIN_PERCENT / 100;
-    let max_right_width = split_width * RIGHT_PANEL_MAX_PERCENT / 100;
-    let min_position = split_width - max_right_width;
-    let max_position = split_width - min_right_width;
-    position.clamp(min_position, max_position)
-}
-
-fn right_panel_position_ratio(split_width: i32, position: i32) -> f64 {
-    if split_width <= 0 {
-        return 0.0;
-    }
-    let right_width = split_width - position.clamp(0, split_width);
-    f64::from(right_width) / f64::from(split_width)
-}
-
-fn content_split_position_from_right_panel_ratio(split_width: i32, ratio: f64) -> i32 {
-    let right_width = (f64::from(split_width) * ratio.clamp(0.0, 1.0)).round() as i32;
-    clamp_content_split_position(split_width, split_width - right_width)
-}
-
-fn content_split_initial_position(split_width: i32, saved_ratio: Option<f64>) -> i32 {
-    saved_ratio
-        .filter(|ratio| ratio.is_finite())
-        .map(|ratio| content_split_position_from_right_panel_ratio(split_width, ratio))
-        .unwrap_or_else(|| default_content_split_position(split_width))
-}
-
-fn content_split_target_position(
-    split_width: i32,
-    previous_width: i32,
-    stored_position: i32,
-    current_position: i32,
-    saved_ratio: Option<f64>,
-) -> i32 {
-    let target_position = if previous_width <= 1 {
-        content_split_initial_position(split_width, saved_ratio)
-    } else if previous_width != split_width && stored_position > 1 {
-        stored_position * split_width / previous_width
-    } else if current_position > 1 {
-        current_position
-    } else {
-        content_split_initial_position(split_width, saved_ratio)
-    };
-    clamp_content_split_position(split_width, target_position)
-}
-
-fn default_content_split_position(split_width: i32) -> i32 {
-    split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS
-}
-
-fn update_right_panel_split_settings(
-    settings: &mut AppSettings,
-    split_width: i32,
-    position: i32,
-) -> bool {
-    if split_width <= 1 || position <= 0 || position >= split_width {
-        return false;
-    }
-
-    let position = clamp_content_split_position(split_width, position);
-    let ratio = right_panel_position_ratio(split_width, position);
-    if settings.right_panel_position == Some(position) && settings.right_panel_ratio == Some(ratio)
-    {
-        return false;
-    }
-
-    settings.right_panel_position = Some(position);
-    settings.right_panel_ratio = Some(ratio);
-    true
-}
-
-fn clamp_home_album_page_start(page_start: usize, page_size: usize, album_count: usize) -> usize {
-    if album_count == 0 {
-        return 0;
-    }
-    let page_size = page_size.max(1);
-    let last_page_start = ((album_count - 1) / page_size) * page_size;
-    page_start.min(last_page_start)
-}
-
-fn home_album_content_width(shell: &Shell) -> i32 {
-    home_album_content_width_for(
-        shell.route_host.width(),
-        shell.content_split.width(),
-        shell.content_split.position(),
-        shell.state.right_panel_visible.get(),
-    )
-}
-
-fn home_album_content_width_for(
-    route_width: i32,
-    split_width: i32,
-    split_position: i32,
-    right_panel_visible: bool,
-) -> i32 {
-    let mut route_width = if !right_panel_visible && split_width > 1 {
-        split_width
-    } else {
-        route_width
-    };
-    if right_panel_visible && split_position > 1 {
-        route_width = if route_width > 1 {
-            route_width.min(split_position)
-        } else {
-            split_position
-        };
-    }
-    if route_width <= 1 && split_width > 1 {
-        route_width = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
-    }
-    (route_width - HOME_ALBUM_HORIZONTAL_MARGINS).max(HOME_ALBUM_MIN_SIZE)
-}
-
-fn home_album_card_size(width: i32, page_size: usize) -> i32 {
-    home_album_raw_card_size(width, page_size).clamp(1, HOME_ALBUM_MAX_SIZE)
-}
-
-fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
-    let page_size = page_size.max(1) as i32;
-    let gaps = HOME_ALBUM_GAP * (page_size - 1);
-    ((width - gaps).max(page_size)) / page_size
-}
-
-fn restored_window_size(width: Option<i32>, height: Option<i32>) -> Option<(i32, i32)> {
-    let (width, height) = (width?, height?);
-    if width < MIN_RESTORED_WINDOW_WIDTH || height < MIN_RESTORED_WINDOW_HEIGHT {
-        return None;
-    }
-    Some((
-        width.clamp(MIN_RESTORED_WINDOW_WIDTH, MAX_RESTORED_WINDOW_WIDTH),
-        height.clamp(MIN_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_HEIGHT),
-    ))
-}
-
-fn card_label_width_chars(size: i32) -> i32 {
-    (size / 8).clamp(8, 28)
-}
-
-fn constrain_card_label(label: &gtk::Label, size: i32) {
-    label.set_width_request(size);
-    label.set_size_request(size, -1);
-    label.set_width_chars(1);
-    label.set_max_width_chars(card_label_width_chars(size));
-    label.set_halign(gtk::Align::Fill);
-    label.set_hexpand(false);
-}
-
-fn clipped_card_label(label: &gtk::Label, size: i32) -> gtk::Widget {
-    let clip = gtk::ScrolledWindow::new();
-    clip.add_css_class("card-label-clip");
-    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
-    clip.set_width_request(size);
-    clip.set_size_request(size, -1);
-    clip.set_min_content_width(size);
-    clip.set_max_content_width(size);
-    clip.set_propagate_natural_width(false);
-    clip.set_propagate_natural_height(true);
-    clip.set_hexpand(false);
-    clip.set_child(Some(label));
-    clip.upcast()
-}
-
-fn clipped_card_label_with_lines(label: &gtk::Label, size: i32, lines: i32) -> gtk::Widget {
-    let clip = gtk::ScrolledWindow::new();
-    clip.add_css_class("card-label-clip");
-    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
-    clip.set_width_request(size);
-    clip.set_size_request(size, card_label_height(lines));
-    clip.set_min_content_width(size);
-    clip.set_max_content_width(size);
-    clip.set_min_content_height(card_label_height(lines));
-    clip.set_max_content_height(card_label_height(lines));
-    clip.set_propagate_natural_width(false);
-    clip.set_propagate_natural_height(false);
-    clip.set_hexpand(false);
-    clip.set_child(Some(label));
-    clip.upcast()
-}
-
-fn card_label_height(lines: i32) -> i32 {
-    CARD_LABEL_LINE_HEIGHT * lines.max(1)
-}
-
-fn home_album_card_height(size: i32) -> i32 {
-    size + HOME_ALBUM_CARD_LABEL_GAP * 3
-        + card_label_height(HOME_ALBUM_TITLE_LINES)
-        + card_label_height(HOME_ALBUM_ARTIST_LINES)
-        + card_label_height(HOME_ALBUM_YEAR_LINES)
-}
-
-fn constrain_wrapped_card_label(label: &gtk::Label, size: i32, lines: i32) {
-    constrain_card_label(label, size);
-    label.set_lines(lines);
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-}
-
-fn constrain_single_line_card_label(label: &gtk::Label, size: i32) {
-    constrain_card_label(label, size);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-}
-
 fn album_card_widget_with_size(
     shell: &Rc<Shell>,
     album: &Album,
@@ -5442,128 +5048,8 @@ mod tests {
         clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_initial_position,
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
     };
-    use super::{
-        HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, card_label_height,
-        clamp_content_split_position, clamp_home_album_page_start, content_split_initial_position,
-        content_split_position_from_right_panel_ratio, content_split_target_position,
-        current_playback_track_id, default_content_split_position, home_album_card_height,
-        home_album_card_size, home_album_content_width_for, home_album_page_size,
-        restored_window_size, right_panel_position_ratio, seekbar_target_seconds,
-        update_right_panel_split_settings,
-    };
-    use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
-
-    #[test]
-    fn home_album_page_size_uses_stable_content_width() {
-        let three_cards_width = super::HOME_ALBUM_TARGET_SIZE * 3 + HOME_ALBUM_GAP * 2;
-        assert_eq!(home_album_page_size(three_cards_width, None), 3);
-        assert_eq!(home_album_page_size(three_cards_width + 1, None), 3);
-
-        let four_cards_width = super::HOME_ALBUM_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
-        assert_eq!(home_album_page_size(four_cards_width, None), 4);
-        assert_eq!(home_album_page_size(1, None), 2);
-        assert_eq!(home_album_page_size(10_000, None), HOME_ALBUM_MAX_COLUMNS);
-    }
-
-    #[test]
-    fn home_album_page_size_changes_without_bouncing_near_size_bounds() {
-        let three_cards_width = super::HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
-        assert_eq!(home_album_page_size(three_cards_width, Some(3)), 3);
-        assert_eq!(home_album_page_size(three_cards_width - 1, Some(3)), 3);
-        assert_eq!(
-            home_album_page_size(
-                (super::HOME_ALBUM_MIN_SIZE - 20) * 3 + HOME_ALBUM_GAP * 2,
-                Some(3)
-            ),
-            2
-        );
-
-        let three_cards_max_width = HOME_ALBUM_MAX_SIZE * 3 + HOME_ALBUM_GAP * 2;
-        assert_eq!(home_album_page_size(three_cards_max_width, Some(3)), 3);
-        assert_eq!(home_album_page_size(three_cards_max_width + 3, Some(3)), 4);
-    }
-
-    #[test]
-    fn home_album_page_size_adds_columns_on_wide_layouts() {
-        let ten_target_cards_width = super::HOME_ALBUM_TARGET_SIZE * 10 + HOME_ALBUM_GAP * 9;
-
-        assert_eq!(home_album_page_size(ten_target_cards_width, None), 10);
-        assert_eq!(home_album_page_size(ten_target_cards_width, Some(7)), 9);
-    }
-
-    #[test]
-    fn home_album_page_start_stays_on_full_pages() {
-        assert_eq!(clamp_home_album_page_start(0, 3, 0), 0);
-        assert_eq!(clamp_home_album_page_start(3, 3, 10), 3);
-        assert_eq!(clamp_home_album_page_start(9, 3, 10), 9);
-        assert_eq!(clamp_home_album_page_start(12, 3, 10), 9);
-    }
-
-    #[test]
-    fn home_album_card_size_remains_bounded() {
-        assert_eq!(home_album_card_size(10_000, 2), HOME_ALBUM_MAX_SIZE);
-        assert_eq!(home_album_card_size(1, 8), 1);
-    }
-
-    #[test]
-    fn home_album_width_uses_full_split_width_when_right_panel_is_hidden() {
-        let stale_route_width = 640;
-        let split_width = 1_000;
-        assert_eq!(
-            home_album_content_width_for(stale_route_width, split_width, 650, false),
-            split_width - super::HOME_ALBUM_HORIZONTAL_MARGINS
-        );
-        assert_eq!(
-            home_album_content_width_for(900, split_width, 650, true),
-            650 - super::HOME_ALBUM_HORIZONTAL_MARGINS
-        );
-    }
-
-    #[test]
-    fn home_album_card_height_reserves_five_text_rows() {
-        assert_eq!(
-            home_album_card_height(180),
-            180 + super::HOME_ALBUM_CARD_LABEL_GAP * 3 + card_label_height(5)
-        );
-    }
-
-    #[test]
-    fn content_split_position_limits_right_panel() {
-        assert_eq!(clamp_content_split_position(1_000, 100), 500);
-        assert_eq!(clamp_content_split_position(1_000, 950), 900);
-        assert_eq!(clamp_content_split_position(1_000, 625), 625);
-        assert_eq!(default_content_split_position(1_000), 700);
-        assert_eq!(content_split_initial_position(1_000, None), 700);
-        assert_eq!(content_split_initial_position(1_000, Some(0.25)), 750);
-        assert_eq!(
-            content_split_position_from_right_panel_ratio(1_000, 0.25),
-            750
-        );
-        assert_eq!(right_panel_position_ratio(1_000, 750), 0.25);
-        assert_eq!(content_split_target_position(1_000, 0, 0, 600, None), 700);
-        assert_eq!(
-            content_split_target_position(1_400, 1_000, 500, 700, None),
-            700
-        );
-        let mut settings = AppSettings::default();
-        assert!(update_right_panel_split_settings(&mut settings, 1_000, 650));
-        assert_eq!(settings.right_panel_position, Some(650));
-        assert_eq!(settings.right_panel_ratio, Some(0.35));
-    }
-
-    #[test]
-    fn restored_window_size_ignores_tiny_and_clamps_huge_geometry() {
-        assert_eq!(restored_window_size(None, Some(700)), None);
-        assert_eq!(restored_window_size(Some(400), Some(700)), None);
-        assert_eq!(
-            restored_window_size(Some(1061), Some(2251)),
-            Some((1061, 900))
-        );
-        assert_eq!(
-            restored_window_size(Some(1800), Some(1200)),
-            Some((1400, 900))
-        );
-    }
+    use super::{current_playback_track_id, seekbar_target_seconds};
+    use rufin_core::{QueueEntry, QueueEntryId, TrackId};
 
     #[test]
     fn queue_lyrics_position_clamps_to_available_height() {
