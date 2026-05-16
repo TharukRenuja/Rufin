@@ -5,10 +5,10 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use adw::prelude::*;
-use gdk_pixbuf::Pixbuf;
-use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
+use image::GenericImageView;
+use image::ImageReader;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
     HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueSnapshot,
@@ -70,7 +70,14 @@ struct CoverBinding {
 struct ArtworkTile {
     area: gtk::DrawingArea,
     seed: Rc<Cell<u32>>,
-    pixbuf: Rc<RefCell<Option<Pixbuf>>>,
+    image: Rc<RefCell<Option<ArtworkImage>>>,
+}
+
+#[derive(Clone)]
+struct ArtworkImage {
+    surface: gtk::cairo::ImageSurface,
+    width: i32,
+    height: i32,
 }
 
 struct HomeSectionState {
@@ -1549,17 +1556,9 @@ impl Shell {
         let title = gtk::Label::new(Some(&entry.title));
         title.set_xalign(0.0);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        let meta = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        meta.set_hexpand(true);
         let artist = queue_link_label(&entry.artist);
-        let separator = gtk::Label::new(Some("·"));
-        separator.add_css_class("muted");
-        let album = queue_link_label(&entry.album);
         labels.append(&title);
-        meta.append(&artist);
-        meta.append(&separator);
-        meta.append(&album);
-        labels.append(&meta);
+        labels.append(&artist);
         if let Some(artist_id) = entry.artist_id.clone() {
             let shell = Rc::clone(self);
             add_label_click(&artist, move || {
@@ -1572,21 +1571,6 @@ impl Shell {
                 shell.navigate(Route::Search {
                     query: artist_name.clone(),
                     kind: SearchKind::Artists,
-                });
-            });
-        }
-        if let Some(album_id) = entry.album_id.clone() {
-            let shell = Rc::clone(self);
-            add_label_click(&album, move || {
-                shell.navigate(Route::AlbumDetail(album_id.clone()))
-            });
-        } else if !entry.album.trim().is_empty() {
-            let shell = Rc::clone(self);
-            let album_name = entry.album.clone();
-            add_label_click(&album, move || {
-                shell.navigate(Route::Search {
-                    query: album_name.clone(),
-                    kind: SearchKind::Albums,
                 });
             });
         }
@@ -2245,12 +2229,12 @@ fn build_bottom_player() -> PlayerControls {
 
     let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
     stop_button.add_css_class("player-transport-button");
-    let previous_button = skip_button(false, "Previous");
+    let previous_button = icon_button("media-skip-backward-symbolic", "Previous");
     previous_button.add_css_class("player-transport-button");
     let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
     play_button.add_css_class("player-transport-button");
     play_button.add_css_class("player-play-button");
-    let next_button = skip_button(true, "Next");
+    let next_button = icon_button("media-skip-forward-symbolic", "Next");
     next_button.add_css_class("player-transport-button");
     let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
     let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
@@ -3427,19 +3411,19 @@ impl ArtworkTile {
         area.set_valign(gtk::Align::Start);
 
         let seed = Rc::new(Cell::new(seed));
-        let pixbuf = Rc::new(RefCell::new(None::<Pixbuf>));
+        let image = Rc::new(RefCell::new(None::<ArtworkImage>));
         let draw_seed = Rc::clone(&seed);
-        let draw_pixbuf = Rc::clone(&pixbuf);
+        let draw_image = Rc::clone(&image);
         area.set_draw_func(move |_, context, width, height| {
             clip_rounded_rect(context, width, height, 12.0);
-            if let Some(pixbuf) = draw_pixbuf.borrow().as_ref() {
-                draw_pixbuf_cover(context, pixbuf, width, height);
+            if let Some(image) = draw_image.borrow().as_ref() {
+                draw_image_cover(context, image, width, height);
             } else {
                 draw_fallback_cover(context, draw_seed.get(), width, height);
             }
         });
 
-        Self { area, seed, pixbuf }
+        Self { area, seed, image }
     }
 
     fn widget(&self) -> gtk::Widget {
@@ -3452,9 +3436,9 @@ impl ArtworkTile {
     }
 
     fn set_path(&self, path: &std::path::Path) {
-        match Pixbuf::from_file(path) {
-            Ok(pixbuf) => {
-                *self.pixbuf.borrow_mut() = Some(pixbuf);
+        match load_artwork_image(path) {
+            Ok(image) => {
+                *self.image.borrow_mut() = Some(image);
                 self.area.queue_draw();
             }
             Err(error) => {
@@ -3465,7 +3449,7 @@ impl ArtworkTile {
     }
 
     fn clear_image(&self) {
-        *self.pixbuf.borrow_mut() = None;
+        *self.image.borrow_mut() = None;
         self.area.queue_draw();
     }
 }
@@ -3487,14 +3471,75 @@ fn draw_fallback_cover(context: &gtk::cairo::Context, seed: u32, width: i32, hei
     let _fill = context.fill();
 }
 
-fn draw_pixbuf_cover(context: &gtk::cairo::Context, pixbuf: &Pixbuf, width: i32, height: i32) {
-    let rect = cover_draw_rect(pixbuf.width(), pixbuf.height(), width, height);
+fn draw_image_cover(context: &gtk::cairo::Context, image: &ArtworkImage, width: i32, height: i32) {
+    let rect = cover_draw_rect(image.width, image.height, width, height);
     let _save = context.save();
     context.translate(rect.x, rect.y);
     context.scale(rect.scale, rect.scale);
-    context.set_source_pixbuf(pixbuf, 0.0, 0.0);
+    let _source = context.set_source_surface(&image.surface, 0.0, 0.0);
     let _paint = context.paint();
     let _restore = context.restore();
+}
+
+fn load_artwork_image(path: &std::path::Path) -> Result<ArtworkImage, String> {
+    let image = ImageReader::open(path)
+        .map_err(|error| error.to_string())?
+        .with_guessed_format()
+        .map_err(|error| error.to_string())?
+        .decode()
+        .map_err(|error| error.to_string())?;
+    let (width, height) = image.dimensions();
+    let width_i32 = i32::try_from(width).map_err(|error| error.to_string())?;
+    let height_i32 = i32::try_from(height).map_err(|error| error.to_string())?;
+    let stride = gtk::cairo::Format::ARgb32
+        .stride_for_width(width)
+        .map_err(|error| error.to_string())?;
+    let rgba = image.to_rgba8();
+    let mut data = vec![0_u8; stride as usize * height as usize];
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let pixel = rgba.get_pixel(x as u32, y as u32).0;
+            let [red, green, blue, alpha] = premultiply_rgba(pixel);
+            let offset = y * stride as usize + x * 4;
+            #[cfg(target_endian = "little")]
+            {
+                data[offset] = blue;
+                data[offset + 1] = green;
+                data[offset + 2] = red;
+                data[offset + 3] = alpha;
+            }
+            #[cfg(target_endian = "big")]
+            {
+                data[offset] = alpha;
+                data[offset + 1] = red;
+                data[offset + 2] = green;
+                data[offset + 3] = blue;
+            }
+        }
+    }
+    let surface = gtk::cairo::ImageSurface::create_for_data(
+        data,
+        gtk::cairo::Format::ARgb32,
+        width_i32,
+        height_i32,
+        stride,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(ArtworkImage {
+        surface,
+        width: width_i32,
+        height: height_i32,
+    })
+}
+
+fn premultiply_rgba([red, green, blue, alpha]: [u8; 4]) -> [u8; 4] {
+    let alpha_u32 = u32::from(alpha);
+    [
+        ((u32::from(red) * alpha_u32 + 127) / 255) as u8,
+        ((u32::from(green) * alpha_u32 + 127) / 255) as u8,
+        ((u32::from(blue) * alpha_u32 + 127) / 255) as u8,
+        alpha,
+    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3589,33 +3634,6 @@ fn add_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
     let click = gtk::GestureClick::new();
     click.connect_released(move |_, _, _, _| callback());
     label.add_controller(click);
-}
-
-fn skip_button(next: bool, label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.set_tooltip_text(Some(&tr(label)));
-
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    content.add_css_class("skip-button-content");
-    let bar = gtk::Label::new(Some("|"));
-    bar.add_css_class("skip-button-bar");
-    let icon = gtk::Image::from_icon_name(if next {
-        "go-next-symbolic"
-    } else {
-        "go-previous-symbolic"
-    });
-    if next {
-        content.append(&icon);
-        content.append(&bar);
-    } else {
-        content.append(&bar);
-        content.append(&icon);
-    }
-    button.set_child(Some(&content));
-    button
 }
 
 fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
@@ -3736,5 +3754,17 @@ mod tests {
         assert!((rect.scale - 0.44).abs() < f64::EPSILON);
         assert!((rect.x + 22.0).abs() < f64::EPSILON);
         assert!((rect.y - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn premultiply_rgba_keeps_opaque_pixels_and_scales_alpha() {
+        assert_eq!(
+            super::premultiply_rgba([10, 20, 30, 255]),
+            [10, 20, 30, 255]
+        );
+        assert_eq!(
+            super::premultiply_rgba([100, 50, 25, 128]),
+            [50, 25, 13, 128]
+        );
     }
 }
