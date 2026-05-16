@@ -5,6 +5,8 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use adw::prelude::*;
+use gdk_pixbuf::Pixbuf;
+use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
 use rufin_core::{
@@ -61,8 +63,14 @@ struct AppState {
 
 #[derive(Clone)]
 struct CoverBinding {
-    stack: gtk::Stack,
-    picture: gtk::Picture,
+    tile: ArtworkTile,
+}
+
+#[derive(Clone)]
+struct ArtworkTile {
+    area: gtk::DrawingArea,
+    seed: Rc<Cell<u32>>,
+    pixbuf: Rc<RefCell<Option<Pixbuf>>>,
 }
 
 struct HomeSectionState {
@@ -97,10 +105,7 @@ struct Shell {
 
 struct PlayerControls {
     root: gtk::Box,
-    cover_stack: gtk::Stack,
-    cover: gtk::DrawingArea,
-    cover_picture: gtk::Picture,
-    cover_seed: Rc<Cell<u32>>,
+    cover: ArtworkTile,
     cover_key: RefCell<Option<String>>,
     title: gtk::Label,
     artist: gtk::Label,
@@ -1614,39 +1619,52 @@ impl Shell {
             .as_ref()
             .map(|entry| entry.duration_seconds)
             .unwrap_or(42);
-        controls.cover_seed.set(cover_seed);
-        controls.cover.queue_draw();
+        controls.cover.set_seed(cover_seed);
         if let Some(image_ref) = player
             .current
             .as_ref()
             .and_then(|entry| entry.image_ref.as_ref())
         {
-            if let Some(path) = self
+            if let Some(key) = self.controller.cover_key(image_ref, THUMB_COVER_SIZE) {
+                if controls.cover_key.borrow().as_deref() != Some(key.as_str()) {
+                    if let Some(path) = self
+                        .controller
+                        .cached_cover_path(image_ref, THUMB_COVER_SIZE)
+                    {
+                        controls.cover.set_path(&path);
+                    } else {
+                        controls.cover.clear_image();
+                        self.state
+                            .cover_bindings
+                            .borrow_mut()
+                            .entry(key.clone())
+                            .or_default()
+                            .push(CoverBinding {
+                                tile: controls.cover.clone(),
+                            });
+                        self.controller
+                            .request_cover(image_ref.clone(), THUMB_COVER_SIZE);
+                    }
+                    *controls.cover_key.borrow_mut() = Some(key);
+                }
+            } else if let Some(path) = self
                 .controller
                 .cached_cover_path(image_ref, THUMB_COVER_SIZE)
             {
-                set_picture_path(&controls.cover_picture, &controls.cover_stack, &path);
-                *controls.cover_key.borrow_mut() = None;
-            } else if let Some(key) = self.controller.cover_key(image_ref, THUMB_COVER_SIZE) {
-                let mut current_key = controls.cover_key.borrow_mut();
-                if current_key.as_deref() != Some(key.as_str()) {
-                    self.state
-                        .cover_bindings
-                        .borrow_mut()
-                        .entry(key.clone())
-                        .or_default()
-                        .push(CoverBinding {
-                            stack: controls.cover_stack.clone(),
-                            picture: controls.cover_picture.clone(),
-                        });
-                    self.controller
-                        .request_cover(image_ref.clone(), THUMB_COVER_SIZE);
-                    *current_key = Some(key);
+                let path_key = path.display().to_string();
+                if controls.cover_key.borrow().as_deref() != Some(path_key.as_str()) {
+                    controls.cover.set_path(&path);
+                    *controls.cover_key.borrow_mut() = Some(path_key);
                 }
-                controls.cover_stack.set_visible_child_name("fallback");
+            } else {
+                let mut current_key = controls.cover_key.borrow_mut();
+                if current_key.is_some() {
+                    controls.cover.clear_image();
+                    *current_key = None;
+                }
             }
         } else {
-            controls.cover_stack.set_visible_child_name("fallback");
+            controls.cover.clear_image();
             *controls.cover_key.borrow_mut() = None;
         }
 
@@ -1751,53 +1769,23 @@ impl Shell {
         size: i32,
         fetch_size: u32,
     ) -> gtk::Widget {
-        let stack = gtk::Stack::new();
-        stack.set_width_request(size);
-        stack.set_height_request(size);
-        stack.set_size_request(size, size);
-        stack.set_overflow(gtk::Overflow::Hidden);
-        stack.set_hexpand(false);
-        stack.set_vexpand(false);
-        stack.set_halign(gtk::Align::Start);
-        stack.set_valign(gtk::Align::Start);
-
-        let fallback = cover_tile(seed, size);
-        stack.add_named(&fallback, Some("fallback"));
-
-        let picture = gtk::Picture::new();
-        picture.add_css_class("cover-tile");
-        picture.add_css_class("card");
-        picture.set_content_fit(gtk::ContentFit::Cover);
-        picture.set_can_shrink(true);
-        picture.set_isolate_contents(true);
-        picture.set_width_request(size);
-        picture.set_height_request(size);
-        picture.set_size_request(size, size);
-        picture.set_hexpand(false);
-        picture.set_vexpand(false);
-        picture.set_halign(gtk::Align::Start);
-        picture.set_valign(gtk::Align::Start);
-        stack.add_named(&picture, Some("image"));
-        stack.set_visible_child_name("fallback");
+        let tile = ArtworkTile::new(size, seed);
 
         if let Some(image_ref) = image_ref {
             if let Some(path) = self.controller.cached_cover_path(image_ref, fetch_size) {
-                set_picture_path(&picture, &stack, &path);
+                tile.set_path(&path);
             } else if let Some(key) = self.controller.cover_key(image_ref, fetch_size) {
                 self.state
                     .cover_bindings
                     .borrow_mut()
                     .entry(key)
                     .or_default()
-                    .push(CoverBinding {
-                        stack: stack.clone(),
-                        picture: picture.clone(),
-                    });
+                    .push(CoverBinding { tile: tile.clone() });
                 self.controller.request_cover(image_ref.clone(), fetch_size);
             }
         }
 
-        stack.upcast()
+        tile.widget()
     }
 
     fn apply_cover_ready(&self, key: &str, path: &std::path::Path) {
@@ -1805,7 +1793,7 @@ impl Shell {
             return;
         };
         for binding in bindings {
-            set_picture_path(&binding.picture, &binding.stack, path);
+            binding.tile.set_path(path);
         }
     }
 
@@ -2234,9 +2222,9 @@ fn build_bottom_player() -> PlayerControls {
     root.set_height_request(44);
     root.set_valign(gtk::Align::Center);
 
-    let (cover_stack, cover, cover_picture, cover_seed) = player_cover_tile(34);
-    cover_stack.set_valign(gtk::Align::Center);
-    root.append(&cover_stack);
+    let cover = ArtworkTile::new(34, 42);
+    cover.area.set_valign(gtk::Align::Center);
+    root.append(&cover.area);
 
     let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
     identity.set_width_request(160);
@@ -2309,10 +2297,7 @@ fn build_bottom_player() -> PlayerControls {
 
     PlayerControls {
         root,
-        cover_stack,
         cover,
-        cover_picture,
-        cover_seed,
         cover_key: RefCell::new(None),
         title,
         artist,
@@ -3426,103 +3411,155 @@ fn playlist_card_widget_with_size(
     card.upcast()
 }
 
-fn cover_tile(seed: u32, size: i32) -> gtk::Widget {
-    let area = gtk::DrawingArea::new();
-    area.add_css_class("cover-tile");
-    area.add_css_class("card");
-    area.set_content_width(size);
-    area.set_content_height(size);
-    area.set_width_request(size);
-    area.set_height_request(size);
-    area.set_size_request(size, size);
-    area.set_hexpand(false);
-    area.set_vexpand(false);
-    area.set_halign(gtk::Align::Start);
-    area.set_valign(gtk::Align::Start);
-    area.set_draw_func(move |_, context, width, height| {
-        let red = f64::from((seed & 0xff) as u8) / 255.0;
-        let green = f64::from(((seed >> 8) & 0xff) as u8) / 255.0;
-        let blue = f64::from(((seed >> 16) & 0xff) as u8) / 255.0;
-        context.set_source_rgb(red * 0.7 + 0.18, green * 0.7 + 0.18, blue * 0.7 + 0.18);
-        context.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
-        let _paint = context.fill();
+impl ArtworkTile {
+    fn new(size: i32, seed: u32) -> Self {
+        let area = gtk::DrawingArea::new();
+        area.add_css_class("cover-tile");
+        area.add_css_class("card");
+        area.set_content_width(size);
+        area.set_content_height(size);
+        area.set_width_request(size);
+        area.set_height_request(size);
+        area.set_size_request(size, size);
+        area.set_hexpand(false);
+        area.set_vexpand(false);
+        area.set_halign(gtk::Align::Start);
+        area.set_valign(gtk::Align::Start);
 
-        context.set_source_rgba(1.0, 1.0, 1.0, 0.18);
-        context.move_to(0.0, f64::from(height) * 0.2);
-        context.line_to(f64::from(width) * 0.8, 0.0);
-        context.line_to(f64::from(width), f64::from(height) * 0.8);
-        context.line_to(f64::from(width) * 0.2, f64::from(height));
-        context.close_path();
-        let _fill = context.fill();
-    });
-    area.upcast()
-}
+        let seed = Rc::new(Cell::new(seed));
+        let pixbuf = Rc::new(RefCell::new(None::<Pixbuf>));
+        let draw_seed = Rc::clone(&seed);
+        let draw_pixbuf = Rc::clone(&pixbuf);
+        area.set_draw_func(move |_, context, width, height| {
+            clip_rounded_rect(context, width, height, 12.0);
+            if let Some(pixbuf) = draw_pixbuf.borrow().as_ref() {
+                draw_pixbuf_cover(context, pixbuf, width, height);
+            } else {
+                draw_fallback_cover(context, draw_seed.get(), width, height);
+            }
+        });
 
-fn set_picture_path(picture: &gtk::Picture, stack: &gtk::Stack, path: &std::path::Path) {
-    let file = gio::File::for_path(path);
-    match gtk::gdk::Texture::from_file(&file) {
-        Ok(texture) => {
-            picture.set_paintable(Some(&texture));
-            stack.set_visible_child_name("image");
+        Self { area, seed, pixbuf }
+    }
+
+    fn widget(&self) -> gtk::Widget {
+        self.area.clone().upcast()
+    }
+
+    fn set_seed(&self, seed: u32) {
+        self.seed.set(seed);
+        self.area.queue_draw();
+    }
+
+    fn set_path(&self, path: &std::path::Path) {
+        match Pixbuf::from_file(path) {
+            Ok(pixbuf) => {
+                *self.pixbuf.borrow_mut() = Some(pixbuf);
+                self.area.queue_draw();
+            }
+            Err(error) => {
+                warn!(%error, path = %path.display(), "failed to load cached cover");
+                self.clear_image();
+            }
         }
-        Err(error) => {
-            warn!(%error, path = %path.display(), "failed to load cached cover");
-            stack.set_visible_child_name("fallback");
-        }
+    }
+
+    fn clear_image(&self) {
+        *self.pixbuf.borrow_mut() = None;
+        self.area.queue_draw();
     }
 }
 
-fn player_cover_tile(size: i32) -> (gtk::Stack, gtk::DrawingArea, gtk::Picture, Rc<Cell<u32>>) {
-    let seed = Rc::new(Cell::new(42));
-    let stack = gtk::Stack::new();
-    stack.set_width_request(size);
-    stack.set_height_request(size);
-    stack.set_size_request(size, size);
-    stack.set_overflow(gtk::Overflow::Hidden);
-    stack.set_hexpand(false);
-    stack.set_vexpand(false);
-    let area = gtk::DrawingArea::new();
-    area.add_css_class("cover-tile");
-    area.add_css_class("card");
-    area.set_content_width(size);
-    area.set_content_height(size);
-    area.set_width_request(size);
-    area.set_height_request(size);
-    area.set_vexpand(false);
-    let draw_seed = Rc::clone(&seed);
-    area.set_draw_func(move |_, context, width, height| {
-        let seed = draw_seed.get();
-        let red = f64::from((seed & 0xff) as u8) / 255.0;
-        let green = f64::from(((seed >> 8) & 0xff) as u8) / 255.0;
-        let blue = f64::from(((seed >> 16) & 0xff) as u8) / 255.0;
-        context.set_source_rgb(red * 0.7 + 0.18, green * 0.7 + 0.18, blue * 0.7 + 0.18);
-        context.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
-        let _paint = context.fill();
+fn draw_fallback_cover(context: &gtk::cairo::Context, seed: u32, width: i32, height: i32) {
+    let red = f64::from((seed & 0xff) as u8) / 255.0;
+    let green = f64::from(((seed >> 8) & 0xff) as u8) / 255.0;
+    let blue = f64::from(((seed >> 16) & 0xff) as u8) / 255.0;
+    context.set_source_rgb(red * 0.7 + 0.18, green * 0.7 + 0.18, blue * 0.7 + 0.18);
+    context.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
+    let _paint = context.fill();
 
-        context.set_source_rgba(1.0, 1.0, 1.0, 0.18);
-        context.move_to(0.0, f64::from(height) * 0.2);
-        context.line_to(f64::from(width) * 0.8, 0.0);
-        context.line_to(f64::from(width), f64::from(height) * 0.8);
-        context.line_to(f64::from(width) * 0.2, f64::from(height));
-        context.close_path();
-        let _fill = context.fill();
-    });
-    stack.add_named(&area, Some("fallback"));
+    context.set_source_rgba(1.0, 1.0, 1.0, 0.18);
+    context.move_to(0.0, f64::from(height) * 0.2);
+    context.line_to(f64::from(width) * 0.8, 0.0);
+    context.line_to(f64::from(width), f64::from(height) * 0.8);
+    context.line_to(f64::from(width) * 0.2, f64::from(height));
+    context.close_path();
+    let _fill = context.fill();
+}
 
-    let picture = gtk::Picture::new();
-    picture.add_css_class("cover-tile");
-    picture.add_css_class("card");
-    picture.set_content_fit(gtk::ContentFit::Cover);
-    picture.set_can_shrink(true);
-    picture.set_isolate_contents(true);
-    picture.set_width_request(size);
-    picture.set_height_request(size);
-    picture.set_size_request(size, size);
-    picture.set_hexpand(false);
-    picture.set_vexpand(false);
-    stack.add_named(&picture, Some("image"));
-    stack.set_visible_child_name("fallback");
-    (stack, area, picture, seed)
+fn draw_pixbuf_cover(context: &gtk::cairo::Context, pixbuf: &Pixbuf, width: i32, height: i32) {
+    let rect = cover_draw_rect(pixbuf.width(), pixbuf.height(), width, height);
+    let _save = context.save();
+    context.translate(rect.x, rect.y);
+    context.scale(rect.scale, rect.scale);
+    context.set_source_pixbuf(pixbuf, 0.0, 0.0);
+    let _paint = context.paint();
+    let _restore = context.restore();
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CoverDrawRect {
+    x: f64,
+    y: f64,
+    scale: f64,
+}
+
+fn cover_draw_rect(
+    image_width: i32,
+    image_height: i32,
+    target_width: i32,
+    target_height: i32,
+) -> CoverDrawRect {
+    let image_width = image_width.max(1);
+    let image_height = image_height.max(1);
+    let target_width = target_width.max(1);
+    let target_height = target_height.max(1);
+    let scale = (f64::from(target_width) / f64::from(image_width))
+        .max(f64::from(target_height) / f64::from(image_height));
+    let drawn_width = f64::from(image_width) * scale;
+    let drawn_height = f64::from(image_height) * scale;
+    CoverDrawRect {
+        x: (f64::from(target_width) - drawn_width) / 2.0,
+        y: (f64::from(target_height) - drawn_height) / 2.0,
+        scale,
+    }
+}
+
+fn clip_rounded_rect(context: &gtk::cairo::Context, width: i32, height: i32, radius: f64) {
+    let width = f64::from(width);
+    let height = f64::from(height);
+    let radius = radius.min(width / 2.0).min(height / 2.0);
+    context.new_sub_path();
+    context.arc(
+        width - radius,
+        radius,
+        radius,
+        (-90.0_f64).to_radians(),
+        0.0,
+    );
+    context.arc(
+        width - radius,
+        height - radius,
+        radius,
+        0.0,
+        90.0_f64.to_radians(),
+    );
+    context.arc(
+        radius,
+        height - radius,
+        radius,
+        90.0_f64.to_radians(),
+        180.0_f64.to_radians(),
+    );
+    context.arc(
+        radius,
+        radius,
+        radius,
+        180.0_f64.to_radians(),
+        270.0_f64.to_radians(),
+    );
+    context.close_path();
+    context.clip();
 }
 
 fn player_link(css_class: &str) -> gtk::Label {
@@ -3683,5 +3720,21 @@ mod tests {
         assert_eq!(clamp_content_split_position(1_000, 100), 500);
         assert_eq!(clamp_content_split_position(1_000, 950), 900);
         assert_eq!(clamp_content_split_position(1_000, 625), 625);
+    }
+
+    #[test]
+    fn cover_draw_rect_crops_portrait_images_to_square_targets() {
+        let rect = super::cover_draw_rect(100, 200, 34, 34);
+        assert!((rect.scale - 0.34).abs() < f64::EPSILON);
+        assert!((rect.x - 0.0).abs() < f64::EPSILON);
+        assert!((rect.y + 17.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cover_draw_rect_crops_landscape_images_to_square_targets() {
+        let rect = super::cover_draw_rect(200, 100, 44, 44);
+        assert!((rect.scale - 0.44).abs() < f64::EPSILON);
+        assert!((rect.x + 22.0).abs() < f64::EPSILON);
+        assert!((rect.y - 0.0).abs() < f64::EPSILON);
     }
 }

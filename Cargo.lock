@@ -2268,6 +2268,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "directories",
+ "gdk-pixbuf",
  "gettext-rs",
  "gtk4",
  "libadwaita",
