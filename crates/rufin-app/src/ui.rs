@@ -514,6 +514,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
 
     shell.window.present();
+    let density_shell = Rc::clone(&shell);
+    glib::idle_add_local_once(move || {
+        if density_shell.state.density_mode.get() == DensityMode::Auto {
+            density_shell.update_density();
+        }
+    });
     shell.queue_responsive_route_render();
 
     if options.ui_perf_run {
@@ -1038,7 +1044,12 @@ impl Shell {
     }
 
     fn update_density(self: &Rc<Self>) {
-        let width = self.window.width().max(1);
+        let width = self.density_width().max(1);
+        self.update_density_for_width(width);
+    }
+
+    fn update_density_for_width(self: &Rc<Self>, width: i32) {
+        let width = width.max(1);
         let next = self.state.density_mode.get().resolve(width);
         let previous = self.state.effective_density.replace(next);
         self.normal_nav
@@ -1053,6 +1064,14 @@ impl Shell {
         } else if route_uses_responsive_cards(self.state.routes.borrow().current()) {
             self.queue_responsive_route_render();
         }
+    }
+
+    fn density_width(&self) -> i32 {
+        self.window
+            .surface()
+            .map(|surface| surface.width())
+            .filter(|width| *width > 1)
+            .unwrap_or_else(|| self.window.width())
     }
 
     fn update_server_selector(&self) {
@@ -3336,6 +3355,7 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
 
     install_window_actions(shell);
     install_main_menu_shortcut(shell, main_menu);
+    connect_auto_density_resize(shell);
 
     let close_shell = Rc::clone(shell);
     shell.window.connect_close_request(move |_| {
@@ -3359,12 +3379,8 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     shell
         .content_split
         .connect_notify_local(Some("width"), move |_, _| {
-            if split_shell.state.density_mode.get() == DensityMode::Auto {
-                split_shell.update_density();
-            } else {
-                split_shell.update_content_split();
-                split_shell.queue_responsive_route_render();
-            }
+            split_shell.update_content_split();
+            split_shell.queue_responsive_route_render();
         });
 
     let split_shell = Rc::clone(shell);
@@ -3381,6 +3397,25 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
             split_shell.queue_responsive_route_render();
         }
         glib::ControlFlow::Continue
+    });
+}
+
+fn connect_auto_density_resize(shell: &Rc<Shell>) {
+    let window = shell.window.clone();
+    let shell = Rc::clone(shell);
+    window.connect_realize(move |window| {
+        let Some(surface) = window.surface() else {
+            return;
+        };
+        let resize_shell = Rc::clone(&shell);
+        surface.connect_width_notify(move |surface| {
+            if resize_shell.state.density_mode.get() == DensityMode::Auto {
+                resize_shell.update_density_for_width(surface.width());
+            }
+        });
+        if shell.state.density_mode.get() == DensityMode::Auto {
+            shell.update_density_for_width(surface.width());
+        }
     });
 }
 
