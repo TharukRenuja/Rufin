@@ -36,7 +36,8 @@ pub(super) struct PlayerControls {
     pub(super) stop_button: gtk::Button,
     pub(super) previous_button: gtk::Button,
     pub(super) play_button: gtk::Button,
-    pub(super) play_icon: gtk::Image,
+    pub(super) play_icon: gtk::DrawingArea,
+    pub(super) play_icon_playing: Rc<Cell<bool>>,
     pub(super) next_button: gtk::Button,
     pub(super) shuffle_button: gtk::Button,
     pub(super) repeat_button: gtk::Button,
@@ -66,7 +67,8 @@ struct TransportControls {
     stop_button: gtk::Button,
     previous_button: gtk::Button,
     play_button: gtk::Button,
-    play_icon: gtk::Image,
+    play_icon: gtk::DrawingArea,
+    play_icon_playing: Rc<Cell<bool>>,
     next_button: gtk::Button,
     shuffle_button: gtk::Button,
     repeat_button: gtk::Button,
@@ -136,11 +138,11 @@ impl Shell {
             *controls.cover_key.borrow_mut() = None;
         }
 
-        let play_icon = match player.state {
-            PlaybackState::Playing | PlaybackState::Buffering => "media-playback-pause-symbolic",
-            PlaybackState::Paused | PlaybackState::Stopped => "media-playback-start-symbolic",
-        };
-        controls.play_icon.set_icon_name(Some(play_icon));
+        controls.play_icon_playing.set(matches!(
+            player.state,
+            PlaybackState::Playing | PlaybackState::Buffering
+        ));
+        controls.play_icon.queue_draw();
         controls
             .play_button
             .set_tooltip_text(Some(&crate::i18n::tr(playback_state_label(player.state))));
@@ -255,6 +257,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         previous_button,
         play_button,
         play_icon,
+        play_icon_playing,
         next_button,
         shuffle_button,
         repeat_button,
@@ -300,6 +303,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         previous_button,
         play_button,
         play_icon,
+        play_icon_playing,
         next_button,
         shuffle_button,
         repeat_button,
@@ -365,16 +369,19 @@ fn build_transport_controls() -> TransportControls {
 
     let stop_button = stop_icon_button("Stop");
     let previous_button = skip_icon_button(false, "Previous");
-    let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
+    let (play_button, play_icon, play_icon_playing) = play_icon_button("Play");
     let next_button = skip_icon_button(true, "Next");
-    let (shuffle_button, _) = transport_symbol_button("media-playlist-shuffle-symbolic", "Shuffle");
+    let shuffle_button = shuffle_icon_button("Shuffle");
     let repeat_button = repeat_icon_button("Repeat off");
-    let (dj_button, _) = transport_symbol_button("media-optical-cd-audio-symbolic", "Auto DJ");
+    let dj_button = auto_dj_icon_button("Auto DJ");
 
     configure_transport_side_button(&stop_button);
+    configure_transport_side_button(&shuffle_button);
     configure_transport_side_button(&previous_button);
-    configure_play_button(&play_button, &play_icon);
+    configure_play_button(&play_button);
     configure_transport_side_button(&next_button);
+    configure_transport_side_button(&repeat_button);
+    configure_transport_side_button(&dj_button);
 
     put_transport_button(&buttons, &stop_button, -3.0, BOTTOM_PLAYER_SIDE_BUTTON_SIZE);
     put_transport_button(
@@ -427,6 +434,7 @@ fn build_transport_controls() -> TransportControls {
         previous_button,
         play_button,
         play_icon,
+        play_icon_playing,
         next_button,
         shuffle_button,
         repeat_button,
@@ -474,23 +482,13 @@ fn configure_transport_side_button(button: &gtk::Button) {
     );
 }
 
-fn configure_play_button(button: &gtk::Button, icon: &gtk::Image) {
+fn configure_play_button(button: &gtk::Button) {
     button.add_css_class("player-transport-button");
     button.add_css_class("player-play-button");
     button.set_size_request(
         BOTTOM_PLAYER_PLAY_BUTTON_SIZE,
         BOTTOM_PLAYER_PLAY_BUTTON_SIZE,
     );
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-    icon.set_pixel_size(20);
-}
-
-fn transport_symbol_button(icon_name: &str, label: &str) -> (gtk::Button, gtk::Image) {
-    let (button, icon) = icon_button_with_image(icon_name, label);
-    configure_transport_side_button(&button);
-    icon.set_pixel_size(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
-    (button, icon)
 }
 
 fn put_transport_button(buttons: &gtk::Fixed, button: &gtk::Button, slot: f64, size: i32) {
@@ -537,26 +535,34 @@ fn set_repeat_button_icon(button: &gtk::Button, repeat_mode: RepeatMode) {
     button.set_child(Some(&repeat_icon_area(repeat_mode)));
 }
 
-fn stop_icon_button(label: &str) -> gtk::Button {
+fn set_icon_source(area: &gtk::DrawingArea, context: &gtk::cairo::Context) {
+    let color = area.color();
+    context.set_source_rgba(
+        f64::from(color.red()),
+        f64::from(color.green()),
+        f64::from(color.blue()),
+        f64::from(color.alpha()),
+    );
+}
+
+fn drawing_icon_button(label: &str, icon: gtk::DrawingArea) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("icon-button");
     button.add_css_class("flat");
     button.add_css_class("circular");
     button.set_tooltip_text(Some(&crate::i18n::tr(label)));
+    button.set_child(Some(&icon));
+    button
+}
 
+fn stop_icon_button(label: &str) -> gtk::Button {
     let icon = gtk::DrawingArea::new();
     icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
     icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        context.set_source_rgba(
-            f64::from(color.red()),
-            f64::from(color.green()),
-            f64::from(color.blue()),
-            f64::from(color.alpha()),
-        );
+        set_icon_source(area, context);
         let size = f64::from(width.min(height)) * 0.48;
         context.rectangle(
             (f64::from(width) - size) / 2.0,
@@ -566,30 +572,17 @@ fn stop_icon_button(label: &str) -> gtk::Button {
         );
         let _ = context.fill();
     });
-    button.set_child(Some(&icon));
-    button
+    drawing_icon_button(label, icon)
 }
 
 fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.set_tooltip_text(Some(&crate::i18n::tr(label)));
-
     let icon = gtk::DrawingArea::new();
     icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
     icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        context.set_source_rgba(
-            f64::from(color.red()),
-            f64::from(color.green()),
-            f64::from(color.blue()),
-            f64::from(color.alpha()),
-        );
+        set_icon_source(area, context);
         let width = f64::from(width);
         let height = f64::from(height);
         let center_y = height / 2.0;
@@ -614,18 +607,79 @@ fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
             let _ = context.fill();
         }
     });
-    button.set_child(Some(&icon));
-    button
+    drawing_icon_button(label, icon)
+}
+
+fn play_icon_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
+    let playing = Rc::new(Cell::new(false));
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    let icon_playing = Rc::clone(&playing);
+    icon.set_draw_func(move |area, context, width, height| {
+        set_icon_source(area, context);
+        let width = f64::from(width);
+        let height = f64::from(height);
+        if icon_playing.get() {
+            let bar_width = width * 0.15;
+            let bar_height = height * 0.48;
+            let y = (height - bar_height) / 2.0;
+            context.rectangle(width * 0.34, y, bar_width, bar_height);
+            context.rectangle(width * 0.56, y, bar_width, bar_height);
+            let _ = context.fill();
+        } else {
+            context.move_to(width * 0.38, height * 0.28);
+            context.line_to(width * 0.38, height * 0.72);
+            context.line_to(width * 0.72, height * 0.50);
+            context.close_path();
+            let _ = context.fill();
+        }
+    });
+    let button = drawing_icon_button(label, icon.clone());
+    (button, icon, playing)
+}
+
+fn shuffle_icon_button(label: &str) -> gtk::Button {
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(move |area, context, width, height| {
+        set_icon_source(area, context);
+        context.set_line_width(1.8);
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_line_join(gtk::cairo::LineJoin::Round);
+
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let left = width * 0.22;
+        let right = width * 0.72;
+        let arrow = width * 0.13;
+        let top_y = height * 0.34;
+        let bottom_y = height * 0.66;
+
+        context.move_to(left, top_y);
+        context.curve_to(width * 0.38, top_y, width * 0.43, bottom_y, right, bottom_y);
+        context.line_to(right - arrow, bottom_y - arrow * 0.75);
+        context.move_to(right, bottom_y);
+        context.line_to(right - arrow, bottom_y + arrow * 0.75);
+
+        context.move_to(left, bottom_y);
+        context.curve_to(width * 0.38, bottom_y, width * 0.43, top_y, right, top_y);
+        context.line_to(right - arrow, top_y - arrow * 0.75);
+        context.move_to(right, top_y);
+        context.line_to(right - arrow, top_y + arrow * 0.75);
+        let _ = context.stroke();
+    });
+    drawing_icon_button(label, icon)
 }
 
 fn repeat_icon_button(label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
+    let button = drawing_icon_button(label, repeat_icon_area(RepeatMode::Off));
     button.add_css_class("player-repeat-button");
-    button.set_tooltip_text(Some(&crate::i18n::tr(label)));
-    button.set_child(Some(&repeat_icon_area(RepeatMode::Off)));
     button
 }
 
@@ -636,38 +690,32 @@ fn repeat_icon_area(repeat_mode: RepeatMode) -> gtk::DrawingArea {
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        context.set_source_rgba(
-            f64::from(color.red()),
-            f64::from(color.green()),
-            f64::from(color.blue()),
-            f64::from(color.alpha()),
-        );
+        set_icon_source(area, context);
         context.set_line_width(1.9);
         context.set_line_cap(gtk::cairo::LineCap::Round);
         context.set_line_join(gtk::cairo::LineJoin::Round);
 
         let width = f64::from(width);
         let height = f64::from(height);
-        let left = width * 0.27;
-        let right = width * 0.73;
-        let top = height * 0.24;
-        let bottom = height * 0.76;
-        let arrow = height * 0.14;
+        let center_x = width / 2.0;
+        let center_y = height / 2.0;
+        let radius = width.min(height) * 0.29;
+        context.arc(
+            center_x,
+            center_y,
+            radius,
+            -0.15,
+            std::f64::consts::PI * 1.72,
+        );
+        let _ = context.stroke();
 
-        context.move_to(left, top + arrow);
-        context.line_to(left, top);
-        context.line_to(right - arrow * 0.9, top);
-        context.line_to(right - arrow * 1.75, top - arrow * 0.7);
-        context.move_to(right - arrow * 0.9, top);
-        context.line_to(right - arrow * 1.75, top + arrow * 0.7);
-
-        context.move_to(right, bottom - arrow);
-        context.line_to(right, bottom);
-        context.line_to(left + arrow * 0.9, bottom);
-        context.line_to(left + arrow * 1.75, bottom - arrow * 0.7);
-        context.move_to(left + arrow * 0.9, bottom);
-        context.line_to(left + arrow * 1.75, bottom + arrow * 0.7);
+        let arrow_x = center_x + radius * (-0.15_f64).cos();
+        let arrow_y = center_y + radius * (-0.15_f64).sin();
+        let arrow = width.min(height) * 0.13;
+        context.move_to(arrow_x, arrow_y);
+        context.line_to(arrow_x - arrow * 0.98, arrow_y - arrow * 0.35);
+        context.move_to(arrow_x, arrow_y);
+        context.line_to(arrow_x - arrow * 0.38, arrow_y + arrow);
         let _ = context.stroke();
 
         if repeat_mode == RepeatMode::One {
@@ -686,13 +734,7 @@ fn repeat_icon_area(repeat_mode: RepeatMode) -> gtk::DrawingArea {
 }
 
 fn lyrics_icon_button(label: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.set_tooltip_text(Some(&crate::i18n::tr(label)));
-    button.set_child(Some(&lyrics_icon_area()));
-    button
+    drawing_icon_button(label, lyrics_icon_area())
 }
 
 fn lyrics_icon_area() -> gtk::DrawingArea {
@@ -702,35 +744,81 @@ fn lyrics_icon_area() -> gtk::DrawingArea {
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     icon.set_draw_func(move |area, context, width, height| {
-        let color = area.color();
-        context.set_source_rgba(
-            f64::from(color.red()),
-            f64::from(color.green()),
-            f64::from(color.blue()),
-            f64::from(color.alpha()),
-        );
+        set_icon_source(area, context);
+        context.set_line_width(1.7);
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_line_join(gtk::cairo::LineJoin::Round);
+
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let left = width * 0.25;
+        let right = width * 0.75;
+        let top = height * 0.25;
+        let bottom = height * 0.66;
+        let radius = width * 0.09;
+
+        context.move_to(left + radius, top);
+        context.line_to(right - radius, top);
+        context.curve_to(right, top, right, top, right, top + radius);
+        context.line_to(right, bottom - radius);
+        context.curve_to(right, bottom, right, bottom, right - radius, bottom);
+        context.line_to(width * 0.45, bottom);
+        context.line_to(width * 0.32, height * 0.79);
+        context.line_to(width * 0.34, bottom);
+        context.line_to(left + radius, bottom);
+        context.curve_to(left, bottom, left, bottom, left, bottom - radius);
+        context.line_to(left, top + radius);
+        context.curve_to(left, top, left, top, left + radius, top);
+        let _ = context.stroke();
+
+        context.move_to(width * 0.36, height * 0.42);
+        context.line_to(width * 0.64, height * 0.42);
+        context.move_to(width * 0.36, height * 0.54);
+        context.line_to(width * 0.58, height * 0.54);
+        let _ = context.stroke();
+    });
+    icon
+}
+
+fn auto_dj_icon_button(label: &str) -> gtk::Button {
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(move |area, context, width, height| {
+        set_icon_source(area, context);
         context.set_line_width(1.8);
         context.set_line_cap(gtk::cairo::LineCap::Round);
         context.set_line_join(gtk::cairo::LineJoin::Round);
 
         let width = f64::from(width);
         let height = f64::from(height);
+        let center_x = width / 2.0;
+        let center_y = height * 0.53;
+        let radius = width.min(height) * 0.29;
 
-        let _ = context.save();
-        context.translate(width * 0.57, height * 0.31);
-        context.rotate(-0.55);
-        context.scale(0.8, 1.25);
-        context.arc(0.0, 0.0, width * 0.15, 0.0, std::f64::consts::TAU);
+        context.arc(
+            center_x,
+            center_y,
+            radius,
+            std::f64::consts::PI,
+            std::f64::consts::TAU,
+        );
         let _ = context.stroke();
-        let _ = context.restore();
 
-        context.move_to(width * 0.48, height * 0.43);
-        context.line_to(width * 0.28, height * 0.74);
-        context.move_to(width * 0.22, height * 0.80);
-        context.line_to(width * 0.36, height * 0.80);
+        context.rectangle(width * 0.22, height * 0.50, width * 0.13, height * 0.24);
+        context.rectangle(width * 0.65, height * 0.50, width * 0.13, height * 0.24);
+        let _ = context.stroke();
+
+        context.set_line_width(1.45);
+        context.move_to(width * 0.75, height * 0.21);
+        context.line_to(width * 0.75, height * 0.36);
+        context.move_to(width * 0.68, height * 0.285);
+        context.line_to(width * 0.82, height * 0.285);
         let _ = context.stroke();
     });
-    icon
+    drawing_icon_button(label, icon)
 }
 
 fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
