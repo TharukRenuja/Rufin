@@ -227,11 +227,15 @@ msgstr ""
 msgid "Title"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:72 crates/rufin-app/src/ui.rs:3723
+#: crates/rufin-app/src/i18n.rs:72
+msgid "Title (merged)"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:73 crates/rufin-app/src/ui.rs:3723
 msgid "Year"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:73
+#: crates/rufin-app/src/i18n.rs:74
 msgid "Duration"
 msgstr ""
 

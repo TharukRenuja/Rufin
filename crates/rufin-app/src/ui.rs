@@ -3663,12 +3663,20 @@ impl Shell {
             .track_table
             .visible_columns
             .clone();
+        let column_checks = Rc::new(RefCell::new(Vec::new()));
+        let syncing_column_checks = Rc::new(Cell::new(false));
         for column in TrackTableColumn::all() {
-            let check = gtk::CheckButton::with_label(&tr(column.title()));
+            let check = gtk::CheckButton::with_label(&tr(track_table_column_config_title(column)));
             check.set_active(visible.contains(&column));
+            column_checks.borrow_mut().push((column, check.clone()));
             let shell = Rc::clone(self);
             let table_for_column = table.clone();
+            let column_checks_for_column = Rc::clone(&column_checks);
+            let syncing_column_checks_for_column = Rc::clone(&syncing_column_checks);
             check.connect_toggled(move |check| {
+                if syncing_column_checks_for_column.get() {
+                    return;
+                }
                 shell.update_track_table_settings(|settings| {
                     if check.is_active() {
                         if !settings.visible_columns.contains(&column) {
@@ -3682,6 +3690,11 @@ impl Shell {
                     }
                 });
                 let settings = shell.state.settings.borrow().track_table.clone();
+                sync_track_column_checks(
+                    &column_checks_for_column,
+                    &settings,
+                    &syncing_column_checks_for_column,
+                );
                 set_track_table_columns(&shell, &table_for_column, &settings);
             });
             content.append(&check);
@@ -5241,6 +5254,25 @@ fn track_sort_from_index(index: u32) -> TrackSortKey {
         .get(index as usize)
         .copied()
         .unwrap_or(TrackSortKey::TrackNumber)
+}
+
+fn track_table_column_config_title(column: TrackTableColumn) -> &'static str {
+    match column {
+        TrackTableColumn::Title => "Title (merged)",
+        _ => column.title(),
+    }
+}
+
+fn sync_track_column_checks(
+    checks: &Rc<RefCell<Vec<(TrackTableColumn, gtk::CheckButton)>>>,
+    settings: &TrackTableSettings,
+    syncing: &Cell<bool>,
+) {
+    syncing.set(true);
+    for (column, check) in checks.borrow().iter() {
+        check.set_active(settings.visible_columns.contains(column));
+    }
+    syncing.set(false);
 }
 
 fn route_uses_responsive_cards(route: &Route) -> bool {

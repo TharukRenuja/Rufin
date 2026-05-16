@@ -3,7 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::domain::HomeSectionKind;
 use crate::route::DensityMode;
 
-pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 1;
+pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
+
+const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 4] = [
+    TrackTableColumn::TrackNumber,
+    TrackTableColumn::Title,
+    TrackTableColumn::Album,
+    TrackTableColumn::Year,
+];
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ThemePreference {
@@ -98,11 +105,7 @@ pub struct TrackTableSettings {
 impl Default for TrackTableSettings {
     fn default() -> Self {
         Self {
-            visible_columns: vec![
-                TrackTableColumn::Title,
-                TrackTableColumn::Album,
-                TrackTableColumn::Year,
-            ],
+            visible_columns: DEFAULT_TRACK_TABLE_COLUMNS.to_vec(),
             sort_key: TrackSortKey::TrackNumber,
             descending: false,
             layout_version: TRACK_TABLE_LAYOUT_VERSION,
@@ -121,10 +124,17 @@ impl TrackTableSettings {
             TrackTableColumn::Duration,
             TrackTableColumn::Favorite,
         ];
+        const COMPOSITE_TITLE_DEFAULT_COLUMNS: [TrackTableColumn; 3] = [
+            TrackTableColumn::Title,
+            TrackTableColumn::Album,
+            TrackTableColumn::Year,
+        ];
 
-        if self.layout_version == 0 {
-            if self.visible_columns.as_slice() == LEGACY_DEFAULT_COLUMNS {
-                self.visible_columns = Self::default().visible_columns;
+        if self.layout_version < TRACK_TABLE_LAYOUT_VERSION {
+            if self.visible_columns.as_slice() == LEGACY_DEFAULT_COLUMNS
+                || self.visible_columns.as_slice() == COMPOSITE_TITLE_DEFAULT_COLUMNS
+            {
+                self.visible_columns = DEFAULT_TRACK_TABLE_COLUMNS.to_vec();
             }
             self.layout_version = TRACK_TABLE_LAYOUT_VERSION;
         }
@@ -195,6 +205,7 @@ mod tests {
         assert_eq!(
             settings.track_table.visible_columns,
             vec![
+                TrackTableColumn::TrackNumber,
                 TrackTableColumn::Title,
                 TrackTableColumn::Album,
                 TrackTableColumn::Year,
@@ -253,6 +264,32 @@ mod tests {
         assert_eq!(
             settings.visible_columns,
             vec![
+                TrackTableColumn::TrackNumber,
+                TrackTableColumn::Title,
+                TrackTableColumn::Album,
+                TrackTableColumn::Year,
+            ]
+        );
+        assert_eq!(settings.layout_version, super::TRACK_TABLE_LAYOUT_VERSION);
+    }
+
+    #[test]
+    fn settings_migrate_previous_composite_title_default_columns() {
+        let json = r#"{
+            "visible_columns":["Title","Album","Year"],
+            "sort_key":"TrackNumber",
+            "descending":false,
+            "layout_version":1
+        }"#;
+
+        let mut settings =
+            serde_json::from_str::<super::TrackTableSettings>(json).expect("deserialize settings");
+        settings.migrate_defaults();
+
+        assert_eq!(
+            settings.visible_columns,
+            vec![
+                TrackTableColumn::TrackNumber,
                 TrackTableColumn::Title,
                 TrackTableColumn::Album,
                 TrackTableColumn::Year,

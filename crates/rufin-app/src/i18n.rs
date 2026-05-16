@@ -69,6 +69,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Play Next");
     let _ = tr("Add to queue");
     let _ = tr("Title");
+    let _ = tr("Title (merged)");
     let _ = tr("Year");
     let _ = tr("Duration");
     let _ = tr("Yes");
