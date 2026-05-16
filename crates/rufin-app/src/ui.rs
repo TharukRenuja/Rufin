@@ -6,6 +6,8 @@ use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+mod navigation;
+
 use adw::prelude::*;
 use gdk_pixbuf::Pixbuf;
 use gtk::gdk::prelude::GdkCairoContextExt;
@@ -17,17 +19,22 @@ use mpris_server::{
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
     HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueEntryId,
-    QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, ServerIdentity, Track, TrackSortKey,
+    QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, Track, TrackSortKey,
     TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
-use rufin_provider::{LyricLine, Lyrics};
+use rufin_provider::Lyrics;
 use rufin_store::{CachedArtistDetail, CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
 
 use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
 use crate::i18n::tr;
+use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
+use navigation::{
+    ServerSelector, build_compact_navigation, build_normal_navigation, build_server_selector,
+    sidebar_history_button,
+};
 
 const COMPACT_RAIL_WIDTH: i32 = 72;
 const MAIN_PANEL_UNITS: i32 = 7;
@@ -41,7 +48,9 @@ const HOME_ALBUM_TARGET_SIZE: i32 = 180;
 const HOME_ALBUM_MAX_SIZE: i32 = 210;
 const HOME_ALBUM_MIN_COLUMNS: usize = 2;
 const HOME_ALBUM_MAX_COLUMNS: usize = 12;
-const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = 56;
+const PRIMARY_ROUTE_MARGIN_START: i32 = 0;
+const PRIMARY_ROUTE_MARGIN_END: i32 = 28;
+const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
 const CARD_LABEL_LINE_HEIGHT: i32 = 18;
 const HOME_ALBUM_CARD_LABEL_GAP: i32 = 4;
 const HOME_ALBUM_TITLE_LINES: i32 = 2;
@@ -77,10 +86,6 @@ const INITIAL_COVER_PRIME_LIMIT: usize = 24;
 const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
-const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 300;
-const MIN_LYRICS_SCROLL_ANIMATION_MS: u64 = 80;
-const LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS: u64 = 200;
-const LYRICS_USER_SCROLL_PAUSE_MS: u64 = 3_000;
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 
 #[derive(Clone, Debug)]
@@ -105,13 +110,8 @@ struct AppState {
     player: RefCell<PlaybackSnapshot>,
     lyrics: RefCell<Option<Lyrics>>,
     lyrics_track_id: RefCell<Option<rufin_core::TrackId>>,
-    lyrics_rows: RefCell<Vec<LyricsRow>>,
-    lyrics_scroller: RefCell<Option<gtk::ScrolledWindow>>,
-    lyrics_active_index: Cell<Option<usize>>,
-    lyrics_scroll_generation: Cell<u64>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
-    lyrics_follow_pause_until: Cell<Option<Instant>>,
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
@@ -127,19 +127,6 @@ struct AppState {
     decoded_covers: RefCell<HashMap<String, Pixbuf>>,
     decoded_cover_order: RefCell<VecDeque<String>>,
     perf: Option<Rc<UiPerfMonitor>>,
-}
-
-#[derive(Clone)]
-struct LyricsRow {
-    row: gtk::Button,
-    label: gtk::Label,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LyricsFollowScrollPause {
-    Inactive,
-    Active,
-    Expired,
 }
 
 #[derive(Clone)]
@@ -308,22 +295,13 @@ struct Shell {
     compact_back_button: gtk::Button,
     compact_forward_button: gtk::Button,
     right_panel: gtk::Box,
+    queue_panel: gtk::Box,
+    queue_shuffle_button: gtk::Button,
+    queue_repeat_button: gtk::Button,
+    queue_clear_button: gtk::Button,
+    queue_lyrics_split: gtk::Paned,
+    lyrics_pane: LyricsPane,
     player_controls: PlayerControls,
-}
-
-struct ServerSelector {
-    normal_button: gtk::MenuButton,
-    normal_name: gtk::Label,
-    normal_subtitle: gtk::Label,
-    compact_button: gtk::MenuButton,
-    compact_label: gtk::Label,
-}
-
-struct ServerSelectorContent {
-    name: String,
-    subtitle: String,
-    detail: String,
-    has_server: bool,
 }
 
 struct PlayerControls {
@@ -378,13 +356,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         player: RefCell::new(player),
         lyrics: RefCell::new(None),
         lyrics_track_id: RefCell::new(None),
-        lyrics_rows: RefCell::new(Vec::new()),
-        lyrics_scroller: RefCell::new(None),
-        lyrics_active_index: Cell::new(None),
-        lyrics_scroll_generation: Cell::new(0),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
-        lyrics_follow_pause_until: Cell::new(None),
         mpris_player: RefCell::new(None),
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
@@ -473,6 +446,43 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     right_panel.add_css_class("right-panel");
     right_panel.set_vexpand(true);
 
+    let queue_header = adw::HeaderBar::new();
+    queue_header.add_css_class("sidebar-header");
+    queue_header.set_show_start_title_buttons(false);
+    queue_header.set_show_end_title_buttons(false);
+    let queue_title = gtk::Label::new(Some(&tr("Queue")));
+    queue_title.add_css_class("panel-title");
+    queue_header.set_title_widget(Some(&queue_title));
+
+    let queue_shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
+    let queue_repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
+    let queue_clear_button = icon_button("edit-clear-symbolic", "Clear queue");
+    queue_header.pack_start(&queue_shuffle_button);
+    queue_header.pack_start(&queue_repeat_button);
+    queue_header.pack_end(&queue_clear_button);
+    right_panel.append(&queue_header);
+
+    let queue_panel = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    queue_panel.add_css_class("queue-panel");
+    queue_panel.set_vexpand(true);
+    queue_panel.set_margin_top(10);
+    queue_panel.set_margin_start(10);
+    queue_panel.set_margin_end(10);
+    queue_panel.set_margin_bottom(12);
+
+    let lyrics_pane = LyricsPane::new(&tr("Lyrics"));
+    let queue_lyrics_split = gtk::Paned::new(gtk::Orientation::Vertical);
+    queue_lyrics_split.add_css_class("queue-lyrics-split");
+    queue_lyrics_split.set_vexpand(true);
+    queue_lyrics_split.set_wide_handle(true);
+    queue_lyrics_split.set_resize_start_child(true);
+    queue_lyrics_split.set_resize_end_child(true);
+    queue_lyrics_split.set_shrink_start_child(true);
+    queue_lyrics_split.set_shrink_end_child(true);
+    queue_lyrics_split.set_start_child(Some(&queue_panel));
+    queue_lyrics_split.set_end_child(Some(lyrics_pane.widget()));
+    right_panel.append(&queue_lyrics_split);
+
     let content_split = gtk::Paned::new(gtk::Orientation::Horizontal);
     content_split.set_hexpand(true);
     content_split.set_vexpand(true);
@@ -509,6 +519,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         compact_back_button,
         compact_forward_button,
         right_panel,
+        queue_panel,
+        queue_shuffle_button,
+        queue_repeat_button,
+        queue_clear_button,
+        queue_lyrics_split,
+        lyrics_pane,
         player_controls,
     });
 
@@ -516,12 +532,15 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     build_compact_navigation(&shell);
     shell.update_server_selector();
     connect_shell_actions(&shell, main_menu);
+    connect_queue_panel_controls(&shell);
+    connect_queue_lyrics_split(&shell);
     connect_player_controls(&shell);
     install_mpris(&shell);
     shell.update_density();
     prime_first_cached_cover(&shell);
     shell.render_current_route();
     shell.render_queue_panel();
+    shell.render_lyrics_panel();
     shell.update_bottom_player();
     shell.update_right_panel_button();
     if !shell.state.right_panel_visible.get() {
@@ -1002,7 +1021,7 @@ impl Shell {
                 warn!(%error, "failed to save lyrics setting");
             }
         }
-        self.render_queue_panel();
+        self.render_lyrics_panel();
         if enabled && current_playback_track_id(&self.state.player.borrow()).is_some() {
             self.controller.request_lyrics_for_current();
         }
@@ -1119,38 +1138,8 @@ impl Shell {
     }
 
     fn update_server_selector(&self) {
-        let content = {
-            let library = self.state.library.borrow();
-            server_selector_content(&library)
-        };
-        let tooltip = format!("{}: {}", tr("Server"), content.name);
-
-        self.server_selector.normal_name.set_text(&content.name);
-        self.server_selector
-            .normal_subtitle
-            .set_text(&content.subtitle);
-        self.server_selector
-            .normal_button
-            .set_tooltip_text(Some(&tooltip));
-        self.server_selector
-            .normal_button
-            .update_property(&[gtk::accessible::Property::Label(&tooltip)]);
-        self.server_selector
-            .normal_button
-            .set_popover(Some(&server_selection_popover(&content)));
-
-        self.server_selector
-            .compact_label
-            .set_text(&compact_sidebar_label_text(&content.name));
-        self.server_selector
-            .compact_button
-            .set_tooltip_text(Some(&tooltip));
-        self.server_selector
-            .compact_button
-            .update_property(&[gtk::accessible::Property::Label(&tooltip)]);
-        self.server_selector
-            .compact_button
-            .set_popover(Some(&server_selection_popover(&content)));
+        let library = self.state.library.borrow();
+        navigation::update_server_selector(&self.server_selector, &library);
     }
 
     fn set_history_buttons_sensitive(&self, can_back: bool, can_forward: bool) {
@@ -1372,49 +1361,9 @@ impl Shell {
     }
 
     fn update_lyrics_highlight_at(self: &Rc<Self>, position_millis: u64) {
-        let lyrics = self.state.lyrics.borrow().clone();
-        let active_index = lyrics
-            .as_ref()
-            .and_then(|lyrics| active_lyrics_line_index(lyrics.lines.as_slice(), position_millis));
-        let previous_index = self.state.lyrics_active_index.replace(active_index);
-        let follow_pause = self.lyrics_follow_scroll_pause();
-        let scroll_target = {
-            let rows = self.state.lyrics_rows.borrow();
-            for (index, row) in rows.iter().enumerate() {
-                let active = Some(index) == active_index;
-                if active {
-                    row.row.add_css_class("lyrics-row-active");
-                    row.label.add_css_class("lyrics-line-active");
-                } else {
-                    row.row.remove_css_class("lyrics-row-active");
-                    row.label.remove_css_class("lyrics-line-active");
-                }
-            }
-
-            lyrics_follow_scroll_target(active_index, previous_index, follow_pause).and_then(
-                |index| {
-                    let scroller = self.state.lyrics_scroller.borrow().clone()?;
-                    let row = rows.get(index)?.row.clone().upcast::<gtk::Widget>();
-                    let duration = lyrics
-                        .as_ref()
-                        .map(|lyrics| {
-                            lyrics_scroll_animation_millis(
-                                lyrics.lines.as_slice(),
-                                index,
-                                position_millis,
-                            )
-                        })
-                        .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS);
-                    Some((scroller, row, duration))
-                },
-            )
-        };
-
-        if let Some((scroller, row, duration)) = scroll_target {
-            let generation = self.state.lyrics_scroll_generation.get().saturating_add(1);
-            self.state.lyrics_scroll_generation.set(generation);
-            scroll_lyrics_row_into_view(Rc::clone(self), scroller, row, duration, generation);
-        }
+        let lyrics = self.state.lyrics.borrow();
+        self.lyrics_pane
+            .update_highlight(lyrics.as_ref(), position_millis);
         self.schedule_next_lyrics_highlight(position_millis);
     }
 
@@ -1422,25 +1371,8 @@ impl Shell {
         self.state.player.borrow().position_millis
     }
 
-    fn lyrics_follow_scroll_pause(&self) -> LyricsFollowScrollPause {
-        let pause = lyrics_follow_scroll_pause_state(
-            self.state.lyrics_follow_pause_until.get(),
-            Instant::now(),
-        );
-        if pause == LyricsFollowScrollPause::Expired {
-            self.state.lyrics_follow_pause_until.set(None);
-        }
-        pause
-    }
-
-    fn pause_lyrics_follow_scroll(&self) {
-        self.state.lyrics_follow_pause_until.set(Some(
-            Instant::now() + Duration::from_millis(LYRICS_USER_SCROLL_PAUSE_MS),
-        ));
-    }
-
     fn seek_to_lyrics_position(self: &Rc<Self>, position_millis: u64) {
-        self.state.lyrics_follow_pause_until.set(None);
+        self.lyrics_pane.clear_follow_scroll_pause();
         self.controller.seek_millis(position_millis);
         self.update_lyrics_highlight_at(position_millis);
     }
@@ -1621,8 +1553,8 @@ impl Shell {
         content.add_css_class("route-content");
         content.set_margin_top(24);
         content.set_margin_bottom(36);
-        content.set_margin_start(28);
-        content.set_margin_end(28);
+        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
 
         for section in &self.state.library.borrow().home_sections {
             content.append(&self.home_album_section(section));
@@ -1894,8 +1826,8 @@ impl Shell {
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
         wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(28);
-        wrapper.set_margin_end(28);
+        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_vexpand(true);
 
         let heading = gtk::Label::new(Some(title));
@@ -2271,8 +2203,8 @@ impl Shell {
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
         wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(28);
-        wrapper.set_margin_end(28);
+        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_vexpand(true);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -2669,8 +2601,8 @@ impl Shell {
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
         wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(28);
-        wrapper.set_margin_end(28);
+        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_vexpand(true);
 
         let heading = gtk::Label::new(Some(title));
@@ -2699,8 +2631,8 @@ impl Shell {
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
         wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(28);
-        wrapper.set_margin_end(28);
+        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_vexpand(true);
 
         let heading = gtk::Label::new(Some(&format!("{}: {query}", tr("Search"))));
@@ -2959,66 +2891,33 @@ impl Shell {
     }
 
     fn render_queue_panel(self: &Rc<Self>) {
-        while let Some(child) = self.right_panel.first_child() {
-            self.right_panel.remove(&child);
-        }
-
         let queue_snapshot = self.state.queue.borrow().clone();
         let player = self.state.player.borrow().clone();
-        let sidebar_header = adw::HeaderBar::new();
-        sidebar_header.add_css_class("sidebar-header");
-        sidebar_header.set_show_start_title_buttons(false);
-        sidebar_header.set_show_end_title_buttons(false);
-        let queue_title = gtk::Label::new(Some(&tr("Queue")));
-        queue_title.add_css_class("panel-title");
-        sidebar_header.set_title_widget(Some(&queue_title));
 
-        let shuffle = icon_button(
-            "media-playlist-shuffle-symbolic",
-            if player.shuffle_enabled {
+        set_active_class(&self.queue_shuffle_button, player.shuffle_enabled);
+        self.queue_shuffle_button
+            .set_tooltip_text(Some(&tr(if player.shuffle_enabled {
                 "Shuffle on"
             } else {
                 "Shuffle"
-            },
+            })));
+        set_active_class(
+            &self.queue_repeat_button,
+            player.repeat_mode != RepeatMode::Off,
         );
-        if player.shuffle_enabled {
-            shuffle.add_css_class("active-toggle");
+        self.queue_repeat_button
+            .set_tooltip_text(Some(&tr(repeat_label(player.repeat_mode))));
+
+        while let Some(child) = self.queue_panel.first_child() {
+            self.queue_panel.remove(&child);
         }
-        let controller = self.controller.clone();
-        shuffle.connect_clicked(move |_| controller.toggle_shuffle());
-        sidebar_header.pack_start(&shuffle);
-
-        let repeat = icon_button(
-            "media-playlist-repeat-symbolic",
-            repeat_label(player.repeat_mode),
-        );
-        if player.repeat_mode != RepeatMode::Off {
-            repeat.add_css_class("active-toggle");
-        }
-        let controller = self.controller.clone();
-        repeat.connect_clicked(move |_| controller.cycle_repeat());
-        sidebar_header.pack_start(&repeat);
-
-        let clear_shell = Rc::clone(self);
-        let clear = icon_button("edit-clear-symbolic", "Clear queue");
-        clear.connect_clicked(move |_| clear_shell.confirm_clear_queue());
-        sidebar_header.pack_end(&clear);
-        self.right_panel.append(&sidebar_header);
-
-        let queue = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        queue.add_css_class("queue-panel");
-        queue.set_vexpand(true);
-        queue.set_margin_top(10);
-        queue.set_margin_start(10);
-        queue.set_margin_end(10);
-        queue.set_margin_bottom(12);
 
         let queue_list = gtk::ListBox::new();
         queue_list.add_css_class("queue-list");
         queue_list.set_selection_mode(gtk::SelectionMode::None);
         if let Some(snapshot) = &queue_snapshot {
             if !snapshot.entries.is_empty() {
-                queue.append(&queue_header_row());
+                self.queue_panel.append(&queue_header_row());
             }
             for (index, entry) in snapshot.entries.iter().enumerate() {
                 queue_list.append(&self.queue_row(index, entry, snapshot.current_index));
@@ -3031,141 +2930,19 @@ impl Shell {
             empty.set_margin_top(24);
             queue_list.append(&empty);
         }
-        queue.append(&queue_list);
+        self.queue_panel.append(&queue_list);
+    }
 
-        let lyrics = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        lyrics.add_css_class("lyrics-panel");
-        lyrics.set_vexpand(true);
-        lyrics.set_margin_top(12);
-        lyrics.set_margin_start(10);
-        lyrics.set_margin_end(10);
-        lyrics.set_margin_bottom(18);
-
-        let lyrics_title = gtk::Label::new(Some(&tr("Lyrics")));
-        lyrics_title.add_css_class("panel-title");
-        lyrics_title.set_xalign(0.0);
-        lyrics.append(&lyrics_title);
-
-        let lyrics_scroller = gtk::ScrolledWindow::new();
-        lyrics_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        lyrics_scroller.set_vexpand(true);
-        let lyrics_scroll_controller =
-            gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
-        lyrics_scroll_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let shell_for_lyrics_scroll = Rc::clone(self);
-        lyrics_scroll_controller.connect_scroll(move |_, _, _| {
-            shell_for_lyrics_scroll.pause_lyrics_follow_scroll();
-            glib::Propagation::Proceed
+    fn render_lyrics_panel(self: &Rc<Self>) {
+        let empty_status = self.lyrics_empty_status();
+        let seek_shell = Rc::clone(self);
+        let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
+            seek_shell.seek_to_lyrics_position(position_millis);
         });
-        lyrics_scroller.add_controller(lyrics_scroll_controller);
-        let lyrics_body = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        lyrics_body.set_vexpand(true);
-        lyrics_body.add_css_class("lyrics-lines");
-        self.state.lyrics_rows.borrow_mut().clear();
-        *self.state.lyrics_scroller.borrow_mut() = Some(lyrics_scroller.clone());
-        if let Some(current_lyrics) = self.state.lyrics.borrow().clone() {
-            for line in &current_lyrics.lines {
-                let label = gtk::Label::new(Some(&line.text));
-                label.set_wrap(true);
-                label.set_xalign(0.5);
-                label.set_justify(gtk::Justification::Center);
-                label.set_hexpand(true);
-                label.add_css_class("lyrics-line");
-                let row = gtk::Button::new();
-                row.add_css_class("lyrics-row");
-                row.add_css_class("flat");
-                row.set_hexpand(true);
-                row.set_child(Some(&label));
-                if let Some(start_millis) = line.start_millis {
-                    let shell = Rc::clone(self);
-                    row.connect_clicked(move |_| {
-                        shell.seek_to_lyrics_position(start_millis);
-                    });
-                } else {
-                    row.set_sensitive(false);
-                }
-                lyrics_body.append(&row);
-                self.state
-                    .lyrics_rows
-                    .borrow_mut()
-                    .push(LyricsRow { row, label });
-            }
-        } else {
-            let lyrics_status = gtk::Label::new(Some(&self.lyrics_empty_status()));
-            lyrics_status.add_css_class("muted");
-            lyrics_status.set_wrap(true);
-            lyrics_status.set_justify(gtk::Justification::Center);
-            lyrics_status.set_valign(gtk::Align::Center);
-            lyrics_status.set_vexpand(true);
-            lyrics_body.append(&lyrics_status);
-        }
-        lyrics_scroller.set_child(Some(&lyrics_body));
-        lyrics.append(&lyrics_scroller);
-
-        let queue_lyrics_split = gtk::Paned::new(gtk::Orientation::Vertical);
-        queue_lyrics_split.add_css_class("queue-lyrics-split");
-        queue_lyrics_split.set_vexpand(true);
-        queue_lyrics_split.set_wide_handle(true);
-        queue_lyrics_split.set_resize_start_child(true);
-        queue_lyrics_split.set_resize_end_child(true);
-        queue_lyrics_split.set_shrink_start_child(true);
-        queue_lyrics_split.set_shrink_end_child(true);
-        queue_lyrics_split.set_start_child(Some(&queue));
-        queue_lyrics_split.set_end_child(Some(&lyrics));
-        let saved_ratio = self.state.settings.borrow().queue_lyrics_ratio;
-        queue_lyrics_split.set_position(queue_lyrics_initial_position(
-            queue_lyrics_available_height(self),
-            saved_ratio,
-        ));
-
-        let suppress_split_position_save = Rc::new(Cell::new(0_u32));
-        let applied_split_height = Rc::new(Cell::new(0));
-        let position_shell = Rc::clone(self);
-        let suppress_for_tick = Rc::clone(&suppress_split_position_save);
-        let applied_height_for_tick = Rc::clone(&applied_split_height);
-        queue_lyrics_split.add_tick_callback(move |split, _| {
-            let available_height = split.height();
-            if available_height >= QUEUE_LYRICS_READY_MIN_HEIGHT
-                && applied_height_for_tick.replace(available_height) != available_height
-            {
-                let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
-                set_queue_lyrics_split_position_without_saving(
-                    split,
-                    &suppress_for_tick,
-                    saved_ratio,
-                );
-            }
-            glib::ControlFlow::Continue
-        });
-
-        let split_interaction = gtk::GestureClick::new();
-        split_interaction.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let split_for_release = queue_lyrics_split.clone();
-        let shell_for_release = Rc::clone(self);
-        let suppress_for_release = Rc::clone(&suppress_split_position_save);
-        split_interaction.connect_released(move |_, _, _, _| {
-            let split = split_for_release.clone();
-            let shell = Rc::clone(&shell_for_release);
-            let suppress = Rc::clone(&suppress_for_release);
-            glib::idle_add_local_once(move || {
-                if suppress.get() > 0 {
-                    return;
-                }
-                shell.save_queue_lyrics_split_position(split.height(), split.position());
-            });
-        });
-        queue_lyrics_split.add_controller(split_interaction);
-
-        let shell = Rc::clone(self);
-        let suppress_for_position = Rc::clone(&suppress_split_position_save);
-        queue_lyrics_split.connect_notify_local(Some("position"), move |split, _| {
-            if suppress_for_position.get() > 0 {
-                return;
-            }
-            shell.save_queue_lyrics_split_position(split.height(), split.position());
-        });
-
-        self.right_panel.append(&queue_lyrics_split);
+        let lyrics = self.state.lyrics.borrow();
+        self.lyrics_pane
+            .set_content(lyrics.as_ref(), empty_status, seek);
+        drop(lyrics);
         self.update_lyrics_highlight();
     }
 
@@ -4128,6 +3905,78 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     });
 }
 
+fn connect_queue_panel_controls(shell: &Rc<Shell>) {
+    let controller = shell.controller.clone();
+    shell
+        .queue_shuffle_button
+        .connect_clicked(move |_| controller.toggle_shuffle());
+
+    let controller = shell.controller.clone();
+    shell
+        .queue_repeat_button
+        .connect_clicked(move |_| controller.cycle_repeat());
+
+    let clear_shell = Rc::clone(shell);
+    shell
+        .queue_clear_button
+        .connect_clicked(move |_| clear_shell.confirm_clear_queue());
+}
+
+fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
+    let saved_ratio = shell.state.settings.borrow().queue_lyrics_ratio;
+    shell
+        .queue_lyrics_split
+        .set_position(queue_lyrics_initial_position(
+            queue_lyrics_available_height(shell),
+            saved_ratio,
+        ));
+
+    let suppress_split_position_save = Rc::new(Cell::new(0_u32));
+    let applied_split_height = Rc::new(Cell::new(0));
+    let position_shell = Rc::clone(shell);
+    let suppress_for_tick = Rc::clone(&suppress_split_position_save);
+    let applied_height_for_tick = Rc::clone(&applied_split_height);
+    shell.queue_lyrics_split.add_tick_callback(move |split, _| {
+        let available_height = split.height();
+        if available_height >= QUEUE_LYRICS_READY_MIN_HEIGHT
+            && applied_height_for_tick.replace(available_height) != available_height
+        {
+            let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
+            set_queue_lyrics_split_position_without_saving(split, &suppress_for_tick, saved_ratio);
+        }
+        glib::ControlFlow::Continue
+    });
+
+    let split_interaction = gtk::GestureClick::new();
+    split_interaction.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let split_for_release = shell.queue_lyrics_split.clone();
+    let shell_for_release = Rc::clone(shell);
+    let suppress_for_release = Rc::clone(&suppress_split_position_save);
+    split_interaction.connect_released(move |_, _, _, _| {
+        let split = split_for_release.clone();
+        let shell = Rc::clone(&shell_for_release);
+        let suppress = Rc::clone(&suppress_for_release);
+        glib::idle_add_local_once(move || {
+            if suppress.get() > 0 {
+                return;
+            }
+            shell.save_queue_lyrics_split_position(split.height(), split.position());
+        });
+    });
+    shell.queue_lyrics_split.add_controller(split_interaction);
+
+    let shell_for_position = Rc::clone(shell);
+    let suppress_for_position = Rc::clone(&suppress_split_position_save);
+    shell
+        .queue_lyrics_split
+        .connect_notify_local(Some("position"), move |split, _| {
+            if suppress_for_position.get() > 0 {
+                return;
+            }
+            shell_for_position.save_queue_lyrics_split_position(split.height(), split.position());
+        });
+}
+
 fn install_window_actions(shell: &Rc<Shell>) {
     let preferences = gio::SimpleAction::new("preferences", None);
     let preferences_shell = Rc::clone(shell);
@@ -4787,9 +4636,10 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     if previous_track != next_track {
                         *shell.state.lyrics.borrow_mut() = None;
                         *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
-                        shell.state.lyrics_follow_pause_until.set(None);
+                        shell.lyrics_pane.clear_follow_scroll_pause();
                         shell.cancel_scheduled_lyrics_highlight();
                         shell.render_queue_panel();
+                        shell.render_lyrics_panel();
                         if next_track.is_some() {
                             shell.controller.request_lyrics_for_current();
                         }
@@ -4803,7 +4653,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 }
                 ControllerEvent::Lyrics(lyrics) => {
                     *shell.state.lyrics.borrow_mut() = *lyrics;
-                    shell.render_queue_panel();
+                    shell.render_lyrics_panel();
                 }
                 ControllerEvent::CoverReady { key, path } => {
                     shell.apply_cover_ready(&key, &path);
@@ -5161,348 +5011,6 @@ fn collect_largest_scrolled_window(
         collect_largest_scrolled_window(&widget, best);
         child = widget.next_sibling();
     }
-}
-
-fn build_server_selector() -> ServerSelector {
-    let normal_button = gtk::MenuButton::new();
-    normal_button.add_css_class("server-selector");
-    normal_button.add_css_class("server-card");
-    normal_button.set_margin_start(12);
-    normal_button.set_margin_end(12);
-    normal_button.set_margin_bottom(12);
-
-    let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    normal_content.set_halign(gtk::Align::Fill);
-    normal_content.append(&gtk::Image::from_icon_name("network-server-symbolic"));
-
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    labels.set_hexpand(true);
-    let normal_name = gtk::Label::new(None);
-    normal_name.set_xalign(0.0);
-    normal_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let normal_subtitle = gtk::Label::new(None);
-    normal_subtitle.add_css_class("muted");
-    normal_subtitle.set_xalign(0.0);
-    normal_subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    labels.append(&normal_name);
-    labels.append(&normal_subtitle);
-    normal_content.append(&labels);
-    normal_content.append(&gtk::Image::from_icon_name("pan-down-symbolic"));
-    normal_button.set_child(Some(&normal_content));
-
-    let compact_button = gtk::MenuButton::new();
-    compact_button.add_css_class("nav-button");
-    compact_button.add_css_class("flat");
-    compact_button.add_css_class("rail-button");
-    compact_button.add_css_class("server-selector");
-    let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    compact_content.set_halign(gtk::Align::Center);
-    let icon = gtk::Image::from_icon_name("network-server-symbolic");
-    icon.set_pixel_size(24);
-    compact_content.append(&icon);
-    let compact_label = gtk::Label::new(None);
-    configure_rail_label(&compact_label);
-    compact_content.append(&compact_label);
-    compact_button.set_child(Some(&compact_content));
-
-    ServerSelector {
-        normal_button,
-        normal_name,
-        normal_subtitle,
-        compact_button,
-        compact_label,
-    }
-}
-
-fn server_selector_content(library: &LibrarySnapshot) -> ServerSelectorContent {
-    let Some(server) = library.server.as_ref() else {
-        return ServerSelectorContent {
-            name: tr("No server"),
-            subtitle: tr("No server"),
-            detail: tr("No server"),
-            has_server: false,
-        };
-    };
-
-    let name = server_display_name(server);
-    let subtitle = tr("Current server");
-    let detail = if server.base_url.trim().is_empty() {
-        provider_display_name(&server.provider)
-    } else {
-        server.base_url.clone()
-    };
-
-    ServerSelectorContent {
-        name,
-        subtitle,
-        detail,
-        has_server: true,
-    }
-}
-
-fn server_display_name(server: &ServerIdentity) -> String {
-    let name = server.name.trim();
-    if name.is_empty() {
-        provider_display_name(&server.provider)
-    } else {
-        name.to_string()
-    }
-}
-
-fn provider_display_name(provider: &str) -> String {
-    match provider {
-        "jellyfin" => "Jellyfin".to_string(),
-        "fake" => tr("Local"),
-        provider => provider.to_string(),
-    }
-}
-
-fn server_selection_popover(content: &ServerSelectorContent) -> gtk::Popover {
-    let popover = gtk::Popover::new();
-    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    wrapper.add_css_class("server-selector-popover");
-
-    let row = gtk::Button::new();
-    row.add_css_class("flat");
-    row.add_css_class("server-option");
-    row.set_sensitive(content.has_server);
-
-    let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row_content.set_halign(gtk::Align::Fill);
-    row_content.append(&gtk::Image::from_icon_name("object-select-symbolic"));
-
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    labels.set_hexpand(true);
-    let name = gtk::Label::new(Some(&content.name));
-    name.set_xalign(0.0);
-    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    let detail = gtk::Label::new(Some(&content.detail));
-    detail.add_css_class("muted");
-    detail.set_xalign(0.0);
-    detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    labels.append(&name);
-    labels.append(&detail);
-    row_content.append(&labels);
-    row.set_child(Some(&row_content));
-
-    let row_popover = popover.clone();
-    row.connect_clicked(move |_| row_popover.popdown());
-
-    wrapper.append(&row);
-    popover.set_child(Some(&wrapper));
-    popover
-}
-
-fn sidebar_history_button(icon_name: &str, label: &str) -> gtk::Button {
-    let button = icon_button(icon_name, label);
-    button.add_css_class("sidebar-history-button");
-    button
-}
-
-fn normal_history_controls(shell: &Rc<Shell>) -> gtk::Box {
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    controls.add_css_class("sidebar-history-controls");
-    controls.append(&shell.normal_back_button);
-    controls.append(&shell.normal_forward_button);
-    controls
-}
-
-fn compact_history_controls(shell: &Rc<Shell>) -> gtk::Box {
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-    controls.add_css_class("rail-history-controls");
-    controls.set_halign(gtk::Align::Center);
-    controls.append(&shell.compact_back_button);
-    controls.append(&shell.compact_forward_button);
-    controls
-}
-
-fn build_normal_navigation(shell: &Rc<Shell>) {
-    shell.normal_nav.append(&normal_history_controls(shell));
-
-    let search = gtk::SearchEntry::new();
-    search.set_placeholder_text(Some(&tr("Search")));
-    search.set_margin_top(8);
-    search.set_margin_start(16);
-    search.set_margin_end(16);
-    let search_shell = Rc::clone(shell);
-    search.connect_activate(move |entry| {
-        let query = entry.text().trim().to_string();
-        if query.is_empty() {
-            return;
-        }
-        search_shell.controller.search(query.clone());
-        search_shell.navigate(Route::Search {
-            query,
-            kind: SearchKind::All,
-        });
-    });
-    shell.normal_nav.append(&search);
-
-    let heading = gtk::Label::new(Some(&tr("My Library")));
-    heading.add_css_class("nav-heading");
-    heading.set_xalign(0.0);
-    heading.set_margin_start(18);
-    heading.set_margin_top(18);
-    shell.normal_nav.append(&heading);
-
-    for item in nav_items() {
-        shell.normal_nav.append(&nav_button(
-            shell,
-            item.icon_name,
-            item.label,
-            item.route.clone(),
-            false,
-        ));
-    }
-
-    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    spacer.set_vexpand(true);
-    shell.normal_nav.append(&spacer);
-
-    shell
-        .normal_nav
-        .append(&shell.server_selector.normal_button);
-}
-
-fn build_compact_navigation(shell: &Rc<Shell>) {
-    shell.compact_nav.append(&compact_history_controls(shell));
-
-    for item in nav_items() {
-        shell.compact_nav.append(&rail_button(
-            shell,
-            item.icon_name,
-            item.label,
-            item.route.clone(),
-        ));
-    }
-    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    spacer.set_vexpand(true);
-    shell.compact_nav.append(&spacer);
-    shell
-        .compact_nav
-        .append(&shell.server_selector.compact_button);
-}
-
-#[derive(Clone)]
-struct NavItem {
-    icon_name: &'static str,
-    label: &'static str,
-    route: Route,
-}
-
-fn nav_items() -> Vec<NavItem> {
-    vec![
-        NavItem {
-            icon_name: "go-home-symbolic",
-            label: "Home",
-            route: Route::Home,
-        },
-        NavItem {
-            icon_name: "starred-symbolic",
-            label: "Favorites",
-            route: Route::Favorites,
-        },
-        NavItem {
-            icon_name: "media-optical-symbolic",
-            label: "Albums",
-            route: Route::Albums,
-        },
-        NavItem {
-            icon_name: "audio-x-generic-symbolic",
-            label: "Tracks",
-            route: Route::Tracks,
-        },
-        NavItem {
-            icon_name: "avatar-default-symbolic",
-            label: "Album Artists",
-            route: Route::AlbumArtists,
-        },
-        NavItem {
-            icon_name: "system-users-symbolic",
-            label: "Artists",
-            route: Route::Artists,
-        },
-        NavItem {
-            icon_name: "flag-symbolic",
-            label: "Genres",
-            route: Route::Genres,
-        },
-        NavItem {
-            icon_name: "media-playlist-consecutive-symbolic",
-            label: "Playlists",
-            route: Route::Playlists,
-        },
-    ]
-}
-
-fn nav_button(
-    shell: &Rc<Shell>,
-    icon_name: &str,
-    label: &str,
-    route: Route,
-    compact: bool,
-) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("nav-button");
-    button.add_css_class("flat");
-    if compact {
-        button.add_css_class("rail-button");
-    }
-    button.set_tooltip_text(Some(&tr(label)));
-
-    let content = gtk::Box::new(
-        if compact {
-            gtk::Orientation::Vertical
-        } else {
-            gtk::Orientation::Horizontal
-        },
-        8,
-    );
-    content.set_halign(gtk::Align::Center);
-    let icon = gtk::Image::from_icon_name(icon_name);
-    content.append(&icon);
-    if compact {
-        icon.set_pixel_size(24);
-        let text = gtk::Label::new(Some(&compact_sidebar_label_text(label)));
-        configure_rail_label(&text);
-        content.append(&text);
-    } else {
-        let text = gtk::Label::new(Some(&tr(label)));
-        text.set_xalign(0.0);
-        content.append(&text);
-    }
-    button.set_child(Some(&content));
-
-    let shell = Rc::clone(shell);
-    button.connect_clicked(move |_| shell.navigate(route.clone()));
-    button
-}
-
-fn compact_sidebar_label_text(label: &str) -> String {
-    let translated = tr(label);
-    let compact = {
-        let words = translated.split_whitespace().collect::<Vec<_>>();
-        if words.len() == 2 {
-            Some(format!("{}\n{}", words[0], words[1]))
-        } else {
-            None
-        }
-    };
-    compact.unwrap_or(translated)
-}
-
-fn configure_rail_label(label: &gtk::Label) {
-    label.add_css_class("rail-label");
-    label.set_xalign(0.5);
-    label.set_justify(gtk::Justification::Center);
-    label.set_lines(2);
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-}
-
-fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) -> gtk::Button {
-    nav_button(shell, icon_name, label, route, true)
 }
 
 fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
@@ -6965,118 +6473,6 @@ fn current_playback_track_id(snapshot: &PlaybackSnapshot) -> Option<rufin_core::
         .map(|entry| entry.track_id.clone())
 }
 
-fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option<usize> {
-    let first_timed_index = lines.iter().position(|line| line.start_millis.is_some());
-    lines
-        .iter()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            let start = line.start_millis?;
-            (start <= position_millis).then_some((index, start))
-        })
-        .max_by_key(|(_, start)| *start)
-        .map(|(index, _)| index)
-        .or(first_timed_index)
-}
-
-fn next_lyrics_line_start_after(lines: &[LyricLine], position_millis: u64) -> Option<u64> {
-    lines
-        .iter()
-        .filter_map(|line| line.start_millis)
-        .filter(|start| *start > position_millis)
-        .min()
-}
-
-fn lyrics_follow_scroll_pause_state(
-    paused_until: Option<Instant>,
-    now: Instant,
-) -> LyricsFollowScrollPause {
-    match paused_until {
-        Some(paused_until) if now < paused_until => LyricsFollowScrollPause::Active,
-        Some(_) => LyricsFollowScrollPause::Expired,
-        None => LyricsFollowScrollPause::Inactive,
-    }
-}
-
-fn lyrics_follow_scroll_target(
-    active_index: Option<usize>,
-    previous_index: Option<usize>,
-    follow_pause: LyricsFollowScrollPause,
-) -> Option<usize> {
-    if follow_pause == LyricsFollowScrollPause::Active {
-        return None;
-    }
-    active_index.filter(|index| {
-        follow_pause == LyricsFollowScrollPause::Expired || Some(*index) != previous_index
-    })
-}
-
-fn lyrics_scroll_animation_millis(
-    lines: &[LyricLine],
-    active_index: usize,
-    position_millis: u64,
-) -> u64 {
-    let budget = lines
-        .iter()
-        .skip(active_index + 1)
-        .filter_map(|line| line.start_millis)
-        .find(|start| *start > position_millis)
-        .and_then(|next_start| {
-            next_start
-                .saturating_sub(position_millis)
-                .checked_sub(LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS)
-        });
-    budget
-        .map(|budget| {
-            budget.clamp(
-                MIN_LYRICS_SCROLL_ANIMATION_MS,
-                DEFAULT_LYRICS_SCROLL_ANIMATION_MS,
-            )
-        })
-        .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS)
-}
-
-fn scroll_lyrics_row_into_view(
-    shell: Rc<Shell>,
-    scroller: gtk::ScrolledWindow,
-    row: gtk::Widget,
-    duration_millis: u64,
-    generation: u64,
-) {
-    glib::idle_add_local_once(move || {
-        let Some(bounds) = row.compute_bounds(&scroller) else {
-            return;
-        };
-        let adjustment = scroller.vadjustment();
-        let viewport_height = f64::from(scroller.height().max(1));
-        let row_center = adjustment.value() + f64::from(bounds.y() + bounds.height() / 2.0);
-        let target = row_center - viewport_height / 2.0;
-        let upper = adjustment.upper() - adjustment.page_size();
-        let target = target.clamp(adjustment.lower(), upper.max(adjustment.lower()));
-        let start = adjustment.value();
-        let delta = target - start;
-        if duration_millis == 0 || delta.abs() < 1.0 {
-            adjustment.set_value(target);
-            return;
-        }
-        let started_at = Instant::now();
-        glib::timeout_add_local(Duration::from_millis(16), move || {
-            if shell.state.lyrics_scroll_generation.get() != generation {
-                return glib::ControlFlow::Break;
-            }
-            let elapsed = started_at.elapsed().as_millis() as f64;
-            let progress = (elapsed / duration_millis as f64).clamp(0.0, 1.0);
-            let eased = 1.0 - (1.0 - progress).powi(3);
-            adjustment.set_value(start + delta * eased);
-            if progress >= 1.0 {
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
-    });
-}
-
 fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
     if active {
         widget.add_css_class("active-toggle");
@@ -7330,21 +6726,16 @@ fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::{
-        HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, LyricsFollowScrollPause,
-        active_lyrics_line_index, card_label_height, clamp_content_split_position,
-        clamp_home_album_page_start, clamp_queue_lyrics_position, content_split_initial_position,
-        content_split_position_from_right_panel_ratio, content_split_target_position,
-        current_playback_track_id, default_content_split_position, home_album_card_height,
-        home_album_card_size, home_album_content_width_for, home_album_page_size,
-        lyrics_follow_scroll_pause_state, lyrics_follow_scroll_target,
-        lyrics_scroll_animation_millis, next_lyrics_line_start_after,
-        queue_lyrics_default_position, queue_lyrics_initial_position,
+        HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, card_label_height,
+        clamp_content_split_position, clamp_home_album_page_start, clamp_queue_lyrics_position,
+        content_split_initial_position, content_split_position_from_right_panel_ratio,
+        content_split_target_position, current_playback_track_id, default_content_split_position,
+        home_album_card_height, home_album_card_size, home_album_content_width_for,
+        home_album_page_size, queue_lyrics_default_position, queue_lyrics_initial_position,
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio, restored_window_size,
         right_panel_position_ratio, update_right_panel_split_settings,
     };
     use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
-    use rufin_provider::LyricLine;
-    use std::time::{Duration, Instant};
 
     #[test]
     fn home_album_page_size_uses_stable_content_width() {
@@ -7475,134 +6866,6 @@ mod tests {
         assert_eq!(
             queue_lyrics_initial_position(1400, Some(saved_default_ratio)),
             1000
-        );
-    }
-
-    #[test]
-    fn synced_lyrics_highlight_last_started_line_only() {
-        let lines = vec![
-            LyricLine {
-                text: "intro".to_string(),
-                start_millis: Some(1_000),
-            },
-            LyricLine {
-                text: "verse".to_string(),
-                start_millis: Some(5_500),
-            },
-            LyricLine {
-                text: "unsynced".to_string(),
-                start_millis: None,
-            },
-            LyricLine {
-                text: "chorus".to_string(),
-                start_millis: Some(9_000),
-            },
-        ];
-
-        assert_eq!(active_lyrics_line_index(&lines, 999), Some(0));
-        assert_eq!(active_lyrics_line_index(&lines, 1_000), Some(0));
-        assert_eq!(active_lyrics_line_index(&lines, 5_499), Some(0));
-        assert_eq!(active_lyrics_line_index(&lines, 5_500), Some(1));
-        assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(1));
-        assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(3));
-    }
-
-    #[test]
-    fn synced_lyrics_without_timed_lines_have_no_highlight() {
-        let lines = vec![LyricLine {
-            text: "plain".to_string(),
-            start_millis: None,
-        }];
-
-        assert_eq!(active_lyrics_line_index(&lines, 0), None);
-    }
-
-    #[test]
-    fn synced_lyrics_schedule_next_started_line() {
-        let lines = vec![
-            LyricLine {
-                text: "intro".to_string(),
-                start_millis: Some(1_000),
-            },
-            LyricLine {
-                text: "verse".to_string(),
-                start_millis: Some(5_500),
-            },
-            LyricLine {
-                text: "unsynced".to_string(),
-                start_millis: None,
-            },
-            LyricLine {
-                text: "chorus".to_string(),
-                start_millis: Some(9_000),
-            },
-        ];
-
-        assert_eq!(next_lyrics_line_start_after(&lines, 999), Some(1_000));
-        assert_eq!(next_lyrics_line_start_after(&lines, 1_000), Some(5_500));
-        assert_eq!(next_lyrics_line_start_after(&lines, 5_499), Some(5_500));
-        assert_eq!(next_lyrics_line_start_after(&lines, 5_500), Some(9_000));
-        assert_eq!(next_lyrics_line_start_after(&lines, 9_000), None);
-    }
-
-    #[test]
-    fn lyrics_scroll_animation_finishes_before_next_line() {
-        let lines = vec![
-            LyricLine {
-                text: "current".to_string(),
-                start_millis: Some(5_500),
-            },
-            LyricLine {
-                text: "next".to_string(),
-                start_millis: Some(6_000),
-            },
-        ];
-
-        let duration = lyrics_scroll_animation_millis(&lines, 0, 5_500);
-
-        assert!(duration <= 300);
-        assert!(duration >= 80);
-        assert_eq!(
-            lyrics_scroll_animation_millis(&lines, 0, 5_501),
-            duration - 1
-        );
-    }
-
-    #[test]
-    fn lyrics_follow_scroll_pause_expires() {
-        let now = Instant::now();
-
-        assert_eq!(
-            lyrics_follow_scroll_pause_state(None, now),
-            LyricsFollowScrollPause::Inactive
-        );
-        assert_eq!(
-            lyrics_follow_scroll_pause_state(Some(now + Duration::from_millis(1)), now),
-            LyricsFollowScrollPause::Active
-        );
-        assert_eq!(
-            lyrics_follow_scroll_pause_state(Some(now), now),
-            LyricsFollowScrollPause::Expired
-        );
-    }
-
-    #[test]
-    fn lyrics_follow_scroll_ignores_same_active_line() {
-        assert_eq!(
-            lyrics_follow_scroll_target(Some(3), Some(3), LyricsFollowScrollPause::Inactive),
-            None
-        );
-        assert_eq!(
-            lyrics_follow_scroll_target(Some(4), Some(3), LyricsFollowScrollPause::Inactive),
-            Some(4)
-        );
-        assert_eq!(
-            lyrics_follow_scroll_target(Some(3), Some(3), LyricsFollowScrollPause::Expired),
-            Some(3)
-        );
-        assert_eq!(
-            lyrics_follow_scroll_target(Some(4), Some(3), LyricsFollowScrollPause::Active),
-            None
         );
     }
 

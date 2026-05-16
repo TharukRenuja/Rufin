@@ -40,6 +40,7 @@ window {
 }
 
 .route-title {
+  font-size: 21px;
   font-weight: 700;
 }
 
@@ -75,7 +76,8 @@ window {
 }
 
 .rail-history-controls {
-  margin: 4px 0 6px;
+  min-width: 58px;
+  margin: 4px 2px 6px;
 }
 
 .sidebar-history-button {

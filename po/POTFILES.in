@@ -1,3 +1,5 @@
 crates/rufin-app/src/i18n.rs
+crates/rufin-app/src/lyrics.rs
 crates/rufin-app/src/main.rs
 crates/rufin-app/src/ui.rs
+crates/rufin-app/src/ui/navigation.rs

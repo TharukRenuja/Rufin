@@ -1,5 +1,6 @@
 mod controller;
 mod i18n;
+mod lyrics;
 mod ui;
 
 use std::path::PathBuf;
