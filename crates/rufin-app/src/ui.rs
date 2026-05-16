@@ -94,6 +94,8 @@ struct AppState {
     lyrics_scroller: RefCell<Option<gtk::ScrolledWindow>>,
     lyrics_active_index: Cell<Option<usize>>,
     lyrics_scroll_generation: Cell<u64>,
+    lyrics_timing_generation: Cell<u64>,
+    lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     lyrics_follow_pause_until: Cell<Option<Instant>>,
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     updating_player_controls: Cell<bool>,
@@ -358,6 +360,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         lyrics_scroller: RefCell::new(None),
         lyrics_active_index: Cell::new(None),
         lyrics_scroll_generation: Cell::new(0),
+        lyrics_timing_generation: Cell::new(0),
+        lyrics_timing_source: RefCell::new(None),
         lyrics_follow_pause_until: Cell::new(None),
         mpris_player: RefCell::new(None),
         updating_player_controls: Cell::new(false),
@@ -1211,7 +1215,11 @@ impl Shell {
     }
 
     fn update_lyrics_highlight(self: &Rc<Self>) {
-        let position_millis = self.current_position_millis();
+        self.cancel_scheduled_lyrics_highlight();
+        self.update_lyrics_highlight_at(self.current_position_millis());
+    }
+
+    fn update_lyrics_highlight_at(self: &Rc<Self>, position_millis: u64) {
         let lyrics = self.state.lyrics.borrow().clone();
         let active_index = lyrics
             .as_ref()
@@ -1261,6 +1269,7 @@ impl Shell {
             self.state.lyrics_scroll_generation.set(generation);
             scroll_lyrics_row_into_view(Rc::clone(self), scroller, row, duration, generation);
         }
+        self.schedule_next_lyrics_highlight(position_millis);
     }
 
     fn current_position_millis(&self) -> u64 {
@@ -1282,6 +1291,48 @@ impl Shell {
         self.state.lyrics_follow_pause_until.set(Some(
             Instant::now() + Duration::from_millis(LYRICS_USER_SCROLL_PAUSE_MS),
         ));
+    }
+
+    fn cancel_scheduled_lyrics_highlight(&self) {
+        self.state
+            .lyrics_timing_generation
+            .set(self.state.lyrics_timing_generation.get().saturating_add(1));
+        if let Some(source) = self.state.lyrics_timing_source.borrow_mut().take() {
+            source.remove();
+        }
+    }
+
+    fn schedule_next_lyrics_highlight(self: &Rc<Self>, position_millis: u64) {
+        let playing = matches!(self.state.player.borrow().state, PlaybackState::Playing);
+        if !playing {
+            return;
+        }
+
+        let Some(next_position_millis) = self
+            .state
+            .lyrics
+            .borrow()
+            .as_ref()
+            .and_then(|lyrics| next_lyrics_line_start_after(&lyrics.lines, position_millis))
+        else {
+            return;
+        };
+        let delay_millis = next_position_millis.saturating_sub(position_millis);
+        let generation = self.state.lyrics_timing_generation.get().saturating_add(1);
+        self.state.lyrics_timing_generation.set(generation);
+
+        let shell = Rc::clone(self);
+        let source = glib::timeout_add_local_once(Duration::from_millis(delay_millis), move || {
+            if shell.state.lyrics_timing_generation.get() != generation {
+                return;
+            }
+            let _source = shell.state.lyrics_timing_source.borrow_mut().take();
+            shell.update_lyrics_highlight_at(next_position_millis);
+        });
+        if let Some(previous_source) = self.state.lyrics_timing_source.borrow_mut().replace(source)
+        {
+            previous_source.remove();
+        }
     }
 
     fn render_current_route(self: &Rc<Self>) {
@@ -4499,10 +4550,8 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     shell.update_bottom_player();
                 }
                 ControllerEvent::Playback(player) => {
-                    let previous_track = shell
-                        .state
-                        .player
-                        .borrow()
+                    let previous_player = shell.state.player.borrow().clone();
+                    let previous_track = previous_player
                         .current
                         .as_ref()
                         .map(|entry| entry.track_id.clone());
@@ -4511,11 +4560,15 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         .current
                         .as_ref()
                         .map(|entry| entry.track_id.clone());
+                    let lyrics_timing_changed = previous_track != next_track
+                        || previous_player.state != next_snapshot.state
+                        || previous_player.position_millis != next_snapshot.position_millis;
                     *shell.state.player.borrow_mut() = next_snapshot.clone();
                     if previous_track != next_track {
                         *shell.state.lyrics.borrow_mut() = None;
                         *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
                         shell.state.lyrics_follow_pause_until.set(None);
+                        shell.cancel_scheduled_lyrics_highlight();
                         shell.render_queue_panel();
                         if next_track.is_some() {
                             shell.controller.request_lyrics_for_current();
@@ -4523,7 +4576,9 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         shell.notify_now_playing(&next_snapshot);
                     }
                     shell.update_bottom_player();
-                    shell.update_lyrics_highlight();
+                    if lyrics_timing_changed {
+                        shell.update_lyrics_highlight();
+                    }
                     shell.update_mpris_player();
                 }
                 ControllerEvent::Lyrics(lyrics) => {
@@ -6461,6 +6516,14 @@ fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option
         .map(|(index, _)| index)
 }
 
+fn next_lyrics_line_start_after(lines: &[LyricLine], position_millis: u64) -> Option<u64> {
+    lines
+        .iter()
+        .filter_map(|line| line.start_millis)
+        .filter(|start| *start > position_millis)
+        .min()
+}
+
 fn lyrics_follow_scroll_pause_state(
     paused_until: Option<Instant>,
     now: Instant,
@@ -6756,7 +6819,7 @@ mod tests {
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, LyricsFollowScrollPause,
         active_lyrics_line_index, clamp_content_split_position, clamp_home_album_page_start,
         home_album_card_size, home_album_page_size, lyrics_follow_scroll_pause_state,
-        lyrics_scroll_animation_millis,
+        lyrics_scroll_animation_millis, next_lyrics_line_start_after,
     };
     use rufin_provider::LyricLine;
     use std::time::{Duration, Instant};
@@ -6847,6 +6910,34 @@ mod tests {
         assert_eq!(active_lyrics_line_index(&lines, 5_500), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(3));
+    }
+
+    #[test]
+    fn synced_lyrics_schedule_next_started_line() {
+        let lines = vec![
+            LyricLine {
+                text: "intro".to_string(),
+                start_millis: Some(1_000),
+            },
+            LyricLine {
+                text: "verse".to_string(),
+                start_millis: Some(5_500),
+            },
+            LyricLine {
+                text: "unsynced".to_string(),
+                start_millis: None,
+            },
+            LyricLine {
+                text: "chorus".to_string(),
+                start_millis: Some(9_000),
+            },
+        ];
+
+        assert_eq!(next_lyrics_line_start_after(&lines, 999), Some(1_000));
+        assert_eq!(next_lyrics_line_start_after(&lines, 1_000), Some(5_500));
+        assert_eq!(next_lyrics_line_start_after(&lines, 5_499), Some(5_500));
+        assert_eq!(next_lyrics_line_start_after(&lines, 5_500), Some(9_000));
+        assert_eq!(next_lyrics_line_start_after(&lines, 9_000), None);
     }
 
     #[test]
