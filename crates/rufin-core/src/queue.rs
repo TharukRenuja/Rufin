@@ -90,6 +90,8 @@ pub struct QueueSnapshot {
     pub current_index: Option<usize>,
     pub repeat_mode: RepeatMode,
     pub shuffle: ShuffleState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shuffle_order: Vec<usize>,
     pub progress_seconds: u32,
 }
 
@@ -132,11 +134,17 @@ impl QueueEngine {
             current_index,
             repeat_mode: snapshot.repeat_mode,
             shuffle: snapshot.shuffle,
-            shuffle_order: Vec::new(),
+            shuffle_order: snapshot.shuffle_order,
             shuffle_position: None,
             progress_seconds: snapshot.progress_seconds,
         };
-        engine.rebuild_shuffle_order();
+        if engine.shuffle.enabled
+            && valid_shuffle_order(&engine.shuffle_order, engine.entries.len())
+        {
+            engine.sync_shuffle_position();
+        } else {
+            engine.rebuild_shuffle_order();
+        }
         engine
     }
 
@@ -147,6 +155,11 @@ impl QueueEngine {
             current_index: self.current_index,
             repeat_mode: self.repeat_mode,
             shuffle: self.shuffle.clone(),
+            shuffle_order: if self.shuffle.enabled {
+                self.shuffle_order.clone()
+            } else {
+                Vec::new()
+            },
             progress_seconds: self.progress_seconds,
         }
     }
@@ -436,6 +449,20 @@ fn next_entry_number(entries: &[QueueEntry]) -> u64 {
         + 1
 }
 
+fn valid_shuffle_order(shuffle_order: &[usize], entries_len: usize) -> bool {
+    if shuffle_order.len() != entries_len {
+        return false;
+    }
+    let mut seen = vec![false; entries_len];
+    for index in shuffle_order {
+        if *index >= entries_len || seen[*index] {
+            return false;
+        }
+        seen[*index] = true;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::{QueueEngine, RepeatMode};
@@ -678,6 +705,26 @@ mod tests {
         );
         assert_eq!(restored.repeat_mode(), RepeatMode::All);
         assert!(restored.shuffle().enabled);
+    }
+
+    #[test]
+    fn snapshot_restores_shuffle_order_history() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        for number in 1..=5 {
+            queue.append(&track(number));
+        }
+        queue.set_shuffle(true, 99);
+        let order = queue.shuffle_order.clone();
+        queue.next_track();
+
+        let restored = QueueEngine::restore(queue.snapshot());
+
+        assert_eq!(restored.shuffle_order, order);
+        assert_eq!(restored.shuffle_position, queue.shuffle_position);
+        assert_eq!(
+            restored.current().map(|entry| &entry.track_id),
+            queue.current().map(|entry| &entry.track_id)
+        );
     }
 
     #[test]
