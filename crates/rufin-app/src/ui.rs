@@ -4358,7 +4358,7 @@ fn build_bottom_player() -> PlayerControls {
         BOTTOM_PLAYER_BUTTON_ROW_HEIGHT,
     );
 
-    let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
+    let stop_button = stop_icon_button("Stop");
     stop_button.add_css_class("player-transport-button");
     let previous_button = skip_icon_button(false, "Previous");
     previous_button.add_css_class("player-transport-button");
@@ -7118,6 +7118,39 @@ fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     button.add_css_class("flat");
     button.add_css_class("circular");
     button.set_tooltip_text(Some(&tr(label)));
+    button
+}
+
+fn stop_icon_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.set_tooltip_text(Some(&tr(label)));
+
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(16);
+    icon.set_content_height(16);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(move |area, context, width, height| {
+        let color = area.color();
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            f64::from(color.alpha()),
+        );
+        let size = 7.6;
+        context.rectangle(
+            (f64::from(width) - size) / 2.0,
+            (f64::from(height) - size) / 2.0,
+            size,
+            size,
+        );
+        let _ = context.fill();
+    });
+    button.set_child(Some(&icon));
     button
 }
 
