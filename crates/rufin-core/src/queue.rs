@@ -300,7 +300,15 @@ impl QueueEngine {
     }
 
     pub fn next_track(&mut self) -> Option<&QueueEntry> {
-        let next_index = self.next_index()?;
+        let next_index = self.next_index(RepeatOneBehavior::Advance)?;
+        self.current_index = Some(next_index);
+        self.progress_seconds = 0;
+        self.sync_shuffle_position();
+        self.current()
+    }
+
+    pub fn advance_after_end_of_stream(&mut self) -> Option<&QueueEntry> {
+        let next_index = self.next_index(RepeatOneBehavior::Stay)?;
         self.current_index = Some(next_index);
         self.progress_seconds = 0;
         self.sync_shuffle_position();
@@ -330,9 +338,9 @@ impl QueueEngine {
         QueueEntry::from_track(id, track)
     }
 
-    fn next_index(&self) -> Option<usize> {
+    fn next_index(&self, repeat_one: RepeatOneBehavior) -> Option<usize> {
         let current = self.current_index?;
-        if self.repeat_mode == RepeatMode::One {
+        if self.repeat_mode == RepeatMode::One && repeat_one == RepeatOneBehavior::Stay {
             return Some(current);
         }
 
@@ -357,9 +365,6 @@ impl QueueEngine {
 
     fn previous_index(&self) -> Option<usize> {
         let current = self.current_index?;
-        if self.repeat_mode == RepeatMode::One {
-            return Some(current);
-        }
 
         if self.shuffle.enabled {
             let position = self.shuffle_position?;
@@ -385,6 +390,16 @@ impl QueueEngine {
         let seed = self.shuffle.seed;
         self.shuffle_order
             .sort_by_key(|index| stable_shuffle_key(seed, self.entries[*index].id.as_str()));
+        if self.shuffle.enabled
+            && let Some(current_index) = self.current_index
+            && let Some(position) = self
+                .shuffle_order
+                .iter()
+                .position(|index| *index == current_index)
+        {
+            self.shuffle_order.remove(position);
+            self.shuffle_order.insert(0, current_index);
+        }
         self.sync_shuffle_position();
     }
 
@@ -395,6 +410,12 @@ impl QueueEngine {
                 .position(|shuffled| *shuffled == current)
         });
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RepeatOneBehavior {
+    Advance,
+    Stay,
 }
 
 fn stable_shuffle_key(seed: u64, value: &str) -> u64 {
@@ -552,7 +573,22 @@ mod tests {
     }
 
     #[test]
-    fn repeat_one_keeps_current_track() {
+    fn end_of_stream_repeat_one_keeps_current_track() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        queue.set_repeat_mode(RepeatMode::One);
+
+        assert_eq!(
+            queue
+                .advance_after_end_of_stream()
+                .map(|entry| &entry.track_id),
+            Some(&TrackId::fake(1))
+        );
+    }
+
+    #[test]
+    fn manual_next_ignores_repeat_one() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -560,6 +596,20 @@ mod tests {
 
         assert_eq!(
             queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(2))
+        );
+    }
+
+    #[test]
+    fn manual_previous_ignores_repeat_one() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        queue.next_track();
+        queue.set_repeat_mode(RepeatMode::One);
+
+        assert_eq!(
+            queue.previous_track().map(|entry| &entry.track_id),
             Some(&TrackId::fake(1))
         );
     }
@@ -595,6 +645,20 @@ mod tests {
         let right_order = right.shuffle_order.clone();
 
         assert_eq!(left_order, right_order);
+    }
+
+    #[test]
+    fn enabling_shuffle_starts_traversal_at_current_track() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        queue.append(&track(3));
+        queue.next_track();
+
+        queue.set_shuffle(true, 99);
+
+        assert_eq!(queue.shuffle_order.first().copied(), Some(1));
+        assert_eq!(queue.shuffle_position, Some(0));
     }
 
     #[test]

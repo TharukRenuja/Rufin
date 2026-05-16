@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 use rufin_core::{
@@ -835,7 +836,12 @@ impl AppController {
     pub fn toggle_shuffle(&self) {
         let result = self.with_queue_mut(|queue| {
             let enabled = !queue.shuffle().enabled;
-            queue.set_shuffle(enabled, 7);
+            let seed = if enabled {
+                shuffle_seed()
+            } else {
+                queue.shuffle().seed
+            };
+            queue.set_shuffle(enabled, seed);
             Ok(())
         });
         if let Err(error) = result {
@@ -919,7 +925,9 @@ impl AppController {
 
     pub fn next_track(&self) {
         let mut moved = false;
+        let mut had_current = false;
         let result = self.with_queue_mut(|queue| {
+            had_current = queue.current().is_some();
             moved = queue.next_track().is_some();
             Ok(())
         });
@@ -928,7 +936,11 @@ impl AppController {
             return;
         }
         if !moved {
-            self.stop();
+            if had_current {
+                self.seek(0);
+            } else {
+                self.stop();
+            }
             return;
         }
         self.persist_and_emit_queue();
@@ -936,6 +948,16 @@ impl AppController {
     }
 
     pub fn previous_track(&self) {
+        let should_restart_current = self
+            .playback_snapshot
+            .lock()
+            .map(|snapshot| snapshot.position_seconds > 10)
+            .unwrap_or(false);
+        if should_restart_current {
+            self.seek(0);
+            return;
+        }
+
         let mut moved = false;
         let result = self.with_queue_mut(|queue| {
             moved = queue.previous_track().is_some();
@@ -1905,7 +1927,7 @@ impl AppController {
         self.report_playback(PlaybackReportKind::Stopped, false);
         let mut has_next = false;
         let result = self.with_queue_mut(|queue| {
-            has_next = queue.next_track().is_some();
+            has_next = queue.advance_after_end_of_stream().is_some();
             Ok(())
         });
         if let Err(error) = result {
@@ -2329,6 +2351,13 @@ fn playback_snapshot_from_queue(queue: Option<&QueueEngine>) -> PlaybackSnapshot
             last_error: None,
         })
         .unwrap_or_default()
+}
+
+fn shuffle_seed() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(1)
 }
 
 fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
@@ -3016,6 +3045,47 @@ mod tests {
     }
 
     #[test]
+    fn manual_next_at_queue_end_restarts_current_track() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first, second.clone()]);
+        let _queue = wait_for_queue(&events).expect("queue");
+        controller.next_track();
+        let _queue = wait_for_queue(&events).expect("next queue");
+        controller.seek_millis(12_000);
+        let _playback = wait_for_playback_position(&events, 12_000);
+
+        controller.next_track();
+
+        let playback = wait_for_playback_position(&events, 0);
+        assert_eq!(playback.current.expect("current").track_id, second.id);
+        assert_ne!(playback.state, PlaybackState::Stopped);
+    }
+
+    #[test]
+    fn manual_previous_after_ten_seconds_restarts_current_track() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first, second.clone()]);
+        let _queue = wait_for_queue(&events).expect("queue");
+        controller.next_track();
+        let _queue = wait_for_queue(&events).expect("next queue");
+        controller.seek_millis(11_000);
+        let _playback = wait_for_playback_position(&events, 11_000);
+
+        controller.previous_track();
+
+        let playback = wait_for_playback_position(&events, 0);
+        assert_eq!(playback.current.expect("current").track_id, second.id);
+    }
+
+    #[test]
     fn cycle_repeat_uses_off_all_one_order() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
@@ -3034,6 +3104,29 @@ mod tests {
         controller.cycle_repeat();
         let queue = wait_for_queue(&events).expect("repeat off");
         assert_eq!(queue.repeat_mode, RepeatMode::Off);
+    }
+
+    #[test]
+    fn end_of_stream_repeat_one_restarts_current_track() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first.clone(), second]);
+        let _queue = wait_for_queue(&events).expect("queue");
+        controller.cycle_repeat();
+        let _queue = wait_for_queue(&events).expect("repeat all");
+        controller.cycle_repeat();
+        let _queue = wait_for_queue(&events).expect("repeat one");
+
+        controller.advance_after_end_of_stream();
+        let queue = wait_for_queue(&events).expect("repeated queue");
+
+        assert_eq!(
+            queue.entries[queue.current_index.expect("current")].track_id,
+            first.id
+        );
     }
 
     #[test]
