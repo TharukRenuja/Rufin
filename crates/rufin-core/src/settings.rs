@@ -1,16 +1,26 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::domain::HomeSectionKind;
 use crate::route::DensityMode;
 
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
+pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
+const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
 
 fn default_right_panel_visible() -> bool {
     true
 }
 
 fn default_lyrics_panel_visible() -> bool {
+    true
+}
+
+fn default_discord_client_id() -> String {
+    DEFAULT_DISCORD_CLIENT_ID.to_string()
+}
+
+fn default_true() -> bool {
     true
 }
 
@@ -26,6 +36,51 @@ pub enum ThemePreference {
     System,
     Light,
     Dark,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub enum DiscordDisplayType {
+    #[serde(rename = "artist")]
+    Artist,
+    #[serde(rename = "application")]
+    #[default]
+    Application,
+    #[serde(rename = "song")]
+    Song,
+}
+
+impl<'de> Deserialize<'de> for DiscordDisplayType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "artist" => Ok(Self::Artist),
+            "application" | "app" => Ok(Self::Application),
+            "song" => Ok(Self::Song),
+            legacy if legacy.as_bytes() == LEGACY_APPLICATION_DISPLAY_BYTES => {
+                Ok(Self::Application)
+            }
+            other => Err(de::Error::unknown_variant(
+                other,
+                &["artist", "application", "song"],
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum DiscordLinkType {
+    #[serde(rename = "last_fm")]
+    LastFm,
+    #[serde(rename = "musicbrainz")]
+    MusicBrainz,
+    #[serde(rename = "musicbrainz_last_fm")]
+    MusicBrainzLastFm,
+    #[serde(rename = "none")]
+    #[default]
+    None,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -158,6 +213,20 @@ pub struct AppSettings {
     pub notifications_enabled: bool,
     pub external_lyrics_enabled: bool,
     pub discord_presence_enabled: bool,
+    #[serde(default = "default_discord_client_id")]
+    pub discord_client_id: String,
+    #[serde(default)]
+    pub discord_display_type: DiscordDisplayType,
+    #[serde(default)]
+    pub discord_link_type: DiscordLinkType,
+    #[serde(default = "default_true")]
+    pub discord_show_paused: bool,
+    #[serde(default)]
+    pub discord_show_as_listening: bool,
+    #[serde(default = "default_true")]
+    pub discord_show_state_icon: bool,
+    #[serde(default)]
+    pub lastfm_api_key: String,
     #[serde(default)]
     pub auto_dj_enabled: bool,
     pub home_sections: Vec<HomeSectionKind>,
@@ -192,6 +261,13 @@ impl Default for AppSettings {
             notifications_enabled: false,
             external_lyrics_enabled: false,
             discord_presence_enabled: false,
+            discord_client_id: default_discord_client_id(),
+            discord_display_type: DiscordDisplayType::Application,
+            discord_link_type: DiscordLinkType::None,
+            discord_show_paused: true,
+            discord_show_as_listening: false,
+            discord_show_state_icon: true,
+            lastfm_api_key: String::new(),
             auto_dj_enabled: false,
             home_sections: vec![
                 HomeSectionKind::Explore,
@@ -221,13 +297,20 @@ impl AppSettings {
             self.queue_lyrics_ratio = None;
             self.queue_lyrics_layout_version = QUEUE_LYRICS_LAYOUT_VERSION;
         }
+        if self.discord_client_id.trim().is_empty() {
+            self.discord_client_id = default_discord_client_id();
+            self.discord_presence_enabled = true;
+        }
         self.track_table.migrate_defaults();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSettings, TrackSortKey, TrackTableColumn};
+    use super::{
+        AppSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType, DiscordLinkType,
+        LEGACY_APPLICATION_DISPLAY_BYTES, TrackSortKey, TrackTableColumn,
+    };
 
     #[test]
     fn settings_default_to_private_external_features_off() {
@@ -236,6 +319,16 @@ mod tests {
         assert!(!settings.notifications_enabled);
         assert!(!settings.external_lyrics_enabled);
         assert!(!settings.discord_presence_enabled);
+        assert_eq!(settings.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
+        assert_eq!(
+            settings.discord_display_type,
+            DiscordDisplayType::Application
+        );
+        assert_eq!(settings.discord_link_type, DiscordLinkType::None);
+        assert!(settings.discord_show_paused);
+        assert!(!settings.discord_show_as_listening);
+        assert!(settings.discord_show_state_icon);
+        assert_eq!(settings.lastfm_api_key, "");
         assert!(!settings.auto_dj_enabled);
         assert!(settings.right_panel_visible);
         assert!(settings.lyrics_panel_visible);
@@ -296,6 +389,16 @@ mod tests {
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
         assert!(!restored.auto_dj_enabled);
+        assert_eq!(restored.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
+        assert_eq!(
+            restored.discord_display_type,
+            DiscordDisplayType::Application
+        );
+        assert_eq!(restored.discord_link_type, DiscordLinkType::None);
+        assert!(restored.discord_show_paused);
+        assert!(!restored.discord_show_as_listening);
+        assert!(restored.discord_show_state_icon);
+        assert_eq!(restored.lastfm_api_key, "");
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
     }
 
@@ -313,6 +416,32 @@ mod tests {
         assert_eq!(settings.queue_lyrics_position, None);
         assert_eq!(settings.queue_lyrics_ratio, None);
         assert_eq!(settings.queue_lyrics_layout_version, 3);
+    }
+
+    #[test]
+    fn settings_migrate_empty_discord_identity_defaults() {
+        let mut settings = AppSettings {
+            discord_presence_enabled: false,
+            discord_client_id: String::new(),
+            ..AppSettings::default()
+        };
+
+        settings.migrate_defaults();
+
+        assert_eq!(settings.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
+        assert!(settings.discord_presence_enabled);
+    }
+
+    #[test]
+    fn settings_restore_previous_application_display_value() {
+        let legacy_value =
+            std::str::from_utf8(LEGACY_APPLICATION_DISPLAY_BYTES).expect("legacy value");
+        let json = format!("\"{}\"", legacy_value);
+
+        let restored =
+            serde_json::from_str::<DiscordDisplayType>(&json).expect("deserialize display type");
+
+        assert_eq!(restored, DiscordDisplayType::Application);
     }
 
     #[test]

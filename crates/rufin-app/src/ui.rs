@@ -6,6 +6,7 @@ use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+mod discord;
 mod favorites;
 mod layout;
 mod mpris;
@@ -22,9 +23,10 @@ use gtk::gio;
 use gtk::glib;
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
-    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueSnapshot, Route, RouteStack,
-    SearchKind, Track, TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
+    Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, DiscordDisplayType,
+    DiscordLinkType, EffectiveDensity, Genre, HomeSection, HomeSectionKind, ImageRef, Playlist,
+    PlaylistId, QueueSnapshot, Route, RouteStack, SearchKind, Track, TrackSortKey,
+    TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, Lyrics};
@@ -35,6 +37,7 @@ use tracing::{debug, info, warn};
 use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
 use crate::i18n::tr;
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
+use discord::DiscordPresence;
 use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, artist_favorite_key,
     clear_favorite_controls, favorite_change_needs_route_render, favorite_control_key,
@@ -102,6 +105,7 @@ struct AppState {
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
+    discord_presence: RefCell<DiscordPresence>,
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
@@ -325,6 +329,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
         mpris_player: RefCell::new(None),
+        discord_presence: RefCell::new(DiscordPresence::new()),
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
@@ -491,6 +496,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     shell.render_queue_panel();
     shell.render_lyrics_panel();
     shell.update_bottom_player();
+    shell.update_discord_presence(&shell.state.player.borrow());
     shell.update_right_panel_button();
     shell.update_lyrics_panel_button();
     if !shell.state.right_panel_visible.get() {
@@ -1006,6 +1012,137 @@ impl Shell {
         if enabled && current_playback_track_id(&self.state.player.borrow()).is_some() {
             self.controller.request_lyrics_for_current();
         }
+    }
+
+    fn set_private_mode(self: &Rc<Self>, enabled: bool) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.private_mode == enabled {
+                return;
+            }
+            settings.private_mode = enabled;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save private mode setting");
+            }
+        }
+        self.update_discord_presence(&self.state.player.borrow());
+        self.render_lyrics_panel();
+        if !enabled
+            && self.state.settings.borrow().external_lyrics_enabled
+            && current_playback_track_id(&self.state.player.borrow()).is_some()
+        {
+            self.controller.request_lyrics_for_current();
+        }
+    }
+
+    fn set_notifications_enabled(self: &Rc<Self>, enabled: bool) {
+        let mut settings = self.state.settings.borrow_mut();
+        if settings.notifications_enabled == enabled {
+            return;
+        }
+        settings.notifications_enabled = enabled;
+        if let Err(error) = self.controller.save_settings(&settings) {
+            warn!(%error, "failed to save notification setting");
+        }
+    }
+
+    fn set_discord_presence_enabled(self: &Rc<Self>, enabled: bool) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.discord_presence_enabled == enabled {
+                return;
+            }
+            settings.discord_presence_enabled = enabled;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save Discord presence setting");
+            }
+        }
+        self.update_discord_presence(&self.state.player.borrow());
+    }
+
+    fn set_discord_display_type(self: &Rc<Self>, display_type: DiscordDisplayType) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.discord_display_type == display_type {
+                return;
+            }
+            settings.discord_display_type = display_type;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save Discord display setting");
+            }
+        }
+        self.update_discord_presence(&self.state.player.borrow());
+    }
+
+    fn set_discord_link_type(self: &Rc<Self>, link_type: DiscordLinkType) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.discord_link_type == link_type {
+                return;
+            }
+            settings.discord_link_type = link_type;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save Discord link setting");
+            }
+        }
+        self.update_discord_presence(&self.state.player.borrow());
+    }
+
+    fn set_discord_show_paused(self: &Rc<Self>, enabled: bool) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.discord_show_paused == enabled {
+                return;
+            }
+            settings.discord_show_paused = enabled;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save Discord paused setting");
+            }
+        }
+        self.update_discord_presence(&self.state.player.borrow());
+    }
+
+    fn set_discord_show_as_listening(self: &Rc<Self>, enabled: bool) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.discord_show_as_listening == enabled {
+                return;
+            }
+            settings.discord_show_as_listening = enabled;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save Discord activity type setting");
+            }
+        }
+        self.update_discord_presence(&self.state.player.borrow());
+    }
+
+    fn set_discord_show_state_icon(self: &Rc<Self>, enabled: bool) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.discord_show_state_icon == enabled {
+                return;
+            }
+            settings.discord_show_state_icon = enabled;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save Discord state icon setting");
+            }
+        }
+        self.update_discord_presence(&self.state.player.borrow());
+    }
+
+    fn set_lastfm_api_key(self: &Rc<Self>, api_key: String) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            let api_key = api_key.trim().to_string();
+            if settings.lastfm_api_key == api_key {
+                return;
+            }
+            settings.lastfm_api_key = api_key;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save Last.fm API key setting");
+            }
+        }
+        self.update_discord_presence(&self.state.player.borrow());
     }
 
     fn save_window_state(&self) {
@@ -3599,6 +3736,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         shell.update_lyrics_highlight();
                     }
                     shell.update_mpris_player();
+                    shell.update_discord_presence(&next_snapshot);
                 }
                 ControllerEvent::Lyrics(lyrics) => {
                     *shell.state.lyrics.borrow_mut() = *lyrics;

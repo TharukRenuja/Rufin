@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::DensityMode;
+use rufin_core::{DensityMode, DiscordDisplayType, DiscordLinkType};
 
 use crate::i18n::tr;
 
@@ -75,6 +75,34 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     page.add(&interface_group);
 
+    let privacy_group = adw::PreferencesGroup::builder()
+        .title(tr("Privacy"))
+        .build();
+    let private_row = adw::SwitchRow::builder()
+        .title(tr("Private mode"))
+        .subtitle(tr(
+            "Stop playback reporting, external lyrics, notifications, and presence.",
+        ))
+        .active(settings.private_mode)
+        .build();
+    let private_shell = Rc::clone(shell);
+    private_row.connect_active_notify(move |row| {
+        private_shell.set_private_mode(row.is_active());
+    });
+    privacy_group.add(&private_row);
+
+    let notifications_row = adw::SwitchRow::builder()
+        .title(tr("Now playing notifications"))
+        .subtitle(tr("Show a desktop notification when the track changes."))
+        .active(settings.notifications_enabled)
+        .build();
+    let notifications_shell = Rc::clone(shell);
+    notifications_row.connect_active_notify(move |row| {
+        notifications_shell.set_notifications_enabled(row.is_active());
+    });
+    privacy_group.add(&notifications_row);
+    page.add(&privacy_group);
+
     let lyrics_group = adw::PreferencesGroup::builder().title(tr("Lyrics")).build();
     let external_row = adw::SwitchRow::builder()
         .title(tr("External lyric lookup"))
@@ -89,6 +117,111 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     lyrics_group.add(&external_row);
     page.add(&lyrics_group);
+
+    let discord_group = adw::PreferencesGroup::builder()
+        .title(tr("Discord"))
+        .description(tr(
+            "Rich presence uses Discord IPC. Last.fm and MusicBrainz covers are public metadata lookups.",
+        ))
+        .build();
+    let presence_row = adw::SwitchRow::builder()
+        .title(tr("Rich presence"))
+        .subtitle(tr("Show the current track in Discord."))
+        .active(settings.discord_presence_enabled)
+        .build();
+    let presence_shell = Rc::clone(shell);
+    presence_row.connect_active_notify(move |row| {
+        presence_shell.set_discord_presence_enabled(row.is_active());
+    });
+    discord_group.add(&presence_row);
+
+    let display_titles = [tr("Application name"), tr("Song title"), tr("Artist name")];
+    let display_refs = display_titles
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let display_options = gtk::StringList::new(&display_refs);
+    let display_row = adw::ComboRow::builder()
+        .title(tr("Status display"))
+        .subtitle(tr("Choose which line Discord emphasizes."))
+        .model(&display_options)
+        .selected(discord_display_index(settings.discord_display_type))
+        .build();
+    let display_shell = Rc::clone(shell);
+    display_row.connect_selected_notify(move |row| {
+        display_shell.set_discord_display_type(discord_display_from_index(row.selected()));
+    });
+    discord_group.add(&display_row);
+
+    let link_titles = [
+        tr("None"),
+        tr("Last.fm"),
+        tr("MusicBrainz"),
+        tr("MusicBrainz and Last.fm"),
+    ];
+    let link_refs = link_titles.iter().map(String::as_str).collect::<Vec<_>>();
+    let link_options = gtk::StringList::new(&link_refs);
+    let link_row = adw::ComboRow::builder()
+        .title(tr("Activity links and MusicBrainz covers"))
+        .subtitle(tr(
+            "Add external links and enable MusicBrainz cover fallback.",
+        ))
+        .model(&link_options)
+        .selected(discord_link_index(settings.discord_link_type))
+        .build();
+    let link_shell = Rc::clone(shell);
+    link_row.connect_selected_notify(move |row| {
+        link_shell.set_discord_link_type(discord_link_from_index(row.selected()));
+    });
+    discord_group.add(&link_row);
+
+    let paused_row = adw::SwitchRow::builder()
+        .title(tr("Show paused status"))
+        .subtitle(tr("Keep rich presence visible while playback is paused."))
+        .active(settings.discord_show_paused)
+        .build();
+    let paused_shell = Rc::clone(shell);
+    paused_row.connect_active_notify(move |row| {
+        paused_shell.set_discord_show_paused(row.is_active());
+    });
+    discord_group.add(&paused_row);
+
+    let listening_row = adw::SwitchRow::builder()
+        .title(tr("Use listening activity"))
+        .subtitle(tr("Set the Discord activity type to Listening."))
+        .active(settings.discord_show_as_listening)
+        .build();
+    let listening_shell = Rc::clone(shell);
+    listening_row.connect_active_notify(move |row| {
+        listening_shell.set_discord_show_as_listening(row.is_active());
+    });
+    discord_group.add(&listening_row);
+
+    let state_icon_row = adw::SwitchRow::builder()
+        .title(tr("Show playback icon"))
+        .subtitle(tr(
+            "Show playing or paused icons when the Discord app assets exist.",
+        ))
+        .active(settings.discord_show_state_icon)
+        .build();
+    let state_icon_shell = Rc::clone(shell);
+    state_icon_row.connect_active_notify(move |row| {
+        state_icon_shell.set_discord_show_state_icon(row.is_active());
+    });
+    discord_group.add(&state_icon_row);
+
+    let lastfm_row = adw::PasswordEntryRow::builder()
+        .title(tr("Last.fm API key"))
+        .show_apply_button(true)
+        .build();
+    lastfm_row.set_text(&settings.lastfm_api_key);
+    let lastfm_shell = Rc::clone(shell);
+    lastfm_row.connect_apply(move |row| {
+        lastfm_shell.set_lastfm_api_key(row.text().to_string());
+    });
+    discord_group.add(&lastfm_row);
+
+    page.add(&discord_group);
 
     page
 }
@@ -200,5 +333,39 @@ fn density_from_index(index: u32) -> DensityMode {
         1 => DensityMode::Normal,
         2 => DensityMode::Compact,
         _ => DensityMode::Auto,
+    }
+}
+
+fn discord_display_index(display_type: DiscordDisplayType) -> u32 {
+    match display_type {
+        DiscordDisplayType::Application => 0,
+        DiscordDisplayType::Song => 1,
+        DiscordDisplayType::Artist => 2,
+    }
+}
+
+fn discord_display_from_index(index: u32) -> DiscordDisplayType {
+    match index {
+        1 => DiscordDisplayType::Song,
+        2 => DiscordDisplayType::Artist,
+        _ => DiscordDisplayType::Application,
+    }
+}
+
+fn discord_link_index(link_type: DiscordLinkType) -> u32 {
+    match link_type {
+        DiscordLinkType::None => 0,
+        DiscordLinkType::LastFm => 1,
+        DiscordLinkType::MusicBrainz => 2,
+        DiscordLinkType::MusicBrainzLastFm => 3,
+    }
+}
+
+fn discord_link_from_index(index: u32) -> DiscordLinkType {
+    match index {
+        1 => DiscordLinkType::LastFm,
+        2 => DiscordLinkType::MusicBrainz,
+        3 => DiscordLinkType::MusicBrainzLastFm,
+        _ => DiscordLinkType::None,
     }
 }
