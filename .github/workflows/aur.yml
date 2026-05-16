@@ -1,0 +1,174 @@
+name: AUR
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package to build or publish
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - rufin
+          - rufin-git
+      publish:
+        description: Push PKGBUILD and .SRCINFO to AUR
+        required: true
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel \
+            curl \
+            gdk-pixbuf2 \
+            gettext \
+            git \
+            gst-libav \
+            gst-plugins-bad \
+            gst-plugins-base \
+            gst-plugins-good \
+            gst-plugins-ugly \
+            gtk4 \
+            hicolor-icon-theme \
+            libadwaita \
+            openssh \
+            pkgconf \
+            rust
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare builder user
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Prepare release package from tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          pkgbuild="packaging/aur/rufin/PKGBUILD"
+          checksum="$(
+            curl -LfsS "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${version}.tar.gz" |
+              sha256sum |
+              awk '{print $1}'
+          )"
+          sed -i "s/^pkgver=.*/pkgver=${version}/" "$pkgbuild"
+          sed -i "s/^sha256sums=.*/sha256sums=('${checksum}')/" "$pkgbuild"
+
+      - name: Build packages
+        run: |
+          set -euo pipefail
+
+          package="${{ inputs.package || 'rufin' }}"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            package="rufin"
+          fi
+
+          case "$package" in
+            both) packages=(rufin rufin-git) ;;
+            rufin) packages=(rufin) ;;
+            rufin-git) packages=(rufin-git) ;;
+            *) echo "unknown package: $package" >&2; exit 1 ;;
+          esac
+
+          for aur_package in "${packages[@]}"; do
+            runuser -u builder -- bash -lc "
+              set -euo pipefail
+              export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
+              cd '$GITHUB_WORKSPACE/packaging/aur/$aur_package'
+              rm -rf src pkg
+              makepkg --cleanbuild --clean --noconfirm --noprogressbar
+              makepkg --printsrcinfo > .SRCINFO
+            "
+          done
+
+      - name: Configure AUR SSH
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AUR_SSH_PRIVATE_KEY}" ]]; then
+            echo "AUR_SSH_PRIVATE_KEY is not set" >&2
+            exit 1
+          fi
+
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+
+          ssh-keyscan -t ed25519 aur.archlinux.org > ~/.ssh/known_hosts
+          fingerprint="$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')"
+          test "$fingerprint" = "SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4"
+
+          {
+            echo "Host aur.archlinux.org"
+            echo "  User aur"
+            echo "  IdentityFile ~/.ssh/aur"
+            echo "  IdentitiesOnly yes"
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+          git config --global user.name "screwys"
+          git config --global user.email "254296947+screwys@users.noreply.github.com"
+
+      - name: Publish packages
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish
+        run: |
+          set -euo pipefail
+
+          package="${{ inputs.package || 'rufin' }}"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            package="rufin"
+          fi
+
+          case "$package" in
+            both) packages=(rufin rufin-git) ;;
+            rufin) packages=(rufin) ;;
+            rufin-git) packages=(rufin-git) ;;
+            *) echo "unknown package: $package" >&2; exit 1 ;;
+          esac
+
+          tmpdir="$(mktemp -d)"
+          for aur_package in "${packages[@]}"; do
+            repo="$tmpdir/$aur_package"
+            if ! git clone "ssh://aur@aur.archlinux.org/${aur_package}.git" "$repo"; then
+              mkdir -p "$repo"
+              git -C "$repo" init -b master
+              git -C "$repo" remote add origin "ssh://aur@aur.archlinux.org/${aur_package}.git"
+            fi
+
+            cp "packaging/aur/$aur_package/PKGBUILD" "$repo/PKGBUILD"
+            cp "packaging/aur/$aur_package/.SRCINFO" "$repo/.SRCINFO"
+
+            git -C "$repo" add PKGBUILD .SRCINFO
+            if [[ -z "$(git -C "$repo" status --porcelain)" ]]; then
+              echo "No AUR changes for $aur_package"
+              continue
+            fi
+
+            if git -C "$repo" rev-parse --verify HEAD >/dev/null 2>&1; then
+              message="Update package"
+            else
+              message="Initial import"
+            fi
+            git -C "$repo" commit -m "$message"
+            git -C "$repo" push origin master
+          done

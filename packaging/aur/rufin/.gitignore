@@ -1,0 +1,6 @@
+/Rufin-*/
+/pkg/
+/src/
+/*.tar.gz
+/*.pkg.tar*
+/*.src.tar*
