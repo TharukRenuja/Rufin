@@ -461,9 +461,9 @@ fn build_player_action_controls() -> PlayerActionControls {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     root.set_valign(gtk::Align::Center);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
-    root.append(&queue_button);
     let (lyrics_button, lyrics_icon, lyrics_icon_open) = lyrics_icon_button("Hide lyrics");
     root.append(&lyrics_button);
+    root.append(&queue_button);
     let favorite_button = favorite_icon_button("Favorite");
     root.append(&favorite_button);
     let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
