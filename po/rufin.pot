@@ -320,7 +320,11 @@ msgid "Type a query in the sidebar search field to search the local cache."
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:94 crates/rufin-app/src/ui.rs:4070
-msgid "Native GTK music client shell with Jellyfin playback."
+msgid "Thank you for trying out Rufin. It can be consired as an Alpha release yet, if you have issues or suggestions I would appreciate if you open a Github issue/PR."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:95 crates/rufin-app/src/ui.rs:4073
+msgid "Issues"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:454
