@@ -976,9 +976,6 @@ impl AppController {
             snapshot.position_seconds = seconds;
             snapshot.position_millis = millis;
         });
-        let _sent = self
-            .events
-            .send(ControllerEvent::Queue(Box::new(queue_snapshot)));
         self.emit_playback_snapshot();
     }
 

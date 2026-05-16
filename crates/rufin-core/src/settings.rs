@@ -4,6 +4,7 @@ use crate::domain::HomeSectionKind;
 use crate::route::DensityMode;
 
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
+pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 2;
 
 const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 4] = [
     TrackTableColumn::TrackNumber,
@@ -157,6 +158,8 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lyrics_position: Option<i32>,
     #[serde(default)]
+    pub queue_lyrics_layout_version: u8,
+    #[serde(default)]
     pub track_table: TrackTableSettings,
 }
 
@@ -179,6 +182,7 @@ impl Default for AppSettings {
             window_width: None,
             window_height: None,
             queue_lyrics_position: None,
+            queue_lyrics_layout_version: QUEUE_LYRICS_LAYOUT_VERSION,
             track_table: TrackTableSettings::default(),
         }
     }
@@ -186,6 +190,10 @@ impl Default for AppSettings {
 
 impl AppSettings {
     pub fn migrate_defaults(&mut self) {
+        if self.queue_lyrics_layout_version < QUEUE_LYRICS_LAYOUT_VERSION {
+            self.queue_lyrics_position = None;
+            self.queue_lyrics_layout_version = QUEUE_LYRICS_LAYOUT_VERSION;
+        }
         self.track_table.migrate_defaults();
     }
 }
@@ -201,6 +209,7 @@ mod tests {
         assert!(!settings.notifications_enabled);
         assert!(!settings.external_lyrics_enabled);
         assert!(!settings.discord_presence_enabled);
+        assert_eq!(settings.queue_lyrics_layout_version, 2);
         assert_eq!(settings.home_sections.len(), 5);
         assert_eq!(
             settings.track_table.visible_columns,
@@ -247,6 +256,20 @@ mod tests {
         assert_eq!(restored.window_height, None);
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
+    }
+
+    #[test]
+    fn settings_migrate_legacy_queue_lyrics_position() {
+        let mut settings = AppSettings {
+            queue_lyrics_position: Some(160),
+            queue_lyrics_layout_version: 0,
+            ..AppSettings::default()
+        };
+
+        settings.migrate_defaults();
+
+        assert_eq!(settings.queue_lyrics_position, None);
+        assert_eq!(settings.queue_lyrics_layout_version, 2);
     }
 
     #[test]

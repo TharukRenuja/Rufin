@@ -62,6 +62,7 @@ const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
 const MAX_RESTORED_WINDOW_WIDTH: i32 = 1400;
 const MAX_RESTORED_WINDOW_HEIGHT: i32 = 900;
 const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
+const QUEUE_LYRICS_READY_MIN_HEIGHT: i32 = QUEUE_LYRICS_MIN_PANE_HEIGHT * 3;
 const QUEUE_LYRICS_DEFAULT_QUEUE_UNITS: i32 = 5;
 const QUEUE_LYRICS_DEFAULT_LYRICS_UNITS: i32 = 2;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
@@ -3036,26 +3037,35 @@ impl Shell {
         ));
 
         let initialized_split_position = Rc::new(Cell::new(false));
+        let suppress_split_position_save = Rc::new(Cell::new(false));
         let position_shell = Rc::clone(self);
         let initialized_for_height = Rc::clone(&initialized_split_position);
+        let suppress_for_height = Rc::clone(&suppress_split_position_save);
         queue_lyrics_split.connect_notify_local(Some("height"), move |split, _| {
             if initialized_for_height.get() {
                 return;
             }
             let available_height = split.height();
-            if available_height <= QUEUE_LYRICS_MIN_PANE_HEIGHT * 2 {
+            if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT {
                 return;
             }
             initialized_for_height.set(true);
             let saved_position = position_shell.state.settings.borrow().queue_lyrics_position;
+            suppress_for_height.set(true);
             split.set_position(queue_lyrics_initial_position(
                 available_height,
                 saved_position,
             ));
+            let suppress = Rc::clone(&suppress_for_height);
+            glib::idle_add_local_once(move || suppress.set(false));
         });
 
         let shell = Rc::clone(self);
+        let suppress_for_position = Rc::clone(&suppress_split_position_save);
         queue_lyrics_split.connect_notify_local(Some("position"), move |split, _| {
+            if suppress_for_position.get() {
+                return;
+            }
             let position = split.position();
             if position <= 0 {
                 return;
