@@ -30,8 +30,8 @@ use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, Playbac
 use crate::i18n::tr;
 
 const COMPACT_RAIL_WIDTH: i32 = 80;
-const MAIN_PANEL_UNITS: i32 = 5;
-const TOTAL_PANEL_UNITS: i32 = 8;
+const MAIN_PANEL_UNITS: i32 = 3;
+const TOTAL_PANEL_UNITS: i32 = 4;
 const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
 const RIGHT_PANEL_MAX_PERCENT: i32 = 50;
 const NORMAL_SIDEBAR_WIDTH: i32 = 220;
@@ -1097,6 +1097,7 @@ impl Shell {
 
         let previous_width = self.state.split_width.replace(split_width);
         let current_position = self.content_split.position().clamp(0, split_width);
+        let stored_position = self.state.split_position.get();
         let width_changed = previous_width != split_width;
 
         if !self.state.right_panel_visible.get() {
@@ -1112,16 +1113,12 @@ impl Shell {
             return width_changed || position_changed;
         }
 
-        let default_position = default_content_split_position(split_width);
-        let target_position =
-            if previous_width > 1 && previous_width != split_width && current_position > 1 {
-                current_position * split_width / previous_width
-            } else if current_position > 1 {
-                current_position
-            } else {
-                default_position
-            };
-        let position = clamp_content_split_position(split_width, target_position);
+        let position = content_split_target_position(
+            split_width,
+            previous_width,
+            stored_position,
+            current_position,
+        );
         let position_changed = self.state.split_position.replace(position) != position;
 
         if current_position != position {
@@ -3056,19 +3053,23 @@ impl Shell {
         ));
 
         let suppress_split_position_save = Rc::new(Cell::new(0_u32));
+        let applied_split_height = Rc::new(Cell::new(0));
         let position_shell = Rc::clone(self);
-        let suppress_for_height = Rc::clone(&suppress_split_position_save);
-        queue_lyrics_split.connect_notify_local(Some("height"), move |split, _| {
+        let suppress_for_tick = Rc::clone(&suppress_split_position_save);
+        let applied_height_for_tick = Rc::clone(&applied_split_height);
+        queue_lyrics_split.add_tick_callback(move |split, _| {
             let available_height = split.height();
-            if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT {
-                return;
+            if available_height >= QUEUE_LYRICS_READY_MIN_HEIGHT
+                && applied_height_for_tick.replace(available_height) != available_height
+            {
+                let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
+                set_queue_lyrics_split_position_without_saving(
+                    split,
+                    &suppress_for_tick,
+                    saved_ratio,
+                );
             }
-            let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
-            set_queue_lyrics_split_position_without_saving(
-                split,
-                &suppress_for_height,
-                saved_ratio,
-            );
+            glib::ControlFlow::Continue
         });
 
         let split_interaction = gtk::GestureClick::new();
@@ -6095,6 +6096,24 @@ fn clamp_content_split_position(split_width: i32, position: i32) -> i32 {
     position.clamp(min_position, max_position)
 }
 
+fn content_split_target_position(
+    split_width: i32,
+    previous_width: i32,
+    stored_position: i32,
+    current_position: i32,
+) -> i32 {
+    let default_position = default_content_split_position(split_width);
+    let target_position =
+        if previous_width > 1 && previous_width != split_width && stored_position > 1 {
+            stored_position * split_width / previous_width
+        } else if current_position > 1 {
+            current_position
+        } else {
+            default_position
+        };
+    clamp_content_split_position(split_width, target_position)
+}
+
 fn default_content_split_position(split_width: i32) -> i32 {
     split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS
 }
@@ -7049,8 +7068,9 @@ mod tests {
     use super::{
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, LyricsFollowScrollPause,
         active_lyrics_line_index, clamp_content_split_position, clamp_home_album_page_start,
-        clamp_queue_lyrics_position, current_playback_track_id, home_album_card_size,
-        home_album_page_size, lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
+        clamp_queue_lyrics_position, content_split_target_position, current_playback_track_id,
+        default_content_split_position, home_album_card_size, home_album_page_size,
+        lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
         next_lyrics_line_start_after, queue_lyrics_default_position, queue_lyrics_initial_position,
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio, restored_window_size,
     };
@@ -7115,6 +7135,9 @@ mod tests {
         assert_eq!(clamp_content_split_position(1_000, 100), 500);
         assert_eq!(clamp_content_split_position(1_000, 950), 900);
         assert_eq!(clamp_content_split_position(1_000, 625), 625);
+        assert_eq!(default_content_split_position(1_000), 750);
+        assert_eq!(content_split_target_position(1_000, 0, 0, 0), 750);
+        assert_eq!(content_split_target_position(1_400, 1_000, 750, 700), 1_050);
     }
 
     #[test]
