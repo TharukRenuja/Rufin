@@ -4357,8 +4357,7 @@ fn build_transport_controls() -> TransportControls {
     let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
     let next_button = skip_icon_button(true, "Next");
     let (shuffle_button, _) = transport_symbol_button("media-playlist-shuffle-symbolic", "Shuffle");
-    let (repeat_button, _) =
-        transport_symbol_button("media-playlist-repeat-symbolic", "Repeat off");
+    let repeat_button = repeat_icon_button("Repeat off");
     let (dj_button, _) = transport_symbol_button("media-optical-cd-audio-symbolic", "Auto DJ");
 
     configure_transport_side_button(&stop_button);
@@ -4432,7 +4431,7 @@ fn build_player_action_controls() -> PlayerActionControls {
     root.set_valign(gtk::Align::Center);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
     root.append(&queue_button);
-    root.append(&icon_button("insert-text-symbolic", "Lyrics"));
+    root.append(&icon_button("audio-input-microphone-symbolic", "Lyrics"));
     let favorite_button = favorite_icon_button("Favorite");
     root.append(&favorite_button);
     let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
@@ -5174,6 +5173,11 @@ fn repeat_icon_name(repeat_mode: RepeatMode) -> &'static str {
 }
 
 fn set_repeat_button_icon(button: &gtk::Button, repeat_mode: RepeatMode) {
+    if button.has_css_class("player-repeat-button") {
+        button.set_child(Some(&repeat_icon_area(repeat_mode)));
+        return;
+    }
+
     let icon_name = repeat_icon_name(repeat_mode);
     if let Some(image) = button
         .child()
@@ -6792,6 +6796,71 @@ fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
     });
     button.set_child(Some(&icon));
     button
+}
+
+fn repeat_icon_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.add_css_class("player-repeat-button");
+    button.set_tooltip_text(Some(&tr(label)));
+    button.set_child(Some(&repeat_icon_area(RepeatMode::Off)));
+    button
+}
+
+fn repeat_icon_area(repeat_mode: RepeatMode) -> gtk::DrawingArea {
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_draw_func(move |area, context, width, height| {
+        let color = area.color();
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            f64::from(color.alpha()),
+        );
+        context.set_line_width(1.7);
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_line_join(gtk::cairo::LineJoin::Round);
+
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let left = width * 0.18;
+        let right = width * 0.82;
+        let top = height * 0.28;
+        let bottom = height * 0.72;
+        let arrow = 3.0;
+
+        context.move_to(left + 1.8, top);
+        context.line_to(right - 1.2, top);
+        context.line_to(right - arrow, top - arrow);
+        context.move_to(right - 1.2, top);
+        context.line_to(right - arrow, top + arrow);
+
+        context.move_to(right - 1.8, bottom);
+        context.line_to(left + 1.2, bottom);
+        context.line_to(left + arrow, bottom - arrow);
+        context.move_to(left + 1.2, bottom);
+        context.line_to(left + arrow, bottom + arrow);
+        let _ = context.stroke();
+
+        if repeat_mode == RepeatMode::One {
+            context.set_line_width(1.4);
+            let one_x = width / 2.0;
+            let one_top = height * 0.40;
+            let one_bottom = height * 0.66;
+            context.move_to(one_x, one_top);
+            context.line_to(one_x, one_bottom);
+            context.move_to(one_x - 1.5, one_top + 1.0);
+            context.line_to(one_x, one_top);
+            let _ = context.stroke();
+        }
+    });
+    icon
 }
 
 fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
