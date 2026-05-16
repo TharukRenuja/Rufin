@@ -12,6 +12,7 @@ use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
 const APP_ID: &str = "io.github.screwys.Rufin";
+const APP_ICON_NAME: &str = APP_ID;
 
 #[derive(Clone, Debug, Parser)]
 #[command(name = "rufin", about = "Native GTK music client shell")]
@@ -115,12 +116,53 @@ fn main() {
     let _runtime_guard = runtime.enter();
 
     let app = adw::Application::builder().application_id(APP_ID).build();
+    app.connect_startup(|_| configure_app_icon());
     app.connect_activate(move |app| ui::build(app, options.clone()));
 
     let program = std::env::args()
         .next()
         .unwrap_or_else(|| "rufin".to_string());
     let _exit_code = app.run_with_args(&[program]);
+}
+
+fn configure_app_icon() {
+    gtk::Window::set_default_icon_name(APP_ICON_NAME);
+
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+    let icon_theme = gtk::IconTheme::for_display(&display);
+    for path in app_icon_search_paths() {
+        if path.exists() {
+            icon_theme.add_search_path(path);
+        }
+    }
+}
+
+fn app_icon_search_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Some(path) = option_env!("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .map(|path| path.join("../../data/icons"))
+    {
+        paths.push(path);
+    }
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(repo_root) = exe
+            .parent()
+            .and_then(|path| path.parent())
+            .and_then(|path| path.parent())
+    {
+        paths.push(repo_root.join("data/icons"));
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        paths.push(current_dir.join("data/icons"));
+    }
+
+    paths
 }
 
 fn init_tracing() {
