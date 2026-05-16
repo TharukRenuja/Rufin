@@ -49,6 +49,7 @@ const THUMB_COVER_SIZE: u32 = 96;
 const BOTTOM_PLAYER_HEIGHT: i32 = 82;
 const BOTTOM_PLAYER_COVER_SIZE: i32 = 72;
 const BOTTOM_PLAYER_IDENTITY_WIDTH: i32 = 190;
+const BOTTOM_PLAYER_IDENTITY_MAX_CHARS: i32 = 24;
 const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 400;
 const BOTTOM_PLAYER_TRANSPORT_OFFSET: i32 = 80;
 const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 300;
@@ -3954,7 +3955,8 @@ fn build_bottom_player() -> PlayerControls {
 
     let identity = gtk::Box::new(gtk::Orientation::Vertical, 1);
     identity.add_css_class("player-identity");
-    identity.set_width_request(BOTTOM_PLAYER_IDENTITY_WIDTH);
+    identity.set_size_request(BOTTOM_PLAYER_IDENTITY_WIDTH, -1);
+    identity.set_hexpand(false);
     identity.set_valign(gtk::Align::Center);
     let title = player_link("player-title");
     let artist = player_link("muted");
@@ -6064,7 +6066,10 @@ fn player_link(css_class: &str) -> gtk::Label {
     label.add_css_class(css_class);
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label.set_hexpand(true);
+    label.set_width_chars(1);
+    label.set_max_width_chars(BOTTOM_PLAYER_IDENTITY_MAX_CHARS);
+    label.set_halign(gtk::Align::Fill);
+    label.set_hexpand(false);
     label.set_cursor_from_name(Some("pointer"));
     add_dynamic_link_hover(label.upcast_ref(), &label);
     label
