@@ -4,7 +4,7 @@ use crate::domain::HomeSectionKind;
 use crate::route::DensityMode;
 
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
-pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 2;
+pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
 
 const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 4] = [
     TrackTableColumn::TrackNumber,
@@ -142,7 +142,7 @@ impl TrackTableSettings {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AppSettings {
     pub density_mode: DensityMode,
     pub theme_preference: ThemePreference,
@@ -157,6 +157,8 @@ pub struct AppSettings {
     pub window_height: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lyrics_position: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_lyrics_ratio: Option<f64>,
     #[serde(default)]
     pub queue_lyrics_layout_version: u8,
     #[serde(default)]
@@ -182,6 +184,7 @@ impl Default for AppSettings {
             window_width: None,
             window_height: None,
             queue_lyrics_position: None,
+            queue_lyrics_ratio: None,
             queue_lyrics_layout_version: QUEUE_LYRICS_LAYOUT_VERSION,
             track_table: TrackTableSettings::default(),
         }
@@ -192,6 +195,7 @@ impl AppSettings {
     pub fn migrate_defaults(&mut self) {
         if self.queue_lyrics_layout_version < QUEUE_LYRICS_LAYOUT_VERSION {
             self.queue_lyrics_position = None;
+            self.queue_lyrics_ratio = None;
             self.queue_lyrics_layout_version = QUEUE_LYRICS_LAYOUT_VERSION;
         }
         self.track_table.migrate_defaults();
@@ -209,7 +213,7 @@ mod tests {
         assert!(!settings.notifications_enabled);
         assert!(!settings.external_lyrics_enabled);
         assert!(!settings.discord_presence_enabled);
-        assert_eq!(settings.queue_lyrics_layout_version, 2);
+        assert_eq!(settings.queue_lyrics_layout_version, 3);
         assert_eq!(settings.home_sections.len(), 5);
         assert_eq!(
             settings.track_table.visible_columns,
@@ -229,6 +233,7 @@ mod tests {
             window_width: Some(1180),
             window_height: Some(760),
             queue_lyrics_position: Some(520),
+            queue_lyrics_ratio: Some(0.7),
             ..AppSettings::default()
         };
 
@@ -255,21 +260,24 @@ mod tests {
         assert_eq!(restored.window_width, None);
         assert_eq!(restored.window_height, None);
         assert_eq!(restored.queue_lyrics_position, None);
+        assert_eq!(restored.queue_lyrics_ratio, None);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
     }
 
     #[test]
-    fn settings_migrate_legacy_queue_lyrics_position() {
+    fn settings_migrate_legacy_queue_lyrics_split_state() {
         let mut settings = AppSettings {
             queue_lyrics_position: Some(160),
-            queue_lyrics_layout_version: 0,
+            queue_lyrics_ratio: Some(0.3),
+            queue_lyrics_layout_version: 2,
             ..AppSettings::default()
         };
 
         settings.migrate_defaults();
 
         assert_eq!(settings.queue_lyrics_position, None);
-        assert_eq!(settings.queue_lyrics_layout_version, 2);
+        assert_eq!(settings.queue_lyrics_ratio, None);
+        assert_eq!(settings.queue_lyrics_layout_version, 3);
     }
 
     #[test]

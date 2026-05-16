@@ -1009,6 +1009,25 @@ impl Shell {
         }
     }
 
+    fn save_queue_lyrics_split_position(&self, available_height: i32, position: i32) {
+        if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT || position <= 0 {
+            return;
+        }
+        let position = clamp_queue_lyrics_position(available_height, position);
+        let ratio = queue_lyrics_position_ratio(available_height, position);
+        let mut settings = self.state.settings.borrow_mut();
+        if settings.queue_lyrics_position == Some(position)
+            && settings.queue_lyrics_ratio == Some(ratio)
+        {
+            return;
+        }
+        settings.queue_lyrics_position = Some(position);
+        settings.queue_lyrics_ratio = Some(ratio);
+        if let Err(error) = self.controller.save_settings(&settings) {
+            warn!(%error, "failed to save queue lyrics split position");
+        }
+    }
+
     fn update_track_table_settings(&self, update: impl FnOnce(&mut TrackTableSettings)) {
         let mut settings = self.state.settings.borrow_mut();
         update(&mut settings.track_table);
@@ -3030,14 +3049,16 @@ impl Shell {
         queue_lyrics_split.set_shrink_end_child(true);
         queue_lyrics_split.set_start_child(Some(&queue));
         queue_lyrics_split.set_end_child(Some(&lyrics));
-        let saved_position = self.state.settings.borrow().queue_lyrics_position;
+        let saved_ratio = self.state.settings.borrow().queue_lyrics_ratio;
         queue_lyrics_split.set_position(queue_lyrics_initial_position(
             queue_lyrics_available_height(self),
-            saved_position,
+            saved_ratio,
         ));
 
         let initialized_split_position = Rc::new(Cell::new(false));
         let suppress_split_position_save = Rc::new(Cell::new(false));
+        let user_adjusting_split = Rc::new(Cell::new(false));
+        let pointer_over_split = Rc::new(Cell::new(false));
         let position_shell = Rc::clone(self);
         let initialized_for_height = Rc::clone(&initialized_split_position);
         let suppress_for_height = Rc::clone(&suppress_split_position_save);
@@ -3050,34 +3071,55 @@ impl Shell {
                 return;
             }
             initialized_for_height.set(true);
-            let saved_position = position_shell.state.settings.borrow().queue_lyrics_position;
+            let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
             suppress_for_height.set(true);
-            split.set_position(queue_lyrics_initial_position(
-                available_height,
-                saved_position,
-            ));
+            split.set_position(queue_lyrics_initial_position(available_height, saved_ratio));
             let suppress = Rc::clone(&suppress_for_height);
             glib::idle_add_local_once(move || suppress.set(false));
         });
 
+        let split_interaction = gtk::GestureClick::new();
+        split_interaction.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let adjusting_for_press = Rc::clone(&user_adjusting_split);
+        split_interaction.connect_pressed(move |_, _, _, _| {
+            adjusting_for_press.set(true);
+        });
+        let split_for_release = queue_lyrics_split.clone();
+        let shell_for_release = Rc::clone(self);
+        let adjusting_for_release = Rc::clone(&user_adjusting_split);
+        split_interaction.connect_released(move |_, _, _, _| {
+            let split = split_for_release.clone();
+            let shell = Rc::clone(&shell_for_release);
+            let adjusting = Rc::clone(&adjusting_for_release);
+            glib::idle_add_local_once(move || {
+                shell.save_queue_lyrics_split_position(split.height(), split.position());
+                adjusting.set(false);
+            });
+        });
+        queue_lyrics_split.add_controller(split_interaction);
+
+        let split_motion = gtk::EventControllerMotion::new();
+        let pointer_for_enter = Rc::clone(&pointer_over_split);
+        split_motion.connect_enter(move |_, _, _| {
+            pointer_for_enter.set(true);
+        });
+        let pointer_for_leave = Rc::clone(&pointer_over_split);
+        split_motion.connect_leave(move |_| {
+            pointer_for_leave.set(false);
+        });
+        queue_lyrics_split.add_controller(split_motion);
+
         let shell = Rc::clone(self);
         let suppress_for_position = Rc::clone(&suppress_split_position_save);
+        let adjusting_for_position = Rc::clone(&user_adjusting_split);
+        let pointer_for_position = Rc::clone(&pointer_over_split);
         queue_lyrics_split.connect_notify_local(Some("position"), move |split, _| {
-            if suppress_for_position.get() {
+            if suppress_for_position.get()
+                || (!adjusting_for_position.get() && !pointer_for_position.get())
+            {
                 return;
             }
-            let position = split.position();
-            if position <= 0 {
-                return;
-            }
-            let mut settings = shell.state.settings.borrow_mut();
-            if settings.queue_lyrics_position == Some(position) {
-                return;
-            }
-            settings.queue_lyrics_position = Some(position);
-            if let Err(error) = shell.controller.save_settings(&settings) {
-                warn!(%error, "failed to save queue lyrics split position");
-            }
+            shell.save_queue_lyrics_split_position(split.height(), split.position());
         });
 
         self.right_panel.append(&queue_lyrics_split);
@@ -6163,15 +6205,23 @@ fn queue_lyrics_default_position(available_height: i32) -> i32 {
     clamp_queue_lyrics_position(available_height, position)
 }
 
-fn queue_lyrics_initial_position(available_height: i32, saved_position: Option<i32>) -> i32 {
-    let max_position =
-        (available_height - QUEUE_LYRICS_MIN_PANE_HEIGHT).max(QUEUE_LYRICS_MIN_PANE_HEIGHT);
-    match saved_position {
-        Some(position) if position > QUEUE_LYRICS_MIN_PANE_HEIGHT && position < max_position => {
-            position
-        }
-        _ => queue_lyrics_default_position(available_height),
+fn queue_lyrics_position_ratio(available_height: i32, position: i32) -> f64 {
+    if available_height <= 0 {
+        return 0.0;
     }
+    f64::from(position).clamp(0.0, f64::from(available_height)) / f64::from(available_height)
+}
+
+fn queue_lyrics_position_from_ratio(available_height: i32, ratio: f64) -> i32 {
+    let position = (f64::from(available_height) * ratio.clamp(0.0, 1.0)).round() as i32;
+    clamp_queue_lyrics_position(available_height, position)
+}
+
+fn queue_lyrics_initial_position(available_height: i32, saved_ratio: Option<f64>) -> i32 {
+    saved_ratio
+        .filter(|ratio| ratio.is_finite())
+        .map(|ratio| queue_lyrics_position_from_ratio(available_height, ratio))
+        .unwrap_or_else(|| queue_lyrics_default_position(available_height))
 }
 
 fn card_label_width_chars(size: i32) -> i32 {
@@ -7008,7 +7058,7 @@ mod tests {
         clamp_queue_lyrics_position, current_playback_track_id, home_album_card_size,
         home_album_page_size, lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
         next_lyrics_line_start_after, queue_lyrics_default_position, queue_lyrics_initial_position,
-        restored_window_size,
+        queue_lyrics_position_from_ratio, queue_lyrics_position_ratio, restored_window_size,
     };
     use rufin_core::{QueueEntry, QueueEntryId, TrackId};
     use rufin_provider::LyricLine;
@@ -7094,9 +7144,11 @@ mod tests {
         assert_eq!(clamp_queue_lyrics_position(200, 1701), 120);
         assert_eq!(queue_lyrics_default_position(700), 500);
         assert_eq!(queue_lyrics_initial_position(700, None), 500);
-        assert_eq!(queue_lyrics_initial_position(700, Some(120)), 500);
-        assert_eq!(queue_lyrics_initial_position(700, Some(650)), 500);
-        assert_eq!(queue_lyrics_initial_position(700, Some(360)), 360);
+        assert_eq!(queue_lyrics_initial_position(700, Some(0.5)), 350);
+        assert_eq!(queue_lyrics_initial_position(700, Some(2.0)), 580);
+        assert_eq!(queue_lyrics_initial_position(700, Some(f64::NAN)), 500);
+        assert_eq!(queue_lyrics_position_from_ratio(700, 0.5), 350);
+        assert_eq!(queue_lyrics_position_ratio(700, 350), 0.5);
     }
 
     #[test]
