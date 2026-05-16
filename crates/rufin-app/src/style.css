@@ -283,20 +283,32 @@ scale.volume-slider trough {
   background: transparent;
 }
 
+.lyrics-lines {
+  padding: 18px 0 132px;
+}
+
 .lyrics-line {
-  color: @dim_label_color;
-  font-size: 17px;
+  color: @window_fg_color;
+  font-size: 18px;
   font-weight: 650;
+  opacity: 0.34;
+  transform: scale(0.96);
+  transition:
+    color 180ms ease,
+    opacity 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .lyrics-line-active {
-  color: @accent_color;
+  color: @window_fg_color;
   font-weight: 800;
+  opacity: 1;
+  transform: scale(1.04);
 }
 
 .lyrics-row {
   border-radius: 8px;
-  padding: 7px 8px;
+  padding: 8px;
   background: transparent;
 }
 
@@ -305,7 +317,11 @@ scale.volume-slider trough {
 }
 
 .lyrics-row-active {
-  background: color-mix(in srgb, @accent_bg_color 12%, transparent);
+  background: transparent;
+}
+
+.lyrics-row-active:hover {
+  background: color-mix(in srgb, @accent_bg_color 8%, transparent);
 }
 
 .table-link {

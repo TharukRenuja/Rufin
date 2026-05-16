@@ -65,6 +65,7 @@ const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
 const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 480;
 const LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS: u64 = 140;
+const LYRICS_USER_SCROLL_PAUSE_MS: u64 = 3_000;
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 
 #[derive(Clone, Debug)]
@@ -93,6 +94,7 @@ struct AppState {
     lyrics_scroller: RefCell<Option<gtk::ScrolledWindow>>,
     lyrics_active_index: Cell<Option<usize>>,
     lyrics_scroll_generation: Cell<u64>,
+    lyrics_follow_pause_until: Cell<Option<Instant>>,
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
@@ -114,6 +116,13 @@ struct AppState {
 struct LyricsRow {
     row: gtk::Button,
     label: gtk::Label,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LyricsFollowScrollPause {
+    Inactive,
+    Active,
+    Expired,
 }
 
 #[derive(Clone)]
@@ -349,6 +358,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         lyrics_scroller: RefCell::new(None),
         lyrics_active_index: Cell::new(None),
         lyrics_scroll_generation: Cell::new(0),
+        lyrics_follow_pause_until: Cell::new(None),
         mpris_player: RefCell::new(None),
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
@@ -1207,6 +1217,9 @@ impl Shell {
             .as_ref()
             .and_then(|lyrics| active_lyrics_line_index(lyrics.lines.as_slice(), position_millis));
         let previous_index = self.state.lyrics_active_index.replace(active_index);
+        let follow_pause = self.lyrics_follow_scroll_pause();
+        let should_follow_scroll = follow_pause != LyricsFollowScrollPause::Active;
+        let force_follow_scroll = follow_pause == LyricsFollowScrollPause::Expired;
         let scroll_target = {
             let rows = self.state.lyrics_rows.borrow();
             for (index, row) in rows.iter().enumerate() {
@@ -1220,23 +1233,27 @@ impl Shell {
                 }
             }
 
-            active_index
-                .filter(|index| Some(*index) != previous_index)
-                .and_then(|index| {
-                    let scroller = self.state.lyrics_scroller.borrow().clone()?;
-                    let row = rows.get(index)?.row.clone().upcast::<gtk::Widget>();
-                    let duration = lyrics
-                        .as_ref()
-                        .map(|lyrics| {
-                            lyrics_scroll_animation_millis(
-                                lyrics.lines.as_slice(),
-                                index,
-                                position_millis,
-                            )
-                        })
-                        .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS);
-                    Some((scroller, row, duration))
-                })
+            if should_follow_scroll {
+                active_index
+                    .filter(|index| force_follow_scroll || Some(*index) != previous_index)
+                    .and_then(|index| {
+                        let scroller = self.state.lyrics_scroller.borrow().clone()?;
+                        let row = rows.get(index)?.row.clone().upcast::<gtk::Widget>();
+                        let duration = lyrics
+                            .as_ref()
+                            .map(|lyrics| {
+                                lyrics_scroll_animation_millis(
+                                    lyrics.lines.as_slice(),
+                                    index,
+                                    position_millis,
+                                )
+                            })
+                            .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS);
+                        Some((scroller, row, duration))
+                    })
+            } else {
+                None
+            }
         };
 
         if let Some((scroller, row, duration)) = scroll_target {
@@ -1248,6 +1265,23 @@ impl Shell {
 
     fn current_position_millis(&self) -> u64 {
         self.state.player.borrow().position_millis
+    }
+
+    fn lyrics_follow_scroll_pause(&self) -> LyricsFollowScrollPause {
+        let pause = lyrics_follow_scroll_pause_state(
+            self.state.lyrics_follow_pause_until.get(),
+            Instant::now(),
+        );
+        if pause == LyricsFollowScrollPause::Expired {
+            self.state.lyrics_follow_pause_until.set(None);
+        }
+        pause
+    }
+
+    fn pause_lyrics_follow_scroll(&self) {
+        self.state.lyrics_follow_pause_until.set(Some(
+            Instant::now() + Duration::from_millis(LYRICS_USER_SCROLL_PAUSE_MS),
+        ));
     }
 
     fn render_current_route(self: &Rc<Self>) {
@@ -2795,6 +2829,15 @@ impl Shell {
         let lyrics_scroller = gtk::ScrolledWindow::new();
         lyrics_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         lyrics_scroller.set_vexpand(true);
+        let lyrics_scroll_controller =
+            gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+        lyrics_scroll_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let shell_for_lyrics_scroll = Rc::clone(self);
+        lyrics_scroll_controller.connect_scroll(move |_, _, _| {
+            shell_for_lyrics_scroll.pause_lyrics_follow_scroll();
+            glib::Propagation::Proceed
+        });
+        lyrics_scroller.add_controller(lyrics_scroll_controller);
         let lyrics_body = gtk::Box::new(gtk::Orientation::Vertical, 6);
         lyrics_body.set_vexpand(true);
         lyrics_body.add_css_class("lyrics-lines");
@@ -4472,6 +4515,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     if previous_track != next_track {
                         *shell.state.lyrics.borrow_mut() = None;
                         *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
+                        shell.state.lyrics_follow_pause_until.set(None);
                         shell.render_queue_panel();
                         if next_track.is_some() {
                             shell.controller.request_lyrics_for_current();
@@ -6417,6 +6461,17 @@ fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option
         .map(|(index, _)| index)
 }
 
+fn lyrics_follow_scroll_pause_state(
+    paused_until: Option<Instant>,
+    now: Instant,
+) -> LyricsFollowScrollPause {
+    match paused_until {
+        Some(paused_until) if now < paused_until => LyricsFollowScrollPause::Active,
+        Some(_) => LyricsFollowScrollPause::Expired,
+        None => LyricsFollowScrollPause::Inactive,
+    }
+}
+
 fn lyrics_scroll_animation_millis(
     lines: &[LyricLine],
     active_index: usize,
@@ -6698,11 +6753,13 @@ fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::{
-        HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, active_lyrics_line_index,
-        clamp_content_split_position, clamp_home_album_page_start, home_album_card_size,
-        home_album_page_size, lyrics_scroll_animation_millis,
+        HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, LyricsFollowScrollPause,
+        active_lyrics_line_index, clamp_content_split_position, clamp_home_album_page_start,
+        home_album_card_size, home_album_page_size, lyrics_follow_scroll_pause_state,
+        lyrics_scroll_animation_millis,
     };
     use rufin_provider::LyricLine;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn home_album_page_size_uses_stable_content_width() {
@@ -6812,6 +6869,24 @@ mod tests {
         assert_eq!(
             lyrics_scroll_animation_millis(&lines, 0, 5_501),
             duration - 1
+        );
+    }
+
+    #[test]
+    fn lyrics_follow_scroll_pause_expires() {
+        let now = Instant::now();
+
+        assert_eq!(
+            lyrics_follow_scroll_pause_state(None, now),
+            LyricsFollowScrollPause::Inactive
+        );
+        assert_eq!(
+            lyrics_follow_scroll_pause_state(Some(now + Duration::from_millis(1)), now),
+            LyricsFollowScrollPause::Active
+        );
+        assert_eq!(
+            lyrics_follow_scroll_pause_state(Some(now), now),
+            LyricsFollowScrollPause::Expired
         );
     }
 
