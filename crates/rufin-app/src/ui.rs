@@ -3055,68 +3055,44 @@ impl Shell {
             saved_ratio,
         ));
 
-        let initialized_split_position = Rc::new(Cell::new(false));
-        let suppress_split_position_save = Rc::new(Cell::new(false));
-        let user_adjusting_split = Rc::new(Cell::new(false));
-        let pointer_over_split = Rc::new(Cell::new(false));
+        let suppress_split_position_save = Rc::new(Cell::new(0_u32));
         let position_shell = Rc::clone(self);
-        let initialized_for_height = Rc::clone(&initialized_split_position);
         let suppress_for_height = Rc::clone(&suppress_split_position_save);
         queue_lyrics_split.connect_notify_local(Some("height"), move |split, _| {
-            if initialized_for_height.get() {
-                return;
-            }
             let available_height = split.height();
             if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT {
                 return;
             }
-            initialized_for_height.set(true);
             let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
-            suppress_for_height.set(true);
-            split.set_position(queue_lyrics_initial_position(available_height, saved_ratio));
-            let suppress = Rc::clone(&suppress_for_height);
-            glib::idle_add_local_once(move || suppress.set(false));
+            set_queue_lyrics_split_position_without_saving(
+                split,
+                &suppress_for_height,
+                saved_ratio,
+            );
         });
 
         let split_interaction = gtk::GestureClick::new();
         split_interaction.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let adjusting_for_press = Rc::clone(&user_adjusting_split);
-        split_interaction.connect_pressed(move |_, _, _, _| {
-            adjusting_for_press.set(true);
-        });
         let split_for_release = queue_lyrics_split.clone();
         let shell_for_release = Rc::clone(self);
-        let adjusting_for_release = Rc::clone(&user_adjusting_split);
+        let suppress_for_release = Rc::clone(&suppress_split_position_save);
         split_interaction.connect_released(move |_, _, _, _| {
             let split = split_for_release.clone();
             let shell = Rc::clone(&shell_for_release);
-            let adjusting = Rc::clone(&adjusting_for_release);
+            let suppress = Rc::clone(&suppress_for_release);
             glib::idle_add_local_once(move || {
+                if suppress.get() > 0 {
+                    return;
+                }
                 shell.save_queue_lyrics_split_position(split.height(), split.position());
-                adjusting.set(false);
             });
         });
         queue_lyrics_split.add_controller(split_interaction);
 
-        let split_motion = gtk::EventControllerMotion::new();
-        let pointer_for_enter = Rc::clone(&pointer_over_split);
-        split_motion.connect_enter(move |_, _, _| {
-            pointer_for_enter.set(true);
-        });
-        let pointer_for_leave = Rc::clone(&pointer_over_split);
-        split_motion.connect_leave(move |_| {
-            pointer_for_leave.set(false);
-        });
-        queue_lyrics_split.add_controller(split_motion);
-
         let shell = Rc::clone(self);
         let suppress_for_position = Rc::clone(&suppress_split_position_save);
-        let adjusting_for_position = Rc::clone(&user_adjusting_split);
-        let pointer_for_position = Rc::clone(&pointer_over_split);
         queue_lyrics_split.connect_notify_local(Some("position"), move |split, _| {
-            if suppress_for_position.get()
-                || (!adjusting_for_position.get() && !pointer_for_position.get())
-            {
+            if suppress_for_position.get() > 0 {
                 return;
             }
             shell.save_queue_lyrics_split_position(split.height(), split.position());
@@ -6224,6 +6200,24 @@ fn queue_lyrics_initial_position(available_height: i32, saved_ratio: Option<f64>
         .unwrap_or_else(|| queue_lyrics_default_position(available_height))
 }
 
+fn set_queue_lyrics_split_position_without_saving(
+    split: &gtk::Paned,
+    suppress_save: &Rc<Cell<u32>>,
+    saved_ratio: Option<f64>,
+) {
+    let available_height = split.height();
+    if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT {
+        return;
+    }
+
+    suppress_save.set(suppress_save.get().saturating_add(1));
+    split.set_position(queue_lyrics_initial_position(available_height, saved_ratio));
+    let suppress = Rc::clone(suppress_save);
+    glib::idle_add_local_once(move || {
+        suppress.set(suppress.get().saturating_sub(1));
+    });
+}
+
 fn card_label_width_chars(size: i32) -> i32 {
     (size / 8).clamp(8, 28)
 }
@@ -7143,12 +7137,18 @@ mod tests {
         assert_eq!(clamp_queue_lyrics_position(800, 10), 120);
         assert_eq!(clamp_queue_lyrics_position(200, 1701), 120);
         assert_eq!(queue_lyrics_default_position(700), 500);
+        assert_eq!(queue_lyrics_default_position(1400), 1000);
         assert_eq!(queue_lyrics_initial_position(700, None), 500);
         assert_eq!(queue_lyrics_initial_position(700, Some(0.5)), 350);
         assert_eq!(queue_lyrics_initial_position(700, Some(2.0)), 580);
         assert_eq!(queue_lyrics_initial_position(700, Some(f64::NAN)), 500);
         assert_eq!(queue_lyrics_position_from_ratio(700, 0.5), 350);
         assert_eq!(queue_lyrics_position_ratio(700, 350), 0.5);
+        let saved_default_ratio = queue_lyrics_position_ratio(700, 500);
+        assert_eq!(
+            queue_lyrics_initial_position(1400, Some(saved_default_ratio)),
+            1000
+        );
     }
 
     #[test]
