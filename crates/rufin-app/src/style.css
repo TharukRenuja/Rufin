@@ -40,6 +40,16 @@ window {
   color: @window_fg_color;
 }
 
+.queue-toolbar {
+  min-height: 40px;
+}
+
+.queue-search {
+  min-height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .route-title {
   font-size: 21px;
   font-weight: 700;

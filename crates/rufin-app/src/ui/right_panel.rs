@@ -38,6 +38,7 @@ pub(super) fn build_right_panel() -> RightPanelParts {
 
     let queue_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     queue_header.add_css_class("sidebar-header");
+    queue_header.add_css_class("queue-toolbar");
     queue_header.set_valign(gtk::Align::Center);
     queue_header.set_margin_top(6);
     queue_header.set_margin_bottom(2);
@@ -45,9 +46,11 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     queue_header.set_margin_end(56);
 
     let queue_search = gtk::SearchEntry::new();
+    queue_search.add_css_class("queue-search");
     let search_label = tr("Search queue");
     queue_search.update_property(&[gtk::accessible::Property::Label(&search_label)]);
     queue_search.set_hexpand(true);
+    queue_search.set_height_request(34);
     queue_header.append(&queue_search);
 
     let queue_clear_button = icon_button("window-close-symbolic", "Clear queue");

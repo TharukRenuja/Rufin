@@ -443,7 +443,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     upper_overlay.set_child(Some(&upper));
     main_menu.set_halign(gtk::Align::End);
     main_menu.set_valign(gtk::Align::Start);
-    main_menu.set_margin_top(7);
+    main_menu.set_margin_top(9);
     main_menu.set_margin_end(8);
     upper_overlay.add_overlay(&main_menu);
 
