@@ -256,6 +256,18 @@ scale.volume-slider trough {
   color: @error_color;
 }
 
+.track-identity {
+  padding: 4px 0;
+}
+
+.track-title {
+  font-weight: 600;
+}
+
+.track-artist-link {
+  padding: 0;
+}
+
 .cached-list,
 .queue-list,
 .lyrics-lines {

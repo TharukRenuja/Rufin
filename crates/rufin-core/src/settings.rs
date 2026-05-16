@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::domain::HomeSectionKind;
 use crate::route::DensityMode;
 
+pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 1;
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ThemePreference {
     System,
@@ -89,22 +91,42 @@ pub struct TrackTableSettings {
     pub visible_columns: Vec<TrackTableColumn>,
     pub sort_key: TrackSortKey,
     pub descending: bool,
+    #[serde(default)]
+    pub layout_version: u8,
 }
 
 impl Default for TrackTableSettings {
     fn default() -> Self {
         Self {
             visible_columns: vec![
-                TrackTableColumn::TrackNumber,
                 TrackTableColumn::Title,
-                TrackTableColumn::Artist,
                 TrackTableColumn::Album,
                 TrackTableColumn::Year,
-                TrackTableColumn::Duration,
-                TrackTableColumn::Favorite,
             ],
             sort_key: TrackSortKey::TrackNumber,
             descending: false,
+            layout_version: TRACK_TABLE_LAYOUT_VERSION,
+        }
+    }
+}
+
+impl TrackTableSettings {
+    pub fn migrate_defaults(&mut self) {
+        const LEGACY_DEFAULT_COLUMNS: [TrackTableColumn; 7] = [
+            TrackTableColumn::TrackNumber,
+            TrackTableColumn::Title,
+            TrackTableColumn::Artist,
+            TrackTableColumn::Album,
+            TrackTableColumn::Year,
+            TrackTableColumn::Duration,
+            TrackTableColumn::Favorite,
+        ];
+
+        if self.layout_version == 0 {
+            if self.visible_columns.as_slice() == LEGACY_DEFAULT_COLUMNS {
+                self.visible_columns = Self::default().visible_columns;
+            }
+            self.layout_version = TRACK_TABLE_LAYOUT_VERSION;
         }
     }
 }
@@ -152,6 +174,12 @@ impl Default for AppSettings {
     }
 }
 
+impl AppSettings {
+    pub fn migrate_defaults(&mut self) {
+        self.track_table.migrate_defaults();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AppSettings, TrackSortKey, TrackTableColumn};
@@ -164,11 +192,13 @@ mod tests {
         assert!(!settings.external_lyrics_enabled);
         assert!(!settings.discord_presence_enabled);
         assert_eq!(settings.home_sections.len(), 5);
-        assert!(
-            settings
-                .track_table
-                .visible_columns
-                .contains(&TrackTableColumn::Title)
+        assert_eq!(
+            settings.track_table.visible_columns,
+            vec![
+                TrackTableColumn::Title,
+                TrackTableColumn::Album,
+                TrackTableColumn::Year,
+            ]
         );
         assert_eq!(settings.track_table.sort_key, TrackSortKey::TrackNumber);
     }
@@ -206,5 +236,28 @@ mod tests {
         assert_eq!(restored.window_height, None);
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
+    }
+
+    #[test]
+    fn settings_migrate_legacy_track_table_default_columns() {
+        let json = r#"{
+            "visible_columns":["TrackNumber","Title","Artist","Album","Year","Duration","Favorite"],
+            "sort_key":"TrackNumber",
+            "descending":false
+        }"#;
+
+        let mut settings =
+            serde_json::from_str::<super::TrackTableSettings>(json).expect("deserialize settings");
+        settings.migrate_defaults();
+
+        assert_eq!(
+            settings.visible_columns,
+            vec![
+                TrackTableColumn::Title,
+                TrackTableColumn::Album,
+                TrackTableColumn::Year,
+            ]
+        );
+        assert_eq!(settings.layout_version, super::TRACK_TABLE_LAYOUT_VERSION);
     }
 }

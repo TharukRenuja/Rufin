@@ -5140,15 +5140,9 @@ fn track_table_column(shell: &Rc<Shell>, column: TrackTableColumn) -> gtk::Colum
         TrackTableColumn::TrackNumber => {
             track_column("#", 54, |track| track.track_number.to_string())
         }
-        TrackTableColumn::Title => track_column("Title", 240, |track| track.title.clone()),
+        TrackTableColumn::Title => track_identity_column(shell),
         TrackTableColumn::Artist => track_link_column(shell, "Artist", 180, |track| {
-            (
-                track.artist.clone(),
-                track
-                    .artist_id
-                    .as_ref()
-                    .map(|artist_id| Route::ArtistDetail(artist_id.clone())),
-            )
+            (track.artist.clone(), track_artist_route(track))
         }),
         TrackTableColumn::Album => track_link_column(shell, "Album", 220, |track| {
             (
@@ -5322,6 +5316,92 @@ where
     column
 }
 
+fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+
+    factory.connect_bind(move |_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(item) = list_item.item() else {
+            return;
+        };
+        let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
+            return;
+        };
+        let track = boxed.borrow::<Track>();
+        let artist_text = track.artist.clone();
+        let artist_route = track_artist_route(&track);
+        let cover = shell.cover_tile_for(
+            track.image_ref.as_ref(),
+            stable_seed(track.id.as_str()),
+            48,
+            THUMB_COVER_SIZE,
+        );
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.add_css_class("track-identity");
+        row.set_valign(gtk::Align::Center);
+        row.set_hexpand(true);
+        row.append(&cover);
+
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        labels.set_valign(gtk::Align::Center);
+        labels.set_hexpand(true);
+
+        let title = gtk::Label::new(Some(&track.title));
+        title.add_css_class("track-title");
+        title.set_xalign(0.0);
+        title.set_halign(gtk::Align::Fill);
+        title.set_hexpand(true);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        labels.append(&title);
+
+        if !artist_text.trim().is_empty() {
+            let artist = gtk::Label::new(Some(&artist_text));
+            artist.add_css_class("muted");
+            artist.add_css_class("table-link-label");
+            artist.set_xalign(0.0);
+            artist.set_halign(gtk::Align::Fill);
+            artist.set_hexpand(true);
+            artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+            if let Some(route) = artist_route {
+                let button = gtk::Button::new();
+                button.add_css_class("flat");
+                button.add_css_class("table-link");
+                button.add_css_class("track-artist-link");
+                button.set_halign(gtk::Align::Fill);
+                button.set_hexpand(true);
+                button.set_cursor_from_name(Some("pointer"));
+                add_link_hover(button.upcast_ref(), &artist, &artist_text);
+                button.set_child(Some(&artist));
+
+                let shell = Rc::clone(&shell);
+                button.connect_clicked(move |_| shell.navigate(route.clone()));
+                labels.append(&button);
+            } else {
+                labels.append(&artist);
+            }
+        }
+
+        row.append(&labels);
+        list_item.set_child(Some(&row));
+    });
+
+    factory.connect_unbind(|_, list_item| {
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
+            list_item.set_child(None::<&gtk::Widget>);
+        }
+    });
+
+    let column = gtk::ColumnViewColumn::new(Some(&tr("Title")), Some(factory));
+    column.set_fixed_width(320);
+    column.set_resizable(false);
+    column
+}
+
 fn track_link_column<F>(
     shell: &Rc<Shell>,
     title: &str,
@@ -5383,6 +5463,19 @@ where
     column.set_fixed_width(width);
     column.set_resizable(false);
     column
+}
+
+fn track_artist_route(track: &Track) -> Option<Route> {
+    if let Some(artist_id) = track.artist_id.clone() {
+        Some(Route::ArtistDetail(artist_id))
+    } else if !track.artist.trim().is_empty() {
+        Some(Route::Search {
+            query: track.artist.clone(),
+            kind: SearchKind::Artists,
+        })
+    } else {
+        None
+    }
 }
 
 fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {

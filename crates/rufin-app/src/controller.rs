@@ -177,9 +177,12 @@ impl StoreHandle {
 
 impl AppController {
     pub fn load_settings(&self) -> AppSettings {
-        self.store
+        let mut settings = self
+            .store
             .with_store(|store| store.load_settings())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        settings.migrate_defaults();
+        settings
     }
 
     pub fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
