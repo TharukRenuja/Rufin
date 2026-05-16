@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ALBUM_LIMIT,
+    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
     HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueSnapshot, ServerId,
     ServerIdentity, Track, TrackId,
 };
@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use thiserror::Error;
 
 const SETTINGS_KEY: &str = "default";
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -241,6 +241,16 @@ impl Store {
                 PRIMARY KEY (server_id, playlist_id, entry_id)
             );
 
+            CREATE TABLE IF NOT EXISTS home_section_items (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                section_kind TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                sync_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, section_kind, item_type, item_id)
+            );
+
             CREATE TABLE IF NOT EXISTS lyrics_cache (
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
                 track_id TEXT NOT NULL,
@@ -286,6 +296,8 @@ impl Store {
                 ON playlists(server_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS tracks_server_album_idx
                 ON tracks(server_id, album_id, disc_number, track_number);
+            CREATE INDEX IF NOT EXISTS home_section_items_order_idx
+                ON home_section_items(server_id, section_kind, position);
             CREATE INDEX IF NOT EXISTS album_genres_server_genre_idx
                 ON album_genres(server_id, genre_name, album_id);
             CREATE INDEX IF NOT EXISTS track_genres_server_genre_idx
@@ -1082,7 +1094,84 @@ impl Store {
         })
     }
 
+    pub fn upsert_home_sections(
+        &self,
+        server_id: &ServerId,
+        sections: &[HomeSection],
+        generation: i64,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            connection.execute(
+                "DELETE FROM home_section_items WHERE server_id = ?1",
+                params![server_id.as_str()],
+            )?;
+            let mut insert_item = connection.prepare(
+                "
+                INSERT INTO home_section_items (
+                    server_id, section_kind, item_type, item_id, position, sync_generation
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(server_id, section_kind, item_type, item_id) DO UPDATE SET
+                    position = excluded.position,
+                    sync_generation = excluded.sync_generation
+                ",
+            )?;
+
+            for section in sections {
+                let section_kind = home_section_kind_key(section.kind);
+                for (position, album) in section.albums.iter().enumerate() {
+                    insert_item.execute(params![
+                        server_id.as_str(),
+                        section_kind,
+                        "album",
+                        album.id.as_str(),
+                        position as i64,
+                        generation,
+                    ])?;
+                }
+                for (position, track) in section.tracks.iter().enumerate() {
+                    insert_item.execute(params![
+                        server_id.as_str(),
+                        section_kind,
+                        "track",
+                        track.id.as_str(),
+                        position as i64,
+                        generation,
+                    ])?;
+                }
+            }
+            Ok(())
+        })
+    }
+
     pub fn load_home_sections(&self, server_id: &ServerId) -> StoreResult<Vec<HomeSection>> {
+        let has_cached_home = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM home_section_items WHERE server_id = ?1)",
+            params![server_id.as_str()],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !has_cached_home {
+            return self.load_legacy_home_sections(server_id);
+        }
+
+        let sections = home_section_kinds()
+            .into_iter()
+            .map(|kind| {
+                Ok(HomeSection {
+                    kind,
+                    albums: self.load_home_section_albums(server_id, kind)?,
+                    tracks: self.load_home_section_tracks(server_id, kind)?,
+                })
+            })
+            .collect::<StoreResult<Vec<_>>>()?;
+
+        Ok(sections
+            .into_iter()
+            .filter(|section| !section.albums.is_empty() || !section.tracks.is_empty())
+            .collect())
+    }
+
+    fn load_legacy_home_sections(&self, server_id: &ServerId) -> StoreResult<Vec<HomeSection>> {
         let sections = [
             (HomeSectionKind::Explore, 0_usize),
             (HomeSectionKind::MostPlayed, 6),
@@ -1092,10 +1181,11 @@ impl Store {
         ]
         .into_iter()
         .map(|(kind, offset)| {
-            self.load_albums(server_id, offset, HOME_SECTION_ALBUM_LIMIT)
+            self.load_albums(server_id, offset, HOME_SECTION_ITEM_LIMIT)
                 .map(|response| HomeSection {
                     kind,
                     albums: response.items,
+                    tracks: Vec::new(),
                 })
         })
         .collect::<StoreResult<Vec<_>>>()?;
@@ -1104,6 +1194,61 @@ impl Store {
             .into_iter()
             .filter(|section| !section.albums.is_empty())
             .collect())
+    }
+
+    fn load_home_section_albums(
+        &self,
+        server_id: &ServerId,
+        kind: HomeSectionKind,
+    ) -> StoreResult<Vec<Album>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT a.album_id, a.title, a.artist, a.artist_id, a.year, a.track_count,
+                   a.duration_seconds, a.favorite, a.color_seed, a.image_item_id, a.image_tag
+            FROM home_section_items h
+            JOIN albums a
+              ON a.server_id = h.server_id
+             AND a.album_id = h.item_id
+            WHERE h.server_id = ?1
+              AND h.section_kind = ?2
+              AND h.item_type = 'album'
+            ORDER BY h.position
+            ",
+        )?;
+        let mut albums = collect_rows(statement.query_map(
+            params![server_id.as_str(), home_section_kind_key(kind)],
+            album_from_row,
+        )?)?;
+        self.attach_album_genres(server_id, &mut albums)?;
+        Ok(albums)
+    }
+
+    fn load_home_section_tracks(
+        &self,
+        server_id: &ServerId,
+        kind: HomeSectionKind,
+    ) -> StoreResult<Vec<Track>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                   t.duration_seconds, t.favorite, t.disc_number, t.track_number,
+                   t.image_item_id, t.image_tag
+            FROM home_section_items h
+            JOIN tracks t
+              ON t.server_id = h.server_id
+             AND t.track_id = h.item_id
+            WHERE h.server_id = ?1
+              AND h.section_kind = ?2
+              AND h.item_type = 'track'
+            ORDER BY h.position
+            ",
+        )?;
+        let mut tracks = collect_rows(statement.query_map(
+            params![server_id.as_str(), home_section_kind_key(kind)],
+            track_from_row,
+        )?)?;
+        self.attach_track_genres(server_id, &mut tracks)?;
+        Ok(tracks)
     }
 
     pub fn load_albums(
@@ -2043,6 +2188,7 @@ impl Store {
                 "track_genres",
                 "playlists",
                 "playlist_tracks",
+                "home_section_items",
             ] {
                 let sql =
                     format!("DELETE FROM {table} WHERE server_id = ?1 AND sync_generation < ?2");
@@ -2467,6 +2613,7 @@ fn clear_library_cache_on_connection(
     server_id: &ServerId,
 ) -> StoreResult<()> {
     for table in [
+        "home_section_items",
         "playlist_tracks",
         "playlists",
         "genres",
@@ -2487,6 +2634,26 @@ fn clear_library_cache_on_connection(
         params![server_id.as_str()],
     )?;
     Ok(())
+}
+
+fn home_section_kinds() -> [HomeSectionKind; 5] {
+    [
+        HomeSectionKind::Explore,
+        HomeSectionKind::MostPlayed,
+        HomeSectionKind::NewlyAdded,
+        HomeSectionKind::RecentlyPlayed,
+        HomeSectionKind::RecentlyReleased,
+    ]
+}
+
+fn home_section_kind_key(kind: HomeSectionKind) -> &'static str {
+    match kind {
+        HomeSectionKind::Explore => "explore",
+        HomeSectionKind::MostPlayed => "most_played",
+        HomeSectionKind::NewlyAdded => "newly_added",
+        HomeSectionKind::RecentlyPlayed => "recently_played",
+        HomeSectionKind::RecentlyReleased => "recently_released",
+    }
 }
 
 fn fts_query(query: &str) -> Option<String> {
@@ -2532,8 +2699,9 @@ mod tests {
 
     use super::{CoverCacheEntry, SavedServer, Store, image_cache_key, lyrics_cache_key};
     use rufin_core::{
-        Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, ImageRef, Playlist,
-        PlaylistId, QueueEngine, ServerId, ServerIdentity, ThemePreference, Track, TrackId,
+        Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection,
+        HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEngine, ServerId, ServerIdentity,
+        ThemePreference, Track, TrackId,
     };
     use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
 
@@ -2541,7 +2709,7 @@ mod tests {
     fn migrations_run_from_empty_database() {
         let store = Store::open_memory().expect("open store");
 
-        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert_eq!(store.schema_version().expect("schema version"), 5);
         assert!(store.foreign_keys_enabled().expect("foreign keys"));
         assert!(store.fts5_available().expect("fts5 table"));
     }
@@ -2681,7 +2849,7 @@ mod tests {
         store.migrate().expect("migrate");
 
         let server_id = ServerId::new("jellyfin:server:test");
-        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert_eq!(store.schema_version().expect("schema version"), 5);
         for table in [
             "albums",
             "tracks",
@@ -2818,7 +2986,7 @@ mod tests {
         store.configure_pragmas(true).expect("configure pragmas");
         store.migrate().expect("migrate");
 
-        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert_eq!(store.schema_version().expect("schema version"), 5);
         assert!(table_has_column(&store, "playlist_tracks", "entry_id"));
         assert!(table_has_column(&store, "lyrics_cache", "value"));
         let entry_id: String = store
@@ -3739,6 +3907,63 @@ mod tests {
             .load_albums(&saved.server.id, 0, 10)
             .expect("load albums");
         assert_eq!(albums.total, 1);
+    }
+
+    #[test]
+    fn home_sections_preserve_synced_album_and_track_order() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album_one = album(1);
+        let album_two = album(2);
+        let track_one = track(1, &album_one);
+        let track_two = track(2, &album_two);
+
+        store
+            .upsert_albums(
+                &saved.server.id,
+                &[album_one.clone(), album_two.clone()],
+                generation,
+            )
+            .expect("upsert albums");
+        store
+            .upsert_tracks(
+                &saved.server.id,
+                &[track_one.clone(), track_two.clone()],
+                generation,
+            )
+            .expect("upsert tracks");
+        store
+            .upsert_home_sections(
+                &saved.server.id,
+                &[
+                    HomeSection {
+                        kind: HomeSectionKind::Explore,
+                        albums: vec![album_two.clone(), album_one.clone()],
+                        tracks: Vec::new(),
+                    },
+                    HomeSection {
+                        kind: HomeSectionKind::MostPlayed,
+                        albums: Vec::new(),
+                        tracks: vec![track_two.clone(), track_one.clone()],
+                    },
+                ],
+                generation,
+            )
+            .expect("upsert home sections");
+
+        let sections = store
+            .load_home_sections(&saved.server.id)
+            .expect("load home sections");
+
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].kind, HomeSectionKind::Explore);
+        assert_eq!(sections[0].albums[0].id, album_two.id);
+        assert_eq!(sections[0].albums[1].id, album_one.id);
+        assert_eq!(sections[1].kind, HomeSectionKind::MostPlayed);
+        assert_eq!(sections[1].tracks[0].id, track_two.id);
+        assert_eq!(sections[1].tracks[1].id, track_one.id);
     }
 
     #[test]

@@ -155,7 +155,7 @@ pub enum HomeSectionKind {
     RecentlyReleased,
 }
 
-pub const HOME_SECTION_ALBUM_LIMIT: usize = 24;
+pub const HOME_SECTION_ITEM_LIMIT: usize = 24;
 
 impl HomeSectionKind {
     pub fn title(self) -> &'static str {
@@ -172,7 +172,10 @@ impl HomeSectionKind {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HomeSection {
     pub kind: HomeSectionKind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub albums: Vec<Album>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tracks: Vec<Track>,
 }
 
 pub fn format_duration(seconds: u32) -> String {

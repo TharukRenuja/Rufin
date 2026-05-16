@@ -2197,6 +2197,7 @@ async fn sync_provider(
     sync_artist_pages(store, server_id, provider, generation, true).await?;
     sync_genre_pages(store, server_id, provider, generation).await?;
     sync_playlist_pages(store, server_id, provider, generation).await?;
+    sync_home_sections(store, server_id, provider, generation).await?;
     store.with_store(|store| store.refresh_library_counts(server_id))?;
     store.with_store(|store| store.complete_sync(server_id, generation))?;
     info!(generation, "completed Jellyfin cache sync");
@@ -2331,6 +2332,30 @@ async fn sync_playlist_pages(
     }
 }
 
+async fn sync_home_sections(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &impl MusicProvider,
+    generation: i64,
+) -> Result<(), String> {
+    let sections = provider
+        .home_sections()
+        .await
+        .map_err(|error| error.to_string())?;
+    for section in &sections {
+        if !section.albums.is_empty() {
+            store
+                .with_store(|store| store.upsert_albums(server_id, &section.albums, generation))?;
+        }
+        if !section.tracks.is_empty() {
+            store
+                .with_store(|store| store.upsert_tracks(server_id, &section.tracks, generation))?;
+        }
+    }
+    store.with_store(|store| store.upsert_home_sections(server_id, &sections, generation))?;
+    Ok(())
+}
+
 fn sync_page_finished(item_count: usize, total: usize, offset: usize) -> bool {
     item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < PAGE_SIZE)
 }
@@ -2452,6 +2477,10 @@ fn seed_fake_cache(store: &StoreHandle, scale: FakeScale) -> Result<(), String> 
             .playlists(PagedRequest::new(0, PAGE_SIZE))
             .await
             .map_err(|error| error.to_string())?;
+        let home_sections = provider
+            .home_sections()
+            .await
+            .map_err(|error| error.to_string())?;
 
         store.with_store(|store| {
             store.upsert_albums(&server.id, &albums.items, generation)?;
@@ -2461,6 +2490,7 @@ fn seed_fake_cache(store: &StoreHandle, scale: FakeScale) -> Result<(), String> 
             store.refresh_library_counts(&server.id)?;
             store.upsert_genres(&server.id, &genres.items, generation)?;
             store.upsert_playlists(&server.id, &playlists.items, generation)?;
+            store.upsert_home_sections(&server.id, &home_sections, generation)?;
             store.complete_sync(&server.id, generation)?;
             Ok(())
         })

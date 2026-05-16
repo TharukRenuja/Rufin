@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ALBUM_LIMIT, HomeSection,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
     HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
@@ -84,26 +84,37 @@ impl MusicProvider for FakeProvider {
     }
 
     async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
-        let sections = [
-            (HomeSectionKind::Explore, 0_usize),
-            (HomeSectionKind::MostPlayed, 6),
-            (HomeSectionKind::NewlyAdded, 12),
-            (HomeSectionKind::RecentlyPlayed, 18),
-            (HomeSectionKind::RecentlyReleased, 24),
-        ]
-        .into_iter()
-        .map(|(kind, offset)| HomeSection {
+        let album_section = |kind, offset| HomeSection {
             kind,
             albums: self
                 .library
                 .albums
                 .iter()
                 .skip(offset)
-                .take(HOME_SECTION_ALBUM_LIMIT)
+                .take(HOME_SECTION_ITEM_LIMIT)
                 .cloned()
                 .collect(),
-        })
-        .collect();
+            tracks: Vec::new(),
+        };
+        let track_section = |kind, offset| HomeSection {
+            kind,
+            albums: Vec::new(),
+            tracks: self
+                .library
+                .tracks
+                .iter()
+                .skip(offset)
+                .take(HOME_SECTION_ITEM_LIMIT)
+                .cloned()
+                .collect(),
+        };
+        let sections = vec![
+            album_section(HomeSectionKind::Explore, 0),
+            track_section(HomeSectionKind::MostPlayed, 0),
+            album_section(HomeSectionKind::NewlyAdded, 24),
+            track_section(HomeSectionKind::RecentlyPlayed, 24),
+            album_section(HomeSectionKind::RecentlyReleased, 48),
+        ];
 
         Ok(sections)
     }
@@ -501,7 +512,7 @@ const PLAYLISTS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use futures_executor::block_on;
-    use rufin_core::{AlbumId, HOME_SECTION_ALBUM_LIMIT};
+    use rufin_core::{AlbumId, HOME_SECTION_ITEM_LIMIT};
     use rufin_provider::{MusicProvider, PagedRequest, ProviderError};
 
     use super::{FakeProvider, FakeScale};
@@ -535,11 +546,11 @@ mod tests {
         let sections = block_on(provider.home_sections()).expect("home sections");
 
         assert_eq!(sections.len(), 5);
-        assert!(
-            sections
-                .iter()
-                .all(|section| section.albums.len() == HOME_SECTION_ALBUM_LIMIT)
-        );
+        assert_eq!(sections[0].albums.len(), HOME_SECTION_ITEM_LIMIT);
+        assert_eq!(sections[1].tracks.len(), HOME_SECTION_ITEM_LIMIT);
+        assert_eq!(sections[2].albums.len(), HOME_SECTION_ITEM_LIMIT);
+        assert_eq!(sections[3].tracks.len(), HOME_SECTION_ITEM_LIMIT);
+        assert_eq!(sections[4].albums.len(), HOME_SECTION_ITEM_LIMIT);
     }
 
     #[test]

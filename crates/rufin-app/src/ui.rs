@@ -1418,7 +1418,7 @@ impl Shell {
         content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
 
         for section in &self.state.library.borrow().home_sections {
-            content.append(&self.home_album_section(section));
+            content.append(&self.home_section(section));
         }
 
         if self.state.library.borrow().home_sections.is_empty() {
@@ -1430,6 +1430,14 @@ impl Shell {
 
         scroller.set_child(Some(&content));
         scroller.upcast()
+    }
+
+    fn home_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
+        if !section_data.tracks.is_empty() {
+            self.home_track_section(section_data)
+        } else {
+            self.home_album_section(section_data)
+        }
     }
 
     fn home_album_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
@@ -1485,6 +1493,62 @@ impl Shell {
         });
 
         render_home_album_page(self, &row, &previous, &next, section_kind, &albums);
+        section.upcast()
+    }
+
+    fn home_track_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
+        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        section.set_hexpand(true);
+        let section_kind = section_data.kind;
+        let tracks = section_data.tracks.clone();
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
+        heading.add_css_class("section-heading");
+        heading.set_xalign(0.0);
+        heading.set_hexpand(true);
+        header.append(&heading);
+
+        let previous = icon_button("go-previous-symbolic", "Previous page");
+        let next = icon_button("go-next-symbolic", "Next page");
+        header.append(&previous);
+        header.append(&next);
+        section.append(&header);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
+        row.add_css_class("album-strip");
+        row.set_hexpand(true);
+        section.append(&row);
+
+        let shell = Rc::clone(self);
+        previous.connect_clicked(move |_| {
+            let mut states = shell.state.home_section_state.borrow_mut();
+            let state = states.entry(section_kind).or_insert(HomeSectionState {
+                page_start: 0,
+                page_size: 2,
+            });
+            state.page_start = state.page_start.saturating_sub(state.page_size);
+            drop(states);
+            shell.render_current_route();
+        });
+
+        let shell = Rc::clone(self);
+        let tracks_for_next = tracks.clone();
+        next.connect_clicked(move |_| {
+            let mut states = shell.state.home_section_state.borrow_mut();
+            let state = states.entry(section_kind).or_insert(HomeSectionState {
+                page_start: 0,
+                page_size: 2,
+            });
+            let next_page = state.page_start.saturating_add(state.page_size);
+            if next_page < tracks_for_next.len() {
+                state.page_start = next_page;
+            }
+            drop(states);
+            shell.render_current_route();
+        });
+
+        render_home_track_page(self, &row, &previous, &next, section_kind, &tracks);
         section.upcast()
     }
 
@@ -2492,6 +2556,7 @@ impl Shell {
             let section = HomeSection {
                 kind: rufin_core::HomeSectionKind::Explore,
                 albums,
+                tracks: Vec::new(),
             };
             wrapper.append(&self.home_album_section(&section));
         }
@@ -4477,6 +4542,60 @@ fn render_home_album_page(
     }
 }
 
+fn render_home_track_page(
+    shell: &Rc<Shell>,
+    row: &gtk::Box,
+    previous: &gtk::Button,
+    next: &gtk::Button,
+    section_kind: HomeSectionKind,
+    tracks: &[Track],
+) {
+    while let Some(child) = row.first_child() {
+        row.remove(&child);
+    }
+
+    if tracks.is_empty() {
+        previous.set_sensitive(false);
+        next.set_sensitive(false);
+        return;
+    }
+
+    let width = home_album_content_width(shell);
+    let page_start = {
+        let mut states = shell.state.home_section_state.borrow_mut();
+        let existing_page_size = states.get(&section_kind).map(|state| state.page_size);
+        let page_size = home_album_page_size(width, existing_page_size);
+        let state = states.entry(section_kind).or_insert(HomeSectionState {
+            page_start: 0,
+            page_size,
+        });
+        if state.page_size != page_size {
+            state.page_start -= state.page_start % page_size.max(1);
+            state.page_size = page_size;
+        }
+        state.page_start = clamp_home_album_page_start(state.page_start, page_size, tracks.len());
+        state.page_start
+    };
+    let page_size = {
+        shell
+            .state
+            .home_section_state
+            .borrow()
+            .get(&section_kind)
+            .map(|state| state.page_size)
+            .unwrap_or_else(|| home_album_page_size(width, None))
+    };
+    let card_size = home_album_card_size(width, page_size);
+    let page_end = page_start.saturating_add(page_size).min(tracks.len());
+
+    previous.set_sensitive(page_start > 0);
+    next.set_sensitive(page_end < tracks.len());
+
+    for track in &tracks[page_start..page_end] {
+        row.append(&track_card_widget_with_size(shell, track, card_size));
+    }
+}
+
 fn album_card_widget_with_size(
     shell: &Rc<Shell>,
     album: &Album,
@@ -4639,6 +4758,58 @@ fn album_cover_tile(
     overlay.add_controller(motion);
 
     overlay.upcast()
+}
+
+fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, HOME_ALBUM_CARD_LABEL_GAP);
+    card.add_css_class("album-card");
+    card.set_width_request(size);
+    card.set_size_request(size, home_album_card_height(size));
+    card.set_hexpand(false);
+    card.set_halign(gtk::Align::Start);
+
+    let play = gtk::Button::new();
+    play.add_css_class("album-cover-button");
+    play.add_css_class("flat");
+    play.set_width_request(size);
+    play.set_height_request(size);
+    play.set_size_request(size, size);
+    play.set_hexpand(false);
+    play.set_halign(gtk::Align::Start);
+    play.set_child(Some(&shell.cover_tile_for(
+        track.image_ref.as_ref(),
+        stable_seed(track.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    )));
+    let controller = shell.controller.clone();
+    let track_for_play = track.clone();
+    play.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
+    card.append(&play);
+
+    let title = gtk::Label::new(Some(&track.title));
+    title.add_css_class("album-title");
+    title.set_xalign(0.0);
+    constrain_wrapped_card_label(&title, size, HOME_ALBUM_TITLE_LINES);
+    let title_clip = clipped_card_label_with_lines(&title, size, HOME_ALBUM_TITLE_LINES);
+    add_link_hover(&title_clip, &title, &track.title);
+
+    let artist = gtk::Label::new(Some(&track.artist));
+    artist.add_css_class("muted");
+    artist.set_xalign(0.0);
+    constrain_single_line_card_label(&artist, size);
+    let artist_clip = clipped_card_label_with_lines(&artist, size, 1);
+
+    let album = gtk::Label::new(Some(&track.album));
+    album.add_css_class("muted");
+    album.set_xalign(0.0);
+    constrain_single_line_card_label(&album, size);
+    let album_clip = clipped_card_label_with_lines(&album, size, 1);
+
+    card.append(&title_clip);
+    card.append(&artist_clip);
+    card.append(&album_clip);
+    card.upcast()
 }
 
 fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widget {

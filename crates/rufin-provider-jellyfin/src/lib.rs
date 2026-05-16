@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ALBUM_LIMIT, HomeSection,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
     HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
@@ -138,6 +138,17 @@ impl JellyfinProvider {
         include_types: &str,
         request: PagedRequest,
     ) -> ProviderResult<PagedResponse<JellyfinItem>> {
+        self.item_page_sorted(include_types, request, "SortName", "Ascending")
+            .await
+    }
+
+    async fn item_page_sorted(
+        &self,
+        include_types: &str,
+        request: PagedRequest,
+        sort_by: &str,
+        sort_order: &str,
+    ) -> ProviderResult<PagedResponse<JellyfinItem>> {
         let mut url = endpoint(&self.base_url, "Items")?;
         url.query_pairs_mut()
             .append_pair("UserId", &self.user_id)
@@ -146,13 +157,56 @@ impl JellyfinProvider {
             .append_pair("StartIndex", &request.offset.to_string())
             .append_pair("Limit", &request.limit.to_string())
             .append_pair("Fields", "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount")
-            .append_pair("SortBy", "SortName");
+            .append_pair("SortBy", sort_by)
+            .append_pair("SortOrder", sort_order);
 
         let response = self.get_json::<ItemQueryResult>(url).await?;
         Ok(PagedResponse::new(
             response.items,
             response.total_record_count.unwrap_or(0),
         ))
+    }
+
+    async fn home_album_section(
+        &self,
+        kind: HomeSectionKind,
+        sort_by: &str,
+        sort_order: &str,
+    ) -> ProviderResult<HomeSection> {
+        let page = self
+            .item_page_sorted(
+                "MusicAlbum",
+                PagedRequest::new(0, HOME_SECTION_ITEM_LIMIT),
+                sort_by,
+                sort_order,
+            )
+            .await?;
+        Ok(HomeSection {
+            kind,
+            albums: page.items.into_iter().map(album_from_item).collect(),
+            tracks: Vec::new(),
+        })
+    }
+
+    async fn home_track_section(
+        &self,
+        kind: HomeSectionKind,
+        sort_by: &str,
+        sort_order: &str,
+    ) -> ProviderResult<HomeSection> {
+        let page = self
+            .item_page_sorted(
+                "Audio",
+                PagedRequest::new(0, HOME_SECTION_ITEM_LIMIT),
+                sort_by,
+                sort_order,
+            )
+            .await?;
+        Ok(HomeSection {
+            kind,
+            albums: Vec::new(),
+            tracks: page.items.into_iter().map(track_from_item).collect(),
+        })
     }
 
     async fn people_page(
@@ -242,28 +296,36 @@ impl MusicProvider for JellyfinProvider {
     }
 
     async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
-        let albums = self
-            .albums(PagedRequest::new(0, HOME_SECTION_ALBUM_LIMIT + 24))
-            .await?
-            .items;
         let sections = [
-            (HomeSectionKind::Explore, 0_usize),
-            (HomeSectionKind::MostPlayed, 6),
-            (HomeSectionKind::NewlyAdded, 12),
-            (HomeSectionKind::RecentlyPlayed, 18),
-            (HomeSectionKind::RecentlyReleased, 24),
+            self.home_album_section(HomeSectionKind::Explore, "Random,SortName", "Ascending")
+                .await?,
+            self.home_track_section(
+                HomeSectionKind::MostPlayed,
+                "PlayCount,SortName",
+                "Descending",
+            )
+            .await?,
+            self.home_album_section(
+                HomeSectionKind::NewlyAdded,
+                "DateCreated,SortName",
+                "Descending",
+            )
+            .await?,
+            self.home_track_section(
+                HomeSectionKind::RecentlyPlayed,
+                "DatePlayed,SortName",
+                "Descending",
+            )
+            .await?,
+            self.home_album_section(
+                HomeSectionKind::RecentlyReleased,
+                "ProductionYear,PremiereDate,SortName",
+                "Descending",
+            )
+            .await?,
         ]
         .into_iter()
-        .map(|(kind, offset)| HomeSection {
-            kind,
-            albums: albums
-                .iter()
-                .skip(offset)
-                .take(HOME_SECTION_ALBUM_LIMIT)
-                .cloned()
-                .collect(),
-        })
-        .filter(|section| !section.albums.is_empty())
+        .filter(|section| !section.albums.is_empty() || !section.tracks.is_empty())
         .collect();
         Ok(sections)
     }

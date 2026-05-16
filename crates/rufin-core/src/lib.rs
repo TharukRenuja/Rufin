@@ -4,7 +4,7 @@ pub mod route;
 pub mod settings;
 
 pub use domain::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ALBUM_LIMIT, HomeSection,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
     HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
     format_duration,
 };
