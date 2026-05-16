@@ -769,6 +769,7 @@ impl Store {
                 .optional()?
                 .unwrap_or(0);
             repair_linked_artists(connection, server_id, generation)?;
+            repair_linked_genres(connection, server_id, generation)?;
             connection.execute(
                 "
                 UPDATE albums
@@ -1248,12 +1249,24 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Genre>> {
-        let total = self.count("genres", server_id)?;
+        let total = self.count_linked_genres(server_id)?;
         let mut statement = self.connection.prepare(
             "
             SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
-            FROM genres
-            WHERE server_id = ?1
+            FROM genres g
+            WHERE g.server_id = ?1
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM track_genres tg
+                      WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                  )
+              )
             ORDER BY name COLLATE NOCASE
             LIMIT ?2 OFFSET ?3
             ",
@@ -1263,6 +1276,34 @@ impl Store {
             genre_from_row,
         )?)?;
         Ok(PagedResponse::new(items, total))
+    }
+
+    fn count_linked_genres(&self, server_id: &ServerId) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM genres g
+                WHERE g.server_id = ?1
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM album_genres ag
+                          WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM track_genres tg
+                          WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                      )
+                  )
+                ",
+                params![server_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(u32_from_i64)
+            .map(|count| count as usize)
+            .map_err(StoreError::from)
     }
 
     pub fn load_playlists(
@@ -2100,6 +2141,53 @@ fn repair_linked_artists(
     Ok(())
 }
 
+fn repair_linked_genres(
+    connection: &Connection,
+    server_id: &ServerId,
+    generation: i64,
+) -> StoreResult<()> {
+    let mut statement = connection.prepare(
+        "
+        SELECT genre_name
+        FROM (
+            SELECT genre_name
+            FROM album_genres
+            WHERE server_id = ?1
+            UNION
+            SELECT genre_name
+            FROM track_genres
+            WHERE server_id = ?1
+        ) linked
+        WHERE TRIM(linked.genre_name) != ''
+          AND NOT EXISTS (
+              SELECT 1
+              FROM genres g
+              WHERE g.server_id = ?1 AND g.name = linked.genre_name
+          )
+        ORDER BY linked.genre_name COLLATE NOCASE
+        ",
+    )?;
+    let genre_names = collect_rows(
+        statement.query_map(params![server_id.as_str()], |row| row.get::<_, String>(0))?,
+    )?;
+    let mut insert = connection.prepare(
+        "
+        INSERT INTO genres (
+            server_id, genre_id, name, album_count, track_count, sync_generation
+        )
+        VALUES (?1, ?2, ?3, 0, 0, ?4)
+        ON CONFLICT(server_id, genre_id) DO UPDATE SET
+            name = excluded.name,
+            sync_generation = excluded.sync_generation
+        ",
+    )?;
+    for name in genre_names {
+        let genre_id = format!("linked:genre:{:08x}", stable_seed(&name));
+        insert.execute(params![server_id.as_str(), genre_id, name, generation])?;
+    }
+    Ok(())
+}
+
 fn refresh_artist_fts(
     connection: &Connection,
     server_id: &ServerId,
@@ -2475,10 +2563,11 @@ mod tests {
         let saved = saved_server();
         store.save_server(&saved).expect("save server");
         let generation = store.begin_sync(&saved.server.id).expect("begin sync");
-        let album = album_with_image(1);
-        let track = track(1, &album);
         let artist = artist(1, Some(image_ref("artist-one", "artist-tag")));
         let genre = genre(1, Some(image_ref("genre-one", "genre-tag")));
+        let mut album = album_with_image(1);
+        album.genres = vec![genre.name.clone()];
+        let track = track(1, &album);
         let playlist = playlist(1, Some(image_ref("playlist-one", "playlist-tag")));
 
         store
@@ -2660,6 +2749,68 @@ mod tests {
         assert_eq!(detail.genre, genre);
         assert_eq!(detail.albums, vec![album]);
         assert_eq!(detail.tracks, vec![track]);
+    }
+
+    #[test]
+    fn genre_list_only_returns_music_linked_genres() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(1);
+        album.genres = vec!["Dream Pop".to_string()];
+        let mut movie_genre = genre(2, None);
+        movie_genre.name = "Science Fiction".to_string();
+        let mut music_genre = genre(3, None);
+        music_genre.name = "Dream Pop".to_string();
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_genres(
+                &saved.server.id,
+                &[movie_genre, music_genre.clone()],
+                generation,
+            )
+            .expect("upsert genres");
+
+        let genres = store
+            .load_genres(&saved.server.id, 0, 20)
+            .expect("load genres");
+
+        assert_eq!(genres.total, 1);
+        assert_eq!(genres.items, vec![music_genre]);
+    }
+
+    #[test]
+    fn refresh_library_counts_repairs_missing_linked_genre_rows() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(1);
+        album.genres = vec!["Dream Pop".to_string()];
+        let track = track(1, &album);
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .refresh_library_counts(&saved.server.id)
+            .expect("refresh counts");
+
+        let genres = store
+            .load_genres(&saved.server.id, 0, 20)
+            .expect("load genres");
+
+        assert_eq!(genres.total, 1);
+        assert_eq!(genres.items[0].name, "Dream Pop");
+        assert_eq!(genres.items[0].album_count, 1);
+        assert_eq!(genres.items[0].track_count, 1);
     }
 
     #[test]

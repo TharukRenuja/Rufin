@@ -176,6 +176,29 @@ impl JellyfinProvider {
         ))
     }
 
+    async fn music_genre_page(
+        &self,
+        request: PagedRequest,
+    ) -> ProviderResult<PagedResponse<JellyfinItem>> {
+        let mut url = endpoint(&self.base_url, "MusicGenres")?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("StartIndex", &request.offset.to_string())
+            .append_pair("Limit", &request.limit.to_string())
+            .append_pair("IncludeItemTypes", "Audio,MusicAlbum")
+            .append_pair(
+                "Fields",
+                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags",
+            )
+            .append_pair("SortBy", "SortName");
+
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        Ok(PagedResponse::new(
+            response.items,
+            response.total_record_count.unwrap_or(0),
+        ))
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, url: Url) -> ProviderResult<T> {
         let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
         send_json(self.client.get(url).header(
@@ -275,7 +298,7 @@ impl MusicProvider for JellyfinProvider {
     }
 
     async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>> {
-        let response = self.people_page("Genres", request).await?;
+        let response = self.music_genre_page(request).await?;
         Ok(PagedResponse::new(
             response.items.into_iter().map(genre_from_item).collect(),
             response.total,
@@ -1132,6 +1155,51 @@ mod tests {
         assert_eq!(artists.items[0].album_count, 4);
         assert_eq!(artists.items[0].track_count, 30);
         assert!(artists.items[0].favorite);
+    }
+
+    #[tokio::test]
+    async fn genres_use_music_genres_endpoint_and_scope_to_music_items() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/MusicGenres"))
+            .and(query_param("IncludeItemTypes", "Audio,MusicAlbum"))
+            .and(query_param("StartIndex", "3"))
+            .and(query_param("Limit", "7"))
+            .and(header_regex("authorization", "Token=\"token-one\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "TotalRecordCount": 1,
+                "Items": [{
+                    "Id": "genre-one",
+                    "Name": "Dream Pop",
+                    "Type": "MusicGenre",
+                    "ItemCounts": {
+                        "AlbumCount": 4,
+                        "SongCount": 31
+                    },
+                    "ImageTags": { "Primary": "genre-tag" }
+                }]
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let genres = provider
+            .genres(PagedRequest::new(3, 7))
+            .await
+            .expect("genres");
+
+        assert_eq!(genres.total, 1);
+        assert_eq!(genres.items[0].id.as_str(), "jellyfin:genre:genre-one");
+        assert_eq!(genres.items[0].name, "Dream Pop");
+        assert_eq!(genres.items[0].album_count, 4);
+        assert_eq!(genres.items[0].track_count, 31);
+        assert_eq!(
+            genres.items[0].image_ref,
+            Some(ImageRef {
+                item_id: "jellyfin:genre:genre-one".to_string(),
+                tag: Some("genre-tag".to_string()),
+            })
+        );
     }
 
     #[tokio::test]
