@@ -53,9 +53,10 @@ const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 400;
 const BOTTOM_PLAYER_TRANSPORT_OFFSET: i32 = 80;
 const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 300;
 const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 40;
+const BOTTOM_PLAYER_BUTTON_SIZE: i32 = 36;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 44.0;
 const BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP: i32 = 6;
-const RIGHT_PANEL_FADE_MS: u64 = 160;
+const RIGHT_PANEL_ANIMATION_MS: u64 = 180;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -97,6 +98,7 @@ struct AppState {
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
     right_panel_visible: Cell<bool>,
+    right_panel_animating: Cell<bool>,
     right_panel_animation_generation: Cell<u64>,
     split_width: Cell<i32>,
     split_position: Cell<i32>,
@@ -292,7 +294,8 @@ struct PlayerControls {
     shuffle_button: gtk::Button,
     repeat_button: gtk::Button,
     queue_button: gtk::Button,
-    queue_icon: gtk::Image,
+    queue_icon: gtk::DrawingArea,
+    queue_icon_open: Rc<Cell<bool>>,
     favorite_button: gtk::Button,
     elapsed: gtk::Label,
     progress: gtk::Scale,
@@ -337,6 +340,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
         right_panel_visible: Cell::new(true),
+        right_panel_animating: Cell::new(false),
         right_panel_animation_generation: Cell::new(0),
         split_width: Cell::new(0),
         split_position: Cell::new(0),
@@ -980,8 +984,27 @@ impl Shell {
         }
 
         let previous_width = self.state.split_width.replace(split_width);
-        let current_position = self.content_split.position();
-        let default_position = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
+        let current_position = self.content_split.position().clamp(0, split_width);
+        let width_changed = previous_width != split_width;
+
+        if self.state.right_panel_animating.get() {
+            return width_changed;
+        }
+
+        if !self.state.right_panel_visible.get() {
+            let position_changed = current_position != split_width;
+            if position_changed {
+                debug!(
+                    split_width,
+                    position = split_width,
+                    "collapse content split"
+                );
+                self.content_split.set_position(split_width);
+            }
+            return width_changed || position_changed;
+        }
+
+        let default_position = default_content_split_position(split_width);
         let target_position =
             if previous_width > 1 && previous_width != split_width && current_position > 1 {
                 current_position * split_width / previous_width
@@ -998,7 +1021,30 @@ impl Shell {
             self.content_split.set_position(position);
         }
 
-        previous_width != split_width || position_changed
+        width_changed || position_changed
+    }
+
+    fn remember_right_panel_open_position(&self) {
+        let split_width = self.content_split.width();
+        if split_width <= 1 {
+            return;
+        }
+        let current_position = self.content_split.position();
+        if current_position <= 1 || current_position >= split_width {
+            return;
+        }
+        let position = clamp_content_split_position(split_width, current_position);
+        self.state.split_position.set(position);
+    }
+
+    fn right_panel_open_position(&self, split_width: i32) -> i32 {
+        let stored = self.state.split_position.get();
+        let target = if stored > 1 && stored < split_width {
+            stored
+        } else {
+            default_content_split_position(split_width)
+        };
+        clamp_content_split_position(split_width, target)
     }
 
     fn queue_responsive_route_render(self: &Rc<Self>) {
@@ -2979,6 +3025,10 @@ impl Shell {
     }
 
     fn set_right_panel_visible(self: &Rc<Self>, visible: bool) {
+        if !visible {
+            self.remember_right_panel_open_position();
+        }
+
         if self.state.right_panel_visible.replace(visible) == visible {
             self.update_right_panel_button();
             return;
@@ -2996,13 +3046,11 @@ impl Shell {
 
     fn update_right_panel_button(&self) {
         let visible = self.state.right_panel_visible.get();
-        self.player_controls
-            .queue_icon
-            .set_icon_name(Some("sidebar-show-right-symbolic"));
+        self.player_controls.queue_icon_open.set(visible);
+        self.player_controls.queue_icon.queue_draw();
         self.player_controls
             .queue_button
             .set_tooltip_text(Some(&tr(if visible { "Hide queue" } else { "Show queue" })));
-        set_active_class(&self.player_controls.queue_button, visible);
     }
 
     fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {
@@ -3938,44 +3986,61 @@ fn build_bottom_player() -> PlayerControls {
     let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
     play_button.add_css_class("player-transport-button");
     play_button.add_css_class("player-play-button");
+    play_icon.set_halign(gtk::Align::Center);
+    play_icon.set_valign(gtk::Align::Center);
+    play_icon.set_pixel_size(17);
     let next_button = skip_icon_button(true, "Next");
     next_button.add_css_class("player-transport-button");
     let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
+    shuffle_button.add_css_class("player-transport-button");
     let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
+    repeat_button.add_css_class("player-transport-button");
     let dj_button = icon_button("media-optical-cd-audio-symbolic", "Auto DJ");
+    dj_button.add_css_class("player-transport-button");
+    for button in [
+        &stop_button,
+        &previous_button,
+        &shuffle_button,
+        &play_button,
+        &next_button,
+        &repeat_button,
+        &dj_button,
+    ] {
+        button.set_size_request(BOTTOM_PLAYER_BUTTON_SIZE, BOTTOM_PLAYER_BUTTON_SIZE);
+    }
 
     let button_center = f64::from(BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2.0;
-    let button_y = 6.0;
-    let play_y = 2.0;
+    let button_radius = f64::from(BOTTOM_PLAYER_BUTTON_SIZE) / 2.0;
+    let button_y = f64::from(BOTTOM_PLAYER_BUTTON_ROW_HEIGHT - BOTTOM_PLAYER_BUTTON_SIZE) / 2.0;
     buttons.put(
         &stop_button,
-        button_center - BOTTOM_PLAYER_BUTTON_STEP * 3.0 - 14.0,
+        button_center - BOTTOM_PLAYER_BUTTON_STEP * 3.0 - button_radius,
         button_y,
     );
     buttons.put(
         &previous_button,
-        button_center - BOTTOM_PLAYER_BUTTON_STEP * 2.0 - 14.0,
+        button_center - BOTTOM_PLAYER_BUTTON_STEP * 2.0 - button_radius,
         button_y,
     );
     buttons.put(
         &shuffle_button,
-        button_center - BOTTOM_PLAYER_BUTTON_STEP - 14.0,
+        button_center - BOTTOM_PLAYER_BUTTON_STEP - button_radius,
         button_y,
     );
-    buttons.put(&play_button, button_center - 18.0, play_y);
+    buttons.put(&play_button, button_center - button_radius, button_y);
     buttons.put(
         &next_button,
-        button_center + BOTTOM_PLAYER_BUTTON_STEP - 14.0,
+        button_center + BOTTOM_PLAYER_BUTTON_STEP - button_radius,
         button_y,
     );
     buttons.put(
         &repeat_button,
-        button_center + BOTTOM_PLAYER_BUTTON_STEP * 2.0 - 14.0,
+        button_center + BOTTOM_PLAYER_BUTTON_STEP * 2.0 - button_radius,
         button_y,
     );
     buttons.put(
         &dj_button,
-        button_center + BOTTOM_PLAYER_BUTTON_STEP * 3.0 - 14.0,
+        button_center + BOTTOM_PLAYER_BUTTON_STEP * 3.0 - button_radius,
         button_y,
     );
 
@@ -4007,8 +4072,7 @@ fn build_bottom_player() -> PlayerControls {
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     actions.set_valign(gtk::Align::Center);
-    let (queue_button, queue_icon) = icon_button_with_image("sidebar-show-right-symbolic", "Queue");
-    queue_button.add_css_class("active-toggle");
+    let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Queue");
     actions.append(&queue_button);
     actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
     let favorite_button = favorite_icon_button("Favorite");
@@ -4053,6 +4117,7 @@ fn build_bottom_player() -> PlayerControls {
         repeat_button,
         queue_button,
         queue_icon,
+        queue_icon_open,
         favorite_button,
         elapsed,
         progress,
@@ -4198,35 +4263,57 @@ fn connect_player_controls(shell: &Rc<Shell>) {
 
 fn animate_right_panel_visibility(shell: Rc<Shell>, visible: bool, generation: u64) {
     let panel = shell.right_panel.clone();
+    if panel.parent().is_none() {
+        shell.content_split.set_end_child(Some(&panel));
+    }
+
+    let split_width = shell.content_split.width();
+    if split_width <= 1 {
+        panel.set_visible(visible);
+        panel.set_opacity(if visible { 1.0 } else { 0.0 });
+        shell.state.right_panel_animating.set(false);
+        shell.queue_responsive_route_render();
+        return;
+    }
+
     if visible {
-        if panel.parent().is_none() {
-            shell.content_split.set_end_child(Some(&panel));
-        }
-        panel.set_opacity(0.0);
         panel.set_visible(true);
     }
 
-    let start_opacity = if visible { 0.0 } else { panel.opacity() };
+    let start_position = shell.content_split.position().clamp(0, split_width);
+    let end_position = if visible {
+        shell.right_panel_open_position(split_width)
+    } else {
+        split_width
+    };
+    let start_opacity = panel.opacity();
     let end_opacity = if visible { 1.0 } else { 0.0 };
     let started_at = Instant::now();
+    shell.state.right_panel_animating.set(true);
     glib::timeout_add_local(Duration::from_millis(16), move || {
         if shell.state.right_panel_animation_generation.get() != generation {
             return glib::ControlFlow::Break;
         }
 
-        let progress =
-            (started_at.elapsed().as_millis() as f64 / RIGHT_PANEL_FADE_MS as f64).clamp(0.0, 1.0);
+        let progress = (started_at.elapsed().as_millis() as f64 / RIGHT_PANEL_ANIMATION_MS as f64)
+            .clamp(0.0, 1.0);
         let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
+        let position = f64::from(start_position) + f64::from(end_position - start_position) * eased;
+        shell.content_split.set_position(position.round() as i32);
         panel.set_opacity(start_opacity + (end_opacity - start_opacity) * eased);
+        shell.queue_responsive_route_render();
 
         if progress >= 1.0 {
+            shell.content_split.set_position(end_position);
             panel.set_opacity(end_opacity);
+            shell.state.right_panel_animating.set(false);
             if visible {
                 panel.set_visible(true);
             } else {
                 panel.set_visible(false);
-                shell.content_split.set_end_child(None::<&gtk::Widget>);
             }
+            shell.update_content_split();
+            shell.queue_responsive_route_render();
             glib::ControlFlow::Break
         } else {
             glib::ControlFlow::Continue
@@ -5457,6 +5544,10 @@ fn clamp_content_split_position(split_width: i32, position: i32) -> i32 {
     position.clamp(min_position, max_position)
 }
 
+fn default_content_split_position(split_width: i32) -> i32 {
+    split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS
+}
+
 fn clamp_home_album_page_start(page_start: usize, page_size: usize, album_count: usize) -> usize {
     if album_count == 0 {
         return 0;
@@ -6184,6 +6275,68 @@ fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
     });
     button.set_child(Some(&icon));
     button
+}
+
+fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.set_tooltip_text(Some(&tr(label)));
+
+    let open = Rc::new(Cell::new(true));
+    let icon = gtk::DrawingArea::new();
+    icon.set_content_width(16);
+    icon.set_content_height(16);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+
+    let icon_open = Rc::clone(&open);
+    icon.set_draw_func(move |area, context, width, height| {
+        let color = area.color();
+        let set_source = |alpha: f64| {
+            context.set_source_rgba(
+                f64::from(color.red()),
+                f64::from(color.green()),
+                f64::from(color.blue()),
+                f64::from(color.alpha()) * alpha,
+            );
+        };
+
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let x = (width - 14.0) / 2.0;
+        let y = (height - 12.0) / 2.0;
+        let icon_width = 14.0;
+        let icon_height = 12.0;
+        let separator_x = x + icon_width - 4.5;
+        let center_y = y + icon_height / 2.0;
+
+        if icon_open.get() {
+            set_source(0.32);
+            context.rectangle(separator_x, y, icon_width - (separator_x - x), icon_height);
+            let _ = context.fill();
+        }
+
+        set_source(1.0);
+        context.set_line_width(1.4);
+        context.rectangle(x + 0.7, y + 0.7, icon_width - 1.4, icon_height - 1.4);
+        let _ = context.stroke();
+
+        context.move_to(separator_x, y + 1.2);
+        context.line_to(separator_x, y + icon_height - 1.2);
+        let _ = context.stroke();
+
+        if !icon_open.get() {
+            context.set_line_width(1.5);
+            context.move_to(separator_x + 2.6, center_y - 3.0);
+            context.line_to(separator_x + 1.0, center_y);
+            context.line_to(separator_x + 2.6, center_y + 3.0);
+            let _ = context.stroke();
+        }
+    });
+    button.set_child(Some(&icon));
+    (button, icon, open)
 }
 
 fn icon_button_with_image(icon_name: &str, label: &str) -> (gtk::Button, gtk::Image) {
