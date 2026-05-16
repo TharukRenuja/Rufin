@@ -37,8 +37,10 @@ const RIGHT_PANEL_MAX_PERCENT: i32 = 50;
 const NORMAL_SIDEBAR_WIDTH: i32 = 220;
 const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
-const HOME_ALBUM_TARGET_SIZE: i32 = 220;
-const HOME_ALBUM_MAX_SIZE: i32 = 260;
+const HOME_ALBUM_TARGET_SIZE: i32 = 180;
+const HOME_ALBUM_MAX_SIZE: i32 = 210;
+const HOME_ALBUM_MIN_COLUMNS: usize = 2;
+const HOME_ALBUM_MAX_COLUMNS: usize = 12;
 const GRID_ROUTE_PAGE_SIZE: usize = 16;
 const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 const GRID_COVER_SIZE: u32 = 256;
@@ -5155,6 +5157,10 @@ fn route_uses_responsive_cards(route: &Route) -> bool {
             | Route::Artists
             | Route::AlbumArtists
             | Route::ArtistDetail(_)
+            | Route::Genres
+            | Route::GenreDetail(_)
+            | Route::Playlists
+            | Route::PlaylistDetail(_)
             | Route::Search { .. }
     )
 }
@@ -5409,14 +5415,20 @@ fn home_album_page_size(width: i32, current_page_size: Option<usize>) -> usize {
     let mut page_size = current_page_size
         .unwrap_or_else(|| {
             let item_width = HOME_ALBUM_TARGET_SIZE + HOME_ALBUM_GAP;
-            ((width + HOME_ALBUM_GAP) / item_width).clamp(2, 8) as usize
+            ((width + HOME_ALBUM_GAP) / item_width)
+                .clamp(HOME_ALBUM_MIN_COLUMNS as i32, HOME_ALBUM_MAX_COLUMNS as i32)
+                as usize
         })
-        .clamp(2, 8);
+        .clamp(HOME_ALBUM_MIN_COLUMNS, HOME_ALBUM_MAX_COLUMNS);
 
-    while page_size > 2 && home_album_raw_card_size(width, page_size) < HOME_ALBUM_MIN_SIZE {
+    while page_size > HOME_ALBUM_MIN_COLUMNS
+        && home_album_raw_card_size(width, page_size) < HOME_ALBUM_MIN_SIZE
+    {
         page_size -= 1;
     }
-    while page_size < 8 && home_album_raw_card_size(width, page_size) > HOME_ALBUM_MAX_SIZE {
+    while page_size < HOME_ALBUM_MAX_COLUMNS
+        && home_album_raw_card_size(width, page_size) > HOME_ALBUM_MAX_SIZE
+    {
         page_size += 1;
     }
 
@@ -5473,6 +5485,32 @@ fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
     ((width - gaps).max(page_size)) / page_size
 }
 
+fn card_label_width_chars(size: i32) -> i32 {
+    (size / 8).clamp(8, 28)
+}
+
+fn constrain_card_label(label: &gtk::Label, size: i32) {
+    label.set_width_request(size);
+    label.set_size_request(size, -1);
+    label.set_width_chars(1);
+    label.set_max_width_chars(card_label_width_chars(size));
+    label.set_halign(gtk::Align::Fill);
+    label.set_hexpand(false);
+}
+
+fn constrain_wrapped_card_label(label: &gtk::Label, size: i32, lines: i32) {
+    constrain_card_label(label, size);
+    label.set_lines(lines);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+}
+
+fn constrain_single_line_card_label(label: &gtk::Label, size: i32) {
+    constrain_card_label(label, size);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+}
+
 fn album_card_widget_with_size(
     shell: &Rc<Shell>,
     album: &Album,
@@ -5491,25 +5529,17 @@ fn album_card_widget_with_size(
     let title = gtk::Label::new(Some(&album.title));
     title.add_css_class("album-title");
     title.set_xalign(0.0);
-    title.set_width_request(size);
-    title.set_size_request(size, -1);
-    title.set_max_width_chars((size / 8).max(8));
-    title.set_lines(2);
-    title.set_wrap(true);
-    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    constrain_wrapped_card_label(&title, size, 2);
     add_link_hover(title.upcast_ref(), &title, &album.title);
     let artist = gtk::Label::new(Some(&album.artist));
     artist.add_css_class("muted");
     artist.set_xalign(0.0);
-    artist.set_width_request(size);
-    artist.set_size_request(size, -1);
-    artist.set_max_width_chars((size / 8).max(8));
-    artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    constrain_single_line_card_label(&artist, size);
     add_link_hover(artist.upcast_ref(), &artist, &album.artist);
     let year = gtk::Label::new(Some(&album.year.to_string()));
     year.add_css_class("muted");
     year.set_xalign(0.0);
-    year.set_width_request(size);
+    constrain_single_line_card_label(&year, size);
 
     card.append(&title);
     card.append(&artist);
@@ -5624,12 +5654,7 @@ fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -
     let name = gtk::Label::new(Some(&artist.name));
     name.add_css_class("album-title");
     name.set_xalign(0.0);
-    name.set_width_request(size);
-    name.set_size_request(size, -1);
-    name.set_max_width_chars((size / 8).max(8));
-    name.set_lines(2);
-    name.set_wrap(true);
-    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    constrain_wrapped_card_label(&name, size, 2);
 
     let counts = gtk::Label::new(Some(&format!(
         "{} {} / {} {}",
@@ -5640,9 +5665,7 @@ fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -
     )));
     counts.add_css_class("muted");
     counts.set_xalign(0.0);
-    counts.set_width_request(size);
-    counts.set_size_request(size, -1);
-    counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    constrain_single_line_card_label(&counts, size);
 
     card.append(&name);
     card.append(&counts);
@@ -5666,10 +5689,7 @@ fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> g
     let name = gtk::Label::new(Some(&genre.name));
     name.add_css_class("album-title");
     name.set_xalign(0.0);
-    name.set_width_request(size);
-    name.set_lines(2);
-    name.set_wrap(true);
-    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    constrain_wrapped_card_label(&name, size, 2);
     let counts = gtk::Label::new(Some(&format!(
         "{} {} / {} {}",
         genre.album_count,
@@ -5679,8 +5699,7 @@ fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> g
     )));
     counts.add_css_class("muted");
     counts.set_xalign(0.0);
-    counts.set_width_request(size);
-    counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    constrain_single_line_card_label(&counts, size);
     card.append(&name);
     card.append(&counts);
     card.upcast()
@@ -5707,10 +5726,7 @@ fn playlist_card_widget_with_size(
     let name = gtk::Label::new(Some(&playlist.name));
     name.add_css_class("album-title");
     name.set_xalign(0.0);
-    name.set_width_request(size);
-    name.set_lines(2);
-    name.set_wrap(true);
-    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    constrain_wrapped_card_label(&name, size, 2);
     let counts = gtk::Label::new(Some(&format!(
         "{} {} • {}",
         playlist.track_count,
@@ -5719,8 +5735,7 @@ fn playlist_card_widget_with_size(
     )));
     counts.add_css_class("muted");
     counts.set_xalign(0.0);
-    counts.set_width_request(size);
-    counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    constrain_single_line_card_label(&counts, size);
     card.append(&name);
     card.append(&counts);
     card.upcast()
@@ -6175,7 +6190,7 @@ fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::{
-        HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, active_lyrics_line_index,
+        HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, active_lyrics_line_index,
         clamp_content_split_position, clamp_home_album_page_start, home_album_card_size,
         home_album_page_size, lyrics_scroll_animation_millis,
     };
@@ -6190,18 +6205,33 @@ mod tests {
         let four_cards_width = super::HOME_ALBUM_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
         assert_eq!(home_album_page_size(four_cards_width, None), 4);
         assert_eq!(home_album_page_size(1, None), 2);
-        assert_eq!(home_album_page_size(10_000, None), 8);
+        assert_eq!(home_album_page_size(10_000, None), HOME_ALBUM_MAX_COLUMNS);
     }
 
     #[test]
-    fn home_album_page_size_changes_only_at_size_bounds() {
+    fn home_album_page_size_changes_without_bouncing_near_size_bounds() {
         let three_cards_width = super::HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
         assert_eq!(home_album_page_size(three_cards_width, Some(3)), 3);
-        assert_eq!(home_album_page_size(three_cards_width - 1, Some(3)), 2);
+        assert_eq!(home_album_page_size(three_cards_width - 1, Some(3)), 3);
+        assert_eq!(
+            home_album_page_size(
+                (super::HOME_ALBUM_MIN_SIZE - 20) * 3 + HOME_ALBUM_GAP * 2,
+                Some(3)
+            ),
+            2
+        );
 
         let three_cards_max_width = HOME_ALBUM_MAX_SIZE * 3 + HOME_ALBUM_GAP * 2;
         assert_eq!(home_album_page_size(three_cards_max_width, Some(3)), 3);
         assert_eq!(home_album_page_size(three_cards_max_width + 3, Some(3)), 4);
+    }
+
+    #[test]
+    fn home_album_page_size_adds_columns_on_wide_layouts() {
+        let ten_target_cards_width = super::HOME_ALBUM_TARGET_SIZE * 10 + HOME_ALBUM_GAP * 9;
+
+        assert_eq!(home_album_page_size(ten_target_cards_width, None), 10);
+        assert_eq!(home_album_page_size(ten_target_cards_width, Some(7)), 9);
     }
 
     #[test]
