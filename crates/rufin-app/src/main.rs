@@ -106,6 +106,13 @@ fn main() {
 
     info!(?options, "starting Rufin native shell");
 
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("rufin-async")
+        .build()
+        .expect("failed to create async runtime");
+    let _runtime_guard = runtime.enter();
+
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(move |app| ui::build(app, options.clone()));
 

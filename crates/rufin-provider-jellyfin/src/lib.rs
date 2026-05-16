@@ -8,8 +8,9 @@ use rufin_core::{
     Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
-    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, LoginRequest,
-    MusicProvider, PagedRequest, PagedResponse, PlaylistDetail, ProviderCapabilities,
+    AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
+    LoginRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse,
+    PlaybackReport, PlaybackReportKind, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
     ProviderError, ProviderIdentity, ProviderResult, ProviderSession, SavedProviderSession,
     SearchResults, StreamDescriptor,
 };
@@ -108,7 +109,7 @@ impl JellyfinProvider {
             identity: ProviderIdentity {
                 server: session.server,
             },
-            capabilities: ProviderCapabilities::default(),
+            capabilities: jellyfin_capabilities(),
         })
     }
 
@@ -202,6 +203,27 @@ impl JellyfinProvider {
     async fn get_json<T: DeserializeOwned>(&self, url: Url) -> ProviderResult<T> {
         let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
         send_json(self.client.get(url).header(
+            header::AUTHORIZATION,
+            auth_header(&config, Some(&self.access_token)),
+        ))
+        .await
+    }
+
+    async fn send_json<T: DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> ProviderResult<T> {
+        let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
+        send_json(request.header(
+            header::AUTHORIZATION,
+            auth_header(&config, Some(&self.access_token)),
+        ))
+        .await
+    }
+
+    async fn send_unit(&self, request: reqwest::RequestBuilder) -> ProviderResult<()> {
+        let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
+        send_unit(request.header(
             header::AUTHORIZATION,
             auth_header(&config, Some(&self.access_token)),
         ))
@@ -321,7 +343,7 @@ impl MusicProvider for JellyfinProvider {
             .append_pair("UserId", &self.user_id);
         let playlist = playlist_from_item(self.get_json::<JellyfinItem>(playlist_url).await?);
 
-        let mut tracks = Vec::new();
+        let mut entries = Vec::new();
         let mut offset = 0;
         loop {
             let mut url = endpoint(
@@ -338,7 +360,17 @@ impl MusicProvider for JellyfinProvider {
                 );
             let response = self.get_json::<ItemQueryResult>(url).await?;
             let item_count = response.items.len();
-            tracks.extend(response.items.into_iter().map(track_from_item));
+            entries.extend(response.items.into_iter().map(|item| {
+                let entry_id = item
+                    .playlist_item_id
+                    .clone()
+                    .filter(|id| !id.is_empty())
+                    .unwrap_or_else(|| item.id.clone());
+                PlaylistEntry {
+                    entry_id,
+                    track: track_from_item(item),
+                }
+            }));
             offset += item_count;
             let total = response.total_record_count.unwrap_or(0);
             if item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < 500)
@@ -347,7 +379,12 @@ impl MusicProvider for JellyfinProvider {
             }
         }
 
-        Ok(PlaylistDetail { playlist, tracks })
+        let tracks = entries.iter().map(|entry| entry.track.clone()).collect();
+        Ok(PlaylistDetail {
+            playlist,
+            tracks,
+            entries,
+        })
     }
 
     async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail> {
@@ -503,6 +540,148 @@ impl MusicProvider for JellyfinProvider {
         ))
         .await
     }
+
+    async fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) -> ProviderResult<()> {
+        let mut url = endpoint(
+            &self.base_url,
+            &format!("UserFavoriteItems/{}", raw_item_id(item_id.as_str())),
+        )?;
+        url.query_pairs_mut().append_pair("userId", &self.user_id);
+        if favorite {
+            self.send_unit(self.client.post(url)).await
+        } else {
+            self.send_unit(self.client.delete(url)).await
+        }
+    }
+
+    async fn create_playlist(
+        &self,
+        name: &str,
+        track_ids: &[TrackId],
+    ) -> ProviderResult<PlaylistId> {
+        let url = endpoint(&self.base_url, "Playlists")?;
+        let body = CreatePlaylistDto {
+            name: name.to_string(),
+            ids: raw_track_ids(track_ids),
+            user_id: Some(self.user_id.clone()),
+            media_type: Some("Audio".to_string()),
+            is_public: false,
+        };
+        let result = self
+            .send_json::<PlaylistCreationResult>(self.client.post(url).json(&body))
+            .await?;
+        Ok(PlaylistId::new(jellyfin_id("playlist", &result.id)))
+    }
+
+    async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> ProviderResult<()> {
+        let url = endpoint(
+            &self.base_url,
+            &format!("Playlists/{}", raw_item_id(playlist_id.as_str())),
+        )?;
+        let body = UpdatePlaylistDto {
+            name: Some(name.to_string()),
+        };
+        self.send_unit(self.client.post(url).json(&body)).await
+    }
+
+    async fn add_playlist_tracks(
+        &self,
+        playlist_id: &PlaylistId,
+        track_ids: &[TrackId],
+    ) -> ProviderResult<()> {
+        let mut url = endpoint(
+            &self.base_url,
+            &format!("Playlists/{}/Items", raw_item_id(playlist_id.as_str())),
+        )?;
+        url.query_pairs_mut()
+            .append_pair("userId", &self.user_id)
+            .append_pair("ids", &raw_track_ids(track_ids).join(","));
+        self.send_unit(self.client.post(url)).await
+    }
+
+    async fn remove_playlist_entries(
+        &self,
+        playlist_id: &PlaylistId,
+        entry_ids: &[String],
+    ) -> ProviderResult<()> {
+        let mut url = endpoint(
+            &self.base_url,
+            &format!("Playlists/{}/Items", raw_item_id(playlist_id.as_str())),
+        )?;
+        url.query_pairs_mut()
+            .append_pair("entryIds", &entry_ids.join(","));
+        self.send_unit(self.client.delete(url)).await
+    }
+
+    async fn move_playlist_entry(
+        &self,
+        playlist_id: &PlaylistId,
+        entry_id: &str,
+        new_index: usize,
+    ) -> ProviderResult<()> {
+        let url = endpoint(
+            &self.base_url,
+            &format!(
+                "Playlists/{}/Items/{}/Move/{}",
+                raw_item_id(playlist_id.as_str()),
+                raw_item_id(entry_id),
+                new_index
+            ),
+        )?;
+        self.send_unit(self.client.post(url)).await
+    }
+
+    async fn lyrics(
+        &self,
+        track_id: &TrackId,
+        allow_remote: bool,
+    ) -> ProviderResult<Option<Lyrics>> {
+        let raw_track_id = raw_item_id(track_id.as_str());
+        let local_url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/Lyrics"))?;
+        match self.send_json::<LyricDto>(self.client.get(local_url)).await {
+            Ok(dto) => {
+                return Ok(Some(lyrics_from_dto(
+                    track_id.clone(),
+                    LyricsSource::Server,
+                    dto,
+                )));
+            }
+            Err(ProviderError::NotFound) if allow_remote => {}
+            Err(ProviderError::NotFound) => return Ok(None),
+            Err(error) => return Err(error),
+        }
+
+        let remote_url = endpoint(
+            &self.base_url,
+            &format!("Audio/{raw_track_id}/RemoteSearch/Lyrics"),
+        )?;
+        let results = self
+            .send_json::<Vec<RemoteLyricInfoDto>>(self.client.get(remote_url))
+            .await?;
+        let Some(first) = results.into_iter().find(|result| !result.id.is_empty()) else {
+            return Ok(None);
+        };
+        let lyric_url = endpoint(&self.base_url, &format!("Providers/Lyrics/{}", first.id))?;
+        let dto = self
+            .send_json::<LyricDto>(self.client.get(lyric_url))
+            .await?;
+        Ok(Some(lyrics_from_dto(
+            track_id.clone(),
+            LyricsSource::Remote,
+            dto,
+        )))
+    }
+
+    async fn report_playback(&self, report: PlaybackReport) -> ProviderResult<()> {
+        let path = match report.kind {
+            PlaybackReportKind::Started => "Sessions/Playing",
+            PlaybackReportKind::Progress => "Sessions/Playing/Progress",
+            PlaybackReportKind::Stopped => "Sessions/Playing/Stopped",
+        };
+        let url = endpoint(&self.base_url, path)?;
+        let body = PlaybackReportDto::from_report(report);
+        self.send_unit(self.client.post(url).json(&body)).await
+    }
 }
 
 async fn public_server_name(
@@ -542,6 +721,28 @@ async fn send_json<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Pro
     }
 
     response.json::<T>().await.map_err(map_reqwest_error)
+}
+
+async fn send_unit(request: reqwest::RequestBuilder) -> ProviderResult<()> {
+    let response = request.send().await.map_err(map_reqwest_error)?;
+    let status = response.status();
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        return Err(ProviderError::Auth(format!(
+            "Jellyfin returned {}",
+            status.as_u16()
+        )));
+    }
+    if status == StatusCode::NOT_FOUND {
+        return Err(ProviderError::NotFound);
+    }
+    if status.is_client_error() || status.is_server_error() {
+        let message = response.text().await.unwrap_or_else(|_| status.to_string());
+        return Err(ProviderError::Server {
+            status: status.as_u16(),
+            message,
+        });
+    }
+    Ok(())
 }
 
 async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
@@ -654,8 +855,25 @@ fn image_kind_path(kind: ImageKind) -> &'static str {
     }
 }
 
+fn jellyfin_capabilities() -> ProviderCapabilities {
+    ProviderCapabilities {
+        lyrics: true,
+        playback_reporting: true,
+        playlist_mutations: true,
+        favorite_mutations: true,
+        ..ProviderCapabilities::default()
+    }
+}
+
 fn jellyfin_id(kind: &str, id: &str) -> String {
     format!("jellyfin:{kind}:{id}")
+}
+
+fn raw_track_ids(track_ids: &[TrackId]) -> Vec<String> {
+    track_ids
+        .iter()
+        .map(|id| raw_item_id(id.as_str()).to_string())
+        .collect()
 }
 
 fn stable_server_id(input: &str) -> String {
@@ -676,6 +894,10 @@ fn duration_seconds(ticks: Option<i64>) -> u32 {
     ticks
         .map(|value| (value.max(0) / 10_000_000) as u32)
         .unwrap_or(0)
+}
+
+fn ticks_to_millis(ticks: Option<i64>) -> Option<u64> {
+    ticks.map(|value| (value.max(0) / 10_000) as u64)
 }
 
 fn u16_from_option(value: Option<i32>) -> u16 {
@@ -820,6 +1042,25 @@ fn playlist_from_item(item: JellyfinItem) -> Playlist {
     }
 }
 
+fn lyrics_from_dto(track_id: TrackId, source: LyricsSource, dto: LyricDto) -> Lyrics {
+    Lyrics {
+        track_id,
+        source,
+        lines: dto
+            .lyrics
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|line| {
+                let text = line.text.unwrap_or_default();
+                (!text.trim().is_empty()).then_some(LyricLine {
+                    text,
+                    start_millis: ticks_to_millis(line.start),
+                })
+            })
+            .collect(),
+    }
+}
+
 fn primary_image_ref(
     kind: &str,
     item_id: &str,
@@ -897,6 +1138,7 @@ struct JellyfinItem {
     parent_index_number: Option<i32>,
     user_data: Option<UserData>,
     image_tags: Option<HashMap<String, String>>,
+    playlist_item_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -920,11 +1162,92 @@ struct UserData {
     is_favorite: Option<bool>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct CreatePlaylistDto {
+    name: String,
+    ids: Vec<String>,
+    user_id: Option<String>,
+    media_type: Option<String>,
+    is_public: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct UpdatePlaylistDto {
+    name: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct PlaylistCreationResult {
+    id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct LyricDto {
+    lyrics: Option<Vec<LyricLineDto>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct LyricLineDto {
+    text: Option<String>,
+    start: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct RemoteLyricInfoDto {
+    id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct PlaybackReportDto {
+    can_seek: bool,
+    item_id: String,
+    is_paused: bool,
+    is_muted: bool,
+    position_ticks: i64,
+    volume_level: i32,
+    play_method: &'static str,
+    repeat_mode: &'static str,
+    playback_order: &'static str,
+    failed: bool,
+}
+
+impl PlaybackReportDto {
+    fn from_report(report: PlaybackReport) -> Self {
+        Self {
+            can_seek: true,
+            item_id: raw_item_id(report.track_id.as_str()).to_string(),
+            is_paused: report.paused,
+            is_muted: report.muted,
+            position_ticks: i64::from(report.position_seconds) * 10_000_000,
+            volume_level: i32::from(report.volume_percent.min(100)),
+            play_method: "DirectPlay",
+            repeat_mode: if report.repeat_one {
+                "RepeatOne"
+            } else if report.repeat_all {
+                "RepeatAll"
+            } else {
+                "RepeatNone"
+            },
+            playback_order: if report.shuffle { "Shuffle" } else { "Default" },
+            failed: report.failed,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rufin_provider::MusicProvider;
-    use wiremock::matchers::{header_regex, method, path, query_param};
+    use wiremock::matchers::{
+        body_json, body_partial_json, header_regex, method, path, query_param,
+    };
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
@@ -1233,6 +1556,7 @@ mod tests {
                     "Genres": ["Ambient"],
                     "IndexNumber": 1,
                     "RunTimeTicks": 2100000000i64,
+                    "PlaylistItemId": "entry-one",
                     "ImageTags": { "Primary": "track-tag-one" }
                 }]
             })))
@@ -1253,7 +1577,8 @@ mod tests {
                     "Artists": ["Astral Kin"],
                     "Genres": ["Ambient"],
                     "IndexNumber": 2,
-                    "RunTimeTicks": 2200000000i64
+                    "RunTimeTicks": 2200000000i64,
+                    "PlaylistItemId": "entry-two"
                 }]
             })))
             .mount(&server)
@@ -1284,6 +1609,9 @@ mod tests {
             })
         );
         assert_eq!(detail.tracks.len(), 2);
+        assert_eq!(detail.entries.len(), 2);
+        assert_eq!(detail.entries[0].entry_id, "entry-one");
+        assert_eq!(detail.entries[1].entry_id, "entry-two");
         assert_eq!(detail.tracks[0].title, "First Motion");
         assert_eq!(detail.tracks[0].genres, vec!["Ambient"]);
         assert_eq!(
@@ -1294,6 +1622,259 @@ mod tests {
             })
         );
         assert_eq!(detail.tracks[1].title, "Second Motion");
+    }
+
+    #[tokio::test]
+    async fn favorite_mutations_use_jellyfin_item_favorite_endpoints() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/UserFavoriteItems/track-one"))
+            .and(query_param("userId", "user-one"))
+            .and(header_regex("authorization", "Token=\"token-one\""))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/UserFavoriteItems/album-one"))
+            .and(query_param("userId", "user-one"))
+            .and(header_regex("authorization", "Token=\"token-one\""))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        provider
+            .set_favorite(
+                FavoriteItemId::Track(TrackId::new("jellyfin:track:track-one")),
+                true,
+            )
+            .await
+            .expect("favorite track");
+        provider
+            .set_favorite(
+                FavoriteItemId::Album(AlbumId::new("jellyfin:album:album-one")),
+                false,
+            )
+            .await
+            .expect("unfavorite album");
+    }
+
+    #[tokio::test]
+    async fn playlist_write_mutations_use_jellyfin_playlist_endpoints() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Playlists"))
+            .and(body_json(serde_json::json!({
+                "Name": "Road",
+                "Ids": ["track-one", "track-two"],
+                "UserId": "user-one",
+                "MediaType": "Audio",
+                "IsPublic": false
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Id": "playlist-one"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/Playlists/playlist-one"))
+            .and(body_json(serde_json::json!({ "Name": "Road Mix" })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/Playlists/playlist-one/Items"))
+            .and(query_param("userId", "user-one"))
+            .and(query_param("ids", "track-three"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/Playlists/playlist-one/Items"))
+            .and(query_param("entryIds", "entry-one,entry-two"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/Playlists/playlist-one/Items/entry-three/Move/0"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+        let playlist_id = PlaylistId::new("jellyfin:playlist:playlist-one");
+
+        assert_eq!(
+            provider
+                .create_playlist(
+                    "Road",
+                    &[
+                        TrackId::new("jellyfin:track:track-one"),
+                        TrackId::new("jellyfin:track:track-two")
+                    ]
+                )
+                .await
+                .expect("create playlist"),
+            playlist_id
+        );
+        provider
+            .rename_playlist(&playlist_id, "Road Mix")
+            .await
+            .expect("rename playlist");
+        provider
+            .add_playlist_tracks(&playlist_id, &[TrackId::new("jellyfin:track:track-three")])
+            .await
+            .expect("add playlist tracks");
+        provider
+            .remove_playlist_entries(
+                &playlist_id,
+                &["entry-one".to_string(), "entry-two".to_string()],
+            )
+            .await
+            .expect("remove playlist entries");
+        provider
+            .move_playlist_entry(&playlist_id, "entry-three", 0)
+            .await
+            .expect("move playlist entry");
+    }
+
+    #[tokio::test]
+    async fn lyrics_use_local_first_and_remote_fallback_when_enabled() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Audio/track-local/Lyrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Lyrics": [
+                    { "Text": "local line", "Start": 120000000i64 }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Audio/track-remote/Lyrics"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Audio/track-remote/RemoteSearch/Lyrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "Id": "remote-lyric-one" }
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Providers/Lyrics/remote-lyric-one"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Lyrics": [
+                    { "Text": "remote line", "Start": 340000000i64 }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let local = provider
+            .lyrics(&TrackId::new("jellyfin:track:track-local"), true)
+            .await
+            .expect("local lyrics")
+            .expect("local lyrics");
+        assert_eq!(local.source, LyricsSource::Server);
+        assert_eq!(local.lines[0].text, "local line");
+        assert_eq!(local.lines[0].start_millis, Some(12_000));
+
+        let remote = provider
+            .lyrics(&TrackId::new("jellyfin:track:track-remote"), true)
+            .await
+            .expect("remote lyrics")
+            .expect("remote lyrics");
+        assert_eq!(remote.source, LyricsSource::Remote);
+        assert_eq!(remote.lines[0].text, "remote line");
+        assert_eq!(remote.lines[0].start_millis, Some(34_000));
+    }
+
+    #[tokio::test]
+    async fn playback_reporting_posts_expected_payloads() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Sessions/Playing"))
+            .and(body_partial_json(serde_json::json!({
+                "ItemId": "track-one",
+                "PositionTicks": 420000000i64,
+                "VolumeLevel": 67,
+                "RepeatMode": "RepeatAll",
+                "PlaybackOrder": "Shuffle",
+                "Failed": false
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/Sessions/Playing/Progress"))
+            .and(body_partial_json(serde_json::json!({
+                "ItemId": "track-one",
+                "IsPaused": true,
+                "IsMuted": true
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/Sessions/Playing/Stopped"))
+            .and(body_partial_json(serde_json::json!({
+                "ItemId": "track-one",
+                "Failed": true
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+        let base_report = PlaybackReport {
+            kind: PlaybackReportKind::Started,
+            track_id: TrackId::new("jellyfin:track:track-one"),
+            position_seconds: 42,
+            paused: false,
+            muted: false,
+            volume_percent: 67,
+            shuffle: true,
+            repeat_one: false,
+            repeat_all: true,
+            failed: false,
+        };
+
+        provider
+            .report_playback(base_report.clone())
+            .await
+            .expect("started report");
+        provider
+            .report_playback(PlaybackReport {
+                kind: PlaybackReportKind::Progress,
+                paused: true,
+                muted: true,
+                ..base_report.clone()
+            })
+            .await
+            .expect("progress report");
+        provider
+            .report_playback(PlaybackReport {
+                kind: PlaybackReportKind::Stopped,
+                failed: true,
+                ..base_report
+            })
+            .await
+            .expect("stopped report");
     }
 
     #[tokio::test]

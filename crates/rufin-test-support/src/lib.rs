@@ -5,8 +5,8 @@ use rufin_core::{
 };
 use rufin_provider::{
     AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicProvider,
-    PagedRequest, PagedResponse, PlaylistDetail, ProviderCapabilities, ProviderError,
-    ProviderIdentity, ProviderResult, SearchResults,
+    PagedRequest, PagedResponse, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
+    ProviderError, ProviderIdentity, ProviderResult, SearchResults,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,7 +120,7 @@ impl MusicProvider for FakeProvider {
             .find(|album| album.id == *album_id)
             .cloned()
             .ok_or(ProviderError::NotFound)?;
-        let tracks = self
+        let tracks: Vec<Track> = self
             .library
             .tracks
             .iter()
@@ -159,15 +159,27 @@ impl MusicProvider for FakeProvider {
             .find(|playlist| playlist.id == *playlist_id)
             .cloned()
             .ok_or(ProviderError::NotFound)?;
-        let tracks = self
+        let tracks: Vec<Track> = self
             .library
             .tracks
             .iter()
             .take(playlist.track_count as usize)
             .cloned()
             .collect();
+        let entries = tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| PlaylistEntry {
+                entry_id: format!("fake-playlist-entry-{}-{index}", playlist.id.as_str()),
+                track: track.clone(),
+            })
+            .collect();
 
-        Ok(PlaylistDetail { playlist, tracks })
+        Ok(PlaylistDetail {
+            playlist,
+            tracks,
+            entries,
+        })
     }
 
     async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail> {

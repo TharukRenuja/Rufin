@@ -191,6 +191,16 @@ window {
   background: transparent;
 }
 
+.lyrics-line {
+  color: @dim_label_color;
+  padding: 3px 0;
+}
+
+.lyrics-line-active {
+  color: @accent_color;
+  font-weight: 700;
+}
+
 .table-link {
   padding: 0 4px;
   min-height: 0;

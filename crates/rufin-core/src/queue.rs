@@ -59,6 +59,8 @@ pub struct QueueEntry {
     #[serde(default)]
     pub year: u16,
     pub duration_seconds: u32,
+    #[serde(default)]
+    pub favorite: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_ref: Option<ImageRef>,
 }
@@ -75,6 +77,7 @@ impl QueueEntry {
             album: track.album.clone(),
             year: track.year,
             duration_seconds: track.duration_seconds,
+            favorite: track.favorite,
             image_ref: track.image_ref.clone(),
         }
     }
@@ -170,6 +173,14 @@ impl QueueEngine {
 
     pub fn set_progress_seconds(&mut self, progress_seconds: u32) {
         self.progress_seconds = progress_seconds;
+    }
+
+    pub fn set_track_favorite(&mut self, track_id: &TrackId, favorite: bool) {
+        for entry in &mut self.entries {
+            if entry.track_id == *track_id {
+                entry.favorite = favorite;
+            }
+        }
     }
 
     pub fn play_now(&mut self, track: &Track) -> QueueEntryId {

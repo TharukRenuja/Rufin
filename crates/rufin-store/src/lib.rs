@@ -4,12 +4,12 @@ use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, Playlist, PlaylistId, QueueSnapshot, ServerId, ServerIdentity, Track, TrackId,
 };
-use rufin_provider::{PagedResponse, PlaylistDetail, SearchResults};
+use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use thiserror::Error;
 
 const SETTINGS_KEY: &str = "default";
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -233,10 +233,20 @@ impl Store {
             CREATE TABLE IF NOT EXISTS playlist_tracks (
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
                 playlist_id TEXT NOT NULL,
+                entry_id TEXT NOT NULL,
                 track_id TEXT NOT NULL,
                 position INTEGER NOT NULL,
                 sync_generation INTEGER NOT NULL,
-                PRIMARY KEY (server_id, playlist_id, track_id)
+                PRIMARY KEY (server_id, playlist_id, entry_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS lyrics_cache (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                track_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, track_id)
             );
 
             CREATE TABLE IF NOT EXISTS cover_cache (
@@ -289,6 +299,7 @@ impl Store {
             self.ensure_column(table, "image_item_id", "TEXT")?;
             self.ensure_column(table, "image_tag", "TEXT")?;
         }
+        self.ensure_playlist_entries_table()?;
         self.connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (version) VALUES (1)",
             [],
@@ -312,6 +323,43 @@ impl Store {
                 [],
             )?;
         }
+        Ok(())
+    }
+
+    fn ensure_playlist_entries_table(&self) -> StoreResult<()> {
+        let mut statement = self
+            .connection
+            .prepare("PRAGMA table_info(playlist_tracks)")?;
+        let columns = collect_rows(statement.query_map([], |row| row.get::<_, String>(1))?)?;
+        if columns.iter().any(|name| name == "entry_id") {
+            return Ok(());
+        }
+
+        self.connection.execute_batch(
+            "
+            ALTER TABLE playlist_tracks RENAME TO playlist_tracks_v3;
+            CREATE TABLE playlist_tracks (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                playlist_id TEXT NOT NULL,
+                entry_id TEXT NOT NULL,
+                track_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                sync_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, playlist_id, entry_id)
+            );
+            INSERT INTO playlist_tracks (
+                server_id, playlist_id, entry_id, track_id, position, sync_generation
+            )
+            SELECT server_id,
+                   playlist_id,
+                   track_id || ':' || position,
+                   track_id,
+                   position,
+                   sync_generation
+            FROM playlist_tracks_v3;
+            DROP TABLE playlist_tracks_v3;
+            ",
+        )?;
         Ok(())
     }
 
@@ -1351,6 +1399,24 @@ impl Store {
         tracks: &[Track],
         generation: i64,
     ) -> StoreResult<()> {
+        let entries = tracks
+            .iter()
+            .enumerate()
+            .map(|(position, track)| PlaylistEntry {
+                entry_id: format!("{}:{position}", track.id.as_str()),
+                track: track.clone(),
+            })
+            .collect::<Vec<_>>();
+        self.upsert_playlist_entries(server_id, playlist_id, &entries, generation)
+    }
+
+    pub fn upsert_playlist_entries(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        entries: &[PlaylistEntry],
+        generation: i64,
+    ) -> StoreResult<()> {
         self.write_batch(|connection| {
             connection.execute(
                 "DELETE FROM playlist_tracks WHERE server_id = ?1 AND playlist_id = ?2",
@@ -1359,19 +1425,21 @@ impl Store {
             let mut statement = connection.prepare(
                 "
                 INSERT INTO playlist_tracks (
-                    server_id, playlist_id, track_id, position, sync_generation
+                    server_id, playlist_id, entry_id, track_id, position, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                ON CONFLICT(server_id, playlist_id, track_id) DO UPDATE SET
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(server_id, playlist_id, entry_id) DO UPDATE SET
+                    track_id = excluded.track_id,
                     position = excluded.position,
                     sync_generation = excluded.sync_generation
                 ",
             )?;
-            for (position, track) in tracks.iter().enumerate() {
+            for (position, entry) in entries.iter().enumerate() {
                 statement.execute(params![
                     server_id.as_str(),
                     playlist_id.as_str(),
-                    track.id.as_str(),
+                    entry.entry_id,
+                    entry.track.id.as_str(),
                     position as i64,
                     generation,
                 ])?;
@@ -1403,7 +1471,8 @@ impl Store {
 
         let mut statement = self.connection.prepare(
             "
-            SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
+            SELECT pt.entry_id,
+                   t.track_id, t.album_id, t.title, t.artist, t.artist_id,
                    t.album, t.year, t.duration_seconds, t.favorite,
                    t.disc_number, t.track_number, t.image_item_id, t.image_tag
             FROM playlist_tracks pt
@@ -1413,13 +1482,24 @@ impl Store {
             ORDER BY pt.position
             ",
         )?;
-        let mut tracks = collect_rows(statement.query_map(
+        let mut entries = collect_rows(statement.query_map(
             params![server_id.as_str(), playlist_id.as_str()],
-            track_from_row,
+            playlist_entry_from_row,
         )?)?;
+        let mut tracks = entries
+            .iter()
+            .map(|entry| entry.track.clone())
+            .collect::<Vec<_>>();
         self.attach_track_genres(server_id, &mut tracks)?;
+        for (entry, track) in entries.iter_mut().zip(tracks.iter().cloned()) {
+            entry.track = track;
+        }
 
-        Ok(Some(PlaylistDetail { playlist, tracks }))
+        Ok(Some(PlaylistDetail {
+            playlist,
+            tracks,
+            entries,
+        }))
     }
 
     pub fn load_genre_detail(
@@ -1502,6 +1582,121 @@ impl Store {
             collect_rows(statement.query_map(params![server_id.as_str()], track_from_row)?)?;
         self.attach_track_genres(server_id, &mut tracks)?;
         Ok(tracks)
+    }
+
+    pub fn set_album_favorite(
+        &self,
+        server_id: &ServerId,
+        album_id: &AlbumId,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE albums SET favorite = ?3 WHERE server_id = ?1 AND album_id = ?2",
+            params![server_id.as_str(), album_id.as_str(), bool_to_i64(favorite)],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_track_favorite(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE tracks SET favorite = ?3 WHERE server_id = ?1 AND track_id = ?2",
+            params![server_id.as_str(), track_id.as_str(), bool_to_i64(favorite)],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_artist_favorite(
+        &self,
+        server_id: &ServerId,
+        artist_id: &ArtistId,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE artists SET favorite = ?3 WHERE server_id = ?1 AND artist_id = ?2",
+            params![
+                server_id.as_str(),
+                artist_id.as_str(),
+                bool_to_i64(favorite)
+            ],
+        )?;
+        self.connection.execute(
+            "UPDATE album_artists SET favorite = ?3 WHERE server_id = ?1 AND artist_id = ?2",
+            params![
+                server_id.as_str(),
+                artist_id.as_str(),
+                bool_to_i64(favorite)
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn rename_playlist(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        name: &str,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE playlists SET name = ?3 WHERE server_id = ?1 AND playlist_id = ?2",
+            params![server_id.as_str(), playlist_id.as_str(), name],
+        )?;
+        self.connection.execute(
+            "DELETE FROM library_fts WHERE server_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
+            params![server_id.as_str(), playlist_id.as_str()],
+        )?;
+        self.connection.execute(
+            "INSERT INTO library_fts (server_id, item_type, item_id, title, subtitle)
+             VALUES (?1, 'playlist', ?2, ?3, '')",
+            params![server_id.as_str(), playlist_id.as_str(), name],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_lyrics(&self, server_id: &ServerId, lyrics: &Lyrics) -> StoreResult<()> {
+        let value = serde_json::to_string(lyrics)?;
+        let source = match lyrics.source {
+            rufin_provider::LyricsSource::Server => "server",
+            rufin_provider::LyricsSource::Remote => "remote",
+        };
+        self.connection.execute(
+            "
+            INSERT INTO lyrics_cache (server_id, track_id, source, value, updated_at)
+            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id, track_id) DO UPDATE SET
+                source = excluded.source,
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str(), lyrics.track_id.as_str(), source, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_lyrics(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<Lyrics>> {
+        let value = self
+            .connection
+            .query_row(
+                "
+                SELECT value
+                FROM lyrics_cache
+                WHERE server_id = ?1 AND track_id = ?2
+                ",
+                params![server_id.as_str(), track_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        value
+            .map(|json| serde_json::from_str(&json).map_err(StoreError::from))
+            .unwrap_or_else(|| Ok(None))
     }
 
     pub fn search_library(
@@ -1957,20 +2152,31 @@ fn album_from_row(row: &Row<'_>) -> rusqlite::Result<Album> {
 }
 
 fn track_from_row(row: &Row<'_>) -> rusqlite::Result<Track> {
-    let artist_id = row.get::<_, Option<String>>(4)?.map(ArtistId::new);
+    track_from_row_at(row, 0)
+}
+
+fn playlist_entry_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistEntry> {
+    Ok(PlaylistEntry {
+        entry_id: row.get(0)?,
+        track: track_from_row_at(row, 1)?,
+    })
+}
+
+fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<Track> {
+    let artist_id = row.get::<_, Option<String>>(offset + 4)?.map(ArtistId::new);
     Ok(Track {
-        id: TrackId::new(row.get::<_, String>(0)?),
-        album_id: AlbumId::new(row.get::<_, String>(1)?),
-        title: row.get(2)?,
-        artist: row.get(3)?,
+        id: TrackId::new(row.get::<_, String>(offset)?),
+        album_id: AlbumId::new(row.get::<_, String>(offset + 1)?),
+        title: row.get(offset + 2)?,
+        artist: row.get(offset + 3)?,
         artist_id,
-        album: row.get(5)?,
-        year: u16_from_i64(row.get(6)?),
-        duration_seconds: u32_from_i64(row.get(7)?),
-        favorite: row.get::<_, i64>(8)? == 1,
-        disc_number: u16_from_i64(row.get(9)?),
-        track_number: u16_from_i64(row.get(10)?),
-        image_ref: image_ref_from_row(row, 11, 12)?,
+        album: row.get(offset + 5)?,
+        year: u16_from_i64(row.get(offset + 6)?),
+        duration_seconds: u32_from_i64(row.get(offset + 7)?),
+        favorite: row.get::<_, i64>(offset + 8)? == 1,
+        disc_number: u16_from_i64(row.get(offset + 9)?),
+        track_number: u16_from_i64(row.get(offset + 10)?),
+        image_ref: image_ref_from_row(row, offset + 11, offset + 12)?,
         genres: Vec::new(),
     })
 }
@@ -2246,6 +2452,7 @@ fn clear_library_cache_on_connection(
         "artists",
         "tracks",
         "albums",
+        "lyrics_cache",
         "cover_cache",
     ] {
         let sql = format!("DELETE FROM {table} WHERE server_id = ?1");
@@ -2304,12 +2511,13 @@ mod tests {
         Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, ImageRef, Playlist,
         PlaylistId, QueueEngine, ServerId, ServerIdentity, ThemePreference, Track, TrackId,
     };
+    use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
 
     #[test]
     fn migrations_run_from_empty_database() {
         let store = Store::open_memory().expect("open store");
 
-        assert_eq!(store.schema_version().expect("schema version"), 3);
+        assert_eq!(store.schema_version().expect("schema version"), 4);
         assert!(store.foreign_keys_enabled().expect("foreign keys"));
         assert!(store.fts5_available().expect("fts5 table"));
     }
@@ -2332,7 +2540,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_to_v3_migration_preserves_existing_rows_and_adds_image_columns() {
+    fn v2_to_v4_migration_preserves_existing_rows_and_adds_image_columns() {
         let connection = rusqlite::Connection::open_in_memory().expect("open connection");
         connection
             .execute_batch(
@@ -2449,7 +2657,7 @@ mod tests {
         store.migrate().expect("migrate");
 
         let server_id = ServerId::new("jellyfin:server:test");
-        assert_eq!(store.schema_version().expect("schema version"), 3);
+        assert_eq!(store.schema_version().expect("schema version"), 4);
         for table in [
             "albums",
             "tracks",
@@ -2477,6 +2685,127 @@ mod tests {
                 .title,
             "Old Track"
         );
+    }
+
+    #[test]
+    fn v3_to_v4_migration_adds_playlist_entry_ids_and_lyrics_cache() {
+        let connection = rusqlite::Connection::open_in_memory().expect("open connection");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO schema_migrations (version) VALUES (1), (2), (3);
+
+                CREATE TABLE servers (
+                    server_id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    trust_invalid_cert INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO servers (
+                    server_id, provider, name, base_url, user_id, username, trust_invalid_cert
+                )
+                VALUES (
+                    'jellyfin:server:test', 'jellyfin', 'Test Server',
+                    'https://music.example', 'user', 'demo', 0
+                );
+                CREATE TABLE albums (
+                    server_id TEXT NOT NULL,
+                    album_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL,
+                    artist_id TEXT,
+                    year INTEGER NOT NULL,
+                    track_count INTEGER NOT NULL,
+                    duration_seconds INTEGER NOT NULL,
+                    favorite INTEGER NOT NULL,
+                    color_seed INTEGER NOT NULL,
+                    image_item_id TEXT,
+                    image_tag TEXT,
+                    sync_generation INTEGER NOT NULL,
+                    PRIMARY KEY (server_id, album_id)
+                );
+                INSERT INTO albums VALUES (
+                    'jellyfin:server:test', 'album-1', 'Old Album', 'Old Artist',
+                    'artist-1', 2020, 1, 180, 0, 1, NULL, NULL, 3
+                );
+                CREATE TABLE tracks (
+                    server_id TEXT NOT NULL,
+                    track_id TEXT NOT NULL,
+                    album_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL,
+                    artist_id TEXT,
+                    album TEXT NOT NULL,
+                    year INTEGER NOT NULL,
+                    duration_seconds INTEGER NOT NULL,
+                    favorite INTEGER NOT NULL,
+                    disc_number INTEGER NOT NULL,
+                    track_number INTEGER NOT NULL,
+                    image_item_id TEXT,
+                    image_tag TEXT,
+                    sync_generation INTEGER NOT NULL,
+                    PRIMARY KEY (server_id, track_id)
+                );
+                INSERT INTO tracks VALUES (
+                    'jellyfin:server:test', 'track-1', 'album-1', 'Old Track',
+                    'Old Artist', 'artist-1', 'Old Album', 2020, 180, 0, 1, 1,
+                    NULL, NULL, 3
+                );
+                CREATE TABLE playlists (
+                    server_id TEXT NOT NULL,
+                    playlist_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    track_count INTEGER NOT NULL,
+                    duration_seconds INTEGER NOT NULL,
+                    image_item_id TEXT,
+                    image_tag TEXT,
+                    sync_generation INTEGER NOT NULL,
+                    PRIMARY KEY (server_id, playlist_id)
+                );
+                INSERT INTO playlists VALUES (
+                    'jellyfin:server:test', 'playlist-1', 'Old Playlist', 1, 180,
+                    NULL, NULL, 3
+                );
+                CREATE TABLE playlist_tracks (
+                    server_id TEXT NOT NULL,
+                    playlist_id TEXT NOT NULL,
+                    track_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    sync_generation INTEGER NOT NULL,
+                    PRIMARY KEY (server_id, playlist_id, track_id)
+                );
+                INSERT INTO playlist_tracks VALUES (
+                    'jellyfin:server:test', 'playlist-1', 'track-1', 7, 3
+                );
+                ",
+            )
+            .expect("seed v3 schema");
+        let store = Store { connection };
+
+        store.configure_pragmas(true).expect("configure pragmas");
+        store.migrate().expect("migrate");
+
+        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert!(table_has_column(&store, "playlist_tracks", "entry_id"));
+        assert!(table_has_column(&store, "lyrics_cache", "value"));
+        let entry_id: String = store
+            .connection
+            .query_row(
+                "SELECT entry_id FROM playlist_tracks WHERE track_id = 'track-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("playlist entry id");
+        assert_eq!(entry_id, "track-1:7");
     }
 
     #[test]
@@ -2744,6 +3073,160 @@ mod tests {
 
         assert_eq!(detail.playlist, playlist);
         assert_eq!(detail.tracks, vec![track_two, track_one]);
+    }
+
+    #[test]
+    fn playlist_entries_allow_duplicate_tracks_and_keep_entry_ids() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let track = track(1, &album);
+        let playlist = playlist(1, None);
+        let entries = vec![
+            PlaylistEntry {
+                entry_id: "entry-one".to_string(),
+                track: track.clone(),
+            },
+            PlaylistEntry {
+                entry_id: "entry-two".to_string(),
+                track: track.clone(),
+            },
+        ];
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert tracks");
+        store
+            .upsert_playlists(
+                &saved.server.id,
+                std::slice::from_ref(&playlist),
+                generation,
+            )
+            .expect("upsert playlist");
+        store
+            .upsert_playlist_entries(&saved.server.id, &playlist.id, &entries, generation)
+            .expect("upsert playlist entries");
+
+        let detail = store
+            .load_playlist_detail(&saved.server.id, &playlist.id)
+            .expect("load playlist detail")
+            .expect("playlist detail");
+
+        assert_eq!(detail.entries, entries);
+        assert_eq!(detail.tracks, vec![track.clone(), track]);
+    }
+
+    #[test]
+    fn lyrics_cache_round_trips_by_server_and_track() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let track = track(1, &album);
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        let lyrics = Lyrics {
+            track_id: track.id.clone(),
+            source: LyricsSource::Remote,
+            lines: vec![LyricLine {
+                start_millis: Some(12_000),
+                text: "hello".to_string(),
+            }],
+        };
+
+        store
+            .save_lyrics(&saved.server.id, &lyrics)
+            .expect("save lyrics");
+
+        assert_eq!(
+            store
+                .load_lyrics(&saved.server.id, &track.id)
+                .expect("load lyrics"),
+            Some(lyrics)
+        );
+        assert_eq!(
+            store
+                .load_lyrics(&ServerId::fake(2), &track.id)
+                .expect("load missing lyrics"),
+            None
+        );
+    }
+
+    #[test]
+    fn favorite_flag_updates_refresh_cached_models_and_favorite_tracks() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(1);
+        album.favorite = false;
+        let mut track = track(1, &album);
+        track.favorite = false;
+        let artist = artist(1, None);
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+
+        store
+            .set_album_favorite(&saved.server.id, &album.id, true)
+            .expect("favorite album");
+        store
+            .set_track_favorite(&saved.server.id, &track.id, true)
+            .expect("favorite track");
+        store
+            .set_artist_favorite(&saved.server.id, &artist.id, true)
+            .expect("favorite artist");
+
+        assert!(
+            store
+                .load_albums(&saved.server.id, 0, 1)
+                .expect("load albums")
+                .items[0]
+                .favorite
+        );
+        assert!(
+            store
+                .load_tracks(&saved.server.id, 0, 1)
+                .expect("load tracks")
+                .items[0]
+                .favorite
+        );
+        assert!(
+            store
+                .load_artists(&saved.server.id, false, 0, 1)
+                .expect("load artists")
+                .items[0]
+                .favorite
+        );
+        assert_eq!(
+            store
+                .load_favorite_tracks(&saved.server.id)
+                .expect("favorite tracks")
+                .len(),
+            1
+        );
     }
 
     #[test]

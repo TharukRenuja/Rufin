@@ -11,6 +11,9 @@ use gdk_pixbuf::Pixbuf;
 use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
+use mpris_server::{
+    LoopStatus, Metadata, PlaybackStatus, Player as MprisPlayer, Time, TrackId as MprisTrackId,
+};
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
     HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueSnapshot,
@@ -18,6 +21,7 @@ use rufin_core::{
     TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
+use rufin_provider::Lyrics;
 use rufin_store::{CachedArtistDetail, CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
@@ -65,6 +69,9 @@ struct AppState {
     library: RefCell<LibrarySnapshot>,
     queue: RefCell<Option<QueueSnapshot>>,
     player: RefCell<PlaybackSnapshot>,
+    lyrics: RefCell<Option<Lyrics>>,
+    lyrics_track_id: RefCell<Option<rufin_core::TrackId>>,
+    mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
@@ -227,6 +234,7 @@ struct GroupedDetailData {
 struct Shell {
     state: AppState,
     controller: AppController,
+    application: adw::Application,
     window: adw::ApplicationWindow,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
@@ -253,6 +261,7 @@ struct PlayerControls {
     next_button: gtk::Button,
     shuffle_button: gtk::Button,
     repeat_button: gtk::Button,
+    favorite_button: gtk::Button,
     elapsed: gtk::Label,
     progress: gtk::Scale,
     duration: gtk::Label,
@@ -285,6 +294,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         library: RefCell::new(library),
         queue: RefCell::new(queue),
         player: RefCell::new(player),
+        lyrics: RefCell::new(None),
+        lyrics_track_id: RefCell::new(None),
+        mpris_player: RefCell::new(None),
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
@@ -393,6 +405,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let shell = Rc::new(Shell {
         state,
         controller,
+        application: app.clone(),
         window,
         normal_nav,
         compact_nav,
@@ -409,6 +422,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     build_compact_navigation(&shell);
     connect_shell_actions(&shell, settings_button);
     connect_player_controls(&shell);
+    install_mpris(&shell);
     shell.update_density();
     prime_first_cached_cover(&shell);
     shell.render_current_route();
@@ -947,6 +961,92 @@ impl Shell {
         previous_width != split_width || position_changed
     }
 
+    fn update_mpris_player(&self) {
+        let Some(player) = self.state.mpris_player.borrow().as_ref().cloned() else {
+            return;
+        };
+        let snapshot = self.state.player.borrow().clone();
+        let metadata = self.mpris_metadata(&snapshot);
+        let playback_status = match snapshot.state {
+            PlaybackState::Playing | PlaybackState::Buffering => PlaybackStatus::Playing,
+            PlaybackState::Paused => PlaybackStatus::Paused,
+            PlaybackState::Stopped => PlaybackStatus::Stopped,
+        };
+        let loop_status = match snapshot.repeat_mode {
+            RepeatMode::Off => LoopStatus::None,
+            RepeatMode::One => LoopStatus::Track,
+            RepeatMode::All => LoopStatus::Playlist,
+        };
+        let has_current = snapshot.current.is_some();
+        let position = Time::from_secs(i64::from(snapshot.position_seconds));
+        let volume = snapshot.volume.clamp(0.0, 1.0);
+
+        glib::spawn_future_local(async move {
+            let _updated = player.set_playback_status(playback_status).await;
+            let _updated = player.set_loop_status(loop_status).await;
+            let _updated = player.set_shuffle(snapshot.shuffle_enabled).await;
+            let _updated = player.set_metadata(metadata).await;
+            let _updated = player.set_volume(volume).await;
+            let _updated = player.set_can_play(has_current).await;
+            let _updated = player.set_can_pause(has_current).await;
+            let _updated = player.set_can_seek(has_current).await;
+            let _updated = player.set_can_go_next(has_current).await;
+            let _updated = player.set_can_go_previous(has_current).await;
+            player.set_position(position);
+        });
+    }
+
+    fn mpris_metadata(&self, snapshot: &PlaybackSnapshot) -> Metadata {
+        let Some(entry) = snapshot.current.as_ref() else {
+            return Metadata::builder().trackid(MprisTrackId::NO_TRACK).build();
+        };
+        let mut builder = Metadata::builder()
+            .trackid(mpris_track_id(entry.track_id.as_str()))
+            .title(entry.title.clone())
+            .artist([entry.artist.clone()])
+            .album(entry.album.clone())
+            .length(Time::from_secs(i64::from(entry.duration_seconds)));
+        if let Some(art_url) = self.current_art_url(entry) {
+            builder = builder.art_url(art_url);
+        }
+        builder.build()
+    }
+
+    fn current_art_url(&self, entry: &QueueEntry) -> Option<String> {
+        let server = self.state.library.borrow().server.as_ref()?.clone();
+        let image_ref = entry.image_ref.as_ref()?;
+        let key = image_cache_key(
+            &server.id,
+            &image_ref.item_id,
+            image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
+            THUMB_COVER_SIZE,
+        );
+        let path = self.controller.cached_cover_path_for_key(&key)?;
+        glib::filename_to_uri(path, None)
+            .ok()
+            .map(|uri| uri.to_string())
+    }
+
+    fn notify_now_playing(&self, snapshot: &PlaybackSnapshot) {
+        let settings = self.state.settings.borrow().clone();
+        if !settings.notifications_enabled || settings.private_mode {
+            return;
+        }
+        if !matches!(
+            snapshot.state,
+            PlaybackState::Playing | PlaybackState::Buffering
+        ) {
+            return;
+        }
+        let Some(entry) = snapshot.current.as_ref() else {
+            return;
+        };
+        let notification = gio::Notification::new(&entry.title);
+        notification.set_body(Some(&format!("{} - {}", entry.artist, entry.album)));
+        self.application
+            .send_notification(Some("now-playing"), &notification);
+    }
+
     fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
         while let Some(child) = self.route_host.first_child() {
@@ -1279,7 +1379,14 @@ impl Shell {
         });
         actions.append(&play_next);
 
-        actions.append(&text_button("emblem-favorite-symbolic", "Favorite"));
+        let favorite = text_button("emblem-favorite-symbolic", "Favorite");
+        if album.favorite {
+            favorite.add_css_class("active-toggle");
+        }
+        let controller = self.controller.clone();
+        let favorite_album = album.clone();
+        favorite.connect_clicked(move |_| controller.toggle_album_favorite(favorite_album.clone()));
+        actions.append(&favorite);
 
         metadata.append(&kind);
         metadata.append(&title);
@@ -1606,6 +1713,18 @@ impl Shell {
         summary.set_xalign(0.0);
         wrapper.append(&summary);
 
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let favorite = text_button("emblem-favorite-symbolic", "Favorite");
+        if artist.favorite {
+            favorite.add_css_class("active-toggle");
+        }
+        let controller = self.controller.clone();
+        let favorite_artist = artist.clone();
+        favorite
+            .connect_clicked(move |_| controller.toggle_artist_favorite(favorite_artist.clone()));
+        actions.append(&favorite);
+        wrapper.append(&actions);
+
         if !albums.is_empty() {
             let album_heading = gtk::Label::new(Some(&tr("Albums")));
             album_heading.add_css_class("section-heading");
@@ -1695,13 +1814,81 @@ impl Shell {
             |controller, offset, limit| controller.cached_playlists_page(offset, limit),
             append_playlists_to_model,
         );
-        self.media_grid_view(
-            title,
-            page.items.is_empty(),
-            "Cached rows will appear here after the background sync finishes.",
-            self.playlist_cards_grid_for_model(model),
-            Some(load_next),
-        )
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(24);
+        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_start(28);
+        wrapper.set_margin_end(28);
+        wrapper.set_vexpand(true);
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let heading = gtk::Label::new(Some(title));
+        heading.add_css_class("section-heading");
+        heading.set_xalign(0.0);
+        heading.set_hexpand(true);
+        let create = text_button("list-add-symbolic", "New Playlist");
+        let shell = Rc::clone(self);
+        create.connect_clicked(move |_| shell.new_playlist_dialog());
+        header.append(&heading);
+        header.append(&create);
+        wrapper.append(&header);
+
+        if page.items.is_empty() {
+            wrapper.append(&self.placeholder_view(
+                title,
+                "Cached rows will appear here after the background sync finishes.",
+            ));
+        } else {
+            let scroller = gtk::ScrolledWindow::new();
+            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            scroller.set_min_content_width(0);
+            scroller.set_vexpand(true);
+            scroller.set_child(Some(&self.playlist_cards_grid_for_model(model)));
+            connect_paged_grid_loader(&scroller, load_next);
+            wrapper.append(&scroller);
+        }
+        wrapper.upcast()
+    }
+
+    fn new_playlist_dialog(self: &Rc<Self>) {
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr("New Playlist"))
+            .body(tr(
+                "Create a playlist. If a track is playing, it will be added.",
+            ))
+            .build();
+        dialog.add_response("cancel", &tr("Cancel"));
+        dialog.add_response("create", &tr("Create"));
+        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        let entry = gtk::Entry::new();
+        entry.set_placeholder_text(Some(&tr("Playlist name")));
+        dialog.set_extra_child(Some(&entry));
+        let controller = self.controller.clone();
+        let current_track = self
+            .state
+            .player
+            .borrow()
+            .current
+            .as_ref()
+            .and_then(|entry| {
+                self.state
+                    .library
+                    .borrow()
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == entry.track_id)
+                    .cloned()
+            });
+        dialog.connect_response(None, move |_, response| {
+            if response == "create" {
+                let name = entry.text().trim().to_string();
+                if !name.is_empty() {
+                    controller.create_playlist(name, current_track.clone().into_iter().collect());
+                }
+            }
+        });
+        dialog.present(Some(&self.window));
     }
 
     fn genre_detail_view(self: &Rc<Self>, genre_id: rufin_core::GenreId) -> gtk::Widget {
@@ -1761,6 +1948,7 @@ impl Shell {
                 Some(rufin_provider::PlaylistDetail {
                     playlist,
                     tracks: Vec::new(),
+                    entries: Vec::new(),
                 })
             });
         let Some(detail) = detail else {
@@ -1774,15 +1962,209 @@ impl Shell {
             tr("tracks"),
             format_duration(detail.playlist.duration_seconds)
         );
-        self.grouped_detail_view(GroupedDetailData {
-            title: detail.playlist.name,
-            image_ref: detail.playlist.image_ref,
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
+        scroller.set_vexpand(true);
+
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 20);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(28);
+        wrapper.set_margin_bottom(36);
+        wrapper.set_margin_start(32);
+        wrapper.set_margin_end(32);
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
+        header.append(&self.cover_tile_for(
+            detail.playlist.image_ref.as_ref(),
             seed,
-            summary,
-            albums: Vec::new(),
-            tracks: detail.tracks,
-            table_context: "playlist-detail",
-        })
+            160,
+            DETAIL_COVER_SIZE,
+        ));
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        metadata.set_valign(gtk::Align::Center);
+        let title = gtk::Label::new(Some(&detail.playlist.name));
+        title.add_css_class("detail-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        let summary = gtk::Label::new(Some(&summary));
+        summary.add_css_class("muted");
+        summary.set_xalign(0.0);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let play = text_button("media-playback-start-symbolic", "Play");
+        let controller = self.controller.clone();
+        let tracks = detail.tracks.clone();
+        play.connect_clicked(move |_| controller.play_tracks_now(tracks.clone()));
+        actions.append(&play);
+        let rename = text_button("document-edit-symbolic", "Rename");
+        let shell = Rc::clone(self);
+        let playlist_id_for_rename = detail.playlist.id.clone();
+        let current_name = detail.playlist.name.clone();
+        rename.connect_clicked(move |_| {
+            shell.rename_playlist_dialog(playlist_id_for_rename.clone(), current_name.clone())
+        });
+        actions.append(&rename);
+        let add_current = text_button("list-add-symbolic", "Add current");
+        let current_track = self
+            .state
+            .player
+            .borrow()
+            .current
+            .as_ref()
+            .and_then(|entry| {
+                self.state
+                    .library
+                    .borrow()
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == entry.track_id)
+                    .cloned()
+            });
+        add_current.set_sensitive(current_track.is_some());
+        let controller = self.controller.clone();
+        let playlist_id_for_add = detail.playlist.id.clone();
+        add_current.connect_clicked(move |_| {
+            if let Some(track) = current_track.clone() {
+                controller.add_tracks_to_playlist(playlist_id_for_add.clone(), vec![track]);
+            }
+        });
+        actions.append(&add_current);
+        metadata.append(&title);
+        metadata.append(&summary);
+        metadata.append(&actions);
+        header.append(&metadata);
+        wrapper.append(&header);
+
+        if detail.entries.is_empty() {
+            wrapper
+                .append(&self.placeholder_view("Tracks", "No cached tracks are linked here yet."));
+        } else {
+            wrapper.append(&self.playlist_entries_view(&detail));
+        }
+        scroller.set_child(Some(&wrapper));
+        scroller.upcast()
+    }
+
+    fn playlist_entries_view(
+        self: &Rc<Self>,
+        detail: &rufin_provider::PlaylistDetail,
+    ) -> gtk::Widget {
+        let list = gtk::ListBox::new();
+        list.add_css_class("track-table");
+        list.set_selection_mode(gtk::SelectionMode::None);
+        for (index, entry) in detail.entries.iter().enumerate() {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.add_css_class("queue-row");
+            row.set_valign(gtk::Align::Center);
+            let number = gtk::Label::new(Some(&(index + 1).to_string()));
+            number.add_css_class("muted");
+            number.set_width_chars(3);
+            row.append(&number);
+            row.append(&self.cover_tile_for(
+                entry.track.image_ref.as_ref(),
+                stable_seed(entry.track.id.as_str()),
+                36,
+                THUMB_COVER_SIZE,
+            ));
+            let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            labels.set_hexpand(true);
+            let title = gtk::Label::new(Some(&entry.track.title));
+            title.set_xalign(0.0);
+            title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            let artist = gtk::Label::new(Some(&entry.track.artist));
+            artist.add_css_class("muted");
+            artist.set_xalign(0.0);
+            artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            labels.append(&title);
+            labels.append(&artist);
+            row.append(&labels);
+
+            let play = icon_button("media-playback-start-symbolic", "Play track");
+            let controller = self.controller.clone();
+            let track = entry.track.clone();
+            play.connect_clicked(move |_| controller.play_now(track.clone()));
+            row.append(&play);
+
+            let up = icon_button("go-up-symbolic", "Move up");
+            up.set_sensitive(index > 0);
+            let controller = self.controller.clone();
+            let playlist_id = detail.playlist.id.clone();
+            let entry_id = entry.entry_id.clone();
+            up.connect_clicked(move |_| {
+                controller.move_playlist_entry(playlist_id.clone(), entry_id.clone(), index - 1)
+            });
+            row.append(&up);
+
+            let down = icon_button("go-down-symbolic", "Move down");
+            down.set_sensitive(index + 1 < detail.entries.len());
+            let controller = self.controller.clone();
+            let playlist_id = detail.playlist.id.clone();
+            let entry_id = entry.entry_id.clone();
+            down.connect_clicked(move |_| {
+                controller.move_playlist_entry(playlist_id.clone(), entry_id.clone(), index + 1)
+            });
+            row.append(&down);
+
+            let remove = icon_button("user-trash-symbolic", "Remove from playlist");
+            let controller = self.controller.clone();
+            let playlist_id = detail.playlist.id.clone();
+            let entry_id = entry.entry_id.clone();
+            remove.connect_clicked(move |_| {
+                controller.remove_playlist_entry(playlist_id.clone(), entry_id.clone())
+            });
+            row.append(&remove);
+
+            let drag_source = gtk::DragSource::builder()
+                .actions(gtk::gdk::DragAction::MOVE)
+                .build();
+            let entry_id = entry.entry_id.clone();
+            drag_source.connect_prepare(move |_, _, _| {
+                Some(gtk::gdk::ContentProvider::for_value(&entry_id.to_value()))
+            });
+            row.add_controller(drag_source);
+
+            let drop_target =
+                gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+            let controller = self.controller.clone();
+            let playlist_id = detail.playlist.id.clone();
+            let target_entry_id = entry.entry_id.clone();
+            drop_target.connect_drop(move |_, value, _, _| {
+                let Ok(entry_id) = value.get::<String>() else {
+                    return false;
+                };
+                if entry_id == target_entry_id {
+                    return false;
+                }
+                controller.move_playlist_entry(playlist_id.clone(), entry_id, index);
+                true
+            });
+            row.add_controller(drop_target);
+            list.append(&row);
+        }
+        list.upcast()
+    }
+
+    fn rename_playlist_dialog(self: &Rc<Self>, playlist_id: PlaylistId, current_name: String) {
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr("Rename Playlist"))
+            .body(tr("Enter a new playlist name."))
+            .build();
+        dialog.add_response("cancel", &tr("Cancel"));
+        dialog.add_response("rename", &tr("Rename"));
+        dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
+        let entry = gtk::Entry::new();
+        entry.set_text(&current_name);
+        dialog.set_extra_child(Some(&entry));
+        let controller = self.controller.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "rename" {
+                let name = entry.text().trim().to_string();
+                if !name.is_empty() {
+                    controller.rename_playlist(playlist_id.clone(), name);
+                }
+            }
+        });
+        dialog.present(Some(&self.window));
     }
 
     fn grouped_detail_view(self: &Rc<Self>, data: GroupedDetailData) -> gtk::Widget {
@@ -2193,13 +2575,36 @@ impl Shell {
         lyrics_title.set_xalign(0.0);
         lyrics.append(&lyrics_title);
 
-        let lyrics_status = gtk::Label::new(Some(&tr("Lyrics arrive in a later playback slice.")));
-        lyrics_status.add_css_class("muted");
-        lyrics_status.set_wrap(true);
-        lyrics_status.set_justify(gtk::Justification::Center);
-        lyrics_status.set_valign(gtk::Align::Center);
-        lyrics_status.set_vexpand(true);
-        lyrics.append(&lyrics_status);
+        let lyrics_scroller = gtk::ScrolledWindow::new();
+        lyrics_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        lyrics_scroller.set_vexpand(true);
+        let lyrics_body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        lyrics_body.set_vexpand(true);
+        if let Some(current_lyrics) = self.state.lyrics.borrow().clone() {
+            let position_millis = u64::from(player.position_seconds) * 1_000;
+            for line in &current_lyrics.lines {
+                let label = gtk::Label::new(Some(&line.text));
+                label.set_wrap(true);
+                label.set_xalign(0.0);
+                label.add_css_class("lyrics-line");
+                if line.start_millis.is_some_and(|start| {
+                    start <= position_millis && position_millis < start + 8_000
+                }) {
+                    label.add_css_class("lyrics-line-active");
+                }
+                lyrics_body.append(&label);
+            }
+        } else {
+            let lyrics_status = gtk::Label::new(Some(&tr("No lyrics for the current track.")));
+            lyrics_status.add_css_class("muted");
+            lyrics_status.set_wrap(true);
+            lyrics_status.set_justify(gtk::Justification::Center);
+            lyrics_status.set_valign(gtk::Align::Center);
+            lyrics_status.set_vexpand(true);
+            lyrics_body.append(&lyrics_status);
+        }
+        lyrics_scroller.set_child(Some(&lyrics_body));
+        lyrics.append(&lyrics_scroller);
 
         let queue_lyrics_split = gtk::Paned::new(gtk::Orientation::Vertical);
         queue_lyrics_split.add_css_class("queue-lyrics-split");
@@ -2394,6 +2799,13 @@ impl Shell {
             &controls.repeat_button,
             player.repeat_mode != RepeatMode::Off,
         );
+        set_active_class(
+            &controls.favorite_button,
+            player.current.as_ref().is_some_and(|entry| entry.favorite),
+        );
+        controls
+            .favorite_button
+            .set_sensitive(player.current.is_some());
         controls
             .repeat_button
             .set_tooltip_text(Some(&tr(repeat_label(player.repeat_mode))));
@@ -3237,7 +3649,8 @@ fn build_bottom_player() -> PlayerControls {
     actions.set_valign(gtk::Align::Center);
     actions.append(&icon_button("view-list-symbolic", "Queue"));
     actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
-    actions.append(&icon_button("emblem-favorite-symbolic", "Favorite"));
+    let favorite_button = icon_button("emblem-favorite-symbolic", "Favorite");
+    actions.append(&favorite_button);
     let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
     actions.append(&mute_button);
     let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
@@ -3262,6 +3675,7 @@ fn build_bottom_player() -> PlayerControls {
         next_button,
         shuffle_button,
         repeat_button,
+        favorite_button,
         elapsed,
         progress,
         duration,
@@ -3307,6 +3721,12 @@ fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .repeat_button
         .connect_clicked(move |_| controller.cycle_repeat());
+
+    let controller = shell.controller.clone();
+    shell
+        .player_controls
+        .favorite_button
+        .connect_clicked(move |_| controller.toggle_current_favorite());
 
     let title_shell = Rc::clone(shell);
     add_label_click(&shell.player_controls.title, move || {
@@ -3392,6 +3812,87 @@ fn connect_player_controls(shell: &Rc<Shell>) {
         });
 }
 
+fn install_mpris(shell: &Rc<Shell>) {
+    let shell = Rc::clone(shell);
+    glib::spawn_future_local(async move {
+        let player = match MprisPlayer::builder("io.github.screwys.Rufin")
+            .identity("Rufin")
+            .desktop_entry("io.github.screwys.Rufin")
+            .supported_uri_schemes(["http", "https"])
+            .supported_mime_types(["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav"])
+            .can_play(true)
+            .can_pause(true)
+            .can_go_next(true)
+            .can_go_previous(true)
+            .can_seek(true)
+            .can_control(true)
+            .build()
+            .await
+        {
+            Ok(player) => Rc::new(player),
+            Err(error) => {
+                warn!(%error, "failed to start MPRIS server");
+                return;
+            }
+        };
+
+        let controller = shell.controller.clone();
+        player.connect_play_pause(move |_| controller.play_pause());
+        let play_shell = Rc::clone(&shell);
+        player.connect_play(move |_| {
+            let state = play_shell.state.player.borrow().state;
+            if !matches!(state, PlaybackState::Playing | PlaybackState::Buffering) {
+                play_shell.controller.play_pause();
+            }
+        });
+        let pause_shell = Rc::clone(&shell);
+        player.connect_pause(move |_| {
+            let state = pause_shell.state.player.borrow().state;
+            if matches!(state, PlaybackState::Playing | PlaybackState::Buffering) {
+                pause_shell.controller.play_pause();
+            }
+        });
+        let controller = shell.controller.clone();
+        player.connect_stop(move |_| controller.stop());
+        let controller = shell.controller.clone();
+        player.connect_next(move |_| controller.next_track());
+        let controller = shell.controller.clone();
+        player.connect_previous(move |_| controller.previous_track());
+        let controller = shell.controller.clone();
+        let seek_shell = Rc::clone(&shell);
+        player.connect_seek(move |_, offset| {
+            let current = seek_shell.state.player.borrow().position_seconds;
+            let offset_seconds = offset.as_micros() / 1_000_000;
+            let target = if offset_seconds.is_negative() {
+                current.saturating_sub(offset_seconds.unsigned_abs() as u32)
+            } else {
+                current.saturating_add(offset_seconds as u32)
+            };
+            controller.seek(target);
+        });
+        let controller = shell.controller.clone();
+        player.connect_set_position(move |_, _, position| {
+            controller.seek((position.as_micros() / 1_000_000) as u32);
+        });
+
+        let run_player = Rc::clone(&player);
+        glib::spawn_future_local(async move {
+            run_player.run().await;
+        });
+        *shell.state.mpris_player.borrow_mut() = Some(player);
+        shell.update_mpris_player();
+    });
+}
+
+fn mpris_track_id(track_id: &str) -> MprisTrackId {
+    let mut encoded = String::with_capacity(track_id.len() * 2);
+    for byte in track_id.as_bytes() {
+        let _written = write!(&mut encoded, "{byte:02x}");
+    }
+    MprisTrackId::try_from(format!("/io/github/screwys/Rufin/track/{encoded}"))
+        .unwrap_or(MprisTrackId::NO_TRACK)
+}
+
 fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local(Duration::from_millis(33), move || {
@@ -3408,8 +3909,34 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     shell.update_bottom_player();
                 }
                 ControllerEvent::Playback(player) => {
-                    *shell.state.player.borrow_mut() = *player;
+                    let previous_track = shell
+                        .state
+                        .player
+                        .borrow()
+                        .current
+                        .as_ref()
+                        .map(|entry| entry.track_id.clone());
+                    let next_snapshot = *player;
+                    let next_track = next_snapshot
+                        .current
+                        .as_ref()
+                        .map(|entry| entry.track_id.clone());
+                    *shell.state.player.borrow_mut() = next_snapshot.clone();
+                    if previous_track != next_track {
+                        *shell.state.lyrics.borrow_mut() = None;
+                        *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
+                        shell.render_queue_panel();
+                        if next_track.is_some() {
+                            shell.controller.request_lyrics_for_current();
+                        }
+                        shell.notify_now_playing(&next_snapshot);
+                    }
                     shell.update_bottom_player();
+                    shell.update_mpris_player();
+                }
+                ControllerEvent::Lyrics(lyrics) => {
+                    *shell.state.lyrics.borrow_mut() = *lyrics;
+                    shell.render_queue_panel();
                 }
                 ControllerEvent::CoverReady { key, path } => {
                     shell.apply_cover_ready(&key, &path);
@@ -4127,13 +4654,7 @@ fn track_table_column(shell: &Rc<Shell>, column: TrackTableColumn) -> gtk::Colum
         TrackTableColumn::Duration => track_column("Duration", 90, |track| {
             format_duration(track.duration_seconds)
         }),
-        TrackTableColumn::Favorite => track_column("Favorite", 76, |track| {
-            if track.favorite {
-                "Yes".to_string()
-            } else {
-                String::new()
-            }
-        }),
+        TrackTableColumn::Favorite => track_favorite_column(shell),
     }
 }
 
@@ -4350,6 +4871,43 @@ where
 
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
+    column.set_resizable(false);
+    column
+}
+
+fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+
+    factory.connect_bind(move |_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(item) = list_item.item() else {
+            return;
+        };
+        let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
+            return;
+        };
+        let track = boxed.borrow::<Track>().clone();
+        let button = icon_button("emblem-favorite-symbolic", "Favorite");
+        button.add_css_class("flat");
+        if track.favorite {
+            button.add_css_class("active-toggle");
+        }
+        let controller = shell.controller.clone();
+        button.connect_clicked(move |_| controller.toggle_track_favorite(track.clone()));
+        list_item.set_child(Some(&button));
+    });
+
+    factory.connect_unbind(|_, list_item| {
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
+            list_item.set_child(None::<&gtk::Widget>);
+        }
+    });
+
+    let column = gtk::ColumnViewColumn::new(Some(&tr("Favorite")), Some(factory));
+    column.set_fixed_width(76);
     column.set_resizable(false);
     column
 }
@@ -4621,13 +5179,14 @@ fn album_cover_tile(
     favorite.set_margin_top(8);
     favorite.set_margin_end(8);
     favorite.set_visible(false);
-    favorite.connect_clicked(|button| {
-        if button.has_css_class("active-toggle") {
-            button.remove_css_class("active-toggle");
-        } else {
-            button.add_css_class("active-toggle");
-        }
-    });
+    if album.favorite {
+        favorite.add_css_class("active-toggle");
+    }
+    if let Some(controller) = controller {
+        let controller = controller.clone();
+        let album = album.clone();
+        favorite.connect_clicked(move |_| controller.toggle_album_favorite(album.clone()));
+    }
     overlay.add_overlay(&favorite);
 
     let motion = gtk::EventControllerMotion::new();

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rufin_core::{
-    Album, Artist, Genre, GenreId, HomeSection, Playlist, PlaylistId, ServerIdentity, Track,
-    TrackId,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, Playlist, PlaylistId,
+    ServerIdentity, Track, TrackId,
 };
 pub use rufin_playback::StreamDescriptor;
 use serde::{Deserialize, Serialize};
@@ -76,6 +76,29 @@ impl<T> PagedResponse<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum FavoriteItemId {
+    Album(AlbumId),
+    Track(TrackId),
+    Artist(ArtistId),
+}
+
+impl FavoriteItemId {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Album(id) => id.as_str(),
+            Self::Track(id) => id.as_str(),
+            Self::Artist(id) => id.as_str(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaylistEntry {
+    pub entry_id: String,
+    pub track: Track,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AlbumDetail {
     pub album: Album,
     pub tracks: Vec<Track>,
@@ -85,6 +108,8 @@ pub struct AlbumDetail {
 pub struct PlaylistDetail {
     pub playlist: Playlist,
     pub tracks: Vec<Track>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entries: Vec<PlaylistEntry>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -155,6 +180,47 @@ pub struct SearchResults {
     pub playlists: Vec<Playlist>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum LyricsSource {
+    Server,
+    Remote,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LyricLine {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_millis: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Lyrics {
+    pub track_id: TrackId,
+    pub source: LyricsSource,
+    pub lines: Vec<LyricLine>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum PlaybackReportKind {
+    Started,
+    Progress,
+    Stopped,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackReport {
+    pub kind: PlaybackReportKind,
+    pub track_id: TrackId,
+    pub position_seconds: u32,
+    pub paused: bool,
+    pub muted: bool,
+    pub volume_percent: u8,
+    pub shuffle: bool,
+    pub repeat_one: bool,
+    pub repeat_all: bool,
+    pub failed: bool,
+}
+
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error("provider authentication failed: {0}")]
@@ -196,6 +262,59 @@ pub trait MusicProvider {
     async fn image_metadata(&self, item_id: &str, kind: ImageKind)
     -> ProviderResult<ImageMetadata>;
     async fn image_bytes(&self, request: ImageRequest) -> ProviderResult<ImageBytes>;
+    async fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) -> ProviderResult<()> {
+        let _unused = (item_id, favorite);
+        Err(ProviderError::Unsupported("favorite mutations"))
+    }
+    async fn create_playlist(
+        &self,
+        name: &str,
+        track_ids: &[TrackId],
+    ) -> ProviderResult<PlaylistId> {
+        let _unused = (name, track_ids);
+        Err(ProviderError::Unsupported("playlist mutations"))
+    }
+    async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> ProviderResult<()> {
+        let _unused = (playlist_id, name);
+        Err(ProviderError::Unsupported("playlist mutations"))
+    }
+    async fn add_playlist_tracks(
+        &self,
+        playlist_id: &PlaylistId,
+        track_ids: &[TrackId],
+    ) -> ProviderResult<()> {
+        let _unused = (playlist_id, track_ids);
+        Err(ProviderError::Unsupported("playlist mutations"))
+    }
+    async fn remove_playlist_entries(
+        &self,
+        playlist_id: &PlaylistId,
+        entry_ids: &[String],
+    ) -> ProviderResult<()> {
+        let _unused = (playlist_id, entry_ids);
+        Err(ProviderError::Unsupported("playlist mutations"))
+    }
+    async fn move_playlist_entry(
+        &self,
+        playlist_id: &PlaylistId,
+        entry_id: &str,
+        new_index: usize,
+    ) -> ProviderResult<()> {
+        let _unused = (playlist_id, entry_id, new_index);
+        Err(ProviderError::Unsupported("playlist mutations"))
+    }
+    async fn lyrics(
+        &self,
+        track_id: &TrackId,
+        allow_remote: bool,
+    ) -> ProviderResult<Option<Lyrics>> {
+        let _unused = (track_id, allow_remote);
+        Err(ProviderError::Unsupported("lyrics"))
+    }
+    async fn report_playback(&self, report: PlaybackReport) -> ProviderResult<()> {
+        let _unused = report;
+        Err(ProviderError::Unsupported("playback reporting"))
+    }
 }
 
 #[cfg(test)]
