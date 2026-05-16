@@ -144,11 +144,6 @@ window {
   background: color-mix(in srgb, @window_bg_color 78%, transparent);
 }
 
-.favorite-glyph {
-  font-size: 17px;
-  font-weight: 700;
-}
-
 .album-title,
 .player-title {
   font-weight: 600;
@@ -265,10 +260,6 @@ scale.player-progress slider {
   background: transparent;
 }
 
-.table-link:hover {
-  background: color-mix(in srgb, @accent_color 14%, transparent);
-}
-
 .table-link:hover .table-link-label {
   color: @accent_color;
 }
@@ -345,10 +336,6 @@ scale.player-progress slider {
 .queue-list row {
   padding: 0;
   background: transparent;
-}
-
-.queue-context-menu modelbutton:first-child {
-  color: @destructive_color;
 }
 
 .active-toggle {

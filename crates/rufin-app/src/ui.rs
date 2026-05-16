@@ -1402,6 +1402,24 @@ impl Shell {
         let artist = gtk::Label::new(Some(&album.artist));
         artist.add_css_class("detail-artist");
         artist.set_xalign(0.0);
+        artist.set_halign(gtk::Align::Start);
+        artist.set_cursor_from_name(Some("pointer"));
+        add_dynamic_link_hover(artist.upcast_ref(), &artist);
+        if let Some(artist_id) = album.artist_id.clone() {
+            let shell = Rc::clone(self);
+            add_label_click(&artist, move || {
+                shell.navigate(Route::ArtistDetail(artist_id.clone()))
+            });
+        } else if !album.artist.trim().is_empty() {
+            let shell = Rc::clone(self);
+            let artist_name = album.artist.clone();
+            add_label_click(&artist, move || {
+                shell.navigate(Route::Search {
+                    query: artist_name.clone(),
+                    kind: SearchKind::Artists,
+                });
+            });
+        }
         let facts = gtk::Label::new(Some(&format!(
             "{} • {} {} • {}",
             album.year,
@@ -1429,8 +1447,8 @@ impl Shell {
         });
         actions.append(&play_next);
 
-        let (favorite, favorite_glyph) = favorite_text_button("Favorite");
-        set_favorite_text_button_active(&favorite, &favorite_glyph, album.favorite);
+        let favorite = favorite_icon_button("Favorite");
+        set_favorite_button_active(&favorite, album.favorite);
         let controller = self.controller.clone();
         let favorite_album = album.clone();
         favorite.connect_clicked(move |_| controller.toggle_album_favorite(favorite_album.clone()));
@@ -1762,8 +1780,8 @@ impl Shell {
         wrapper.append(&summary);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let (favorite, favorite_glyph) = favorite_text_button("Favorite");
-        set_favorite_text_button_active(&favorite, &favorite_glyph, artist.favorite);
+        let favorite = favorite_icon_button("Favorite");
+        set_favorite_button_active(&favorite, artist.favorite);
         let controller = self.controller.clone();
         let favorite_artist = artist.clone();
         favorite
@@ -5828,32 +5846,9 @@ fn favorite_icon_button(label: &str) -> gtk::Button {
     button
 }
 
-fn favorite_text_button(label: &str) -> (gtk::Button, gtk::Label) {
-    let button = gtk::Button::new();
-    button.add_css_class("pill-button");
-    button.add_css_class("pill");
-    button.add_css_class("favorite-toggle");
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let glyph = gtk::Label::new(Some(FAVORITE_EMPTY_GLYPH));
-    glyph.add_css_class("favorite-glyph");
-    content.append(&glyph);
-    content.append(&gtk::Label::new(Some(&tr(label))));
-    button.set_child(Some(&content));
-    (button, glyph)
-}
-
 fn set_favorite_button_active(button: &gtk::Button, active: bool) {
     set_active_class(button, active);
     button.set_label(if active {
-        FAVORITE_FILLED_GLYPH
-    } else {
-        FAVORITE_EMPTY_GLYPH
-    });
-}
-
-fn set_favorite_text_button_active(button: &gtk::Button, glyph: &gtk::Label, active: bool) {
-    set_active_class(button, active);
-    glyph.set_text(if active {
         FAVORITE_FILLED_GLYPH
     } else {
         FAVORITE_EMPTY_GLYPH
