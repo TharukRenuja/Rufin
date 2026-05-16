@@ -57,7 +57,8 @@ const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 40;
 const BOTTOM_PLAYER_BUTTON_SIZE: i32 = 36;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 44.0;
 const BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP: i32 = 6;
-const RIGHT_PANEL_ANIMATION_MS: u64 = 180;
+const RIGHT_PANEL_OPEN_ANIMATION_MS: u64 = 140;
+const RIGHT_PANEL_CLOSE_ANIMATION_MS: u64 = 90;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -1103,6 +1104,9 @@ impl Shell {
     }
 
     fn queue_responsive_route_render(self: &Rc<Self>) {
+        if self.state.right_panel_animating.get() {
+            return;
+        }
         if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
             return;
         }
@@ -3101,11 +3105,19 @@ impl Shell {
 
     fn update_right_panel_button(&self) {
         let visible = self.state.right_panel_visible.get();
+        let label = tr(if visible {
+            "Hide sidebar"
+        } else {
+            "Show sidebar"
+        });
         self.player_controls.queue_icon_open.set(visible);
         self.player_controls.queue_icon.queue_draw();
         self.player_controls
             .queue_button
-            .set_tooltip_text(Some(&tr(if visible { "Hide queue" } else { "Show queue" })));
+            .set_tooltip_text(Some(&label));
+        self.player_controls
+            .queue_button
+            .update_property(&[gtk::accessible::Property::Label(&label)]);
     }
 
     fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {
@@ -4147,7 +4159,7 @@ fn build_bottom_player() -> PlayerControls {
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     actions.set_valign(gtk::Align::Center);
-    let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Queue");
+    let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
     actions.append(&queue_button);
     actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
     let favorite_button = favorite_icon_button("Favorite");
@@ -4363,6 +4375,11 @@ fn animate_right_panel_visibility(shell: Rc<Shell>, visible: bool, generation: u
     };
     let start_opacity = panel.opacity();
     let end_opacity = if visible { 1.0 } else { 0.0 };
+    let duration_ms = if visible {
+        RIGHT_PANEL_OPEN_ANIMATION_MS
+    } else {
+        RIGHT_PANEL_CLOSE_ANIMATION_MS
+    };
     let started_at = Instant::now();
     shell.state.right_panel_animating.set(true);
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -4370,13 +4387,12 @@ fn animate_right_panel_visibility(shell: Rc<Shell>, visible: bool, generation: u
             return glib::ControlFlow::Break;
         }
 
-        let progress = (started_at.elapsed().as_millis() as f64 / RIGHT_PANEL_ANIMATION_MS as f64)
-            .clamp(0.0, 1.0);
+        let progress =
+            (started_at.elapsed().as_millis() as f64 / duration_ms as f64).clamp(0.0, 1.0);
         let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
         let position = f64::from(start_position) + f64::from(end_position - start_position) * eased;
         shell.content_split.set_position(position.round() as i32);
         panel.set_opacity(start_opacity + (end_opacity - start_opacity) * eased);
-        shell.queue_responsive_route_render();
 
         if progress >= 1.0 {
             shell.content_split.set_position(end_position);
@@ -6609,7 +6625,9 @@ fn queue_sidebar_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<
     button.add_css_class("icon-button");
     button.add_css_class("flat");
     button.add_css_class("circular");
-    button.set_tooltip_text(Some(&tr(label)));
+    let label = tr(label);
+    button.set_tooltip_text(Some(&label));
+    button.update_property(&[gtk::accessible::Property::Label(&label)]);
 
     let open = Rc::new(Cell::new(true));
     let icon = gtk::DrawingArea::new();

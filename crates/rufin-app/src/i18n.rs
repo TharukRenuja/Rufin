@@ -60,6 +60,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Repeat off");
     let _ = tr("Repeat one");
     let _ = tr("Repeat all");
+    let _ = tr("Show sidebar");
+    let _ = tr("Hide sidebar");
     let _ = tr("Remove from queue");
     let _ = tr("Remove from Queue");
     let _ = tr("Mute");
