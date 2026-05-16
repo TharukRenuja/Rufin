@@ -75,6 +75,7 @@ const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
+const STARTUP_HOME_REFRESH_DELAY_MS: u64 = 750;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -502,6 +503,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     install_event_pump(&shell, events);
 
     if options.fake_scale.is_none() && !options.ui_perf_run {
+        schedule_startup_home_refresh(&shell);
         schedule_startup_sync(&shell);
     }
 
@@ -936,9 +938,13 @@ fn initial_cached_grid_covers(shell: &Rc<Shell>) -> Vec<(String, PathBuf)> {
 impl Shell {
     fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
+        let refresh_home = matches!(route, Route::Home);
         self.refresh_search_results_for_route(&route);
         self.state.routes.borrow_mut().navigate(route);
         self.render_current_route();
+        if refresh_home {
+            self.controller.refresh_home_sections_for_active();
+        }
     }
 
     fn go_back(self: &Rc<Self>) {
@@ -947,6 +953,7 @@ impl Shell {
             debug!(?route, "navigate back");
             self.refresh_search_results_for_route(&route);
             self.render_current_route();
+            self.refresh_home_sections_for_route(&route);
         }
     }
 
@@ -956,12 +963,19 @@ impl Shell {
             debug!(?route, "navigate forward");
             self.refresh_search_results_for_route(&route);
             self.render_current_route();
+            self.refresh_home_sections_for_route(&route);
         }
     }
 
     fn refresh_search_results_for_route(&self, route: &Route) {
         if let Route::Search { query, .. } = route {
             self.controller.search(query.clone());
+        }
+    }
+
+    fn refresh_home_sections_for_route(&self, route: &Route) {
+        if matches!(route, Route::Home) {
+            self.controller.refresh_home_sections_for_active();
         }
     }
 
@@ -3516,6 +3530,17 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
         debug!(delay_ms, "starting deferred background sync");
         shell.controller.start_background_sync_for_active();
     });
+}
+
+fn schedule_startup_home_refresh(shell: &Rc<Shell>) {
+    let shell = Rc::clone(shell);
+    glib::timeout_add_local_once(
+        Duration::from_millis(STARTUP_HOME_REFRESH_DELAY_MS),
+        move || {
+            debug!("refreshing home sections after startup");
+            shell.controller.refresh_home_sections_for_active();
+        },
+    );
 }
 
 fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
