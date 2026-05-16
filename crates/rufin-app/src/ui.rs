@@ -5004,8 +5004,8 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     let artist = gtk::Label::new(Some(&track.artist));
     artist.add_css_class("muted");
     artist.set_xalign(0.0);
-    constrain_single_line_card_label(&artist, size);
-    let artist_clip = clipped_card_label_with_lines(&artist, size, 1);
+    constrain_wrapped_card_label(&artist, size, HOME_ALBUM_ARTIST_LINES);
+    let artist_clip = clipped_card_label_with_lines(&artist, size, HOME_ALBUM_ARTIST_LINES);
 
     let album = gtk::Label::new(Some(&track.album));
     album.add_css_class("muted");
