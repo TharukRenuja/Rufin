@@ -2,6 +2,8 @@ mod controller;
 mod i18n;
 mod ui;
 
+use std::path::PathBuf;
+
 use adw::prelude::*;
 use clap::{Parser, ValueEnum};
 use rufin_test_support::FakeScale;
@@ -18,6 +20,24 @@ struct Cli {
 
     #[arg(long)]
     smoke_exit_ms: Option<u64>,
+
+    #[arg(long)]
+    ui_perf_run: bool,
+
+    #[arg(long, default_value_t = 120)]
+    ui_perf_max_gap_ms: u64,
+
+    #[arg(long, default_value_t = 650)]
+    ui_perf_route_ms: u64,
+
+    #[arg(long, default_value_t = 15_000)]
+    ui_perf_duration_ms: u64,
+
+    #[arg(long, default_value_t = 300)]
+    ui_perf_asset_ms: u64,
+
+    #[arg(long)]
+    ui_perf_output: Option<PathBuf>,
 
     #[arg(long)]
     clear_cache: bool,
@@ -76,6 +96,12 @@ fn main() {
     let options = ui::AppOptions {
         fake_scale: cli.fake_scale.map(Into::into),
         smoke_exit_ms: cli.smoke_exit_ms,
+        ui_perf_run: cli.ui_perf_run,
+        ui_perf_max_gap_ms: cli.ui_perf_max_gap_ms,
+        ui_perf_route_ms: cli.ui_perf_route_ms,
+        ui_perf_duration_ms: cli.ui_perf_duration_ms,
+        ui_perf_asset_ms: cli.ui_perf_asset_ms,
+        ui_perf_output: cli.ui_perf_output,
     };
 
     info!(?options, "starting Rufin native shell");

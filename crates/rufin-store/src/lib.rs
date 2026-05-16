@@ -263,6 +263,8 @@ impl Store {
                 ON albums(server_id, title COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS tracks_server_title_idx
                 ON tracks(server_id, title);
+            CREATE INDEX IF NOT EXISTS tracks_server_title_nocase_idx
+                ON tracks(server_id, title COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS artists_server_name_nocase_idx
                 ON artists(server_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS album_artists_server_name_nocase_idx
@@ -1219,11 +1221,10 @@ impl Store {
             LIMIT ?2 OFFSET ?3
             ",
         )?;
-        let mut items = collect_rows(statement.query_map(
+        let items = collect_rows(statement.query_map(
             params![server_id.as_str(), limit as i64, offset as i64],
             track_from_row,
         )?)?;
-        self.attach_track_genres(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
 

@@ -344,6 +344,10 @@ impl AppController {
         None
     }
 
+    pub fn cached_cover_path_for_key(&self, key: &str) -> Option<PathBuf> {
+        cached_cover_path_for_key(key)
+    }
+
     #[cfg(test)]
     pub fn request_cover(&self, image_ref: ImageRef, size: u32) {
         let Some(saved) = self
@@ -422,14 +426,11 @@ impl AppController {
         let cover_in_flight = Arc::clone(&self.cover_in_flight);
         let cover_slots = Arc::clone(&self.cover_slots);
         thread::spawn(move || {
-            if !acquire_cover_slot(&cover_slots) {
-                if let Ok(mut in_flight) = cover_in_flight.lock() {
-                    in_flight.remove(&key);
-                }
-                return;
-            }
-
             let result = (|| -> Result<Option<PathBuf>, String> {
+                if let Some(path) = cached_cover_path_for_key(&key) {
+                    return Ok(Some(path));
+                }
+
                 let Some(saved) = store.with_store(|store| store.active_server())? else {
                     return Ok(None);
                 };
@@ -447,10 +448,16 @@ impl AppController {
                     return Ok(Some(path));
                 }
 
-                fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size).map(Some)
+                if !acquire_cover_slot(&cover_slots) {
+                    return Ok(None);
+                }
+                let result =
+                    fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size)
+                        .map(Some);
+                release_cover_slot(&cover_slots);
+                result
             })();
 
-            release_cover_slot(&cover_slots);
             if let Ok(mut in_flight) = cover_in_flight.lock() {
                 in_flight.remove(&key);
             }
@@ -1886,6 +1893,11 @@ fn cached_cover_path_for_saved(
         store.delete_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
     })?;
     Ok(None)
+}
+
+fn cached_cover_path_for_key(key: &str) -> Option<PathBuf> {
+    let path = cache_dir()?.join("covers").join(key);
+    path.exists().then_some(path)
 }
 
 fn fetch_and_cache_cover(
