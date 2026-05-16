@@ -1687,8 +1687,10 @@ impl Shell {
         set_favorite_button_active(&favorite, album.favorite);
         self.register_favorite_button(album_favorite_key(&album.id), &favorite);
         let controller = self.controller.clone();
-        let favorite_album = album.clone();
-        favorite.connect_clicked(move |_| controller.toggle_album_favorite(favorite_album.clone()));
+        let album_id = album.id.clone();
+        favorite.connect_clicked(move |button| {
+            controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
+        });
         actions.append(&favorite);
 
         metadata.append(&kind);
@@ -2016,9 +2018,10 @@ impl Shell {
         set_favorite_button_active(&favorite, artist.favorite);
         self.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
         let controller = self.controller.clone();
-        let favorite_artist = artist.clone();
-        favorite
-            .connect_clicked(move |_| controller.toggle_artist_favorite(favorite_artist.clone()));
+        let artist_id = artist.id.clone();
+        favorite.connect_clicked(move |button| {
+            controller.set_artist_favorite(artist_id.clone(), !favorite_button_is_active(button));
+        });
         actions.append(&favorite);
         wrapper.append(&actions);
 
@@ -4502,7 +4505,10 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         set_favorite_button_active(&button, track.favorite);
         shell.register_favorite_button(track_favorite_key(&track.id), &button);
         let controller = shell.controller.clone();
-        button.connect_clicked(move |_| controller.toggle_track_favorite(track.clone()));
+        let track_id = track.id.clone();
+        button.connect_clicked(move |button| {
+            controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
+        });
         list_item.set_child(Some(&button));
     });
 
@@ -4979,8 +4985,10 @@ fn album_cover_tile(
     shell.register_favorite_button(album_favorite_key(&album.id), &favorite);
     if let Some(controller) = controller {
         let controller = controller.clone();
-        let album = album.clone();
-        favorite.connect_clicked(move |_| controller.toggle_album_favorite(album.clone()));
+        let album_id = album.id.clone();
+        favorite.connect_clicked(move |button| {
+            controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
+        });
     }
     overlay.add_overlay(&favorite);
 
@@ -5343,6 +5351,10 @@ fn set_favorite_button_active(button: &gtk::Button, active: bool) {
     } else {
         FAVORITE_EMPTY_GLYPH
     });
+}
+
+fn favorite_button_is_active(button: &gtk::Button) -> bool {
+    button.label().as_deref() == Some(FAVORITE_FILLED_GLYPH)
 }
 
 fn primary_menu_button() -> gtk::MenuButton {

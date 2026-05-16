@@ -1372,16 +1372,16 @@ impl AppController {
         });
     }
 
-    pub fn toggle_album_favorite(&self, album: Album) {
-        self.set_favorite(FavoriteItemId::Album(album.id), !album.favorite);
+    pub fn set_album_favorite(&self, album_id: AlbumId, favorite: bool) {
+        self.set_favorite(FavoriteItemId::Album(album_id), favorite);
     }
 
-    pub fn toggle_track_favorite(&self, track: Track) {
-        self.set_favorite(FavoriteItemId::Track(track.id), !track.favorite);
+    pub fn set_track_favorite(&self, track_id: TrackId, favorite: bool) {
+        self.set_favorite(FavoriteItemId::Track(track_id), favorite);
     }
 
-    pub fn toggle_artist_favorite(&self, artist: Artist) {
-        self.set_favorite(FavoriteItemId::Artist(artist.id), !artist.favorite);
+    pub fn set_artist_favorite(&self, artist_id: ArtistId, favorite: bool) {
+        self.set_favorite(FavoriteItemId::Artist(artist_id), favorite);
     }
 
     pub fn toggle_current_favorite(&self) {
@@ -3561,6 +3561,44 @@ mod tests {
                 .favorites
                 .iter()
                 .any(|candidate| candidate.id == track.id)
+        );
+    }
+
+    #[test]
+    fn explicit_favorite_updates_can_unfavorite_persistent_controls() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let album = snapshot
+            .albums
+            .iter()
+            .find(|album| !album.favorite)
+            .expect("non-favorite album")
+            .clone();
+
+        controller.set_album_favorite(album.id.clone(), true);
+        let (item_id, favorite, snapshot) = wait_for_favorite_changed(&events);
+        assert_eq!(item_id, FavoriteItemId::Album(album.id.clone()));
+        assert!(favorite);
+        assert!(
+            snapshot
+                .albums
+                .iter()
+                .find(|candidate| candidate.id == album.id)
+                .expect("cached album")
+                .favorite
+        );
+
+        controller.set_album_favorite(album.id.clone(), false);
+        let (item_id, favorite, snapshot) = wait_for_favorite_changed(&events);
+        assert_eq!(item_id, FavoriteItemId::Album(album.id.clone()));
+        assert!(!favorite);
+        assert!(
+            !snapshot
+                .albums
+                .iter()
+                .find(|candidate| candidate.id == album.id)
+                .expect("cached album")
+                .favorite
         );
     }
 
