@@ -57,8 +57,6 @@ const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 40;
 const BOTTOM_PLAYER_BUTTON_SIZE: i32 = 36;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 44.0;
 const BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP: i32 = 6;
-const RIGHT_PANEL_OPEN_ANIMATION_MS: u64 = 140;
-const RIGHT_PANEL_CLOSE_ANIMATION_MS: u64 = 90;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -100,8 +98,6 @@ struct AppState {
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
     right_panel_visible: Cell<bool>,
-    right_panel_animating: Cell<bool>,
-    right_panel_animation_generation: Cell<u64>,
     split_width: Cell<i32>,
     split_position: Cell<i32>,
     responsive_render_queued: Cell<bool>,
@@ -358,8 +354,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
         right_panel_visible: Cell::new(true),
-        right_panel_animating: Cell::new(false),
-        right_panel_animation_generation: Cell::new(0),
         split_width: Cell::new(0),
         split_position: Cell::new(0),
         responsive_render_queued: Cell::new(false),
@@ -1043,10 +1037,6 @@ impl Shell {
         let current_position = self.content_split.position().clamp(0, split_width);
         let width_changed = previous_width != split_width;
 
-        if self.state.right_panel_animating.get() {
-            return width_changed;
-        }
-
         if !self.state.right_panel_visible.get() {
             let position_changed = current_position != split_width;
             if position_changed {
@@ -1104,9 +1094,6 @@ impl Shell {
     }
 
     fn queue_responsive_route_render(self: &Rc<Self>) {
-        if self.state.right_panel_animating.get() {
-            return;
-        }
         if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
             return;
         }
@@ -3093,14 +3080,8 @@ impl Shell {
             return;
         }
 
-        let generation = self
-            .state
-            .right_panel_animation_generation
-            .get()
-            .saturating_add(1);
-        self.state.right_panel_animation_generation.set(generation);
         self.update_right_panel_button();
-        animate_right_panel_visibility(Rc::clone(self), visible, generation);
+        apply_right_panel_visibility(Rc::clone(self), visible);
     }
 
     fn update_right_panel_button(&self) {
@@ -4348,68 +4329,33 @@ fn connect_player_controls(shell: &Rc<Shell>) {
         });
 }
 
-fn animate_right_panel_visibility(shell: Rc<Shell>, visible: bool, generation: u64) {
+fn apply_right_panel_visibility(shell: Rc<Shell>, visible: bool) {
     let panel = shell.right_panel.clone();
     if panel.parent().is_none() {
         shell.content_split.set_end_child(Some(&panel));
     }
 
     let split_width = shell.content_split.width();
-    if split_width <= 1 {
-        panel.set_visible(visible);
-        panel.set_opacity(if visible { 1.0 } else { 0.0 });
-        shell.state.right_panel_animating.set(false);
-        shell.queue_responsive_route_render();
-        return;
-    }
-
     if visible {
         panel.set_visible(true);
     }
+    panel.set_opacity(if visible { 1.0 } else { 0.0 });
 
-    let start_position = shell.content_split.position().clamp(0, split_width);
-    let end_position = if visible {
-        shell.right_panel_open_position(split_width)
-    } else {
-        split_width
-    };
-    let start_opacity = panel.opacity();
-    let end_opacity = if visible { 1.0 } else { 0.0 };
-    let duration_ms = if visible {
-        RIGHT_PANEL_OPEN_ANIMATION_MS
-    } else {
-        RIGHT_PANEL_CLOSE_ANIMATION_MS
-    };
-    let started_at = Instant::now();
-    shell.state.right_panel_animating.set(true);
-    glib::timeout_add_local(Duration::from_millis(16), move || {
-        if shell.state.right_panel_animation_generation.get() != generation {
-            return glib::ControlFlow::Break;
-        }
-
-        let progress =
-            (started_at.elapsed().as_millis() as f64 / duration_ms as f64).clamp(0.0, 1.0);
-        let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
-        let position = f64::from(start_position) + f64::from(end_position - start_position) * eased;
-        shell.content_split.set_position(position.round() as i32);
-        panel.set_opacity(start_opacity + (end_opacity - start_opacity) * eased);
-
-        if progress >= 1.0 {
-            shell.content_split.set_position(end_position);
-            panel.set_opacity(end_opacity);
-            shell.state.right_panel_animating.set(false);
-            if visible {
-                panel.set_visible(true);
-            } else {
-                panel.set_visible(false);
-            }
-            shell.update_content_split();
-            shell.queue_responsive_route_render();
-            glib::ControlFlow::Break
+    if split_width > 1 {
+        let position = if visible {
+            shell.right_panel_open_position(split_width)
         } else {
-            glib::ControlFlow::Continue
-        }
-    });
+            split_width
+        };
+        shell.content_split.set_position(position);
+    }
+
+    if !visible {
+        panel.set_visible(false);
+    }
+
+    shell.update_content_split();
+    shell.queue_responsive_route_render();
 }
 
 fn install_mpris(shell: &Rc<Shell>) {
