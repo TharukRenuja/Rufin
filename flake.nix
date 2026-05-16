@@ -80,12 +80,12 @@
             ];
 
             postInstall = ''
-              install -Dm644 data/io.github.screwys.Rufin.Devel.desktop \
-                "$out/share/applications/io.github.screwys.Rufin.Devel.desktop"
-              install -Dm644 data/io.github.screwys.Rufin.Devel.metainfo.xml \
-                "$out/share/metainfo/io.github.screwys.Rufin.Devel.metainfo.xml"
-              install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg \
-                "$out/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg"
+              install -Dm644 data/io.github.screwys.Rufin.desktop \
+                "$out/share/applications/io.github.screwys.Rufin.desktop"
+              install -Dm644 data/io.github.screwys.Rufin.metainfo.xml \
+                "$out/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
+              install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg \
+                "$out/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
 
               for po_file in po/*.po; do
                 if [ -f "$po_file" ]; then

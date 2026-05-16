@@ -1,5 +1,5 @@
 {
-  "app-id": "io.github.screwys.Rufin.Devel",
+  "app-id": "io.github.screwys.Rufin",
   "runtime": "org.gnome.Platform",
   "runtime-version": "50",
   "sdk": "org.gnome.Sdk",
@@ -26,9 +26,9 @@
       "build-commands": [
         "cargo build --release -p rufin-app",
         "install -Dm755 target/release/rufin /app/bin/rufin",
-        "install -Dm644 data/io.github.screwys.Rufin.Devel.desktop /app/share/applications/io.github.screwys.Rufin.Devel.desktop",
-        "install -Dm644 data/io.github.screwys.Rufin.Devel.metainfo.xml /app/share/metainfo/io.github.screwys.Rufin.Devel.metainfo.xml",
-        "install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg /app/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg"
+        "install -Dm644 data/io.github.screwys.Rufin.desktop /app/share/applications/io.github.screwys.Rufin.desktop",
+        "install -Dm644 data/io.github.screwys.Rufin.metainfo.xml /app/share/metainfo/io.github.screwys.Rufin.metainfo.xml",
+        "install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg /app/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
       ],
       "sources": [
         {

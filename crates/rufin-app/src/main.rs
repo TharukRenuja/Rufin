@@ -8,7 +8,7 @@ use rufin_test_support::FakeScale;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
-const APP_ID: &str = "io.github.screwys.Rufin.Devel";
+const APP_ID: &str = "io.github.screwys.Rufin";
 
 #[derive(Clone, Debug, Parser)]
 #[command(name = "rufin", about = "Native GTK music client shell")]

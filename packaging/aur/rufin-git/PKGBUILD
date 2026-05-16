@@ -74,12 +74,12 @@ package() {
   cd Rufin || return
 
   install -Dm755 target/release/rufin "$pkgdir/usr/bin/rufin"
-  install -Dm644 data/io.github.screwys.Rufin.Devel.desktop \
-    "$pkgdir/usr/share/applications/io.github.screwys.Rufin.Devel.desktop"
-  install -Dm644 data/io.github.screwys.Rufin.Devel.metainfo.xml \
-    "$pkgdir/usr/share/metainfo/io.github.screwys.Rufin.Devel.metainfo.xml"
-  install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg \
-    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.Devel.svg"
+  install -Dm644 data/io.github.screwys.Rufin.desktop \
+    "$pkgdir/usr/share/applications/io.github.screwys.Rufin.desktop"
+  install -Dm644 data/io.github.screwys.Rufin.metainfo.xml \
+    "$pkgdir/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
+  install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
 
   local lang po_file
   for po_file in po/*.po; do

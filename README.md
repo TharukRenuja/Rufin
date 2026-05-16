@@ -21,3 +21,12 @@ nix develop
 ```
 
 The flake exposes the app as `packages.default` and `apps.default`.
+
+## Flatpak
+
+```bash
+git clone https://github.com/screwys/Rufin.git
+cd Rufin
+flatpak-builder --user --install --install-deps-from=flathub --force-clean build-dir build-aux/flatpak/io.github.screwys.Rufin.json
+flatpak run io.github.screwys.Rufin
+```
