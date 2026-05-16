@@ -848,9 +848,9 @@ impl AppController {
     pub fn cycle_repeat(&self) {
         let result = self.with_queue_mut(|queue| {
             let next = match queue.repeat_mode() {
-                RepeatMode::Off => RepeatMode::One,
-                RepeatMode::One => RepeatMode::All,
-                RepeatMode::All => RepeatMode::Off,
+                RepeatMode::Off => RepeatMode::All,
+                RepeatMode::All => RepeatMode::One,
+                RepeatMode::One => RepeatMode::Off,
             };
             queue.set_repeat_mode(next);
             Ok(())
@@ -2715,7 +2715,7 @@ mod tests {
         playback_snapshot_from_queue, restore_queue, sync_page_finished,
     };
     use rufin_core::{
-        AlbumId, AppSettings, ArtistId, ImageRef, PlaylistId, QueueEngine, ServerId,
+        AlbumId, AppSettings, ArtistId, ImageRef, PlaylistId, QueueEngine, RepeatMode, ServerId,
         ServerIdentity, Track, TrackId,
     };
     use rufin_playback::PlaybackState;
@@ -3013,6 +3013,27 @@ mod tests {
         controller.clear_queue();
         let queue = wait_for_queue(&events).expect("clear queue");
         assert!(queue.entries.is_empty());
+    }
+
+    #[test]
+    fn cycle_repeat_uses_off_all_one_order() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+
+        controller.play_now(snapshot.tracks[0].clone());
+        let _queue = wait_for_queue(&events).expect("queue");
+
+        controller.cycle_repeat();
+        let queue = wait_for_queue(&events).expect("repeat all");
+        assert_eq!(queue.repeat_mode, RepeatMode::All);
+
+        controller.cycle_repeat();
+        let queue = wait_for_queue(&events).expect("repeat one");
+        assert_eq!(queue.repeat_mode, RepeatMode::One);
+
+        controller.cycle_repeat();
+        let queue = wait_for_queue(&events).expect("repeat off");
+        assert_eq!(queue.repeat_mode, RepeatMode::Off);
     }
 
     #[test]

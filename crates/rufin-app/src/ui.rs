@@ -2905,6 +2905,7 @@ impl Shell {
             &self.queue_repeat_button,
             player.repeat_mode != RepeatMode::Off,
         );
+        set_repeat_button_icon(&self.queue_repeat_button, player.repeat_mode);
         self.queue_repeat_button
             .set_tooltip_text(Some(&tr(repeat_label(player.repeat_mode))));
 
@@ -3104,6 +3105,7 @@ impl Shell {
             &controls.repeat_button,
             player.repeat_mode != RepeatMode::Off,
         );
+        set_repeat_button_icon(&controls.repeat_button, player.repeat_mode);
         set_favorite_button_active(
             &controls.favorite_button,
             player.current.as_ref().is_some_and(|entry| entry.favorite),
@@ -5018,6 +5020,25 @@ fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
         RepeatMode::Off => "Repeat off",
         RepeatMode::One => "Repeat one",
         RepeatMode::All => "Repeat all",
+    }
+}
+
+fn repeat_icon_name(repeat_mode: RepeatMode) -> &'static str {
+    match repeat_mode {
+        RepeatMode::One => "media-playlist-repeat-song-symbolic",
+        RepeatMode::Off | RepeatMode::All => "media-playlist-repeat-symbolic",
+    }
+}
+
+fn set_repeat_button_icon(button: &gtk::Button, repeat_mode: RepeatMode) {
+    let icon_name = repeat_icon_name(repeat_mode);
+    if let Some(image) = button
+        .child()
+        .and_then(|child| child.downcast::<gtk::Image>().ok())
+    {
+        image.set_icon_name(Some(icon_name));
+    } else {
+        button.set_child(Some(&gtk::Image::from_icon_name(icon_name)));
     }
 }
 
