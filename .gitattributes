@@ -1,0 +1,6 @@
+*.nix linguist-detectable=true
+*.nix linguist-language=Nix
+*.css linguist-detectable=true
+*.css linguist-language=CSS
+packaging/aur/** linguist-detectable=false
+crates/rufin-test-support/** linguist-detectable=false
