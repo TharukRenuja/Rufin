@@ -3359,8 +3359,12 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     shell
         .content_split
         .connect_notify_local(Some("width"), move |_, _| {
-            split_shell.update_content_split();
-            split_shell.queue_responsive_route_render();
+            if split_shell.state.density_mode.get() == DensityMode::Auto {
+                split_shell.update_density();
+            } else {
+                split_shell.update_content_split();
+                split_shell.queue_responsive_route_render();
+            }
         });
 
     let split_shell = Rc::clone(shell);
