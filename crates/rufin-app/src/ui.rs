@@ -64,6 +64,7 @@ const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
 const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 480;
 const LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS: u64 = 140;
+const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -99,6 +100,7 @@ struct AppState {
     right_panel_animation_generation: Cell<u64>,
     split_width: Cell<i32>,
     split_position: Cell<i32>,
+    responsive_render_queued: Cell<bool>,
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
@@ -338,6 +340,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         right_panel_animation_generation: Cell::new(0),
         split_width: Cell::new(0),
         split_position: Cell::new(0),
+        responsive_render_queued: Cell::new(false),
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
         cover_bindings: RefCell::new(HashMap::new()),
@@ -479,6 +482,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
 
     shell.window.present();
+    shell.queue_responsive_route_render();
 
     if options.ui_perf_run {
         start_ui_perf_run(&shell, app);
@@ -963,9 +967,9 @@ impl Shell {
 
         if next != previous {
             debug!(?next, width, "effective density changed");
-            self.render_current_route();
+            self.queue_responsive_route_render();
         } else if route_uses_responsive_cards(self.state.routes.borrow().current()) {
-            self.render_current_route();
+            self.queue_responsive_route_render();
         }
     }
 
@@ -995,6 +999,27 @@ impl Shell {
         }
 
         previous_width != split_width || position_changed
+    }
+
+    fn queue_responsive_route_render(self: &Rc<Self>) {
+        if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
+            return;
+        }
+        if self.state.responsive_render_queued.replace(true) {
+            return;
+        }
+
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
+            move || {
+                shell.state.responsive_render_queued.set(false);
+                shell.update_content_split();
+                if route_uses_responsive_cards(shell.state.routes.borrow().current()) {
+                    shell.render_current_route();
+                }
+            },
+        );
     }
 
     fn update_mpris_player(&self) {
@@ -3645,12 +3670,8 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
             if resize_shell.state.density_mode.get() == DensityMode::Auto {
                 resize_shell.update_density();
             } else {
-                let split_changed = resize_shell.update_content_split();
-                if split_changed
-                    || route_uses_responsive_cards(resize_shell.state.routes.borrow().current())
-                {
-                    resize_shell.render_current_route();
-                }
+                resize_shell.update_content_split();
+                resize_shell.queue_responsive_route_render();
             }
         });
 
@@ -3658,32 +3679,22 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     shell
         .content_split
         .connect_notify_local(Some("width"), move |_, _| {
-            let split_changed = split_shell.update_content_split();
-            if split_changed
-                || route_uses_responsive_cards(split_shell.state.routes.borrow().current())
-            {
-                split_shell.render_current_route();
-            }
+            split_shell.update_content_split();
+            split_shell.queue_responsive_route_render();
         });
 
     let split_shell = Rc::clone(shell);
     shell
         .content_split
         .connect_notify_local(Some("position"), move |_, _| {
-            let split_changed = split_shell.update_content_split();
-            if split_changed
-                || route_uses_responsive_cards(split_shell.state.routes.borrow().current())
-            {
-                split_shell.render_current_route();
-            }
+            split_shell.update_content_split();
+            split_shell.queue_responsive_route_render();
         });
 
     let split_shell = Rc::clone(shell);
     shell.content_split.add_tick_callback(move |_, _| {
-        if split_shell.update_content_split()
-            && route_uses_responsive_cards(split_shell.state.routes.borrow().current())
-        {
-            split_shell.render_current_route();
+        if split_shell.update_content_split() {
+            split_shell.queue_responsive_route_render();
         }
         glib::ControlFlow::Continue
     });
