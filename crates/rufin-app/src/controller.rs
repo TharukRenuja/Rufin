@@ -27,7 +27,7 @@ use rufin_store::{
 };
 use rufin_test_support::{FakeProvider, FakeScale};
 use tokio::runtime::Runtime;
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 const PAGE_SIZE: usize = 500;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
@@ -474,7 +474,11 @@ impl AppController {
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    warn!(%error, "failed to prepare cover");
+                    if is_provider_not_found_error(&error) {
+                        debug!(%error, "cached cover source item is no longer available");
+                    } else {
+                        warn!(%error, "failed to prepare cover");
+                    }
                 }
             }
         });
@@ -2610,6 +2614,10 @@ fn fetch_and_cache_cover(
     Ok(path)
 }
 
+fn is_provider_not_found_error(error: &str) -> bool {
+    error == "provider item was not found"
+}
+
 fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.data_dir().to_path_buf())
 }
@@ -3078,6 +3086,16 @@ mod tests {
     fn controller_events_are_sendable() {
         fn assert_send<T: Send>() {}
         assert_send::<ControllerEvent>();
+    }
+
+    #[test]
+    fn provider_not_found_cover_errors_are_classified() {
+        assert!(super::is_provider_not_found_error(
+            "provider item was not found"
+        ));
+        assert!(!super::is_provider_not_found_error(
+            "provider network failed: offline"
+        ));
     }
 
     fn wait_for_snapshot(events: &Receiver<ControllerEvent>) -> LibrarySnapshot {

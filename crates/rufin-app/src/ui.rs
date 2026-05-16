@@ -500,6 +500,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     shell.render_current_route();
     shell.render_queue_panel();
     shell.update_bottom_player();
+    shell.request_initial_lyrics_if_needed();
     install_event_pump(&shell, events);
 
     if options.fake_scale.is_none() && !options.ui_perf_run {
@@ -1217,6 +1218,14 @@ impl Shell {
     fn update_lyrics_highlight(self: &Rc<Self>) {
         self.cancel_scheduled_lyrics_highlight();
         self.update_lyrics_highlight_at(self.current_position_millis());
+    }
+
+    fn request_initial_lyrics_if_needed(&self) {
+        let Some(track_id) = current_playback_track_id(&self.state.player.borrow()) else {
+            return;
+        };
+        *self.state.lyrics_track_id.borrow_mut() = Some(track_id);
+        self.controller.request_lyrics_for_current();
     }
 
     fn update_lyrics_highlight_at(self: &Rc<Self>, position_millis: u64) {
@@ -4099,10 +4108,13 @@ fn install_queue_row_context_menu(
 fn build_bottom_player() -> PlayerControls {
     let root = gtk::Overlay::new();
     root.add_css_class("bottom-player");
+    root.set_hexpand(true);
+    root.set_vexpand(false);
     root.set_height_request(BOTTOM_PLAYER_HEIGHT);
     root.set_valign(gtk::Align::Center);
 
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    bar.set_hexpand(true);
     bar.set_valign(gtk::Align::Center);
 
     let now_playing = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -6504,7 +6516,15 @@ fn add_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
     label.add_controller(click);
 }
 
+fn current_playback_track_id(snapshot: &PlaybackSnapshot) -> Option<rufin_core::TrackId> {
+    snapshot
+        .current
+        .as_ref()
+        .map(|entry| entry.track_id.clone())
+}
+
 fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option<usize> {
+    let first_timed_index = lines.iter().position(|line| line.start_millis.is_some());
     lines
         .iter()
         .enumerate()
@@ -6514,6 +6534,7 @@ fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option
         })
         .max_by_key(|(_, start)| *start)
         .map(|(index, _)| index)
+        .or(first_timed_index)
 }
 
 fn next_lyrics_line_start_after(lines: &[LyricLine], position_millis: u64) -> Option<u64> {
@@ -6818,9 +6839,11 @@ mod tests {
     use super::{
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, LyricsFollowScrollPause,
         active_lyrics_line_index, clamp_content_split_position, clamp_home_album_page_start,
-        home_album_card_size, home_album_page_size, lyrics_follow_scroll_pause_state,
-        lyrics_scroll_animation_millis, next_lyrics_line_start_after,
+        current_playback_track_id, home_album_card_size, home_album_page_size,
+        lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
+        next_lyrics_line_start_after,
     };
+    use rufin_core::{QueueEntry, QueueEntryId, TrackId};
     use rufin_provider::LyricLine;
     use std::time::{Duration, Instant};
 
@@ -6904,12 +6927,22 @@ mod tests {
             },
         ];
 
-        assert_eq!(active_lyrics_line_index(&lines, 999), None);
+        assert_eq!(active_lyrics_line_index(&lines, 999), Some(0));
         assert_eq!(active_lyrics_line_index(&lines, 1_000), Some(0));
         assert_eq!(active_lyrics_line_index(&lines, 5_499), Some(0));
         assert_eq!(active_lyrics_line_index(&lines, 5_500), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(3));
+    }
+
+    #[test]
+    fn synced_lyrics_without_timed_lines_have_no_highlight() {
+        let lines = vec![LyricLine {
+            text: "plain".to_string(),
+            start_millis: None,
+        }];
+
+        assert_eq!(active_lyrics_line_index(&lines, 0), None);
     }
 
     #[test]
@@ -6978,6 +7011,33 @@ mod tests {
         assert_eq!(
             lyrics_follow_scroll_pause_state(Some(now), now),
             LyricsFollowScrollPause::Expired
+        );
+    }
+
+    #[test]
+    fn current_playback_track_id_uses_restored_current_entry() {
+        let track_id = TrackId::fake(7);
+        let snapshot = super::PlaybackSnapshot {
+            current: Some(QueueEntry {
+                id: QueueEntryId::new("queue-7"),
+                track_id: track_id.clone(),
+                album_id: None,
+                title: "Restored".to_string(),
+                artist: "Artist".to_string(),
+                artist_id: None,
+                album: "Album".to_string(),
+                year: 2026,
+                duration_seconds: 180,
+                favorite: false,
+                image_ref: None,
+            }),
+            ..super::PlaybackSnapshot::default()
+        };
+
+        assert_eq!(current_playback_track_id(&snapshot), Some(track_id));
+        assert_eq!(
+            current_playback_track_id(&super::PlaybackSnapshot::default()),
+            None
         );
     }
 
