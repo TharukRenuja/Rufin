@@ -104,6 +104,7 @@ struct AppState {
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
+    queue_filter: RefCell<String>,
     right_panel_visible: Cell<bool>,
     lyrics_panel_visible: Cell<bool>,
     split_width: Cell<i32>,
@@ -287,6 +288,7 @@ struct Shell {
     compact_forward_button: gtk::Button,
     right_panel: gtk::Box,
     queue_panel: gtk::Box,
+    queue_search: gtk::SearchEntry,
     queue_clear_button: gtk::Button,
     queue_lyrics_split: gtk::Paned,
     lyrics_pane: LyricsPane,
@@ -325,6 +327,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
+        queue_filter: RefCell::new(String::new()),
         right_panel_visible: Cell::new(settings.right_panel_visible),
         lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
         split_width: Cell::new(0),
@@ -386,6 +389,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.add_css_class("route-header");
     header.set_valign(gtk::Align::Center);
+    header.set_margin_end(52);
 
     let normal_back_button = sidebar_history_button("go-previous-symbolic", "Back");
     let normal_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
@@ -401,7 +405,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let main_menu = primary_menu_button();
 
     header.append(&route_title);
-    header.append(&main_menu);
 
     let route_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     route_host.set_hexpand(true);
@@ -413,6 +416,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let right_panel_parts = build_right_panel();
     let right_panel = right_panel_parts.root;
     let queue_panel = right_panel_parts.queue_panel;
+    let queue_search = right_panel_parts.queue_search;
     let queue_clear_button = right_panel_parts.queue_clear_button;
     let queue_lyrics_split = right_panel_parts.queue_lyrics_split;
     let lyrics_pane = right_panel_parts.lyrics_pane;
@@ -432,7 +436,18 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     upper.append(&normal_nav);
     upper.append(&compact_nav);
     upper.append(&content_split);
-    root.append(&upper);
+
+    let upper_overlay = gtk::Overlay::new();
+    upper_overlay.set_hexpand(true);
+    upper_overlay.set_vexpand(true);
+    upper_overlay.set_child(Some(&upper));
+    main_menu.set_halign(gtk::Align::End);
+    main_menu.set_valign(gtk::Align::Start);
+    main_menu.set_margin_top(7);
+    main_menu.set_margin_end(8);
+    upper_overlay.add_overlay(&main_menu);
+
+    root.append(&upper_overlay);
     root.append(&player_controls.root);
 
     window.set_content(Some(&root));
@@ -454,6 +469,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         compact_forward_button,
         right_panel,
         queue_panel,
+        queue_search,
         queue_clear_button,
         queue_lyrics_split,
         lyrics_pane,
@@ -914,6 +930,7 @@ fn initial_cached_grid_covers(shell: &Rc<Shell>) -> Vec<(String, PathBuf)> {
 impl Shell {
     fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
+        self.refresh_search_results_for_route(&route);
         self.state.routes.borrow_mut().navigate(route);
         self.render_current_route();
     }
@@ -922,6 +939,7 @@ impl Shell {
         let route = self.state.routes.borrow_mut().back().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate back");
+            self.refresh_search_results_for_route(&route);
             self.render_current_route();
         }
     }
@@ -930,7 +948,14 @@ impl Shell {
         let route = self.state.routes.borrow_mut().forward().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate forward");
+            self.refresh_search_results_for_route(&route);
             self.render_current_route();
+        }
+    }
+
+    fn refresh_search_results_for_route(&self, route: &Route) {
+        if let Route::Search { query, .. } = route {
+            self.controller.search(query.clone());
         }
     }
 
@@ -2474,9 +2499,7 @@ impl Shell {
         if has_tracks {
             wrapper.append(&self.tracks_table(library.search.tracks, "search"));
         } else if !has_albums && !has_artists && !has_playlists {
-            wrapper.append(&self.route_empty_view(
-                "Type a query in the sidebar search field to search the local cache.",
-            ));
+            wrapper.append(&self.route_empty_view("No cached results found."));
         }
 
         wrapper.upcast()

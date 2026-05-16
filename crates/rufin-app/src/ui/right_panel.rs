@@ -25,6 +25,7 @@ const QUEUE_LYRICS_DEFAULT_LYRICS_UNITS: i32 = 2;
 pub(super) struct RightPanelParts {
     pub(super) root: gtk::Box,
     pub(super) queue_panel: gtk::Box,
+    pub(super) queue_search: gtk::SearchEntry,
     pub(super) queue_clear_button: gtk::Button,
     pub(super) queue_lyrics_split: gtk::Paned,
     pub(super) lyrics_pane: LyricsPane,
@@ -35,17 +36,19 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     root.add_css_class("right-panel");
     root.set_vexpand(true);
 
-    let queue_header = adw::HeaderBar::new();
+    let queue_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     queue_header.add_css_class("sidebar-header");
-    queue_header.set_show_start_title_buttons(false);
-    queue_header.set_show_end_title_buttons(false);
+    queue_header.set_valign(gtk::Align::Center);
+    queue_header.set_margin_start(8);
+    queue_header.set_margin_end(52);
 
-    let queue_title = gtk::Label::new(Some(&tr("Queue")));
-    queue_title.add_css_class("panel-title");
-    queue_header.set_title_widget(Some(&queue_title));
+    let queue_search = gtk::SearchEntry::new();
+    queue_search.set_placeholder_text(Some(&tr("Search queue")));
+    queue_search.set_hexpand(true);
+    queue_header.append(&queue_search);
 
-    let queue_clear_button = icon_button("edit-clear-symbolic", "Clear queue");
-    queue_header.pack_end(&queue_clear_button);
+    let queue_clear_button = icon_button("window-close-symbolic", "Clear queue");
+    queue_header.append(&queue_clear_button);
     root.append(&queue_header);
 
     let queue_panel = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -72,6 +75,7 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     RightPanelParts {
         root,
         queue_panel,
+        queue_search,
         queue_clear_button,
         queue_lyrics_split,
         lyrics_pane,

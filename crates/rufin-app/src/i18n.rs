@@ -73,6 +73,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Show Lyrics Panel");
     let _ = tr("Keep the lyrics section visible below the queue.");
     let _ = tr("Keep the queue sidebar visible in the main window.");
+    let _ = tr("Search queue");
     let _ = tr("Left sidebar density");
     let _ = tr("Choose when the left sidebar uses compact navigation.");
     let _ = tr("Remove from queue");
@@ -95,11 +96,13 @@ fn catalog_strings_for_extraction() {
     let _ = tr("no account");
     let _ = tr("Nothing playing");
     let _ = tr("Queue a track to begin");
+    let _ = tr("No queue items match the search.");
     let _ = tr("Artist detail will use cached album and track groups.");
     let _ = tr("Genre detail keeps albums above tracks.");
     let _ = tr("Playlist detail will use the track table.");
     let _ = tr("Cached library data will appear here as sync pages finish.");
     let _ = tr("The selected cached album was not found.");
+    let _ = tr("No cached results found.");
     let _ = tr("Cached rows will appear here after the background sync finishes.");
     let _ = tr("Type a query in the sidebar search field to search the local cache.");
     let _ = tr("Native GTK music client shell with Jellyfin playback.");

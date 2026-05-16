@@ -14,31 +14,10 @@ use super::{Shell, THUMB_COVER_SIZE, add_dynamic_link_hover};
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
 
 impl Shell {
-    fn confirm_clear_queue(self: &Rc<Self>) {
-        let dialog = adw::AlertDialog::builder()
-            .heading(tr("Clear queue"))
-            .body(tr("This removes all queued tracks and stops playback."))
-            .build();
-        let cancel = tr("Cancel");
-        let clear = tr("Clear queue");
-        dialog.add_responses(&[("cancel", cancel.as_str()), ("clear", clear.as_str())]);
-        dialog.set_default_response(Some("cancel"));
-        dialog.set_close_response("cancel");
-        dialog.set_response_appearance("clear", adw::ResponseAppearance::Destructive);
-        let controller = self.controller.clone();
-        dialog.choose(
-            Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |response| {
-                if response.as_str() == "clear" {
-                    controller.clear_queue();
-                }
-            },
-        );
-    }
-
     pub(super) fn render_queue_panel(self: &Rc<Self>) {
         let queue_snapshot = self.state.queue.borrow().clone();
+        let queue_filter = self.state.queue_filter.borrow().trim().to_lowercase();
+        let has_filter = !queue_filter.is_empty();
 
         while let Some(child) = self.queue_panel.first_child() {
             self.queue_panel.remove(&child);
@@ -53,16 +32,28 @@ impl Shell {
         queue_list.add_css_class("queue-list");
         queue_list.set_vexpand(true);
         queue_list.set_selection_mode(gtk::SelectionMode::None);
+        let mut queue_has_entries = false;
         if let Some(snapshot) = &queue_snapshot {
-            if !snapshot.entries.is_empty() {
-                self.queue_panel.append(&queue_header_row());
-            }
+            queue_has_entries = !snapshot.entries.is_empty();
+            let mut visible_entries = 0;
             for (index, entry) in snapshot.entries.iter().enumerate() {
+                if !queue_entry_matches_filter(entry, &queue_filter) {
+                    continue;
+                }
+                if visible_entries == 0 {
+                    self.queue_panel.append(&queue_header_row());
+                }
                 queue_list.append(&self.queue_row(index, entry, snapshot.current_index));
+                visible_entries += 1;
             }
         }
         if queue_list.first_child().is_none() {
-            let empty = gtk::Label::new(Some(&tr("Add music to start a queue.")));
+            let empty_text = if has_filter && queue_has_entries {
+                tr("No queue items match the search.")
+            } else {
+                tr("Add music to start a queue.")
+            };
+            let empty = gtk::Label::new(Some(&empty_text));
             empty.add_css_class("muted");
             empty.set_wrap(true);
             empty.set_margin_top(24);
@@ -137,10 +128,24 @@ impl Shell {
 }
 
 pub(super) fn connect_queue_panel_controls(shell: &Rc<Shell>) {
-    let clear_shell = Rc::clone(shell);
+    let filter_shell = Rc::clone(shell);
+    shell.queue_search.connect_search_changed(move |entry| {
+        *filter_shell.state.queue_filter.borrow_mut() = entry.text().trim().to_string();
+        filter_shell.render_queue_panel();
+    });
+
+    let controller = shell.controller.clone();
     shell
         .queue_clear_button
-        .connect_clicked(move |_| clear_shell.confirm_clear_queue());
+        .connect_clicked(move |_| controller.clear_queue());
+}
+
+fn queue_entry_matches_filter(entry: &QueueEntry, filter: &str) -> bool {
+    filter.is_empty()
+        || entry.title.to_lowercase().contains(filter)
+        || entry.artist.to_lowercase().contains(filter)
+        || entry.album.to_lowercase().contains(filter)
+        || (entry.year != 0 && entry.year.to_string().contains(filter))
 }
 
 fn queue_header_row() -> gtk::Widget {

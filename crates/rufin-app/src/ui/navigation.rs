@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{Route, SearchKind, ServerIdentity};
+use rufin_core::{Route, ServerIdentity};
 
 use super::{Shell, icon_button};
 use crate::controller::LibrarySnapshot;
@@ -109,30 +109,11 @@ pub(super) fn sidebar_history_button(icon_name: &str, label: &str) -> gtk::Butto
 pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
     shell.normal_nav.append(&normal_history_controls(shell));
 
-    let search = gtk::SearchEntry::new();
-    search.set_placeholder_text(Some(&tr("Search")));
-    search.set_margin_top(8);
-    search.set_margin_start(16);
-    search.set_margin_end(16);
-    let search_shell = Rc::clone(shell);
-    search.connect_activate(move |entry| {
-        let query = entry.text().trim().to_string();
-        if query.is_empty() {
-            return;
-        }
-        search_shell.controller.search(query.clone());
-        search_shell.navigate(Route::Search {
-            query,
-            kind: SearchKind::All,
-        });
-    });
-    shell.normal_nav.append(&search);
-
     let heading = gtk::Label::new(Some(&tr("My Library")));
     heading.add_css_class("nav-heading");
     heading.set_xalign(0.0);
     heading.set_margin_start(18);
-    heading.set_margin_top(18);
+    heading.set_margin_top(8);
     shell.normal_nav.append(&heading);
 
     for item in nav_items() {
