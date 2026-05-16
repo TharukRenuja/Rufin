@@ -3571,6 +3571,16 @@ fn connect_auto_density_resize(shell: &Rc<Shell>) {
 }
 
 fn install_window_actions(shell: &Rc<Shell>) {
+    let go_back = gio::SimpleAction::new("go-back", None);
+    let go_back_shell = Rc::clone(shell);
+    go_back.connect_activate(move |_, _| go_back_shell.go_back());
+    shell.window.add_action(&go_back);
+
+    let go_forward = gio::SimpleAction::new("go-forward", None);
+    let go_forward_shell = Rc::clone(shell);
+    go_forward.connect_activate(move |_, _| go_forward_shell.go_forward());
+    shell.window.add_action(&go_forward);
+
     let preferences = gio::SimpleAction::new("preferences", None);
     let preferences_shell = Rc::clone(shell);
     preferences.connect_activate(move |_, _| present_preferences_dialog(&preferences_shell));
@@ -3597,6 +3607,12 @@ fn install_window_actions(shell: &Rc<Shell>) {
     about.connect_activate(move |_, _| show_about_dialog(&about_shell));
     shell.window.add_action(&about);
 
+    shell
+        .application
+        .set_accels_for_action("win.go-back", &["<Alt>Left"]);
+    shell
+        .application
+        .set_accels_for_action("win.go-forward", &["<Alt>Right"]);
     shell
         .application
         .set_accels_for_action("win.preferences", &["<Control>comma"]);
@@ -3626,6 +3642,11 @@ fn show_shortcuts_dialog(shell: &Shell) {
         .title(tr("Keyboard Shortcuts"))
         .build();
     let section = adw::ShortcutsSection::new(Some(&tr("General")));
+    section.add(adw::ShortcutsItem::from_action(&tr("Back"), "win.go-back"));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Forward"),
+        "win.go-forward",
+    ));
     section.add(adw::ShortcutsItem::new(&tr("Main Menu"), "F10"));
     section.add(adw::ShortcutsItem::from_action(
         &tr("Preferences"),
