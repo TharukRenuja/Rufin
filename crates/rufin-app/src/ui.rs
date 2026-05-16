@@ -288,7 +288,6 @@ struct GroupedDetailData {
     image_ref: Option<ImageRef>,
     seed: u32,
     summary: String,
-    albums: Vec<Album>,
     tracks: Vec<Track>,
     table_context: &'static str,
 }
@@ -2358,19 +2357,12 @@ impl Shell {
             return self.placeholder_view("Genre", "The selected cached genre was not found.");
         };
         let seed = stable_seed(detail.genre.id.as_str());
-        let summary = format!(
-            "{} {} / {} {}",
-            detail.genre.album_count,
-            tr("albums"),
-            detail.genre.track_count,
-            tr("tracks")
-        );
+        let summary = format!("{} {}", detail.genre.track_count, tr("tracks"));
         self.grouped_detail_view(GroupedDetailData {
             title: detail.genre.name,
             image_ref: detail.genre.image_ref,
             seed,
             summary,
-            albums: detail.albums,
             tracks: detail.tracks,
             table_context: "genre-detail",
         })
@@ -2645,13 +2637,6 @@ impl Shell {
         header.append(&metadata);
         wrapper.append(&header);
 
-        if !data.albums.is_empty() {
-            let album_heading = gtk::Label::new(Some(&tr("Albums")));
-            album_heading.add_css_class("section-heading");
-            album_heading.set_xalign(0.0);
-            wrapper.append(&album_heading);
-            wrapper.append(&self.album_cards_grid(&data.albums));
-        }
         if data.tracks.is_empty() {
             wrapper
                 .append(&self.placeholder_view("Tracks", "No cached tracks are linked here yet."));
@@ -6655,13 +6640,7 @@ fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> g
     name.set_xalign(0.0);
     constrain_wrapped_card_label(&name, size, 2);
     let name_clip = clipped_card_label(&name, size);
-    let counts = gtk::Label::new(Some(&format!(
-        "{} {} / {} {}",
-        genre.album_count,
-        tr("albums"),
-        genre.track_count,
-        tr("tracks")
-    )));
+    let counts = gtk::Label::new(Some(&format!("{} {}", genre.track_count, tr("tracks"))));
     counts.add_css_class("muted");
     counts.set_xalign(0.0);
     constrain_single_line_card_label(&counts, size);

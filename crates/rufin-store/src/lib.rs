@@ -1316,7 +1316,18 @@ impl Store {
         let total = self.count_linked_genres(server_id)?;
         let mut statement = self.connection.prepare(
             "
-            SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
+            SELECT genre_id, name,
+                   (
+                       SELECT COUNT(DISTINCT album_id)
+                       FROM album_genres ag
+                       WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                   ) AS album_count,
+                   (
+                       SELECT COUNT(DISTINCT track_id)
+                       FROM track_genres tg
+                       WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                   ) AS track_count,
+                   image_item_id, image_tag
             FROM genres g
             WHERE g.server_id = ?1
               AND (
@@ -1512,7 +1523,18 @@ impl Store {
             .connection
             .query_row(
                 "
-                SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
+                SELECT genre_id, name,
+                       (
+                           SELECT COUNT(DISTINCT album_id)
+                           FROM album_genres ag
+                           WHERE ag.server_id = genres.server_id AND ag.genre_name = genres.name
+                       ) AS album_count,
+                       (
+                           SELECT COUNT(DISTINCT track_id)
+                           FROM track_genres tg
+                           WHERE tg.server_id = genres.server_id AND tg.genre_name = genres.name
+                       ) AS track_count,
+                       image_item_id, image_tag
                 FROM genres
                 WHERE server_id = ?1 AND genre_id = ?2
                 ",
@@ -3262,7 +3284,9 @@ mod tests {
             .expect("load genre detail")
             .expect("genre detail");
 
-        assert_eq!(detail.genre, genre);
+        assert_eq!(detail.genre.name, genre.name);
+        assert_eq!(detail.genre.album_count, 1);
+        assert_eq!(detail.genre.track_count, 1);
         assert_eq!(detail.albums, vec![album]);
         assert_eq!(detail.tracks, vec![track]);
     }
@@ -3296,7 +3320,55 @@ mod tests {
             .expect("load genres");
 
         assert_eq!(genres.total, 1);
-        assert_eq!(genres.items, vec![music_genre]);
+        assert_eq!(genres.items[0].id, music_genre.id);
+        assert_eq!(genres.items[0].name, music_genre.name);
+        assert_eq!(genres.items[0].album_count, 1);
+        assert_eq!(genres.items[0].track_count, 0);
+    }
+
+    #[test]
+    fn genre_counts_use_linked_music_items_instead_of_provider_counts() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(1);
+        album.genres = vec!["Anime".to_string()];
+        let track = track(1, &album);
+        let provider_genre = Genre {
+            id: GenreId::new("jellyfin:genre:anime"),
+            name: "Anime".to_string(),
+            album_count: 167,
+            track_count: 1_561,
+            image_ref: None,
+        };
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_genres(
+                &saved.server.id,
+                std::slice::from_ref(&provider_genre),
+                generation,
+            )
+            .expect("upsert genre");
+
+        let genres = store
+            .load_genres(&saved.server.id, 0, 20)
+            .expect("load genres");
+        let detail = store
+            .load_genre_detail(&saved.server.id, &provider_genre.id)
+            .expect("load genre detail")
+            .expect("genre detail");
+
+        assert_eq!(genres.items[0].album_count, 1);
+        assert_eq!(genres.items[0].track_count, 1);
+        assert_eq!(detail.genre.album_count, 1);
+        assert_eq!(detail.genre.track_count, 1);
     }
 
     #[test]
