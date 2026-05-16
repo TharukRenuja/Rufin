@@ -1368,8 +1368,6 @@ impl Shell {
             .and_then(|lyrics| active_lyrics_line_index(lyrics.lines.as_slice(), position_millis));
         let previous_index = self.state.lyrics_active_index.replace(active_index);
         let follow_pause = self.lyrics_follow_scroll_pause();
-        let should_follow_scroll = follow_pause != LyricsFollowScrollPause::Active;
-        let force_follow_scroll = follow_pause == LyricsFollowScrollPause::Expired;
         let scroll_target = {
             let rows = self.state.lyrics_rows.borrow();
             for (index, row) in rows.iter().enumerate() {
@@ -1383,27 +1381,23 @@ impl Shell {
                 }
             }
 
-            if should_follow_scroll {
-                active_index
-                    .filter(|index| force_follow_scroll || Some(*index) != previous_index)
-                    .and_then(|index| {
-                        let scroller = self.state.lyrics_scroller.borrow().clone()?;
-                        let row = rows.get(index)?.row.clone().upcast::<gtk::Widget>();
-                        let duration = lyrics
-                            .as_ref()
-                            .map(|lyrics| {
-                                lyrics_scroll_animation_millis(
-                                    lyrics.lines.as_slice(),
-                                    index,
-                                    position_millis,
-                                )
-                            })
-                            .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS);
-                        Some((scroller, row, duration))
-                    })
-            } else {
-                None
-            }
+            lyrics_follow_scroll_target(active_index, previous_index, follow_pause).and_then(
+                |index| {
+                    let scroller = self.state.lyrics_scroller.borrow().clone()?;
+                    let row = rows.get(index)?.row.clone().upcast::<gtk::Widget>();
+                    let duration = lyrics
+                        .as_ref()
+                        .map(|lyrics| {
+                            lyrics_scroll_animation_millis(
+                                lyrics.lines.as_slice(),
+                                index,
+                                position_millis,
+                            )
+                        })
+                        .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS);
+                    Some((scroller, row, duration))
+                },
+            )
         };
 
         if let Some((scroller, row, duration)) = scroll_target {
@@ -3074,7 +3068,6 @@ impl Shell {
         lyrics_body.add_css_class("lyrics-lines");
         self.state.lyrics_rows.borrow_mut().clear();
         *self.state.lyrics_scroller.borrow_mut() = Some(lyrics_scroller.clone());
-        self.state.lyrics_active_index.set(None);
         if let Some(current_lyrics) = self.state.lyrics.borrow().clone() {
             for line in &current_lyrics.lines {
                 let label = gtk::Label::new(Some(&line.text));
@@ -6979,6 +6972,19 @@ fn lyrics_follow_scroll_pause_state(
     }
 }
 
+fn lyrics_follow_scroll_target(
+    active_index: Option<usize>,
+    previous_index: Option<usize>,
+    follow_pause: LyricsFollowScrollPause,
+) -> Option<usize> {
+    if follow_pause == LyricsFollowScrollPause::Active {
+        return None;
+    }
+    active_index.filter(|index| {
+        follow_pause == LyricsFollowScrollPause::Expired || Some(*index) != previous_index
+    })
+}
+
 fn lyrics_scroll_animation_millis(
     lines: &[LyricLine],
     active_index: usize,
@@ -7271,8 +7277,9 @@ mod tests {
         content_split_position_from_right_panel_ratio, content_split_target_position,
         current_playback_track_id, default_content_split_position, home_album_card_height,
         home_album_card_size, home_album_content_width_for, home_album_page_size,
-        lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
-        next_lyrics_line_start_after, queue_lyrics_default_position, queue_lyrics_initial_position,
+        lyrics_follow_scroll_pause_state, lyrics_follow_scroll_target,
+        lyrics_scroll_animation_millis, next_lyrics_line_start_after,
+        queue_lyrics_default_position, queue_lyrics_initial_position,
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio, restored_window_size,
         right_panel_position_ratio, update_right_panel_split_settings,
     };
@@ -7517,6 +7524,26 @@ mod tests {
         assert_eq!(
             lyrics_follow_scroll_pause_state(Some(now), now),
             LyricsFollowScrollPause::Expired
+        );
+    }
+
+    #[test]
+    fn lyrics_follow_scroll_ignores_same_active_line() {
+        assert_eq!(
+            lyrics_follow_scroll_target(Some(3), Some(3), LyricsFollowScrollPause::Inactive),
+            None
+        );
+        assert_eq!(
+            lyrics_follow_scroll_target(Some(4), Some(3), LyricsFollowScrollPause::Inactive),
+            Some(4)
+        );
+        assert_eq!(
+            lyrics_follow_scroll_target(Some(3), Some(3), LyricsFollowScrollPause::Expired),
+            Some(3)
+        );
+        assert_eq!(
+            lyrics_follow_scroll_target(Some(4), Some(3), LyricsFollowScrollPause::Active),
+            None
         );
     }
 
