@@ -5,10 +5,10 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use adw::prelude::*;
+use gdk_pixbuf::Pixbuf;
+use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
-use image::GenericImageView;
-use image::ImageReader;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
     HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueSnapshot,
@@ -70,14 +70,7 @@ struct CoverBinding {
 struct ArtworkTile {
     area: gtk::DrawingArea,
     seed: Rc<Cell<u32>>,
-    image: Rc<RefCell<Option<ArtworkImage>>>,
-}
-
-#[derive(Clone)]
-struct ArtworkImage {
-    surface: gtk::cairo::ImageSurface,
-    width: i32,
-    height: i32,
+    pixbuf: Rc<RefCell<Option<Pixbuf>>>,
 }
 
 struct HomeSectionState {
@@ -3411,19 +3404,19 @@ impl ArtworkTile {
         area.set_valign(gtk::Align::Start);
 
         let seed = Rc::new(Cell::new(seed));
-        let image = Rc::new(RefCell::new(None::<ArtworkImage>));
+        let pixbuf = Rc::new(RefCell::new(None::<Pixbuf>));
         let draw_seed = Rc::clone(&seed);
-        let draw_image = Rc::clone(&image);
+        let draw_pixbuf = Rc::clone(&pixbuf);
         area.set_draw_func(move |_, context, width, height| {
             clip_rounded_rect(context, width, height, 12.0);
-            if let Some(image) = draw_image.borrow().as_ref() {
-                draw_image_cover(context, image, width, height);
+            if let Some(pixbuf) = draw_pixbuf.borrow().as_ref() {
+                draw_pixbuf_cover(context, pixbuf, width, height);
             } else {
                 draw_fallback_cover(context, draw_seed.get(), width, height);
             }
         });
 
-        Self { area, seed, image }
+        Self { area, seed, pixbuf }
     }
 
     fn widget(&self) -> gtk::Widget {
@@ -3436,9 +3429,9 @@ impl ArtworkTile {
     }
 
     fn set_path(&self, path: &std::path::Path) {
-        match load_artwork_image(path) {
-            Ok(image) => {
-                *self.image.borrow_mut() = Some(image);
+        match Pixbuf::from_file(path) {
+            Ok(pixbuf) => {
+                *self.pixbuf.borrow_mut() = Some(pixbuf);
                 self.area.queue_draw();
             }
             Err(error) => {
@@ -3449,7 +3442,7 @@ impl ArtworkTile {
     }
 
     fn clear_image(&self) {
-        *self.image.borrow_mut() = None;
+        *self.pixbuf.borrow_mut() = None;
         self.area.queue_draw();
     }
 }
@@ -3471,75 +3464,14 @@ fn draw_fallback_cover(context: &gtk::cairo::Context, seed: u32, width: i32, hei
     let _fill = context.fill();
 }
 
-fn draw_image_cover(context: &gtk::cairo::Context, image: &ArtworkImage, width: i32, height: i32) {
-    let rect = cover_draw_rect(image.width, image.height, width, height);
+fn draw_pixbuf_cover(context: &gtk::cairo::Context, pixbuf: &Pixbuf, width: i32, height: i32) {
+    let rect = cover_draw_rect(pixbuf.width(), pixbuf.height(), width, height);
     let _save = context.save();
     context.translate(rect.x, rect.y);
     context.scale(rect.scale, rect.scale);
-    let _source = context.set_source_surface(&image.surface, 0.0, 0.0);
+    context.set_source_pixbuf(pixbuf, 0.0, 0.0);
     let _paint = context.paint();
     let _restore = context.restore();
-}
-
-fn load_artwork_image(path: &std::path::Path) -> Result<ArtworkImage, String> {
-    let image = ImageReader::open(path)
-        .map_err(|error| error.to_string())?
-        .with_guessed_format()
-        .map_err(|error| error.to_string())?
-        .decode()
-        .map_err(|error| error.to_string())?;
-    let (width, height) = image.dimensions();
-    let width_i32 = i32::try_from(width).map_err(|error| error.to_string())?;
-    let height_i32 = i32::try_from(height).map_err(|error| error.to_string())?;
-    let stride = gtk::cairo::Format::ARgb32
-        .stride_for_width(width)
-        .map_err(|error| error.to_string())?;
-    let rgba = image.to_rgba8();
-    let mut data = vec![0_u8; stride as usize * height as usize];
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            let pixel = rgba.get_pixel(x as u32, y as u32).0;
-            let [red, green, blue, alpha] = premultiply_rgba(pixel);
-            let offset = y * stride as usize + x * 4;
-            #[cfg(target_endian = "little")]
-            {
-                data[offset] = blue;
-                data[offset + 1] = green;
-                data[offset + 2] = red;
-                data[offset + 3] = alpha;
-            }
-            #[cfg(target_endian = "big")]
-            {
-                data[offset] = alpha;
-                data[offset + 1] = red;
-                data[offset + 2] = green;
-                data[offset + 3] = blue;
-            }
-        }
-    }
-    let surface = gtk::cairo::ImageSurface::create_for_data(
-        data,
-        gtk::cairo::Format::ARgb32,
-        width_i32,
-        height_i32,
-        stride,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(ArtworkImage {
-        surface,
-        width: width_i32,
-        height: height_i32,
-    })
-}
-
-fn premultiply_rgba([red, green, blue, alpha]: [u8; 4]) -> [u8; 4] {
-    let alpha_u32 = u32::from(alpha);
-    [
-        ((u32::from(red) * alpha_u32 + 127) / 255) as u8,
-        ((u32::from(green) * alpha_u32 + 127) / 255) as u8,
-        ((u32::from(blue) * alpha_u32 + 127) / 255) as u8,
-        alpha,
-    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3754,17 +3686,5 @@ mod tests {
         assert!((rect.scale - 0.44).abs() < f64::EPSILON);
         assert!((rect.x + 22.0).abs() < f64::EPSILON);
         assert!((rect.y - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn premultiply_rgba_keeps_opaque_pixels_and_scales_alpha() {
-        assert_eq!(
-            super::premultiply_rgba([10, 20, 30, 255]),
-            [10, 20, 30, 255]
-        );
-        assert_eq!(
-            super::premultiply_rgba([100, 50, 25, 128]),
-            [50, 25, 13, 128]
-        );
     }
 }
