@@ -216,6 +216,7 @@ impl QueueEngine {
             self.current_index = Some(0);
         }
         self.rebuild_shuffle_order();
+        self.move_shuffle_entry_after_current(&id);
         id
     }
 
@@ -309,6 +310,7 @@ impl QueueEngine {
         self.entries.insert(target, entry);
         self.current_index = Some(current_index);
         self.rebuild_shuffle_order();
+        self.move_shuffle_entry_after_current(entry_id);
         true
     }
 
@@ -423,6 +425,47 @@ impl QueueEngine {
                 .position(|shuffled| *shuffled == current)
         });
     }
+
+    fn move_shuffle_entry_after_current(&mut self, entry_id: &QueueEntryId) {
+        if !self.shuffle.enabled {
+            return;
+        }
+        let Some(current_index) = self.current_index else {
+            return;
+        };
+        let Some(entry_index) = self.entries.iter().position(|entry| entry.id == *entry_id) else {
+            return;
+        };
+        if entry_index == current_index {
+            self.sync_shuffle_position();
+            return;
+        }
+        let Some(current_position) = self
+            .shuffle_order
+            .iter()
+            .position(|index| *index == current_index)
+        else {
+            self.sync_shuffle_position();
+            return;
+        };
+        let Some(entry_position) = self
+            .shuffle_order
+            .iter()
+            .position(|index| *index == entry_index)
+        else {
+            self.sync_shuffle_position();
+            return;
+        };
+        let entry = self.shuffle_order.remove(entry_position);
+        let target = if entry_position < current_position {
+            current_position
+        } else {
+            current_position + 1
+        }
+        .min(self.shuffle_order.len());
+        self.shuffle_order.insert(target, entry);
+        self.sync_shuffle_position();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -514,6 +557,21 @@ mod tests {
     }
 
     #[test]
+    fn play_next_remains_next_when_shuffle_is_enabled() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        queue.append(&track(4));
+        queue.set_shuffle(true, 99);
+        queue.play_next(&track(3));
+
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(3))
+        );
+    }
+
+    #[test]
     fn queue_entries_keep_navigation_ids_from_tracks() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         let mut track = track(1);
@@ -597,6 +655,22 @@ mod tests {
             Some(&TrackId::fake(1))
         );
         assert_eq!(queue.progress_seconds(), 42);
+    }
+
+    #[test]
+    fn move_after_current_remains_next_when_shuffle_is_enabled() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        let third = queue.append(&track(3));
+        queue.set_shuffle(true, 99);
+
+        assert!(queue.move_after_current(&third));
+
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(3))
+        );
     }
 
     #[test]
