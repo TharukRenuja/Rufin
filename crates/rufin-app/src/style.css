@@ -162,6 +162,29 @@ window {
   background: transparent;
 }
 
+.player-identity {
+  min-width: 180px;
+}
+
+.player-transport {
+  margin: 0 8px;
+}
+
+.player-progress-row label {
+  font-size: 12px;
+}
+
+.player-progress {
+  min-width: 220px;
+}
+
+scale.player-progress slider {
+  min-width: 10px;
+  min-height: 10px;
+  margin: -4px;
+  padding: 0;
+}
+
 .player-transport-button {
   border-radius: 999px;
   background: transparent;

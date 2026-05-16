@@ -44,6 +44,12 @@ const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
+const BOTTOM_PLAYER_HEIGHT: i32 = 68;
+const BOTTOM_PLAYER_COVER_SIZE: i32 = 60;
+const BOTTOM_PLAYER_IDENTITY_WIDTH: i32 = 190;
+const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 330;
+const BOTTOM_PLAYER_TRANSPORT_OFFSET: i32 = 80;
+const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 230;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -259,7 +265,7 @@ struct Shell {
 }
 
 struct PlayerControls {
-    root: gtk::Box,
+    root: gtk::Overlay,
     cover: ArtworkTile,
     cover_key: RefCell<Option<String>>,
     title: gtk::Label,
@@ -3640,17 +3646,25 @@ fn queue_header_row() -> gtk::Widget {
 }
 
 fn build_bottom_player() -> PlayerControls {
-    let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let root = gtk::Overlay::new();
     root.add_css_class("bottom-player");
-    root.set_height_request(44);
+    root.set_height_request(BOTTOM_PLAYER_HEIGHT);
     root.set_valign(gtk::Align::Center);
 
-    let cover = ArtworkTile::new(34, 42);
-    cover.area.set_valign(gtk::Align::Center);
-    root.append(&cover.area);
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    bar.set_valign(gtk::Align::Center);
 
-    let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    identity.set_width_request(160);
+    let now_playing = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    now_playing.add_css_class("player-now-playing");
+    now_playing.set_valign(gtk::Align::Center);
+
+    let cover = ArtworkTile::new(BOTTOM_PLAYER_COVER_SIZE, 42);
+    cover.area.set_valign(gtk::Align::Center);
+    now_playing.append(&cover.area);
+
+    let identity = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    identity.add_css_class("player-identity");
+    identity.set_width_request(BOTTOM_PLAYER_IDENTITY_WIDTH);
     identity.set_valign(gtk::Align::Center);
     let title = player_link("player-title");
     let artist = player_link("muted");
@@ -3658,22 +3672,26 @@ fn build_bottom_player() -> PlayerControls {
     identity.append(&title);
     identity.append(&artist);
     identity.append(&album);
-    root.append(&identity);
+    now_playing.append(&identity);
+    bar.append(&now_playing);
 
-    let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    transport.set_hexpand(true);
+    let transport = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    transport.add_css_class("player-transport");
+    transport.set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH);
     transport.set_valign(gtk::Align::Center);
-    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 18);
+    buttons.add_css_class("player-button-row");
+    buttons.set_halign(gtk::Align::Center);
     buttons.set_valign(gtk::Align::Center);
 
     let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
     stop_button.add_css_class("player-transport-button");
-    let previous_button = icon_button("media-skip-backward-symbolic", "Previous");
+    let previous_button = icon_button("go-previous-symbolic", "Previous");
     previous_button.add_css_class("player-transport-button");
     let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
     play_button.add_css_class("player-transport-button");
     play_button.add_css_class("player-play-button");
-    let next_button = icon_button("media-skip-forward-symbolic", "Next");
+    let next_button = icon_button("go-next-symbolic", "Next");
     next_button.add_css_class("player-transport-button");
     let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
     let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
@@ -3686,22 +3704,30 @@ fn build_bottom_player() -> PlayerControls {
     buttons.append(&repeat_button);
 
     let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    progress_row.set_hexpand(true);
+    progress_row.add_css_class("player-progress-row");
+    progress_row.set_halign(gtk::Align::Center);
     progress_row.set_valign(gtk::Align::Center);
     let elapsed = gtk::Label::new(Some("0:00"));
     elapsed.add_css_class("muted");
+    elapsed.set_width_chars(4);
+    elapsed.set_xalign(1.0);
     let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1.0);
+    progress.add_css_class("player-progress");
     progress.set_draw_value(false);
-    progress.set_hexpand(true);
+    progress.set_width_request(BOTTOM_PLAYER_PROGRESS_WIDTH);
     let duration = gtk::Label::new(Some("0:00"));
     duration.add_css_class("muted");
+    duration.set_width_chars(4);
     progress_row.append(&elapsed);
     progress_row.append(&progress);
     progress_row.append(&duration);
 
     transport.append(&buttons);
     transport.append(&progress_row);
-    root.append(&transport);
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    bar.append(&spacer);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     actions.set_valign(gtk::Align::Center);
@@ -3717,7 +3743,20 @@ fn build_bottom_player() -> PlayerControls {
     volume.set_value(1.0);
     volume.set_draw_value(false);
     actions.append(&volume);
-    root.append(&actions);
+    bar.append(&actions);
+
+    let transport_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    transport_slot
+        .set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH + BOTTOM_PLAYER_TRANSPORT_OFFSET);
+    transport_slot.set_halign(gtk::Align::Center);
+    transport_slot.set_valign(gtk::Align::Center);
+    transport_slot.append(&transport);
+    let offset_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    offset_spacer.set_width_request(BOTTOM_PLAYER_TRANSPORT_OFFSET);
+    transport_slot.append(&offset_spacer);
+
+    root.set_child(Some(&bar));
+    root.add_overlay(&transport_slot);
 
     PlayerControls {
         root,
