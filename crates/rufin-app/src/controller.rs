@@ -33,6 +33,9 @@ use tracing::{debug, info, instrument, warn};
 const PAGE_SIZE: usize = 500;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
+const AUTO_DJ_ITEM_COUNT: usize = 5;
+const AUTO_DJ_THRESHOLD: usize = 1;
+const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
@@ -63,6 +66,7 @@ pub struct PlaybackSnapshot {
     pub muted: bool,
     pub repeat_mode: RepeatMode,
     pub shuffle_enabled: bool,
+    pub auto_dj_enabled: bool,
     pub buffering_percent: Option<u8>,
     pub last_error: Option<String>,
 }
@@ -79,6 +83,7 @@ impl Default for PlaybackSnapshot {
             muted: false,
             repeat_mode: RepeatMode::Off,
             shuffle_enabled: false,
+            auto_dj_enabled: false,
             buffering_percent: None,
             last_error: None,
         }
@@ -125,6 +130,7 @@ pub struct AppController {
     queue: Arc<Mutex<Option<QueueEngine>>>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: Arc<Mutex<bool>>,
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
     events: Sender<ControllerEvent>,
@@ -178,12 +184,7 @@ impl StoreHandle {
 
 impl AppController {
     pub fn load_settings(&self) -> AppSettings {
-        let mut settings = self
-            .store
-            .with_store(|store| store.load_settings())
-            .unwrap_or_default();
-        settings.migrate_defaults();
-        settings
+        load_settings_from_store(&self.store)
     }
 
     pub fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
@@ -508,9 +509,11 @@ impl AppController {
                 warn!(%error, "failed to load fake snapshot");
                 LibrarySnapshot::first_run()
             });
+            let settings = load_settings_from_store(&store);
             let queue = restore_queue(&store, snapshot.server.as_ref());
             let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
-            let playback_snapshot = playback_snapshot_from_queue(queue.as_ref());
+            let playback_snapshot =
+                playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled);
             let controller = Self {
                 store,
                 runtime,
@@ -518,6 +521,7 @@ impl AppController {
                 queue: Arc::new(Mutex::new(queue)),
                 playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
                 playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
+                auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
                 last_progress_snapshot: Arc::new(Mutex::new(None)),
                 last_report_snapshot: Arc::new(Mutex::new(None)),
                 events,
@@ -544,9 +548,11 @@ impl AppController {
             warn!(%error, "failed to load app snapshot");
             LibrarySnapshot::first_run()
         });
+        let settings = load_settings_from_store(&store);
         let queue = restore_queue(&store, snapshot.server.as_ref());
         let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
-        let playback_snapshot = playback_snapshot_from_queue(queue.as_ref());
+        let playback_snapshot =
+            playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled);
         let controller = Self {
             store,
             runtime,
@@ -554,6 +560,7 @@ impl AppController {
             queue: Arc::new(Mutex::new(queue)),
             playback: Arc::new(Mutex::new(playback_backend(false))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
+            auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
             events,
@@ -587,13 +594,18 @@ impl AppController {
         let snapshot = load_snapshot(&store).unwrap_or_else(|error| {
             panic!("failed to load memory snapshot: {error}");
         });
+        let settings = load_settings_from_store(&store);
         let controller = Self {
             store,
             runtime,
             secrets: Arc::new(MemorySecretStore::new()),
             queue: Arc::new(Mutex::new(None)),
             playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
-            playback_snapshot: Arc::new(Mutex::new(PlaybackSnapshot::default())),
+            playback_snapshot: Arc::new(Mutex::new(PlaybackSnapshot {
+                auto_dj_enabled: settings.auto_dj_enabled,
+                ..PlaybackSnapshot::default()
+            })),
+            auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
             events,
@@ -606,7 +618,10 @@ impl AppController {
             receiver,
             snapshot,
             None,
-            PlaybackSnapshot::default(),
+            PlaybackSnapshot {
+                auto_dj_enabled: settings.auto_dj_enabled,
+                ..PlaybackSnapshot::default()
+            },
         )
     }
 
@@ -732,6 +747,7 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
+        self.auto_dj_top_up_or_emit_error();
         self.persist_and_emit_queue();
         self.start_current_track();
     }
@@ -801,6 +817,7 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
+        self.auto_dj_top_up_or_emit_error();
         self.persist_and_emit_queue();
         self.start_current_track();
     }
@@ -868,6 +885,32 @@ impl AppController {
         self.persist_and_emit_queue();
     }
 
+    pub fn toggle_auto_dj(&self) {
+        let enabled = self
+            .auto_dj_enabled
+            .lock()
+            .map(|mut current| {
+                *current = !*current;
+                *current
+            })
+            .unwrap_or(false);
+
+        let mut settings = self.load_settings();
+        settings.auto_dj_enabled = enabled;
+        if let Err(error) = self.save_settings(&settings) {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.auto_dj_enabled = enabled;
+        });
+        if enabled && self.auto_dj_top_up_or_emit_error() {
+            self.persist_and_emit_queue();
+        } else {
+            self.emit_playback_snapshot();
+        }
+    }
+
     pub fn play_pause(&self) {
         let state = self
             .playback_snapshot
@@ -924,6 +967,7 @@ impl AppController {
     }
 
     pub fn next_track(&self) {
+        self.auto_dj_top_up_or_emit_error();
         let mut moved = false;
         let mut had_current = false;
         let result = self.with_queue_mut(|queue| {
@@ -971,6 +1015,7 @@ impl AppController {
             self.seek(0);
             return;
         }
+        self.auto_dj_top_up_or_emit_error();
         self.persist_and_emit_queue();
         self.start_current_track();
     }
@@ -1144,6 +1189,7 @@ impl AppController {
         let queue = Arc::clone(&self.queue);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
             let Some(saved) = store
@@ -1185,10 +1231,22 @@ impl AppController {
                 let _result = playback.send(PlaybackCommand::Stop);
             }
             if let Ok(mut snapshot) = playback_snapshot.lock() {
-                *snapshot = PlaybackSnapshot::default();
+                *snapshot = PlaybackSnapshot {
+                    auto_dj_enabled: auto_dj_enabled
+                        .lock()
+                        .map(|enabled| *enabled)
+                        .unwrap_or_default(),
+                    ..PlaybackSnapshot::default()
+                };
             }
             let _sent = events.send(ControllerEvent::Queue(Box::new(None)));
-            let _sent = events.send(ControllerEvent::Playback(Box::default()));
+            let _sent = events.send(ControllerEvent::Playback(Box::new(PlaybackSnapshot {
+                auto_dj_enabled: auto_dj_enabled
+                    .lock()
+                    .map(|enabled| *enabled)
+                    .unwrap_or_default(),
+                ..PlaybackSnapshot::default()
+            })));
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(
                 LibrarySnapshot::first_run(),
             )));
@@ -1209,6 +1267,7 @@ impl AppController {
         let events = self.events.clone();
         let queue = Arc::clone(&self.queue);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
             let _sent = events.send(ControllerEvent::LoginStatus(
@@ -1251,8 +1310,14 @@ impl AppController {
             if let Ok(mut queue) = queue.lock() {
                 *queue = Some(QueueEngine::restore(queue_snapshot.clone()));
             }
-            let player =
-                playback_snapshot_from_queue(Some(&QueueEngine::restore(queue_snapshot.clone())));
+            let auto_dj_enabled = auto_dj_enabled
+                .lock()
+                .map(|enabled| *enabled)
+                .unwrap_or_default();
+            let player = playback_snapshot_from_queue(
+                Some(&QueueEngine::restore(queue_snapshot.clone())),
+                auto_dj_enabled,
+            );
             if let Ok(mut snapshot) = playback_snapshot.lock() {
                 *snapshot = player.clone();
             }
@@ -1690,6 +1755,71 @@ impl AppController {
         operation(queue)
     }
 
+    fn auto_dj_top_up_or_emit_error(&self) -> bool {
+        match self.auto_dj_top_up() {
+            Ok(topped_up) => topped_up,
+            Err(error) => {
+                let _sent = self.events.send(ControllerEvent::Error(error));
+                false
+            }
+        }
+    }
+
+    fn auto_dj_top_up(&self) -> Result<bool, String> {
+        if !self
+            .auto_dj_enabled
+            .lock()
+            .map(|enabled| *enabled)
+            .unwrap_or_default()
+        {
+            return Ok(false);
+        }
+
+        let Some((server_id, current, queued_track_ids, remaining)) = self.auto_dj_queue_state()
+        else {
+            return Ok(false);
+        };
+        if remaining >= AUTO_DJ_THRESHOLD {
+            return Ok(false);
+        }
+
+        let tracks = self
+            .store
+            .with_store(|store| store.load_tracks(&server_id, 0, AUTO_DJ_LIBRARY_LIMIT))
+            .map(|page| page.items)?;
+        let candidates = auto_dj_candidates(&tracks, &current, &queued_track_ids, shuffle_seed());
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+
+        self.with_queue_mut(|queue| {
+            for track in &candidates {
+                queue.append(track);
+            }
+            Ok(())
+        })?;
+        Ok(true)
+    }
+
+    fn auto_dj_queue_state(&self) -> Option<(ServerId, QueueEntry, HashSet<TrackId>, usize)> {
+        self.queue.lock().ok().and_then(|queue| {
+            let queue = queue.as_ref()?;
+            let snapshot = queue.snapshot();
+            let current = queue.current()?.clone();
+            let queued = queue
+                .entries()
+                .iter()
+                .map(|entry| entry.track_id.clone())
+                .collect::<HashSet<_>>();
+            Some((
+                snapshot.server_id,
+                current,
+                queued,
+                queue.remaining_after_current(),
+            ))
+        })
+    }
+
     fn persist_and_emit_queue(&self) {
         let queue_snapshot = self.queue_snapshot();
         if let Some(snapshot) = &queue_snapshot {
@@ -1747,6 +1877,11 @@ impl AppController {
                 .unwrap_or(RepeatMode::Off);
             snapshot.shuffle_enabled = queue
                 .map(|queue| queue.shuffle().enabled)
+                .unwrap_or_default();
+            snapshot.auto_dj_enabled = self
+                .auto_dj_enabled
+                .lock()
+                .map(|enabled| *enabled)
                 .unwrap_or_default();
             if snapshot.current.is_none() {
                 snapshot.state = PlaybackState::Stopped;
@@ -1925,6 +2060,7 @@ impl AppController {
 
     fn advance_after_end_of_stream(&self) {
         self.report_playback(PlaybackReportKind::Stopped, false);
+        self.auto_dj_top_up_or_emit_error();
         let mut has_next = false;
         let result = self.with_queue_mut(|queue| {
             has_next = queue.advance_after_end_of_stream().is_some();
@@ -2332,7 +2468,18 @@ fn restore_queue(store: &StoreHandle, server: Option<&ServerIdentity>) -> Option
     }
 }
 
-fn playback_snapshot_from_queue(queue: Option<&QueueEngine>) -> PlaybackSnapshot {
+fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
+    let mut settings = store
+        .with_store(|store| store.load_settings())
+        .unwrap_or_default();
+    settings.migrate_defaults();
+    settings
+}
+
+fn playback_snapshot_from_queue(
+    queue: Option<&QueueEngine>,
+    auto_dj_enabled: bool,
+) -> PlaybackSnapshot {
     queue
         .map(|queue| PlaybackSnapshot {
             current: queue.current().cloned(),
@@ -2347,10 +2494,14 @@ fn playback_snapshot_from_queue(queue: Option<&QueueEngine>) -> PlaybackSnapshot
             muted: false,
             repeat_mode: queue.repeat_mode(),
             shuffle_enabled: queue.shuffle().enabled,
+            auto_dj_enabled,
             buffering_percent: None,
             last_error: None,
         })
-        .unwrap_or_default()
+        .unwrap_or_else(|| PlaybackSnapshot {
+            auto_dj_enabled,
+            ..PlaybackSnapshot::default()
+        })
 }
 
 fn shuffle_seed() -> u64 {
@@ -2358,6 +2509,78 @@ fn shuffle_seed() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(1)
+}
+
+fn auto_dj_candidates(
+    tracks: &[Track],
+    current: &QueueEntry,
+    queued_track_ids: &HashSet<TrackId>,
+    seed: u64,
+) -> Vec<Track> {
+    let current_genres = tracks
+        .iter()
+        .find(|track| track.id == current.track_id)
+        .map(|track| {
+            track
+                .genres
+                .iter()
+                .map(|genre| genre.to_lowercase())
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut candidates = tracks
+        .iter()
+        .filter(|track| !queued_track_ids.contains(&track.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|track| {
+        (
+            std::cmp::Reverse(auto_dj_score(track, current, &current_genres)),
+            auto_dj_shuffle_key(seed, track.id.as_str()),
+        )
+    });
+    candidates.truncate(AUTO_DJ_ITEM_COUNT);
+    candidates
+}
+
+fn auto_dj_score(track: &Track, current: &QueueEntry, current_genres: &HashSet<String>) -> u8 {
+    let mut score = 0;
+    if !current_genres.is_empty()
+        && track
+            .genres
+            .iter()
+            .any(|genre| current_genres.contains(&genre.to_lowercase()))
+    {
+        score += 80;
+    }
+    if current
+        .artist_id
+        .as_ref()
+        .is_some_and(|artist_id| track.artist_id.as_ref() == Some(artist_id))
+    {
+        score += 60;
+    } else if !current.artist.trim().is_empty()
+        && track.artist.eq_ignore_ascii_case(current.artist.as_str())
+    {
+        score += 50;
+    }
+    if current
+        .album_id
+        .as_ref()
+        .is_some_and(|album_id| track.album_id == *album_id)
+    {
+        score += 25;
+    }
+    score
+}
+
+fn auto_dj_shuffle_key(seed: u64, value: &str) -> u64 {
+    value
+        .bytes()
+        .fold(seed ^ 0xa24b_aed4_963e_e407, |hash, byte| {
+            hash.rotate_left(7) ^ u64::from(byte)
+        })
 }
 
 fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
@@ -2740,8 +2963,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AppController, ControllerEvent, LibrarySnapshot, StoreHandle, load_snapshot,
-        playback_snapshot_from_queue, restore_queue, sync_page_finished,
+        AppController, ControllerEvent, LibrarySnapshot, StoreHandle, auto_dj_candidates,
+        load_settings_from_store, load_snapshot, playback_snapshot_from_queue, restore_queue,
+        sync_page_finished,
     };
     use rufin_core::{
         AlbumId, AppSettings, ArtistId, ImageRef, PlaylistId, QueueEngine, RepeatMode, ServerId,
@@ -3107,6 +3331,124 @@ mod tests {
     }
 
     #[test]
+    fn toggle_auto_dj_persists_and_emits_playback_state() {
+        let (controller, events, _snapshot, _queue, player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+
+        assert!(!player.auto_dj_enabled);
+
+        controller.toggle_auto_dj();
+
+        let playback = wait_for_playback_auto_dj(&events, true);
+        assert!(playback.auto_dj_enabled);
+        assert!(controller.load_settings().auto_dj_enabled);
+    }
+
+    #[test]
+    fn auto_dj_tops_up_low_queue_from_cached_library() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+
+        controller.toggle_auto_dj();
+        let _playback = wait_for_playback_auto_dj(&events, true);
+        controller.play_now(first.clone());
+
+        let queue = wait_for_queue(&events).expect("queue");
+        assert_eq!(queue.entries.len(), 1 + super::AUTO_DJ_ITEM_COUNT);
+        assert_eq!(queue.entries[0].track_id, first.id);
+        assert_eq!(
+            queue
+                .entries
+                .iter()
+                .map(|entry| entry.track_id.clone())
+                .collect::<HashSet<_>>()
+                .len(),
+            queue.entries.len()
+        );
+    }
+
+    #[test]
+    fn auto_dj_extends_queue_before_manual_next_at_end() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first, second.clone()]);
+        let _queue = wait_for_queue(&events).expect("queue");
+        controller.toggle_auto_dj();
+        let _playback = wait_for_playback_auto_dj(&events, true);
+
+        controller.next_track();
+        let queue = wait_for_queue(&events).expect("second queue");
+        assert_eq!(
+            queue.entries[queue.current_index.expect("current")].track_id,
+            second.id
+        );
+
+        controller.next_track();
+        let queue = wait_for_queue(&events).expect("auto dj queue");
+
+        assert_eq!(queue.entries.len(), 2 + super::AUTO_DJ_ITEM_COUNT);
+        assert_ne!(
+            queue.entries[queue.current_index.expect("current")].track_id,
+            second.id
+        );
+    }
+
+    #[test]
+    fn auto_dj_candidates_prefer_related_tracks() {
+        let current = library_track(
+            1,
+            Some(ArtistId::fake(1)),
+            AlbumId::fake(1),
+            "Artist",
+            &["Rock"],
+        );
+        let related = library_track(
+            2,
+            Some(ArtistId::fake(1)),
+            AlbumId::fake(1),
+            "Artist",
+            &["Rock"],
+        );
+        let genre_only = library_track(
+            3,
+            Some(ArtistId::fake(2)),
+            AlbumId::fake(2),
+            "Other",
+            &["Rock"],
+        );
+        let unrelated = library_track(
+            4,
+            Some(ArtistId::fake(3)),
+            AlbumId::fake(3),
+            "Other",
+            &["Jazz"],
+        );
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.play_now(&current);
+        let current_entry = queue.current().expect("current").clone();
+        let queued = HashSet::from([current.id.clone()]);
+
+        let candidates = auto_dj_candidates(
+            &[
+                unrelated.clone(),
+                current.clone(),
+                genre_only,
+                related.clone(),
+            ],
+            &current_entry,
+            &queued,
+            7,
+        );
+
+        assert_eq!(candidates[0].id, related.id);
+        assert!(candidates.iter().all(|track| track.id != current.id));
+    }
+
+    #[test]
     fn end_of_stream_repeat_one_restarts_current_track() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
@@ -3321,8 +3663,10 @@ mod tests {
             .map(Arc::new)
             .unwrap_or_else(|error| panic!("failed to create Tokio runtime: {error}"));
         let snapshot = load_snapshot(&store).expect("load snapshot");
+        let settings = load_settings_from_store(&store);
         let queue = restore_queue(&store, snapshot.server.as_ref());
-        let playback_snapshot = playback_snapshot_from_queue(queue.as_ref());
+        let playback_snapshot =
+            playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled);
         let controller = AppController {
             store,
             runtime,
@@ -3332,6 +3676,7 @@ mod tests {
                 rufin_playback::FakePlaybackBackend::new(),
             ))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot)),
+            auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
             events,
@@ -3357,6 +3702,30 @@ mod tests {
             track_number: 1,
             image_ref: None,
             genres: Vec::new(),
+        }
+    }
+
+    fn library_track(
+        number: u32,
+        artist_id: Option<ArtistId>,
+        album_id: AlbumId,
+        artist: &str,
+        genres: &[&str],
+    ) -> Track {
+        Track {
+            id: TrackId::fake(number),
+            album_id,
+            title: format!("Track {number}"),
+            artist: artist.to_string(),
+            artist_id,
+            album: "Album".to_string(),
+            year: 2026,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number: 1,
+            track_number: number as u16,
+            image_ref: None,
+            genres: genres.iter().map(|genre| genre.to_string()).collect(),
         }
     }
 
@@ -3490,6 +3859,28 @@ mod tests {
                 ControllerEvent::Playback(playback)
                     if playback.position_millis == position_millis =>
                 {
+                    return *playback;
+                }
+                ControllerEvent::Playback(_)
+                | ControllerEvent::Queue(_)
+                | ControllerEvent::Lyrics(_)
+                | ControllerEvent::CoverReady { .. } => {}
+                ControllerEvent::Snapshot(_) | ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
+    }
+
+    fn wait_for_playback_auto_dj(
+        events: &Receiver<ControllerEvent>,
+        enabled: bool,
+    ) -> super::PlaybackSnapshot {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::Playback(playback) if playback.auto_dj_enabled == enabled => {
                     return *playback;
                 }
                 ControllerEvent::Playback(_)

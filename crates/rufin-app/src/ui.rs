@@ -318,6 +318,7 @@ struct PlayerControls {
     next_button: gtk::Button,
     shuffle_button: gtk::Button,
     repeat_button: gtk::Button,
+    dj_button: gtk::Button,
     queue_button: gtk::Button,
     queue_icon: gtk::DrawingArea,
     queue_icon_open: Rc<Cell<bool>>,
@@ -3106,6 +3107,14 @@ impl Shell {
             player.repeat_mode != RepeatMode::Off,
         );
         set_repeat_button_icon(&controls.repeat_button, player.repeat_mode);
+        set_active_class(&controls.dj_button, player.auto_dj_enabled);
+        controls
+            .dj_button
+            .set_tooltip_text(Some(&tr(if player.auto_dj_enabled {
+                "Auto DJ on"
+            } else {
+                "Auto DJ"
+            })));
         set_favorite_button_active(
             &controls.favorite_button,
             player.current.as_ref().is_some_and(|entry| entry.favorite),
@@ -4350,6 +4359,7 @@ fn build_bottom_player() -> PlayerControls {
         next_button,
         shuffle_button,
         repeat_button,
+        dj_button,
         queue_button,
         queue_icon,
         queue_icon_open,
@@ -4399,6 +4409,12 @@ fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .repeat_button
         .connect_clicked(move |_| controller.cycle_repeat());
+
+    let controller = shell.controller.clone();
+    shell
+        .player_controls
+        .dj_button
+        .connect_clicked(move |_| controller.toggle_auto_dj());
 
     let queue_shell = Rc::clone(shell);
     shell

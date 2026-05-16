@@ -57,6 +57,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Favorite");
     let _ = tr("Shuffle");
     let _ = tr("Shuffle on");
+    let _ = tr("Auto DJ");
+    let _ = tr("Auto DJ on");
     let _ = tr("Repeat off");
     let _ = tr("Repeat one");
     let _ = tr("Repeat all");

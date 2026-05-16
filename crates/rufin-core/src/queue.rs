@@ -172,6 +172,18 @@ impl QueueEngine {
         self.current_index.and_then(|index| self.entries.get(index))
     }
 
+    pub fn remaining_after_current(&self) -> usize {
+        if self.shuffle.enabled {
+            return self
+                .shuffle_position
+                .map(|position| self.shuffle_order.len().saturating_sub(position + 1))
+                .unwrap_or_default();
+        }
+        self.current_index
+            .map(|index| self.entries.len().saturating_sub(index + 1))
+            .unwrap_or_default()
+    }
+
     pub fn repeat_mode(&self) -> RepeatMode {
         self.repeat_mode
     }
@@ -223,11 +235,17 @@ impl QueueEngine {
     pub fn append(&mut self, track: &Track) -> QueueEntryId {
         let entry = self.entry_from_track(track);
         let id = entry.id.clone();
+        let new_index = self.entries.len();
         self.entries.push(entry);
         if self.current_index.is_none() {
             self.current_index = Some(0);
         }
-        self.rebuild_shuffle_order();
+        if self.shuffle.enabled {
+            self.shuffle_order.push(new_index);
+            self.sync_shuffle_position();
+        } else {
+            self.rebuild_shuffle_order();
+        }
         id
     }
 
@@ -760,6 +778,28 @@ mod tests {
 
         assert_eq!(queue.shuffle_order.first().copied(), Some(1));
         assert_eq!(queue.shuffle_position, Some(0));
+    }
+
+    #[test]
+    fn appending_while_shuffled_adds_new_tracks_after_existing_traversal() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        queue.append(&track(3));
+        queue.set_shuffle(true, 99);
+
+        while queue.remaining_after_current() > 0 {
+            queue.next_track();
+        }
+        assert_eq!(queue.remaining_after_current(), 0);
+
+        queue.append(&track(4));
+
+        assert_eq!(queue.remaining_after_current(), 1);
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(4))
+        );
     }
 
     #[test]

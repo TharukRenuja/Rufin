@@ -1270,10 +1270,11 @@ impl Store {
             LIMIT ?2 OFFSET ?3
             ",
         )?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![server_id.as_str(), limit as i64, offset as i64],
             track_from_row,
         )?)?;
+        self.attach_track_genres(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
 

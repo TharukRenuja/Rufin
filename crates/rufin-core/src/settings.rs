@@ -154,6 +154,8 @@ pub struct AppSettings {
     pub notifications_enabled: bool,
     pub external_lyrics_enabled: bool,
     pub discord_presence_enabled: bool,
+    #[serde(default)]
+    pub auto_dj_enabled: bool,
     pub home_sections: Vec<HomeSectionKind>,
     #[serde(default = "default_right_panel_visible")]
     pub right_panel_visible: bool,
@@ -184,6 +186,7 @@ impl Default for AppSettings {
             notifications_enabled: false,
             external_lyrics_enabled: false,
             discord_presence_enabled: false,
+            auto_dj_enabled: false,
             home_sections: vec![
                 HomeSectionKind::Explore,
                 HomeSectionKind::MostPlayed,
@@ -226,6 +229,7 @@ mod tests {
         assert!(!settings.notifications_enabled);
         assert!(!settings.external_lyrics_enabled);
         assert!(!settings.discord_presence_enabled);
+        assert!(!settings.auto_dj_enabled);
         assert!(settings.right_panel_visible);
         assert_eq!(settings.queue_lyrics_layout_version, 3);
         assert_eq!(settings.home_sections.len(), 5);
@@ -281,6 +285,7 @@ mod tests {
         assert_eq!(restored.right_panel_ratio, None);
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
+        assert!(!restored.auto_dj_enabled);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
     }
 
