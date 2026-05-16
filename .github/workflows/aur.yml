@@ -87,6 +87,13 @@ jobs:
           install -d -m 700 ~/.ssh
           printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
+          secret_fingerprint="$(
+            ssh-keygen -y -f ~/.ssh/aur |
+              ssh-keygen -lf - |
+              awk '{print $2}'
+          )"
+          echo "AUR SSH key fingerprint: ${secret_fingerprint}"
+          test "$secret_fingerprint" = "SHA256:B9M3ivEcGuf7RqkzyXLTAytU4AlBW5NcACn7PayJZmg"
 
           ssh-keyscan aur.archlinux.org > ~/.ssh/known_hosts
           ssh-keygen -lf ~/.ssh/known_hosts |
