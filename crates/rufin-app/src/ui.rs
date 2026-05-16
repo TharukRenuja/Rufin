@@ -466,7 +466,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let route_title = gtk::Label::new(None);
     route_title.add_css_class("route-title");
     route_title.set_xalign(0.0);
-    route_title.set_valign(gtk::Align::Center);
+    route_title.set_yalign(0.58);
+    route_title.set_valign(gtk::Align::Fill);
     route_title.set_hexpand(true);
     let main_menu = primary_menu_button();
 
