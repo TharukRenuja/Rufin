@@ -164,7 +164,7 @@ fn sync_favorite_tracks(library: &mut LibrarySnapshot, track_id: &TrackId, favor
             library.favorites.push(track);
             library
                 .favorites
-                .sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
+                .sort_by_key(|track| track.title.to_lowercase());
         }
     } else {
         library.favorites.retain(|track| track.id != *track_id);
