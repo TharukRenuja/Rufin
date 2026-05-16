@@ -56,6 +56,8 @@ pub struct QueueEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artist_id: Option<ArtistId>,
     pub album: String,
+    #[serde(default)]
+    pub year: u16,
     pub duration_seconds: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_ref: Option<ImageRef>,
@@ -71,6 +73,7 @@ impl QueueEntry {
             artist: track.artist.clone(),
             artist_id: track.artist_id.clone(),
             album: track.album.clone(),
+            year: track.year,
             duration_seconds: track.duration_seconds,
             image_ref: track.image_ref.clone(),
         }
@@ -430,6 +433,7 @@ mod tests {
 
         assert_eq!(entry.album_id, Some(AlbumId::fake(9)));
         assert_eq!(entry.artist_id, Some(crate::domain::ArtistId::fake(7)));
+        assert_eq!(entry.year, 2026);
     }
 
     #[test]

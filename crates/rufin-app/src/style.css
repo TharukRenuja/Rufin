@@ -93,6 +93,12 @@ window {
   border-radius: 12px;
 }
 
+.album-cover-button {
+  padding: 0;
+  border-radius: 12px;
+  background: transparent;
+}
+
 .album-card {
   padding: 0;
 }
@@ -141,9 +147,6 @@ window {
 }
 
 .player-transport-button {
-  padding: 0;
-  min-width: 32px;
-  min-height: 32px;
   border-radius: 999px;
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
@@ -225,6 +228,17 @@ window {
   min-height: 34px;
 }
 
+.icon-button.player-transport-button {
+  padding: 0;
+  min-width: 28px;
+  min-height: 28px;
+}
+
+.icon-button.queue-remove-button {
+  min-width: 28px;
+  min-height: 28px;
+}
+
 .queue-panel {
   min-height: 260px;
 }
@@ -234,12 +248,22 @@ window {
 }
 
 .queue-row {
-  padding: 6px 4px;
-  border-radius: 9px;
+  padding: 4px 0;
+  border-radius: 6px;
 }
 
 .queue-row-current {
-  background: color-mix(in srgb, @accent_bg_color 20%, transparent);
+  background: color-mix(in srgb, @accent_bg_color 10%, transparent);
+}
+
+.queue-header {
+  padding: 0 0 4px;
+  border-bottom: 1px solid @borders;
+}
+
+.queue-list row {
+  padding: 0;
+  background: transparent;
 }
 
 .active-toggle {
@@ -268,7 +292,7 @@ window {
 }
 
 .bottom-player {
-  padding: 8px 10px;
+  padding: 4px 8px;
   background: color-mix(in srgb, @window_bg_color 92%, transparent);
   color: @window_fg_color;
   border-top: 1px solid @borders;

@@ -1448,7 +1448,11 @@ impl Shell {
 
         let queue_list = gtk::ListBox::new();
         queue_list.add_css_class("queue-list");
+        queue_list.set_selection_mode(gtk::SelectionMode::None);
         if let Some(snapshot) = &queue_snapshot {
+            if !snapshot.entries.is_empty() {
+                queue.append(&queue_header_row());
+            }
             for (index, entry) in snapshot.entries.iter().enumerate() {
                 queue_list.append(&self.queue_row(index, entry, snapshot.current_index));
             }
@@ -1524,6 +1528,7 @@ impl Shell {
     ) -> gtk::Widget {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         row.add_css_class("queue-row");
+        row.set_valign(gtk::Align::Center);
         if current_index == Some(index) {
             row.add_css_class("queue-row-current");
         }
@@ -1533,11 +1538,12 @@ impl Shell {
         let cover = self.cover_tile_for(
             entry.image_ref.as_ref(),
             index as u32 * 7 + entry.duration_seconds,
-            32,
+            44,
             THUMB_COVER_SIZE,
         );
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         labels.set_hexpand(true);
+        labels.set_valign(gtk::Align::Center);
         let title = gtk::Label::new(Some(&entry.title));
         title.set_xalign(0.0);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -1547,13 +1553,21 @@ impl Shell {
         artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
         labels.append(&title);
         labels.append(&artist);
+        let year_text = (entry.year != 0).then(|| entry.year.to_string());
+        let year = gtk::Label::new(year_text.as_deref());
+        year.add_css_class("muted");
+        year.set_xalign(1.0);
+        year.set_width_chars(4);
+        year.set_halign(gtk::Align::End);
         let remove = icon_button("user-trash-symbolic", "Remove from queue");
+        remove.add_css_class("queue-remove-button");
         let controller = self.controller.clone();
         let entry_id = entry.id.clone();
         remove.connect_clicked(move |_| controller.remove_from_queue(entry_id.clone()));
         row.append(&number);
         row.append(&cover);
         row.append(&labels);
+        row.append(&year);
         row.append(&remove);
         row.upcast()
     }
@@ -1797,21 +1811,9 @@ impl Shell {
         grid.add_css_class("album-grid");
         grid.set_min_columns(columns as u32);
         grid.set_max_columns(columns as u32);
-        grid.set_single_click_activate(true);
+        grid.set_single_click_activate(false);
         grid.set_hexpand(true);
         grid.set_vexpand(true);
-
-        let shell = Rc::clone(self);
-        let model_for_activate = model.clone();
-        grid.connect_activate(move |_, position| {
-            let Some(item) = model_for_activate.item(position) else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            shell.navigate(Route::AlbumDetail(boxed.borrow::<Album>().id.clone()));
-        });
 
         grid.upcast()
     }
@@ -1985,21 +1987,8 @@ impl Shell {
         grid.upcast()
     }
 
-    fn album_card_with_size(self: &Rc<Self>, album: &Album, size: i32) -> gtk::Button {
-        let button = gtk::Button::new();
-        button.add_css_class("album-button");
-        button.add_css_class("flat");
-        button.set_width_request(size);
-        button.set_size_request(size, -1);
-        button.set_hexpand(false);
-        button.set_halign(gtk::Align::Start);
-        button.set_child(Some(&album_card_widget_with_size(
-            self,
-            album,
-            size,
-            Some(&self.controller),
-        )));
-        button
+    fn album_card_with_size(self: &Rc<Self>, album: &Album, size: i32) -> gtk::Widget {
+        album_card_widget_with_size(self, album, size, Some(&self.controller))
     }
 
     fn track_table_popover(
@@ -2175,13 +2164,40 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
     });
 }
 
+fn queue_header_row() -> gtk::Widget {
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    header.add_css_class("queue-header");
+    header.set_valign(gtk::Align::Center);
+
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_width_request(70);
+    header.append(&spacer);
+
+    let title = gtk::Label::new(Some(&tr("Title").to_uppercase()));
+    title.add_css_class("muted");
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    header.append(&title);
+
+    let year = gtk::Label::new(Some(&tr("Year").to_uppercase()));
+    year.add_css_class("muted");
+    year.set_xalign(1.0);
+    year.set_width_chars(4);
+    header.append(&year);
+
+    let end_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    end_spacer.set_width_request(28);
+    header.append(&end_spacer);
+    header.upcast()
+}
+
 fn build_bottom_player() -> PlayerControls {
-    let root = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     root.add_css_class("bottom-player");
-    root.set_height_request(78);
+    root.set_height_request(52);
     root.set_valign(gtk::Align::Center);
 
-    let (cover_stack, cover, cover_picture, cover_seed) = player_cover_tile(48);
+    let (cover_stack, cover, cover_picture, cover_seed) = player_cover_tile(38);
     cover_stack.set_valign(gtk::Align::Center);
     root.append(&cover_stack);
 
@@ -2196,11 +2212,11 @@ fn build_bottom_player() -> PlayerControls {
     identity.append(&album_button);
     root.append(&identity);
 
-    let transport = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     transport.set_hexpand(true);
     transport.set_valign(gtk::Align::Center);
-    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    buttons.set_halign(gtk::Align::Center);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    buttons.set_valign(gtk::Align::Center);
 
     let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
     stop_button.add_css_class("player-transport-button");
@@ -2220,7 +2236,8 @@ fn build_bottom_player() -> PlayerControls {
     buttons.append(&shuffle_button);
     buttons.append(&repeat_button);
 
-    let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    progress_row.set_hexpand(true);
     progress_row.set_valign(gtk::Align::Center);
     let elapsed = gtk::Label::new(Some("0:00"));
     elapsed.add_css_class("muted");
@@ -2237,7 +2254,7 @@ fn build_bottom_player() -> PlayerControls {
     transport.append(&progress_row);
     root.append(&transport);
 
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     actions.set_valign(gtk::Align::Center);
     actions.append(&icon_button("view-list-symbolic", "Queue"));
     actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
@@ -3056,9 +3073,6 @@ fn render_home_album_page(
 
     for album in &albums[page_start..page_end] {
         let card = shell.album_card_with_size(album, card_size);
-        let shell = Rc::clone(shell);
-        let album_id = album.id.clone();
-        card.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
         row.append(&card);
     }
 }
@@ -3188,12 +3202,26 @@ fn album_cover_tile(
     overlay.set_size_request(size, size);
     overlay.set_hexpand(false);
     overlay.set_halign(gtk::Align::Start);
-    overlay.set_child(Some(&shell.cover_tile_for(
+
+    let album_button = gtk::Button::new();
+    album_button.add_css_class("album-cover-button");
+    album_button.add_css_class("flat");
+    album_button.set_width_request(size);
+    album_button.set_height_request(size);
+    album_button.set_size_request(size, size);
+    album_button.set_hexpand(false);
+    album_button.set_halign(gtk::Align::Start);
+    album_button.set_child(Some(&shell.cover_tile_for(
         album.image_ref.as_ref(),
         album.color_seed,
         size,
         GRID_COVER_SIZE,
     )));
+    let open_shell = Rc::clone(shell);
+    let open_album_id = album.id.clone();
+    album_button
+        .connect_clicked(move |_| open_shell.navigate(Route::AlbumDetail(open_album_id.clone())));
+    overlay.set_child(Some(&album_button));
 
     let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
     shade.add_css_class("cover-hover-layer");
@@ -3225,6 +3253,13 @@ fn album_cover_tile(
     favorite.set_margin_top(8);
     favorite.set_margin_end(8);
     favorite.set_visible(false);
+    favorite.connect_clicked(|button| {
+        if button.has_css_class("active-toggle") {
+            button.remove_css_class("active-toggle");
+        } else {
+            button.add_css_class("active-toggle");
+        }
+    });
     overlay.add_overlay(&favorite);
 
     let motion = gtk::EventControllerMotion::new();
