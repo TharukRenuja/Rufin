@@ -4,13 +4,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, Playlist,
-    PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef,
+    Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
-    AlbumDetail, ImageKind, ImageMetadata, LoginRequest, MusicProvider, PagedRequest,
-    PagedResponse, ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult,
-    ProviderSession, SavedProviderSession, SearchResults, StreamDescriptor,
+    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, LoginRequest,
+    MusicProvider, PagedRequest, PagedResponse, PlaylistDetail, ProviderCapabilities,
+    ProviderError, ProviderIdentity, ProviderResult, ProviderSession, SavedProviderSession,
+    SearchResults, StreamDescriptor,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::instrument;
@@ -117,13 +118,13 @@ impl JellyfinProvider {
         kind: ImageKind,
         tag: Option<&str>,
     ) -> ProviderResult<String> {
-        let image_kind = match kind {
-            ImageKind::Primary => "Primary",
-            ImageKind::Backdrop => "Backdrop",
-        };
         let mut url = endpoint(
             &self.base_url,
-            &format!("Items/{}/Images/{image_kind}", raw_item_id(item_id)),
+            &format!(
+                "Items/{}/Images/{}",
+                raw_item_id(item_id),
+                image_kind_path(kind)
+            ),
         )?;
         if let Some(tag) = tag.filter(|tag| !tag.is_empty()) {
             url.query_pairs_mut().append_pair("tag", tag);
@@ -165,7 +166,7 @@ impl JellyfinProvider {
             .append_pair("Limit", &request.limit.to_string())
             .append_pair(
                 "Fields",
-                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount",
+                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags",
             );
 
         let response = self.get_json::<ItemQueryResult>(url).await?;
@@ -289,6 +290,95 @@ impl MusicProvider for JellyfinProvider {
         ))
     }
 
+    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail> {
+        let raw_playlist_id = raw_item_id(playlist_id.as_str());
+        let mut playlist_url = endpoint(&self.base_url, &format!("Items/{raw_playlist_id}"))?;
+        playlist_url
+            .query_pairs_mut()
+            .append_pair("UserId", &self.user_id);
+        let playlist = playlist_from_item(self.get_json::<JellyfinItem>(playlist_url).await?);
+
+        let mut tracks = Vec::new();
+        let mut offset = 0;
+        loop {
+            let mut url = endpoint(
+                &self.base_url,
+                &format!("Playlists/{raw_playlist_id}/Items"),
+            )?;
+            url.query_pairs_mut()
+                .append_pair("UserId", &self.user_id)
+                .append_pair("StartIndex", &offset.to_string())
+                .append_pair("Limit", "500")
+                .append_pair(
+                    "Fields",
+                    "Genres,ProductionYear,RunTimeTicks,ParentId,AlbumId,ArtistItems,UserData,ImageTags",
+                );
+            let response = self.get_json::<ItemQueryResult>(url).await?;
+            let item_count = response.items.len();
+            tracks.extend(response.items.into_iter().map(track_from_item));
+            offset += item_count;
+            let total = response.total_record_count.unwrap_or(0);
+            if item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < 500)
+            {
+                break;
+            }
+        }
+
+        Ok(PlaylistDetail { playlist, tracks })
+    }
+
+    async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail> {
+        let raw_genre_id = raw_item_id(genre_id.as_str());
+        let mut genre_url = endpoint(&self.base_url, &format!("Items/{raw_genre_id}"))?;
+        genre_url
+            .query_pairs_mut()
+            .append_pair("UserId", &self.user_id);
+        let genre = genre_from_item(self.get_json::<JellyfinItem>(genre_url).await?);
+
+        let mut albums_url = endpoint(&self.base_url, "Items")?;
+        albums_url
+            .query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Recursive", "true")
+            .append_pair("IncludeItemTypes", "MusicAlbum")
+            .append_pair("Genres", &genre.name)
+            .append_pair("Limit", "500")
+            .append_pair(
+                "Fields",
+                "Genres,ProductionYear,RunTimeTicks,ParentId,UserData,ImageTags",
+            );
+        let albums = self
+            .get_json::<ItemQueryResult>(albums_url)
+            .await?
+            .items
+            .into_iter()
+            .map(album_from_item)
+            .collect();
+
+        let mut tracks_url = endpoint(&self.base_url, "Items")?;
+        tracks_url
+            .query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Recursive", "true")
+            .append_pair("IncludeItemTypes", "Audio")
+            .append_pair("Genres", &genre.name)
+            .append_pair("Limit", "500")
+            .append_pair("Fields", "Genres,ProductionYear,RunTimeTicks,ParentId,AlbumId,ArtistItems,UserData,ImageTags");
+        let tracks = self
+            .get_json::<ItemQueryResult>(tracks_url)
+            .await?
+            .items
+            .into_iter()
+            .map(track_from_item)
+            .collect();
+
+        Ok(GenreDetail {
+            genre,
+            albums,
+            tracks,
+        })
+    }
+
     async fn track(&self, track_id: &TrackId) -> ProviderResult<Track> {
         let mut url = endpoint(
             &self.base_url,
@@ -366,6 +456,30 @@ impl MusicProvider for JellyfinProvider {
             url: self.image_url(item_id, kind, None)?,
         })
     }
+
+    async fn image_bytes(&self, request: ImageRequest) -> ProviderResult<ImageBytes> {
+        let mut url = endpoint(
+            &self.base_url,
+            &format!(
+                "Items/{}/Images/{}",
+                raw_item_id(&request.item_id),
+                image_kind_path(request.kind)
+            ),
+        )?;
+        url.query_pairs_mut()
+            .append_pair("fillWidth", &request.size.max(1).to_string())
+            .append_pair("fillHeight", &request.size.max(1).to_string())
+            .append_pair("quality", "90");
+        if let Some(tag) = request.tag.as_deref().filter(|tag| !tag.is_empty()) {
+            url.query_pairs_mut().append_pair("tag", tag);
+        }
+        let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
+        send_bytes(self.client.get(url).header(
+            header::AUTHORIZATION,
+            auth_header(&config, Some(&self.access_token)),
+        ))
+        .await
+    }
 }
 
 async fn public_server_name(
@@ -405,6 +519,38 @@ async fn send_json<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Pro
     }
 
     response.json::<T>().await.map_err(map_reqwest_error)
+}
+
+async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
+    let response = request.send().await.map_err(map_reqwest_error)?;
+    let status = response.status();
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        return Err(ProviderError::Auth(format!(
+            "Jellyfin returned {}",
+            status.as_u16()
+        )));
+    }
+    if status == StatusCode::NOT_FOUND {
+        return Err(ProviderError::NotFound);
+    }
+    if status.is_client_error() || status.is_server_error() {
+        let message = response.text().await.unwrap_or_else(|_| status.to_string());
+        return Err(ProviderError::Server {
+            status: status.as_u16(),
+            message,
+        });
+    }
+
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let bytes = response.bytes().await.map_err(map_reqwest_error)?.to_vec();
+    Ok(ImageBytes {
+        bytes,
+        content_type,
+    })
 }
 
 fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
@@ -478,6 +624,13 @@ fn raw_item_id(id: &str) -> &str {
     id.rsplit(':').next().unwrap_or(id)
 }
 
+fn image_kind_path(kind: ImageKind) -> &'static str {
+    match kind {
+        ImageKind::Primary => "Primary",
+        ImageKind::Backdrop => "Backdrop",
+    }
+}
+
 fn jellyfin_id(kind: &str, id: &str) -> String {
     format!("jellyfin:{kind}:{id}")
 }
@@ -518,6 +671,7 @@ fn favorite(user_data: &Option<UserData>) -> bool {
 }
 
 fn album_from_item(item: JellyfinItem) -> Album {
+    let item_id = item.id.clone();
     let artist_id = item
         .artist_items
         .as_ref()
@@ -532,7 +686,6 @@ fn album_from_item(item: JellyfinItem) -> Album {
                 .and_then(|artists| artists.first().cloned())
         })
         .unwrap_or_else(|| "Unknown Artist".to_string());
-    let item_id = item.id.clone();
     Album {
         id: AlbumId::new(jellyfin_id("album", &item.id)),
         title: item.name.unwrap_or_else(|| "Untitled Album".to_string()),
@@ -543,10 +696,18 @@ fn album_from_item(item: JellyfinItem) -> Album {
         duration_seconds: duration_seconds(item.run_time_ticks),
         favorite: favorite(&item.user_data),
         color_seed: color_seed(&item_id),
+        image_ref: primary_image_ref("album", &item.id, &item.image_tags),
+        genres: item.genres.unwrap_or_default(),
     }
 }
 
 fn track_from_item(item: JellyfinItem) -> Track {
+    let image_ref = primary_image_ref("track", &item.id, &item.image_tags).or_else(|| {
+        item.album_id.as_ref().map(|album_id| ImageRef {
+            item_id: jellyfin_id("album", album_id),
+            tag: None,
+        })
+    });
     let artist_id = item
         .artist_items
         .as_ref()
@@ -576,6 +737,8 @@ fn track_from_item(item: JellyfinItem) -> Track {
         favorite: favorite(&item.user_data),
         disc_number: u16_from_option(item.parent_index_number),
         track_number: u16_from_option(item.index_number),
+        image_ref,
+        genres: item.genres.unwrap_or_default(),
     }
 }
 
@@ -598,6 +761,7 @@ fn artist_from_item(item: JellyfinItem) -> Artist {
                 .and_then(|counts| counts.song_count)
         })),
         favorite: favorite(&item.user_data),
+        image_ref: primary_image_ref("artist", &item.id, &item.image_tags),
     }
 }
 
@@ -619,6 +783,7 @@ fn genre_from_item(item: JellyfinItem) -> Genre {
                 .as_ref()
                 .and_then(|counts| counts.song_count)
         })),
+        image_ref: primary_image_ref("genre", &item.id, &item.image_tags),
     }
 }
 
@@ -628,7 +793,23 @@ fn playlist_from_item(item: JellyfinItem) -> Playlist {
         name: item.name.unwrap_or_else(|| "Untitled Playlist".to_string()),
         track_count: u32_from_option(item.child_count),
         duration_seconds: duration_seconds(item.run_time_ticks),
+        image_ref: primary_image_ref("playlist", &item.id, &item.image_tags),
     }
+}
+
+fn primary_image_ref(
+    kind: &str,
+    item_id: &str,
+    image_tags: &Option<HashMap<String, String>>,
+) -> Option<ImageRef> {
+    image_tags
+        .as_ref()
+        .and_then(|tags| tags.get("Primary"))
+        .filter(|tag| !tag.is_empty())
+        .map(|tag| ImageRef {
+            item_id: jellyfin_id(kind, item_id),
+            tag: Some(tag.clone()),
+        })
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -678,6 +859,7 @@ struct JellyfinItem {
     item_type: Option<String>,
     album_artist: Option<String>,
     artists: Option<Vec<String>>,
+    genres: Option<Vec<String>>,
     artist_items: Option<Vec<NameIdPair>>,
     album: Option<String>,
     album_id: Option<String>,
@@ -691,7 +873,6 @@ struct JellyfinItem {
     index_number: Option<i32>,
     parent_index_number: Option<i32>,
     user_data: Option<UserData>,
-    #[allow(dead_code)]
     image_tags: Option<HashMap<String, String>>,
 }
 
@@ -779,16 +960,18 @@ mod tests {
             .and(query_param("Limit", "2"))
             .and(header_regex("authorization", "Token=\"token-one\""))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "TotalRecordCount": 20,
-                "Items": [{
-                    "Id": "album-one",
-                    "Name": "Blue Rooms",
+                    "TotalRecordCount": 20,
+                    "Items": [{
+                        "Id": "album-one",
+                        "Name": "Blue Rooms",
                     "Type": "MusicAlbum",
                     "AlbumArtist": "Astral Kin",
+                    "Genres": ["Ambient", "Electronic"],
                     "ProductionYear": 2024,
                     "ChildCount": 9,
                     "RunTimeTicks": 1800000000i64,
-                    "UserData": { "IsFavorite": true }
+                    "UserData": { "IsFavorite": true },
+                    "ImageTags": { "Primary": "album-tag-one" }
                 }]
             })))
             .mount(&server)
@@ -803,7 +986,72 @@ mod tests {
         assert_eq!(page.total, 20);
         assert_eq!(page.items[0].id.as_str(), "jellyfin:album:album-one");
         assert_eq!(page.items[0].title, "Blue Rooms");
+        assert_eq!(page.items[0].genres, vec!["Ambient", "Electronic"]);
+        assert_eq!(
+            page.items[0].image_ref,
+            Some(ImageRef {
+                item_id: "jellyfin:album:album-one".to_string(),
+                tag: Some("album-tag-one".to_string()),
+            })
+        );
         assert!(page.items[0].favorite);
+    }
+
+    #[tokio::test]
+    async fn image_bytes_send_auth_header_and_size_params() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Items/album-one/Images/Primary"))
+            .and(query_param("fillWidth", "256"))
+            .and(query_param("fillHeight", "256"))
+            .and(query_param("quality", "90"))
+            .and(query_param("tag", "album-tag-one"))
+            .and(header_regex("authorization", "Token=\"secret-token\""))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/jpeg")
+                    .set_body_bytes(vec![1_u8, 2, 3]),
+            )
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "secret-token");
+
+        let image = provider
+            .image_bytes(ImageRequest {
+                item_id: "jellyfin:album:album-one".to_string(),
+                kind: ImageKind::Primary,
+                tag: Some("album-tag-one".to_string()),
+                size: 256,
+            })
+            .await
+            .expect("image bytes");
+
+        assert_eq!(image.bytes, vec![1, 2, 3]);
+        assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
+    }
+
+    #[tokio::test]
+    async fn image_errors_do_not_expose_tokens() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Items/album-one/Images/Primary"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("broken"))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "secret-token");
+
+        let error = provider
+            .image_bytes(ImageRequest {
+                item_id: "jellyfin:album:album-one".to_string(),
+                kind: ImageKind::Primary,
+                tag: None,
+                size: 256,
+            })
+            .await
+            .expect_err("image error");
+
+        assert!(!format!("{error:?}").contains("secret-token"));
+        assert!(!error.to_string().contains("secret-token"));
     }
 
     #[tokio::test]
@@ -884,6 +1132,100 @@ mod tests {
         assert_eq!(artists.items[0].album_count, 4);
         assert_eq!(artists.items[0].track_count, 30);
         assert!(artists.items[0].favorite);
+    }
+
+    #[tokio::test]
+    async fn playlist_detail_paginates_and_maps_ordered_tracks() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Items/playlist-one"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Id": "playlist-one",
+                "Name": "Late Set",
+                "Type": "Playlist",
+                "ChildCount": 501,
+                "RunTimeTicks": 9000000000i64,
+                "ImageTags": { "Primary": "playlist-tag" }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Playlists/playlist-one/Items"))
+            .and(query_param("StartIndex", "0"))
+            .and(query_param("Limit", "500"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "TotalRecordCount": 501,
+                "Items": [{
+                    "Id": "track-one",
+                    "Name": "First Motion",
+                    "Type": "Audio",
+                    "AlbumId": "album-one",
+                    "Album": "Blue Rooms",
+                    "Artists": ["Astral Kin"],
+                    "Genres": ["Ambient"],
+                    "IndexNumber": 1,
+                    "RunTimeTicks": 2100000000i64,
+                    "ImageTags": { "Primary": "track-tag-one" }
+                }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Playlists/playlist-one/Items"))
+            .and(query_param("StartIndex", "1"))
+            .and(query_param("Limit", "500"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "TotalRecordCount": 501,
+                "Items": [{
+                    "Id": "track-two",
+                    "Name": "Second Motion",
+                    "Type": "Audio",
+                    "AlbumId": "album-one",
+                    "Album": "Blue Rooms",
+                    "Artists": ["Astral Kin"],
+                    "Genres": ["Ambient"],
+                    "IndexNumber": 2,
+                    "RunTimeTicks": 2200000000i64
+                }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Playlists/playlist-one/Items"))
+            .and(query_param("StartIndex", "2"))
+            .and(query_param("Limit", "500"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "TotalRecordCount": 2,
+                "Items": []
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let detail = provider
+            .playlist_detail(&PlaylistId::new("jellyfin:playlist:playlist-one"))
+            .await
+            .expect("playlist detail");
+
+        assert_eq!(detail.playlist.name, "Late Set");
+        assert_eq!(
+            detail.playlist.image_ref,
+            Some(ImageRef {
+                item_id: "jellyfin:playlist:playlist-one".to_string(),
+                tag: Some("playlist-tag".to_string()),
+            })
+        );
+        assert_eq!(detail.tracks.len(), 2);
+        assert_eq!(detail.tracks[0].title, "First Motion");
+        assert_eq!(detail.tracks[0].genres, vec!["Ambient"]);
+        assert_eq!(
+            detail.tracks[0].image_ref,
+            Some(ImageRef {
+                item_id: "jellyfin:track:track-one".to_string(),
+                tag: Some("track-tag-one".to_string()),
+            })
+        );
+        assert_eq!(detail.tracks[1].title, "Second Motion");
     }
 
     #[tokio::test]

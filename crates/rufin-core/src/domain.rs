@@ -54,6 +54,24 @@ opaque_id!(PlaylistId, "playlist-");
 opaque_id!(ServerId, "server-");
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ImageRef {
+    pub item_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+}
+
+impl ImageRef {
+    pub fn new(item_id: impl Into<String>, tag: impl Into<Option<String>>) -> Self {
+        let item_id = item_id.into();
+        assert!(!item_id.is_empty(), "ImageRef item_id cannot be empty");
+        Self {
+            item_id,
+            tag: tag.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ServerIdentity {
     pub id: ServerId,
     pub provider: String,
@@ -72,6 +90,10 @@ pub struct Album {
     pub duration_seconds: u32,
     pub favorite: bool,
     pub color_seed: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub genres: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -87,6 +109,10 @@ pub struct Track {
     pub favorite: bool,
     pub disc_number: u16,
     pub track_number: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub genres: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -96,6 +122,8 @@ pub struct Artist {
     pub album_count: u32,
     pub track_count: u32,
     pub favorite: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -104,6 +132,8 @@ pub struct Genre {
     pub name: String,
     pub album_count: u32,
     pub track_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -112,6 +142,8 @@ pub struct Playlist {
     pub name: String,
     pub track_count: u32,
     pub duration_seconds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

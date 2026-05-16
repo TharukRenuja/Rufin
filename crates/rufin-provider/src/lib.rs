@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use rufin_core::{Album, Artist, Genre, HomeSection, Playlist, ServerIdentity, Track, TrackId};
+use rufin_core::{
+    Album, Artist, Genre, GenreId, HomeSection, Playlist, PlaylistId, ServerIdentity, Track,
+    TrackId,
+};
 pub use rufin_playback::StreamDescriptor;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -79,6 +82,19 @@ pub struct AlbumDetail {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaylistDetail {
+    pub playlist: Playlist,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GenreDetail {
+    pub genre: Genre,
+    pub albums: Vec<Album>,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub base_url: String,
     pub username: String,
@@ -115,6 +131,20 @@ pub struct ImageMetadata {
     pub kind: ImageKind,
     pub tag: Option<String>,
     pub url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ImageRequest {
+    pub item_id: String,
+    pub kind: ImageKind,
+    pub tag: Option<String>,
+    pub size: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ImageBytes {
+    pub bytes: Vec<u8>,
+    pub content_type: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -158,11 +188,14 @@ pub trait MusicProvider {
     async fn album_artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>>;
     async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>>;
     async fn playlists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Playlist>>;
+    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail>;
+    async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail>;
     async fn track(&self, track_id: &TrackId) -> ProviderResult<Track>;
     async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor>;
     async fn search(&self, query: &str) -> ProviderResult<SearchResults>;
     async fn image_metadata(&self, item_id: &str, kind: ImageKind)
     -> ProviderResult<ImageMetadata>;
+    async fn image_bytes(&self, request: ImageRequest) -> ProviderResult<ImageBytes>;
 }
 
 #[cfg(test)]

@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, Playlist,
-    PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, ImageRef,
+    Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
-    AlbumDetail, ImageKind, ImageMetadata, MusicProvider, PagedRequest, PagedResponse,
-    ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult, SearchResults,
+    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicProvider,
+    PagedRequest, PagedResponse, PlaylistDetail, ProviderCapabilities, ProviderError,
+    ProviderIdentity, ProviderResult, SearchResults,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -150,6 +151,55 @@ impl MusicProvider for FakeProvider {
         Ok(page(&self.library.playlists, request))
     }
 
+    async fn playlist_detail(&self, playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail> {
+        let playlist = self
+            .library
+            .playlists
+            .iter()
+            .find(|playlist| playlist.id == *playlist_id)
+            .cloned()
+            .ok_or(ProviderError::NotFound)?;
+        let tracks = self
+            .library
+            .tracks
+            .iter()
+            .take(playlist.track_count as usize)
+            .cloned()
+            .collect();
+
+        Ok(PlaylistDetail { playlist, tracks })
+    }
+
+    async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail> {
+        let genre = self
+            .library
+            .genres
+            .iter()
+            .find(|genre| genre.id == *genre_id)
+            .cloned()
+            .ok_or(ProviderError::NotFound)?;
+        let albums = self
+            .library
+            .albums
+            .iter()
+            .filter(|album| album.genres.iter().any(|name| name == &genre.name))
+            .cloned()
+            .collect();
+        let tracks = self
+            .library
+            .tracks
+            .iter()
+            .filter(|track| track.genres.iter().any(|name| name == &genre.name))
+            .cloned()
+            .collect();
+
+        Ok(GenreDetail {
+            genre,
+            albums,
+            tracks,
+        })
+    }
+
     async fn track(&self, track_id: &TrackId) -> ProviderResult<Track> {
         self.library
             .tracks
@@ -229,6 +279,24 @@ impl MusicProvider for FakeProvider {
             url: format!("fake://local/images/{item_id}"),
         })
     }
+
+    async fn image_bytes(&self, request: ImageRequest) -> ProviderResult<ImageBytes> {
+        let seed = color_seed(request.item_id.len() as u32);
+        let red = (seed & 0xff) as u8;
+        let green = ((seed >> 8) & 0xff) as u8;
+        let blue = ((seed >> 16) & 0xff) as u8;
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="{0}" height="{0}"><rect width="100%" height="100%" fill="#{1:02x}{2:02x}{3:02x}"/></svg>"##,
+            request.size.max(1),
+            red,
+            green,
+            blue
+        );
+        Ok(ImageBytes {
+            bytes: svg.into_bytes(),
+            content_type: Some("image/svg+xml".to_string()),
+        })
+    }
 }
 
 fn page<T: Clone>(items: &[T], request: PagedRequest) -> PagedResponse<T> {
@@ -261,6 +329,7 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
             album_count: (album_count / ARTISTS.len()) as u32,
             track_count: (track_count / ARTISTS.len()) as u32,
             favorite: index.is_multiple_of(5),
+            image_ref: Some(fake_image_ref("artist", index + 1)),
         })
         .collect::<Vec<_>>();
 
@@ -285,6 +354,7 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
             name: (*name).to_string(),
             album_count: (album_count / GENRES.len()) as u32,
             track_count: (track_count / GENRES.len()) as u32,
+            image_ref: Some(fake_image_ref("genre", index + 1)),
         })
         .collect::<Vec<_>>();
 
@@ -296,6 +366,7 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
             name: (*name).to_string(),
             track_count: 25 + index as u32,
             duration_seconds: 4_500 + index as u32 * 300,
+            image_ref: Some(fake_image_ref("playlist", index + 1)),
         })
         .collect();
 
@@ -326,6 +397,8 @@ fn fake_album(index: usize, track_count: u16, artists: &[Artist]) -> Album {
         duration_seconds,
         favorite: index.is_multiple_of(17),
         color_seed: color_seed(index as u32),
+        image_ref: Some(fake_image_ref("album", index + 1)),
+        genres: vec![GENRES[index % GENRES.len()].to_string()],
     }
 }
 
@@ -345,6 +418,15 @@ fn fake_track(index: usize, album: &Album, track_number: u16) -> Track {
         favorite: index.is_multiple_of(23),
         disc_number: 1,
         track_number,
+        image_ref: album.image_ref.clone(),
+        genres: album.genres.clone(),
+    }
+}
+
+fn fake_image_ref(kind: &str, index: usize) -> ImageRef {
+    ImageRef {
+        item_id: format!("fake:{kind}:{index}"),
+        tag: Some(format!("fake-tag-{index}")),
     }
 }
 

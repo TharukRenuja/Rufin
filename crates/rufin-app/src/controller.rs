@@ -1,29 +1,37 @@
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use directories::ProjectDirs;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, HomeSection, Playlist, QueueEngine,
-    QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, ImageRef, Playlist,
+    PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ServerId,
+    ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
     PlaybackEvent, PlaybackState, PlaybackTrack, StreamDescriptor,
 };
 use rufin_provider::{
-    LoginRequest, MusicProvider, PagedRequest, SavedProviderSession, SearchResults,
+    ImageKind, ImageRequest, LoginRequest, MusicProvider, PagedRequest, SavedProviderSession,
+    SearchResults,
 };
 use rufin_provider_jellyfin::JellyfinProvider;
 use rufin_secrets::{MemorySecretStore, SecretServiceStore, SecretStore};
-use rufin_store::{CachedArtistDetail, SavedServer, Store, StoreError};
+use rufin_store::{
+    CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, SavedServer, Store, StoreError,
+    image_cache_key,
+};
 use rufin_test_support::{FakeProvider, FakeScale};
 use tokio::runtime::Runtime;
 use tracing::{info, instrument, warn};
 
 const PAGE_SIZE: usize = 500;
+const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
+const IMAGE_TAG_UNTAGGED: &str = "untagged";
 
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
@@ -100,6 +108,7 @@ pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
     Queue(Box<Option<QueueSnapshot>>),
     Playback(Box<PlaybackSnapshot>),
+    CoverReady { key: String, path: PathBuf },
     LoginStatus(String),
     Error(String),
 }
@@ -115,6 +124,8 @@ pub struct AppController {
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     events: Sender<ControllerEvent>,
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    cover_in_flight: Arc<Mutex<HashSet<String>>>,
+    cover_slots: Arc<(Mutex<usize>, Condvar)>,
 }
 
 #[derive(Clone)]
@@ -201,6 +212,196 @@ impl AppController {
             .with_store(|store| store.load_artist_detail(&server.id, artist_id))
     }
 
+    pub fn cached_playlist_detail(
+        &self,
+        playlist_id: &PlaylistId,
+    ) -> Result<Option<rufin_provider::PlaylistDetail>, String> {
+        let Some(server) = self
+            .store
+            .with_store(|store| store.active_server())?
+            .map(|saved| saved.server)
+        else {
+            return Ok(None);
+        };
+        self.store
+            .with_store(|store| store.load_playlist_detail(&server.id, playlist_id))
+    }
+
+    pub fn cached_genre_detail(
+        &self,
+        genre_id: &GenreId,
+    ) -> Result<Option<CachedGenreDetail>, String> {
+        let Some(server) = self
+            .store
+            .with_store(|store| store.active_server())?
+            .map(|saved| saved.server)
+        else {
+            return Ok(None);
+        };
+        self.store
+            .with_store(|store| store.load_genre_detail(&server.id, genre_id))
+    }
+
+    pub fn cached_albums_page(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Album>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_albums(&saved.server.id, offset, limit))
+    }
+
+    pub fn cached_tracks_page(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Track>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_tracks(&saved.server.id, offset, limit))
+    }
+
+    pub fn cached_artists_page(
+        &self,
+        album_artist: bool,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Artist>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_artists(&saved.server.id, album_artist, offset, limit))
+    }
+
+    pub fn cached_genres_page(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Genre>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_genres(&saved.server.id, offset, limit))
+    }
+
+    pub fn cached_playlists_page(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Playlist>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_playlists(&saved.server.id, offset, limit))
+    }
+
+    pub fn cover_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
+        let server = self
+            .store
+            .with_store(|store| store.active_server())
+            .ok()
+            .flatten()?
+            .server;
+        Some(image_cache_key(
+            &server.id,
+            &image_ref.item_id,
+            image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
+            size,
+        ))
+    }
+
+    pub fn cached_cover_path(&self, image_ref: &ImageRef, size: u32) -> Option<PathBuf> {
+        let saved = self
+            .store
+            .with_store(|store| store.active_server())
+            .ok()
+            .flatten()?;
+        let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+        let entry = self
+            .store
+            .with_store(|store| {
+                store.load_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
+            })
+            .ok()
+            .flatten()?;
+        let path = PathBuf::from(entry.path);
+        if path.exists() {
+            return Some(path);
+        }
+        let _invalidated = self.store.with_store(|store| {
+            store.delete_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
+        });
+        None
+    }
+
+    pub fn request_cover(&self, image_ref: ImageRef, size: u32) {
+        let Some(saved) = self
+            .store
+            .with_store(|store| store.active_server())
+            .unwrap_or(None)
+        else {
+            return;
+        };
+        if saved.server.provider == "fake" {
+            return;
+        }
+        if let Some(path) = self.cached_cover_path(&image_ref, size) {
+            if let Some(key) = self.cover_key(&image_ref, size) {
+                let _sent = self.events.send(ControllerEvent::CoverReady { key, path });
+            }
+            return;
+        }
+        let tag = image_ref
+            .tag
+            .clone()
+            .unwrap_or_else(|| IMAGE_TAG_UNTAGGED.to_string());
+        let key = image_cache_key(&saved.server.id, &image_ref.item_id, &tag, size);
+        match self.cover_in_flight.lock() {
+            Ok(mut in_flight) => {
+                if !in_flight.insert(key.clone()) {
+                    return;
+                }
+            }
+            Err(_) => return,
+        }
+
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let events = self.events.clone();
+        let cover_in_flight = Arc::clone(&self.cover_in_flight);
+        let cover_slots = Arc::clone(&self.cover_slots);
+        thread::spawn(move || {
+            if !acquire_cover_slot(&cover_slots) {
+                if let Ok(mut in_flight) = cover_in_flight.lock() {
+                    in_flight.remove(&key);
+                }
+                return;
+            }
+            let result = fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size);
+            release_cover_slot(&cover_slots);
+            if let Ok(mut in_flight) = cover_in_flight.lock() {
+                in_flight.remove(&key);
+            }
+            match result {
+                Ok(path) => {
+                    let _sent = events.send(ControllerEvent::CoverReady { key, path });
+                }
+                Err(error) => {
+                    warn!(%error, "failed to fetch cover");
+                }
+            }
+        });
+    }
+
     pub fn bootstrap(
         fake_scale: Option<FakeScale>,
     ) -> (
@@ -237,6 +438,8 @@ impl AppController {
                 last_progress_snapshot: Arc::new(Mutex::new(None)),
                 events,
                 sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
+                cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
+                cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
             };
             return (
                 controller,
@@ -270,6 +473,8 @@ impl AppController {
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
         };
         (
             controller,
@@ -307,6 +512,8 @@ impl AppController {
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
         };
         (
             controller,
@@ -367,6 +574,52 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(
                 "No active Jellyfin server is saved.".to_string(),
             ));
+        }
+    }
+
+    pub fn startup_sync_delay_ms(&self) -> Option<u64> {
+        let saved = self
+            .store
+            .with_store(|store| store.active_server())
+            .ok()
+            .flatten()?;
+        let albums = self
+            .store
+            .with_store(|store| {
+                store
+                    .load_albums(&saved.server.id, 0, 1)
+                    .map(|page| page.total)
+            })
+            .unwrap_or(0);
+        let tracks = self
+            .store
+            .with_store(|store| {
+                store
+                    .load_tracks(&saved.server.id, 0, 1)
+                    .map(|page| page.total)
+            })
+            .unwrap_or(0);
+        if albums == 0 && tracks == 0 {
+            return Some(500);
+        }
+        let sync_state = self
+            .store
+            .with_store(|store| store.sync_state(&saved.server.id))
+            .ok();
+        if sync_state
+            .as_ref()
+            .is_some_and(|state| state.status == "error")
+        {
+            return Some(8_000);
+        }
+        let age = self
+            .store
+            .with_store(|store| store.sync_completed_age_seconds(&saved.server.id))
+            .ok()
+            .flatten();
+        match age {
+            Some(seconds) if seconds < STARTUP_CACHE_STALE_SECONDS => None,
+            _ => Some(8_000),
         }
     }
 
@@ -1190,9 +1443,9 @@ async fn sync_provider(
     sync_track_pages(store, server_id, provider, generation).await?;
     sync_artist_pages(store, server_id, provider, generation, false).await?;
     sync_artist_pages(store, server_id, provider, generation, true).await?;
-    store.with_store(|store| store.refresh_library_counts(server_id))?;
     sync_genre_pages(store, server_id, provider, generation).await?;
     sync_playlist_pages(store, server_id, provider, generation).await?;
+    store.with_store(|store| store.refresh_library_counts(server_id))?;
     store.with_store(|store| store.complete_sync(server_id, generation))?;
     info!(generation, "completed Jellyfin cache sync");
     Ok(())
@@ -1302,6 +1555,22 @@ async fn sync_playlist_pages(
             .await
             .map_err(|error| error.to_string())?;
         store.with_store(|store| store.upsert_playlists(server_id, &page.items, generation))?;
+        for playlist in &page.items {
+            let detail = provider
+                .playlist_detail(&playlist.id)
+                .await
+                .map_err(|error| error.to_string())?;
+            store.with_store(|store| {
+                store.upsert_tracks(server_id, &detail.tracks, generation)?;
+                store.upsert_playlist_tracks(
+                    server_id,
+                    &detail.playlist.id,
+                    &detail.tracks,
+                    generation,
+                )?;
+                Ok(())
+            })?;
+        }
         let item_count = page.items.len();
         offset += item_count;
         if sync_page_finished(item_count, page.total, offset) {
@@ -1532,6 +1801,64 @@ fn resolve_stream(
         .map_err(|error| error.to_string())
 }
 
+fn fetch_and_cache_cover(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedServer,
+    image_ref: ImageRef,
+    size: u32,
+) -> Result<PathBuf, String> {
+    let token = secrets
+        .load_token(&saved.server.id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No saved token found for the active server.".to_string())?;
+    let session = SavedProviderSession {
+        server: saved.server.clone(),
+        user_id: saved.user_id.clone(),
+        username: saved.username.clone(),
+        trust_invalid_cert: saved.trust_invalid_cert,
+        access_token: token,
+    };
+    let provider =
+        JellyfinProvider::from_saved_session(session).map_err(|error| error.to_string())?;
+    let image = runtime
+        .block_on(provider.image_bytes(ImageRequest {
+            item_id: image_ref.item_id.clone(),
+            kind: ImageKind::Primary,
+            tag: image_ref.tag.clone(),
+            size,
+        }))
+        .map_err(|error| error.to_string())?;
+    if image.bytes.is_empty() {
+        return Err("cover response was empty".to_string());
+    }
+
+    let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+    let key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
+    let path = cache_dir()
+        .map(|dir| dir.join("covers").join(&key))
+        .ok_or_else(|| "cache directory is unavailable".to_string())?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let temp_path = path.with_extension("tmp");
+    fs::write(&temp_path, image.bytes).map_err(|error| error.to_string())?;
+    fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
+
+    store.with_store(|store| {
+        store.save_cover_cache_entry(&CoverCacheEntry {
+            server_id: saved.server.id.clone(),
+            item_id: image_ref.item_id,
+            image_tag: tag.to_string(),
+            size,
+            path: path.to_string_lossy().to_string(),
+        })
+    })?;
+
+    Ok(path)
+}
+
 fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.data_dir().to_path_buf())
 }
@@ -1574,13 +1901,40 @@ fn sync_is_running(sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>, server_id: &S
         .unwrap_or(true)
 }
 
+fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
+    let (lock, ready) = &**slots;
+    let Ok(mut active) = lock.lock() else {
+        return false;
+    };
+    while *active >= 2 {
+        let Ok(waiting) = ready.wait(active) else {
+            return false;
+        };
+        active = waiting;
+    }
+    *active += 1;
+    true
+}
+
+fn release_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) {
+    let (lock, ready) = &**slots;
+    if let Ok(mut active) = lock.lock() {
+        *active = active.saturating_sub(1);
+        ready.notify_one();
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
     use std::sync::mpsc::Receiver;
     use std::time::Duration;
 
     use super::{AppController, ControllerEvent, LibrarySnapshot, sync_page_finished};
+    use rufin_core::{ImageRef, ServerId, ServerIdentity};
     use rufin_playback::PlaybackState;
+    use rufin_store::{CoverCacheEntry, SavedServer};
     use rufin_test_support::FakeScale;
 
     #[test]
@@ -1644,6 +1998,125 @@ mod tests {
         assert!(snapshot.albums.is_empty());
         assert!(snapshot.tracks.is_empty());
         assert!(snapshot.search.albums.is_empty());
+    }
+
+    #[test]
+    fn startup_sync_policy_uses_empty_fresh_and_error_cache_states() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let server_id = snapshot.server.expect("server").id;
+
+        assert_eq!(controller.startup_sync_delay_ms(), None);
+
+        controller
+            .store
+            .with_store(|store| store.fail_sync(&server_id, "previous sync failed"))
+            .expect("mark sync failed");
+        assert_eq!(controller.startup_sync_delay_ms(), Some(8_000));
+
+        controller.clear_active_server_cache();
+        let _snapshot = wait_for_snapshot(&events);
+        assert_eq!(controller.startup_sync_delay_ms(), Some(500));
+    }
+
+    #[test]
+    fn cached_cover_request_emits_cover_ready_without_fetching() {
+        let (controller, events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let server_id = ServerId::new("jellyfin:server:test");
+        let saved = SavedServer {
+            server: ServerIdentity {
+                id: server_id.clone(),
+                provider: "jellyfin".to_string(),
+                name: "Test".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        };
+        let path = std::env::temp_dir().join(format!(
+            "rufin-cover-ready-{}-{}.jpg",
+            std::process::id(),
+            "cached"
+        ));
+        fs::write(&path, [1_u8, 2, 3]).expect("write cover");
+        let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+
+        controller
+            .store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&server_id)?;
+                store.save_cover_cache_entry(&CoverCacheEntry {
+                    server_id: server_id.clone(),
+                    item_id: image_ref.item_id.clone(),
+                    image_tag: "tag-one".to_string(),
+                    size: 256,
+                    path: path.to_string_lossy().to_string(),
+                })
+            })
+            .expect("seed cover cache");
+        let key = controller.cover_key(&image_ref, 256).expect("cover key");
+
+        controller.request_cover(image_ref, 256);
+
+        assert_eq!(wait_for_cover_ready(&events, &key), path);
+        let _cleanup = fs::remove_file(path);
+    }
+
+    #[test]
+    fn missing_cached_cover_file_invalidates_cover_index() {
+        let (controller, _events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let server_id = ServerId::new("jellyfin:server:test");
+        let saved = SavedServer {
+            server: ServerIdentity {
+                id: server_id.clone(),
+                provider: "jellyfin".to_string(),
+                name: "Test".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        };
+        let path = std::env::temp_dir().join(format!(
+            "rufin-missing-cover-{}-{}.jpg",
+            std::process::id(),
+            "cached"
+        ));
+        let _cleanup = fs::remove_file(&path);
+        let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+
+        controller
+            .store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&server_id)?;
+                store.save_cover_cache_entry(&CoverCacheEntry {
+                    server_id: server_id.clone(),
+                    item_id: image_ref.item_id.clone(),
+                    image_tag: "tag-one".to_string(),
+                    size: 256,
+                    path: path.to_string_lossy().to_string(),
+                })
+            })
+            .expect("seed cover cache");
+
+        assert_eq!(controller.cached_cover_path(&image_ref, 256), None);
+        assert_eq!(
+            controller
+                .store
+                .with_store(|store| store.load_cover_cache_entry(
+                    &server_id,
+                    &image_ref.item_id,
+                    "tag-one",
+                    256
+                ))
+                .expect("load cover cache"),
+            None
+        );
     }
 
     #[test]
@@ -1772,7 +2245,9 @@ mod tests {
                 .expect("controller event")
             {
                 ControllerEvent::Snapshot(snapshot) => return *snapshot,
-                ControllerEvent::Queue(_) | ControllerEvent::Playback(_) => {}
+                ControllerEvent::Queue(_)
+                | ControllerEvent::Playback(_)
+                | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -1788,7 +2263,8 @@ mod tests {
                 ControllerEvent::LoginStatus(status) => return status,
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::Queue(_)
-                | ControllerEvent::Playback(_) => {}
+                | ControllerEvent::Playback(_)
+                | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
         }
@@ -1803,7 +2279,25 @@ mod tests {
                 ControllerEvent::Queue(queue) => return *queue,
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::Playback(_)
-                | ControllerEvent::LoginStatus(_) => {}
+                | ControllerEvent::LoginStatus(_)
+                | ControllerEvent::CoverReady { .. } => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
+    }
+
+    fn wait_for_cover_ready(events: &Receiver<ControllerEvent>, expected_key: &str) -> PathBuf {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::CoverReady { key, path } if key == expected_key => return path,
+                ControllerEvent::Snapshot(_)
+                | ControllerEvent::Queue(_)
+                | ControllerEvent::Playback(_)
+                | ControllerEvent::LoginStatus(_)
+                | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
         }
@@ -1826,7 +2320,9 @@ mod tests {
                     ControllerEvent::Playback(playback) if playback.state == state => {
                         return *playback;
                     }
-                    ControllerEvent::Playback(_) | ControllerEvent::Queue(_) => {}
+                    ControllerEvent::Playback(_)
+                    | ControllerEvent::Queue(_)
+                    | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_) | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),
                 },

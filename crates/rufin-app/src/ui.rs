@@ -9,12 +9,12 @@ use gtk::gio;
 use gtk::glib;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
-    HomeSection, HomeSectionKind, Playlist, QueueEntry, QueueSnapshot, RepeatMode, Route,
-    RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn, TrackTableSettings,
-    format_duration,
+    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueSnapshot,
+    RepeatMode, Route, RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn,
+    TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
-use rufin_store::CachedArtistDetail;
+use rufin_store::{CachedArtistDetail, CachedGenreDetail};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
 
@@ -31,8 +31,9 @@ const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 220;
 const HOME_ALBUM_MAX_SIZE: i32 = 260;
-const CACHED_LIBRARY_STARTUP_SYNC_DELAY_MS: u64 = 8_000;
-const EMPTY_LIBRARY_STARTUP_SYNC_DELAY_MS: u64 = 500;
+const GRID_COVER_SIZE: u32 = 256;
+const DETAIL_COVER_SIZE: u32 = 512;
+const THUMB_COVER_SIZE: u32 = 96;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -55,11 +56,28 @@ struct AppState {
     split_position: Cell<i32>,
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
+    cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
+}
+
+#[derive(Clone)]
+struct CoverBinding {
+    stack: gtk::Stack,
+    picture: gtk::Picture,
 }
 
 struct HomeSectionState {
     page_start: usize,
     page_size: usize,
+}
+
+struct GroupedDetailData {
+    title: String,
+    image_ref: Option<ImageRef>,
+    seed: u32,
+    summary: String,
+    albums: Vec<Album>,
+    tracks: Vec<Track>,
+    table_context: &'static str,
 }
 
 struct Shell {
@@ -79,8 +97,11 @@ struct Shell {
 
 struct PlayerControls {
     root: gtk::Box,
+    cover_stack: gtk::Stack,
     cover: gtk::DrawingArea,
+    cover_picture: gtk::Picture,
     cover_seed: Rc<Cell<u32>>,
+    cover_key: RefCell<Option<String>>,
     title: gtk::Label,
     artist: gtk::Label,
     album: gtk::Label,
@@ -128,6 +149,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         split_position: Cell::new(0),
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
+        cover_bindings: RefCell::new(HashMap::new()),
     };
 
     let window = adw::ApplicationWindow::builder()
@@ -381,24 +403,46 @@ impl Shell {
             Route::Home => self.home_view(),
             Route::Albums => self.albums_view(),
             Route::AlbumDetail(album_id) => self.album_detail_view(album_id),
-            Route::Tracks => self.tracks_view(library.tracks.clone(), &tr("Tracks")),
+            Route::Tracks => self.tracks_view(
+                self.controller
+                    .cached_tracks_page(0, 5_000)
+                    .map(|page| page.items)
+                    .unwrap_or_else(|_| library.tracks.clone()),
+                &tr("Tracks"),
+            ),
             Route::Settings => self.settings_view(),
             Route::Favorites => self.tracks_view(library.favorites.clone(), &tr("Favorites")),
-            Route::Artists => self.artist_list_view(library.artists.clone(), &tr("Artists")),
+            Route::Artists => self.artist_list_view(
+                self.controller
+                    .cached_artists_page(false, 0, 2_000)
+                    .map(|page| page.items)
+                    .unwrap_or_else(|_| library.artists.clone()),
+                &tr("Artists"),
+            ),
             Route::ArtistDetail(artist_id) => self.artist_detail_view(artist_id),
-            Route::AlbumArtists => {
-                self.artist_list_view(library.album_artists.clone(), &tr("Album Artists"))
-            }
-            Route::Genres => self.genre_list_view(library.genres.clone(), &tr("Genres")),
-            Route::GenreDetail(_) => {
-                self.placeholder_view("Genre", "Genre detail keeps albums above tracks.")
-            }
-            Route::Playlists => {
-                self.playlist_list_view(library.playlists.clone(), &tr("Playlists"))
-            }
-            Route::PlaylistDetail(_) => {
-                self.placeholder_view("Playlist", "Playlist detail will use the track table.")
-            }
+            Route::AlbumArtists => self.artist_list_view(
+                self.controller
+                    .cached_artists_page(true, 0, 2_000)
+                    .map(|page| page.items)
+                    .unwrap_or_else(|_| library.album_artists.clone()),
+                &tr("Album Artists"),
+            ),
+            Route::Genres => self.genre_list_view(
+                self.controller
+                    .cached_genres_page(0, 2_000)
+                    .map(|page| page.items)
+                    .unwrap_or_else(|_| library.genres.clone()),
+                &tr("Genres"),
+            ),
+            Route::GenreDetail(genre_id) => self.genre_detail_view(genre_id),
+            Route::Playlists => self.playlist_list_view(
+                self.controller
+                    .cached_playlists_page(0, 2_000)
+                    .map(|page| page.items)
+                    .unwrap_or_else(|_| library.playlists.clone()),
+                &tr("Playlists"),
+            ),
+            Route::PlaylistDetail(playlist_id) => self.playlist_detail_view(playlist_id),
             Route::Search { query, .. } => self.search_view(&query, library),
         };
 
@@ -562,7 +606,11 @@ impl Shell {
     }
 
     fn albums_view(self: &Rc<Self>) -> gtk::Widget {
-        let albums = self.state.library.borrow().albums.clone();
+        let albums = self
+            .controller
+            .cached_albums_page(0, 2_000)
+            .map(|page| page.items)
+            .unwrap_or_else(|_| self.state.library.borrow().albums.clone());
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
         content.add_css_class("route-content");
         content.set_margin_top(24);
@@ -631,7 +679,12 @@ impl Shell {
         content.set_margin_end(32);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
-        let cover = cover_tile(album.color_seed, 188);
+        let cover = self.cover_tile_for(
+            album.image_ref.as_ref(),
+            album.color_seed,
+            188,
+            DETAIL_COVER_SIZE,
+        );
         header.append(&cover);
 
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -921,47 +974,161 @@ impl Shell {
     }
 
     fn genre_list_view(self: &Rc<Self>, genres: Vec<Genre>, title: &str) -> gtk::Widget {
-        let rows = genres
-            .into_iter()
-            .map(|genre| {
-                (
-                    genre.name,
-                    format!(
-                        "{} {} / {} {}",
-                        genre.album_count,
-                        tr("albums"),
-                        genre.track_count,
-                        tr("tracks")
-                    ),
-                )
-            })
-            .collect::<Vec<_>>();
-        self.simple_list_view(title, rows, "flag-symbolic")
+        self.media_grid_view(
+            title,
+            genres.is_empty(),
+            "Cached rows will appear here after the background sync finishes.",
+            self.genre_cards_grid(&genres),
+        )
     }
 
     fn playlist_list_view(self: &Rc<Self>, playlists: Vec<Playlist>, title: &str) -> gtk::Widget {
-        let rows = playlists
-            .into_iter()
-            .map(|playlist| {
-                (
-                    playlist.name,
-                    format!(
-                        "{} {} • {}",
-                        playlist.track_count,
-                        tr("tracks"),
-                        format_duration(playlist.duration_seconds)
-                    ),
-                )
-            })
-            .collect::<Vec<_>>();
-        self.simple_list_view(title, rows, "folder-music-symbolic")
+        self.media_grid_view(
+            title,
+            playlists.is_empty(),
+            "Cached rows will appear here after the background sync finishes.",
+            self.playlist_cards_grid(&playlists),
+        )
     }
 
-    fn simple_list_view(
+    fn genre_detail_view(self: &Rc<Self>, genre_id: rufin_core::GenreId) -> gtk::Widget {
+        let detail = self
+            .controller
+            .cached_genre_detail(&genre_id)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                let library = self.state.library.borrow();
+                let genre = library
+                    .genres
+                    .iter()
+                    .find(|genre| genre.id.as_str() == genre_id.as_str())
+                    .cloned()?;
+                Some(CachedGenreDetail {
+                    genre,
+                    albums: Vec::new(),
+                    tracks: Vec::new(),
+                })
+            });
+        let Some(detail) = detail else {
+            return self.placeholder_view("Genre", "The selected cached genre was not found.");
+        };
+        let seed = stable_seed(detail.genre.id.as_str());
+        let summary = format!(
+            "{} {} / {} {}",
+            detail.genre.album_count,
+            tr("albums"),
+            detail.genre.track_count,
+            tr("tracks")
+        );
+        self.grouped_detail_view(GroupedDetailData {
+            title: detail.genre.name,
+            image_ref: detail.genre.image_ref,
+            seed,
+            summary,
+            albums: detail.albums,
+            tracks: detail.tracks,
+            table_context: "genre-detail",
+        })
+    }
+
+    fn playlist_detail_view(self: &Rc<Self>, playlist_id: PlaylistId) -> gtk::Widget {
+        let detail = self
+            .controller
+            .cached_playlist_detail(&playlist_id)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                let library = self.state.library.borrow();
+                let playlist = library
+                    .playlists
+                    .iter()
+                    .find(|playlist| playlist.id.as_str() == playlist_id.as_str())
+                    .cloned()?;
+                Some(rufin_provider::PlaylistDetail {
+                    playlist,
+                    tracks: Vec::new(),
+                })
+            });
+        let Some(detail) = detail else {
+            return self
+                .placeholder_view("Playlist", "The selected cached playlist was not found.");
+        };
+        let seed = stable_seed(detail.playlist.id.as_str());
+        let summary = format!(
+            "{} {} • {}",
+            detail.playlist.track_count,
+            tr("tracks"),
+            format_duration(detail.playlist.duration_seconds)
+        );
+        self.grouped_detail_view(GroupedDetailData {
+            title: detail.playlist.name,
+            image_ref: detail.playlist.image_ref,
+            seed,
+            summary,
+            albums: Vec::new(),
+            tracks: detail.tracks,
+            table_context: "playlist-detail",
+        })
+    }
+
+    fn grouped_detail_view(self: &Rc<Self>, data: GroupedDetailData) -> gtk::Widget {
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
+        scroller.set_vexpand(true);
+
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 20);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(28);
+        wrapper.set_margin_bottom(36);
+        wrapper.set_margin_start(32);
+        wrapper.set_margin_end(32);
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
+        header.append(&self.cover_tile_for(
+            data.image_ref.as_ref(),
+            data.seed,
+            160,
+            DETAIL_COVER_SIZE,
+        ));
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        metadata.set_valign(gtk::Align::Center);
+        let title = gtk::Label::new(Some(&data.title));
+        title.add_css_class("detail-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        let summary = gtk::Label::new(Some(&data.summary));
+        summary.add_css_class("muted");
+        summary.set_xalign(0.0);
+        metadata.append(&title);
+        metadata.append(&summary);
+        header.append(&metadata);
+        wrapper.append(&header);
+
+        if !data.albums.is_empty() {
+            let album_heading = gtk::Label::new(Some(&tr("Albums")));
+            album_heading.add_css_class("section-heading");
+            album_heading.set_xalign(0.0);
+            wrapper.append(&album_heading);
+            wrapper.append(&self.album_cards_grid(&data.albums));
+        }
+        if data.tracks.is_empty() {
+            wrapper
+                .append(&self.placeholder_view("Tracks", "No cached tracks are linked here yet."));
+        } else {
+            wrapper.append(&self.tracks_table(data.tracks, data.table_context));
+        }
+        scroller.set_child(Some(&wrapper));
+        scroller.upcast()
+    }
+
+    fn media_grid_view(
         self: &Rc<Self>,
         title: &str,
-        rows: Vec<(String, String)>,
-        icon_name: &str,
+        empty: bool,
+        empty_body: &str,
+        grid: gtk::Widget,
     ) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
@@ -976,39 +1143,16 @@ impl Shell {
         heading.set_xalign(0.0);
         wrapper.append(&heading);
 
-        if rows.is_empty() {
-            wrapper.append(&self.placeholder_view(
-                title,
-                "Cached rows will appear here after the background sync finishes.",
-            ));
-            return wrapper.upcast();
+        if empty {
+            wrapper.append(&self.placeholder_view(title, empty_body));
+        } else {
+            let scroller = gtk::ScrolledWindow::new();
+            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            scroller.set_min_content_width(0);
+            scroller.set_vexpand(true);
+            scroller.set_child(Some(&grid));
+            wrapper.append(&scroller);
         }
-
-        let list = gtk::ListBox::new();
-        list.add_css_class("cached-list");
-        for (name, subtitle) in rows {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            row.add_css_class("cached-row");
-            row.append(&gtk::Image::from_icon_name(icon_name));
-            let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            labels.set_hexpand(true);
-            let name_label = gtk::Label::new(Some(&name));
-            name_label.set_xalign(0.0);
-            name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            let subtitle_label = gtk::Label::new(Some(&subtitle));
-            subtitle_label.add_css_class("muted");
-            subtitle_label.set_xalign(0.0);
-            labels.append(&name_label);
-            labels.append(&subtitle_label);
-            row.append(&labels);
-            list.append(&row);
-        }
-
-        let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroller.set_vexpand(true);
-        scroller.set_child(Some(&list));
-        wrapper.append(&scroller);
         wrapper.upcast()
     }
 
@@ -1383,7 +1527,12 @@ impl Shell {
         let number = gtk::Label::new(Some(&(index + 1).to_string()));
         number.add_css_class("muted");
         number.set_width_chars(2);
-        let cover = cover_tile(index as u32 * 7 + entry.duration_seconds, 32);
+        let cover = self.cover_tile_for(
+            entry.image_ref.as_ref(),
+            index as u32 * 7 + entry.duration_seconds,
+            32,
+            THUMB_COVER_SIZE,
+        );
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         labels.set_hexpand(true);
         let title = gtk::Label::new(Some(&entry.title));
@@ -1418,6 +1567,39 @@ impl Shell {
             .unwrap_or(42);
         controls.cover_seed.set(cover_seed);
         controls.cover.queue_draw();
+        if let Some(image_ref) = player
+            .current
+            .as_ref()
+            .and_then(|entry| entry.image_ref.as_ref())
+        {
+            if let Some(path) = self
+                .controller
+                .cached_cover_path(image_ref, THUMB_COVER_SIZE)
+            {
+                set_picture_path(&controls.cover_picture, &controls.cover_stack, &path);
+                *controls.cover_key.borrow_mut() = None;
+            } else if let Some(key) = self.controller.cover_key(image_ref, THUMB_COVER_SIZE) {
+                let mut current_key = controls.cover_key.borrow_mut();
+                if current_key.as_deref() != Some(key.as_str()) {
+                    self.state
+                        .cover_bindings
+                        .borrow_mut()
+                        .entry(key.clone())
+                        .or_default()
+                        .push(CoverBinding {
+                            stack: controls.cover_stack.clone(),
+                            picture: controls.cover_picture.clone(),
+                        });
+                    self.controller
+                        .request_cover(image_ref.clone(), THUMB_COVER_SIZE);
+                    *current_key = Some(key);
+                }
+                controls.cover_stack.set_visible_child_name("fallback");
+            }
+        } else {
+            controls.cover_stack.set_visible_child_name("fallback");
+            *controls.cover_key.borrow_mut() = None;
+        }
 
         let play_icon = match player.state {
             PlaybackState::Playing | PlaybackState::Buffering => "media-playback-pause-symbolic",
@@ -1500,6 +1682,64 @@ impl Shell {
         wrapper.upcast()
     }
 
+    fn cover_tile_for(
+        self: &Rc<Self>,
+        image_ref: Option<&ImageRef>,
+        seed: u32,
+        size: i32,
+        fetch_size: u32,
+    ) -> gtk::Widget {
+        let stack = gtk::Stack::new();
+        stack.set_width_request(size);
+        stack.set_height_request(size);
+        stack.set_size_request(size, size);
+        stack.set_hexpand(false);
+        stack.set_halign(gtk::Align::Start);
+
+        let fallback = cover_tile(seed, size);
+        stack.add_named(&fallback, Some("fallback"));
+
+        let picture = gtk::Picture::new();
+        picture.add_css_class("cover-tile");
+        picture.add_css_class("card");
+        picture.set_content_fit(gtk::ContentFit::Cover);
+        picture.set_width_request(size);
+        picture.set_height_request(size);
+        picture.set_size_request(size, size);
+        picture.set_hexpand(false);
+        picture.set_halign(gtk::Align::Start);
+        stack.add_named(&picture, Some("image"));
+        stack.set_visible_child_name("fallback");
+
+        if let Some(image_ref) = image_ref {
+            if let Some(path) = self.controller.cached_cover_path(image_ref, fetch_size) {
+                set_picture_path(&picture, &stack, &path);
+            } else if let Some(key) = self.controller.cover_key(image_ref, fetch_size) {
+                self.state
+                    .cover_bindings
+                    .borrow_mut()
+                    .entry(key)
+                    .or_default()
+                    .push(CoverBinding {
+                        stack: stack.clone(),
+                        picture: picture.clone(),
+                    });
+                self.controller.request_cover(image_ref.clone(), fetch_size);
+            }
+        }
+
+        stack.upcast()
+    }
+
+    fn apply_cover_ready(&self, key: &str, path: &std::path::Path) {
+        let Some(bindings) = self.state.cover_bindings.borrow_mut().remove(key) else {
+            return;
+        };
+        for binding in bindings {
+            set_picture_path(&binding.picture, &binding.stack, path);
+        }
+    }
+
     fn album_cards_grid(self: &Rc<Self>, albums: &[Album]) -> gtk::Widget {
         let model = album_model(albums);
         let width = home_album_content_width(self);
@@ -1523,6 +1763,7 @@ impl Shell {
             };
             let album = boxed.borrow::<Album>();
             list_item.set_child(Some(&album_card_widget_with_size(
+                &shell_for_factory,
                 &album,
                 card_size,
                 Some(&shell_for_factory.controller),
@@ -1565,6 +1806,7 @@ impl Shell {
         self.state.card_grid_columns.set(columns);
         let card_size = home_album_card_size(width, columns);
 
+        let shell_for_factory = Rc::clone(self);
         let selection = gtk::SingleSelection::new(Some(model.clone()));
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_bind(move |_, list_item| {
@@ -1578,7 +1820,11 @@ impl Shell {
                 return;
             };
             let artist = boxed.borrow::<Artist>();
-            list_item.set_child(Some(&artist_card_widget_with_size(&artist, card_size)));
+            list_item.set_child(Some(&artist_card_widget_with_size(
+                &shell_for_factory,
+                &artist,
+                card_size,
+            )));
         });
         factory.connect_unbind(|_, list_item| {
             if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
@@ -1609,7 +1855,119 @@ impl Shell {
         grid.upcast()
     }
 
-    fn album_card_with_size(&self, album: &Album, size: i32) -> gtk::Button {
+    fn genre_cards_grid(self: &Rc<Self>, genres: &[Genre]) -> gtk::Widget {
+        let model = genre_model(genres);
+        let width = home_album_content_width(self);
+        let current = nonzero_usize(self.state.card_grid_columns.get());
+        let columns = home_album_page_size(width, current);
+        self.state.card_grid_columns.set(columns);
+        let card_size = home_album_card_size(width, columns);
+
+        let shell_for_factory = Rc::clone(self);
+        let selection = gtk::SingleSelection::new(Some(model.clone()));
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_bind(move |_, list_item| {
+            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            let Some(item) = list_item.item() else {
+                return;
+            };
+            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
+                return;
+            };
+            let genre = boxed.borrow::<Genre>();
+            list_item.set_child(Some(&genre_card_widget_with_size(
+                &shell_for_factory,
+                &genre,
+                card_size,
+            )));
+        });
+        factory.connect_unbind(|_, list_item| {
+            if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
+                list_item.set_child(None::<&gtk::Widget>);
+            }
+        });
+
+        let grid = gtk::GridView::new(Some(selection), Some(factory));
+        grid.add_css_class("album-grid");
+        grid.set_min_columns(columns as u32);
+        grid.set_max_columns(columns as u32);
+        grid.set_single_click_activate(true);
+        grid.set_hexpand(true);
+        grid.set_vexpand(true);
+
+        let shell = Rc::clone(self);
+        let model_for_activate = model.clone();
+        grid.connect_activate(move |_, position| {
+            let Some(item) = model_for_activate.item(position) else {
+                return;
+            };
+            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
+                return;
+            };
+            shell.navigate(Route::GenreDetail(boxed.borrow::<Genre>().id.clone()));
+        });
+        grid.upcast()
+    }
+
+    fn playlist_cards_grid(self: &Rc<Self>, playlists: &[Playlist]) -> gtk::Widget {
+        let model = playlist_model(playlists);
+        let width = home_album_content_width(self);
+        let current = nonzero_usize(self.state.card_grid_columns.get());
+        let columns = home_album_page_size(width, current);
+        self.state.card_grid_columns.set(columns);
+        let card_size = home_album_card_size(width, columns);
+
+        let shell_for_factory = Rc::clone(self);
+        let selection = gtk::SingleSelection::new(Some(model.clone()));
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_bind(move |_, list_item| {
+            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            let Some(item) = list_item.item() else {
+                return;
+            };
+            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
+                return;
+            };
+            let playlist = boxed.borrow::<Playlist>();
+            list_item.set_child(Some(&playlist_card_widget_with_size(
+                &shell_for_factory,
+                &playlist,
+                card_size,
+            )));
+        });
+        factory.connect_unbind(|_, list_item| {
+            if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
+                list_item.set_child(None::<&gtk::Widget>);
+            }
+        });
+
+        let grid = gtk::GridView::new(Some(selection), Some(factory));
+        grid.add_css_class("album-grid");
+        grid.set_min_columns(columns as u32);
+        grid.set_max_columns(columns as u32);
+        grid.set_single_click_activate(true);
+        grid.set_hexpand(true);
+        grid.set_vexpand(true);
+
+        let shell = Rc::clone(self);
+        let model_for_activate = model.clone();
+        grid.connect_activate(move |_, position| {
+            let Some(item) = model_for_activate.item(position) else {
+                return;
+            };
+            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
+                return;
+            };
+            shell.navigate(Route::PlaylistDetail(boxed.borrow::<Playlist>().id.clone()));
+        });
+        grid.upcast()
+    }
+
+    fn album_card_with_size(self: &Rc<Self>, album: &Album, size: i32) -> gtk::Button {
         let button = gtk::Button::new();
         button.add_css_class("album-button");
         button.add_css_class("flat");
@@ -1618,6 +1976,7 @@ impl Shell {
         button.set_hexpand(false);
         button.set_halign(gtk::Align::Start);
         button.set_child(Some(&album_card_widget_with_size(
+            self,
             album,
             size,
             Some(&self.controller),
@@ -1787,16 +2146,8 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
 }
 
 fn schedule_startup_sync(shell: &Rc<Shell>) {
-    let delay_ms = {
-        let library = shell.state.library.borrow();
-        if library.first_run {
-            return;
-        }
-        if library.albums.is_empty() && library.tracks.is_empty() {
-            EMPTY_LIBRARY_STARTUP_SYNC_DELAY_MS
-        } else {
-            CACHED_LIBRARY_STARTUP_SYNC_DELAY_MS
-        }
+    let Some(delay_ms) = shell.controller.startup_sync_delay_ms() else {
+        return;
     };
 
     let shell = Rc::clone(shell);
@@ -1811,8 +2162,8 @@ fn build_bottom_player() -> PlayerControls {
     root.add_css_class("bottom-player");
     root.set_height_request(90);
 
-    let (cover, cover_seed) = player_cover_tile(58);
-    root.append(&cover);
+    let (cover_stack, cover, cover_picture, cover_seed) = player_cover_tile(58);
+    root.append(&cover_stack);
 
     let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
     identity.set_width_request(160);
@@ -1876,8 +2227,11 @@ fn build_bottom_player() -> PlayerControls {
 
     PlayerControls {
         root,
+        cover_stack,
         cover,
+        cover_picture,
         cover_seed,
+        cover_key: RefCell::new(None),
         title,
         artist,
         album,
@@ -1995,6 +2349,9 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 ControllerEvent::Playback(player) => {
                     *shell.state.player.borrow_mut() = *player;
                     shell.update_bottom_player();
+                }
+                ControllerEvent::CoverReady { key, path } => {
+                    shell.apply_cover_ready(&key, &path);
                 }
                 ControllerEvent::LoginStatus(status) => {
                     let should_render = {
@@ -2237,6 +2594,22 @@ fn artist_model(artists: &[Artist]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     for artist in artists {
         model.append(&glib::BoxedAnyObject::new(artist.clone()));
+    }
+    model
+}
+
+fn genre_model(genres: &[Genre]) -> gio::ListStore {
+    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+    for genre in genres {
+        model.append(&glib::BoxedAnyObject::new(genre.clone()));
+    }
+    model
+}
+
+fn playlist_model(playlists: &[Playlist]) -> gio::ListStore {
+    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+    for playlist in playlists {
+        model.append(&glib::BoxedAnyObject::new(playlist.clone()));
     }
     model
 }
@@ -2662,6 +3035,7 @@ fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
 }
 
 fn album_card_widget_with_size(
+    shell: &Rc<Shell>,
     album: &Album,
     size: i32,
     controller: Option<&AppController>,
@@ -2672,7 +3046,7 @@ fn album_card_widget_with_size(
     card.set_size_request(size, -1);
     card.set_hexpand(false);
     card.set_halign(gtk::Align::Start);
-    let cover = album_cover_tile(album, size, controller);
+    let cover = album_cover_tile(shell, album, size, controller);
     card.append(&cover);
 
     let title = gtk::Label::new(Some(&album.title));
@@ -2704,14 +3078,24 @@ fn album_card_widget_with_size(
     card.upcast()
 }
 
-fn album_cover_tile(album: &Album, size: i32, controller: Option<&AppController>) -> gtk::Widget {
+fn album_cover_tile(
+    shell: &Rc<Shell>,
+    album: &Album,
+    size: i32,
+    controller: Option<&AppController>,
+) -> gtk::Widget {
     let overlay = gtk::Overlay::new();
     overlay.set_width_request(size);
     overlay.set_height_request(size);
     overlay.set_size_request(size, size);
     overlay.set_hexpand(false);
     overlay.set_halign(gtk::Align::Start);
-    overlay.set_child(Some(&cover_tile(album.color_seed, size)));
+    overlay.set_child(Some(&shell.cover_tile_for(
+        album.image_ref.as_ref(),
+        album.color_seed,
+        size,
+        GRID_COVER_SIZE,
+    )));
 
     let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
     shade.add_css_class("cover-hover-layer");
@@ -2764,14 +3148,19 @@ fn album_cover_tile(album: &Album, size: i32, controller: Option<&AppController>
     overlay.upcast()
 }
 
-fn artist_card_widget_with_size(artist: &Artist, size: i32) -> gtk::Widget {
+fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.add_css_class("album-card");
     card.set_width_request(size);
     card.set_size_request(size, -1);
     card.set_hexpand(false);
     card.set_halign(gtk::Align::Start);
-    card.append(&cover_tile(stable_seed(artist.id.as_str()), size));
+    card.append(&shell.cover_tile_for(
+        artist.image_ref.as_ref(),
+        stable_seed(artist.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    ));
 
     let name = gtk::Label::new(Some(&artist.name));
     name.add_css_class("album-title");
@@ -2796,6 +3185,83 @@ fn artist_card_widget_with_size(artist: &Artist, size: i32) -> gtk::Widget {
     counts.set_size_request(size, -1);
     counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
+    card.append(&name);
+    card.append(&counts);
+    card.upcast()
+}
+
+fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    card.add_css_class("album-card");
+    card.set_width_request(size);
+    card.set_size_request(size, -1);
+    card.set_hexpand(false);
+    card.set_halign(gtk::Align::Start);
+    card.append(&shell.cover_tile_for(
+        genre.image_ref.as_ref(),
+        stable_seed(genre.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    ));
+
+    let name = gtk::Label::new(Some(&genre.name));
+    name.add_css_class("album-title");
+    name.set_xalign(0.0);
+    name.set_width_request(size);
+    name.set_lines(2);
+    name.set_wrap(true);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let counts = gtk::Label::new(Some(&format!(
+        "{} {} / {} {}",
+        genre.album_count,
+        tr("albums"),
+        genre.track_count,
+        tr("tracks")
+    )));
+    counts.add_css_class("muted");
+    counts.set_xalign(0.0);
+    counts.set_width_request(size);
+    counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    card.append(&name);
+    card.append(&counts);
+    card.upcast()
+}
+
+fn playlist_card_widget_with_size(
+    shell: &Rc<Shell>,
+    playlist: &Playlist,
+    size: i32,
+) -> gtk::Widget {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    card.add_css_class("album-card");
+    card.set_width_request(size);
+    card.set_size_request(size, -1);
+    card.set_hexpand(false);
+    card.set_halign(gtk::Align::Start);
+    card.append(&shell.cover_tile_for(
+        playlist.image_ref.as_ref(),
+        stable_seed(playlist.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    ));
+
+    let name = gtk::Label::new(Some(&playlist.name));
+    name.add_css_class("album-title");
+    name.set_xalign(0.0);
+    name.set_width_request(size);
+    name.set_lines(2);
+    name.set_wrap(true);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let counts = gtk::Label::new(Some(&format!(
+        "{} {} • {}",
+        playlist.track_count,
+        tr("tracks"),
+        format_duration(playlist.duration_seconds)
+    )));
+    counts.add_css_class("muted");
+    counts.set_xalign(0.0);
+    counts.set_width_request(size);
+    counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
     card.append(&name);
     card.append(&counts);
     card.upcast()
@@ -2831,8 +3297,26 @@ fn cover_tile(seed: u32, size: i32) -> gtk::Widget {
     area.upcast()
 }
 
-fn player_cover_tile(size: i32) -> (gtk::DrawingArea, Rc<Cell<u32>>) {
+fn set_picture_path(picture: &gtk::Picture, stack: &gtk::Stack, path: &std::path::Path) {
+    let file = gio::File::for_path(path);
+    match gtk::gdk::Texture::from_file(&file) {
+        Ok(texture) => {
+            picture.set_paintable(Some(&texture));
+            stack.set_visible_child_name("image");
+        }
+        Err(error) => {
+            warn!(%error, path = %path.display(), "failed to load cached cover");
+            stack.set_visible_child_name("fallback");
+        }
+    }
+}
+
+fn player_cover_tile(size: i32) -> (gtk::Stack, gtk::DrawingArea, gtk::Picture, Rc<Cell<u32>>) {
     let seed = Rc::new(Cell::new(42));
+    let stack = gtk::Stack::new();
+    stack.set_width_request(size);
+    stack.set_height_request(size);
+    stack.set_size_request(size, size);
     let area = gtk::DrawingArea::new();
     area.add_css_class("cover-tile");
     area.add_css_class("card");
@@ -2858,7 +3342,18 @@ fn player_cover_tile(size: i32) -> (gtk::DrawingArea, Rc<Cell<u32>>) {
         context.close_path();
         let _fill = context.fill();
     });
-    (area, seed)
+    stack.add_named(&area, Some("fallback"));
+
+    let picture = gtk::Picture::new();
+    picture.add_css_class("cover-tile");
+    picture.add_css_class("card");
+    picture.set_content_fit(gtk::ContentFit::Cover);
+    picture.set_width_request(size);
+    picture.set_height_request(size);
+    picture.set_size_request(size, size);
+    stack.add_named(&picture, Some("image"));
+    stack.set_visible_child_name("fallback");
+    (stack, area, picture, seed)
 }
 
 fn player_label(css_class: &str) -> gtk::Label {

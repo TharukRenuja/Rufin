@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{ServerId, Track, TrackId};
+use crate::domain::{ImageRef, ServerId, Track, TrackId};
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct QueueEntryId(String);
@@ -53,6 +53,8 @@ pub struct QueueEntry {
     pub artist: String,
     pub album: String,
     pub duration_seconds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
 }
 
 impl QueueEntry {
@@ -64,6 +66,7 @@ impl QueueEntry {
             artist: track.artist.clone(),
             album: track.album.clone(),
             duration_seconds: track.duration_seconds,
+            image_ref: track.image_ref.clone(),
         }
     }
 }
@@ -377,6 +380,8 @@ mod tests {
             favorite: false,
             disc_number: 1,
             track_number: number as u16,
+            image_ref: None,
+            genres: Vec::new(),
         }
     }
 
