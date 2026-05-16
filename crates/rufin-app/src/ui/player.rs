@@ -46,6 +46,8 @@ pub(super) struct PlayerControls {
     pub(super) queue_icon: gtk::DrawingArea,
     pub(super) queue_icon_open: Rc<Cell<bool>>,
     pub(super) lyrics_button: gtk::Button,
+    pub(super) lyrics_icon: gtk::DrawingArea,
+    pub(super) lyrics_icon_open: Rc<Cell<bool>>,
     pub(super) favorite_button: gtk::Button,
     pub(super) elapsed: gtk::Label,
     pub(super) progress: gtk::Scale,
@@ -85,6 +87,8 @@ struct PlayerActionControls {
     queue_icon: gtk::DrawingArea,
     queue_icon_open: Rc<Cell<bool>>,
     lyrics_button: gtk::Button,
+    lyrics_icon: gtk::DrawingArea,
+    lyrics_icon_open: Rc<Cell<bool>>,
     favorite_button: gtk::Button,
     mute_button: gtk::Button,
     mute_icon: gtk::Image,
@@ -279,6 +283,8 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         queue_icon,
         queue_icon_open,
         lyrics_button,
+        lyrics_icon,
+        lyrics_icon_open,
         favorite_button,
         mute_button,
         mute_icon,
@@ -315,6 +321,8 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         queue_icon,
         queue_icon_open,
         lyrics_button,
+        lyrics_icon,
+        lyrics_icon_open,
         favorite_button,
         elapsed,
         progress,
@@ -454,7 +462,7 @@ fn build_player_action_controls() -> PlayerActionControls {
     root.set_valign(gtk::Align::Center);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
     root.append(&queue_button);
-    let lyrics_button = lyrics_icon_button("Hide lyrics");
+    let (lyrics_button, lyrics_icon, lyrics_icon_open) = lyrics_icon_button("Hide lyrics");
     root.append(&lyrics_button);
     let favorite_button = favorite_icon_button("Favorite");
     root.append(&favorite_button);
@@ -473,6 +481,8 @@ fn build_player_action_controls() -> PlayerActionControls {
         queue_icon,
         queue_icon_open,
         lyrics_button,
+        lyrics_icon,
+        lyrics_icon_open,
         favorite_button,
         mute_button,
         mute_icon,
@@ -739,11 +749,14 @@ fn repeat_icon_area(repeat_mode: RepeatMode) -> gtk::DrawingArea {
     icon
 }
 
-fn lyrics_icon_button(label: &str) -> gtk::Button {
-    drawing_icon_button(label, lyrics_icon_area())
+fn lyrics_icon_button(label: &str) -> (gtk::Button, gtk::DrawingArea, Rc<Cell<bool>>) {
+    let open = Rc::new(Cell::new(true));
+    let icon = lyrics_icon_area(Rc::clone(&open));
+    let button = drawing_icon_button(label, icon.clone());
+    (button, icon, open)
 }
 
-fn lyrics_icon_area() -> gtk::DrawingArea {
+fn lyrics_icon_area(open: Rc<Cell<bool>>) -> gtk::DrawingArea {
     let icon = gtk::DrawingArea::new();
     icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
     icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
@@ -777,11 +790,13 @@ fn lyrics_icon_area() -> gtk::DrawingArea {
         context.curve_to(left, top, left, top, left + radius, top);
         let _ = context.stroke();
 
-        context.move_to(width * 0.36, height * 0.42);
-        context.line_to(width * 0.64, height * 0.42);
-        context.move_to(width * 0.36, height * 0.54);
-        context.line_to(width * 0.58, height * 0.54);
-        let _ = context.stroke();
+        if open.get() {
+            context.move_to(width * 0.36, height * 0.42);
+            context.line_to(width * 0.64, height * 0.42);
+            context.move_to(width * 0.36, height * 0.54);
+            context.line_to(width * 0.58, height * 0.54);
+            let _ = context.stroke();
+        }
     });
     icon
 }

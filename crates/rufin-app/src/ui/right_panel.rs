@@ -10,7 +10,7 @@ use crate::lyrics::LyricsPane;
 
 use super::{
     MAX_RESTORED_WINDOW_HEIGHT, MIN_RESTORED_WINDOW_HEIGHT, Shell, clamp_content_split_position,
-    content_split_initial_position, icon_button, player::BOTTOM_PLAYER_HEIGHT, set_active_class,
+    content_split_initial_position, icon_button, player::BOTTOM_PLAYER_HEIGHT,
 };
 
 const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
@@ -203,6 +203,7 @@ impl Shell {
         self.player_controls
             .queue_button
             .update_property(&[gtk::accessible::Property::Label(&label)]);
+        self.player_controls.lyrics_button.set_visible(visible);
     }
 
     pub(super) fn toggle_lyrics_panel(self: &Rc<Self>) {
@@ -236,7 +237,14 @@ impl Shell {
         } else {
             "Show lyrics"
         });
-        set_active_class(&self.player_controls.lyrics_button, visible);
+        self.player_controls.lyrics_icon_open.set(visible);
+        self.player_controls.lyrics_icon.queue_draw();
+        self.player_controls
+            .lyrics_button
+            .remove_css_class("active-toggle");
+        self.player_controls
+            .lyrics_button
+            .set_visible(self.state.right_panel_visible.get());
         self.player_controls
             .lyrics_button
             .set_tooltip_text(Some(&label));
