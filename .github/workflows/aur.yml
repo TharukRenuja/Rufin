@@ -73,6 +73,47 @@ jobs:
           sed -i "s/^pkgver=.*/pkgver=${version}/" "$pkgbuild"
           sed -i "s/^sha256sums=.*/sha256sums=('${checksum}')/" "$pkgbuild"
 
+      - name: Configure AUR SSH
+        if: github.event_name == 'release' || inputs.publish
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AUR_SSH_PRIVATE_KEY}" ]]; then
+            echo "AUR_SSH_PRIVATE_KEY is not set" >&2
+            exit 1
+          fi
+
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+
+          ssh-keyscan aur.archlinux.org > ~/.ssh/known_hosts
+          ssh-keygen -lf ~/.ssh/known_hosts |
+            grep -q "SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4"
+
+          {
+            echo "Host aur.archlinux.org"
+            echo "  User aur"
+            echo "  IdentityFile $HOME/.ssh/aur"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  UserKnownHostsFile $HOME/.ssh/known_hosts"
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+          git config --global user.name "screwys"
+          git config --global user.email "254296947+screwys@users.noreply.github.com"
+          git config --global core.sshCommand \
+            "ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+
+          ssh -i "$HOME/.ssh/aur" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            aur@aur.archlinux.org help >/dev/null
+
       - name: Build packages
         run: |
           set -euo pipefail
@@ -99,40 +140,6 @@ jobs:
               makepkg --printsrcinfo > .SRCINFO
             "
           done
-
-      - name: Configure AUR SSH
-        if: github.event_name == 'release' || inputs.publish
-        env:
-          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${AUR_SSH_PRIVATE_KEY}" ]]; then
-            echo "AUR_SSH_PRIVATE_KEY is not set" >&2
-            exit 1
-          fi
-
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-
-          ssh-keyscan aur.archlinux.org > ~/.ssh/known_hosts
-          ssh-keygen -lf ~/.ssh/known_hosts |
-            grep -q "SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4"
-
-          {
-            echo "Host aur.archlinux.org"
-            echo "  User aur"
-            echo "  IdentityFile ~/.ssh/aur"
-            echo "  IdentitiesOnly yes"
-          } > ~/.ssh/config
-          chmod 600 ~/.ssh/config
-
-          git config --global user.name "screwys"
-          git config --global user.email "254296947+screwys@users.noreply.github.com"
-          git config --global core.sshCommand \
-            "ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
-
-          ssh -o BatchMode=yes aur@aur.archlinux.org help >/dev/null
 
       - name: Publish packages
         if: github.event_name == 'release' || inputs.publish
