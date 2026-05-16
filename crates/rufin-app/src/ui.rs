@@ -57,6 +57,11 @@ const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 40;
 const BOTTOM_PLAYER_BUTTON_SIZE: i32 = 36;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 44.0;
 const BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP: i32 = 6;
+const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
+const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
+const MAX_RESTORED_WINDOW_WIDTH: i32 = 1400;
+const MAX_RESTORED_WINDOW_HEIGHT: i32 = 900;
+const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
@@ -396,9 +401,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         .application(app)
         .title("Rufin")
         .build();
-    if let (Some(width), Some(height)) = (settings.window_width, settings.window_height)
-        && width >= 480
-        && height >= 360
+    if let Some((width, height)) =
+        restored_window_size(settings.window_width, settings.window_height)
     {
         window.set_default_size(width, height);
     }
@@ -964,12 +968,32 @@ impl Shell {
         self.update_density();
     }
 
+    fn set_external_lyrics_enabled(self: &Rc<Self>, enabled: bool) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.external_lyrics_enabled == enabled {
+                return;
+            }
+            settings.external_lyrics_enabled = enabled;
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save lyrics setting");
+            }
+        }
+        self.render_queue_panel();
+        if enabled && current_playback_track_id(&self.state.player.borrow()).is_some() {
+            self.controller.request_lyrics_for_current();
+        }
+    }
+
     fn save_window_geometry(&self) {
-        let width = self.window.width();
-        let height = self.window.height();
-        if width < 480 || height < 360 {
+        if self.window.is_maximized() || self.window.is_fullscreen() {
             return;
         }
+        let Some((width, height)) =
+            restored_window_size(Some(self.window.width()), Some(self.window.height()))
+        else {
+            return;
+        };
         let mut settings = self.state.settings.borrow_mut();
         if settings.window_width == Some(width) && settings.window_height == Some(height) {
             return;
@@ -1226,6 +1250,17 @@ impl Shell {
         };
         *self.state.lyrics_track_id.borrow_mut() = Some(track_id);
         self.controller.request_lyrics_for_current();
+    }
+
+    fn lyrics_empty_status(&self) -> String {
+        let settings = self.state.settings.borrow();
+        if settings.private_mode {
+            tr("No server lyrics for the current track. Private mode is on.")
+        } else if !settings.external_lyrics_enabled {
+            tr("No server lyrics for the current track. External lyric lookup is off.")
+        } else {
+            tr("No lyrics for the current track.")
+        }
     }
 
     fn update_lyrics_highlight_at(self: &Rc<Self>, position_millis: u64) {
@@ -2648,6 +2683,38 @@ impl Shell {
         group.append(&note);
         wrapper.append(&group);
 
+        let lyrics_group = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        lyrics_group.add_css_class("settings-group");
+        let lyrics_heading = gtk::Label::new(Some(&tr("Lyrics")));
+        lyrics_heading.add_css_class("section-heading");
+        lyrics_heading.set_xalign(0.0);
+        lyrics_group.append(&lyrics_heading);
+
+        let external_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        external_row.set_valign(gtk::Align::Center);
+        let external_text = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        external_text.set_hexpand(true);
+        let external_title = gtk::Label::new(Some(&tr("External lyric lookup")));
+        external_title.set_xalign(0.0);
+        let external_note = gtk::Label::new(Some(&tr(
+            "Use Jellyfin remote lyric providers when server lyrics are unavailable.",
+        )));
+        external_note.add_css_class("muted");
+        external_note.set_wrap(true);
+        external_note.set_xalign(0.0);
+        external_text.append(&external_title);
+        external_text.append(&external_note);
+        let external_switch = gtk::Switch::new();
+        external_switch.set_active(self.state.settings.borrow().external_lyrics_enabled);
+        let shell = Rc::clone(self);
+        external_switch.connect_active_notify(move |switch| {
+            shell.set_external_lyrics_enabled(switch.is_active());
+        });
+        external_row.append(&external_text);
+        external_row.append(&external_switch);
+        lyrics_group.append(&external_row);
+        wrapper.append(&lyrics_group);
+
         let library = self.state.library.borrow();
         let server_name = library
             .server
@@ -2932,7 +2999,7 @@ impl Shell {
                     .push(LyricsRow { row, label });
             }
         } else {
-            let lyrics_status = gtk::Label::new(Some(&tr("No lyrics for the current track.")));
+            let lyrics_status = gtk::Label::new(Some(&self.lyrics_empty_status()));
             lyrics_status.add_css_class("muted");
             lyrics_status.set_wrap(true);
             lyrics_status.set_justify(gtk::Justification::Center);
@@ -2950,11 +3017,13 @@ impl Shell {
         queue_lyrics_split.set_resize_start_child(true);
         queue_lyrics_split.set_resize_end_child(true);
         queue_lyrics_split.set_shrink_start_child(true);
-        queue_lyrics_split.set_shrink_end_child(false);
+        queue_lyrics_split.set_shrink_end_child(true);
         queue_lyrics_split.set_start_child(Some(&queue));
         queue_lyrics_split.set_end_child(Some(&lyrics));
         if let Some(position) = self.state.settings.borrow().queue_lyrics_position {
-            queue_lyrics_split.set_position(position.max(120));
+            let available_height = queue_lyrics_available_height(self);
+            queue_lyrics_split
+                .set_position(clamp_queue_lyrics_position(available_height, position));
         }
 
         let shell = Rc::clone(self);
@@ -6013,6 +6082,31 @@ fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
     ((width - gaps).max(page_size)) / page_size
 }
 
+fn restored_window_size(width: Option<i32>, height: Option<i32>) -> Option<(i32, i32)> {
+    let (width, height) = (width?, height?);
+    if width < MIN_RESTORED_WINDOW_WIDTH || height < MIN_RESTORED_WINDOW_HEIGHT {
+        return None;
+    }
+    Some((
+        width.clamp(MIN_RESTORED_WINDOW_WIDTH, MAX_RESTORED_WINDOW_WIDTH),
+        height.clamp(MIN_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_HEIGHT),
+    ))
+}
+
+fn queue_lyrics_available_height(shell: &Shell) -> i32 {
+    let panel_height = shell.right_panel.height();
+    if panel_height > QUEUE_LYRICS_MIN_PANE_HEIGHT * 2 {
+        return panel_height;
+    }
+    (shell.window.height() - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2)
+}
+
+fn clamp_queue_lyrics_position(available_height: i32, position: i32) -> i32 {
+    let max_position =
+        (available_height - QUEUE_LYRICS_MIN_PANE_HEIGHT).max(QUEUE_LYRICS_MIN_PANE_HEIGHT);
+    position.clamp(QUEUE_LYRICS_MIN_PANE_HEIGHT, max_position)
+}
+
 fn card_label_width_chars(size: i32) -> i32 {
     (size / 8).clamp(8, 28)
 }
@@ -6839,9 +6933,9 @@ mod tests {
     use super::{
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, LyricsFollowScrollPause,
         active_lyrics_line_index, clamp_content_split_position, clamp_home_album_page_start,
-        current_playback_track_id, home_album_card_size, home_album_page_size,
-        lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
-        next_lyrics_line_start_after,
+        clamp_queue_lyrics_position, current_playback_track_id, home_album_card_size,
+        home_album_page_size, lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
+        next_lyrics_line_start_after, restored_window_size,
     };
     use rufin_core::{QueueEntry, QueueEntryId, TrackId};
     use rufin_provider::LyricLine;
@@ -6904,6 +6998,27 @@ mod tests {
         assert_eq!(clamp_content_split_position(1_000, 100), 500);
         assert_eq!(clamp_content_split_position(1_000, 950), 900);
         assert_eq!(clamp_content_split_position(1_000, 625), 625);
+    }
+
+    #[test]
+    fn restored_window_size_ignores_tiny_and_clamps_huge_geometry() {
+        assert_eq!(restored_window_size(None, Some(700)), None);
+        assert_eq!(restored_window_size(Some(400), Some(700)), None);
+        assert_eq!(
+            restored_window_size(Some(1061), Some(2251)),
+            Some((1061, 900))
+        );
+        assert_eq!(
+            restored_window_size(Some(1800), Some(1200)),
+            Some((1400, 900))
+        );
+    }
+
+    #[test]
+    fn queue_lyrics_position_clamps_to_available_height() {
+        assert_eq!(clamp_queue_lyrics_position(800, 1701), 680);
+        assert_eq!(clamp_queue_lyrics_position(800, 10), 120);
+        assert_eq!(clamp_queue_lyrics_position(200, 1701), 120);
     }
 
     #[test]

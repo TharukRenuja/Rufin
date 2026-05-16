@@ -1585,6 +1585,7 @@ impl AppController {
 
     pub fn request_lyrics_for_current(&self) {
         let Some((server_id, entry, _position)) = self.current_queue_entry() else {
+            debug!("lyrics request skipped because the queue has no current track");
             let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
             return;
         };
@@ -1593,14 +1594,16 @@ impl AppController {
             .with_store(|store| store.load_lyrics(&server_id, &entry.track_id))
             .unwrap_or(None);
         if cached.is_some() {
+            debug!(track_id = %entry.track_id, "loaded lyrics from cache");
             let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(cached)));
             return;
         }
         let allow_remote = self
             .store
             .with_store(|store| store.load_settings())
-            .map(|settings| settings.external_lyrics_enabled)
+            .map(|settings| remote_lyrics_allowed(&settings))
             .unwrap_or(false);
+        debug!(track_id = %entry.track_id, allow_remote, "requesting lyrics from provider");
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
@@ -1626,10 +1629,12 @@ impl AppController {
                 });
             match result {
                 Ok(Some(lyrics)) => {
+                    debug!(track_id = %entry.track_id, source = ?lyrics.source, "loaded lyrics from provider");
                     let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
                     let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
                 }
                 Ok(None) => {
+                    debug!(track_id = %entry.track_id, allow_remote, "provider returned no lyrics");
                     let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
                 }
                 Err(error) => {
@@ -2370,6 +2375,10 @@ fn resolve_stream(
         .map_err(|error| error.to_string())
 }
 
+fn remote_lyrics_allowed(settings: &AppSettings) -> bool {
+    settings.external_lyrics_enabled && !settings.private_mode
+}
+
 fn provider_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
@@ -2685,16 +2694,27 @@ fn release_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::mpsc::Receiver;
+    use std::sync::mpsc::{Receiver, channel};
+    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
-    use super::{AppController, ControllerEvent, LibrarySnapshot, sync_page_finished};
-    use rufin_core::{ImageRef, PlaylistId, ServerId, ServerIdentity};
+    use super::{
+        AppController, ControllerEvent, LibrarySnapshot, StoreHandle, load_snapshot,
+        playback_snapshot_from_queue, restore_queue, sync_page_finished,
+    };
+    use rufin_core::{
+        AlbumId, AppSettings, ArtistId, ImageRef, PlaylistId, QueueEngine, ServerId,
+        ServerIdentity, Track, TrackId,
+    };
     use rufin_playback::PlaybackState;
+    use rufin_provider::{LyricLine, Lyrics, LyricsSource};
+    use rufin_secrets::MemorySecretStore;
     use rufin_store::{CoverCacheEntry, SavedServer};
     use rufin_test_support::FakeScale;
+    use tokio::runtime::Runtime;
 
     #[test]
     fn no_server_bootstrap_enters_first_run_state() {
@@ -3083,6 +3103,65 @@ mod tests {
     }
 
     #[test]
+    fn restored_queue_request_lyrics_emits_cached_current_lyrics() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = SavedServer {
+            server: ServerIdentity {
+                id: ServerId::new("jellyfin:server:lyrics"),
+                provider: "jellyfin".to_string(),
+                name: "Lyrics Server".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        };
+        let track = restored_track();
+        let mut queue = QueueEngine::new(saved.server.id.clone());
+        queue.play_now(&track);
+        queue.set_progress_seconds(12);
+        let lyrics = Lyrics {
+            track_id: track.id.clone(),
+            source: LyricsSource::Server,
+            lines: vec![LyricLine {
+                text: "first line".to_string(),
+                start_millis: Some(1_000),
+            }],
+        };
+        store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.save_queue_snapshot(&queue.snapshot())?;
+                store.save_lyrics(&saved.server.id, &lyrics)?;
+                Ok(())
+            })
+            .expect("seed restored state");
+
+        let (controller, events) = controller_from_store_for_test(store);
+
+        controller.request_lyrics_for_current();
+
+        assert_eq!(wait_for_lyrics(&events), Some(lyrics));
+    }
+
+    #[test]
+    fn remote_lyrics_are_disabled_in_private_mode() {
+        let mut settings = AppSettings {
+            external_lyrics_enabled: true,
+            ..AppSettings::default()
+        };
+        assert!(super::remote_lyrics_allowed(&settings));
+
+        settings.private_mode = true;
+        assert!(!super::remote_lyrics_allowed(&settings));
+
+        settings.private_mode = false;
+        settings.external_lyrics_enabled = false;
+        assert!(!super::remote_lyrics_allowed(&settings));
+    }
+
+    #[test]
     fn controller_events_are_sendable() {
         fn assert_send<T: Send>() {}
         assert_send::<ControllerEvent>();
@@ -3096,6 +3175,53 @@ mod tests {
         assert!(!super::is_provider_not_found_error(
             "provider network failed: offline"
         ));
+    }
+
+    fn controller_from_store_for_test(
+        store: StoreHandle,
+    ) -> (AppController, Receiver<ControllerEvent>) {
+        let (events, receiver) = channel();
+        let runtime = Runtime::new()
+            .map(Arc::new)
+            .unwrap_or_else(|error| panic!("failed to create Tokio runtime: {error}"));
+        let snapshot = load_snapshot(&store).expect("load snapshot");
+        let queue = restore_queue(&store, snapshot.server.as_ref());
+        let playback_snapshot = playback_snapshot_from_queue(queue.as_ref());
+        let controller = AppController {
+            store,
+            runtime,
+            secrets: Arc::new(MemorySecretStore::new()),
+            queue: Arc::new(Mutex::new(queue)),
+            playback: Arc::new(Mutex::new(Box::new(
+                rufin_playback::FakePlaybackBackend::new(),
+            ))),
+            playback_snapshot: Arc::new(Mutex::new(playback_snapshot)),
+            last_progress_snapshot: Arc::new(Mutex::new(None)),
+            last_report_snapshot: Arc::new(Mutex::new(None)),
+            events,
+            sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
+        };
+        (controller, receiver)
+    }
+
+    fn restored_track() -> Track {
+        Track {
+            id: TrackId::new("jellyfin:track:lyrics"),
+            album_id: AlbumId::fake(1),
+            title: "Restored Track".to_string(),
+            artist: "Artist".to_string(),
+            artist_id: Some(ArtistId::fake(1)),
+            album: "Album".to_string(),
+            year: 2026,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number: 1,
+            track_number: 1,
+            image_ref: None,
+            genres: Vec::new(),
+        }
     }
 
     fn wait_for_snapshot(events: &Receiver<ControllerEvent>) -> LibrarySnapshot {
