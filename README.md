@@ -1,8 +1,13 @@
 # Rufin
 
-Native GTK4 Jellyfin Client in Rust 
+Native GTK4 Jellyfin Client in Rust, built for speed. Currently it is operational **enough**. 
 
-Experimental. Testing:
+## TODO
+
+- Local folder playbacks
+- Support for Navidrome and other music servers
+- Support for music server + folder 
+- Private mode
 
 ```bash
 cargo fmt --check
@@ -14,13 +19,22 @@ cargo run -p rufin-app
 
 ## Nix
 
+- Run or build  with the flake
+
 ```bash
 nix run github:screwys/Rufin
 nix build github:screwys/Rufin
 nix develop
 ```
 
-The flake exposes the app as `packages.default` and `apps.default`.
+## AUR
+
+- `rufin` for tagged binary releases, `rufin-git` to track this repository
+
+```bash
+yay -S rufin
+yay -S rufin-git
+```
 
 ## Flatpak
 
