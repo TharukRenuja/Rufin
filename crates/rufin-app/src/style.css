@@ -136,10 +136,7 @@ window {
 }
 
 .player-link {
-  padding: 0 2px;
-  min-height: 0;
-  border-radius: 5px;
-  background: transparent;
+  padding: 0;
 }
 
 .player-link:hover {
@@ -148,11 +145,29 @@ window {
 
 .player-transport-button {
   border-radius: 999px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
+  background: transparent;
 }
 
 .player-transport-button:hover {
-  background: color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.player-play-button {
+  background: color-mix(in srgb, @window_fg_color 92%, transparent);
+  color: @window_bg_color;
+}
+
+.player-play-button:hover {
+  background: @window_fg_color;
+}
+
+.skip-button-content {
+  margin: 0;
+  padding: 0;
+}
+
+.skip-button-bar {
+  font-weight: 700;
 }
 
 .detail-title {
@@ -234,6 +249,11 @@ window {
   min-height: 28px;
 }
 
+.icon-button.player-play-button {
+  min-width: 36px;
+  min-height: 36px;
+}
+
 .icon-button.queue-remove-button {
   min-width: 28px;
   min-height: 28px;
@@ -250,6 +270,10 @@ window {
 .queue-row {
   padding: 4px 0;
   border-radius: 6px;
+}
+
+.queue-link {
+  padding: 0;
 }
 
 .queue-row-current {

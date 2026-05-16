@@ -102,11 +102,8 @@ struct PlayerControls {
     cover_picture: gtk::Picture,
     cover_seed: Rc<Cell<u32>>,
     cover_key: RefCell<Option<String>>,
-    title_button: gtk::Button,
     title: gtk::Label,
-    artist_button: gtk::Button,
     artist: gtk::Label,
-    album_button: gtk::Button,
     album: gtk::Label,
     stop_button: gtk::Button,
     previous_button: gtk::Button,
@@ -1547,12 +1544,47 @@ impl Shell {
         let title = gtk::Label::new(Some(&entry.title));
         title.set_xalign(0.0);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        let artist = gtk::Label::new(Some(&entry.artist));
-        artist.add_css_class("muted");
-        artist.set_xalign(0.0);
-        artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let meta = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        meta.set_hexpand(true);
+        let artist = queue_link_label(&entry.artist);
+        let separator = gtk::Label::new(Some("·"));
+        separator.add_css_class("muted");
+        let album = queue_link_label(&entry.album);
         labels.append(&title);
-        labels.append(&artist);
+        meta.append(&artist);
+        meta.append(&separator);
+        meta.append(&album);
+        labels.append(&meta);
+        if let Some(artist_id) = entry.artist_id.clone() {
+            let shell = Rc::clone(self);
+            add_label_click(&artist, move || {
+                shell.navigate(Route::ArtistDetail(artist_id.clone()))
+            });
+        } else if !entry.artist.trim().is_empty() {
+            let shell = Rc::clone(self);
+            let artist_name = entry.artist.clone();
+            add_label_click(&artist, move || {
+                shell.navigate(Route::Search {
+                    query: artist_name.clone(),
+                    kind: SearchKind::Artists,
+                });
+            });
+        }
+        if let Some(album_id) = entry.album_id.clone() {
+            let shell = Rc::clone(self);
+            add_label_click(&album, move || {
+                shell.navigate(Route::AlbumDetail(album_id.clone()))
+            });
+        } else if !entry.album.trim().is_empty() {
+            let shell = Rc::clone(self);
+            let album_name = entry.album.clone();
+            add_label_click(&album, move || {
+                shell.navigate(Route::Search {
+                    query: album_name.clone(),
+                    kind: SearchKind::Albums,
+                });
+            });
+        }
         let year_text = (entry.year != 0).then(|| entry.year.to_string());
         let year = gtk::Label::new(year_text.as_deref());
         year.add_css_class("muted");
@@ -1647,16 +1679,14 @@ impl Shell {
         controls.title.set_text(&title);
         controls.artist.set_text(&artist);
         controls.album.set_text(album);
-        controls
-            .title_button
-            .set_sensitive(player.current.is_some());
-        controls.artist_button.set_sensitive(
+        controls.title.set_sensitive(player.current.is_some());
+        controls.artist.set_sensitive(
             player
                 .current
                 .as_ref()
                 .is_some_and(|entry| !entry.artist.is_empty()),
         );
-        controls.album_button.set_sensitive(
+        controls.album.set_sensitive(
             player
                 .current
                 .as_ref()
@@ -1725,8 +1755,11 @@ impl Shell {
         stack.set_width_request(size);
         stack.set_height_request(size);
         stack.set_size_request(size, size);
+        stack.set_overflow(gtk::Overflow::Hidden);
         stack.set_hexpand(false);
+        stack.set_vexpand(false);
         stack.set_halign(gtk::Align::Start);
+        stack.set_valign(gtk::Align::Start);
 
         let fallback = cover_tile(seed, size);
         stack.add_named(&fallback, Some("fallback"));
@@ -1735,11 +1768,15 @@ impl Shell {
         picture.add_css_class("cover-tile");
         picture.add_css_class("card");
         picture.set_content_fit(gtk::ContentFit::Cover);
+        picture.set_can_shrink(true);
+        picture.set_isolate_contents(true);
         picture.set_width_request(size);
         picture.set_height_request(size);
         picture.set_size_request(size, size);
         picture.set_hexpand(false);
+        picture.set_vexpand(false);
         picture.set_halign(gtk::Align::Start);
+        picture.set_valign(gtk::Align::Start);
         stack.add_named(&picture, Some("image"));
         stack.set_visible_child_name("fallback");
 
@@ -2194,22 +2231,22 @@ fn queue_header_row() -> gtk::Widget {
 fn build_bottom_player() -> PlayerControls {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     root.add_css_class("bottom-player");
-    root.set_height_request(52);
+    root.set_height_request(44);
     root.set_valign(gtk::Align::Center);
 
-    let (cover_stack, cover, cover_picture, cover_seed) = player_cover_tile(38);
+    let (cover_stack, cover, cover_picture, cover_seed) = player_cover_tile(34);
     cover_stack.set_valign(gtk::Align::Center);
     root.append(&cover_stack);
 
     let identity = gtk::Box::new(gtk::Orientation::Vertical, 2);
     identity.set_width_request(160);
     identity.set_valign(gtk::Align::Center);
-    let (title_button, title) = player_link("player-title");
-    let (artist_button, artist) = player_link("muted");
-    let (album_button, album) = player_link("muted");
-    identity.append(&title_button);
-    identity.append(&artist_button);
-    identity.append(&album_button);
+    let title = player_link("player-title");
+    let artist = player_link("muted");
+    let album = player_link("muted");
+    identity.append(&title);
+    identity.append(&artist);
+    identity.append(&album);
     root.append(&identity);
 
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -2220,11 +2257,12 @@ fn build_bottom_player() -> PlayerControls {
 
     let stop_button = icon_button("media-playback-stop-symbolic", "Stop");
     stop_button.add_css_class("player-transport-button");
-    let previous_button = icon_button("go-previous-symbolic", "Previous");
+    let previous_button = skip_button(false, "Previous");
     previous_button.add_css_class("player-transport-button");
     let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
     play_button.add_css_class("player-transport-button");
-    let next_button = icon_button("go-next-symbolic", "Next");
+    play_button.add_css_class("player-play-button");
+    let next_button = skip_button(true, "Next");
     next_button.add_css_class("player-transport-button");
     let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
     let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
@@ -2276,11 +2314,8 @@ fn build_bottom_player() -> PlayerControls {
         cover_picture,
         cover_seed,
         cover_key: RefCell::new(None),
-        title_button,
         title,
-        artist_button,
         artist,
-        album_button,
         album,
         stop_button,
         previous_button,
@@ -2336,54 +2371,45 @@ fn connect_player_controls(shell: &Rc<Shell>) {
         .connect_clicked(move |_| controller.cycle_repeat());
 
     let title_shell = Rc::clone(shell);
-    shell
-        .player_controls
-        .title_button
-        .connect_clicked(move |_| {
-            let Some(entry) = title_shell.state.player.borrow().current.clone() else {
-                return;
-            };
-            title_shell.navigate(Route::Search {
-                query: entry.title,
-                kind: SearchKind::Tracks,
-            });
+    add_label_click(&shell.player_controls.title, move || {
+        let Some(entry) = title_shell.state.player.borrow().current.clone() else {
+            return;
+        };
+        title_shell.navigate(Route::Search {
+            query: entry.title,
+            kind: SearchKind::Tracks,
         });
+    });
 
     let artist_shell = Rc::clone(shell);
-    shell
-        .player_controls
-        .artist_button
-        .connect_clicked(move |_| {
-            let Some(entry) = artist_shell.state.player.borrow().current.clone() else {
-                return;
-            };
-            if let Some(artist_id) = entry.artist_id {
-                artist_shell.navigate(Route::ArtistDetail(artist_id));
-            } else if !entry.artist.trim().is_empty() {
-                artist_shell.navigate(Route::Search {
-                    query: entry.artist,
-                    kind: SearchKind::Artists,
-                });
-            }
-        });
+    add_label_click(&shell.player_controls.artist, move || {
+        let Some(entry) = artist_shell.state.player.borrow().current.clone() else {
+            return;
+        };
+        if let Some(artist_id) = entry.artist_id {
+            artist_shell.navigate(Route::ArtistDetail(artist_id));
+        } else if !entry.artist.trim().is_empty() {
+            artist_shell.navigate(Route::Search {
+                query: entry.artist,
+                kind: SearchKind::Artists,
+            });
+        }
+    });
 
     let album_shell = Rc::clone(shell);
-    shell
-        .player_controls
-        .album_button
-        .connect_clicked(move |_| {
-            let Some(entry) = album_shell.state.player.borrow().current.clone() else {
-                return;
-            };
-            if let Some(album_id) = entry.album_id {
-                album_shell.navigate(Route::AlbumDetail(album_id));
-            } else if !entry.album.trim().is_empty() {
-                album_shell.navigate(Route::Search {
-                    query: entry.album,
-                    kind: SearchKind::Albums,
-                });
-            }
-        });
+    add_label_click(&shell.player_controls.album, move || {
+        let Some(entry) = album_shell.state.player.borrow().current.clone() else {
+            return;
+        };
+        if let Some(album_id) = entry.album_id {
+            album_shell.navigate(Route::AlbumDetail(album_id));
+        } else if !entry.album.trim().is_empty() {
+            album_shell.navigate(Route::Search {
+                query: entry.album,
+                kind: SearchKind::Albums,
+            });
+        }
+    });
 
     let controller = shell.controller.clone();
     shell
@@ -3410,7 +3436,9 @@ fn cover_tile(seed: u32, size: i32) -> gtk::Widget {
     area.set_height_request(size);
     area.set_size_request(size, size);
     area.set_hexpand(false);
+    area.set_vexpand(false);
     area.set_halign(gtk::Align::Start);
+    area.set_valign(gtk::Align::Start);
     area.set_draw_func(move |_, context, width, height| {
         let red = f64::from((seed & 0xff) as u8) / 255.0;
         let green = f64::from(((seed >> 8) & 0xff) as u8) / 255.0;
@@ -3450,6 +3478,9 @@ fn player_cover_tile(size: i32) -> (gtk::Stack, gtk::DrawingArea, gtk::Picture, 
     stack.set_width_request(size);
     stack.set_height_request(size);
     stack.set_size_request(size, size);
+    stack.set_overflow(gtk::Overflow::Hidden);
+    stack.set_hexpand(false);
+    stack.set_vexpand(false);
     let area = gtk::DrawingArea::new();
     area.add_css_class("cover-tile");
     area.add_css_class("card");
@@ -3457,6 +3488,7 @@ fn player_cover_tile(size: i32) -> (gtk::Stack, gtk::DrawingArea, gtk::Picture, 
     area.set_content_height(size);
     area.set_width_request(size);
     area.set_height_request(size);
+    area.set_vexpand(false);
     let draw_seed = Rc::clone(&seed);
     area.set_draw_func(move |_, context, width, height| {
         let seed = draw_seed.get();
@@ -3481,30 +3513,72 @@ fn player_cover_tile(size: i32) -> (gtk::Stack, gtk::DrawingArea, gtk::Picture, 
     picture.add_css_class("cover-tile");
     picture.add_css_class("card");
     picture.set_content_fit(gtk::ContentFit::Cover);
+    picture.set_can_shrink(true);
+    picture.set_isolate_contents(true);
     picture.set_width_request(size);
     picture.set_height_request(size);
     picture.set_size_request(size, size);
+    picture.set_hexpand(false);
+    picture.set_vexpand(false);
     stack.add_named(&picture, Some("image"));
     stack.set_visible_child_name("fallback");
     (stack, area, picture, seed)
 }
 
-fn player_link(css_class: &str) -> (gtk::Button, gtk::Label) {
-    let button = gtk::Button::new();
-    button.add_css_class("flat");
-    button.add_css_class("player-link");
-    button.set_halign(gtk::Align::Fill);
-    button.set_hexpand(true);
-    button.set_cursor_from_name(Some("pointer"));
-
+fn player_link(css_class: &str) -> gtk::Label {
     let label = gtk::Label::new(None);
+    label.add_css_class("player-link");
     label.add_css_class(css_class);
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_hexpand(true);
-    add_dynamic_link_hover(button.upcast_ref(), &label);
-    button.set_child(Some(&label));
-    (button, label)
+    label.set_cursor_from_name(Some("pointer"));
+    add_dynamic_link_hover(label.upcast_ref(), &label);
+    label
+}
+
+fn queue_link_label(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("queue-link");
+    label.add_css_class("muted");
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_cursor_from_name(Some("pointer"));
+    add_dynamic_link_hover(label.upcast_ref(), &label);
+    label
+}
+
+fn add_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
+    let click = gtk::GestureClick::new();
+    click.connect_released(move |_, _, _, _| callback());
+    label.add_controller(click);
+}
+
+fn skip_button(next: bool, label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.set_tooltip_text(Some(&tr(label)));
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    content.add_css_class("skip-button-content");
+    let bar = gtk::Label::new(Some("|"));
+    bar.add_css_class("skip-button-bar");
+    let icon = gtk::Image::from_icon_name(if next {
+        "go-next-symbolic"
+    } else {
+        "go-previous-symbolic"
+    });
+    if next {
+        content.append(&icon);
+        content.append(&bar);
+    } else {
+        content.append(&bar);
+        content.append(&icon);
+    }
+    button.set_child(Some(&content));
+    button
 }
 
 fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
