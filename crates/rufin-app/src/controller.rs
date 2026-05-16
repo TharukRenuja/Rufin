@@ -779,6 +779,37 @@ impl AppController {
         }
     }
 
+    pub fn activate_queue_entry(&self, entry_id: QueueEntryId) {
+        let result = self.with_queue_mut(|queue| {
+            if queue.activate(&entry_id) {
+                Ok(())
+            } else {
+                Err("The selected queue entry was not found.".to_string())
+            }
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+        self.start_current_track();
+    }
+
+    pub fn move_queue_entry_after_current(&self, entry_id: QueueEntryId) {
+        let result = self.with_queue_mut(|queue| {
+            if queue.move_after_current(&entry_id) {
+                Ok(())
+            } else {
+                Err("The selected queue entry was not found.".to_string())
+            }
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
     pub fn clear_queue(&self) {
         let result = self.with_queue_mut(|queue| {
             queue.clear();

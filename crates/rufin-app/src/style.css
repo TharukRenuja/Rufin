@@ -312,11 +312,6 @@ scale.player-progress slider {
   min-height: 36px;
 }
 
-.icon-button.queue-remove-button {
-  min-width: 28px;
-  min-height: 28px;
-}
-
 .queue-panel {
   min-height: 260px;
 }
@@ -326,8 +321,12 @@ scale.player-progress slider {
 }
 
 .queue-row {
-  padding: 4px 0;
-  border-radius: 6px;
+  padding: 5px 6px;
+  border-radius: 8px;
+}
+
+.queue-row:focus {
+  box-shadow: inset 0 0 0 2px @accent_color;
 }
 
 .queue-link {
@@ -346,6 +345,10 @@ scale.player-progress slider {
 .queue-list row {
   padding: 0;
   background: transparent;
+}
+
+.queue-context-menu modelbutton:first-child {
+  color: @destructive_color;
 }
 
 .active-toggle {

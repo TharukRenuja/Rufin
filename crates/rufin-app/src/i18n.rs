@@ -40,6 +40,12 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Back");
     let _ = tr("Forward");
     let _ = tr("Menu");
+    let _ = tr("Main Menu");
+    let _ = tr("Preferences");
+    let _ = tr("Keyboard Shortcuts");
+    let _ = tr("Toggle Fullscreen");
+    let _ = tr("About Rufin");
+    let _ = tr("General");
     let _ = tr("Connect");
     let _ = tr("Resync Library");
     let _ = tr("Play");
@@ -55,9 +61,12 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Repeat one");
     let _ = tr("Repeat all");
     let _ = tr("Remove from queue");
+    let _ = tr("Remove from Queue");
     let _ = tr("Mute");
     let _ = tr("Play now");
+    let _ = tr("Play Now");
     let _ = tr("Play next");
+    let _ = tr("Play Next");
     let _ = tr("Add to queue");
     let _ = tr("Title");
     let _ = tr("Year");
@@ -74,4 +83,5 @@ fn catalog_strings_for_extraction() {
     let _ = tr("The selected cached album was not found.");
     let _ = tr("Cached rows will appear here after the background sync finishes.");
     let _ = tr("Type a query in the sidebar search field to search the local cache.");
+    let _ = tr("Native GTK music client shell with Jellyfin playback.");
 }

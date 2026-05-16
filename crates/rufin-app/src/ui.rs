@@ -16,9 +16,9 @@ use mpris_server::{
 };
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
-    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueSnapshot,
-    RepeatMode, Route, RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn,
-    TrackTableSettings, format_duration,
+    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueEntryId,
+    QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, Track, TrackSortKey,
+    TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{LyricLine, Lyrics};
@@ -384,12 +384,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     route_title.set_xalign(0.0);
     route_title.set_valign(gtk::Align::Center);
     route_title.set_hexpand(true);
-    let settings_button = icon_button("emblem-system-symbolic", "Settings");
+    let main_menu = primary_menu_button();
 
     header.append(&back_button);
     header.append(&forward_button);
     header.append(&route_title);
-    header.append(&settings_button);
+    header.append(&main_menu);
 
     let route_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     route_host.set_hexpand(true);
@@ -440,7 +440,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
-    connect_shell_actions(&shell, settings_button);
+    connect_shell_actions(&shell, main_menu);
     connect_player_controls(&shell);
     install_mpris(&shell);
     shell.update_density();
@@ -1528,7 +1528,7 @@ impl Shell {
 
         let configure = gtk::MenuButton::new();
         configure.add_css_class("flat");
-        configure.set_icon_name("emblem-system-symbolic");
+        configure.set_icon_name("view-more-symbolic");
         configure.set_tooltip_text(Some(&tr("Configure columns")));
         toolbar.append(&configure);
         wrapper.append(&toolbar);
@@ -2712,6 +2712,9 @@ impl Shell {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         row.add_css_class("queue-row");
         row.set_valign(gtk::Align::Center);
+        row.set_focusable(true);
+        let accessible_label = format!("{} {}", entry.title, entry.artist);
+        row.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
         if current_index == Some(index) {
             row.add_css_class("queue-row-current");
         }
@@ -2754,16 +2757,11 @@ impl Shell {
         year.set_xalign(1.0);
         year.set_width_chars(4);
         year.set_halign(gtk::Align::End);
-        let remove = icon_button("user-trash-symbolic", "Remove from queue");
-        remove.add_css_class("queue-remove-button");
-        let controller = self.controller.clone();
-        let entry_id = entry.id.clone();
-        remove.connect_clicked(move |_| controller.remove_from_queue(entry_id.clone()));
         row.append(&number);
         row.append(&cover);
         row.append(&labels);
         row.append(&year);
-        row.append(&remove);
+        install_queue_row_context_menu(&row, &self.controller, entry.id.clone());
         row.upcast()
     }
 
@@ -3535,7 +3533,7 @@ impl Shell {
     }
 }
 
-fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
+fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let back_shell = Rc::clone(shell);
     shell
         .back_button
@@ -3546,8 +3544,8 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
         .forward_button
         .connect_clicked(move |_| forward_shell.go_forward());
 
-    let settings_shell = Rc::clone(shell);
-    settings_button.connect_clicked(move |_| settings_shell.navigate(Route::Settings));
+    install_window_actions(shell);
+    install_main_menu_shortcut(shell, main_menu);
 
     let close_shell = Rc::clone(shell);
     shell.window.connect_close_request(move |_| {
@@ -3606,6 +3604,93 @@ fn connect_shell_actions(shell: &Rc<Shell>, settings_button: gtk::Button) {
     });
 }
 
+fn install_window_actions(shell: &Rc<Shell>) {
+    let preferences = gio::SimpleAction::new("preferences", None);
+    let preferences_shell = Rc::clone(shell);
+    preferences.connect_activate(move |_, _| preferences_shell.navigate(Route::Settings));
+    shell.window.add_action(&preferences);
+
+    let shortcuts = gio::SimpleAction::new("show-shortcuts", None);
+    let shortcuts_shell = Rc::clone(shell);
+    shortcuts.connect_activate(move |_, _| show_shortcuts_dialog(&shortcuts_shell));
+    shell.window.add_action(&shortcuts);
+
+    let fullscreen = gio::SimpleAction::new("toggle-fullscreen", None);
+    let fullscreen_shell = Rc::clone(shell);
+    fullscreen.connect_activate(move |_, _| {
+        if fullscreen_shell.window.is_fullscreen() {
+            fullscreen_shell.window.unfullscreen();
+        } else {
+            fullscreen_shell.window.fullscreen();
+        }
+    });
+    shell.window.add_action(&fullscreen);
+
+    let about = gio::SimpleAction::new("about", None);
+    let about_shell = Rc::clone(shell);
+    about.connect_activate(move |_, _| show_about_dialog(&about_shell));
+    shell.window.add_action(&about);
+
+    shell
+        .application
+        .set_accels_for_action("win.preferences", &["<Control>comma"]);
+    shell
+        .application
+        .set_accels_for_action("win.show-shortcuts", &["<Control>question"]);
+    shell
+        .application
+        .set_accels_for_action("win.toggle-fullscreen", &["F11"]);
+}
+
+fn install_main_menu_shortcut(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
+    let key_controller = gtk::EventControllerKey::new();
+    key_controller.connect_key_pressed(move |_, key, _, state| {
+        if key == gtk::gdk::Key::F10 && !state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+            main_menu.popup();
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    shell.window.add_controller(key_controller);
+}
+
+fn show_shortcuts_dialog(shell: &Shell) {
+    let dialog = adw::ShortcutsDialog::builder()
+        .title(tr("Keyboard Shortcuts"))
+        .build();
+    let section = adw::ShortcutsSection::new(Some(&tr("General")));
+    section.add(adw::ShortcutsItem::new(&tr("Main Menu"), "F10"));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Preferences"),
+        "win.preferences",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Keyboard Shortcuts"),
+        "win.show-shortcuts",
+    ));
+    section.add(adw::ShortcutsItem::from_action(
+        &tr("Toggle Fullscreen"),
+        "win.toggle-fullscreen",
+    ));
+    dialog.add(section);
+    dialog.present(Some(&shell.window));
+}
+
+fn show_about_dialog(shell: &Shell) {
+    let dialog = adw::AboutDialog::builder()
+        .application_name("Rufin")
+        .application_icon("io.github.screwys.Rufin")
+        .developer_name("screwys")
+        .version(env!("CARGO_PKG_VERSION"))
+        .comments(tr("Native GTK music client shell with Jellyfin playback."))
+        .website("https://github.com/screwys/Rufin")
+        .issue_url("https://github.com/screwys/Rufin/issues")
+        .license_type(gtk::License::Gpl30)
+        .build();
+    dialog.present(Some(&shell.window));
+}
+
 fn schedule_startup_sync(shell: &Rc<Shell>) {
     let Some(delay_ms) = shell.controller.startup_sync_delay_ms() else {
         return;
@@ -3639,10 +3724,71 @@ fn queue_header_row() -> gtk::Widget {
     year.set_width_chars(4);
     header.append(&year);
 
-    let end_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    end_spacer.set_width_request(28);
-    header.append(&end_spacer);
     header.upcast()
+}
+
+fn install_queue_row_context_menu(
+    row: &gtk::Box,
+    controller: &AppController,
+    entry_id: QueueEntryId,
+) {
+    let actions = gio::SimpleActionGroup::new();
+
+    let remove = gio::SimpleAction::new("remove", None);
+    let remove_controller = controller.clone();
+    let remove_id = entry_id.clone();
+    remove.connect_activate(move |_, _| remove_controller.remove_from_queue(remove_id.clone()));
+    actions.add_action(&remove);
+
+    let play_now = gio::SimpleAction::new("play-now", None);
+    let play_now_controller = controller.clone();
+    let play_now_id = entry_id.clone();
+    play_now.connect_activate(move |_, _| {
+        play_now_controller.activate_queue_entry(play_now_id.clone())
+    });
+    actions.add_action(&play_now);
+
+    let play_next = gio::SimpleAction::new("play-next", None);
+    let play_next_controller = controller.clone();
+    play_next.connect_activate(move |_, _| {
+        play_next_controller.move_queue_entry_after_current(entry_id.clone())
+    });
+    actions.add_action(&play_next);
+
+    row.insert_action_group("queue", Some(&actions));
+
+    let menu = gio::Menu::new();
+    menu.append(Some(&tr("Remove from Queue")), Some("queue.remove"));
+    menu.append(Some(&tr("Play Now")), Some("queue.play-now"));
+    menu.append(Some(&tr("Play Next")), Some("queue.play-next"));
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.add_css_class("queue-context-menu");
+    popover.set_parent(row);
+
+    let click_popover = popover.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.connect_pressed(move |_, _, x, y| {
+        let rect = gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+        click_popover.set_pointing_to(Some(&rect));
+        click_popover.popup();
+    });
+    row.add_controller(click);
+
+    let key_popover = popover.clone();
+    let key_controller = gtk::EventControllerKey::new();
+    key_controller.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if opens_menu {
+            key_popover.set_pointing_to(None);
+            key_popover.popup();
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    row.add_controller(key_controller);
 }
 
 fn build_bottom_player() -> PlayerControls {
@@ -4454,12 +4600,6 @@ fn build_normal_navigation(shell: &Rc<Shell>) {
 }
 
 fn build_compact_navigation(shell: &Rc<Shell>) {
-    shell.compact_nav.append(&rail_button(
-        shell,
-        "open-menu-symbolic",
-        "Menu",
-        Route::Home,
-    ));
     for item in nav_items() {
         shell.compact_nav.append(&rail_button(
             shell,
@@ -4473,8 +4613,8 @@ fn build_compact_navigation(shell: &Rc<Shell>) {
     shell.compact_nav.append(&spacer);
     shell.compact_nav.append(&rail_button(
         shell,
-        "audio-x-generic-symbolic",
-        "Rufin",
+        "preferences-system-symbolic",
+        "Settings",
         Route::Settings,
     ));
 }
@@ -4494,7 +4634,7 @@ fn nav_items() -> Vec<NavItem> {
             route: Route::Home,
         },
         NavItem {
-            icon_name: "emblem-favorite-symbolic",
+            icon_name: "starred-symbolic",
             label: "Favorites",
             route: Route::Favorites,
         },
@@ -4524,7 +4664,7 @@ fn nav_items() -> Vec<NavItem> {
             route: Route::Genres,
         },
         NavItem {
-            icon_name: "folder-music-symbolic",
+            icon_name: "media-playlist-consecutive-symbolic",
             label: "Playlists",
             route: Route::Playlists,
         },
@@ -5718,6 +5858,40 @@ fn set_favorite_text_button_active(button: &gtk::Button, glyph: &gtk::Label, act
     } else {
         FAVORITE_EMPTY_GLYPH
     });
+}
+
+fn primary_menu_button() -> gtk::MenuButton {
+    let button = gtk::MenuButton::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.set_icon_name("open-menu-symbolic");
+    button.set_primary(true);
+    let label = tr("Main Menu");
+    button.set_tooltip_text(Some(&label));
+    button.update_property(&[gtk::accessible::Property::Label(&label)]);
+    button.set_menu_model(Some(&primary_menu_model()));
+    button
+}
+
+fn primary_menu_model() -> gio::Menu {
+    let menu = gio::Menu::new();
+    let view = gio::Menu::new();
+    view.append(
+        Some(&tr("Toggle Fullscreen")),
+        Some("win.toggle-fullscreen"),
+    );
+    menu.append_section(None, &view);
+
+    let preferences = gio::Menu::new();
+    preferences.append(Some(&tr("Preferences")), Some("win.preferences"));
+    preferences.append(Some(&tr("Keyboard Shortcuts")), Some("win.show-shortcuts"));
+    menu.append_section(None, &preferences);
+
+    let about = gio::Menu::new();
+    about.append(Some(&tr("About Rufin")), Some("win.about"));
+    menu.append_section(None, &about);
+    menu
 }
 
 fn icon_button(icon_name: &str, label: &str) -> gtk::Button {

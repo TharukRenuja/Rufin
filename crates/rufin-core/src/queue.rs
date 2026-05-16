@@ -237,6 +237,16 @@ impl QueueEngine {
         Some(removed)
     }
 
+    pub fn activate(&mut self, entry_id: &QueueEntryId) -> bool {
+        let Some(index) = self.entries.iter().position(|entry| entry.id == *entry_id) else {
+            return false;
+        };
+        self.current_index = Some(index);
+        self.progress_seconds = 0;
+        self.sync_shuffle_position();
+        true
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
         self.current_index = None;
@@ -262,6 +272,29 @@ impl QueueEngine {
                 .or(Some(target));
         }
 
+        self.rebuild_shuffle_order();
+        true
+    }
+
+    pub fn move_after_current(&mut self, entry_id: &QueueEntryId) -> bool {
+        let Some(current_id) = self.current().map(|entry| entry.id.clone()) else {
+            return false;
+        };
+        if current_id == *entry_id {
+            return true;
+        }
+
+        let Some(old_index) = self.entries.iter().position(|entry| entry.id == *entry_id) else {
+            return false;
+        };
+        let entry = self.entries.remove(old_index);
+        let Some(current_index) = self.entries.iter().position(|entry| entry.id == current_id)
+        else {
+            return false;
+        };
+        let target = (current_index + 1).min(self.entries.len());
+        self.entries.insert(target, entry);
+        self.current_index = Some(current_index);
         self.rebuild_shuffle_order();
         true
     }
@@ -475,6 +508,47 @@ mod tests {
             queue.current().map(|entry| &entry.track_id),
             Some(&TrackId::fake(1))
         );
+    }
+
+    #[test]
+    fn activate_jumps_to_existing_queue_entry() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        let second = queue.append(&track(2));
+        queue.set_progress_seconds(42);
+
+        assert!(queue.activate(&second));
+
+        assert_eq!(
+            queue.current().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(2))
+        );
+        assert_eq!(queue.progress_seconds(), 0);
+    }
+
+    #[test]
+    fn move_after_current_preserves_current_playback() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        let third = queue.append(&track(3));
+        queue.set_progress_seconds(42);
+
+        assert!(queue.move_after_current(&third));
+
+        assert_eq!(
+            queue
+                .entries()
+                .iter()
+                .map(|entry| entry.track_id.clone())
+                .collect::<Vec<_>>(),
+            vec![TrackId::fake(1), TrackId::fake(3), TrackId::fake(2)]
+        );
+        assert_eq!(
+            queue.current().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(1))
+        );
+        assert_eq!(queue.progress_seconds(), 42);
     }
 
     #[test]
