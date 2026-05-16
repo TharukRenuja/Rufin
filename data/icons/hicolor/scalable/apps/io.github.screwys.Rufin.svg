@@ -1,6 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#171923"/>
-  <path d="M35 86 58 31c2-5 10-5 12 0l23 55c2 5-2 10-7 10H42c-5 0-9-5-7-10Z" fill="#8fb6ff"/>
-  <path d="M50 79 64 46l14 33H50Z" fill="#171923"/>
-  <circle cx="64" cy="82" r="8" fill="#f4f5fb"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img">
+  <defs>
+    <linearGradient id="rust" x1="160" y1="132" x2="884" y2="892" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f2a65a"/>
+      <stop offset=".48" stop-color="#c9502c"/>
+      <stop offset="1" stop-color="#7a2f24"/>
+    </linearGradient>
+    <radialGradient id="record" cx="50%" cy="43%" r="58%">
+      <stop offset="0" stop-color="#393f46"/>
+      <stop offset=".54" stop-color="#171b1f"/>
+      <stop offset="1" stop-color="#050607"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="232" fill="#f7f2e8"/>
+  <g transform="translate(512 512)">
+    <g fill="url(#rust)">
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(0)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(30)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(60)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(90)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(120)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(150)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(180)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(210)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(240)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(270)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(300)"/>
+      <rect x="-46" y="-496" width="92" height="138" rx="24" transform="rotate(330)"/>
+      <circle r="412"/>
+    </g>
+    <circle r="335" fill="#f7f2e8"/>
+    <circle r="294" fill="url(#record)"/>
+    <circle r="230" fill="none" stroke="#6b7179" stroke-width="10" opacity=".55"/>
+    <circle r="174" fill="none" stroke="#6b7179" stroke-width="8" opacity=".42"/>
+    <circle r="114" fill="none" stroke="#6b7179" stroke-width="7" opacity=".36"/>
+    <g fill="#f7f2e8" transform="translate(-58 -4)">
+      <path d="M26-164c0-15 10-28 24-32l128-39c18-6 36 8 36 27v44c0 14-9 27-23 31L82-99v238H26Z"/>
+      <ellipse cx="-14" cy="128" rx="132" ry="78" transform="rotate(-20 -14 128)"/>
+    </g>
+  </g>
 </svg>
