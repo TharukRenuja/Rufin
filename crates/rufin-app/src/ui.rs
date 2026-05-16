@@ -62,14 +62,17 @@ const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
 const MAX_RESTORED_WINDOW_WIDTH: i32 = 1400;
 const MAX_RESTORED_WINDOW_HEIGHT: i32 = 900;
 const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
+const QUEUE_LYRICS_DEFAULT_QUEUE_UNITS: i32 = 5;
+const QUEUE_LYRICS_DEFAULT_LYRICS_UNITS: i32 = 2;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
 const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
-const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 480;
-const LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS: u64 = 140;
+const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 300;
+const MIN_LYRICS_SCROLL_ANIMATION_MS: u64 = 80;
+const LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS: u64 = 200;
 const LYRICS_USER_SCROLL_PAUSE_MS: u64 = 3_000;
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 
@@ -1335,6 +1338,12 @@ impl Shell {
         self.state.lyrics_follow_pause_until.set(Some(
             Instant::now() + Duration::from_millis(LYRICS_USER_SCROLL_PAUSE_MS),
         ));
+    }
+
+    fn seek_to_lyrics_position(self: &Rc<Self>, position_millis: u64) {
+        self.state.lyrics_follow_pause_until.set(None);
+        self.controller.seek_millis(position_millis);
+        self.update_lyrics_highlight_at(position_millis);
     }
 
     fn cancel_scheduled_lyrics_highlight(&self) {
@@ -2985,9 +2994,9 @@ impl Shell {
                 row.set_hexpand(true);
                 row.set_child(Some(&label));
                 if let Some(start_millis) = line.start_millis {
-                    let controller = self.controller.clone();
+                    let shell = Rc::clone(self);
                     row.connect_clicked(move |_| {
-                        controller.seek_millis(start_millis);
+                        shell.seek_to_lyrics_position(start_millis);
                     });
                 } else {
                     row.set_sensitive(false);
@@ -3020,11 +3029,30 @@ impl Shell {
         queue_lyrics_split.set_shrink_end_child(true);
         queue_lyrics_split.set_start_child(Some(&queue));
         queue_lyrics_split.set_end_child(Some(&lyrics));
-        if let Some(position) = self.state.settings.borrow().queue_lyrics_position {
-            let available_height = queue_lyrics_available_height(self);
-            queue_lyrics_split
-                .set_position(clamp_queue_lyrics_position(available_height, position));
-        }
+        let saved_position = self.state.settings.borrow().queue_lyrics_position;
+        queue_lyrics_split.set_position(queue_lyrics_initial_position(
+            queue_lyrics_available_height(self),
+            saved_position,
+        ));
+
+        let initialized_split_position = Rc::new(Cell::new(false));
+        let position_shell = Rc::clone(self);
+        let initialized_for_height = Rc::clone(&initialized_split_position);
+        queue_lyrics_split.connect_notify_local(Some("height"), move |split, _| {
+            if initialized_for_height.get() {
+                return;
+            }
+            let available_height = split.height();
+            if available_height <= QUEUE_LYRICS_MIN_PANE_HEIGHT * 2 {
+                return;
+            }
+            initialized_for_height.set(true);
+            let saved_position = position_shell.state.settings.borrow().queue_lyrics_position;
+            split.set_position(queue_lyrics_initial_position(
+                available_height,
+                saved_position,
+            ));
+        });
 
         let shell = Rc::clone(self);
         queue_lyrics_split.connect_notify_local(Some("position"), move |split, _| {
@@ -6098,13 +6126,42 @@ fn queue_lyrics_available_height(shell: &Shell) -> i32 {
     if panel_height > QUEUE_LYRICS_MIN_PANE_HEIGHT * 2 {
         return panel_height;
     }
-    (shell.window.height() - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2)
+    let window_height = shell.window.height();
+    if window_height > MIN_RESTORED_WINDOW_HEIGHT {
+        return (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2);
+    }
+    let restored_height = shell
+        .state
+        .settings
+        .borrow()
+        .window_height
+        .filter(|height| *height >= MIN_RESTORED_WINDOW_HEIGHT)
+        .map(|height| height.clamp(MIN_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_HEIGHT))
+        .unwrap_or(MAX_RESTORED_WINDOW_HEIGHT);
+    (restored_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2)
 }
 
 fn clamp_queue_lyrics_position(available_height: i32, position: i32) -> i32 {
     let max_position =
         (available_height - QUEUE_LYRICS_MIN_PANE_HEIGHT).max(QUEUE_LYRICS_MIN_PANE_HEIGHT);
     position.clamp(QUEUE_LYRICS_MIN_PANE_HEIGHT, max_position)
+}
+
+fn queue_lyrics_default_position(available_height: i32) -> i32 {
+    let total_units = QUEUE_LYRICS_DEFAULT_QUEUE_UNITS + QUEUE_LYRICS_DEFAULT_LYRICS_UNITS;
+    let position = available_height * QUEUE_LYRICS_DEFAULT_QUEUE_UNITS / total_units;
+    clamp_queue_lyrics_position(available_height, position)
+}
+
+fn queue_lyrics_initial_position(available_height: i32, saved_position: Option<i32>) -> i32 {
+    let max_position =
+        (available_height - QUEUE_LYRICS_MIN_PANE_HEIGHT).max(QUEUE_LYRICS_MIN_PANE_HEIGHT);
+    match saved_position {
+        Some(position) if position > QUEUE_LYRICS_MIN_PANE_HEIGHT && position < max_position => {
+            position
+        }
+        _ => queue_lyrics_default_position(available_height),
+    }
 }
 
 fn card_label_width_chars(size: i32) -> i32 {
@@ -6666,7 +6723,12 @@ fn lyrics_scroll_animation_millis(
                 .checked_sub(LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS)
         });
     budget
-        .map(|budget| budget.clamp(120, DEFAULT_LYRICS_SCROLL_ANIMATION_MS))
+        .map(|budget| {
+            budget.clamp(
+                MIN_LYRICS_SCROLL_ANIMATION_MS,
+                DEFAULT_LYRICS_SCROLL_ANIMATION_MS,
+            )
+        })
         .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS)
 }
 
@@ -6935,7 +6997,8 @@ mod tests {
         active_lyrics_line_index, clamp_content_split_position, clamp_home_album_page_start,
         clamp_queue_lyrics_position, current_playback_track_id, home_album_card_size,
         home_album_page_size, lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
-        next_lyrics_line_start_after, restored_window_size,
+        next_lyrics_line_start_after, queue_lyrics_default_position, queue_lyrics_initial_position,
+        restored_window_size,
     };
     use rufin_core::{QueueEntry, QueueEntryId, TrackId};
     use rufin_provider::LyricLine;
@@ -7019,6 +7082,11 @@ mod tests {
         assert_eq!(clamp_queue_lyrics_position(800, 1701), 680);
         assert_eq!(clamp_queue_lyrics_position(800, 10), 120);
         assert_eq!(clamp_queue_lyrics_position(200, 1701), 120);
+        assert_eq!(queue_lyrics_default_position(700), 500);
+        assert_eq!(queue_lyrics_initial_position(700, None), 500);
+        assert_eq!(queue_lyrics_initial_position(700, Some(120)), 500);
+        assert_eq!(queue_lyrics_initial_position(700, Some(650)), 500);
+        assert_eq!(queue_lyrics_initial_position(700, Some(360)), 360);
     }
 
     #[test]
@@ -7103,8 +7171,8 @@ mod tests {
 
         let duration = lyrics_scroll_animation_millis(&lines, 0, 5_500);
 
-        assert!(duration <= 360);
-        assert!(duration >= 120);
+        assert!(duration <= 300);
+        assert!(duration >= 80);
         assert_eq!(
             lyrics_scroll_animation_millis(&lines, 0, 5_501),
             duration - 1

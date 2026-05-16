@@ -967,7 +967,19 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        self.persist_and_emit_queue();
+        let queue_snapshot = self.queue_snapshot();
+        if let Some(snapshot) = &queue_snapshot {
+            self.persist_queue_snapshot(snapshot);
+        }
+        self.sync_playback_snapshot_from_queue();
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.position_seconds = seconds;
+            snapshot.position_millis = millis;
+        });
+        let _sent = self
+            .events
+            .send(ControllerEvent::Queue(Box::new(queue_snapshot)));
+        self.emit_playback_snapshot();
     }
 
     pub fn set_volume(&self, volume: f64) {
@@ -2966,6 +2978,19 @@ mod tests {
     }
 
     #[test]
+    fn seek_millis_emits_exact_playback_position() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        controller.play_now(snapshot.tracks[0].clone());
+        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+
+        controller.seek_millis(12_345);
+
+        let playback = wait_for_playback_position(&events, 12_345);
+        assert_eq!(playback.position_seconds, 12);
+    }
+
+    #[test]
     fn next_previous_and_clear_keep_queue_and_player_synchronized() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
@@ -3338,6 +3363,30 @@ mod tests {
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     panic!("controller event channel closed")
                 }
+            }
+        }
+    }
+
+    fn wait_for_playback_position(
+        events: &Receiver<ControllerEvent>,
+        position_millis: u64,
+    ) -> super::PlaybackSnapshot {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::Playback(playback)
+                    if playback.position_millis == position_millis =>
+                {
+                    return *playback;
+                }
+                ControllerEvent::Playback(_)
+                | ControllerEvent::Queue(_)
+                | ControllerEvent::Lyrics(_)
+                | ControllerEvent::CoverReady { .. } => {}
+                ControllerEvent::Snapshot(_) | ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
         }
     }
