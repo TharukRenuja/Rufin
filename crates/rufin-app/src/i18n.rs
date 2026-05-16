@@ -73,7 +73,10 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Year");
     let _ = tr("Duration");
     let _ = tr("Yes");
+    let _ = tr("Server");
     let _ = tr("No server");
+    let _ = tr("Current server");
+    let _ = tr("Local");
     let _ = tr("no account");
     let _ = tr("Nothing playing");
     let _ = tr("Queue a track to begin");

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Rufin 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
-"POT-Creation-Date: 2026-05-16 13:56+0300\n"
+"POT-Creation-Date: 2026-05-16 16:41+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -21,20 +21,20 @@ msgstr ""
 msgid "Home"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:22 crates/rufin-app/src/ui.rs:1134
+#: crates/rufin-app/src/i18n.rs:22 crates/rufin-app/src/ui.rs:1296
 msgid "Favorites"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:23 crates/rufin-app/src/ui.rs:1339
-#: crates/rufin-app/src/ui.rs:1775 crates/rufin-app/src/ui.rs:2251
+#: crates/rufin-app/src/i18n.rs:23 crates/rufin-app/src/ui.rs:1501
+#: crates/rufin-app/src/ui.rs:1955 crates/rufin-app/src/ui.rs:2431
 msgid "Albums"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:24 crates/rufin-app/src/ui.rs:1395
+#: crates/rufin-app/src/i18n.rs:24 crates/rufin-app/src/ui.rs:1557
 msgid "Album"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:25 crates/rufin-app/src/ui.rs:1130
+#: crates/rufin-app/src/i18n.rs:25 crates/rufin-app/src/ui.rs:1292
 msgid "Tracks"
 msgstr ""
 
@@ -42,11 +42,11 @@ msgstr ""
 msgid "Artist"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:27 crates/rufin-app/src/ui.rs:1136
+#: crates/rufin-app/src/i18n.rs:27 crates/rufin-app/src/ui.rs:1298
 msgid "Artists"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:28 crates/rufin-app/src/ui.rs:1138
+#: crates/rufin-app/src/i18n.rs:28 crates/rufin-app/src/ui.rs:1300
 msgid "Album Artists"
 msgstr ""
 
@@ -54,7 +54,7 @@ msgstr ""
 msgid "Genre"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:30 crates/rufin-app/src/ui.rs:1139
+#: crates/rufin-app/src/i18n.rs:30 crates/rufin-app/src/ui.rs:1301
 msgid "Genres"
 msgstr ""
 
@@ -62,12 +62,12 @@ msgstr ""
 msgid "Playlist"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:32 crates/rufin-app/src/ui.rs:1141
+#: crates/rufin-app/src/i18n.rs:32 crates/rufin-app/src/ui.rs:1303
 msgid "Playlists"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:33 crates/rufin-app/src/ui.rs:1519
-#: crates/rufin-app/src/ui.rs:2313 crates/rufin-app/src/ui.rs:4547
+#: crates/rufin-app/src/i18n.rs:33 crates/rufin-app/src/ui.rs:1699
+#: crates/rufin-app/src/ui.rs:2493 crates/rufin-app/src/ui.rs:5017
 msgid "Search"
 msgstr ""
 
@@ -107,31 +107,31 @@ msgstr ""
 msgid "Menu"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:43 crates/rufin-app/src/ui.rs:3663
-#: crates/rufin-app/src/ui.rs:5872
+#: crates/rufin-app/src/i18n.rs:43 crates/rufin-app/src/ui.rs:3881
+#: crates/rufin-app/src/ui.rs:6524
 msgid "Main Menu"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:44 crates/rufin-app/src/ui.rs:3665
-#: crates/rufin-app/src/ui.rs:5889
+#: crates/rufin-app/src/i18n.rs:44 crates/rufin-app/src/ui.rs:3883
+#: crates/rufin-app/src/ui.rs:6541
 msgid "Preferences"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:45 crates/rufin-app/src/ui.rs:3660
-#: crates/rufin-app/src/ui.rs:3669 crates/rufin-app/src/ui.rs:5891
+#: crates/rufin-app/src/i18n.rs:45 crates/rufin-app/src/ui.rs:3878
+#: crates/rufin-app/src/ui.rs:3887 crates/rufin-app/src/ui.rs:6542
 msgid "Keyboard Shortcuts"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:46 crates/rufin-app/src/ui.rs:3673
-#: crates/rufin-app/src/ui.rs:5883
+#: crates/rufin-app/src/i18n.rs:46 crates/rufin-app/src/ui.rs:3891
+#: crates/rufin-app/src/ui.rs:6535
 msgid "Toggle Fullscreen"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:47 crates/rufin-app/src/ui.rs:5897
+#: crates/rufin-app/src/i18n.rs:47 crates/rufin-app/src/ui.rs:6546
 msgid "About Rufin"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:48 crates/rufin-app/src/ui.rs:3662
+#: crates/rufin-app/src/i18n.rs:48 crates/rufin-app/src/ui.rs:3880
 msgid "General"
 msgstr ""
 
@@ -167,7 +167,7 @@ msgstr ""
 msgid "Next"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:57 crates/rufin-app/src/ui.rs:5146
+#: crates/rufin-app/src/i18n.rs:57 crates/rufin-app/src/ui.rs:5738
 msgid "Favorite"
 msgstr ""
 
@@ -195,7 +195,7 @@ msgstr ""
 msgid "Remove from queue"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:64 crates/rufin-app/src/ui.rs:3763
+#: crates/rufin-app/src/i18n.rs:64 crates/rufin-app/src/ui.rs:3979
 msgid "Remove from Queue"
 msgstr ""
 
@@ -207,7 +207,7 @@ msgstr ""
 msgid "Play now"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:67 crates/rufin-app/src/ui.rs:3764
+#: crates/rufin-app/src/i18n.rs:67 crates/rufin-app/src/ui.rs:3980
 msgid "Play Now"
 msgstr ""
 
@@ -215,7 +215,7 @@ msgstr ""
 msgid "Play next"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:69 crates/rufin-app/src/ui.rs:3765
+#: crates/rufin-app/src/i18n.rs:69 crates/rufin-app/src/ui.rs:3981
 msgid "Play Next"
 msgstr ""
 
@@ -223,7 +223,8 @@ msgstr ""
 msgid "Add to queue"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:71 crates/rufin-app/src/ui.rs:3717
+#: crates/rufin-app/src/i18n.rs:71 crates/rufin-app/src/ui.rs:3933
+#: crates/rufin-app/src/ui.rs:5628
 msgid "Title"
 msgstr ""
 
@@ -231,7 +232,7 @@ msgstr ""
 msgid "Title (merged)"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:73 crates/rufin-app/src/ui.rs:3723
+#: crates/rufin-app/src/i18n.rs:73 crates/rufin-app/src/ui.rs:3939
 msgid "Year"
 msgstr ""
 
@@ -239,232 +240,242 @@ msgstr ""
 msgid "Duration"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:74
+#: crates/rufin-app/src/i18n.rs:75
 msgid "Yes"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:75 crates/rufin-app/src/ui.rs:2392
+#: crates/rufin-app/src/i18n.rs:76 crates/rufin-app/src/ui.rs:1005
+msgid "Server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:77 crates/rufin-app/src/ui.rs:2572
+#: crates/rufin-app/src/ui.rs:4939 crates/rufin-app/src/ui.rs:4940
+#: crates/rufin-app/src/ui.rs:4941
 msgid "No server"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:76 crates/rufin-app/src/ui.rs:2397
+#: crates/rufin-app/src/i18n.rs:78 crates/rufin-app/src/ui.rs:4947
+msgid "Current server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:79 crates/rufin-app/src/ui.rs:4974
+msgid "Local"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:80 crates/rufin-app/src/ui.rs:2577
 msgid "no account"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:77 crates/rufin-app/src/ui.rs:2830
+#: crates/rufin-app/src/i18n.rs:81 crates/rufin-app/src/ui.rs:3010
 msgid "Nothing playing"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:78 crates/rufin-app/src/ui.rs:2836
+#: crates/rufin-app/src/i18n.rs:82 crates/rufin-app/src/ui.rs:3016
 msgid "Queue a track to begin"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:79
+#: crates/rufin-app/src/i18n.rs:83
 msgid "Artist detail will use cached album and track groups."
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:80
+#: crates/rufin-app/src/i18n.rs:84
 msgid "Genre detail keeps albums above tracks."
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:81
+#: crates/rufin-app/src/i18n.rs:85
 msgid "Playlist detail will use the track table."
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:82
+#: crates/rufin-app/src/i18n.rs:86
 msgid "Cached library data will appear here as sync pages finish."
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:83
+#: crates/rufin-app/src/i18n.rs:87
 msgid "The selected cached album was not found."
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:84
+#: crates/rufin-app/src/i18n.rs:88
 msgid "Cached rows will appear here after the background sync finishes."
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:85
+#: crates/rufin-app/src/i18n.rs:89
 msgid "Type a query in the sidebar search field to search the local cache."
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:86 crates/rufin-app/src/ui.rs:3687
+#: crates/rufin-app/src/i18n.rs:90 crates/rufin-app/src/ui.rs:3904
 msgid "Native GTK music client shell with Jellyfin playback."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1109 crates/rufin-app/src/ui.rs:1163
+#: crates/rufin-app/src/ui.rs:1271 crates/rufin-app/src/ui.rs:1325
 msgid "Add Jellyfin Server"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1167
+#: crates/rufin-app/src/ui.rs:1329
 msgid ""
 "Tokens are saved in native Secret Service. Cached library metadata is saved "
 "in SQLite."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1174
+#: crates/rufin-app/src/ui.rs:1336
 msgid "Server URL"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1177
+#: crates/rufin-app/src/ui.rs:1339
 msgid "Username"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1179
+#: crates/rufin-app/src/ui.rs:1341
 msgid "Password"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1183
+#: crates/rufin-app/src/ui.rs:1345
 msgid "Trust invalid certificate for this server"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1409 crates/rufin-app/src/ui.rs:1758
-#: crates/rufin-app/src/ui.rs:1968 crates/rufin-app/src/ui.rs:2008
-#: crates/rufin-app/src/ui.rs:2404 crates/rufin-app/src/ui.rs:2432
-#: crates/rufin-app/src/ui.rs:5475 crates/rufin-app/src/ui.rs:5514
-#: crates/rufin-app/src/ui.rs:5553
+#: crates/rufin-app/src/ui.rs:1589 crates/rufin-app/src/ui.rs:1938
+#: crates/rufin-app/src/ui.rs:2148 crates/rufin-app/src/ui.rs:2188
+#: crates/rufin-app/src/ui.rs:2584 crates/rufin-app/src/ui.rs:2612
+#: crates/rufin-app/src/ui.rs:6109 crates/rufin-app/src/ui.rs:6145
+#: crates/rufin-app/src/ui.rs:6182
 msgid "tracks"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1532
+#: crates/rufin-app/src/ui.rs:1712
 msgid "Configure columns"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1756 crates/rufin-app/src/ui.rs:1966
-#: crates/rufin-app/src/ui.rs:2402 crates/rufin-app/src/ui.rs:2430
-#: crates/rufin-app/src/ui.rs:5473 crates/rufin-app/src/ui.rs:5512
+#: crates/rufin-app/src/ui.rs:1936 crates/rufin-app/src/ui.rs:2146
+#: crates/rufin-app/src/ui.rs:2582 crates/rufin-app/src/ui.rs:2610
+#: crates/rufin-app/src/ui.rs:6107 crates/rufin-app/src/ui.rs:6143
 msgid "albums"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1902
+#: crates/rufin-app/src/ui.rs:2082
 msgid "New Playlist"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1904
+#: crates/rufin-app/src/ui.rs:2084
 msgid "Create a playlist. If a track is playing, it will be added."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1907 crates/rufin-app/src/ui.rs:2198
-#: crates/rufin-app/src/ui.rs:2470 crates/rufin-app/src/ui.rs:2495
-#: crates/rufin-app/src/ui.rs:2518
+#: crates/rufin-app/src/ui.rs:2087 crates/rufin-app/src/ui.rs:2378
+#: crates/rufin-app/src/ui.rs:2650 crates/rufin-app/src/ui.rs:2675
+#: crates/rufin-app/src/ui.rs:2698
 msgid "Cancel"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1908
+#: crates/rufin-app/src/ui.rs:2088
 msgid "Create"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:1911
+#: crates/rufin-app/src/ui.rs:2091
 msgid "Playlist name"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2195
+#: crates/rufin-app/src/ui.rs:2375
 msgid "Rename Playlist"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2196
+#: crates/rufin-app/src/ui.rs:2376
 msgid "Enter a new playlist name."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2199
+#: crates/rufin-app/src/ui.rs:2379
 msgid "Rename"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2354
+#: crates/rufin-app/src/ui.rs:2534
 msgid "Layout density"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2358
+#: crates/rufin-app/src/ui.rs:2538
 msgid "Auto"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2358
+#: crates/rufin-app/src/ui.rs:2538
 msgid "Normal"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2358
+#: crates/rufin-app/src/ui.rs:2538
 msgid "Compact"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2376
+#: crates/rufin-app/src/ui.rs:2556
 msgid "Saved locally for the next launch."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2413
+#: crates/rufin-app/src/ui.rs:2593
 msgid "Jellyfin Server"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2422
+#: crates/rufin-app/src/ui.rs:2602
 msgid "No active server"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2426
+#: crates/rufin-app/src/ui.rs:2606
 msgid "User"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2428
+#: crates/rufin-app/src/ui.rs:2608
 msgid "Cached"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2465
+#: crates/rufin-app/src/ui.rs:2645
 msgid "Clear Cached Library"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2467
+#: crates/rufin-app/src/ui.rs:2647
 msgid ""
 "This removes cached Jellyfin library metadata for the active server. Login "
 "stays saved."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2471
+#: crates/rufin-app/src/ui.rs:2651
 msgid "Clear Cache"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2490 crates/rufin-app/src/ui.rs:2496
+#: crates/rufin-app/src/ui.rs:2670 crates/rufin-app/src/ui.rs:2676
 msgid "Forget Server"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2492
+#: crates/rufin-app/src/ui.rs:2672
 msgid ""
 "This removes the active server, cached library metadata, queue snapshot, and "
 "saved token."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2515 crates/rufin-app/src/ui.rs:2519
+#: crates/rufin-app/src/ui.rs:2695 crates/rufin-app/src/ui.rs:2699
 msgid "Clear queue"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2516
+#: crates/rufin-app/src/ui.rs:2696
 msgid "This removes all queued tracks and stops playback."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2547
+#: crates/rufin-app/src/ui.rs:2727
 msgid "Queue"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2603
+#: crates/rufin-app/src/ui.rs:2783
 msgid "Add music to start a queue."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2619
+#: crates/rufin-app/src/ui.rs:2799
 msgid "Lyrics"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:2661
+#: crates/rufin-app/src/ui.rs:2841
 msgid "No lyrics for the current track."
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:3460
+#: crates/rufin-app/src/ui.rs:3673
 msgid "Sort by"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:3495
+#: crates/rufin-app/src/ui.rs:3714
 msgid "Columns"
 msgstr ""
 
-#: crates/rufin-app/src/ui.rs:4565
+#: crates/rufin-app/src/ui.rs:5035
 msgid "My Library"
-msgstr ""
-
-#: crates/rufin-app/src/ui.rs:4595
-msgid "Cached library"
 msgstr ""

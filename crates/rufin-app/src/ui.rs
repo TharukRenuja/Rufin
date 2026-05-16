@@ -17,7 +17,7 @@ use mpris_server::{
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, EffectiveDensity, Genre,
     HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEntry, QueueEntryId,
-    QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, Track, TrackSortKey,
+    QueueSnapshot, RepeatMode, Route, RouteStack, SearchKind, ServerIdentity, Track, TrackSortKey,
     TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
@@ -29,7 +29,7 @@ use tracing::{debug, info, warn};
 use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
 use crate::i18n::tr;
 
-const COMPACT_RAIL_WIDTH: i32 = 92;
+const COMPACT_RAIL_WIDTH: i32 = 80;
 const MAIN_PANEL_UNITS: i32 = 5;
 const TOTAL_PANEL_UNITS: i32 = 8;
 const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
@@ -271,6 +271,7 @@ struct Shell {
     window: adw::ApplicationWindow,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
+    server_selector: ServerSelector,
     content_split: gtk::Paned,
     route_title: gtk::Label,
     route_host: gtk::Box,
@@ -278,6 +279,21 @@ struct Shell {
     forward_button: gtk::Button,
     right_panel: gtk::Box,
     player_controls: PlayerControls,
+}
+
+struct ServerSelector {
+    normal_button: gtk::MenuButton,
+    normal_name: gtk::Label,
+    normal_subtitle: gtk::Label,
+    compact_button: gtk::MenuButton,
+    compact_label: gtk::Label,
+}
+
+struct ServerSelectorContent {
+    name: String,
+    subtitle: String,
+    detail: String,
+    has_server: bool,
 }
 
 struct PlayerControls {
@@ -391,6 +407,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 8);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
+    let server_selector = build_server_selector();
 
     let main_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
     main_area.add_css_class("main-area");
@@ -453,6 +470,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         window,
         normal_nav,
         compact_nav,
+        server_selector,
         content_split,
         route_title,
         route_host,
@@ -464,6 +482,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     build_normal_navigation(&shell);
     build_compact_navigation(&shell);
+    shell.update_server_selector();
     connect_shell_actions(&shell, main_menu);
     connect_player_controls(&shell);
     install_mpris(&shell);
@@ -976,6 +995,41 @@ impl Shell {
         } else if route_uses_responsive_cards(self.state.routes.borrow().current()) {
             self.queue_responsive_route_render();
         }
+    }
+
+    fn update_server_selector(&self) {
+        let content = {
+            let library = self.state.library.borrow();
+            server_selector_content(&library)
+        };
+        let tooltip = format!("{}: {}", tr("Server"), content.name);
+
+        self.server_selector.normal_name.set_text(&content.name);
+        self.server_selector
+            .normal_subtitle
+            .set_text(&content.subtitle);
+        self.server_selector
+            .normal_button
+            .set_tooltip_text(Some(&tooltip));
+        self.server_selector
+            .normal_button
+            .update_property(&[gtk::accessible::Property::Label(&tooltip)]);
+        self.server_selector
+            .normal_button
+            .set_popover(Some(&server_selection_popover(&content)));
+
+        self.server_selector
+            .compact_label
+            .set_text(&compact_sidebar_label_text(&content.name));
+        self.server_selector
+            .compact_button
+            .set_tooltip_text(Some(&tooltip));
+        self.server_selector
+            .compact_button
+            .update_property(&[gtk::accessible::Property::Label(&tooltip)]);
+        self.server_selector
+            .compact_button
+            .set_popover(Some(&server_selection_popover(&content)));
     }
 
     fn update_content_split(&self) -> bool {
@@ -4431,6 +4485,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
             match event {
                 ControllerEvent::Snapshot(snapshot) => {
                     *shell.state.library.borrow_mut() = *snapshot;
+                    shell.update_server_selector();
                     shell.render_current_route();
                 }
                 ControllerEvent::Queue(queue) => {
@@ -4827,6 +4882,136 @@ fn collect_largest_scrolled_window(
     }
 }
 
+fn build_server_selector() -> ServerSelector {
+    let normal_button = gtk::MenuButton::new();
+    normal_button.add_css_class("server-selector");
+    normal_button.add_css_class("server-card");
+    normal_button.set_margin_start(12);
+    normal_button.set_margin_end(12);
+    normal_button.set_margin_bottom(12);
+
+    let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    normal_content.set_halign(gtk::Align::Fill);
+    normal_content.append(&gtk::Image::from_icon_name("network-server-symbolic"));
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+    let normal_name = gtk::Label::new(None);
+    normal_name.set_xalign(0.0);
+    normal_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let normal_subtitle = gtk::Label::new(None);
+    normal_subtitle.add_css_class("muted");
+    normal_subtitle.set_xalign(0.0);
+    normal_subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    labels.append(&normal_name);
+    labels.append(&normal_subtitle);
+    normal_content.append(&labels);
+    normal_content.append(&gtk::Image::from_icon_name("pan-down-symbolic"));
+    normal_button.set_child(Some(&normal_content));
+
+    let compact_button = gtk::MenuButton::new();
+    compact_button.add_css_class("nav-button");
+    compact_button.add_css_class("flat");
+    compact_button.add_css_class("rail-button");
+    compact_button.add_css_class("server-selector");
+    let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    compact_content.set_halign(gtk::Align::Center);
+    let icon = gtk::Image::from_icon_name("network-server-symbolic");
+    icon.set_pixel_size(24);
+    compact_content.append(&icon);
+    let compact_label = gtk::Label::new(None);
+    configure_rail_label(&compact_label);
+    compact_content.append(&compact_label);
+    compact_button.set_child(Some(&compact_content));
+
+    ServerSelector {
+        normal_button,
+        normal_name,
+        normal_subtitle,
+        compact_button,
+        compact_label,
+    }
+}
+
+fn server_selector_content(library: &LibrarySnapshot) -> ServerSelectorContent {
+    let Some(server) = library.server.as_ref() else {
+        return ServerSelectorContent {
+            name: tr("No server"),
+            subtitle: tr("No server"),
+            detail: tr("No server"),
+            has_server: false,
+        };
+    };
+
+    let name = server_display_name(server);
+    let subtitle = tr("Current server");
+    let detail = if server.base_url.trim().is_empty() {
+        provider_display_name(&server.provider)
+    } else {
+        server.base_url.clone()
+    };
+
+    ServerSelectorContent {
+        name,
+        subtitle,
+        detail,
+        has_server: true,
+    }
+}
+
+fn server_display_name(server: &ServerIdentity) -> String {
+    let name = server.name.trim();
+    if name.is_empty() {
+        provider_display_name(&server.provider)
+    } else {
+        name.to_string()
+    }
+}
+
+fn provider_display_name(provider: &str) -> String {
+    match provider {
+        "jellyfin" => "Jellyfin".to_string(),
+        "fake" => tr("Local"),
+        provider => provider.to_string(),
+    }
+}
+
+fn server_selection_popover(content: &ServerSelectorContent) -> gtk::Popover {
+    let popover = gtk::Popover::new();
+    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    wrapper.add_css_class("server-selector-popover");
+
+    let row = gtk::Button::new();
+    row.add_css_class("flat");
+    row.add_css_class("server-option");
+    row.set_sensitive(content.has_server);
+
+    let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row_content.set_halign(gtk::Align::Fill);
+    row_content.append(&gtk::Image::from_icon_name("object-select-symbolic"));
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+    let name = gtk::Label::new(Some(&content.name));
+    name.set_xalign(0.0);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let detail = gtk::Label::new(Some(&content.detail));
+    detail.add_css_class("muted");
+    detail.set_xalign(0.0);
+    detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    labels.append(&name);
+    labels.append(&detail);
+    row_content.append(&labels);
+    row.set_child(Some(&row_content));
+
+    let row_popover = popover.clone();
+    row.connect_clicked(move |_| row_popover.popdown());
+
+    wrapper.append(&row);
+    popover.set_child(Some(&wrapper));
+    popover
+}
+
 fn build_normal_navigation(shell: &Rc<Shell>) {
     let search = gtk::SearchEntry::new();
     search.set_placeholder_text(Some(&tr("Search")));
@@ -4868,22 +5053,9 @@ fn build_normal_navigation(shell: &Rc<Shell>) {
     spacer.set_vexpand(true);
     shell.normal_nav.append(&spacer);
 
-    let server = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    server.add_css_class("server-card");
-    server.set_margin_start(14);
-    server.set_margin_end(14);
-    server.set_margin_bottom(14);
-    server.append(&gtk::Image::from_icon_name("audio-x-generic-symbolic"));
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    let name = gtk::Label::new(Some("Rufin"));
-    name.set_xalign(0.0);
-    let subtitle = gtk::Label::new(Some(&tr("Cached library")));
-    subtitle.add_css_class("muted");
-    subtitle.set_xalign(0.0);
-    labels.append(&name);
-    labels.append(&subtitle);
-    server.append(&labels);
-    shell.normal_nav.append(&server);
+    shell
+        .normal_nav
+        .append(&shell.server_selector.normal_button);
 }
 
 fn build_compact_navigation(shell: &Rc<Shell>) {
@@ -4898,12 +5070,9 @@ fn build_compact_navigation(shell: &Rc<Shell>) {
     let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     shell.compact_nav.append(&spacer);
-    shell.compact_nav.append(&rail_button(
-        shell,
-        "preferences-system-symbolic",
-        "Settings",
-        Route::Settings,
-    ));
+    shell
+        .compact_nav
+        .append(&shell.server_selector.compact_button);
 }
 
 #[derive(Clone)]
@@ -4986,9 +5155,8 @@ fn nav_button(
     content.append(&icon);
     if compact {
         icon.set_pixel_size(24);
-        let text = gtk::Label::new(Some(&tr(label)));
-        text.add_css_class("rail-label");
-        text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let text = gtk::Label::new(Some(&compact_sidebar_label_text(label)));
+        configure_rail_label(&text);
         content.append(&text);
     } else {
         let text = gtk::Label::new(Some(&tr(label)));
@@ -5000,6 +5168,29 @@ fn nav_button(
     let shell = Rc::clone(shell);
     button.connect_clicked(move |_| shell.navigate(route.clone()));
     button
+}
+
+fn compact_sidebar_label_text(label: &str) -> String {
+    let translated = tr(label);
+    let compact = {
+        let words = translated.split_whitespace().collect::<Vec<_>>();
+        if words.len() == 2 {
+            Some(format!("{}\n{}", words[0], words[1]))
+        } else {
+            None
+        }
+    };
+    compact.unwrap_or(translated)
+}
+
+fn configure_rail_label(label: &gtk::Label) {
+    label.add_css_class("rail-label");
+    label.set_xalign(0.5);
+    label.set_justify(gtk::Justification::Center);
+    label.set_lines(2);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
 }
 
 fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) -> gtk::Button {
