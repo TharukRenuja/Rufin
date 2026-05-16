@@ -45,6 +45,7 @@ pub(super) struct PlayerControls {
     pub(super) queue_button: gtk::Button,
     pub(super) queue_icon: gtk::DrawingArea,
     pub(super) queue_icon_open: Rc<Cell<bool>>,
+    pub(super) lyrics_button: gtk::Button,
     pub(super) favorite_button: gtk::Button,
     pub(super) elapsed: gtk::Label,
     pub(super) progress: gtk::Scale,
@@ -83,6 +84,7 @@ struct PlayerActionControls {
     queue_button: gtk::Button,
     queue_icon: gtk::DrawingArea,
     queue_icon_open: Rc<Cell<bool>>,
+    lyrics_button: gtk::Button,
     favorite_button: gtk::Button,
     mute_button: gtk::Button,
     mute_icon: gtk::Image,
@@ -276,6 +278,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         queue_button,
         queue_icon,
         queue_icon_open,
+        lyrics_button,
         favorite_button,
         mute_button,
         mute_icon,
@@ -311,6 +314,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         queue_button,
         queue_icon,
         queue_icon_open,
+        lyrics_button,
         favorite_button,
         elapsed,
         progress,
@@ -450,7 +454,8 @@ fn build_player_action_controls() -> PlayerActionControls {
     root.set_valign(gtk::Align::Center);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
     root.append(&queue_button);
-    root.append(&lyrics_icon_button("Lyrics"));
+    let lyrics_button = lyrics_icon_button("Hide lyrics");
+    root.append(&lyrics_button);
     let favorite_button = favorite_icon_button("Favorite");
     root.append(&favorite_button);
     let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
@@ -467,6 +472,7 @@ fn build_player_action_controls() -> PlayerActionControls {
         queue_button,
         queue_icon,
         queue_icon_open,
+        lyrics_button,
         favorite_button,
         mute_button,
         mute_icon,
@@ -933,6 +939,12 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         .player_controls
         .queue_button
         .connect_clicked(move |_| queue_shell.toggle_right_panel());
+
+    let lyrics_shell = Rc::clone(shell);
+    shell
+        .player_controls
+        .lyrics_button
+        .connect_clicked(move |_| lyrics_shell.toggle_lyrics_panel());
 
     let controller = shell.controller.clone();
     shell

@@ -6,8 +6,10 @@ use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+mod favorites;
 mod navigation;
 mod player;
+mod preferences;
 mod queue;
 mod right_panel;
 
@@ -26,7 +28,7 @@ use rufin_core::{
     TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
-use rufin_provider::Lyrics;
+use rufin_provider::{FavoriteItemId, Lyrics};
 use rufin_store::{CachedArtistDetail, CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
@@ -34,13 +36,23 @@ use tracing::{debug, info, warn};
 use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
 use crate::i18n::tr;
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
+use favorites::{
+    FavoriteControlKey, FavoriteControls, album_favorite_key, artist_favorite_key,
+    clear_favorite_controls, favorite_change_needs_route_render, favorite_control_key,
+    merge_favorite_snapshot, register_favorite_control, track_favorite_key,
+    update_favorite_controls,
+};
 use navigation::{
     ServerSelector, build_compact_navigation, build_normal_navigation, build_server_selector,
     sidebar_history_button,
 };
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
+use preferences::present_preferences_dialog;
 use queue::connect_queue_panel_controls;
-use right_panel::{apply_right_panel_visibility, build_right_panel, connect_queue_lyrics_split};
+use right_panel::{
+    apply_lyrics_panel_visibility, apply_right_panel_visibility, build_right_panel,
+    connect_queue_lyrics_split,
+};
 
 const COMPACT_RAIL_WIDTH: i32 = 72;
 const MAIN_PANEL_UNITS: i32 = 7;
@@ -108,8 +120,10 @@ struct AppState {
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
     right_panel_visible: Cell<bool>,
+    lyrics_panel_visible: Cell<bool>,
     split_width: Cell<i32>,
     split_position: Cell<i32>,
+    queue_lyrics_position_save_suppressed: Rc<Cell<u32>>,
     responsive_render_queued: Cell<bool>,
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
@@ -117,6 +131,7 @@ struct AppState {
     cover_decodes: RefCell<HashSet<String>>,
     decoded_covers: RefCell<HashMap<String, Pixbuf>>,
     decoded_cover_order: RefCell<VecDeque<String>>,
+    favorite_controls: FavoriteControls,
     perf: Option<Rc<UiPerfMonitor>>,
 }
 
@@ -326,8 +341,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
         right_panel_visible: Cell::new(settings.right_panel_visible),
+        lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
         split_width: Cell::new(0),
         split_position: Cell::new(0),
+        queue_lyrics_position_save_suppressed: Rc::new(Cell::new(0)),
         responsive_render_queued: Cell::new(false),
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
@@ -335,6 +352,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         cover_decodes: RefCell::new(HashSet::new()),
         decoded_covers: RefCell::new(HashMap::new()),
         decoded_cover_order: RefCell::new(VecDeque::new()),
+        favorite_controls: RefCell::new(HashMap::new()),
         perf: options.ui_perf_run.then(|| {
             Rc::new(UiPerfMonitor::new(UiPerfOptions {
                 max_gap_ms: options.ui_perf_max_gap_ms,
@@ -471,8 +489,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     shell.render_lyrics_panel();
     shell.update_bottom_player();
     shell.update_right_panel_button();
+    shell.update_lyrics_panel_button();
     if !shell.state.right_panel_visible.get() {
         apply_right_panel_visibility(Rc::clone(&shell), false);
+    }
+    if !shell.state.lyrics_panel_visible.get() {
+        apply_lyrics_panel_visibility(Rc::clone(&shell), false);
     }
     shell.request_initial_lyrics_if_needed();
     install_event_pump(&shell, events);
@@ -996,30 +1018,6 @@ impl Shell {
         }
     }
 
-    fn save_right_panel_split_position(&self, split_width: i32, position: i32) {
-        if !self.state.right_panel_visible.get() {
-            return;
-        }
-        let mut settings = self.state.settings.borrow_mut();
-        if !update_right_panel_split_settings(&mut settings, split_width, position) {
-            return;
-        }
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save right panel split position");
-        }
-    }
-
-    fn save_right_panel_visibility(&self, visible: bool) {
-        let mut settings = self.state.settings.borrow_mut();
-        if settings.right_panel_visible == visible {
-            return;
-        }
-        settings.right_panel_visible = visible;
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save right panel visibility");
-        }
-    }
-
     fn update_track_table_settings(&self, update: impl FnOnce(&mut TrackTableSettings)) {
         let mut settings = self.state.settings.borrow_mut();
         update(&mut settings.track_table);
@@ -1101,31 +1099,6 @@ impl Shell {
         }
 
         width_changed || position_changed
-    }
-
-    fn remember_right_panel_open_position(&self) {
-        let split_width = self.content_split.width();
-        if split_width <= 1 {
-            return;
-        }
-        let current_position = self.content_split.position();
-        if current_position <= 1 || current_position >= split_width {
-            return;
-        }
-        let position = clamp_content_split_position(split_width, current_position);
-        self.state.split_position.set(position);
-        self.save_right_panel_split_position(split_width, position);
-    }
-
-    fn right_panel_open_position(&self, split_width: i32) -> i32 {
-        let stored = self.state.split_position.get();
-        let target = if stored > 1 && stored < split_width {
-            stored
-        } else {
-            let saved_ratio = self.state.settings.borrow().right_panel_ratio;
-            content_split_initial_position(split_width, saved_ratio)
-        };
-        clamp_content_split_position(split_width, target)
     }
 
     fn queue_responsive_route_render(self: &Rc<Self>) {
@@ -1330,6 +1303,7 @@ impl Shell {
 
     fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
+        clear_favorite_controls(&self.state.favorite_controls);
         while let Some(child) = self.route_host.first_child() {
             self.route_host.remove(&child);
         }
@@ -1358,7 +1332,6 @@ impl Shell {
             Route::Albums => self.albums_view(),
             Route::AlbumDetail(album_id) => self.album_detail_view(album_id),
             Route::Tracks => self.tracks_route_view(),
-            Route::Settings => self.settings_view(),
             Route::Favorites => {
                 let favorites = self.state.library.borrow().favorites.clone();
                 self.tracks_view(favorites, "favorites")
@@ -1378,6 +1351,40 @@ impl Shell {
 
         self.route_host.append(&view);
         self.record_perf_route_render(route_name, render_started.elapsed());
+    }
+
+    fn register_favorite_button(&self, key: FavoriteControlKey, button: &gtk::Button) {
+        register_favorite_control(&self.state.favorite_controls, key, button);
+    }
+
+    fn update_visible_favorite_buttons(&self, item_id: &FavoriteItemId, favorite: bool) {
+        let key = favorite_control_key(item_id);
+        update_favorite_controls(&self.state.favorite_controls, &key, favorite);
+    }
+
+    fn apply_favorite_changed(
+        self: &Rc<Self>,
+        item_id: FavoriteItemId,
+        favorite: bool,
+        snapshot: LibrarySnapshot,
+    ) {
+        let route = self.state.routes.borrow().current().clone();
+        {
+            let mut library = self.state.library.borrow_mut();
+            merge_favorite_snapshot(
+                &mut library,
+                snapshot,
+                &item_id,
+                favorite,
+                matches!(route, Route::Search { .. }),
+            );
+        }
+
+        self.update_visible_favorite_buttons(&item_id, favorite);
+        let track_sort_key = self.state.settings.borrow().track_table.sort_key;
+        if favorite_change_needs_route_render(&route, &item_id, track_sort_key) {
+            self.render_current_route();
+        }
     }
 
     fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
@@ -1678,6 +1685,7 @@ impl Shell {
 
         let favorite = favorite_icon_button("Favorite");
         set_favorite_button_active(&favorite, album.favorite);
+        self.register_favorite_button(album_favorite_key(&album.id), &favorite);
         let controller = self.controller.clone();
         let favorite_album = album.clone();
         favorite.connect_clicked(move |_| controller.toggle_album_favorite(favorite_album.clone()));
@@ -2006,6 +2014,7 @@ impl Shell {
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let favorite = favorite_icon_button("Favorite");
         set_favorite_button_active(&favorite, artist.favorite);
+        self.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
         let controller = self.controller.clone();
         let favorite_artist = artist.clone();
         favorite
@@ -2550,158 +2559,6 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn settings_view(self: &Rc<Self>) -> gtk::Widget {
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(28);
-        wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(32);
-        wrapper.set_margin_end(32);
-
-        let group = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        group.add_css_class("settings-group");
-
-        let heading = gtk::Label::new(Some(&tr("Layout density")));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-
-        let options = gtk::StringList::new(&[&tr("Auto"), &tr("Normal"), &tr("Compact")]);
-        let dropdown = gtk::DropDown::new(Some(options), None::<gtk::Expression>);
-        dropdown.set_selected(match self.state.density_mode.get() {
-            DensityMode::Auto => 0,
-            DensityMode::Normal => 1,
-            DensityMode::Compact => 2,
-        });
-
-        let shell = Rc::clone(self);
-        dropdown.connect_selected_notify(move |dropdown| {
-            let density = match dropdown.selected() {
-                1 => DensityMode::Normal,
-                2 => DensityMode::Compact,
-                _ => DensityMode::Auto,
-            };
-            shell.set_density_mode(density);
-        });
-
-        let note = gtk::Label::new(Some(&tr("Saved locally for the next launch.")));
-        note.add_css_class("muted");
-        note.set_wrap(true);
-        note.set_xalign(0.0);
-
-        group.append(&heading);
-        group.append(&dropdown);
-        group.append(&note);
-        wrapper.append(&group);
-
-        let lyrics_group = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        lyrics_group.add_css_class("settings-group");
-        let lyrics_heading = gtk::Label::new(Some(&tr("Lyrics")));
-        lyrics_heading.add_css_class("section-heading");
-        lyrics_heading.set_xalign(0.0);
-        lyrics_group.append(&lyrics_heading);
-
-        let external_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        external_row.set_valign(gtk::Align::Center);
-        let external_text = gtk::Box::new(gtk::Orientation::Vertical, 3);
-        external_text.set_hexpand(true);
-        let external_title = gtk::Label::new(Some(&tr("External lyric lookup")));
-        external_title.set_xalign(0.0);
-        let external_note = gtk::Label::new(Some(&tr(
-            "Use Jellyfin remote lyric providers when server lyrics are unavailable.",
-        )));
-        external_note.add_css_class("muted");
-        external_note.set_wrap(true);
-        external_note.set_xalign(0.0);
-        external_text.append(&external_title);
-        external_text.append(&external_note);
-        let external_switch = gtk::Switch::new();
-        external_switch.set_active(self.state.settings.borrow().external_lyrics_enabled);
-        let shell = Rc::clone(self);
-        external_switch.connect_active_notify(move |switch| {
-            shell.set_external_lyrics_enabled(switch.is_active());
-        });
-        external_row.append(&external_text);
-        external_row.append(&external_switch);
-        lyrics_group.append(&external_row);
-        wrapper.append(&lyrics_group);
-
-        let library = self.state.library.borrow();
-        let server_name = library
-            .server
-            .as_ref()
-            .map(|server| server.name.as_str())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| tr("No server"));
-        let username = library
-            .username
-            .as_deref()
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| tr("no account"));
-        let status = gtk::Label::new(Some(&format!(
-            "{} ({username}): {} {} / {} {} • {}",
-            server_name,
-            library.albums.len(),
-            tr("albums"),
-            library.tracks.len(),
-            tr("tracks"),
-            library.sync_status
-        )));
-        status.add_css_class("muted");
-        status.set_xalign(0.0);
-        wrapper.append(&status);
-
-        let server_group = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        server_group.add_css_class("settings-group");
-        let server_heading = gtk::Label::new(Some(&tr("Jellyfin Server")));
-        server_heading.add_css_class("section-heading");
-        server_heading.set_xalign(0.0);
-        server_group.append(&server_heading);
-
-        let server_url = library
-            .server
-            .as_ref()
-            .map(|server| server.base_url.clone())
-            .unwrap_or_else(|| tr("No active server"));
-        let details = gtk::Label::new(Some(&format!(
-            "{}\n{}: {}\n{}: {} {} / {} {}",
-            server_url,
-            tr("User"),
-            username,
-            tr("Cached"),
-            library.albums.len(),
-            tr("albums"),
-            library.tracks.len(),
-            tr("tracks")
-        )));
-        details.add_css_class("muted");
-        details.set_wrap(true);
-        details.set_xalign(0.0);
-        server_group.append(&details);
-
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let resync = text_button("view-refresh-symbolic", "Resync Library");
-        let clear_cache = text_button("edit-clear-symbolic", "Clear Cached Library");
-        let forget = text_button("user-trash-symbolic", "Forget Server");
-        forget.add_css_class("destructive-action");
-
-        let controller = self.controller.clone();
-        resync.connect_clicked(move |_| controller.resync_active_server());
-
-        let clear_shell = Rc::clone(self);
-        clear_cache.connect_clicked(move |_| clear_shell.confirm_clear_cache());
-
-        let forget_shell = Rc::clone(self);
-        forget.connect_clicked(move |_| forget_shell.confirm_forget_server());
-
-        actions.append(&resync);
-        actions.append(&clear_cache);
-        actions.append(&forget);
-        server_group.append(&actions);
-        wrapper.append(&server_group);
-
-        wrapper.upcast()
-    }
-
     fn confirm_clear_cache(self: &Rc<Self>) {
         let dialog = adw::AlertDialog::builder()
             .heading(tr("Clear Cached Library"))
@@ -2763,42 +2620,6 @@ impl Shell {
             .set_content(lyrics.as_ref(), empty_status, seek);
         drop(lyrics);
         self.update_lyrics_highlight();
-    }
-
-    fn toggle_right_panel(self: &Rc<Self>) {
-        self.set_right_panel_visible(!self.state.right_panel_visible.get());
-    }
-
-    fn set_right_panel_visible(self: &Rc<Self>, visible: bool) {
-        if !visible {
-            self.remember_right_panel_open_position();
-        }
-
-        if self.state.right_panel_visible.replace(visible) == visible {
-            self.update_right_panel_button();
-            return;
-        }
-
-        self.save_right_panel_visibility(visible);
-        self.update_right_panel_button();
-        apply_right_panel_visibility(Rc::clone(self), visible);
-    }
-
-    fn update_right_panel_button(&self) {
-        let visible = self.state.right_panel_visible.get();
-        let label = tr(if visible {
-            "Hide sidebar"
-        } else {
-            "Show sidebar"
-        });
-        self.player_controls.queue_icon_open.set(visible);
-        self.player_controls.queue_icon.queue_draw();
-        self.player_controls
-            .queue_button
-            .set_tooltip_text(Some(&label));
-        self.player_controls
-            .queue_button
-            .update_property(&[gtk::accessible::Property::Label(&label)]);
     }
 
     fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {
@@ -3551,7 +3372,7 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
 fn install_window_actions(shell: &Rc<Shell>) {
     let preferences = gio::SimpleAction::new("preferences", None);
     let preferences_shell = Rc::clone(shell);
-    preferences.connect_activate(move |_, _| preferences_shell.navigate(Route::Settings));
+    preferences.connect_activate(move |_, _| present_preferences_dialog(&preferences_shell));
     shell.window.add_action(&preferences);
 
     let shortcuts = gio::SimpleAction::new("show-shortcuts", None);
@@ -3738,6 +3559,13 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     *shell.state.library.borrow_mut() = *snapshot;
                     shell.update_server_selector();
                     shell.render_current_route();
+                }
+                ControllerEvent::FavoriteChanged {
+                    item_id,
+                    favorite,
+                    snapshot,
+                } => {
+                    shell.apply_favorite_changed(item_id, favorite, *snapshot);
                 }
                 ControllerEvent::Queue(queue) => {
                     *shell.state.queue.borrow_mut() = *queue;
@@ -4035,13 +3863,7 @@ fn ui_perf_routes(shell: &Shell) -> Vec<Route> {
         query: search_query,
         kind: SearchKind::All,
     });
-    routes.extend([
-        Route::Tracks,
-        Route::Settings,
-        Route::Albums,
-        Route::Tracks,
-        Route::Albums,
-    ]);
+    routes.extend([Route::Tracks, Route::Albums, Route::Tracks, Route::Albums]);
     routes
 }
 
@@ -4411,8 +4233,8 @@ fn route_uses_responsive_cards(route: &Route) -> bool {
     )
 }
 
-fn route_displays_sync_status(route: &Route, first_run: bool) -> bool {
-    first_run || matches!(route, Route::Settings)
+fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
+    first_run
 }
 
 fn nonzero_usize(value: usize) -> Option<usize> {
@@ -4678,6 +4500,7 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         let track = boxed.borrow::<Track>().clone();
         let button = favorite_icon_button("Favorite");
         set_favorite_button_active(&button, track.favorite);
+        shell.register_favorite_button(track_favorite_key(&track.id), &button);
         let controller = shell.controller.clone();
         button.connect_clicked(move |_| controller.toggle_track_favorite(track.clone()));
         list_item.set_child(Some(&button));
@@ -5153,6 +4976,7 @@ fn album_cover_tile(
     favorite.set_margin_end(8);
     favorite.set_visible(false);
     set_favorite_button_active(&favorite, album.favorite);
+    shell.register_favorite_button(album_favorite_key(&album.id), &favorite);
     if let Some(controller) = controller {
         let controller = controller.clone();
         let album = album.clone();

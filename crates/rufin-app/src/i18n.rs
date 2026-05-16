@@ -46,6 +46,10 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Toggle Fullscreen");
     let _ = tr("About Rufin");
     let _ = tr("General");
+    let _ = tr("Interface");
+    let _ = tr("Library");
+    let _ = tr("Actions");
+    let _ = tr("Sync Status");
     let _ = tr("Connect");
     let _ = tr("Resync Library");
     let _ = tr("Play");
@@ -64,6 +68,12 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Repeat all");
     let _ = tr("Show sidebar");
     let _ = tr("Hide sidebar");
+    let _ = tr("Show lyrics");
+    let _ = tr("Hide lyrics");
+    let _ = tr("Show Lyrics Panel");
+    let _ = tr("Keep the lyrics section visible below the queue.");
+    let _ = tr("Keep the queue sidebar visible in the main window.");
+    let _ = tr("Choose how navigation adapts to the window width.");
     let _ = tr("Remove from queue");
     let _ = tr("Remove from Queue");
     let _ = tr("Mute");

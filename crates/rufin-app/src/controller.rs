@@ -114,10 +114,18 @@ impl LibrarySnapshot {
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
+    FavoriteChanged {
+        item_id: FavoriteItemId,
+        favorite: bool,
+        snapshot: Box<LibrarySnapshot>,
+    },
     Queue(Box<Option<QueueSnapshot>>),
     Playback(Box<PlaybackSnapshot>),
     Lyrics(Box<Option<Lyrics>>),
-    CoverReady { key: String, path: PathBuf },
+    CoverReady {
+        key: String,
+        path: PathBuf,
+    },
     LoginStatus(String),
     Error(String),
 }
@@ -1461,7 +1469,11 @@ impl AppController {
 
             match load_snapshot(&store) {
                 Ok(snapshot) => {
-                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+                    let _sent = events.send(ControllerEvent::FavoriteChanged {
+                        item_id,
+                        favorite,
+                        snapshot: Box::new(snapshot),
+                    });
                 }
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
@@ -2972,7 +2984,7 @@ mod tests {
         ServerIdentity, Track, TrackId,
     };
     use rufin_playback::PlaybackState;
-    use rufin_provider::{LyricLine, Lyrics, LyricsSource};
+    use rufin_provider::{FavoriteItemId, LyricLine, Lyrics, LyricsSource};
     use rufin_secrets::MemorySecretStore;
     use rufin_store::{CoverCacheEntry, SavedServer};
     use rufin_test_support::FakeScale;
@@ -3533,7 +3545,9 @@ mod tests {
 
         let playback = wait_for_playback_current_favorite(&controller, &events, true);
         assert_eq!(playback.current.expect("current").track_id, track.id);
-        let snapshot = wait_for_snapshot(&events);
+        let (item_id, favorite, snapshot) = wait_for_favorite_changed(&events);
+        assert_eq!(item_id, FavoriteItemId::Track(track.id.clone()));
+        assert!(favorite);
         assert!(
             snapshot
                 .tracks
@@ -3764,6 +3778,31 @@ mod tests {
             {
                 ControllerEvent::Snapshot(snapshot) => return *snapshot,
                 ControllerEvent::Queue(_)
+                | ControllerEvent::FavoriteChanged { .. }
+                | ControllerEvent::Playback(_)
+                | ControllerEvent::Lyrics(_)
+                | ControllerEvent::CoverReady { .. } => {}
+                ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
+    }
+
+    fn wait_for_favorite_changed(
+        events: &Receiver<ControllerEvent>,
+    ) -> (FavoriteItemId, bool, LibrarySnapshot) {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::FavoriteChanged {
+                    item_id,
+                    favorite,
+                    snapshot,
+                } => return (item_id, favorite, *snapshot),
+                ControllerEvent::Snapshot(_)
+                | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::CoverReady { .. } => {}
@@ -3781,6 +3820,7 @@ mod tests {
             {
                 ControllerEvent::LoginStatus(status) => return status,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Lyrics(_)
@@ -3798,6 +3838,7 @@ mod tests {
             {
                 ControllerEvent::Queue(queue) => return *queue,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
                 | ControllerEvent::Lyrics(_)
@@ -3815,6 +3856,7 @@ mod tests {
             {
                 ControllerEvent::CoverReady { key, path } if key == expected_key => return path,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
@@ -3833,6 +3875,7 @@ mod tests {
             {
                 ControllerEvent::Lyrics(lyrics) => return *lyrics,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
@@ -3863,7 +3906,9 @@ mod tests {
                     | ControllerEvent::Queue(_)
                     | ControllerEvent::Lyrics(_)
                     | ControllerEvent::CoverReady { .. } => {}
-                    ControllerEvent::Snapshot(_) | ControllerEvent::LoginStatus(_) => {}
+                    ControllerEvent::Snapshot(_)
+                    | ControllerEvent::FavoriteChanged { .. }
+                    | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),
                 },
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -3892,7 +3937,9 @@ mod tests {
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::CoverReady { .. } => {}
-                ControllerEvent::Snapshot(_) | ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Snapshot(_)
+                | ControllerEvent::FavoriteChanged { .. }
+                | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
         }
@@ -3914,7 +3961,9 @@ mod tests {
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::CoverReady { .. } => {}
-                ControllerEvent::Snapshot(_) | ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Snapshot(_)
+                | ControllerEvent::FavoriteChanged { .. }
+                | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
         }
@@ -3946,7 +3995,9 @@ mod tests {
                     | ControllerEvent::Queue(_)
                     | ControllerEvent::Lyrics(_)
                     | ControllerEvent::CoverReady { .. } => {}
-                    ControllerEvent::Snapshot(_) | ControllerEvent::LoginStatus(_) => {}
+                    ControllerEvent::Snapshot(_)
+                    | ControllerEvent::FavoriteChanged { .. }
+                    | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),
                 },
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}

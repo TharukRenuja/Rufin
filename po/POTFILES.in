@@ -3,3 +3,4 @@ crates/rufin-app/src/lyrics.rs
 crates/rufin-app/src/main.rs
 crates/rufin-app/src/ui.rs
 crates/rufin-app/src/ui/navigation.rs
+crates/rufin-app/src/ui/preferences.rs

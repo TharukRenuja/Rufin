@@ -50,7 +50,6 @@ pub enum Route {
     Playlists,
     PlaylistDetail(PlaylistId),
     Search { query: String, kind: SearchKind },
-    Settings,
 }
 
 impl Route {
@@ -69,7 +68,6 @@ impl Route {
             Self::Playlists => "Playlists",
             Self::PlaylistDetail(_) => "Playlist",
             Self::Search { .. } => "Search",
-            Self::Settings => "Settings",
         }
     }
 }
@@ -144,10 +142,10 @@ mod tests {
         assert_eq!(stack.back(), None);
         assert_eq!(stack.forward(), Some(&Route::Albums));
 
-        stack.navigate(Route::Settings);
+        stack.navigate(Route::Favorites);
 
         assert!(!stack.can_forward());
-        assert_eq!(stack.current(), &Route::Settings);
+        assert_eq!(stack.current(), &Route::Favorites);
     }
 
     #[test]
