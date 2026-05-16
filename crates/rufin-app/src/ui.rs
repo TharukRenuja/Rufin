@@ -21,7 +21,7 @@ use rufin_core::{
     TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
-use rufin_provider::Lyrics;
+use rufin_provider::{LyricLine, Lyrics};
 use rufin_store::{CachedArtistDetail, CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
@@ -48,6 +48,8 @@ const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 800;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
 const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
+const FAVORITE_EMPTY_GLYPH: &str = "♡";
+const FAVORITE_FILLED_GLYPH: &str = "♥";
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -71,6 +73,9 @@ struct AppState {
     player: RefCell<PlaybackSnapshot>,
     lyrics: RefCell<Option<Lyrics>>,
     lyrics_track_id: RefCell<Option<rufin_core::TrackId>>,
+    lyrics_rows: RefCell<Vec<LyricsRow>>,
+    lyrics_scroller: RefCell<Option<gtk::ScrolledWindow>>,
+    lyrics_active_index: Cell<Option<usize>>,
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     updating_player_controls: Cell<bool>,
     seeking_player_controls: Cell<bool>,
@@ -84,6 +89,12 @@ struct AppState {
     decoded_covers: RefCell<HashMap<String, Pixbuf>>,
     decoded_cover_order: RefCell<VecDeque<String>>,
     perf: Option<Rc<UiPerfMonitor>>,
+}
+
+#[derive(Clone)]
+struct LyricsRow {
+    row: gtk::Button,
+    label: gtk::Label,
 }
 
 #[derive(Clone)]
@@ -296,6 +307,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         player: RefCell::new(player),
         lyrics: RefCell::new(None),
         lyrics_track_id: RefCell::new(None),
+        lyrics_rows: RefCell::new(Vec::new()),
+        lyrics_scroller: RefCell::new(None),
+        lyrics_active_index: Cell::new(None),
         mpris_player: RefCell::new(None),
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
@@ -1047,6 +1061,36 @@ impl Shell {
             .send_notification(Some("now-playing"), &notification);
     }
 
+    fn update_lyrics_highlight(&self) {
+        let active_index = self.state.lyrics.borrow().as_ref().and_then(|lyrics| {
+            active_lyrics_line_index(lyrics.lines.as_slice(), self.current_position_millis())
+        });
+        let previous_index = self.state.lyrics_active_index.replace(active_index);
+        let rows = self.state.lyrics_rows.borrow();
+        for (index, row) in rows.iter().enumerate() {
+            let active = Some(index) == active_index;
+            if active {
+                row.row.add_css_class("lyrics-row-active");
+                row.label.add_css_class("lyrics-line-active");
+            } else {
+                row.row.remove_css_class("lyrics-row-active");
+                row.label.remove_css_class("lyrics-line-active");
+            }
+        }
+
+        if active_index != previous_index
+            && let (Some(index), Some(scroller)) =
+                (active_index, self.state.lyrics_scroller.borrow().clone())
+            && let Some(row) = rows.get(index)
+        {
+            scroll_lyrics_row_into_view(scroller, row.row.clone().upcast());
+        }
+    }
+
+    fn current_position_millis(&self) -> u64 {
+        u64::from(self.state.player.borrow().position_seconds) * 1_000
+    }
+
     fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
         while let Some(child) = self.route_host.first_child() {
@@ -1379,10 +1423,8 @@ impl Shell {
         });
         actions.append(&play_next);
 
-        let favorite = text_button("emblem-favorite-symbolic", "Favorite");
-        if album.favorite {
-            favorite.add_css_class("active-toggle");
-        }
+        let (favorite, favorite_glyph) = favorite_text_button("Favorite");
+        set_favorite_text_button_active(&favorite, &favorite_glyph, album.favorite);
         let controller = self.controller.clone();
         let favorite_album = album.clone();
         favorite.connect_clicked(move |_| controller.toggle_album_favorite(favorite_album.clone()));
@@ -1714,10 +1756,8 @@ impl Shell {
         wrapper.append(&summary);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let favorite = text_button("emblem-favorite-symbolic", "Favorite");
-        if artist.favorite {
-            favorite.add_css_class("active-toggle");
-        }
+        let (favorite, favorite_glyph) = favorite_text_button("Favorite");
+        set_favorite_text_button_active(&favorite, &favorite_glyph, artist.favorite);
         let controller = self.controller.clone();
         let favorite_artist = artist.clone();
         favorite
@@ -2580,19 +2620,36 @@ impl Shell {
         lyrics_scroller.set_vexpand(true);
         let lyrics_body = gtk::Box::new(gtk::Orientation::Vertical, 6);
         lyrics_body.set_vexpand(true);
+        lyrics_body.add_css_class("lyrics-lines");
+        self.state.lyrics_rows.borrow_mut().clear();
+        *self.state.lyrics_scroller.borrow_mut() = Some(lyrics_scroller.clone());
+        self.state.lyrics_active_index.set(None);
         if let Some(current_lyrics) = self.state.lyrics.borrow().clone() {
-            let position_millis = u64::from(player.position_seconds) * 1_000;
             for line in &current_lyrics.lines {
                 let label = gtk::Label::new(Some(&line.text));
                 label.set_wrap(true);
-                label.set_xalign(0.0);
+                label.set_xalign(0.5);
+                label.set_justify(gtk::Justification::Center);
+                label.set_hexpand(true);
                 label.add_css_class("lyrics-line");
-                if line.start_millis.is_some_and(|start| {
-                    start <= position_millis && position_millis < start + 8_000
-                }) {
-                    label.add_css_class("lyrics-line-active");
+                let row = gtk::Button::new();
+                row.add_css_class("lyrics-row");
+                row.add_css_class("flat");
+                row.set_hexpand(true);
+                row.set_child(Some(&label));
+                if let Some(start_millis) = line.start_millis {
+                    let controller = self.controller.clone();
+                    row.connect_clicked(move |_| {
+                        controller.seek((start_millis / 1_000) as u32);
+                    });
+                } else {
+                    row.set_sensitive(false);
                 }
-                lyrics_body.append(&label);
+                lyrics_body.append(&row);
+                self.state
+                    .lyrics_rows
+                    .borrow_mut()
+                    .push(LyricsRow { row, label });
             }
         } else {
             let lyrics_status = gtk::Label::new(Some(&tr("No lyrics for the current track.")));
@@ -2637,6 +2694,7 @@ impl Shell {
         });
 
         self.right_panel.append(&queue_lyrics_split);
+        self.update_lyrics_highlight();
     }
 
     fn queue_row(
@@ -2799,7 +2857,7 @@ impl Shell {
             &controls.repeat_button,
             player.repeat_mode != RepeatMode::Off,
         );
-        set_active_class(
+        set_favorite_button_active(
             &controls.favorite_button,
             player.current.as_ref().is_some_and(|entry| entry.favorite),
         );
@@ -3649,7 +3707,7 @@ fn build_bottom_player() -> PlayerControls {
     actions.set_valign(gtk::Align::Center);
     actions.append(&icon_button("view-list-symbolic", "Queue"));
     actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
-    let favorite_button = icon_button("emblem-favorite-symbolic", "Favorite");
+    let favorite_button = favorite_icon_button("Favorite");
     actions.append(&favorite_button);
     let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
     actions.append(&mute_button);
@@ -3932,6 +3990,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         shell.notify_now_playing(&next_snapshot);
                     }
                     shell.update_bottom_player();
+                    shell.update_lyrics_highlight();
                     shell.update_mpris_player();
                 }
                 ControllerEvent::Lyrics(lyrics) => {
@@ -4890,11 +4949,8 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
             return;
         };
         let track = boxed.borrow::<Track>().clone();
-        let button = icon_button("emblem-favorite-symbolic", "Favorite");
-        button.add_css_class("flat");
-        if track.favorite {
-            button.add_css_class("active-toggle");
-        }
+        let button = favorite_icon_button("Favorite");
+        set_favorite_button_active(&button, track.favorite);
         let controller = shell.controller.clone();
         button.connect_clicked(move |_| controller.toggle_track_favorite(track.clone()));
         list_item.set_child(Some(&button));
@@ -5171,7 +5227,7 @@ fn album_cover_tile(
     }
     overlay.add_overlay(&play);
 
-    let favorite = icon_button("emblem-favorite-symbolic", "Favorite");
+    let favorite = favorite_icon_button("Favorite");
     favorite.add_css_class("cover-hover-button");
     favorite.add_css_class("cover-favorite-button");
     favorite.set_halign(gtk::Align::End);
@@ -5179,9 +5235,7 @@ fn album_cover_tile(
     favorite.set_margin_top(8);
     favorite.set_margin_end(8);
     favorite.set_visible(false);
-    if album.favorite {
-        favorite.add_css_class("active-toggle");
-    }
+    set_favorite_button_active(&favorite, album.favorite);
     if let Some(controller) = controller {
         let controller = controller.clone();
         let album = album.clone();
@@ -5547,12 +5601,80 @@ fn add_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
     label.add_controller(click);
 }
 
+fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let start = line.start_millis?;
+            (start <= position_millis).then_some((index, start))
+        })
+        .max_by_key(|(_, start)| *start)
+        .map(|(index, _)| index)
+}
+
+fn scroll_lyrics_row_into_view(scroller: gtk::ScrolledWindow, row: gtk::Widget) {
+    glib::idle_add_local_once(move || {
+        let Some(bounds) = row.compute_bounds(&scroller) else {
+            return;
+        };
+        let adjustment = scroller.vadjustment();
+        let viewport_height = f64::from(scroller.height().max(1));
+        let row_center = adjustment.value() + f64::from(bounds.y() + bounds.height() / 2.0);
+        let target = row_center - viewport_height / 2.0;
+        let upper = adjustment.upper() - adjustment.page_size();
+        adjustment.set_value(target.clamp(adjustment.lower(), upper.max(adjustment.lower())));
+    });
+}
+
 fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
     if active {
         widget.add_css_class("active-toggle");
     } else {
         widget.remove_css_class("active-toggle");
     }
+}
+
+fn favorite_icon_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::with_label(FAVORITE_EMPTY_GLYPH);
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.add_css_class("favorite-toggle");
+    button.set_tooltip_text(Some(&tr(label)));
+    button
+}
+
+fn favorite_text_button(label: &str) -> (gtk::Button, gtk::Label) {
+    let button = gtk::Button::new();
+    button.add_css_class("pill-button");
+    button.add_css_class("pill");
+    button.add_css_class("favorite-toggle");
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let glyph = gtk::Label::new(Some(FAVORITE_EMPTY_GLYPH));
+    glyph.add_css_class("favorite-glyph");
+    content.append(&glyph);
+    content.append(&gtk::Label::new(Some(&tr(label))));
+    button.set_child(Some(&content));
+    (button, glyph)
+}
+
+fn set_favorite_button_active(button: &gtk::Button, active: bool) {
+    set_active_class(button, active);
+    button.set_label(if active {
+        FAVORITE_FILLED_GLYPH
+    } else {
+        FAVORITE_EMPTY_GLYPH
+    });
+}
+
+fn set_favorite_text_button_active(button: &gtk::Button, glyph: &gtk::Label, active: bool) {
+    set_active_class(button, active);
+    glyph.set_text(if active {
+        FAVORITE_FILLED_GLYPH
+    } else {
+        FAVORITE_EMPTY_GLYPH
+    });
 }
 
 fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
@@ -5603,9 +5725,11 @@ fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::{
-        HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, clamp_content_split_position,
-        clamp_home_album_page_start, home_album_card_size, home_album_page_size,
+        HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, active_lyrics_line_index,
+        clamp_content_split_position, clamp_home_album_page_start, home_album_card_size,
+        home_album_page_size,
     };
+    use rufin_provider::LyricLine;
 
     #[test]
     fn home_album_page_size_uses_stable_content_width() {
@@ -5649,6 +5773,33 @@ mod tests {
         assert_eq!(clamp_content_split_position(1_000, 100), 500);
         assert_eq!(clamp_content_split_position(1_000, 950), 900);
         assert_eq!(clamp_content_split_position(1_000, 625), 625);
+    }
+
+    #[test]
+    fn synced_lyrics_highlight_last_started_line_only() {
+        let lines = vec![
+            LyricLine {
+                text: "intro".to_string(),
+                start_millis: Some(1_000),
+            },
+            LyricLine {
+                text: "verse".to_string(),
+                start_millis: Some(5_000),
+            },
+            LyricLine {
+                text: "unsynced".to_string(),
+                start_millis: None,
+            },
+            LyricLine {
+                text: "chorus".to_string(),
+                start_millis: Some(9_000),
+            },
+        ];
+
+        assert_eq!(active_lyrics_line_index(&lines, 999), None);
+        assert_eq!(active_lyrics_line_index(&lines, 1_000), Some(0));
+        assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(1));
+        assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(3));
     }
 
     #[test]
