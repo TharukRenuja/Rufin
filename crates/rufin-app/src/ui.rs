@@ -2640,7 +2640,7 @@ impl Shell {
                 if let Some(start_millis) = line.start_millis {
                     let controller = self.controller.clone();
                     row.connect_clicked(move |_| {
-                        controller.seek((start_millis / 1_000) as u32);
+                        controller.seek(lyrics_seek_seconds(start_millis));
                     });
                 } else {
                     row.set_sensitive(false);
@@ -5613,6 +5613,10 @@ fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option
         .map(|(index, _)| index)
 }
 
+fn lyrics_seek_seconds(start_millis: u64) -> u32 {
+    start_millis.div_ceil(1_000).min(u64::from(u32::MAX)) as u32
+}
+
 fn scroll_lyrics_row_into_view(scroller: gtk::ScrolledWindow, row: gtk::Widget) {
     glib::idle_add_local_once(move || {
         let Some(bounds) = row.compute_bounds(&scroller) else {
@@ -5727,7 +5731,7 @@ mod tests {
     use super::{
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_SIZE, active_lyrics_line_index,
         clamp_content_split_position, clamp_home_album_page_start, home_album_card_size,
-        home_album_page_size,
+        home_album_page_size, lyrics_seek_seconds,
     };
     use rufin_provider::LyricLine;
 
@@ -5800,6 +5804,28 @@ mod tests {
         assert_eq!(active_lyrics_line_index(&lines, 1_000), Some(0));
         assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(3));
+    }
+
+    #[test]
+    fn lyrics_seek_rounds_up_for_mid_second_rows() {
+        let lines = vec![
+            LyricLine {
+                text: "previous".to_string(),
+                start_millis: Some(5_000),
+            },
+            LyricLine {
+                text: "clicked".to_string(),
+                start_millis: Some(5_500),
+            },
+        ];
+
+        let seek_seconds = lyrics_seek_seconds(5_500);
+
+        assert_eq!(seek_seconds, 6);
+        assert_eq!(
+            active_lyrics_line_index(&lines, u64::from(seek_seconds) * 1_000),
+            Some(1)
+        );
     }
 
     #[test]
