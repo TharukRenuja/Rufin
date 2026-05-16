@@ -19,7 +19,7 @@ cargo run -p rufin-app
 
 ## Nix
 
-- Run or build  with the flake
+- Run or build with the flake
 
 ```bash
 nix run github:screwys/Rufin
