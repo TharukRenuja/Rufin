@@ -300,12 +300,12 @@ scale.volume-slider trough {
 }
 
 .lyrics-lines {
-  padding: 18px 0 132px;
+  padding: 20px 0 140px;
 }
 
 .lyrics-line {
   color: @window_fg_color;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 650;
   opacity: 0.34;
   transform: scale(0.96);
@@ -324,7 +324,7 @@ scale.volume-slider trough {
 
 .lyrics-row {
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px 8px;
   background: transparent;
 }
 
@@ -394,12 +394,16 @@ scale.volume-slider trough {
   min-height: 120px;
 }
 
+.queue-scroller {
+  min-height: 80px;
+}
+
 .queue-lyrics-split {
   background: transparent;
 }
 
 .queue-row {
-  padding: 5px 6px;
+  padding: 7px 8px;
   border-radius: 8px;
 }
 

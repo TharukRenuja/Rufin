@@ -2914,8 +2914,14 @@ impl Shell {
             self.queue_panel.remove(&child);
         }
 
+        let queue_scroller = gtk::ScrolledWindow::new();
+        queue_scroller.add_css_class("queue-scroller");
+        queue_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        queue_scroller.set_vexpand(true);
+
         let queue_list = gtk::ListBox::new();
         queue_list.add_css_class("queue-list");
+        queue_list.set_vexpand(true);
         queue_list.set_selection_mode(gtk::SelectionMode::None);
         if let Some(snapshot) = &queue_snapshot {
             if !snapshot.entries.is_empty() {
@@ -2932,7 +2938,8 @@ impl Shell {
             empty.set_margin_top(24);
             queue_list.append(&empty);
         }
-        self.queue_panel.append(&queue_list);
+        queue_scroller.set_child(Some(&queue_list));
+        self.queue_panel.append(&queue_scroller);
     }
 
     fn render_lyrics_panel(self: &Rc<Self>) {
@@ -2954,7 +2961,7 @@ impl Shell {
         entry: &QueueEntry,
         current_index: Option<usize>,
     ) -> gtk::Widget {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.add_css_class("queue-row");
         row.set_valign(gtk::Align::Center);
         row.set_focusable(true);
@@ -2969,7 +2976,7 @@ impl Shell {
         let cover = self.cover_tile_for(
             entry.image_ref.as_ref(),
             index as u32 * 7 + entry.duration_seconds,
-            44,
+            50,
             THUMB_COVER_SIZE,
         );
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
