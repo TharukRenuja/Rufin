@@ -4833,24 +4833,7 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     card.set_hexpand(false);
     card.set_halign(gtk::Align::Start);
 
-    let play = gtk::Button::new();
-    play.add_css_class("album-cover-button");
-    play.add_css_class("flat");
-    play.set_width_request(size);
-    play.set_height_request(size);
-    play.set_size_request(size, size);
-    play.set_hexpand(false);
-    play.set_halign(gtk::Align::Start);
-    play.set_child(Some(&shell.cover_tile_for(
-        track.image_ref.as_ref(),
-        stable_seed(track.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    )));
-    let controller = shell.controller.clone();
-    let track_for_play = track.clone();
-    play.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
-    card.append(&play);
+    card.append(&track_cover_tile(shell, track, size));
 
     let title = gtk::Label::new(Some(&track.title));
     title.add_css_class("album-title");
@@ -4875,6 +4858,89 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     card.append(&artist_clip);
     card.append(&album_clip);
     card.upcast()
+}
+
+fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
+    let overlay = gtk::Overlay::new();
+    overlay.set_width_request(size);
+    overlay.set_height_request(size);
+    overlay.set_size_request(size, size);
+    overlay.set_hexpand(false);
+    overlay.set_halign(gtk::Align::Start);
+
+    let cover_button = gtk::Button::new();
+    cover_button.add_css_class("album-cover-button");
+    cover_button.add_css_class("flat");
+    cover_button.set_width_request(size);
+    cover_button.set_height_request(size);
+    cover_button.set_size_request(size, size);
+    cover_button.set_hexpand(false);
+    cover_button.set_halign(gtk::Align::Start);
+    cover_button.set_child(Some(&shell.cover_tile_for(
+        track.image_ref.as_ref(),
+        stable_seed(track.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    )));
+    let controller = shell.controller.clone();
+    let track_for_play = track.clone();
+    cover_button.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
+    overlay.set_child(Some(&cover_button));
+
+    let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    shade.add_css_class("cover-hover-layer");
+    shade.set_width_request(size);
+    shade.set_height_request(size);
+    shade.set_size_request(size, size);
+    shade.set_can_target(false);
+    shade.set_visible(false);
+    overlay.add_overlay(&shade);
+
+    let play = icon_button("media-playback-start-symbolic", "Play track");
+    play.add_css_class("cover-hover-button");
+    play.add_css_class("cover-play-button");
+    play.set_halign(gtk::Align::Center);
+    play.set_valign(gtk::Align::Center);
+    play.set_visible(false);
+    let controller = shell.controller.clone();
+    let track_for_play = track.clone();
+    play.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
+    overlay.add_overlay(&play);
+
+    let favorite = favorite_icon_button("Favorite");
+    favorite.add_css_class("cover-hover-button");
+    favorite.add_css_class("cover-favorite-button");
+    favorite.set_halign(gtk::Align::End);
+    favorite.set_valign(gtk::Align::Start);
+    favorite.set_margin_top(8);
+    favorite.set_margin_end(8);
+    favorite.set_visible(false);
+    set_favorite_button_active(&favorite, track.favorite);
+    shell.register_favorite_button(track_favorite_key(&track.id), &favorite);
+    let controller = shell.controller.clone();
+    let track_id = track.id.clone();
+    favorite.connect_clicked(move |button| {
+        controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
+    });
+    overlay.add_overlay(&favorite);
+
+    let motion = gtk::EventControllerMotion::new();
+    let shade_for_enter = shade.clone();
+    let play_for_enter = play.clone();
+    let favorite_for_enter = favorite.clone();
+    motion.connect_enter(move |_, _, _| {
+        shade_for_enter.set_visible(true);
+        play_for_enter.set_visible(true);
+        favorite_for_enter.set_visible(true);
+    });
+    motion.connect_leave(move |_| {
+        shade.set_visible(false);
+        play.set_visible(false);
+        favorite.set_visible(false);
+    });
+    overlay.add_controller(motion);
+
+    overlay.upcast()
 }
 
 fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widget {
