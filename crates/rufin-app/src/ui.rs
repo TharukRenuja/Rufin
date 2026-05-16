@@ -61,17 +61,20 @@ const TRACK_ROUTE_PAGE_SIZE: usize = 64;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
-const BOTTOM_PLAYER_HEIGHT: i32 = 82;
+const BOTTOM_PLAYER_HEIGHT: i32 = 88;
 const BOTTOM_PLAYER_COVER_SIZE: i32 = 72;
 const BOTTOM_PLAYER_IDENTITY_WIDTH: i32 = 190;
 const BOTTOM_PLAYER_IDENTITY_MAX_CHARS: i32 = 24;
 const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 400;
 const BOTTOM_PLAYER_TRANSPORT_OFFSET: i32 = 80;
 const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 300;
-const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 40;
-const BOTTOM_PLAYER_BUTTON_SIZE: i32 = 36;
+const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 48;
+const BOTTOM_PLAYER_SIDE_BUTTON_SIZE: i32 = 40;
+const BOTTOM_PLAYER_PLAY_BUTTON_SIZE: i32 = 36;
+const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 3.0;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 44.0;
-const BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP: i32 = 6;
+const BOTTOM_PLAYER_TRANSPORT_ICON_SIZE: i32 = 18;
+const BOTTOM_PLAYER_TRANSPORT_MARGIN_TOP: i32 = 9;
 const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
 const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
 const MAX_RESTORED_WINDOW_WIDTH: i32 = 1400;
@@ -326,6 +329,40 @@ struct PlayerControls {
     elapsed: gtk::Label,
     progress: gtk::Scale,
     duration: gtk::Label,
+    mute_button: gtk::Button,
+    mute_icon: gtk::Image,
+    volume: gtk::Scale,
+}
+
+struct NowPlayingControls {
+    root: gtk::Box,
+    cover: ArtworkTile,
+    title: gtk::Label,
+    artist: gtk::Label,
+    album: gtk::Label,
+}
+
+struct TransportControls {
+    root: gtk::Box,
+    stop_button: gtk::Button,
+    previous_button: gtk::Button,
+    play_button: gtk::Button,
+    play_icon: gtk::Image,
+    next_button: gtk::Button,
+    shuffle_button: gtk::Button,
+    repeat_button: gtk::Button,
+    dj_button: gtk::Button,
+    elapsed: gtk::Label,
+    progress: gtk::Scale,
+    duration: gtk::Label,
+}
+
+struct PlayerActionControls {
+    root: gtk::Box,
+    queue_button: gtk::Button,
+    queue_icon: gtk::DrawingArea,
+    queue_icon_open: Rc<Cell<bool>>,
+    favorite_button: gtk::Button,
     mute_button: gtk::Button,
     mute_icon: gtk::Image,
     volume: gtk::Scale,
@@ -4186,148 +4223,44 @@ fn build_bottom_player() -> PlayerControls {
     bar.set_hexpand(true);
     bar.set_valign(gtk::Align::Center);
 
-    let now_playing = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    now_playing.add_css_class("player-now-playing");
-    now_playing.set_valign(gtk::Align::Center);
-
-    let cover = ArtworkTile::new(BOTTOM_PLAYER_COVER_SIZE, 42);
-    cover.area.set_valign(gtk::Align::Center);
-    now_playing.append(&cover.area);
-
-    let identity = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    identity.add_css_class("player-identity");
-    identity.set_size_request(BOTTOM_PLAYER_IDENTITY_WIDTH, -1);
-    identity.set_hexpand(false);
-    identity.set_valign(gtk::Align::Center);
-    let title = player_link("player-title");
-    let artist = player_link("muted");
-    let album = player_link("muted");
-    identity.append(&title);
-    identity.append(&artist);
-    identity.append(&album);
-    now_playing.append(&identity);
+    let NowPlayingControls {
+        root: now_playing,
+        cover,
+        title,
+        artist,
+        album,
+    } = build_now_playing_controls();
     bar.append(&now_playing);
 
-    let transport = gtk::Box::new(gtk::Orientation::Vertical, 5);
-    transport.add_css_class("player-transport");
-    transport.set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH);
-    transport.set_valign(gtk::Align::Center);
-
-    let buttons = gtk::Fixed::new();
-    buttons.add_css_class("player-button-row");
-    buttons.set_halign(gtk::Align::Center);
-    buttons.set_valign(gtk::Align::Center);
-    buttons.set_size_request(
-        BOTTOM_PLAYER_TRANSPORT_WIDTH,
-        BOTTOM_PLAYER_BUTTON_ROW_HEIGHT,
-    );
-
-    let stop_button = stop_icon_button("Stop");
-    stop_button.add_css_class("player-transport-button");
-    let previous_button = skip_icon_button(false, "Previous");
-    previous_button.add_css_class("player-transport-button");
-    let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
-    play_button.add_css_class("player-transport-button");
-    play_button.add_css_class("player-play-button");
-    play_icon.set_halign(gtk::Align::Center);
-    play_icon.set_valign(gtk::Align::Center);
-    play_icon.set_pixel_size(17);
-    let next_button = skip_icon_button(true, "Next");
-    next_button.add_css_class("player-transport-button");
-    let shuffle_button = icon_button("media-playlist-shuffle-symbolic", "Shuffle");
-    shuffle_button.add_css_class("player-transport-button");
-    let repeat_button = icon_button("media-playlist-repeat-symbolic", "Repeat off");
-    repeat_button.add_css_class("player-transport-button");
-    let dj_button = icon_button("media-optical-cd-audio-symbolic", "Auto DJ");
-    dj_button.add_css_class("player-transport-button");
-    for button in [
-        &stop_button,
-        &previous_button,
-        &shuffle_button,
-        &play_button,
-        &next_button,
-        &repeat_button,
-        &dj_button,
-    ] {
-        button.set_size_request(BOTTOM_PLAYER_BUTTON_SIZE, BOTTOM_PLAYER_BUTTON_SIZE);
-    }
-
-    let button_center = f64::from(BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2.0;
-    let button_radius = f64::from(BOTTOM_PLAYER_BUTTON_SIZE) / 2.0;
-    let button_y = f64::from(BOTTOM_PLAYER_BUTTON_ROW_HEIGHT - BOTTOM_PLAYER_BUTTON_SIZE) / 2.0;
-    buttons.put(
-        &stop_button,
-        button_center - BOTTOM_PLAYER_BUTTON_STEP * 3.0 - button_radius,
-        button_y,
-    );
-    buttons.put(
-        &previous_button,
-        button_center - BOTTOM_PLAYER_BUTTON_STEP * 2.0 - button_radius,
-        button_y,
-    );
-    buttons.put(
-        &shuffle_button,
-        button_center - BOTTOM_PLAYER_BUTTON_STEP - button_radius,
-        button_y,
-    );
-    buttons.put(&play_button, button_center - button_radius, button_y);
-    buttons.put(
-        &next_button,
-        button_center + BOTTOM_PLAYER_BUTTON_STEP - button_radius,
-        button_y,
-    );
-    buttons.put(
-        &repeat_button,
-        button_center + BOTTOM_PLAYER_BUTTON_STEP * 2.0 - button_radius,
-        button_y,
-    );
-    buttons.put(
-        &dj_button,
-        button_center + BOTTOM_PLAYER_BUTTON_STEP * 3.0 - button_radius,
-        button_y,
-    );
-
-    let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    progress_row.add_css_class("player-progress-row");
-    progress_row.set_halign(gtk::Align::Center);
-    progress_row.set_valign(gtk::Align::Center);
-    let elapsed = gtk::Label::new(Some("0:00"));
-    elapsed.add_css_class("muted");
-    elapsed.set_width_chars(4);
-    elapsed.set_xalign(1.0);
-    let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1.0);
-    progress.add_css_class("player-progress");
-    progress.set_draw_value(false);
-    progress.set_width_request(BOTTOM_PLAYER_PROGRESS_WIDTH);
-    let duration = gtk::Label::new(Some("0:00"));
-    duration.add_css_class("muted");
-    duration.set_width_chars(4);
-    progress_row.append(&elapsed);
-    progress_row.append(&progress);
-    progress_row.append(&duration);
-
-    transport.append(&buttons);
-    transport.append(&progress_row);
+    let TransportControls {
+        root: transport,
+        stop_button,
+        previous_button,
+        play_button,
+        play_icon,
+        next_button,
+        shuffle_button,
+        repeat_button,
+        dj_button,
+        elapsed,
+        progress,
+        duration,
+    } = build_transport_controls();
 
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     bar.append(&spacer);
 
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    actions.set_valign(gtk::Align::Center);
-    let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
-    actions.append(&queue_button);
-    actions.append(&icon_button("insert-text-symbolic", "Lyrics"));
-    let favorite_button = favorite_icon_button("Favorite");
-    actions.append(&favorite_button);
-    let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
-    actions.append(&mute_button);
-    let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
-    volume.add_css_class("volume-slider");
-    volume.set_width_request(88);
-    volume.set_value(1.0);
-    volume.set_draw_value(false);
-    actions.append(&volume);
+    let PlayerActionControls {
+        root: actions,
+        queue_button,
+        queue_icon,
+        queue_icon_open,
+        favorite_button,
+        mute_button,
+        mute_icon,
+        volume,
+    } = build_player_action_controls();
     bar.append(&actions);
 
     let transport_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -4370,6 +4303,191 @@ fn build_bottom_player() -> PlayerControls {
         mute_icon,
         volume,
     }
+}
+
+fn build_now_playing_controls() -> NowPlayingControls {
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    root.add_css_class("player-now-playing");
+    root.set_valign(gtk::Align::Center);
+
+    let cover = ArtworkTile::new(BOTTOM_PLAYER_COVER_SIZE, 42);
+    cover.area.set_valign(gtk::Align::Center);
+    root.append(&cover.area);
+
+    let identity = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    identity.add_css_class("player-identity");
+    identity.set_size_request(BOTTOM_PLAYER_IDENTITY_WIDTH, -1);
+    identity.set_hexpand(false);
+    identity.set_valign(gtk::Align::Center);
+    let title = player_link("player-title");
+    let artist = player_link("muted");
+    let album = player_link("muted");
+    identity.append(&title);
+    identity.append(&artist);
+    identity.append(&album);
+    root.append(&identity);
+
+    NowPlayingControls {
+        root,
+        cover,
+        title,
+        artist,
+        album,
+    }
+}
+
+fn build_transport_controls() -> TransportControls {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    root.add_css_class("player-transport");
+    root.set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH);
+    root.set_valign(gtk::Align::Center);
+
+    let buttons = gtk::Fixed::new();
+    buttons.add_css_class("player-button-row");
+    buttons.set_halign(gtk::Align::Center);
+    buttons.set_valign(gtk::Align::Center);
+    buttons.set_size_request(
+        BOTTOM_PLAYER_TRANSPORT_WIDTH,
+        BOTTOM_PLAYER_BUTTON_ROW_HEIGHT,
+    );
+
+    let stop_button = stop_icon_button("Stop");
+    let previous_button = skip_icon_button(false, "Previous");
+    let (play_button, play_icon) = icon_button_with_image("media-playback-start-symbolic", "Play");
+    let next_button = skip_icon_button(true, "Next");
+    let (shuffle_button, _) = transport_symbol_button("media-playlist-shuffle-symbolic", "Shuffle");
+    let (repeat_button, _) =
+        transport_symbol_button("media-playlist-repeat-symbolic", "Repeat off");
+    let (dj_button, _) = transport_symbol_button("media-optical-cd-audio-symbolic", "Auto DJ");
+
+    configure_transport_side_button(&stop_button);
+    configure_transport_side_button(&previous_button);
+    configure_play_button(&play_button, &play_icon);
+    configure_transport_side_button(&next_button);
+
+    put_transport_button(&buttons, &stop_button, -3.0, BOTTOM_PLAYER_SIDE_BUTTON_SIZE);
+    put_transport_button(
+        &buttons,
+        &shuffle_button,
+        -2.0,
+        BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+    );
+    put_transport_button(
+        &buttons,
+        &previous_button,
+        -1.0,
+        BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+    );
+    put_transport_button(&buttons, &play_button, 0.0, BOTTOM_PLAYER_PLAY_BUTTON_SIZE);
+    put_transport_button(&buttons, &next_button, 1.0, BOTTOM_PLAYER_SIDE_BUTTON_SIZE);
+    put_transport_button(
+        &buttons,
+        &repeat_button,
+        2.0,
+        BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+    );
+    put_transport_button(&buttons, &dj_button, 3.0, BOTTOM_PLAYER_SIDE_BUTTON_SIZE);
+
+    let progress_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    progress_row.add_css_class("player-progress-row");
+    progress_row.set_halign(gtk::Align::Center);
+    progress_row.set_valign(gtk::Align::Center);
+    let elapsed = gtk::Label::new(Some("0:00"));
+    elapsed.add_css_class("muted");
+    elapsed.set_width_chars(4);
+    elapsed.set_xalign(1.0);
+    let progress = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1.0);
+    progress.add_css_class("player-progress");
+    progress.set_draw_value(false);
+    progress.set_width_request(BOTTOM_PLAYER_PROGRESS_WIDTH);
+    let duration = gtk::Label::new(Some("0:00"));
+    duration.add_css_class("muted");
+    duration.set_width_chars(4);
+    progress_row.append(&elapsed);
+    progress_row.append(&progress);
+    progress_row.append(&duration);
+
+    root.append(&buttons);
+    root.append(&progress_row);
+
+    TransportControls {
+        root,
+        stop_button,
+        previous_button,
+        play_button,
+        play_icon,
+        next_button,
+        shuffle_button,
+        repeat_button,
+        dj_button,
+        elapsed,
+        progress,
+        duration,
+    }
+}
+
+fn build_player_action_controls() -> PlayerActionControls {
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    root.set_valign(gtk::Align::Center);
+    let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
+    root.append(&queue_button);
+    root.append(&icon_button("insert-text-symbolic", "Lyrics"));
+    let favorite_button = favorite_icon_button("Favorite");
+    root.append(&favorite_button);
+    let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
+    root.append(&mute_button);
+    let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
+    volume.add_css_class("volume-slider");
+    volume.set_width_request(88);
+    volume.set_value(1.0);
+    volume.set_draw_value(false);
+    root.append(&volume);
+
+    PlayerActionControls {
+        root,
+        queue_button,
+        queue_icon,
+        queue_icon_open,
+        favorite_button,
+        mute_button,
+        mute_icon,
+        volume,
+    }
+}
+
+fn configure_transport_side_button(button: &gtk::Button) {
+    button.add_css_class("player-transport-button");
+    button.set_size_request(
+        BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+        BOTTOM_PLAYER_SIDE_BUTTON_SIZE,
+    );
+}
+
+fn configure_play_button(button: &gtk::Button, icon: &gtk::Image) {
+    button.add_css_class("player-transport-button");
+    button.add_css_class("player-play-button");
+    button.set_size_request(
+        BOTTOM_PLAYER_PLAY_BUTTON_SIZE,
+        BOTTOM_PLAYER_PLAY_BUTTON_SIZE,
+    );
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_pixel_size(17);
+}
+
+fn transport_symbol_button(icon_name: &str, label: &str) -> (gtk::Button, gtk::Image) {
+    let (button, icon) = icon_button_with_image(icon_name, label);
+    configure_transport_side_button(&button);
+    icon.set_pixel_size(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    (button, icon)
+}
+
+fn put_transport_button(buttons: &gtk::Fixed, button: &gtk::Button, slot: f64, size: i32) {
+    let center_x =
+        f64::from(BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2.0 + BOTTOM_PLAYER_BUTTON_STEP * slot;
+    let radius = f64::from(size) / 2.0;
+    let y = f64::from(BOTTOM_PLAYER_BUTTON_ROW_HEIGHT - size) / 2.0 + BOTTOM_PLAYER_BUTTON_OFFSET_Y;
+    buttons.put(button, center_x - radius, y);
 }
 
 fn connect_player_controls(shell: &Rc<Shell>) {
@@ -6603,8 +6721,8 @@ fn stop_icon_button(label: &str) -> gtk::Button {
     button.set_tooltip_text(Some(&tr(label)));
 
     let icon = gtk::DrawingArea::new();
-    icon.set_content_width(16);
-    icon.set_content_height(16);
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     icon.set_draw_func(move |area, context, width, height| {
@@ -6615,7 +6733,7 @@ fn stop_icon_button(label: &str) -> gtk::Button {
             f64::from(color.blue()),
             f64::from(color.alpha()),
         );
-        let size = 7.6;
+        let size = 8.8;
         context.rectangle(
             (f64::from(width) - size) / 2.0,
             (f64::from(height) - size) / 2.0,
@@ -6636,8 +6754,8 @@ fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
     button.set_tooltip_text(Some(&tr(label)));
 
     let icon = gtk::DrawingArea::new();
-    icon.set_content_width(16);
-    icon.set_content_height(16);
+    icon.set_content_width(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
+    icon.set_content_height(BOTTOM_PLAYER_TRANSPORT_ICON_SIZE);
     icon.set_halign(gtk::Align::Center);
     icon.set_valign(gtk::Align::Center);
     icon.set_draw_func(move |area, context, width, height| {
@@ -6651,18 +6769,18 @@ fn skip_icon_button(forward: bool, label: &str) -> gtk::Button {
         let width = f64::from(width);
         let height = f64::from(height);
         let center_y = height / 2.0;
-        let top = center_y - 4.5;
-        let bottom = center_y + 4.5;
+        let top = center_y - 5.2;
+        let bottom = center_y + 5.2;
         if forward {
             context.move_to(width * 0.30, top);
             context.line_to(width * 0.30, bottom);
             context.line_to(width * 0.70, center_y);
             context.close_path();
             let _ = context.fill();
-            context.rectangle(width * 0.76, top, 2.0, bottom - top);
+            context.rectangle(width * 0.76, top, 2.2, bottom - top);
             let _ = context.fill();
         } else {
-            context.rectangle(width * 0.20, top, 2.0, bottom - top);
+            context.rectangle(width * 0.20, top, 2.2, bottom - top);
             let _ = context.fill();
             context.move_to(width * 0.70, top);
             context.line_to(width * 0.70, bottom);

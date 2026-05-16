@@ -381,8 +381,8 @@ scale.volume-slider trough {
 
 .icon-button.player-transport-button {
   padding: 0;
-  min-width: 36px;
-  min-height: 36px;
+  min-width: 40px;
+  min-height: 40px;
 }
 
 .icon-button.player-play-button {
