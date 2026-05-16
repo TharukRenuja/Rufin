@@ -1,6 +1,6 @@
 # Rufin
 
-Native GTK4 Jellyfin Client in Rust, built for speed. Currently it is operational **enough**. 
+Native GTK4 music client in Rust, built for speed. Currently it is operational **enough**. Greatly influenced by [feishin](https://github.com/jeffvli/feishin), it is not as feature-rich, but aims to offer a similar experience without any web stack.
 
 ## TODO
 
