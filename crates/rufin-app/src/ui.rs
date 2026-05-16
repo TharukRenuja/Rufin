@@ -30,8 +30,8 @@ use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, Playbac
 use crate::i18n::tr;
 
 const COMPACT_RAIL_WIDTH: i32 = 80;
-const MAIN_PANEL_UNITS: i32 = 3;
-const TOTAL_PANEL_UNITS: i32 = 4;
+const MAIN_PANEL_UNITS: i32 = 1;
+const TOTAL_PANEL_UNITS: i32 = 2;
 const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
 const RIGHT_PANEL_MAX_PERCENT: i32 = 50;
 const NORMAL_SIDEBAR_WIDTH: i32 = 220;
@@ -989,23 +989,53 @@ impl Shell {
         }
     }
 
-    fn save_window_geometry(&self) {
-        if self.window.is_maximized() || self.window.is_fullscreen() {
-            return;
-        }
-        let Some((width, height)) =
-            restored_window_size(Some(self.window.width()), Some(self.window.height()))
-        else {
-            return;
-        };
+    fn save_window_state(&self) {
         let mut settings = self.state.settings.borrow_mut();
-        if settings.window_width == Some(width) && settings.window_height == Some(height) {
+        let mut changed = false;
+
+        if !self.window.is_maximized() && !self.window.is_fullscreen() {
+            if let Some((width, height)) =
+                restored_window_size(Some(self.window.width()), Some(self.window.height()))
+            {
+                if settings.window_width != Some(width) || settings.window_height != Some(height) {
+                    settings.window_width = Some(width);
+                    settings.window_height = Some(height);
+                    changed = true;
+                }
+            }
+        }
+
+        let split_position = if self.state.right_panel_visible.get() {
+            self.content_split.position()
+        } else {
+            self.state.split_position.get()
+        };
+        if update_right_panel_split_settings(
+            &mut settings,
+            self.content_split.width(),
+            split_position,
+        ) {
+            changed = true;
+        }
+
+        if !changed {
             return;
         }
-        settings.window_width = Some(width);
-        settings.window_height = Some(height);
         if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save window geometry");
+            warn!(%error, "failed to save window state");
+        }
+    }
+
+    fn save_right_panel_split_position(&self, split_width: i32, position: i32) {
+        if !self.state.right_panel_visible.get() {
+            return;
+        }
+        let mut settings = self.state.settings.borrow_mut();
+        if !update_right_panel_split_settings(&mut settings, split_width, position) {
+            return;
+        }
+        if let Err(error) = self.controller.save_settings(&settings) {
+            warn!(%error, "failed to save right panel split position");
         }
     }
 
@@ -1098,6 +1128,7 @@ impl Shell {
         let previous_width = self.state.split_width.replace(split_width);
         let current_position = self.content_split.position().clamp(0, split_width);
         let stored_position = self.state.split_position.get();
+        let saved_ratio = self.state.settings.borrow().right_panel_ratio;
         let width_changed = previous_width != split_width;
 
         if !self.state.right_panel_visible.get() {
@@ -1118,8 +1149,12 @@ impl Shell {
             previous_width,
             stored_position,
             current_position,
+            saved_ratio,
         );
         let position_changed = self.state.split_position.replace(position) != position;
+        if position_changed && !width_changed && current_position == position {
+            self.save_right_panel_split_position(split_width, position);
+        }
 
         if current_position != position {
             debug!(split_width, position, "update content split");
@@ -1140,6 +1175,7 @@ impl Shell {
         }
         let position = clamp_content_split_position(split_width, current_position);
         self.state.split_position.set(position);
+        self.save_right_panel_split_position(split_width, position);
     }
 
     fn right_panel_open_position(&self, split_width: i32) -> i32 {
@@ -1147,7 +1183,8 @@ impl Shell {
         let target = if stored > 1 && stored < split_width {
             stored
         } else {
-            default_content_split_position(split_width)
+            let saved_ratio = self.state.settings.borrow().right_panel_ratio;
+            content_split_initial_position(split_width, saved_ratio)
         };
         clamp_content_split_position(split_width, target)
     }
@@ -4003,7 +4040,7 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
 
     let close_shell = Rc::clone(shell);
     shell.window.connect_close_request(move |_| {
-        close_shell.save_window_geometry();
+        close_shell.save_window_state();
         glib::Propagation::Proceed
     });
 
@@ -6096,26 +6133,68 @@ fn clamp_content_split_position(split_width: i32, position: i32) -> i32 {
     position.clamp(min_position, max_position)
 }
 
+fn right_panel_position_ratio(split_width: i32, position: i32) -> f64 {
+    if split_width <= 0 {
+        return 0.0;
+    }
+    let right_width = split_width - position.clamp(0, split_width);
+    f64::from(right_width) / f64::from(split_width)
+}
+
+fn content_split_position_from_right_panel_ratio(split_width: i32, ratio: f64) -> i32 {
+    let right_width = (f64::from(split_width) * ratio.clamp(0.0, 1.0)).round() as i32;
+    clamp_content_split_position(split_width, split_width - right_width)
+}
+
+fn content_split_initial_position(split_width: i32, saved_ratio: Option<f64>) -> i32 {
+    saved_ratio
+        .filter(|ratio| ratio.is_finite())
+        .map(|ratio| content_split_position_from_right_panel_ratio(split_width, ratio))
+        .unwrap_or_else(|| default_content_split_position(split_width))
+}
+
 fn content_split_target_position(
     split_width: i32,
     previous_width: i32,
     stored_position: i32,
     current_position: i32,
+    saved_ratio: Option<f64>,
 ) -> i32 {
-    let default_position = default_content_split_position(split_width);
-    let target_position =
-        if previous_width > 1 && previous_width != split_width && stored_position > 1 {
-            stored_position * split_width / previous_width
-        } else if current_position > 1 {
-            current_position
-        } else {
-            default_position
-        };
+    let target_position = if previous_width <= 1 {
+        content_split_initial_position(split_width, saved_ratio)
+    } else if previous_width != split_width && stored_position > 1 {
+        stored_position * split_width / previous_width
+    } else if current_position > 1 {
+        current_position
+    } else {
+        content_split_initial_position(split_width, saved_ratio)
+    };
     clamp_content_split_position(split_width, target_position)
 }
 
 fn default_content_split_position(split_width: i32) -> i32 {
     split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS
+}
+
+fn update_right_panel_split_settings(
+    settings: &mut AppSettings,
+    split_width: i32,
+    position: i32,
+) -> bool {
+    if split_width <= 1 || position <= 0 || position >= split_width {
+        return false;
+    }
+
+    let position = clamp_content_split_position(split_width, position);
+    let ratio = right_panel_position_ratio(split_width, position);
+    if settings.right_panel_position == Some(position) && settings.right_panel_ratio == Some(ratio)
+    {
+        return false;
+    }
+
+    settings.right_panel_position = Some(position);
+    settings.right_panel_ratio = Some(ratio);
+    true
 }
 
 fn clamp_home_album_page_start(page_start: usize, page_size: usize, album_count: usize) -> usize {
@@ -7068,13 +7147,15 @@ mod tests {
     use super::{
         HOME_ALBUM_GAP, HOME_ALBUM_MAX_COLUMNS, HOME_ALBUM_MAX_SIZE, LyricsFollowScrollPause,
         active_lyrics_line_index, clamp_content_split_position, clamp_home_album_page_start,
-        clamp_queue_lyrics_position, content_split_target_position, current_playback_track_id,
-        default_content_split_position, home_album_card_size, home_album_page_size,
-        lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
+        clamp_queue_lyrics_position, content_split_initial_position,
+        content_split_position_from_right_panel_ratio, content_split_target_position,
+        current_playback_track_id, default_content_split_position, home_album_card_size,
+        home_album_page_size, lyrics_follow_scroll_pause_state, lyrics_scroll_animation_millis,
         next_lyrics_line_start_after, queue_lyrics_default_position, queue_lyrics_initial_position,
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio, restored_window_size,
+        right_panel_position_ratio, update_right_panel_split_settings,
     };
-    use rufin_core::{QueueEntry, QueueEntryId, TrackId};
+    use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
     use rufin_provider::LyricLine;
     use std::time::{Duration, Instant};
 
@@ -7135,9 +7216,23 @@ mod tests {
         assert_eq!(clamp_content_split_position(1_000, 100), 500);
         assert_eq!(clamp_content_split_position(1_000, 950), 900);
         assert_eq!(clamp_content_split_position(1_000, 625), 625);
-        assert_eq!(default_content_split_position(1_000), 750);
-        assert_eq!(content_split_target_position(1_000, 0, 0, 0), 750);
-        assert_eq!(content_split_target_position(1_400, 1_000, 750, 700), 1_050);
+        assert_eq!(default_content_split_position(1_000), 500);
+        assert_eq!(content_split_initial_position(1_000, None), 500);
+        assert_eq!(content_split_initial_position(1_000, Some(0.25)), 750);
+        assert_eq!(
+            content_split_position_from_right_panel_ratio(1_000, 0.25),
+            750
+        );
+        assert_eq!(right_panel_position_ratio(1_000, 750), 0.25);
+        assert_eq!(content_split_target_position(1_000, 0, 0, 600, None), 500);
+        assert_eq!(
+            content_split_target_position(1_400, 1_000, 500, 700, None),
+            700
+        );
+        let mut settings = AppSettings::default();
+        assert!(update_right_panel_split_settings(&mut settings, 1_000, 650));
+        assert_eq!(settings.right_panel_position, Some(650));
+        assert_eq!(settings.right_panel_ratio, Some(0.35));
     }
 
     #[test]

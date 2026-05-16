@@ -156,6 +156,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_height: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_panel_position: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_panel_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lyrics_position: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lyrics_ratio: Option<f64>,
@@ -183,6 +187,8 @@ impl Default for AppSettings {
             ],
             window_width: None,
             window_height: None,
+            right_panel_position: None,
+            right_panel_ratio: None,
             queue_lyrics_position: None,
             queue_lyrics_ratio: None,
             queue_lyrics_layout_version: QUEUE_LYRICS_LAYOUT_VERSION,
@@ -232,6 +238,8 @@ mod tests {
         let settings = AppSettings {
             window_width: Some(1180),
             window_height: Some(760),
+            right_panel_position: Some(820),
+            right_panel_ratio: Some(0.3),
             queue_lyrics_position: Some(520),
             queue_lyrics_ratio: Some(0.7),
             ..AppSettings::default()
@@ -259,6 +267,8 @@ mod tests {
 
         assert_eq!(restored.window_width, None);
         assert_eq!(restored.window_height, None);
+        assert_eq!(restored.right_panel_position, None);
+        assert_eq!(restored.right_panel_ratio, None);
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
