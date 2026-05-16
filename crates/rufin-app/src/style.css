@@ -18,7 +18,7 @@ window {
 }
 
 .compact-rail {
-  padding: 6px 4px;
+  padding: 4px 2px;
 }
 
 .main-area,
@@ -60,14 +60,28 @@ window {
 }
 
 .rail-button {
-  margin: 0 3px;
-  padding: 7px 4px;
-  min-width: 64px;
-  min-height: 58px;
+  margin: 0 2px;
+  padding: 6px 2px;
+  min-width: 58px;
+  min-height: 56px;
 }
 
 .rail-label {
   font-size: 11px;
+}
+
+.sidebar-history-controls {
+  margin: 10px 12px 0;
+}
+
+.rail-history-controls {
+  margin: 4px 0 6px;
+}
+
+.sidebar-history-button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 5px;
 }
 
 .nav-button:hover,

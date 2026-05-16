@@ -29,7 +29,7 @@ use tracing::{debug, info, warn};
 use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, PlaybackSnapshot};
 use crate::i18n::tr;
 
-const COMPACT_RAIL_WIDTH: i32 = 80;
+const COMPACT_RAIL_WIDTH: i32 = 72;
 const MAIN_PANEL_UNITS: i32 = 7;
 const TOTAL_PANEL_UNITS: i32 = 10;
 const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
@@ -303,8 +303,10 @@ struct Shell {
     content_split: gtk::Paned,
     route_title: gtk::Label,
     route_host: gtk::Box,
-    back_button: gtk::Button,
-    forward_button: gtk::Button,
+    normal_back_button: gtk::Button,
+    normal_forward_button: gtk::Button,
+    compact_back_button: gtk::Button,
+    compact_forward_button: gtk::Button,
     right_panel: gtk::Box,
     player_controls: PlayerControls,
 }
@@ -432,7 +434,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     normal_nav.add_css_class("wide-sidebar");
     normal_nav.set_width_request(NORMAL_SIDEBAR_WIDTH);
 
-    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 5);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
     let server_selector = build_server_selector();
@@ -446,8 +448,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     header.add_css_class("route-header");
     header.set_valign(gtk::Align::Center);
 
-    let back_button = icon_button("go-previous-symbolic", "Back");
-    let forward_button = icon_button("go-next-symbolic", "Forward");
+    let normal_back_button = sidebar_history_button("go-previous-symbolic", "Back");
+    let normal_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
+    let compact_back_button = sidebar_history_button("go-previous-symbolic", "Back");
+    let compact_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
     let route_title = gtk::Label::new(None);
     route_title.add_css_class("route-title");
     route_title.set_xalign(0.0);
@@ -455,8 +459,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     route_title.set_hexpand(true);
     let main_menu = primary_menu_button();
 
-    header.append(&back_button);
-    header.append(&forward_button);
     header.append(&route_title);
     header.append(&main_menu);
 
@@ -502,8 +504,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         content_split,
         route_title,
         route_host,
-        back_button,
-        forward_button,
+        normal_back_button,
+        normal_forward_button,
+        compact_back_button,
+        compact_forward_button,
         right_panel,
         player_controls,
     });
@@ -1149,6 +1153,13 @@ impl Shell {
             .set_popover(Some(&server_selection_popover(&content)));
     }
 
+    fn set_history_buttons_sensitive(&self, can_back: bool, can_forward: bool) {
+        self.normal_back_button.set_sensitive(can_back);
+        self.compact_back_button.set_sensitive(can_back);
+        self.normal_forward_button.set_sensitive(can_forward);
+        self.compact_forward_button.set_sensitive(can_forward);
+    }
+
     fn update_content_split(&self) -> bool {
         let split_width = self.content_split.width();
         if split_width <= 1 {
@@ -1486,8 +1497,7 @@ impl Shell {
         if first_run {
             let route_name = "FirstRun".to_string();
             self.route_title.set_text(&tr("Add Jellyfin Server"));
-            self.back_button.set_sensitive(false);
-            self.forward_button.set_sensitive(false);
+            self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
             self.route_host.append(&view);
             self.record_perf_route_render(route_name, render_started.elapsed());
@@ -1497,10 +1507,10 @@ impl Shell {
         let route = self.state.routes.borrow().current().clone();
         let route_name = format!("{route:?}");
         self.route_title.set_text(&tr(route.title()));
-        self.back_button
-            .set_sensitive(self.state.routes.borrow().can_back());
-        self.forward_button
-            .set_sensitive(self.state.routes.borrow().can_forward());
+        self.set_history_buttons_sensitive(
+            self.state.routes.borrow().can_back(),
+            self.state.routes.borrow().can_forward(),
+        );
 
         let view = match route {
             Route::Home => self.home_view(),
@@ -4052,15 +4062,25 @@ impl Shell {
 }
 
 fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
-    let back_shell = Rc::clone(shell);
+    let normal_back_shell = Rc::clone(shell);
     shell
-        .back_button
-        .connect_clicked(move |_| back_shell.go_back());
+        .normal_back_button
+        .connect_clicked(move |_| normal_back_shell.go_back());
 
-    let forward_shell = Rc::clone(shell);
+    let compact_back_shell = Rc::clone(shell);
     shell
-        .forward_button
-        .connect_clicked(move |_| forward_shell.go_forward());
+        .compact_back_button
+        .connect_clicked(move |_| compact_back_shell.go_back());
+
+    let normal_forward_shell = Rc::clone(shell);
+    shell
+        .normal_forward_button
+        .connect_clicked(move |_| normal_forward_shell.go_forward());
+
+    let compact_forward_shell = Rc::clone(shell);
+    shell
+        .compact_forward_button
+        .connect_clicked(move |_| compact_forward_shell.go_forward());
 
     install_window_actions(shell);
     install_main_menu_shortcut(shell, main_menu);
@@ -5273,10 +5293,35 @@ fn server_selection_popover(content: &ServerSelectorContent) -> gtk::Popover {
     popover
 }
 
+fn sidebar_history_button(icon_name: &str, label: &str) -> gtk::Button {
+    let button = icon_button(icon_name, label);
+    button.add_css_class("sidebar-history-button");
+    button
+}
+
+fn normal_history_controls(shell: &Rc<Shell>) -> gtk::Box {
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    controls.add_css_class("sidebar-history-controls");
+    controls.append(&shell.normal_back_button);
+    controls.append(&shell.normal_forward_button);
+    controls
+}
+
+fn compact_history_controls(shell: &Rc<Shell>) -> gtk::Box {
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    controls.add_css_class("rail-history-controls");
+    controls.set_halign(gtk::Align::Center);
+    controls.append(&shell.compact_back_button);
+    controls.append(&shell.compact_forward_button);
+    controls
+}
+
 fn build_normal_navigation(shell: &Rc<Shell>) {
+    shell.normal_nav.append(&normal_history_controls(shell));
+
     let search = gtk::SearchEntry::new();
     search.set_placeholder_text(Some(&tr("Search")));
-    search.set_margin_top(18);
+    search.set_margin_top(8);
     search.set_margin_start(16);
     search.set_margin_end(16);
     let search_shell = Rc::clone(shell);
@@ -5320,6 +5365,8 @@ fn build_normal_navigation(shell: &Rc<Shell>) {
 }
 
 fn build_compact_navigation(shell: &Rc<Shell>) {
+    shell.compact_nav.append(&compact_history_controls(shell));
+
     for item in nav_items() {
         shell.compact_nav.append(&rail_button(
             shell,
