@@ -5309,9 +5309,7 @@ fn set_track_table_columns(
 
 fn track_table_column(shell: &Rc<Shell>, column: TrackTableColumn) -> gtk::ColumnViewColumn {
     match column {
-        TrackTableColumn::TrackNumber => {
-            track_column("#", 54, |track| track.track_number.to_string())
-        }
+        TrackTableColumn::TrackNumber => track_row_index_column(),
         TrackTableColumn::Title => track_identity_column(shell),
         TrackTableColumn::Artist => track_link_column(shell, "Artist", 180, |track| {
             (track.artist.clone(), track_artist_route(track))
@@ -5503,6 +5501,37 @@ where
 
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
+    column.set_resizable(false);
+    column
+}
+
+fn track_row_index_column() -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+
+    factory.connect_setup(|_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        list_item.set_child(Some(&label));
+    });
+
+    factory.connect_bind(|_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(child) = list_item.child() else {
+            return;
+        };
+        let Ok(label) = child.downcast::<gtk::Label>() else {
+            return;
+        };
+        label.set_text(&(list_item.position() + 1).to_string());
+    });
+
+    let column = gtk::ColumnViewColumn::new(Some("#"), Some(factory));
+    column.set_fixed_width(54);
     column.set_resizable(false);
     column
 }
