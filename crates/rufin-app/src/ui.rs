@@ -3635,9 +3635,13 @@ impl Shell {
         let tracks_for_sort = Rc::clone(&tracks);
         let search_for_sort = search.clone();
         let sort_button_for_sort = sort_button.clone();
+        let popover_for_sort = popover.clone();
         sort_dropdown.connect_selected_notify(move |dropdown| {
             let sort_key = track_sort_from_index(dropdown.selected());
             let mut settings = shell.state.settings.borrow().track_table.clone();
+            if settings.sort_key == sort_key {
+                return;
+            }
             settings.sort_key = sort_key;
             shell.update_track_table_settings(|stored| *stored = settings.clone());
             let tracks = tracks_for_sort.borrow();
@@ -3648,6 +3652,8 @@ impl Shell {
                 search_for_sort.text().as_str(),
             );
             set_track_sort_button_content(&sort_button_for_sort, &settings);
+            let popover = popover_for_sort.clone();
+            glib::idle_add_local_once(move || popover.popdown());
         });
         content.append(&sort_dropdown);
 
