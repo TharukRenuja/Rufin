@@ -1625,8 +1625,10 @@ impl Shell {
 
         let previous = icon_button("go-previous-symbolic", "Previous page");
         let next = icon_button("go-next-symbolic", "Next page");
+        let refresh = icon_button("view-refresh-symbolic", "Refresh section");
         header.append(&previous);
         header.append(&next);
+        header.append(&refresh);
         section.append(&header);
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
@@ -1662,6 +1664,21 @@ impl Shell {
             shell.render_current_route();
         });
 
+        let shell = Rc::clone(self);
+        refresh.connect_clicked(move |_| {
+            if let Some(state) = shell
+                .state
+                .home_section_state
+                .borrow_mut()
+                .get_mut(&section_kind)
+            {
+                state.page_start = 0;
+            }
+            shell
+                .controller
+                .refresh_home_section_for_active(section_kind);
+        });
+
         render_home_album_page(self, &row, &previous, &next, section_kind, &albums);
         section.upcast()
     }
@@ -1681,8 +1698,10 @@ impl Shell {
 
         let previous = icon_button("go-previous-symbolic", "Previous page");
         let next = icon_button("go-next-symbolic", "Next page");
+        let refresh = icon_button("view-refresh-symbolic", "Refresh section");
         header.append(&previous);
         header.append(&next);
+        header.append(&refresh);
         section.append(&header);
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
@@ -1716,6 +1735,21 @@ impl Shell {
             }
             drop(states);
             shell.render_current_route();
+        });
+
+        let shell = Rc::clone(self);
+        refresh.connect_clicked(move |_| {
+            if let Some(state) = shell
+                .state
+                .home_section_state
+                .borrow_mut()
+                .get_mut(&section_kind)
+            {
+                state.page_start = 0;
+            }
+            shell
+                .controller
+                .refresh_home_section_for_active(section_kind);
         });
 
         render_home_track_page(self, &row, &previous, &next, section_kind, &tracks);

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, Playlist, PlaylistId,
-    ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, Playlist,
+    PlaylistId, ServerIdentity, Track, TrackId,
 };
 pub use rufin_playback::StreamDescriptor;
 use serde::{Deserialize, Serialize};
@@ -247,6 +247,13 @@ pub trait MusicProvider {
     fn capabilities(&self) -> &ProviderCapabilities;
 
     async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>>;
+    async fn home_section(&self, kind: HomeSectionKind) -> ProviderResult<HomeSection> {
+        self.home_sections()
+            .await?
+            .into_iter()
+            .find(|section| section.kind == kind)
+            .ok_or(ProviderError::NotFound)
+    }
     async fn albums(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Album>>;
     async fn album_detail(&self, album_id: &rufin_core::AlbumId) -> ProviderResult<AlbumDetail>;
     async fn tracks(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Track>>;

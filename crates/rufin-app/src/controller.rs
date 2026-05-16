@@ -8,9 +8,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, ImageRef, Playlist,
-    PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ServerId,
-    ServerIdentity, Track, TrackId,
+    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
+    ImageRef, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot,
+    RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -149,6 +149,15 @@ pub struct AppController {
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_in_flight: Arc<Mutex<HashSet<String>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
+}
+
+struct HomeRefreshContext {
+    store: StoreHandle,
+    runtime: Arc<Runtime>,
+    secrets: Arc<dyn SecretStore>,
+    events: Sender<ControllerEvent>,
+    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -708,16 +717,37 @@ impl AppController {
             .with_store(|store| store.active_server())
             .unwrap_or(None);
         if let Some(saved) = active {
-            start_home_refresh_thread(
-                self.store.clone(),
-                Arc::clone(&self.runtime),
-                Arc::clone(&self.secrets),
-                self.events.clone(),
-                Arc::clone(&self.sync_in_flight),
-                Arc::clone(&self.home_refresh_in_flight),
-                saved,
-            );
+            self.start_home_refresh_for_saved(saved, None);
         }
+    }
+
+    pub fn refresh_home_section_for_active(&self, kind: HomeSectionKind) {
+        let active = self
+            .store
+            .with_store(|store| store.active_server())
+            .unwrap_or(None);
+        if let Some(saved) = active {
+            self.start_home_refresh_for_saved(saved, Some(kind));
+        }
+    }
+
+    fn start_home_refresh_for_saved(
+        &self,
+        saved: SavedServer,
+        section_kind: Option<HomeSectionKind>,
+    ) {
+        start_home_refresh_thread(
+            HomeRefreshContext {
+                store: self.store.clone(),
+                runtime: Arc::clone(&self.runtime),
+                secrets: Arc::clone(&self.secrets),
+                events: self.events.clone(),
+                sync_in_flight: Arc::clone(&self.sync_in_flight),
+                home_refresh_in_flight: Arc::clone(&self.home_refresh_in_flight),
+            },
+            saved,
+            section_kind,
+        );
     }
 
     pub fn startup_sync_delay_ms(&self) -> Option<u64> {
@@ -2226,30 +2256,26 @@ fn start_sync_thread(
 }
 
 fn start_home_refresh_thread(
-    store: StoreHandle,
-    runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
-    events: Sender<ControllerEvent>,
-    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    context: HomeRefreshContext,
     saved: SavedServer,
+    section_kind: Option<HomeSectionKind>,
 ) {
     if saved.server.provider == "fake" {
         return;
     }
 
     let server_id = saved.server.id.clone();
-    if sync_is_running(&sync_in_flight, &server_id) {
+    if sync_is_running(&context.sync_in_flight, &server_id) {
         return;
     }
-    match home_refresh_in_flight.lock() {
+    match context.home_refresh_in_flight.lock() {
         Ok(mut running) => {
             if !running.insert(server_id.clone()) {
                 return;
             }
         }
         Err(_) => {
-            let _sent = events.send(ControllerEvent::Error(
+            let _sent = context.events.send(ControllerEvent::Error(
                 "Home refresh guard lock was poisoned.".to_string(),
             ));
             return;
@@ -2257,14 +2283,28 @@ fn start_home_refresh_thread(
     }
 
     thread::spawn(move || {
-        let result = refresh_home_sections_for_saved(&store, &runtime, &secrets, &saved)
-            .and_then(|()| load_snapshot(&store).map(Box::new));
-        if let Ok(mut running) = home_refresh_in_flight.lock() {
+        let result = match section_kind {
+            Some(kind) => refresh_home_section_for_saved(
+                &context.store,
+                &context.runtime,
+                &context.secrets,
+                &saved,
+                kind,
+            ),
+            None => refresh_home_sections_for_saved(
+                &context.store,
+                &context.runtime,
+                &context.secrets,
+                &saved,
+            ),
+        }
+        .and_then(|()| load_snapshot(&context.store).map(Box::new));
+        if let Ok(mut running) = context.home_refresh_in_flight.lock() {
             running.remove(&server_id);
         }
         match result {
             Ok(snapshot) => {
-                let _sent = events.send(ControllerEvent::Snapshot(snapshot));
+                let _sent = context.events.send(ControllerEvent::Snapshot(snapshot));
             }
             Err(error) => {
                 warn!(%error, "failed to refresh home sections");
@@ -2303,6 +2343,22 @@ fn refresh_home_sections_for_saved(
 ) -> Result<(), String> {
     let provider = provider_for_saved(store, runtime, secrets, saved)?;
     runtime.block_on(refresh_home_sections(store, &saved.server.id, &provider))
+}
+
+fn refresh_home_section_for_saved(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedServer,
+    kind: HomeSectionKind,
+) -> Result<(), String> {
+    let provider = provider_for_saved(store, runtime, secrets, saved)?;
+    runtime.block_on(refresh_home_section(
+        store,
+        &saved.server.id,
+        &provider,
+        kind,
+    ))
 }
 
 #[instrument(skip(store, provider), fields(server_id = %server_id.as_str()))]
@@ -2481,6 +2537,21 @@ async fn refresh_home_sections(
     cache_home_sections(store, server_id, &sections, generation)
 }
 
+async fn refresh_home_section(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &impl MusicProvider,
+    kind: HomeSectionKind,
+) -> Result<(), String> {
+    let generation =
+        store.with_store(|store| store.sync_state(server_id).map(|state| state.generation))?;
+    let section = provider
+        .home_section(kind)
+        .await
+        .map_err(|error| error.to_string())?;
+    cache_home_section(store, server_id, &section, generation)
+}
+
 fn cache_home_sections(
     store: &StoreHandle,
     server_id: &ServerId,
@@ -2488,16 +2559,35 @@ fn cache_home_sections(
     generation: i64,
 ) -> Result<(), String> {
     for section in sections {
-        if !section.albums.is_empty() {
-            store
-                .with_store(|store| store.upsert_albums(server_id, &section.albums, generation))?;
-        }
-        if !section.tracks.is_empty() {
-            store
-                .with_store(|store| store.upsert_tracks(server_id, &section.tracks, generation))?;
-        }
+        cache_home_section_items(store, server_id, section, generation)?;
     }
     store.with_store(|store| store.upsert_home_sections(server_id, sections, generation))?;
+    Ok(())
+}
+
+fn cache_home_section(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    section: &HomeSection,
+    generation: i64,
+) -> Result<(), String> {
+    cache_home_section_items(store, server_id, section, generation)?;
+    store.with_store(|store| store.upsert_home_section(server_id, section, generation))?;
+    Ok(())
+}
+
+fn cache_home_section_items(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    section: &HomeSection,
+    generation: i64,
+) -> Result<(), String> {
+    if !section.albums.is_empty() {
+        store.with_store(|store| store.upsert_albums(server_id, &section.albums, generation))?;
+    }
+    if !section.tracks.is_empty() {
+        store.with_store(|store| store.upsert_tracks(server_id, &section.tracks, generation))?;
+    }
     Ok(())
 }
 
@@ -3162,7 +3252,8 @@ mod tests {
     use super::{
         AppController, ControllerEvent, LibrarySnapshot, PendingSeek, StoreHandle,
         auto_dj_candidates, load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
-        refresh_home_sections, restore_queue, seek_position_is_stale, sync_page_finished,
+        refresh_home_section, refresh_home_sections, restore_queue, seek_position_is_stale,
+        sync_page_finished,
     };
     use rufin_core::{
         AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, ImageRef, PlaylistId,
@@ -3336,6 +3427,77 @@ mod tests {
         assert_eq!(after[1].tracks[0].id, TrackId::fake(1));
         assert_eq!(sync_state.generation, 0);
         assert_eq!(sync_state.status, "idle");
+    }
+
+    #[test]
+    fn home_section_refresh_replaces_only_selected_section() {
+        let runtime = Runtime::new().expect("runtime");
+        let store = StoreHandle::open_memory().expect("memory store");
+        let provider = FakeProvider::new(FakeScale::Small);
+        let saved = SavedServer {
+            server: provider.identity().server.clone(),
+            user_id: "fake-user".to_string(),
+            username: "fake".to_string(),
+            trust_invalid_cert: false,
+        };
+        let stale_album = runtime
+            .block_on(provider.albums(PagedRequest::new(8, 1)))
+            .expect("stale album page")
+            .items
+            .into_iter()
+            .next()
+            .expect("stale album");
+        let stale_track = runtime
+            .block_on(provider.tracks(PagedRequest::new(8, 1)))
+            .expect("stale track page")
+            .items
+            .into_iter()
+            .next()
+            .expect("stale track");
+
+        store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.upsert_albums(&saved.server.id, std::slice::from_ref(&stale_album), 0)?;
+                store.upsert_tracks(&saved.server.id, std::slice::from_ref(&stale_track), 0)?;
+                store.upsert_home_sections(
+                    &saved.server.id,
+                    &[
+                        HomeSection {
+                            kind: HomeSectionKind::Explore,
+                            albums: vec![stale_album],
+                            tracks: Vec::new(),
+                        },
+                        HomeSection {
+                            kind: HomeSectionKind::MostPlayed,
+                            albums: Vec::new(),
+                            tracks: vec![stale_track.clone()],
+                        },
+                    ],
+                    0,
+                )?;
+                Ok(())
+            })
+            .expect("seed stale home sections");
+
+        runtime
+            .block_on(refresh_home_section(
+                &store,
+                &saved.server.id,
+                &provider,
+                HomeSectionKind::Explore,
+            ))
+            .expect("refresh Explore");
+
+        let after = store
+            .with_store(|store| store.load_home_sections(&saved.server.id))
+            .expect("load refreshed home sections");
+
+        assert_eq!(after[0].kind, HomeSectionKind::Explore);
+        assert_eq!(after[0].albums[0].id, AlbumId::fake(1));
+        assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
+        assert_eq!(after[1].tracks, vec![stale_track]);
     }
 
     #[test]

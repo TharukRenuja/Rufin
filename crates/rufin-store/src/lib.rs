@@ -1105,43 +1105,71 @@ impl Store {
                 "DELETE FROM home_section_items WHERE server_id = ?1",
                 params![server_id.as_str()],
             )?;
-            let mut insert_item = connection.prepare(
-                "
-                INSERT INTO home_section_items (
-                    server_id, section_kind, item_type, item_id, position, sync_generation
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                ON CONFLICT(server_id, section_kind, item_type, item_id) DO UPDATE SET
-                    position = excluded.position,
-                    sync_generation = excluded.sync_generation
-                ",
-            )?;
-
             for section in sections {
-                let section_kind = home_section_kind_key(section.kind);
-                for (position, album) in section.albums.iter().enumerate() {
-                    insert_item.execute(params![
-                        server_id.as_str(),
-                        section_kind,
-                        "album",
-                        album.id.as_str(),
-                        position as i64,
-                        generation,
-                    ])?;
-                }
-                for (position, track) in section.tracks.iter().enumerate() {
-                    insert_item.execute(params![
-                        server_id.as_str(),
-                        section_kind,
-                        "track",
-                        track.id.as_str(),
-                        position as i64,
-                        generation,
-                    ])?;
-                }
+                Self::insert_home_section_items(connection, server_id, section, generation)?;
             }
             Ok(())
         })
+    }
+
+    pub fn upsert_home_section(
+        &self,
+        server_id: &ServerId,
+        section: &HomeSection,
+        generation: i64,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                DELETE FROM home_section_items
+                WHERE server_id = ?1
+                  AND section_kind = ?2
+                ",
+                params![server_id.as_str(), home_section_kind_key(section.kind)],
+            )?;
+            Self::insert_home_section_items(connection, server_id, section, generation)
+        })
+    }
+
+    fn insert_home_section_items(
+        connection: &Connection,
+        server_id: &ServerId,
+        section: &HomeSection,
+        generation: i64,
+    ) -> StoreResult<()> {
+        let mut insert_item = connection.prepare(
+            "
+            INSERT INTO home_section_items (
+                server_id, section_kind, item_type, item_id, position, sync_generation
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(server_id, section_kind, item_type, item_id) DO UPDATE SET
+                position = excluded.position,
+                sync_generation = excluded.sync_generation
+            ",
+        )?;
+        let section_kind = home_section_kind_key(section.kind);
+        for (position, album) in section.albums.iter().enumerate() {
+            insert_item.execute(params![
+                server_id.as_str(),
+                section_kind,
+                "album",
+                album.id.as_str(),
+                position as i64,
+                generation,
+            ])?;
+        }
+        for (position, track) in section.tracks.iter().enumerate() {
+            insert_item.execute(params![
+                server_id.as_str(),
+                section_kind,
+                "track",
+                track.id.as_str(),
+                position as i64,
+                generation,
+            ])?;
+        }
+        Ok(())
     }
 
     pub fn load_home_sections(&self, server_id: &ServerId) -> StoreResult<Vec<HomeSection>> {

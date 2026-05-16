@@ -297,37 +297,41 @@ impl MusicProvider for JellyfinProvider {
 
     async fn home_sections(&self) -> ProviderResult<Vec<HomeSection>> {
         let sections = [
-            self.home_album_section(HomeSectionKind::Explore, "Random,SortName", "Ascending")
-                .await?,
-            self.home_track_section(
-                HomeSectionKind::MostPlayed,
-                "PlayCount,SortName",
-                "Descending",
-            )
-            .await?,
-            self.home_album_section(
-                HomeSectionKind::NewlyAdded,
-                "DateCreated,SortName",
-                "Descending",
-            )
-            .await?,
-            self.home_track_section(
-                HomeSectionKind::RecentlyPlayed,
-                "DatePlayed,SortName",
-                "Descending",
-            )
-            .await?,
-            self.home_album_section(
-                HomeSectionKind::RecentlyReleased,
-                "ProductionYear,PremiereDate,SortName",
-                "Descending",
-            )
-            .await?,
+            self.home_section(HomeSectionKind::Explore).await?,
+            self.home_section(HomeSectionKind::MostPlayed).await?,
+            self.home_section(HomeSectionKind::NewlyAdded).await?,
+            self.home_section(HomeSectionKind::RecentlyPlayed).await?,
+            self.home_section(HomeSectionKind::RecentlyReleased).await?,
         ]
         .into_iter()
         .filter(|section| !section.albums.is_empty() || !section.tracks.is_empty())
         .collect();
         Ok(sections)
+    }
+
+    async fn home_section(&self, kind: HomeSectionKind) -> ProviderResult<HomeSection> {
+        match kind {
+            HomeSectionKind::Explore => {
+                self.home_album_section(kind, "Random,SortName", "Ascending")
+                    .await
+            }
+            HomeSectionKind::MostPlayed => {
+                self.home_track_section(kind, "PlayCount,SortName", "Descending")
+                    .await
+            }
+            HomeSectionKind::NewlyAdded => {
+                self.home_album_section(kind, "DateCreated,SortName", "Descending")
+                    .await
+            }
+            HomeSectionKind::RecentlyPlayed => {
+                self.home_track_section(kind, "DatePlayed,SortName", "Descending")
+                    .await
+            }
+            HomeSectionKind::RecentlyReleased => {
+                self.home_album_section(kind, "ProductionYear,PremiereDate,SortName", "Descending")
+                    .await
+            }
+        }
     }
 
     async fn albums(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Album>> {
