@@ -1562,10 +1562,10 @@ impl Shell {
         }
 
         if self.state.library.borrow().home_sections.is_empty() {
-            content.append(&self.placeholder_view(
-                "Home",
-                "Cached library data will appear here as sync pages finish.",
-            ));
+            content
+                .append(&self.route_empty_view(
+                    "Cached library data will appear here as sync pages finish.",
+                ));
         }
 
         scroller.set_child(Some(&content));
@@ -1658,7 +1658,6 @@ impl Shell {
             append_albums_to_model,
         );
         self.media_grid_view(
-            &tr("Albums"),
             page.items.is_empty(),
             "Cached albums will appear here after the background sync finishes.",
             self.album_cards_grid_for_model(model),
@@ -1791,11 +1790,11 @@ impl Shell {
         scroller.upcast()
     }
 
-    fn tracks_view(self: &Rc<Self>, tracks: Vec<Track>, title: &str) -> gtk::Widget {
-        self.tracks_view_with_paging(tracks, title, None)
+    fn tracks_view(self: &Rc<Self>, tracks: Vec<Track>, context: &str) -> gtk::Widget {
+        self.tracks_view_with_paging(tracks, context, None)
     }
 
-    fn tracks_route_view(self: &Rc<Self>, title: &str) -> gtk::Widget {
+    fn tracks_route_view(self: &Rc<Self>) -> gtk::Widget {
         let page = self
             .controller
             .cached_tracks_page(0, TRACK_ROUTE_PAGE_SIZE)
@@ -1814,13 +1813,13 @@ impl Shell {
             });
         let offset = page.items.len();
         let total = page.total;
-        self.tracks_view_with_paging(page.items, title, Some((offset, total)))
+        self.tracks_view_with_paging(page.items, "tracks", Some((offset, total)))
     }
 
     fn tracks_view_with_paging(
         self: &Rc<Self>,
         tracks: Vec<Track>,
-        title: &str,
+        context: &str,
         paging: Option<(usize, usize)>,
     ) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
@@ -1831,11 +1830,7 @@ impl Shell {
         wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_vexpand(true);
 
-        let heading = gtk::Label::new(Some(title));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        wrapper.append(&heading);
-        wrapper.append(&self.tracks_table_with_paging(tracks, title, paging));
+        wrapper.append(&self.tracks_table_with_paging(tracks, context, paging));
         wrapper.upcast()
     }
 
@@ -1985,7 +1980,7 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn artist_list_view(self: &Rc<Self>, album_artist: bool, title: &str) -> gtk::Widget {
+    fn artist_list_view(self: &Rc<Self>, album_artist: bool) -> gtk::Widget {
         let page = self
             .controller
             .cached_artists_page(album_artist, 0, GRID_ROUTE_PAGE_SIZE)
@@ -2024,7 +2019,6 @@ impl Shell {
             append_artists_to_model,
         );
         self.media_grid_view(
-            title,
             page.items.is_empty(),
             "Cached rows will appear here after the background sync finishes.",
             self.artist_cards_grid_for_model(model),
@@ -2130,7 +2124,7 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn genre_list_view(self: &Rc<Self>, title: &str) -> gtk::Widget {
+    fn genre_list_view(self: &Rc<Self>) -> gtk::Widget {
         let page = self
             .controller
             .cached_genres_page(0, GRID_ROUTE_PAGE_SIZE)
@@ -2160,7 +2154,6 @@ impl Shell {
             append_genres_to_model,
         );
         self.media_grid_view(
-            title,
             page.items.is_empty(),
             "Cached rows will appear here after the background sync finishes.",
             self.genre_cards_grid_for_model(model),
@@ -2168,7 +2161,7 @@ impl Shell {
         )
     }
 
-    fn playlist_list_view(self: &Rc<Self>, title: &str) -> gtk::Widget {
+    fn playlist_list_view(self: &Rc<Self>) -> gtk::Widget {
         let page = self
             .controller
             .cached_playlists_page(0, GRID_ROUTE_PAGE_SIZE)
@@ -2209,20 +2202,15 @@ impl Shell {
         wrapper.set_vexpand(true);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let heading = gtk::Label::new(Some(title));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        heading.set_hexpand(true);
+        header.set_halign(gtk::Align::End);
         let create = text_button("list-add-symbolic", "New Playlist");
         let shell = Rc::clone(self);
         create.connect_clicked(move |_| shell.new_playlist_dialog());
-        header.append(&heading);
         header.append(&create);
         wrapper.append(&header);
 
         if page.items.is_empty() {
-            wrapper.append(&self.placeholder_view(
-                title,
+            wrapper.append(&self.route_empty_view(
                 "Cached rows will appear here after the background sync finishes.",
             ));
         } else {
@@ -2592,7 +2580,6 @@ impl Shell {
 
     fn media_grid_view(
         self: &Rc<Self>,
-        title: &str,
         empty: bool,
         empty_body: &str,
         grid: gtk::Widget,
@@ -2606,13 +2593,8 @@ impl Shell {
         wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_vexpand(true);
 
-        let heading = gtk::Label::new(Some(title));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        wrapper.append(&heading);
-
         if empty {
-            wrapper.append(&self.placeholder_view(title, empty_body));
+            wrapper.append(&self.route_empty_view(empty_body));
         } else {
             let scroller = gtk::ScrolledWindow::new();
             scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
@@ -2627,7 +2609,7 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn search_view(self: &Rc<Self>, query: &str, library: LibrarySnapshot) -> gtk::Widget {
+    fn search_view(self: &Rc<Self>, _query: &str, library: LibrarySnapshot) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -2635,11 +2617,6 @@ impl Shell {
         wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_vexpand(true);
-
-        let heading = gtk::Label::new(Some(&format!("{}: {query}", tr("Search"))));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        wrapper.append(&heading);
 
         let has_albums = !library.search.albums.is_empty();
         let has_tracks = !library.search.tracks.is_empty();
@@ -2657,8 +2634,7 @@ impl Shell {
         if has_tracks {
             wrapper.append(&self.tracks_table(library.search.tracks, "search"));
         } else if !has_albums && !has_artists && !has_playlists {
-            wrapper.append(&self.placeholder_view(
-                "Search",
+            wrapper.append(&self.route_empty_view(
                 "Type a query in the sidebar search field to search the local cache.",
             ));
         }
@@ -3207,6 +3183,22 @@ impl Shell {
         label.set_wrap(true);
         label.set_justify(gtk::Justification::Center);
         wrapper.append(&heading);
+        wrapper.append(&label);
+        wrapper.upcast()
+    }
+
+    fn route_empty_view(&self, body: &str) -> gtk::Widget {
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        wrapper.add_css_class("empty-state");
+        wrapper.set_vexpand(true);
+        wrapper.set_hexpand(true);
+        wrapper.set_valign(gtk::Align::Center);
+        wrapper.set_halign(gtk::Align::Center);
+
+        let label = gtk::Label::new(Some(&tr(body)));
+        label.add_css_class("muted");
+        label.set_wrap(true);
+        label.set_justify(gtk::Justification::Center);
         wrapper.append(&label);
         wrapper.upcast()
     }
