@@ -3228,6 +3228,33 @@ mod tests {
     }
 
     #[test]
+    fn activate_queue_entry_starts_selected_track() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first, second.clone()]);
+        let queue = wait_for_queue(&events).expect("queue");
+        let second_entry = queue
+            .entries
+            .iter()
+            .find(|entry| entry.track_id == second.id)
+            .expect("second entry")
+            .id
+            .clone();
+        let _initial_playback =
+            wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+
+        controller.activate_queue_entry(second_entry);
+
+        let queue = wait_for_queue(&events).expect("activated queue");
+        assert_eq!(queue.current_index, Some(1));
+        let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+        assert_eq!(playback.current.expect("current").track_id, second.id);
+    }
+
+    #[test]
     fn seek_millis_emits_exact_playback_position() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
