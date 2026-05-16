@@ -30,8 +30,8 @@ use crate::controller::{AppController, ControllerEvent, LibrarySnapshot, Playbac
 use crate::i18n::tr;
 
 const COMPACT_RAIL_WIDTH: i32 = 80;
-const MAIN_PANEL_UNITS: i32 = 1;
-const TOTAL_PANEL_UNITS: i32 = 2;
+const MAIN_PANEL_UNITS: i32 = 7;
+const TOTAL_PANEL_UNITS: i32 = 10;
 const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
 const RIGHT_PANEL_MAX_PERCENT: i32 = 50;
 const NORMAL_SIDEBAR_WIDTH: i32 = 220;
@@ -388,7 +388,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         updating_player_controls: Cell::new(false),
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
-        right_panel_visible: Cell::new(true),
+        right_panel_visible: Cell::new(settings.right_panel_visible),
         split_width: Cell::new(0),
         split_position: Cell::new(0),
         responsive_render_queued: Cell::new(false),
@@ -520,6 +520,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     shell.render_current_route();
     shell.render_queue_panel();
     shell.update_bottom_player();
+    shell.update_right_panel_button();
+    if !shell.state.right_panel_visible.get() {
+        apply_right_panel_visibility(Rc::clone(&shell), false);
+    }
     shell.request_initial_lyrics_if_needed();
     install_event_pump(&shell, events);
 
@@ -1028,6 +1032,11 @@ impl Shell {
         ) {
             changed = true;
         }
+        let right_panel_visible = self.state.right_panel_visible.get();
+        if settings.right_panel_visible != right_panel_visible {
+            settings.right_panel_visible = right_panel_visible;
+            changed = true;
+        }
 
         if !changed {
             return;
@@ -1047,6 +1056,17 @@ impl Shell {
         }
         if let Err(error) = self.controller.save_settings(&settings) {
             warn!(%error, "failed to save right panel split position");
+        }
+    }
+
+    fn save_right_panel_visibility(&self, visible: bool) {
+        let mut settings = self.state.settings.borrow_mut();
+        if settings.right_panel_visible == visible {
+            return;
+        }
+        settings.right_panel_visible = visible;
+        if let Err(error) = self.controller.save_settings(&settings) {
+            warn!(%error, "failed to save right panel visibility");
         }
     }
 
@@ -3367,6 +3387,7 @@ impl Shell {
             return;
         }
 
+        self.save_right_panel_visibility(visible);
         self.update_right_panel_button();
         apply_right_panel_visibility(Rc::clone(self), visible);
     }
@@ -7338,15 +7359,15 @@ mod tests {
         assert_eq!(clamp_content_split_position(1_000, 100), 500);
         assert_eq!(clamp_content_split_position(1_000, 950), 900);
         assert_eq!(clamp_content_split_position(1_000, 625), 625);
-        assert_eq!(default_content_split_position(1_000), 500);
-        assert_eq!(content_split_initial_position(1_000, None), 500);
+        assert_eq!(default_content_split_position(1_000), 700);
+        assert_eq!(content_split_initial_position(1_000, None), 700);
         assert_eq!(content_split_initial_position(1_000, Some(0.25)), 750);
         assert_eq!(
             content_split_position_from_right_panel_ratio(1_000, 0.25),
             750
         );
         assert_eq!(right_panel_position_ratio(1_000, 750), 0.25);
-        assert_eq!(content_split_target_position(1_000, 0, 0, 600, None), 500);
+        assert_eq!(content_split_target_position(1_000, 0, 0, 600, None), 700);
         assert_eq!(
             content_split_target_position(1_400, 1_000, 500, 700, None),
             700

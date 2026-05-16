@@ -6,6 +6,10 @@ use crate::route::DensityMode;
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
 
+fn default_right_panel_visible() -> bool {
+    true
+}
+
 const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 4] = [
     TrackTableColumn::TrackNumber,
     TrackTableColumn::Title,
@@ -151,6 +155,8 @@ pub struct AppSettings {
     pub external_lyrics_enabled: bool,
     pub discord_presence_enabled: bool,
     pub home_sections: Vec<HomeSectionKind>,
+    #[serde(default = "default_right_panel_visible")]
+    pub right_panel_visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_width: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,6 +191,7 @@ impl Default for AppSettings {
                 HomeSectionKind::RecentlyPlayed,
                 HomeSectionKind::RecentlyReleased,
             ],
+            right_panel_visible: true,
             window_width: None,
             window_height: None,
             right_panel_position: None,
@@ -219,6 +226,7 @@ mod tests {
         assert!(!settings.notifications_enabled);
         assert!(!settings.external_lyrics_enabled);
         assert!(!settings.discord_presence_enabled);
+        assert!(settings.right_panel_visible);
         assert_eq!(settings.queue_lyrics_layout_version, 3);
         assert_eq!(settings.home_sections.len(), 5);
         assert_eq!(
@@ -236,6 +244,7 @@ mod tests {
     #[test]
     fn settings_serialize_to_json() {
         let settings = AppSettings {
+            right_panel_visible: false,
             window_width: Some(1180),
             window_height: Some(760),
             right_panel_position: Some(820),
@@ -267,6 +276,7 @@ mod tests {
 
         assert_eq!(restored.window_width, None);
         assert_eq!(restored.window_height, None);
+        assert!(restored.right_panel_visible);
         assert_eq!(restored.right_panel_position, None);
         assert_eq!(restored.right_panel_ratio, None);
         assert_eq!(restored.queue_lyrics_position, None);
