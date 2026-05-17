@@ -16,8 +16,8 @@ pub(super) const PRIMARY_ROUTE_MARGIN_END: i32 = 28;
 const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
 const CARD_LABEL_LINE_HEIGHT: i32 = 20;
 pub(super) const HOME_ALBUM_CARD_LABEL_GAP: i32 = 4;
-pub(super) const HOME_ALBUM_TITLE_LINES: i32 = 2;
-pub(super) const HOME_ALBUM_ARTIST_LINES: i32 = 2;
+pub(super) const HOME_ALBUM_TITLE_LINES: i32 = 1;
+pub(super) const HOME_ALBUM_ARTIST_LINES: i32 = 1;
 pub(super) const HOME_ALBUM_YEAR_LINES: i32 = 1;
 
 const MAIN_PANEL_UNITS: i32 = 7;
@@ -256,14 +256,6 @@ pub(super) fn home_album_card_height(size: i32) -> i32 {
         + card_label_height(HOME_ALBUM_YEAR_LINES)
 }
 
-pub(super) fn constrain_wrapped_card_label(label: &gtk::Label, size: i32, lines: i32) {
-    constrain_card_label(label, size);
-    label.set_lines(lines);
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-}
-
 pub(super) fn constrain_single_line_card_label(label: &gtk::Label, size: i32) {
     constrain_card_label(label, size);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -339,10 +331,10 @@ mod tests {
     }
 
     #[test]
-    fn home_album_card_height_reserves_five_text_rows() {
+    fn home_album_card_height_reserves_three_text_rows() {
         assert_eq!(
             home_album_card_height(180),
-            180 + HOME_ALBUM_CARD_LABEL_GAP * 3 + card_label_height(5)
+            180 + HOME_ALBUM_CARD_LABEL_GAP * 3 + card_label_height(3)
         );
     }
 

@@ -9,10 +9,9 @@ use crate::i18n::tr;
 
 use super::favorites::{album_favorite_key, track_favorite_key};
 use super::layout::{
-    HOME_ALBUM_ARTIST_LINES, HOME_ALBUM_CARD_LABEL_GAP, HOME_ALBUM_TITLE_LINES,
-    clamp_home_album_page_start, clipped_card_label, clipped_card_label_with_lines,
-    constrain_single_line_card_label, home_album_card_height, home_album_card_size,
-    home_album_content_width, home_album_page_size,
+    HOME_ALBUM_CARD_LABEL_GAP, clamp_home_album_page_start, clipped_card_label,
+    clipped_card_label_with_lines, constrain_single_line_card_label, home_album_card_height,
+    home_album_card_size, home_album_content_width, home_album_page_size,
 };
 use super::{
     GRID_COVER_SIZE, HomeSectionState, Shell, add_card_label_link, add_link_hover,
@@ -346,16 +345,11 @@ fn album_card_widget_with_size(
     let card = media_card(size, label_layout);
     card.append(&album_cover_tile(shell, album, size, controller));
 
-    let title = wrapped_card_label(&album.title, size, HOME_ALBUM_TITLE_LINES, &["album-title"]);
+    let title = single_line_card_label(&album.title, size, &["album-title"]);
     let title_clip = label_clip(&title, size, label_layout);
     add_link_hover(&title_clip, &title, &album.title);
 
-    let artist = match label_layout {
-        AlbumCardLabelLayout::Natural => single_line_card_label(&album.artist, size, &["muted"]),
-        AlbumCardLabelLayout::StableHome => {
-            wrapped_card_label(&album.artist, size, HOME_ALBUM_ARTIST_LINES, &["muted"])
-        }
-    };
+    let artist = single_line_card_label(&album.artist, size, &["muted"]);
     let artist_clip = label_clip(&artist, size, label_layout);
     add_card_label_link(
         shell,
@@ -424,12 +418,12 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     let card = media_card(size, AlbumCardLabelLayout::StableHome);
     card.append(&track_cover_tile(shell, track, size));
 
-    let title = wrapped_card_label(&track.title, size, HOME_ALBUM_TITLE_LINES, &["album-title"]);
-    let title_clip = clipped_card_label_with_lines(&title, size, HOME_ALBUM_TITLE_LINES);
+    let title = single_line_card_label(&track.title, size, &["album-title"]);
+    let title_clip = clipped_card_label_with_lines(&title, size, 1);
     add_link_hover(&title_clip, &title, &track.title);
 
-    let artist = wrapped_card_label(&track.artist, size, HOME_ALBUM_ARTIST_LINES, &["muted"]);
-    let artist_clip = clipped_card_label_with_lines(&artist, size, HOME_ALBUM_ARTIST_LINES);
+    let artist = single_line_card_label(&track.artist, size, &["muted"]);
+    let artist_clip = clipped_card_label_with_lines(&artist, size, 1);
     add_card_label_link(
         shell,
         &artist_clip,
@@ -493,7 +487,7 @@ fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -
         GRID_COVER_SIZE,
     ));
 
-    let name = wrapped_card_label(&artist.name, size, 2, &["album-title"]);
+    let name = single_line_card_label(&artist.name, size, &["album-title"]);
     let counts = single_line_card_label(
         &format!(
             "{} {} / {} {}",
@@ -520,7 +514,7 @@ fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> g
         GRID_COVER_SIZE,
     ));
 
-    let name = wrapped_card_label(&genre.name, size, 2, &["album-title"]);
+    let name = single_line_card_label(&genre.name, size, &["album-title"]);
     let counts = single_line_card_label(
         &format!("{} {}", genre.track_count, tr("tracks")),
         size,
@@ -545,7 +539,7 @@ fn playlist_card_widget_with_size(
         GRID_COVER_SIZE,
     ));
 
-    let name = wrapped_card_label(&playlist.name, size, 2, &["album-title"]);
+    let name = single_line_card_label(&playlist.name, size, &["album-title"]);
     let counts = single_line_card_label(
         &format!(
             "{} {} • {}",
@@ -595,23 +589,6 @@ fn single_line_card_label(text: &str, size: i32, css_classes: &[&str]) -> gtk::L
     label.set_xalign(0.0);
     constrain_single_line_card_label(&label, size);
     label
-}
-
-fn wrapped_card_label(text: &str, size: i32, lines: i32, css_classes: &[&str]) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    for css_class in css_classes {
-        label.add_css_class(css_class);
-    }
-    label.set_xalign(0.0);
-    constrain_wrapped_card_label(&label, size, lines);
-    label
-}
-
-fn constrain_wrapped_card_label(label: &gtk::Label, size: i32, lines: i32) {
-    constrain_single_line_card_label(label, size);
-    label.set_lines(lines);
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
 }
 
 fn label_clip(label: &gtk::Label, size: i32, label_layout: AlbumCardLabelLayout) -> gtk::Widget {
