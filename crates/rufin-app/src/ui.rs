@@ -1807,23 +1807,46 @@ impl Shell {
                     .collect::<Vec<_>>();
                 rufin_provider::PagedResponse::new(albums, self.state.library.borrow().albums.len())
             });
-        let model = album_model(&page.items);
+        let albums = Rc::new(RefCell::new(page.items));
+        let model = album_model(&albums.borrow());
+        let albums_for_page = Rc::clone(&albums);
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        let search_for_page = search.clone();
         let load_next = self.grid_loader(
             model.clone(),
             PagedGridConfig {
                 route: Route::Albums,
-                offset: page.items.len(),
+                offset: albums.borrow().len(),
                 total: page.total,
                 page_name: "albums",
             },
             |controller, offset, limit| controller.cached_albums_page(offset, limit),
-            append_albums_to_model,
+            move |model, items| {
+                albums_for_page.borrow_mut().extend(items);
+                populate_album_model(
+                    model,
+                    &albums_for_page.borrow(),
+                    search_for_page.text().as_str(),
+                );
+            },
         );
+        let model_for_search = model.clone();
+        let albums_for_search = Rc::clone(&albums);
+        search.connect_search_changed(move |entry| {
+            populate_album_model(
+                &model_for_search,
+                &albums_for_search.borrow(),
+                entry.text().as_str(),
+            );
+        });
         self.media_grid_view(
-            page.items.is_empty(),
+            albums.borrow().is_empty(),
             "Cached albums will appear here after the background sync finishes.",
             self.album_cards_grid_for_model(model),
             Some(load_next),
+            Some(search),
         )
     }
 
@@ -2164,7 +2187,13 @@ impl Shell {
                     .collect::<Vec<_>>();
                 rufin_provider::PagedResponse::new(artists, fallback.len())
             });
-        let model = artist_model(&page.items);
+        let artists = Rc::new(RefCell::new(page.items));
+        let model = artist_model(&artists.borrow());
+        let artists_for_page = Rc::clone(&artists);
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        let search_for_page = search.clone();
         let route = if album_artist {
             Route::AlbumArtists
         } else {
@@ -2174,20 +2203,37 @@ impl Shell {
             model.clone(),
             PagedGridConfig {
                 route,
-                offset: page.items.len(),
+                offset: artists.borrow().len(),
                 total: page.total,
                 page_name: "artists",
             },
             move |controller, offset, limit| {
                 controller.cached_artists_page(album_artist, offset, limit)
             },
-            append_artists_to_model,
+            move |model, items| {
+                artists_for_page.borrow_mut().extend(items);
+                populate_artist_model(
+                    model,
+                    &artists_for_page.borrow(),
+                    search_for_page.text().as_str(),
+                );
+            },
         );
+        let model_for_search = model.clone();
+        let artists_for_search = Rc::clone(&artists);
+        search.connect_search_changed(move |entry| {
+            populate_artist_model(
+                &model_for_search,
+                &artists_for_search.borrow(),
+                entry.text().as_str(),
+            );
+        });
         self.media_grid_view(
-            page.items.is_empty(),
+            artists.borrow().is_empty(),
             "Cached rows will appear here after the background sync finishes.",
             self.artist_cards_grid_for_model(model),
             Some(load_next),
+            Some(search),
         )
     }
 
@@ -2308,23 +2354,46 @@ impl Shell {
                     .collect::<Vec<_>>();
                 rufin_provider::PagedResponse::new(genres, self.state.library.borrow().genres.len())
             });
-        let model = genre_model(&page.items);
+        let genres = Rc::new(RefCell::new(page.items));
+        let model = genre_model(&genres.borrow());
+        let genres_for_page = Rc::clone(&genres);
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        let search_for_page = search.clone();
         let load_next = self.grid_loader(
             model.clone(),
             PagedGridConfig {
                 route: Route::Genres,
-                offset: page.items.len(),
+                offset: genres.borrow().len(),
                 total: page.total,
                 page_name: "genres",
             },
             |controller, offset, limit| controller.cached_genres_page(offset, limit),
-            append_genres_to_model,
+            move |model, items| {
+                genres_for_page.borrow_mut().extend(items);
+                populate_genre_model(
+                    model,
+                    &genres_for_page.borrow(),
+                    search_for_page.text().as_str(),
+                );
+            },
         );
+        let model_for_search = model.clone();
+        let genres_for_search = Rc::clone(&genres);
+        search.connect_search_changed(move |entry| {
+            populate_genre_model(
+                &model_for_search,
+                &genres_for_search.borrow(),
+                entry.text().as_str(),
+            );
+        });
         self.media_grid_view(
-            page.items.is_empty(),
+            genres.borrow().is_empty(),
             "Cached rows will appear here after the background sync finishes.",
             self.genre_cards_grid_for_model(model),
             Some(load_next),
+            Some(search),
         )
     }
 
@@ -2348,18 +2417,40 @@ impl Shell {
                     self.state.library.borrow().playlists.len(),
                 )
             });
-        let model = playlist_model(&page.items);
+        let playlists = Rc::new(RefCell::new(page.items));
+        let model = playlist_model(&playlists.borrow());
+        let playlists_for_page = Rc::clone(&playlists);
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        let search_for_page = search.clone();
         let load_next = self.grid_loader(
             model.clone(),
             PagedGridConfig {
                 route: Route::Playlists,
-                offset: page.items.len(),
+                offset: playlists.borrow().len(),
                 total: page.total,
                 page_name: "playlists",
             },
             |controller, offset, limit| controller.cached_playlists_page(offset, limit),
-            append_playlists_to_model,
+            move |model, items| {
+                playlists_for_page.borrow_mut().extend(items);
+                populate_playlist_model(
+                    model,
+                    &playlists_for_page.borrow(),
+                    search_for_page.text().as_str(),
+                );
+            },
         );
+        let model_for_search = model.clone();
+        let playlists_for_search = Rc::clone(&playlists);
+        search.connect_search_changed(move |entry| {
+            populate_playlist_model(
+                &model_for_search,
+                &playlists_for_search.borrow(),
+                entry.text().as_str(),
+            );
+        });
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -2369,14 +2460,14 @@ impl Shell {
         wrapper.set_vexpand(true);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        header.set_halign(gtk::Align::End);
+        header.append(&search);
         let create = text_button("list-add-symbolic", "New Playlist");
         let shell = Rc::clone(self);
         create.connect_clicked(move |_| shell.new_playlist_dialog());
         header.append(&create);
         wrapper.append(&header);
 
-        if page.items.is_empty() {
+        if playlists.borrow().is_empty() {
             wrapper.append(&self.route_empty_view(
                 "Cached rows will appear here after the background sync finishes.",
             ));
@@ -2751,6 +2842,7 @@ impl Shell {
         empty_body: &str,
         grid: gtk::Widget,
         load_next: Option<Rc<dyn Fn()>>,
+        search: Option<gtk::SearchEntry>,
     ) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
@@ -2759,6 +2851,9 @@ impl Shell {
         wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_vexpand(true);
+        if let Some(search) = search {
+            wrapper.append(&search);
+        }
 
         if empty {
             wrapper.append(&self.route_empty_view(empty_body));
@@ -4434,6 +4529,23 @@ fn append_albums_to_model(model: &gio::ListStore, albums: impl IntoIterator<Item
     }
 }
 
+fn populate_album_model(model: &gio::ListStore, albums: &[Album], query: &str) {
+    let query = normalized_query(query);
+    let items = albums
+        .iter()
+        .filter(|album| query.is_empty() || album_matches_query(album, &query))
+        .cloned();
+    replace_albums_in_model(model, items);
+}
+
+fn replace_albums_in_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
+    let additions = albums
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
+}
+
 fn artist_model(artists: &[Artist]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     append_artists_to_model(&model, artists.iter().cloned());
@@ -4448,6 +4560,23 @@ fn append_artists_to_model(model: &gio::ListStore, artists: impl IntoIterator<It
     if !additions.is_empty() {
         model.splice(model.n_items(), 0, &additions);
     }
+}
+
+fn populate_artist_model(model: &gio::ListStore, artists: &[Artist], query: &str) {
+    let query = normalized_query(query);
+    let items = artists
+        .iter()
+        .filter(|artist| query.is_empty() || artist_matches_query(artist, &query))
+        .cloned();
+    replace_artists_in_model(model, items);
+}
+
+fn replace_artists_in_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
+    let additions = artists
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
 }
 
 fn genre_model(genres: &[Genre]) -> gio::ListStore {
@@ -4466,10 +4595,47 @@ fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item
     }
 }
 
+fn populate_genre_model(model: &gio::ListStore, genres: &[Genre], query: &str) {
+    let query = normalized_query(query);
+    let items = genres
+        .iter()
+        .filter(|genre| query.is_empty() || genre_matches_query(genre, &query))
+        .cloned();
+    replace_genres_in_model(model, items);
+}
+
+fn replace_genres_in_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
+    let additions = genres
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
+}
+
 fn playlist_model(playlists: &[Playlist]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     append_playlists_to_model(&model, playlists.iter().cloned());
     model
+}
+
+fn populate_playlist_model(model: &gio::ListStore, playlists: &[Playlist], query: &str) {
+    let query = normalized_query(query);
+    let items = playlists
+        .iter()
+        .filter(|playlist| query.is_empty() || playlist_matches_query(playlist, &query))
+        .cloned();
+    replace_playlists_in_model(model, items);
+}
+
+fn replace_playlists_in_model(
+    model: &gio::ListStore,
+    playlists: impl IntoIterator<Item = Playlist>,
+) {
+    let additions = playlists
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
 }
 
 fn append_playlists_to_model(
@@ -4483,6 +4649,32 @@ fn append_playlists_to_model(
     if !additions.is_empty() {
         model.splice(model.n_items(), 0, &additions);
     }
+}
+
+fn normalized_query(query: &str) -> String {
+    query.trim().to_lowercase()
+}
+
+fn album_matches_query(album: &Album, query: &str) -> bool {
+    album.title.to_lowercase().contains(query)
+        || album.artist.to_lowercase().contains(query)
+        || album.year.to_string().contains(query)
+        || album
+            .genres
+            .iter()
+            .any(|genre| genre.to_lowercase().contains(query))
+}
+
+fn artist_matches_query(artist: &Artist, query: &str) -> bool {
+    artist.name.to_lowercase().contains(query)
+}
+
+fn genre_matches_query(genre: &Genre, query: &str) -> bool {
+    genre.name.to_lowercase().contains(query)
+}
+
+fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
+    playlist.name.to_lowercase().contains(query)
 }
 
 fn finish_grid_page(cursor: &PagedGridCursor, previous_offset: usize, count: usize, total: usize) {
