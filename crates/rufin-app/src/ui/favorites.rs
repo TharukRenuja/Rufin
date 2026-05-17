@@ -201,6 +201,8 @@ mod tests {
             first_run: false,
             sync_status: String::new(),
             last_error: None,
+            cached_album_count: 0,
+            cached_track_count: 1,
             home_sections: Vec::new(),
             prefetched_explore: None,
             albums: Vec::new(),

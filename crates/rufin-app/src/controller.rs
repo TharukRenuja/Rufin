@@ -40,6 +40,8 @@ mod discovery;
 pub use discovery::DiscoveredServer;
 
 const PAGE_SIZE: usize = 500;
+const SNAPSHOT_GRID_LIMIT: usize = 500;
+const SNAPSHOT_TRACK_LIMIT: usize = 25_000;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
@@ -55,6 +57,8 @@ pub struct LibrarySnapshot {
     pub first_run: bool,
     pub sync_status: String,
     pub last_error: Option<String>,
+    pub cached_album_count: usize,
+    pub cached_track_count: usize,
     pub home_sections: Vec<HomeSection>,
     pub prefetched_explore: Option<HomeSection>,
     pub albums: Vec<Album>,
@@ -121,6 +125,8 @@ impl LibrarySnapshot {
             first_run: true,
             sync_status: "Add a music server to start.".to_string(),
             last_error: None,
+            cached_album_count: 0,
+            cached_track_count: 0,
             home_sections: Vec::new(),
             prefetched_explore: None,
             albums: Vec::new(),
@@ -3019,34 +3025,32 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     let prefetched_explore = store.with_store(|store| {
         store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
     })?;
-    let albums = store.with_store(|store| {
-        store
-            .load_albums(&saved.server.id, 0, 500)
-            .map(|page| page.items)
-    })?;
-    let tracks = store.with_store(|store| {
-        store
-            .load_tracks(&saved.server.id, 0, 1_000)
-            .map(|page| page.items)
-    })?;
+    let album_page =
+        store.with_store(|store| store.load_albums(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
+    let track_page =
+        store.with_store(|store| store.load_tracks(&saved.server.id, 0, SNAPSHOT_TRACK_LIMIT))?;
+    let cached_album_count = album_page.total;
+    let cached_track_count = track_page.total;
+    let albums = album_page.items;
+    let tracks = track_page.items;
     let artists = store.with_store(|store| {
         store
-            .load_artists(&saved.server.id, false, 0, 500)
+            .load_artists(&saved.server.id, false, 0, SNAPSHOT_GRID_LIMIT)
             .map(|page| page.items)
     })?;
     let album_artists = store.with_store(|store| {
         store
-            .load_artists(&saved.server.id, true, 0, 500)
+            .load_artists(&saved.server.id, true, 0, SNAPSHOT_GRID_LIMIT)
             .map(|page| page.items)
     })?;
     let genres = store.with_store(|store| {
         store
-            .load_genres(&saved.server.id, 0, 500)
+            .load_genres(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT)
             .map(|page| page.items)
     })?;
     let playlists = store.with_store(|store| {
         store
-            .load_playlists(&saved.server.id, 0, 500)
+            .load_playlists(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT)
             .map(|page| page.items)
     })?;
     let favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
@@ -3066,6 +3070,8 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         first_run: false,
         sync_status: status,
         last_error,
+        cached_album_count,
+        cached_track_count,
         home_sections,
         prefetched_explore,
         albums,
@@ -3991,11 +3997,12 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AppController, ControllerEvent, LibrarySnapshot, PendingSeek, StoreHandle,
-        auto_dj_candidates, load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
-        prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
-        refresh_home_sections, refresh_home_sections_without_explore, restore_queue,
-        seek_position_is_stale, sync_page_finished,
+        AppController, ControllerEvent, LibrarySnapshot, PendingSeek, SNAPSHOT_GRID_LIMIT,
+        SNAPSHOT_TRACK_LIMIT, StoreHandle, auto_dj_candidates, load_settings_from_store,
+        load_snapshot, playback_snapshot_from_queue, prefetch_home_section,
+        promote_prefetched_home_section, refresh_home_section, refresh_home_sections,
+        refresh_home_sections_without_explore, restore_queue, seek_position_is_stale,
+        sync_page_finished, sync_provider,
     };
     use rufin_core::{
         AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, ImageRef, PlaylistId,
@@ -4070,12 +4077,14 @@ mod tests {
         assert_eq!(player.state, PlaybackState::Stopped);
         assert_eq!(
             snapshot.albums.len(),
-            500.min(FakeScale::Small.album_count())
+            SNAPSHOT_GRID_LIMIT.min(FakeScale::Small.album_count())
         );
         assert_eq!(
             snapshot.tracks.len(),
-            1_000.min(FakeScale::Small.track_count())
+            SNAPSHOT_TRACK_LIMIT.min(FakeScale::Small.track_count())
         );
+        assert_eq!(snapshot.cached_album_count, FakeScale::Small.album_count());
+        assert_eq!(snapshot.cached_track_count, FakeScale::Small.track_count());
     }
 
     #[test]
@@ -4092,8 +4101,45 @@ mod tests {
             AppController::bootstrap(Some(FakeScale::Large));
 
         assert!(!snapshot.first_run);
-        assert_eq!(snapshot.albums.len(), 500);
-        assert_eq!(snapshot.tracks.len(), 1_000);
+        assert_eq!(snapshot.albums.len(), SNAPSHOT_GRID_LIMIT);
+        assert_eq!(snapshot.tracks.len(), 2_000);
+        assert_eq!(snapshot.cached_album_count, 1_000);
+        assert_eq!(snapshot.cached_track_count, 2_000);
+    }
+
+    #[test]
+    fn provider_sync_caches_all_track_pages() {
+        let runtime = Runtime::new().expect("runtime");
+        let store = StoreHandle::open_memory().expect("memory store");
+        let provider = FakeProvider::new(FakeScale::Small);
+        let server_id = provider.identity().server.id.clone();
+        let saved = SavedServer {
+            server: provider.identity().server.clone(),
+            user_id: "fake-user".to_string(),
+            username: "fake".to_string(),
+            trust_invalid_cert: false,
+        };
+
+        store
+            .with_store(|store| store.save_server(&saved))
+            .expect("save server");
+
+        runtime
+            .block_on(sync_provider(&store, &server_id, &provider))
+            .expect("sync provider");
+
+        let first_page = store
+            .with_store(|store| store.load_tracks(&server_id, 0, 1))
+            .expect("load first track page");
+        let final_page = store
+            .with_store(|store| {
+                store.load_tracks(&server_id, FakeScale::Small.track_count() - 1, 10)
+            })
+            .expect("load final track page");
+
+        assert_eq!(first_page.total, FakeScale::Small.track_count());
+        assert_eq!(final_page.total, FakeScale::Small.track_count());
+        assert_eq!(final_page.items.len(), 1);
     }
 
     #[test]

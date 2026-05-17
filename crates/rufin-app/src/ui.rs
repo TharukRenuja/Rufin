@@ -327,8 +327,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let (controller, events, library, queue, player) = AppController::bootstrap(options.fake_scale);
     let settings = controller.load_settings();
     info!(
-        albums = library.albums.len(),
-        tracks = library.tracks.len(),
+        cached_albums = library.cached_album_count,
+        cached_tracks = library.cached_track_count,
+        preloaded_albums = library.albums.len(),
+        preloaded_tracks = library.tracks.len(),
         first_run = library.first_run,
         elapsed_ms = loaded_at.elapsed().as_millis(),
         "loaded cached music library snapshot"
@@ -2037,7 +2039,10 @@ impl Shell {
                     .take(TRACK_ROUTE_PAGE_SIZE)
                     .cloned()
                     .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(tracks, self.state.library.borrow().tracks.len())
+                rufin_provider::PagedResponse::new(
+                    tracks,
+                    self.state.library.borrow().cached_track_count,
+                )
             });
         let offset = page.items.len();
         let total = page.total;

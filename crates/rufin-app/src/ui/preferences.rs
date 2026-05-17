@@ -279,9 +279,9 @@ fn library_page(shell: &Rc<Shell>, dialog: &adw::PreferencesDialog) -> adw::Pref
             tr("User"),
             username,
             tr("Cached"),
-            library.albums.len(),
+            library.cached_album_count,
             tr("albums"),
-            library.tracks.len(),
+            library.cached_track_count,
             tr("tracks")
         ))
         .subtitle_lines(3)
