@@ -2778,6 +2778,7 @@ async fn sync_home_sections(
     cache_home_sections(store, server_id, &sections, generation)
 }
 
+#[cfg(test)]
 async fn refresh_home_sections(
     store: &StoreHandle,
     server_id: &ServerId,
