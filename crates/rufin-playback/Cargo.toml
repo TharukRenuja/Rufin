@@ -6,9 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gstreamer = { version = "0.25.2", features = ["v1_28"] }
-gstreamer-audio = { version = "0.25.2", features = ["v1_28"] }
-gstreamer-play = { version = "0.25.0", features = ["v1_28"] }
+gstreamer = { version = "0.25.2", features = ["v1_26"] }
+gstreamer-audio = { version = "0.25.2", features = ["v1_26"] }
+gstreamer-play = { version = "0.25.0", features = ["v1_26"] }
 rufin-core = { path = "../rufin-core" }
 thiserror = "2.0.18"
 tracing = "0.1.41"

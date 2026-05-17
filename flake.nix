@@ -79,6 +79,8 @@
               "--all-targets"
             ];
 
+            SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+
             postInstall = ''
               install -Dm644 data/io.github.screwys.Rufin.desktop \
                 "$out/share/applications/io.github.screwys.Rufin.desktop"
@@ -101,6 +103,7 @@
             preFixup = ''
               gappsWrapperArgs+=(
                 --set-default RUFIN_LOCALEDIR "$out/share/locale"
+                --set-default SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "$GST_PLUGIN_SYSTEM_PATH_1_0"
               )
             '';
