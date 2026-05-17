@@ -12,8 +12,8 @@ pub use queue::{QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode
 pub use route::{DensityMode, EffectiveDensity, Route, RouteStack, SearchKind};
 pub use settings::{
     AppSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType, DiscordLinkType,
-    EQUALIZER_BAND_COUNT, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
-    LibraryListSettingsEntry, PlaybackSettings, PlaybackTransitionMode, ReplayGainMode,
-    StreamQuality, ThemePreference, TrackSortKey, TrackTableColumn, TrackTableSettings,
-    available_grid_fields, available_row_fields, available_sort_fields,
+    EQUALIZER_BAND_COUNT, EqualizerSettings, LibraryField, LibraryLayout, LibraryListKey,
+    LibraryListSettings, LibraryListSettingsEntry, PlaybackSettings, PlaybackTransitionMode,
+    ReplayGainMode, StreamQuality, ThemePreference, TrackSortKey, TrackTableColumn,
+    TrackTableSettings, available_grid_fields, available_row_fields, available_sort_fields,
 };

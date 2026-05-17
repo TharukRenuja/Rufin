@@ -1,9 +1,9 @@
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use adw::prelude::*;
 use rufin_core::{
-    DensityMode, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT, HomeBlockKind,
-    PlaybackTransitionMode, ReplayGainMode, StreamQuality,
+    DensityMode, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT, EqualizerSettings,
+    HomeBlockKind, PlaybackTransitionMode, ReplayGainMode, StreamQuality,
 };
 use rufin_playback::available_audio_outputs;
 
@@ -445,18 +445,26 @@ fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let equalizer_group = adw::PreferencesGroup::builder()
         .title(tr("Equalizer"))
         .build();
+    let resetting_equalizer = Rc::new(Cell::new(false));
     let equalizer_row = adw::SwitchRow::builder()
         .title(tr("Enable equalizer"))
         .active(settings.equalizer.enabled)
         .build();
     let equalizer_shell = Rc::clone(shell);
+    let switch_reset_guard = Rc::clone(&resetting_equalizer);
     equalizer_row.connect_active_notify(move |row| {
+        if switch_reset_guard.get() {
+            return;
+        }
         equalizer_shell.update_playback_settings(|settings| {
             settings.equalizer.enabled = row.is_active();
         });
     });
     equalizer_group.add(&equalizer_row);
 
+    let band_scales = Rc::new(std::cell::RefCell::new(Vec::with_capacity(
+        EQUALIZER_BAND_COUNT,
+    )));
     for index in 0..EQUALIZER_BAND_COUNT {
         let row = adw::ActionRow::builder()
             .title(equalizer_band_title(index))
@@ -468,7 +476,11 @@ fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         scale.set_width_request(220);
         scale.set_valign(gtk::Align::Center);
         let band_shell = Rc::clone(shell);
+        let scale_reset_guard = Rc::clone(&resetting_equalizer);
         scale.connect_value_changed(move |scale| {
+            if scale_reset_guard.get() {
+                return;
+            }
             band_shell.update_playback_settings(|settings| {
                 if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
                     settings.equalizer.sanitize();
@@ -481,7 +493,34 @@ fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         row.add_suffix(&scale);
         row.set_activatable_widget(Some(&scale));
         equalizer_group.add(&row);
+        band_scales.borrow_mut().push(scale);
     }
+
+    let reset_row = adw::ActionRow::builder()
+        .title(tr("Reset equalizer"))
+        .subtitle(tr("Restore neutral bands and disable equalizer."))
+        .build();
+    let reset_button = gtk::Button::with_label(&tr("Reset"));
+    reset_button.set_valign(gtk::Align::Center);
+    reset_button.add_css_class("destructive-action");
+    let reset_shell = Rc::clone(shell);
+    let reset_switch = equalizer_row.clone();
+    let reset_scales = Rc::clone(&band_scales);
+    let reset_guard = Rc::clone(&resetting_equalizer);
+    reset_button.connect_clicked(move |_| {
+        reset_guard.set(true);
+        reset_switch.set_active(false);
+        for scale in reset_scales.borrow().iter() {
+            scale.set_value(0.0);
+        }
+        reset_guard.set(false);
+        reset_shell.update_playback_settings(|settings| {
+            settings.equalizer = EqualizerSettings::default();
+        });
+    });
+    reset_row.add_suffix(&reset_button);
+    reset_row.set_activatable_widget(Some(&reset_button));
+    equalizer_group.add(&reset_row);
     page.add(&equalizer_group);
 
     page
