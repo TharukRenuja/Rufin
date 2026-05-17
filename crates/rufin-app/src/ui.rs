@@ -6,11 +6,13 @@ use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+mod artist;
 mod discord;
 mod favorites;
 mod layout;
 mod mpris;
 mod navigation;
+mod paging;
 mod player;
 mod preferences;
 mod queue;
@@ -23,14 +25,14 @@ use gtk::gio;
 use gtk::glib;
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, DensityMode, DiscordDisplayType,
-    DiscordLinkType, EffectiveDensity, Genre, HomeSection, HomeSectionKind, ImageRef, Playlist,
-    PlaylistId, QueueSnapshot, Route, RouteStack, SearchKind, Track, TrackSortKey,
-    TrackTableColumn, TrackTableSettings, format_duration,
+    Album, AlbumId, AppSettings, Artist, DensityMode, DiscordDisplayType, DiscordLinkType,
+    EffectiveDensity, Genre, HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId,
+    QueueSnapshot, Route, RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn,
+    TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, Lyrics, LyricsSource};
-use rufin_store::{CachedArtistDetail, CachedGenreDetail, image_cache_key};
+use rufin_store::{CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
 
@@ -60,6 +62,7 @@ use navigation::{
     ServerSelector, build_compact_navigation, build_normal_navigation, build_server_selector,
     sidebar_history_button,
 };
+use paging::{PagedGridConfig, PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use preferences::present_preferences_dialog;
 use queue::connect_queue_panel_controls;
@@ -166,19 +169,6 @@ struct HomeSectionState {
 struct PrefetchedHomeSection {
     server_id: rufin_core::ServerId,
     section: HomeSection,
-}
-
-struct PagedGridCursor {
-    offset: Cell<usize>,
-    total: Cell<usize>,
-    loading: Cell<bool>,
-}
-
-struct PagedGridConfig {
-    route: Route,
-    offset: usize,
-    total: usize,
-    page_name: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -1997,38 +1987,21 @@ impl Shell {
             });
         let albums = Rc::new(RefCell::new(page.items));
         let model = album_model(&albums.borrow());
-        let albums_for_page = Rc::clone(&albums);
-        let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some(&tr("Search")));
-        search.set_hexpand(true);
-        let search_for_page = search.clone();
-        let load_next = self.grid_loader(
+        let (search, load_next) = self.searchable_grid_controls(
             model.clone(),
+            Rc::clone(&albums),
             PagedGridConfig {
                 route: Route::Albums,
                 offset: albums.borrow().len(),
                 total: page.total,
                 page_name: "albums",
             },
-            |controller, offset, limit| controller.cached_albums_page(offset, limit),
-            move |model, items| {
-                albums_for_page.borrow_mut().extend(items);
-                populate_album_model(
-                    model,
-                    &albums_for_page.borrow(),
-                    search_for_page.text().as_str(),
-                );
+            |controller, query, offset, limit| {
+                controller.cached_albums_page_matching(query, offset, limit)
             },
+            |model, items| replace_albums_in_model(model, items),
+            |model, items| append_albums_to_model(model, items),
         );
-        let model_for_search = model.clone();
-        let albums_for_search = Rc::clone(&albums);
-        search.connect_search_changed(move |entry| {
-            populate_album_model(
-                &model_for_search,
-                &albums_for_search.borrow(),
-                entry.text().as_str(),
-            );
-        });
         self.media_grid_view(
             albums.borrow().is_empty(),
             "Cached albums will appear here after the background sync finishes.",
@@ -2271,6 +2244,15 @@ impl Shell {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_vexpand(options.expand);
         let tracks = Rc::new(RefCell::new(tracks));
+        let page_cursor = options.paging.map(|(offset, total)| {
+            Rc::new(PagedGridCursor {
+                offset: Cell::new(offset),
+                total: Cell::new(total),
+                loading: Cell::new(false),
+            })
+        });
+        let server_search = page_cursor.is_some();
+        let paged_query = Rc::new(RefCell::new(String::new()));
 
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         toolbar.add_css_class("track-toolbar");
@@ -2323,16 +2305,48 @@ impl Shell {
         let model_for_search = model.clone();
         let tracks_for_search = Rc::clone(&tracks);
         let shell = Rc::clone(self);
+        let page_cursor_for_search = page_cursor.clone();
+        let paged_query_for_search = Rc::clone(&paged_query);
         search.connect_search_changed(move |entry| {
             let settings = shell.state.settings.borrow().track_table.clone();
-            let tracks = tracks_for_search.borrow();
-            populate_track_model_with_options(
-                &model_for_search,
-                &tracks,
-                &settings,
-                entry.text().as_str(),
-                options.favorite_first,
-            );
+            if let Some(cursor) = page_cursor_for_search.as_ref() {
+                let query = entry.text().trim().to_string();
+                *paged_query_for_search.borrow_mut() = query.clone();
+                cursor.offset.set(0);
+                cursor.total.set(usize::MAX);
+                cursor.loading.set(true);
+                match shell
+                    .controller
+                    .cached_tracks_page_matching(&query, 0, TRACK_ROUTE_PAGE_SIZE)
+                {
+                    Ok(page) => {
+                        let count = page.items.len();
+                        *tracks_for_search.borrow_mut() = page.items;
+                        let tracks = tracks_for_search.borrow();
+                        populate_track_model_with_options(
+                            &model_for_search,
+                            &tracks,
+                            &settings,
+                            "",
+                            options.favorite_first,
+                        );
+                        finish_grid_page(cursor, 0, count, page.total);
+                    }
+                    Err(error) => {
+                        warn!(%error, "failed to search cached tracks page");
+                        cursor.loading.set(false);
+                    }
+                }
+            } else {
+                let tracks = tracks_for_search.borrow();
+                populate_track_model_with_options(
+                    &model_for_search,
+                    &tracks,
+                    &settings,
+                    entry.text().as_str(),
+                    options.favorite_first,
+                );
+            }
         });
 
         let model_for_sort = model.clone();
@@ -2344,11 +2358,17 @@ impl Shell {
             settings.descending = !settings.descending;
             shell.update_track_table_settings(|stored| *stored = settings.clone());
             let tracks = tracks_for_sort.borrow();
+            let search_text = search_for_sort.text();
+            let query = if server_search {
+                ""
+            } else {
+                search_text.as_str()
+            };
             populate_track_model_with_options(
                 &model_for_sort,
                 &tracks,
                 &settings,
-                search_for_sort.text().as_str(),
+                query,
                 options.favorite_first,
             );
             set_track_sort_button_content(button, &settings);
@@ -2361,6 +2381,7 @@ impl Shell {
             &search,
             &sort_button,
             options.favorite_first,
+            server_search,
         )));
 
         let scroller = gtk::ScrolledWindow::new();
@@ -2374,30 +2395,27 @@ impl Shell {
             scroller.set_max_content_height(height);
         }
         scroller.set_child(Some(&table));
-        if let Some((offset, total)) = options.paging {
-            let cursor = Rc::new(PagedGridCursor {
-                offset: Cell::new(offset),
-                total: Cell::new(total),
-                loading: Cell::new(false),
-            });
+        if let Some(cursor) = page_cursor {
             let shell = Rc::clone(self);
             let tracks_for_page = Rc::clone(&tracks);
             let model_for_page = model.clone();
-            let search_for_page = search.clone();
+            let paged_query_for_page = Rc::clone(&paged_query);
             let load_next = Rc::new(move || {
                 if !shell.can_load_grid_page(&cursor, &Route::Tracks) {
                     return;
                 }
                 let offset = cursor.offset.get();
-                match shell
-                    .controller
-                    .cached_tracks_page(offset, TRACK_ROUTE_PAGE_SIZE)
-                {
+                let query = paged_query_for_page.borrow().clone();
+                match shell.controller.cached_tracks_page_matching(
+                    &query,
+                    offset,
+                    TRACK_ROUTE_PAGE_SIZE,
+                ) {
                     Ok(page) => {
                         let count = page.items.len();
                         let items = page.items;
                         tracks_for_page.borrow_mut().extend(items.iter().cloned());
-                        if search_for_page.text().trim().is_empty() {
+                        if query.is_empty() {
                             append_tracks_to_model(&model_for_page, items);
                         } else {
                             let settings = shell.state.settings.borrow().track_table.clone();
@@ -2406,7 +2424,7 @@ impl Shell {
                                 &model_for_page,
                                 &tracks,
                                 &settings,
-                                search_for_page.text().as_str(),
+                                "",
                                 options.favorite_first,
                             );
                         }
@@ -2423,298 +2441,6 @@ impl Shell {
         wrapper.append(&scroller);
         wrapper.set_widget_name(context);
         wrapper.upcast()
-    }
-
-    fn artist_list_view(self: &Rc<Self>, album_artist: bool) -> gtk::Widget {
-        let page = self
-            .controller
-            .cached_artists_page(album_artist, 0, GRID_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, album_artist, "failed to load cached artists page");
-                let library = self.state.library.borrow();
-                let fallback = if album_artist {
-                    &library.album_artists
-                } else {
-                    &library.artists
-                };
-                let artists = fallback
-                    .iter()
-                    .take(GRID_ROUTE_PAGE_SIZE)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(artists, fallback.len())
-            });
-        let artists = Rc::new(RefCell::new(page.items));
-        let model = artist_model(&artists.borrow());
-        let artists_for_page = Rc::clone(&artists);
-        let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some(&tr("Search")));
-        search.set_hexpand(true);
-        let search_for_page = search.clone();
-        let route = if album_artist {
-            Route::AlbumArtists
-        } else {
-            Route::Artists
-        };
-        let load_next = self.grid_loader(
-            model.clone(),
-            PagedGridConfig {
-                route,
-                offset: artists.borrow().len(),
-                total: page.total,
-                page_name: "artists",
-            },
-            move |controller, offset, limit| {
-                controller.cached_artists_page(album_artist, offset, limit)
-            },
-            move |model, items| {
-                artists_for_page.borrow_mut().extend(items);
-                populate_artist_model(
-                    model,
-                    &artists_for_page.borrow(),
-                    search_for_page.text().as_str(),
-                );
-            },
-        );
-        let model_for_search = model.clone();
-        let artists_for_search = Rc::clone(&artists);
-        search.connect_search_changed(move |entry| {
-            populate_artist_model(
-                &model_for_search,
-                &artists_for_search.borrow(),
-                entry.text().as_str(),
-            );
-        });
-        self.media_grid_view(
-            artists.borrow().is_empty(),
-            "Cached rows will appear here after the background sync finishes.",
-            self.artist_cards_grid_for_model(model),
-            Some(load_next),
-            Some(search),
-        )
-    }
-
-    fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
-        let detail = self.artist_detail_data(&artist_id);
-        let Some(detail) = detail else {
-            return self.placeholder_view("Artist", "The selected cached artist was not found.");
-        };
-        let artist = detail.artist;
-        let albums = detail.albums;
-        let appears_on = detail.appears_on;
-        let tracks = detail.tracks;
-        let favorite_tracks = favorite_artist_tracks(&tracks);
-        let has_favorite_tracks = !favorite_tracks.is_empty();
-
-        let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_vexpand(true);
-
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(28);
-        wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(32);
-        wrapper.set_margin_end(32);
-
-        let title = gtk::Label::new(Some(&artist.name));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        wrapper.append(&title);
-
-        let summary = gtk::Label::new(Some(&artist_summary_text(
-            albums.len(),
-            appears_on.len(),
-            artist
-                .track_count
-                .max(tracks.len().min(u32::MAX as usize) as u32),
-        )));
-        summary.add_css_class("muted");
-        summary.set_xalign(0.0);
-        wrapper.append(&summary);
-
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let favorite = favorite_icon_button("Favorite");
-        set_favorite_button_active(&favorite, artist.favorite);
-        self.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
-        let controller = self.controller.clone();
-        let artist_id = artist.id.clone();
-        favorite.connect_clicked(move |button| {
-            controller.set_artist_favorite(artist_id.clone(), !favorite_button_is_active(button));
-        });
-        actions.append(&favorite);
-
-        let discography = text_button("media-optical-symbolic", "Discography");
-        let shell = Rc::clone(self);
-        let artist_id = artist.id.clone();
-        discography.connect_clicked(move |_| {
-            shell.navigate(Route::ArtistDiscography(artist_id.clone()));
-        });
-        actions.append(&discography);
-
-        let all_tracks = text_button("audio-x-generic-symbolic", "View all tracks");
-        let shell = Rc::clone(self);
-        let artist_id = artist.id.clone();
-        all_tracks.connect_clicked(move |_| {
-            shell.navigate(Route::ArtistTracks(artist_id.clone()));
-        });
-        actions.append(&all_tracks);
-        wrapper.append(&actions);
-
-        if has_favorite_tracks {
-            wrapper.append(&section_heading("Favorite tracks"));
-            wrapper.append(&self.compact_artist_tracks_table(favorite_tracks, "artist-favorites"));
-        }
-
-        if !albums.is_empty() {
-            wrapper.append(&self.artist_album_section("Albums", &albums));
-        }
-
-        if !appears_on.is_empty() {
-            wrapper.append(&self.artist_album_section("Appears on", &appears_on));
-        }
-
-        if !has_favorite_tracks && albums.is_empty() && appears_on.is_empty() {
-            wrapper.append(&self.placeholder_view(
-                "Artist",
-                "No cached albums or tracks are linked to this artist yet.",
-            ));
-        }
-
-        scroller.set_child(Some(&wrapper));
-        scroller.upcast()
-    }
-
-    fn artist_discography_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
-        let Some(detail) = self.artist_detail_data(&artist_id) else {
-            return self
-                .placeholder_view("Discography", "The selected cached artist was not found.");
-        };
-
-        let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_vexpand(true);
-
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(28);
-        wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(32);
-        wrapper.set_margin_end(32);
-
-        let title = gtk::Label::new(Some(&detail.artist.name));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        wrapper.append(&title);
-
-        let summary = gtk::Label::new(Some(&artist_summary_text(
-            detail.albums.len(),
-            detail.appears_on.len(),
-            detail
-                .artist
-                .track_count
-                .max(detail.tracks.len().min(u32::MAX as usize) as u32),
-        )));
-        summary.add_css_class("muted");
-        summary.set_xalign(0.0);
-        wrapper.append(&summary);
-
-        if !detail.albums.is_empty() {
-            wrapper.append(&self.artist_album_section("Albums", &detail.albums));
-        }
-        if !detail.appears_on.is_empty() {
-            wrapper.append(&self.artist_album_section("Appears on", &detail.appears_on));
-        }
-        if detail.albums.is_empty() && detail.appears_on.is_empty() {
-            wrapper.append(&self.placeholder_view(
-                "Discography",
-                "No cached albums are linked to this artist yet.",
-            ));
-        }
-
-        scroller.set_child(Some(&wrapper));
-        scroller.upcast()
-    }
-
-    fn artist_tracks_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
-        let Some(detail) = self.artist_detail_data(&artist_id) else {
-            return self.placeholder_view("Tracks", "The selected cached artist was not found.");
-        };
-
-        if detail.tracks.is_empty() {
-            return self
-                .placeholder_view("Tracks", "No cached tracks are linked to this artist yet.");
-        }
-
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
-        wrapper.set_vexpand(true);
-
-        let title = gtk::Label::new(Some(&detail.artist.name));
-        title.add_css_class("section-heading");
-        title.set_xalign(0.0);
-        wrapper.append(&title);
-        wrapper.append(&self.artist_tracks_table(detail.tracks, "artist-tracks"));
-
-        wrapper.upcast()
-    }
-
-    fn artist_detail_data(&self, artist_id: &ArtistId) -> Option<CachedArtistDetail> {
-        self.controller
-            .cached_artist_detail(artist_id)
-            .ok()
-            .flatten()
-            .or_else(|| {
-                let library = self.state.library.borrow();
-                let artist = library
-                    .artists
-                    .iter()
-                    .chain(library.album_artists.iter())
-                    .find(|artist| artist.id.as_str() == artist_id.as_str())
-                    .cloned()?;
-                let albums = library
-                    .albums
-                    .iter()
-                    .filter(|album| {
-                        album.artist_id.as_ref().map(ArtistId::as_str) == Some(artist_id.as_str())
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let tracks = library
-                    .tracks
-                    .iter()
-                    .filter(|track| {
-                        track.artist_id.as_ref().map(ArtistId::as_str) == Some(artist_id.as_str())
-                            || albums.iter().any(|album| album.id == track.album_id)
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let appears_on =
-                    artist_appears_on_from_tracks(&library.albums, &albums, &tracks, artist_id);
-                Some(CachedArtistDetail {
-                    artist,
-                    albums,
-                    appears_on,
-                    tracks,
-                })
-            })
-    }
-
-    fn artist_album_section(self: &Rc<Self>, title: &str, albums: &[Album]) -> gtk::Widget {
-        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        section.append(&section_heading(title));
-        let grid = self.album_cards_grid(albums);
-        grid.set_vexpand(false);
-        section.append(&grid);
-        section.upcast()
     }
 
     fn genre_list_view(self: &Rc<Self>) -> gtk::Widget {
@@ -2736,38 +2462,21 @@ impl Shell {
             });
         let genres = Rc::new(RefCell::new(page.items));
         let model = genre_model(&genres.borrow());
-        let genres_for_page = Rc::clone(&genres);
-        let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some(&tr("Search")));
-        search.set_hexpand(true);
-        let search_for_page = search.clone();
-        let load_next = self.grid_loader(
+        let (search, load_next) = self.searchable_grid_controls(
             model.clone(),
+            Rc::clone(&genres),
             PagedGridConfig {
                 route: Route::Genres,
                 offset: genres.borrow().len(),
                 total: page.total,
                 page_name: "genres",
             },
-            |controller, offset, limit| controller.cached_genres_page(offset, limit),
-            move |model, items| {
-                genres_for_page.borrow_mut().extend(items);
-                populate_genre_model(
-                    model,
-                    &genres_for_page.borrow(),
-                    search_for_page.text().as_str(),
-                );
+            |controller, query, offset, limit| {
+                controller.cached_genres_page_matching(query, offset, limit)
             },
+            |model, items| replace_genres_in_model(model, items),
+            |model, items| append_genres_to_model(model, items),
         );
-        let model_for_search = model.clone();
-        let genres_for_search = Rc::clone(&genres);
-        search.connect_search_changed(move |entry| {
-            populate_genre_model(
-                &model_for_search,
-                &genres_for_search.borrow(),
-                entry.text().as_str(),
-            );
-        });
         self.media_grid_view(
             genres.borrow().is_empty(),
             "Cached rows will appear here after the background sync finishes.",
@@ -2799,38 +2508,21 @@ impl Shell {
             });
         let playlists = Rc::new(RefCell::new(page.items));
         let model = playlist_model(&playlists.borrow());
-        let playlists_for_page = Rc::clone(&playlists);
-        let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some(&tr("Search")));
-        search.set_hexpand(true);
-        let search_for_page = search.clone();
-        let load_next = self.grid_loader(
+        let (search, load_next) = self.searchable_grid_controls(
             model.clone(),
+            Rc::clone(&playlists),
             PagedGridConfig {
                 route: Route::Playlists,
                 offset: playlists.borrow().len(),
                 total: page.total,
                 page_name: "playlists",
             },
-            |controller, offset, limit| controller.cached_playlists_page(offset, limit),
-            move |model, items| {
-                playlists_for_page.borrow_mut().extend(items);
-                populate_playlist_model(
-                    model,
-                    &playlists_for_page.borrow(),
-                    search_for_page.text().as_str(),
-                );
+            |controller, query, offset, limit| {
+                controller.cached_playlists_page_matching(query, offset, limit)
             },
+            |model, items| replace_playlists_in_model(model, items),
+            |model, items| append_playlists_to_model(model, items),
         );
-        let model_for_search = model.clone();
-        let playlists_for_search = Rc::clone(&playlists);
-        search.connect_search_changed(move |entry| {
-            populate_playlist_model(
-                &model_for_search,
-                &playlists_for_search.borrow(),
-                entry.text().as_str(),
-            );
-        });
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -3830,56 +3522,6 @@ impl Shell {
         }
     }
 
-    fn grid_loader<T>(
-        self: &Rc<Self>,
-        model: gio::ListStore,
-        config: PagedGridConfig,
-        load_page: impl Fn(
-            &AppController,
-            usize,
-            usize,
-        ) -> Result<rufin_provider::PagedResponse<T>, String>
-        + 'static,
-        append_items: impl Fn(&gio::ListStore, Vec<T>) + 'static,
-    ) -> Rc<dyn Fn()> {
-        let shell = Rc::clone(self);
-        let cursor = Rc::new(PagedGridCursor {
-            offset: Cell::new(config.offset),
-            total: Cell::new(config.total),
-            loading: Cell::new(false),
-        });
-        let route = config.route;
-        let page_name = config.page_name;
-        Rc::new(move || {
-            if !shell.can_load_grid_page(&cursor, &route) {
-                return;
-            }
-            let offset = cursor.offset.get();
-            match load_page(&shell.controller, offset, GRID_ROUTE_PAGE_SIZE) {
-                Ok(page) => {
-                    let count = page.items.len();
-                    append_items(&model, page.items);
-                    finish_grid_page(&cursor, offset, count, page.total);
-                }
-                Err(error) => {
-                    warn!(%error, page = page_name, "failed to append cached grid page");
-                    cursor.loading.set(false);
-                }
-            }
-        })
-    }
-
-    fn can_load_grid_page(&self, cursor: &PagedGridCursor, route: &Route) -> bool {
-        if cursor.loading.get() || cursor.offset.get() >= cursor.total.get() {
-            return false;
-        }
-        if self.state.routes.borrow().current() != route {
-            return false;
-        }
-        cursor.loading.set(true);
-        true
-    }
-
     fn album_cards_grid(self: &Rc<Self>, albums: &[Album]) -> gtk::Widget {
         let model = album_model(albums);
         self.album_cards_grid_for_model(model)
@@ -4115,6 +3757,7 @@ impl Shell {
         search: &gtk::SearchEntry,
         sort_button: &gtk::Button,
         favorite_first: bool,
+        server_search: bool,
     ) -> gtk::Popover {
         let popover = gtk::Popover::new();
         let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -4152,11 +3795,17 @@ impl Shell {
             settings.sort_key = sort_key;
             shell.update_track_table_settings(|stored| *stored = settings.clone());
             let tracks = tracks_for_sort.borrow();
+            let search_text = search_for_sort.text();
+            let query = if server_search {
+                ""
+            } else {
+                search_text.as_str()
+            };
             populate_track_model_with_options(
                 &model_for_sort,
                 &tracks,
                 &settings,
-                search_for_sort.text().as_str(),
+                query,
                 favorite_first,
             );
             set_track_sort_button_content(&sort_button_for_sort, &settings);
@@ -5039,15 +4688,6 @@ fn append_albums_to_model(model: &gio::ListStore, albums: impl IntoIterator<Item
     }
 }
 
-fn populate_album_model(model: &gio::ListStore, albums: &[Album], query: &str) {
-    let query = normalized_query(query);
-    let items = albums
-        .iter()
-        .filter(|album| query.is_empty() || album_matches_query(album, &query))
-        .cloned();
-    replace_albums_in_model(model, items);
-}
-
 fn replace_albums_in_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
     let additions = albums
         .into_iter()
@@ -5070,15 +4710,6 @@ fn append_artists_to_model(model: &gio::ListStore, artists: impl IntoIterator<It
     if !additions.is_empty() {
         model.splice(model.n_items(), 0, &additions);
     }
-}
-
-fn populate_artist_model(model: &gio::ListStore, artists: &[Artist], query: &str) {
-    let query = normalized_query(query);
-    let items = artists
-        .iter()
-        .filter(|artist| query.is_empty() || artist_matches_query(artist, &query))
-        .cloned();
-    replace_artists_in_model(model, items);
 }
 
 fn replace_artists_in_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
@@ -5105,15 +4736,6 @@ fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item
     }
 }
 
-fn populate_genre_model(model: &gio::ListStore, genres: &[Genre], query: &str) {
-    let query = normalized_query(query);
-    let items = genres
-        .iter()
-        .filter(|genre| query.is_empty() || genre_matches_query(genre, &query))
-        .cloned();
-    replace_genres_in_model(model, items);
-}
-
 fn replace_genres_in_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
     let additions = genres
         .into_iter()
@@ -5126,15 +4748,6 @@ fn playlist_model(playlists: &[Playlist]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     append_playlists_to_model(&model, playlists.iter().cloned());
     model
-}
-
-fn populate_playlist_model(model: &gio::ListStore, playlists: &[Playlist], query: &str) {
-    let query = normalized_query(query);
-    let items = playlists
-        .iter()
-        .filter(|playlist| query.is_empty() || playlist_matches_query(playlist, &query))
-        .cloned();
-    replace_playlists_in_model(model, items);
 }
 
 fn replace_playlists_in_model(
@@ -5159,64 +4772,6 @@ fn append_playlists_to_model(
     if !additions.is_empty() {
         model.splice(model.n_items(), 0, &additions);
     }
-}
-
-fn normalized_query(query: &str) -> String {
-    query.trim().to_lowercase()
-}
-
-fn album_matches_query(album: &Album, query: &str) -> bool {
-    album.title.to_lowercase().contains(query)
-        || album.artist.to_lowercase().contains(query)
-        || album.year.to_string().contains(query)
-        || album
-            .genres
-            .iter()
-            .any(|genre| genre.to_lowercase().contains(query))
-}
-
-fn artist_matches_query(artist: &Artist, query: &str) -> bool {
-    artist.name.to_lowercase().contains(query)
-}
-
-fn genre_matches_query(genre: &Genre, query: &str) -> bool {
-    genre.name.to_lowercase().contains(query)
-}
-
-fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
-    playlist.name.to_lowercase().contains(query)
-}
-
-fn finish_grid_page(cursor: &PagedGridCursor, previous_offset: usize, count: usize, total: usize) {
-    let next_offset = previous_offset.saturating_add(count);
-    cursor.offset.set(next_offset);
-    cursor.total.set(if count == 0 {
-        next_offset
-    } else {
-        total.max(next_offset)
-    });
-    cursor.loading.set(false);
-}
-
-fn connect_paged_grid_loader(scroller: &gtk::ScrolledWindow, load_next: Rc<dyn Fn()>) {
-    let load_for_edge = Rc::clone(&load_next);
-    scroller.connect_edge_reached(move |_, position| {
-        if position == gtk::PositionType::Bottom {
-            load_for_edge();
-        }
-    });
-
-    let scroller_for_idle = scroller.clone();
-    glib::idle_add_local_once(move || {
-        if scroller_needs_more_items(&scroller_for_idle) {
-            load_next();
-        }
-    });
-}
-
-fn scroller_needs_more_items(scroller: &gtk::ScrolledWindow) -> bool {
-    let adjustment = scroller.vadjustment();
-    adjustment.upper() <= adjustment.page_size() + 1.0
 }
 
 fn set_track_sort_button_content(button: &gtk::Button, settings: &TrackTableSettings) {
@@ -5364,111 +4919,6 @@ fn track_sort_from_index(index: u32) -> TrackSortKey {
         .get(index as usize)
         .copied()
         .unwrap_or(TrackSortKey::TrackNumber)
-}
-
-fn section_heading(title: &str) -> gtk::Widget {
-    let heading = gtk::Label::new(Some(&tr(title)));
-    heading.add_css_class("section-heading");
-    heading.set_xalign(0.0);
-    heading.upcast()
-}
-
-fn artist_summary_text(album_count: usize, appears_on_count: usize, track_count: u32) -> String {
-    if appears_on_count == 0 {
-        format!(
-            "{} {} / {} {}",
-            album_count,
-            tr("albums"),
-            track_count,
-            tr("tracks")
-        )
-    } else {
-        format!(
-            "{} {} / {} {} / {} {}",
-            album_count,
-            tr("albums"),
-            appears_on_count,
-            tr("appears on"),
-            track_count,
-            tr("tracks")
-        )
-    }
-}
-
-fn favorite_artist_tracks(tracks: &[Track]) -> Vec<Track> {
-    let mut favorites = tracks
-        .iter()
-        .filter(|track| track.favorite)
-        .cloned()
-        .collect::<Vec<_>>();
-    favorites.sort_by(|left, right| {
-        left.album
-            .to_lowercase()
-            .cmp(&right.album.to_lowercase())
-            .then(left.disc_number.cmp(&right.disc_number))
-            .then(left.track_number.cmp(&right.track_number))
-            .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
-    });
-    favorites
-}
-
-fn artist_appears_on_from_tracks(
-    all_albums: &[Album],
-    albums: &[Album],
-    tracks: &[Track],
-    artist_id: &ArtistId,
-) -> Vec<Album> {
-    let mut appears_on = Vec::new();
-    let mut seen_album_ids = Vec::new();
-    for track in tracks
-        .iter()
-        .filter(|track| track.artist_id.as_ref() == Some(artist_id))
-    {
-        if albums.iter().any(|album| album.id == track.album_id)
-            || seen_album_ids.contains(&track.album_id)
-        {
-            continue;
-        }
-        seen_album_ids.push(track.album_id.clone());
-        if let Some(album) = all_albums.iter().find(|album| album.id == track.album_id) {
-            appears_on.push(album.clone());
-        } else {
-            let album_tracks = tracks
-                .iter()
-                .filter(|candidate| candidate.album_id == track.album_id)
-                .cloned()
-                .collect::<Vec<_>>();
-            if let Some(album) = synthesize_album_from_tracks(&track.album_id, &album_tracks) {
-                appears_on.push(album);
-            }
-        }
-    }
-    appears_on.sort_by(|left, right| {
-        left.year
-            .cmp(&right.year)
-            .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
-    });
-    appears_on
-}
-
-fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Option<Album> {
-    let first = tracks.first()?;
-    Some(Album {
-        id: album_id.clone(),
-        title: first.album.clone(),
-        artist: first.artist.clone(),
-        artist_id: first.artist_id.clone(),
-        year: first.year,
-        track_count: tracks.len().min(usize::from(u16::MAX)) as u16,
-        duration_seconds: tracks
-            .iter()
-            .map(|track| track.duration_seconds)
-            .fold(0_u32, u32::saturating_add),
-        favorite: tracks.iter().any(|track| track.favorite),
-        color_seed: stable_seed(album_id.as_str()),
-        image_ref: first.image_ref.clone(),
-        genres: first.genres.clone(),
-    })
 }
 
 fn track_table_column_config_title(column: TrackTableColumn) -> &'static str {
@@ -6809,43 +6259,7 @@ mod tests {
     }
 
     #[test]
-    fn artist_summary_counts_appears_on_albums() {
-        let summary = super::artist_summary_text(0, 1, 3);
-
-        assert!(summary.contains("0 albums"));
-        assert!(summary.contains("1 appears on"));
-        assert!(summary.contains("3 tracks"));
-    }
-
-    #[test]
-    fn artist_appears_on_from_tracks_excludes_primary_albums() {
-        let artist_id = ArtistId::fake(7);
-        let mut primary = test_album("Artist", Some(artist_id.clone()));
-        primary.id = AlbumId::fake(1);
-        let mut appears_on = test_album("Other Artist", Some(ArtistId::fake(8)));
-        appears_on.id = AlbumId::fake(2);
-        appears_on.title = "Compilation".to_string();
-
-        let mut primary_track = test_track("Artist", Some(artist_id.clone()));
-        primary_track.album_id = primary.id.clone();
-        let mut featured_track = test_track("Artist", Some(artist_id.clone()));
-        featured_track.id = TrackId::fake(2);
-        featured_track.album_id = appears_on.id.clone();
-        featured_track.album = appears_on.title.clone();
-
-        assert_eq!(
-            super::artist_appears_on_from_tracks(
-                &[primary.clone(), appears_on.clone()],
-                &[primary],
-                &[primary_track, featured_track],
-                &artist_id,
-            ),
-            vec![appears_on]
-        );
-    }
-
-    #[test]
-    fn artist_track_sort_keeps_favorites_first() {
+    fn compact_artist_track_sort_keeps_favorites_first() {
         let mut favorite_late = test_track("Artist", Some(ArtistId::fake(1)));
         favorite_late.id = TrackId::fake(1);
         favorite_late.title = "Zulu".to_string();
@@ -6876,6 +6290,37 @@ mod tests {
                 .map(|track| track.title.as_str())
                 .collect::<Vec<_>>(),
             vec!["Bravo", "Zulu", "Alpha"]
+        );
+    }
+
+    #[test]
+    fn full_artist_track_sort_uses_selected_ranking() {
+        let mut favorite_late = test_track("Artist", Some(ArtistId::fake(1)));
+        favorite_late.id = TrackId::fake(1);
+        favorite_late.title = "Zulu".to_string();
+        favorite_late.favorite = true;
+        let mut ordinary_first = test_track("Artist", Some(ArtistId::fake(1)));
+        ordinary_first.id = TrackId::fake(2);
+        ordinary_first.title = "Alpha".to_string();
+        let mut favorite_first = test_track("Artist", Some(ArtistId::fake(1)));
+        favorite_first.id = TrackId::fake(3);
+        favorite_first.title = "Bravo".to_string();
+        favorite_first.favorite = true;
+
+        let mut tracks = vec![favorite_late, ordinary_first, favorite_first];
+        let settings = TrackTableSettings {
+            sort_key: TrackSortKey::Title,
+            ..TrackTableSettings::default()
+        };
+
+        super::sort_tracks_with_options(&mut tracks, &settings, false);
+
+        assert_eq!(
+            tracks
+                .iter()
+                .map(|track| track.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alpha", "Bravo", "Zulu"]
         );
     }
 

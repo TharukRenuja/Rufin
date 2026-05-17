@@ -1423,6 +1423,25 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
 
+    pub fn load_albums_matching(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Album>> {
+        let Some(pattern) = like_pattern(query) else {
+            return self.load_albums(server_id, offset, limit);
+        };
+        if let Some(query) = fts_query(query) {
+            let total = self.count_fts_matches(server_id, "album", &query)?;
+            if total > 0 {
+                return self.search_albums_page(server_id, &query, offset, limit, total);
+            }
+        }
+        self.load_albums_like(server_id, &pattern, offset, limit)
+    }
+
     pub fn load_album_detail(
         &self,
         server_id: &ServerId,
@@ -1496,18 +1515,35 @@ impl Store {
                 )
                 .optional()?,
         };
+        let artist_name_lower = artist
+            .as_ref()
+            .map(|artist| artist.name.trim())
+            .filter(|name| !name.is_empty())
+            .map(str::to_lowercase);
 
         let mut albums_statement = self.connection.prepare(
             "
             SELECT album_id, title, artist, artist_id, year, track_count,
                    duration_seconds, favorite, color_seed, image_item_id, image_tag
             FROM albums
-            WHERE server_id = ?1 AND artist_id = ?2
+            WHERE server_id = ?1
+              AND (
+                  artist_id = ?2
+                  OR (
+                      ?3 IS NOT NULL
+                      AND artist_id IS NULL
+                      AND LOWER(artist) = ?3
+                  )
+              )
             ORDER BY year, title COLLATE NOCASE
             ",
         )?;
         let mut albums = collect_rows(albums_statement.query_map(
-            params![server_id.as_str(), artist_id.as_str()],
+            params![
+                server_id.as_str(),
+                artist_id.as_str(),
+                artist_name_lower.as_deref()
+            ],
             album_from_row,
         )?)?;
         self.attach_album_genres(server_id, &mut albums)?;
@@ -1521,17 +1557,37 @@ impl Store {
             LEFT JOIN albums a
                 ON a.server_id = t.server_id AND a.album_id = t.album_id
             WHERE t.server_id = ?1
-              AND (t.artist_id = ?2 OR a.artist_id = ?2)
+              AND (
+                  t.artist_id = ?2
+                  OR a.artist_id = ?2
+                  OR (
+                      ?3 IS NOT NULL
+                      AND (
+                          (t.artist_id IS NULL AND LOWER(t.artist) = ?3)
+                          OR (a.artist_id IS NULL AND LOWER(a.artist) = ?3)
+                      )
+                  )
+              )
             ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
                      t.title COLLATE NOCASE
             ",
         )?;
         let mut tracks = collect_rows(tracks_statement.query_map(
-            params![server_id.as_str(), artist_id.as_str()],
+            params![
+                server_id.as_str(),
+                artist_id.as_str(),
+                artist_name_lower.as_deref()
+            ],
             track_from_row,
         )?)?;
         self.attach_track_genres(server_id, &mut tracks)?;
-        let appears_on = self.artist_appears_on_albums(server_id, artist_id, &albums, &tracks)?;
+        let appears_on = self.artist_appears_on_albums(
+            server_id,
+            artist_id,
+            artist_name_lower.as_deref(),
+            &albums,
+            &tracks,
+        )?;
 
         let artist = match artist {
             Some(artist) => artist,
@@ -1551,13 +1607,14 @@ impl Store {
         &self,
         server_id: &ServerId,
         artist_id: &ArtistId,
+        artist_name_lower: Option<&str>,
         albums: &[Album],
         tracks: &[Track],
     ) -> StoreResult<Vec<Album>> {
         let mut album_ids = Vec::new();
         for track in tracks
             .iter()
-            .filter(|track| track.artist_id.as_ref() == Some(artist_id))
+            .filter(|track| track_matches_artist(track, artist_id, artist_name_lower))
         {
             if albums.iter().any(|album| album.id == track.album_id)
                 || album_ids.contains(&track.album_id)
@@ -1616,6 +1673,25 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
 
+    pub fn load_tracks_matching(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
+        let Some(pattern) = like_pattern(query) else {
+            return self.load_tracks(server_id, offset, limit);
+        };
+        if let Some(query) = fts_query(query) {
+            let total = self.count_fts_matches(server_id, "track", &query)?;
+            if total > 0 {
+                return self.search_tracks_page(server_id, &query, offset, limit, total);
+            }
+        }
+        self.load_tracks_like(server_id, &pattern, offset, limit)
+    }
+
     pub fn load_artists(
         &self,
         server_id: &ServerId,
@@ -1644,6 +1720,38 @@ impl Store {
             artist_from_row,
         )?)?;
         Ok(PagedResponse::new(items, total))
+    }
+
+    pub fn load_artists_matching(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Artist>> {
+        let Some(pattern) = like_pattern(query) else {
+            return self.load_artists(server_id, album_artist, offset, limit);
+        };
+        let item_type = if album_artist {
+            "album_artist"
+        } else {
+            "artist"
+        };
+        if let Some(query) = fts_query(query) {
+            let total = self.count_fts_matches(server_id, item_type, &query)?;
+            if total > 0 {
+                return self.search_artists_page(
+                    server_id,
+                    album_artist,
+                    &query,
+                    offset,
+                    limit,
+                    total,
+                );
+            }
+        }
+        self.load_artists_like(server_id, album_artist, &pattern, offset, limit)
     }
 
     pub fn load_genres(
@@ -1692,6 +1800,57 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
 
+    pub fn load_genres_matching(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Genre>> {
+        let Some(pattern) = like_pattern(query) else {
+            return self.load_genres(server_id, offset, limit);
+        };
+        let total = self.count_linked_genres_like(server_id, &pattern)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT genre_id, name,
+                   (
+                       SELECT COUNT(DISTINCT album_id)
+                       FROM album_genres ag
+                       WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                   ) AS album_count,
+                   (
+                       SELECT COUNT(DISTINCT track_id)
+                       FROM track_genres tg
+                       WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                   ) AS track_count,
+                   image_item_id, image_tag
+            FROM genres g
+            WHERE g.server_id = ?1
+              AND LOWER(g.name) LIKE ?2 ESCAPE '\\'
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM track_genres tg
+                      WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                  )
+              )
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?3 OFFSET ?4
+            ",
+        )?;
+        let items = collect_rows(statement.query_map(
+            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            genre_from_row,
+        )?)?;
+        Ok(PagedResponse::new(items, total))
+    }
+
     fn count_linked_genres(&self, server_id: &ServerId) -> StoreResult<usize> {
         self.connection
             .query_row(
@@ -1720,6 +1879,34 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    fn count_linked_genres_like(&self, server_id: &ServerId, pattern: &str) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM genres g
+                WHERE g.server_id = ?1
+                  AND LOWER(g.name) LIKE ?2 ESCAPE '\\'
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM album_genres ag
+                          WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM track_genres tg
+                          WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                      )
+                  )
+                ",
+                params![server_id.as_str(), pattern],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as usize)
+            .map_err(StoreError::from)
+    }
+
     pub fn load_playlists(
         &self,
         server_id: &ServerId,
@@ -1741,6 +1928,25 @@ impl Store {
             playlist_from_row,
         )?)?;
         Ok(PagedResponse::new(items, total))
+    }
+
+    pub fn load_playlists_matching(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Playlist>> {
+        let Some(pattern) = like_pattern(query) else {
+            return self.load_playlists(server_id, offset, limit);
+        };
+        if let Some(query) = fts_query(query) {
+            let total = self.count_fts_matches(server_id, "playlist", &query)?;
+            if total > 0 {
+                return self.search_playlists_page(server_id, &query, offset, limit, total);
+            }
+        }
+        self.load_playlists_like(server_id, &pattern, offset, limit)
     }
 
     pub fn upsert_playlist_tracks(
@@ -2187,6 +2393,18 @@ impl Store {
         query: &str,
         limit: usize,
     ) -> StoreResult<Vec<Album>> {
+        self.search_albums_page(server_id, query, 0, limit, limit)
+            .map(|page| page.items)
+    }
+
+    fn search_albums_page(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+        total: usize,
+    ) -> StoreResult<PagedResponse<Album>> {
         let mut statement = self.connection.prepare(
             "
             SELECT a.album_id, a.title, a.artist, a.artist_id, a.year,
@@ -2199,15 +2417,74 @@ impl Store {
               AND f.item_type = 'album'
               AND library_fts MATCH ?2
             ORDER BY bm25(library_fts)
-            LIMIT ?3
+            LIMIT ?3 OFFSET ?4
             ",
         )?;
         let mut albums = collect_rows(statement.query_map(
-            params![server_id.as_str(), query, limit as i64],
+            params![server_id.as_str(), query, limit as i64, offset as i64],
             album_from_row,
         )?)?;
         self.attach_album_genres(server_id, &mut albums)?;
-        Ok(albums)
+        Ok(PagedResponse::new(albums, total))
+    }
+
+    fn load_albums_like(
+        &self,
+        server_id: &ServerId,
+        pattern: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Album>> {
+        let total = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM albums a
+            WHERE a.server_id = ?1
+              AND (
+                  LOWER(a.title) LIKE ?2 ESCAPE '\\'
+                  OR LOWER(a.artist) LIKE ?2 ESCAPE '\\'
+                  OR CAST(a.year AS TEXT) LIKE ?2 ESCAPE '\\'
+                  OR EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = a.server_id
+                        AND ag.album_id = a.album_id
+                        AND LOWER(ag.genre_name) LIKE ?2 ESCAPE '\\'
+                  )
+              )
+            ",
+            params![server_id.as_str(), pattern],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT a.album_id, a.title, a.artist, a.artist_id, a.year,
+                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.image_item_id, a.image_tag
+            FROM albums a
+            WHERE a.server_id = ?1
+              AND (
+                  LOWER(a.title) LIKE ?2 ESCAPE '\\'
+                  OR LOWER(a.artist) LIKE ?2 ESCAPE '\\'
+                  OR CAST(a.year AS TEXT) LIKE ?2 ESCAPE '\\'
+                  OR EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = a.server_id
+                        AND ag.album_id = a.album_id
+                        AND LOWER(ag.genre_name) LIKE ?2 ESCAPE '\\'
+                  )
+              )
+            ORDER BY a.title COLLATE NOCASE
+            LIMIT ?3 OFFSET ?4
+            ",
+        )?;
+        let mut albums = collect_rows(statement.query_map(
+            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            album_from_row,
+        )?)?;
+        self.attach_album_genres(server_id, &mut albums)?;
+        Ok(PagedResponse::new(albums, total.max(0) as usize))
     }
 
     fn search_tracks(
@@ -2216,6 +2493,18 @@ impl Store {
         query: &str,
         limit: usize,
     ) -> StoreResult<Vec<Track>> {
+        self.search_tracks_page(server_id, query, 0, limit, limit)
+            .map(|page| page.items)
+    }
+
+    fn search_tracks_page(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+        total: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
         let mut statement = self.connection.prepare(
             "
             SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
@@ -2228,15 +2517,61 @@ impl Store {
               AND f.item_type = 'track'
               AND library_fts MATCH ?2
             ORDER BY bm25(library_fts)
-            LIMIT ?3
+            LIMIT ?3 OFFSET ?4
             ",
         )?;
         let mut tracks = collect_rows(statement.query_map(
-            params![server_id.as_str(), query, limit as i64],
+            params![server_id.as_str(), query, limit as i64, offset as i64],
             track_from_row,
         )?)?;
         self.attach_track_genres(server_id, &mut tracks)?;
-        Ok(tracks)
+        Ok(PagedResponse::new(tracks, total))
+    }
+
+    fn load_tracks_like(
+        &self,
+        server_id: &ServerId,
+        pattern: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
+        let total = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM tracks
+            WHERE server_id = ?1
+              AND (
+                  LOWER(title) LIKE ?2 ESCAPE '\\'
+                  OR LOWER(artist) LIKE ?2 ESCAPE '\\'
+                  OR LOWER(album) LIKE ?2 ESCAPE '\\'
+                  OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
+              )
+            ",
+            params![server_id.as_str(), pattern],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT track_id, album_id, title, artist, artist_id, album, year,
+                   duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
+            FROM tracks
+            WHERE server_id = ?1
+              AND (
+                  LOWER(title) LIKE ?2 ESCAPE '\\'
+                  OR LOWER(artist) LIKE ?2 ESCAPE '\\'
+                  OR LOWER(album) LIKE ?2 ESCAPE '\\'
+                  OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
+              )
+            ORDER BY title COLLATE NOCASE
+            LIMIT ?3 OFFSET ?4
+            ",
+        )?;
+        let mut tracks = collect_rows(statement.query_map(
+            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            track_from_row,
+        )?)?;
+        self.attach_track_genres(server_id, &mut tracks)?;
+        Ok(PagedResponse::new(tracks, total.max(0) as usize))
     }
 
     fn search_artists(
@@ -2245,24 +2580,99 @@ impl Store {
         query: &str,
         limit: usize,
     ) -> StoreResult<Vec<Artist>> {
-        let mut statement = self.connection.prepare(
+        self.search_artists_page(server_id, false, query, 0, limit, limit)
+            .map(|page| page.items)
+    }
+
+    fn search_artists_page(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+        query: &str,
+        offset: usize,
+        limit: usize,
+        total: usize,
+    ) -> StoreResult<PagedResponse<Artist>> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let item_type = if album_artist {
+            "album_artist"
+        } else {
+            "artist"
+        };
+        let sql = format!(
             "
             SELECT a.artist_id, a.name, a.album_count, a.track_count, a.favorite,
                    a.image_item_id, a.image_tag
             FROM library_fts f
-            JOIN artists a
+            JOIN {table} a
                 ON a.server_id = f.server_id AND a.artist_id = f.item_id
             WHERE f.server_id = ?1
-              AND f.item_type = 'artist'
-              AND library_fts MATCH ?2
+              AND f.item_type = ?2
+              AND library_fts MATCH ?3
             ORDER BY bm25(library_fts)
-            LIMIT ?3
-            ",
-        )?;
-        collect_rows(statement.query_map(
-            params![server_id.as_str(), query, limit as i64],
+            LIMIT ?4 OFFSET ?5
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let items = collect_rows(statement.query_map(
+            params![
+                server_id.as_str(),
+                item_type,
+                query,
+                limit as i64,
+                offset as i64
+            ],
             artist_from_row,
-        )?)
+        )?)?;
+        Ok(PagedResponse::new(items, total))
+    }
+
+    fn load_artists_like(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+        pattern: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Artist>> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let total_sql = format!(
+            "
+            SELECT COUNT(*)
+            FROM {table}
+            WHERE server_id = ?1
+              AND LOWER(name) LIKE ?2 ESCAPE '\\'
+            "
+        );
+        let total =
+            self.connection
+                .query_row(&total_sql, params![server_id.as_str(), pattern], |row| {
+                    row.get::<_, i64>(0)
+                })?;
+        let sql = format!(
+            "
+            SELECT artist_id, name, album_count, track_count, favorite, image_item_id, image_tag
+            FROM {table}
+            WHERE server_id = ?1
+              AND LOWER(name) LIKE ?2 ESCAPE '\\'
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?3 OFFSET ?4
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let items = collect_rows(statement.query_map(
+            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            artist_from_row,
+        )?)?;
+        Ok(PagedResponse::new(items, total.max(0) as usize))
     }
 
     fn search_playlists(
@@ -2271,6 +2681,18 @@ impl Store {
         query: &str,
         limit: usize,
     ) -> StoreResult<Vec<Playlist>> {
+        self.search_playlists_page(server_id, query, 0, limit, limit)
+            .map(|page| page.items)
+    }
+
+    fn search_playlists_page(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+        total: usize,
+    ) -> StoreResult<PagedResponse<Playlist>> {
         let mut statement = self.connection.prepare(
             "
             SELECT p.playlist_id, p.name, p.track_count, p.duration_seconds,
@@ -2282,13 +2704,70 @@ impl Store {
               AND f.item_type = 'playlist'
               AND library_fts MATCH ?2
             ORDER BY bm25(library_fts)
-            LIMIT ?3
+            LIMIT ?3 OFFSET ?4
             ",
         )?;
-        collect_rows(statement.query_map(
-            params![server_id.as_str(), query, limit as i64],
+        let items = collect_rows(statement.query_map(
+            params![server_id.as_str(), query, limit as i64, offset as i64],
             playlist_from_row,
-        )?)
+        )?)?;
+        Ok(PagedResponse::new(items, total))
+    }
+
+    fn load_playlists_like(
+        &self,
+        server_id: &ServerId,
+        pattern: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Playlist>> {
+        let total = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM playlists
+            WHERE server_id = ?1
+              AND LOWER(name) LIKE ?2 ESCAPE '\\'
+            ",
+            params![server_id.as_str(), pattern],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT playlist_id, name, track_count, duration_seconds, image_item_id, image_tag
+            FROM playlists
+            WHERE server_id = ?1
+              AND LOWER(name) LIKE ?2 ESCAPE '\\'
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?3 OFFSET ?4
+            ",
+        )?;
+        let items = collect_rows(statement.query_map(
+            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            playlist_from_row,
+        )?)?;
+        Ok(PagedResponse::new(items, total.max(0) as usize))
+    }
+
+    fn count_fts_matches(
+        &self,
+        server_id: &ServerId,
+        item_type: &str,
+        query: &str,
+    ) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM library_fts
+                WHERE server_id = ?1
+                  AND item_type = ?2
+                  AND library_fts MATCH ?3
+                ",
+                params![server_id.as_str(), item_type, query],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as usize)
+            .map_err(StoreError::from)
     }
 
     fn attach_album_genres(&self, server_id: &ServerId, albums: &mut [Album]) -> StoreResult<()> {
@@ -2598,6 +3077,21 @@ fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
     }
 }
 
+fn track_matches_artist(
+    track: &Track,
+    artist_id: &ArtistId,
+    artist_name_lower: Option<&str>,
+) -> bool {
+    if track.artist_id.as_ref() == Some(artist_id) {
+        return true;
+    }
+
+    track.artist_id.is_none()
+        && artist_name_lower
+            .map(|artist_name| track.artist.to_lowercase() == artist_name)
+            .unwrap_or(false)
+}
+
 fn synthesize_artist_from_links(
     artist_id: &ArtistId,
     albums: &[Album],
@@ -2864,6 +3358,27 @@ fn fts_query(query: &str) -> Option<String> {
         .collect::<Vec<_>>();
 
     (!tokens.is_empty()).then(|| tokens.join(" "))
+}
+
+fn like_pattern(query: &str) -> Option<String> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return None;
+    }
+
+    let mut pattern = String::with_capacity(query.len() + 2);
+    pattern.push('%');
+    for character in query.chars() {
+        match character {
+            '%' | '_' | '\\' => {
+                pattern.push('\\');
+                pattern.push(character);
+            }
+            _ => pattern.push(character),
+        }
+    }
+    pattern.push('%');
+    Some(pattern)
 }
 
 fn bool_to_i64(value: bool) -> i64 {
@@ -3417,6 +3932,76 @@ mod tests {
         assert_eq!(album_page.items.len(), 5);
         assert_eq!(track_page.total, 1005);
         assert_eq!(track_page.items.len(), 5);
+    }
+
+    #[test]
+    fn paged_search_reads_items_beyond_previous_snapshot_caps() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut albums = (1..=505).map(album).collect::<Vec<_>>();
+        albums[504].genres = vec!["Needle Genre".to_string()];
+        let tracks = (1..=1005)
+            .map(|number| track(number, &albums[(number as usize - 1) % albums.len()]))
+            .collect::<Vec<_>>();
+        let artists = (1..=505)
+            .map(|number| artist(number, None))
+            .collect::<Vec<_>>();
+        let album_artists = artists.clone();
+        let mut genres = (1..=505)
+            .map(|number| genre(number, None))
+            .collect::<Vec<_>>();
+        genres[504].name = "Needle Genre".to_string();
+        genres[504].track_count = 1;
+        let playlists = (1..=505)
+            .map(|number| playlist(number, None))
+            .collect::<Vec<_>>();
+
+        store
+            .upsert_albums(&saved.server.id, &albums, generation)
+            .expect("upsert albums");
+        store
+            .upsert_tracks(&saved.server.id, &tracks, generation)
+            .expect("upsert tracks");
+        store
+            .upsert_artists(&saved.server.id, &artists, false, generation)
+            .expect("upsert artists");
+        store
+            .upsert_artists(&saved.server.id, &album_artists, true, generation)
+            .expect("upsert album artists");
+        store
+            .upsert_genres(&saved.server.id, &genres, generation)
+            .expect("upsert genres");
+        store
+            .upsert_playlists(&saved.server.id, &playlists, generation)
+            .expect("upsert playlists");
+
+        let album_page = store
+            .load_albums_matching(&saved.server.id, "Needle Genre", 0, 10)
+            .expect("search albums");
+        let track_page = store
+            .load_tracks_matching(&saved.server.id, "Track 1005", 0, 10)
+            .expect("search tracks");
+        let artist_page = store
+            .load_artists_matching(&saved.server.id, false, "Artist 505", 0, 10)
+            .expect("search artists");
+        let album_artist_page = store
+            .load_artists_matching(&saved.server.id, true, "Artist 505", 0, 10)
+            .expect("search album artists");
+        let genre_page = store
+            .load_genres_matching(&saved.server.id, "Needle Genre", 0, 10)
+            .expect("search genres");
+        let playlist_page = store
+            .load_playlists_matching(&saved.server.id, "Playlist 505", 0, 10)
+            .expect("search playlists");
+
+        assert_eq!(album_page.items, vec![albums[504].clone()]);
+        assert_eq!(track_page.items, vec![tracks[1004].clone()]);
+        assert_eq!(artist_page.items, vec![artists[504].clone()]);
+        assert_eq!(album_artist_page.items, vec![album_artists[504].clone()]);
+        assert_eq!(genre_page.items, vec![genres[504].clone()]);
+        assert_eq!(playlist_page.items, vec![playlists[504].clone()]);
     }
 
     #[test]
@@ -4097,6 +4682,95 @@ mod tests {
             .expect("artist detail");
 
         assert_eq!(detail.artist, artist);
+        assert!(detail.albums.is_empty());
+        assert_eq!(detail.appears_on, vec![album]);
+        assert_eq!(detail.tracks, vec![track]);
+    }
+
+    #[test]
+    fn artist_detail_uses_album_name_when_artist_ids_are_missing() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(4);
+        album.artist_id = None;
+        let track = track(1, &album);
+        let artist = Artist {
+            id: ArtistId::fake(1),
+            name: album.artist.clone(),
+            album_count: 1,
+            track_count: 1,
+            favorite: false,
+            image_ref: None,
+        };
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &artist.id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(detail.albums, vec![album]);
+        assert!(detail.appears_on.is_empty());
+        assert_eq!(detail.tracks, vec![track]);
+    }
+
+    #[test]
+    fn artist_detail_groups_name_matched_track_albums_as_appears_on() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(5);
+        album.artist = "Other Artist".to_string();
+        album.artist_id = Some(ArtistId::fake(99));
+        let artist = Artist {
+            id: ArtistId::fake(1),
+            name: "Artist".to_string(),
+            album_count: 1,
+            track_count: 1,
+            favorite: false,
+            image_ref: None,
+        };
+        let mut track = track(1, &album);
+        track.artist = artist.name.clone();
+        track.artist_id = None;
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &artist.id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
         assert!(detail.albums.is_empty());
         assert_eq!(detail.appears_on, vec![album]);
         assert_eq!(detail.tracks, vec![track]);

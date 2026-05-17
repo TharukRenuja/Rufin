@@ -96,7 +96,7 @@ pub(super) fn favorite_change_needs_route_render(
         return true;
     }
 
-    if matches!(route, Route::ArtistDetail(_) | Route::ArtistTracks(_)) {
+    if matches!(route, Route::ArtistDetail(_)) {
         return true;
     }
 
@@ -105,6 +105,7 @@ pub(super) fn favorite_change_needs_route_render(
             route,
             Route::Tracks
                 | Route::AlbumDetail(_)
+                | Route::ArtistTracks(_)
                 | Route::GenreDetail(_)
                 | Route::PlaylistDetail(_)
                 | Route::Search { .. }
@@ -272,10 +273,15 @@ mod tests {
             &track,
             TrackSortKey::Title,
         ));
-        assert!(favorite_change_needs_route_render(
+        assert!(!favorite_change_needs_route_render(
             &Route::ArtistTracks(ArtistId::fake(1)),
             &track,
             TrackSortKey::Title,
+        ));
+        assert!(favorite_change_needs_route_render(
+            &Route::ArtistTracks(ArtistId::fake(1)),
+            &track,
+            TrackSortKey::Favorite,
         ));
         assert!(!favorite_change_needs_route_render(
             &Route::Tracks,

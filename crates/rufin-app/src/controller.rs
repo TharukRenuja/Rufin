@@ -334,6 +334,19 @@ impl AppController {
             .with_store(|store| store.load_albums(&saved.server.id, offset, limit))
     }
 
+    pub fn cached_albums_page_matching(
+        &self,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Album>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_albums_matching(&saved.server.id, query, offset, limit))
+    }
+
     pub fn cached_tracks_page(
         &self,
         offset: usize,
@@ -344,6 +357,19 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.load_tracks(&saved.server.id, offset, limit))
+    }
+
+    pub fn cached_tracks_page_matching(
+        &self,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Track>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_tracks_matching(&saved.server.id, query, offset, limit))
     }
 
     pub fn cached_artists_page(
@@ -359,6 +385,21 @@ impl AppController {
             .with_store(|store| store.load_artists(&saved.server.id, album_artist, offset, limit))
     }
 
+    pub fn cached_artists_page_matching(
+        &self,
+        album_artist: bool,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Artist>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store.with_store(|store| {
+            store.load_artists_matching(&saved.server.id, album_artist, query, offset, limit)
+        })
+    }
+
     pub fn cached_genres_page(
         &self,
         offset: usize,
@@ -371,6 +412,19 @@ impl AppController {
             .with_store(|store| store.load_genres(&saved.server.id, offset, limit))
     }
 
+    pub fn cached_genres_page_matching(
+        &self,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Genre>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_genres_matching(&saved.server.id, query, offset, limit))
+    }
+
     pub fn cached_playlists_page(
         &self,
         offset: usize,
@@ -381,6 +435,20 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.load_playlists(&saved.server.id, offset, limit))
+    }
+
+    pub fn cached_playlists_page_matching(
+        &self,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<Playlist>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store.with_store(|store| {
+            store.load_playlists_matching(&saved.server.id, query, offset, limit)
+        })
     }
 
     #[cfg(test)]
