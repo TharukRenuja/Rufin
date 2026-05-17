@@ -53,6 +53,7 @@ pub struct CoverCacheEntry {
 pub struct CachedArtistDetail {
     pub artist: Artist,
     pub albums: Vec<Album>,
+    pub appears_on: Vec<Album>,
     pub tracks: Vec<Track>,
 }
 
@@ -1530,18 +1531,64 @@ impl Store {
             track_from_row,
         )?)?;
         self.attach_track_genres(server_id, &mut tracks)?;
+        let appears_on = self.artist_appears_on_albums(server_id, artist_id, &albums, &tracks)?;
 
         let artist = match artist {
             Some(artist) => artist,
             None if albums.is_empty() && tracks.is_empty() => return Ok(None),
-            None => synthesize_artist_from_links(artist_id, &albums, &tracks),
+            None => synthesize_artist_from_links(artist_id, &albums, &appears_on, &tracks),
         };
 
         Ok(Some(CachedArtistDetail {
             artist,
             albums,
+            appears_on,
             tracks,
         }))
+    }
+
+    fn artist_appears_on_albums(
+        &self,
+        server_id: &ServerId,
+        artist_id: &ArtistId,
+        albums: &[Album],
+        tracks: &[Track],
+    ) -> StoreResult<Vec<Album>> {
+        let mut album_ids = Vec::new();
+        for track in tracks
+            .iter()
+            .filter(|track| track.artist_id.as_ref() == Some(artist_id))
+        {
+            if albums.iter().any(|album| album.id == track.album_id)
+                || album_ids.contains(&track.album_id)
+            {
+                continue;
+            }
+            album_ids.push(track.album_id.clone());
+        }
+
+        let mut appears_on = Vec::new();
+        for album_id in album_ids {
+            let album = match self.load_album_detail(server_id, &album_id)? {
+                Some((album, _tracks)) => album,
+                None => {
+                    let album_tracks = tracks
+                        .iter()
+                        .filter(|track| track.album_id == album_id)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    synthesize_album_from_tracks(&album_id, &album_tracks)
+                }
+            };
+            appears_on.push(album);
+        }
+
+        appears_on.sort_by(|left, right| {
+            left.year
+                .cmp(&right.year)
+                .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
+        });
+        Ok(appears_on)
     }
 
     pub fn load_tracks(
@@ -2554,6 +2601,7 @@ fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
 fn synthesize_artist_from_links(
     artist_id: &ArtistId,
     albums: &[Album],
+    appears_on: &[Album],
     tracks: &[Track],
 ) -> Artist {
     let name = tracks
@@ -2570,7 +2618,7 @@ fn synthesize_artist_from_links(
         .unwrap_or_else(|| artist_id.as_str().to_string());
 
     let mut album_ids = Vec::new();
-    for album in albums {
+    for album in albums.iter().chain(appears_on.iter()) {
         if !album_ids.contains(&album.id) {
             album_ids.push(album.id.clone());
         }
@@ -2844,7 +2892,10 @@ fn encode_key_part(value: &str) -> String {
 mod tests {
     use std::fs;
 
-    use super::{CoverCacheEntry, SavedServer, Store, image_cache_key, lyrics_cache_key};
+    use super::{
+        CoverCacheEntry, SavedServer, Store, image_cache_key, lyrics_cache_key,
+        synthesize_album_from_tracks,
+    };
     use rufin_core::{
         Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection,
         HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEngine, ServerId, ServerIdentity,
@@ -3937,6 +3988,7 @@ mod tests {
 
         assert_eq!(detail.artist, artist);
         assert_eq!(detail.albums, vec![album]);
+        assert!(detail.appears_on.is_empty());
         assert_eq!(detail.tracks, vec![track]);
     }
 
@@ -3964,6 +4016,10 @@ mod tests {
         assert_eq!(detail.artist.album_count, 1);
         assert_eq!(detail.artist.track_count, 2);
         assert!(detail.albums.is_empty());
+        assert_eq!(
+            detail.appears_on,
+            vec![synthesize_album_from_tracks(&album.id, &tracks)]
+        );
         assert_eq!(detail.tracks, tracks);
     }
 
@@ -3995,6 +4051,54 @@ mod tests {
         assert_eq!(detail.artist.album_count, 1);
         assert_eq!(detail.artist.track_count, 1);
         assert_eq!(detail.albums, vec![album]);
+        assert!(detail.appears_on.is_empty());
+        assert_eq!(detail.tracks, vec![track]);
+    }
+
+    #[test]
+    fn artist_detail_groups_non_primary_track_albums_as_appears_on() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(3);
+        album.artist = "Other Artist".to_string();
+        album.artist_id = Some(ArtistId::fake(99));
+        let artist = Artist {
+            id: ArtistId::fake(1),
+            name: "Artist".to_string(),
+            album_count: 0,
+            track_count: 1,
+            favorite: false,
+            image_ref: None,
+        };
+        let mut track = track(1, &album);
+        track.artist = artist.name.clone();
+        track.artist_id = Some(artist.id.clone());
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &artist.id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(detail.artist, artist);
+        assert!(detail.albums.is_empty());
+        assert_eq!(detail.appears_on, vec![album]);
         assert_eq!(detail.tracks, vec![track]);
     }
 

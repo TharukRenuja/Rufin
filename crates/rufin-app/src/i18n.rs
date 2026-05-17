@@ -37,6 +37,13 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Newly added");
     let _ = tr("Recently played");
     let _ = tr("Recently released");
+    let _ = tr("Favorite tracks");
+    let _ = tr("Appears on");
+    let _ = tr("appears on");
+    let _ = tr("Discography");
+    let _ = tr("View all tracks");
+    let _ = tr("albums");
+    let _ = tr("tracks");
     let _ = tr("Back");
     let _ = tr("Forward");
     let _ = tr("Menu");

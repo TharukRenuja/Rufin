@@ -96,12 +96,15 @@ pub(super) fn favorite_change_needs_route_render(
         return true;
     }
 
+    if matches!(route, Route::ArtistDetail(_) | Route::ArtistTracks(_)) {
+        return true;
+    }
+
     track_sort_key == TrackSortKey::Favorite
         && matches!(
             route,
             Route::Tracks
                 | Route::AlbumDetail(_)
-                | Route::ArtistDetail(_)
                 | Route::GenreDetail(_)
                 | Route::PlaylistDetail(_)
                 | Route::Search { .. }
@@ -263,6 +266,16 @@ mod tests {
             &Route::Tracks,
             &track,
             TrackSortKey::Favorite,
+        ));
+        assert!(favorite_change_needs_route_render(
+            &Route::ArtistDetail(ArtistId::fake(1)),
+            &track,
+            TrackSortKey::Title,
+        ));
+        assert!(favorite_change_needs_route_render(
+            &Route::ArtistTracks(ArtistId::fake(1)),
+            &track,
+            TrackSortKey::Title,
         ));
         assert!(!favorite_change_needs_route_render(
             &Route::Tracks,
