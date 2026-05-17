@@ -488,6 +488,14 @@ msgstr ""
 msgid "Search Lyrics"
 msgstr ""
 
+#: crates/rufin-app/src/ui.rs:3009
+msgid "Close"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3132
+msgid "Skip automatic lyric search for this track"
+msgstr ""
+
 #: crates/rufin-app/src/ui.rs:2987
 msgid "No lyrics found."
 msgstr ""

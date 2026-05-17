@@ -104,6 +104,7 @@ struct AppState {
     player: RefCell<PlaybackSnapshot>,
     lyrics: RefCell<Option<Lyrics>>,
     lyrics_track_id: RefCell<Option<rufin_core::TrackId>>,
+    lyrics_auto_search_attempted: RefCell<HashSet<rufin_core::TrackId>>,
     lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
@@ -132,7 +133,7 @@ struct AppState {
 
 #[derive(Clone)]
 struct LyricsSearchDialog {
-    popover: gtk::Popover,
+    dialog: adw::Dialog,
     track_id: rufin_core::TrackId,
     artist_entry: gtk::Entry,
     title_entry: gtk::Entry,
@@ -348,6 +349,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         player: RefCell::new(player),
         lyrics: RefCell::new(None),
         lyrics_track_id: RefCell::new(None),
+        lyrics_auto_search_attempted: RefCell::new(HashSet::new()),
         lyrics_search_dialog: RefCell::new(None),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
@@ -1133,6 +1135,7 @@ impl Shell {
             }
         }
         *self.state.lyrics.borrow_mut() = None;
+        self.state.lyrics_auto_search_attempted.borrow_mut().clear();
         self.render_lyrics_panel();
         if current_playback_track_id(&self.state.player.borrow()).is_some() {
             self.controller.refresh_lyrics_for_current();
@@ -1154,6 +1157,7 @@ impl Shell {
             && current_playback_track_id(&self.state.player.borrow()).is_some()
         {
             *self.state.lyrics.borrow_mut() = None;
+            self.state.lyrics_auto_search_attempted.borrow_mut().clear();
             self.render_lyrics_panel();
             self.controller.refresh_lyrics_for_current();
         }
@@ -1172,6 +1176,7 @@ impl Shell {
         }
         self.update_discord_presence(&self.state.player.borrow());
         *self.state.lyrics.borrow_mut() = None;
+        self.state.lyrics_auto_search_attempted.borrow_mut().clear();
         self.render_lyrics_panel();
         if current_playback_track_id(&self.state.player.borrow()).is_some() {
             self.controller.refresh_lyrics_for_current();
@@ -1486,7 +1491,56 @@ impl Shell {
             return;
         };
         *self.state.lyrics_track_id.borrow_mut() = Some(track_id);
+        self.request_auto_lyrics_if_needed();
+    }
+
+    fn request_auto_lyrics_if_needed(&self) {
+        let Some(track_id) = current_playback_track_id(&self.state.player.borrow()) else {
+            return;
+        };
+        if self.state.lyrics.borrow().is_some() {
+            return;
+        }
+        let settings = self.state.settings.borrow();
+        if settings.private_mode
+            || !settings.external_lyrics_enabled
+            || !settings.lyrics_panel_visible
+            || auto_lyrics_search_is_suppressed(&settings, &track_id)
+        {
+            return;
+        }
+        drop(settings);
+        if !self
+            .state
+            .lyrics_auto_search_attempted
+            .borrow_mut()
+            .insert(track_id)
+        {
+            return;
+        }
         self.controller.request_lyrics_for_current();
+    }
+
+    fn suppress_auto_lyrics_for_current(self: &Rc<Self>) {
+        let Some(track_id) = current_playback_track_id(&self.state.player.borrow()) else {
+            return;
+        };
+        {
+            let mut attempted = self.state.lyrics_auto_search_attempted.borrow_mut();
+            attempted.remove(&track_id);
+        }
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            let id = track_id.as_str().to_string();
+            if !settings.suppressed_auto_lyrics_track_ids.contains(&id) {
+                settings.suppressed_auto_lyrics_track_ids.push(id);
+                if let Err(error) = self.controller.save_settings(&settings) {
+                    warn!(%error, "failed to save lyrics auto-search setting");
+                }
+            }
+        }
+        *self.state.lyrics.borrow_mut() = None;
+        self.render_lyrics_panel();
     }
 
     fn lyrics_empty_status(&self) -> String {
@@ -3078,6 +3132,10 @@ impl Shell {
         drop(settings);
         self.lyrics_pane
             .set_search_action(&search_label, search_enabled);
+        self.lyrics_pane.set_clear_auto_search_action(
+            &tr("Skip automatic lyric search for this track"),
+            has_current_track,
+        );
         let empty_status = self.lyrics_empty_status();
         let seek_shell = Rc::clone(self);
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
@@ -3088,11 +3146,12 @@ impl Shell {
             .set_content(lyrics.as_ref(), empty_status, seek);
         drop(lyrics);
         self.update_lyrics_highlight();
+        self.request_auto_lyrics_if_needed();
     }
 
     fn present_lyrics_search_dialog(self: &Rc<Self>) {
         if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref() {
-            self.lyrics_pane.present_search_popover(&dialog.popover);
+            dialog.dialog.present(Some(&self.window));
             dialog.title_entry.grab_focus();
             return;
         }
@@ -3112,10 +3171,16 @@ impl Shell {
         content.set_width_request(420);
         content.set_height_request(500);
 
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        header.set_valign(gtk::Align::Center);
         let title = gtk::Label::new(Some(&tr("Search Lyrics")));
         title.add_css_class("title");
         title.set_xalign(0.0);
-        content.append(&title);
+        title.set_hexpand(true);
+        header.append(&title);
+        let close_button = icon_button("window-close-symbolic", "Close");
+        header.append(&close_button);
+        content.append(&header);
 
         let artist_entry = gtk::Entry::new();
         artist_entry.set_placeholder_text(Some(&tr("Artist")));
@@ -3148,11 +3213,13 @@ impl Shell {
         scroller.set_child(Some(&list));
         content.append(&scroller);
 
-        let popover = gtk::Popover::new();
-        popover.set_autohide(true);
-        popover.set_child(Some(&content));
+        let dialog = adw::Dialog::builder()
+            .content_width(520)
+            .content_height(560)
+            .child(&content)
+            .build();
         let search_dialog = LyricsSearchDialog {
-            popover: popover.clone(),
+            dialog: dialog.clone(),
             track_id: current.track_id,
             artist_entry: artist_entry.clone(),
             title_entry: title_entry.clone(),
@@ -3163,9 +3230,13 @@ impl Shell {
         *self.state.lyrics_search_dialog.borrow_mut() = Some(search_dialog.clone());
 
         let close_shell = Rc::clone(self);
-        popover.connect_closed(move |popover| {
-            popover.unparent();
+        dialog.connect_closed(move |_| {
             close_shell.state.lyrics_search_dialog.borrow_mut().take();
+        });
+
+        let close_dialog = dialog.clone();
+        close_button.connect_clicked(move |_| {
+            close_dialog.close();
         });
 
         let search_shell = Rc::clone(self);
@@ -3177,8 +3248,9 @@ impl Shell {
         let search_shell = Rc::clone(self);
         title_entry.connect_activate(move |_| submit_lyrics_search(&search_shell));
 
-        self.lyrics_pane.present_search_popover(&popover);
+        dialog.present(Some(&self.window));
         search_dialog.title_entry.grab_focus();
+        submit_lyrics_search(self);
     }
 
     fn apply_lyrics_search_results(
@@ -3998,6 +4070,10 @@ fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
         }
         lyrics_shell.present_lyrics_search_dialog();
     });
+    let lyrics_shell = Rc::clone(shell);
+    shell
+        .lyrics_pane
+        .connect_clear_auto_search_clicked(move || lyrics_shell.suppress_auto_lyrics_for_current());
 }
 
 fn submit_lyrics_search(shell: &Rc<Shell>) {
@@ -4016,6 +4092,16 @@ fn submit_lyrics_search(shell: &Rc<Shell>) {
     shell
         .controller
         .search_lyrics_for_current(artist_name, track_name);
+}
+
+fn auto_lyrics_search_is_suppressed(
+    settings: &AppSettings,
+    track_id: &rufin_core::TrackId,
+) -> bool {
+    settings
+        .suppressed_auto_lyrics_track_ids
+        .iter()
+        .any(|stored| stored == track_id.as_str())
 }
 
 fn clear_list_box(list: &gtk::ListBox) {
@@ -4287,9 +4373,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         shell.cancel_scheduled_lyrics_highlight();
                         shell.render_queue_panel();
                         shell.render_lyrics_panel();
-                        if next_track.is_some() {
-                            shell.controller.request_lyrics_for_current();
-                        }
+                        shell.request_auto_lyrics_if_needed();
                         shell.notify_now_playing(&next_snapshot);
                     }
                     shell.update_bottom_player();

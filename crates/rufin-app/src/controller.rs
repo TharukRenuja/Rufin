@@ -3240,13 +3240,17 @@ fn resolve_stream(
 #[serde(rename_all = "camelCase")]
 struct LrcLibLyricsDto {
     id: u64,
+    #[serde(default, alias = "name")]
     track_name: String,
+    #[serde(default)]
     artist_name: String,
     #[serde(default)]
     album_name: Option<String>,
     #[serde(default)]
     duration: Option<f64>,
+    #[serde(default)]
     synced_lyrics: Option<String>,
+    #[serde(default)]
     plain_lyrics: Option<String>,
 }
 
@@ -3265,29 +3269,166 @@ impl From<LrcLibLyricsDto> for LyricsSearchResult {
 }
 
 fn lrclib_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearchResult>, String> {
-    let mut url =
-        reqwest::Url::parse("https://lrclib.net/api/search").map_err(|error| error.to_string())?;
-    {
-        let mut query = url.query_pairs_mut();
-        if !track_name.trim().is_empty() {
-            query.append_pair("track_name", track_name.trim());
-        }
-        if !artist_name.trim().is_empty() {
-            query.append_pair("artist_name", artist_name.trim());
-        }
-    }
     let client = reqwest::blocking::Client::builder()
         .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|error| error.to_string())?;
-    let results = client
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    let mut had_success = false;
+    let mut errors = Vec::new();
+    for url in lrclib_search_urls(artist_name, track_name)? {
+        match lrclib_fetch_search(&client, url) {
+            Ok(batch) => {
+                had_success = true;
+                for result in batch {
+                    if seen.insert(result.id) {
+                        results.push(result);
+                    }
+                }
+            }
+            Err(error) => errors.push(error),
+        }
+    }
+    if !had_success && !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    order_lrclib_results(&mut results, artist_name, track_name);
+    Ok(results)
+}
+
+fn lrclib_search_urls(artist_name: &str, track_name: &str) -> Result<Vec<reqwest::Url>, String> {
+    let artist_name = artist_name.trim();
+    let track_name = track_name.trim();
+    let mut urls = Vec::new();
+    let combined_query = [track_name, artist_name]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !combined_query.is_empty() {
+        let mut url = lrclib_search_base_url()?;
+        url.query_pairs_mut().append_pair("q", &combined_query);
+        urls.push(url);
+    }
+    if !track_name.is_empty() {
+        let mut url = lrclib_search_base_url()?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("track_name", track_name);
+            if !artist_name.is_empty() {
+                query.append_pair("artist_name", artist_name);
+            }
+        }
+        urls.push(url);
+    }
+    Ok(urls)
+}
+
+fn lrclib_search_base_url() -> Result<reqwest::Url, String> {
+    reqwest::Url::parse("https://lrclib.net/api/search").map_err(|error| error.to_string())
+}
+
+fn lrclib_fetch_search(
+    client: &reqwest::blocking::Client,
+    url: reqwest::Url,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    let body = client
         .get(url)
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|error| format!("Lyric search failed: {error}"))?
-        .json::<Vec<LrcLibLyricsDto>>()
+        .text()
+        .map_err(|error| format!("Lyric search failed: {error}"))?;
+    parse_lrclib_search_body(&body)
+}
+
+fn parse_lrclib_search_body(body: &str) -> Result<Vec<LyricsSearchResult>, String> {
+    let values = serde_json::from_str::<Vec<serde_json::Value>>(body)
         .map_err(|error| format!("Lyric search returned invalid data: {error}"))?;
-    Ok(results.into_iter().map(LyricsSearchResult::from).collect())
+    let mut results = Vec::new();
+    for value in values {
+        match serde_json::from_value::<LrcLibLyricsDto>(value) {
+            Ok(dto) => {
+                let result = LyricsSearchResult::from(dto);
+                if !result.track_name.trim().is_empty() || !result.artist_name.trim().is_empty() {
+                    results.push(result);
+                }
+            }
+            Err(error) => {
+                debug!(%error, "skipped invalid LRCLIB search result");
+            }
+        }
+    }
+    Ok(results)
+}
+
+fn order_lrclib_results(results: &mut [LyricsSearchResult], artist_name: &str, track_name: &str) {
+    results.sort_by(|a, b| {
+        lrclib_match_score(a, artist_name, track_name)
+            .cmp(&lrclib_match_score(b, artist_name, track_name))
+            .then_with(|| lrclib_has_synced_lyrics(b).cmp(&lrclib_has_synced_lyrics(a)))
+            .then_with(|| lrclib_has_plain_lyrics(b).cmp(&lrclib_has_plain_lyrics(a)))
+            .then_with(|| a.track_name.cmp(&b.track_name))
+            .then_with(|| a.artist_name.cmp(&b.artist_name))
+    });
+}
+
+fn lrclib_match_score(result: &LyricsSearchResult, artist_name: &str, track_name: &str) -> u16 {
+    text_match_score(track_name, &result.track_name).saturating_mul(2)
+        + text_match_score(artist_name, &result.artist_name)
+}
+
+fn text_match_score(query: &str, candidate: &str) -> u16 {
+    let query = normalize_search_text(query);
+    if query.is_empty() {
+        return 0;
+    }
+    let candidate = normalize_search_text(candidate);
+    if candidate == query {
+        return 0;
+    }
+    if candidate.contains(&query) || query.contains(&candidate) {
+        return 10;
+    }
+    let query_tokens = query.split_whitespace().collect::<HashSet<_>>();
+    if query_tokens.is_empty() {
+        return 0;
+    }
+    let candidate_tokens = candidate.split_whitespace().collect::<HashSet<_>>();
+    let matched = query_tokens.intersection(&candidate_tokens).count();
+    let missing = query_tokens.len().saturating_sub(matched);
+    let extra = candidate_tokens.len().saturating_sub(matched);
+    if matched == 0 {
+        return 100 + query_tokens.len() as u16 * 10;
+    }
+    (missing as u16 * 30) + (extra.min(6) as u16 * 4)
+}
+
+fn normalize_search_text(value: &str) -> String {
+    let mut normalized = String::new();
+    for character in value.chars() {
+        if character.is_alphanumeric() {
+            normalized.extend(character.to_lowercase());
+        } else {
+            normalized.push(' ');
+        }
+    }
+    normalized.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn lrclib_has_synced_lyrics(result: &LyricsSearchResult) -> bool {
+    result
+        .synced_lyrics
+        .as_deref()
+        .is_some_and(|lyrics| !lyrics.trim().is_empty())
+}
+
+fn lrclib_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
+    result
+        .plain_lyrics
+        .as_deref()
+        .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
 
 fn save_lrclib_result(
@@ -4954,6 +5095,72 @@ mod tests {
         assert_eq!(result.duration_seconds, 185);
         assert_eq!(result.track_name, "Imagine");
         assert_eq!(result.artist_name, "John Lennon");
+    }
+
+    #[test]
+    fn lrclib_manual_search_uses_feishin_style_query_first() {
+        let urls = super::lrclib_search_urls("joy", "feel my soul").expect("lrclib search urls");
+        let query_pairs = urls[0]
+            .query_pairs()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            query_pairs,
+            vec![("q".to_string(), "feel my soul joy".to_string())]
+        );
+    }
+
+    #[test]
+    fn lrclib_search_body_decodes_feel_my_soul_result() {
+        let json = r#"[{
+            "id": 9386114,
+            "name": "feel my soul",
+            "artistName": "joy",
+            "albumName": "feel my soul",
+            "duration": 223.0,
+            "plainLyrics": "plain line",
+            "syncedLyrics": "[00:01.00]synced line",
+            "lyricsfile": null
+        }]"#;
+
+        let results = super::parse_lrclib_search_body(json).expect("parse lrclib response");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, 9_386_114);
+        assert_eq!(results[0].track_name, "feel my soul");
+        assert_eq!(results[0].artist_name, "joy");
+        assert_eq!(results[0].duration_seconds, 223);
+        assert!(results[0].synced_lyrics.is_some());
+        assert!(results[0].plain_lyrics.is_some());
+    }
+
+    #[test]
+    fn lrclib_results_prefer_matching_title_over_album_hit() {
+        let mut results = vec![
+            super::LyricsSearchResult {
+                id: 1,
+                track_name: "Crippled Inside".to_string(),
+                artist_name: "John Lennon".to_string(),
+                album_name: "Imagine".to_string(),
+                duration_seconds: 233,
+                synced_lyrics: Some("[00:01.00]line".to_string()),
+                plain_lyrics: Some("line".to_string()),
+            },
+            super::LyricsSearchResult {
+                id: 2,
+                track_name: "Imagine".to_string(),
+                artist_name: "John Lennon".to_string(),
+                album_name: "Lennon".to_string(),
+                duration_seconds: 185,
+                synced_lyrics: None,
+                plain_lyrics: Some("line".to_string()),
+            },
+        ];
+
+        super::order_lrclib_results(&mut results, "John Lennon", "Imagine");
+
+        assert_eq!(results[0].track_name, "Imagine");
     }
 
     #[test]

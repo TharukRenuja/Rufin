@@ -72,6 +72,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Hide lyrics");
     let _ = tr("Search lyrics");
     let _ = tr("Search Lyrics");
+    let _ = tr("Close");
+    let _ = tr("Skip automatic lyric search for this track");
     let _ = tr("No track playing");
     let _ = tr("Song");
     let _ = tr("Ready");

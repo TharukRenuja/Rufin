@@ -252,6 +252,8 @@ pub struct AppSettings {
     pub queue_lyrics_layout_version: u8,
     #[serde(default)]
     pub track_table: TrackTableSettings,
+    #[serde(default)]
+    pub suppressed_auto_lyrics_track_ids: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -289,6 +291,7 @@ impl Default for AppSettings {
             queue_lyrics_ratio: None,
             queue_lyrics_layout_version: QUEUE_LYRICS_LAYOUT_VERSION,
             track_table: TrackTableSettings::default(),
+            suppressed_auto_lyrics_track_ids: Vec::new(),
         }
     }
 }
@@ -348,6 +351,7 @@ mod tests {
             ]
         );
         assert_eq!(settings.track_table.sort_key, TrackSortKey::TrackNumber);
+        assert!(settings.suppressed_auto_lyrics_track_ids.is_empty());
     }
 
     #[test]

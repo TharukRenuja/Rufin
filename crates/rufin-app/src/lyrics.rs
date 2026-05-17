@@ -16,6 +16,7 @@ pub struct LyricsPane {
     root: gtk::Box,
     scroller: gtk::ScrolledWindow,
     body: gtk::Box,
+    clear_auto_search_button: gtk::Button,
     search_button: gtk::Button,
     rows: Rc<RefCell<Vec<LyricsRow>>>,
     active_index: Rc<Cell<Option<usize>>>,
@@ -55,6 +56,13 @@ impl LyricsPane {
         title.set_hexpand(true);
         header.append(&title);
 
+        let clear_auto_search_button = gtk::Button::from_icon_name("window-close-symbolic");
+        clear_auto_search_button.add_css_class("icon-button");
+        clear_auto_search_button.add_css_class("flat");
+        clear_auto_search_button.add_css_class("circular");
+        clear_auto_search_button.set_visible(false);
+        header.append(&clear_auto_search_button);
+
         let search_button = gtk::Button::from_icon_name("system-search-symbolic");
         search_button.add_css_class("icon-button");
         search_button.add_css_class("flat");
@@ -76,12 +84,14 @@ impl LyricsPane {
             root,
             scroller,
             body,
+            clear_auto_search_button,
             search_button,
             rows: Rc::new(RefCell::new(Vec::new())),
             active_index: Rc::new(Cell::new(None)),
             scroll_generation: Rc::new(Cell::new(0)),
             follow_pause_until: Rc::new(Cell::new(None)),
         };
+        pane.connect_header_hover(&header);
         pane.connect_user_scroll_pause();
         pane
     }
@@ -94,6 +104,11 @@ impl LyricsPane {
         self.search_button.connect_clicked(move |_| search());
     }
 
+    pub fn connect_clear_auto_search_clicked(&self, clear: impl Fn() + 'static) {
+        self.clear_auto_search_button
+            .connect_clicked(move |_| clear());
+    }
+
     pub fn set_search_action(&self, label: &str, enabled: bool) {
         self.search_button.set_tooltip_text(Some(label));
         self.search_button
@@ -101,11 +116,14 @@ impl LyricsPane {
         self.search_button.set_sensitive(enabled);
     }
 
-    pub fn present_search_popover(&self, popover: &gtk::Popover) {
-        if popover.parent().is_none() {
-            popover.set_parent(&self.search_button);
+    pub fn set_clear_auto_search_action(&self, label: &str, enabled: bool) {
+        self.clear_auto_search_button.set_tooltip_text(Some(label));
+        self.clear_auto_search_button
+            .update_property(&[gtk::accessible::Property::Label(label)]);
+        self.clear_auto_search_button.set_sensitive(enabled);
+        if !enabled {
+            self.clear_auto_search_button.set_visible(false);
         }
-        popover.popup();
     }
 
     pub fn set_content(
@@ -216,6 +234,21 @@ impl LyricsPane {
             glib::Propagation::Proceed
         });
         self.scroller.add_controller(controller);
+    }
+
+    fn connect_header_hover(&self, header: &gtk::Box) {
+        let button = self.clear_auto_search_button.clone();
+        let motion = gtk::EventControllerMotion::new();
+        motion.connect_enter(move |_, _, _| {
+            if button.is_sensitive() {
+                button.set_visible(true);
+            }
+        });
+        let button = self.clear_auto_search_button.clone();
+        motion.connect_leave(move |_| {
+            button.set_visible(false);
+        });
+        header.add_controller(motion);
     }
 
     fn follow_scroll_pause(&self) -> LyricsFollowScrollPause {
