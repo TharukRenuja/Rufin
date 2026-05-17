@@ -1,6 +1,6 @@
 pkgbase = rufin-git
 	pkgdesc = Native GTK music client for Jellyfin
-	pkgver = 0.1.r2.g3d59a83
+	pkgver = 0.1.2
 	pkgrel = 1
 	url = https://github.com/screwys/Rufin
 	arch = x86_64

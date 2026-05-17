@@ -2414,7 +2414,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-app"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "clap",
  "directories",
@@ -2440,7 +2440,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2448,7 +2448,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-playback"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "gstreamer",
  "gstreamer-audio",
@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-provider"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "rufin-core",
@@ -2471,7 +2471,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-provider-jellyfin"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -2487,7 +2487,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-secrets"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "rufin-core",
  "secret-service",
@@ -2496,7 +2496,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-store"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "rufin-core",
  "rufin-provider",
@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-test-support"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "futures-executor",
