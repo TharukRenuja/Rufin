@@ -1,0 +1,89 @@
+name: Flatpak
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: true
+        default: main
+      upload_release_tag:
+        description: Optional existing GitHub release tag to upload the bundle to
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ID: io.github.screwys.Rufin
+  BUNDLE_NAME: io.github.screwys.Rufin.flatpak
+  MANIFEST: build-aux/flatpak/io.github.screwys.Rufin.json
+  RUNTIME_REPO_URL: https://flathub.org/repo/flathub.flatpakrepo
+
+jobs:
+  bundle:
+    name: Build Flatpak bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub "$RUNTIME_REPO_URL"
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+
+      - name: Build Flatpak repository
+        run: |
+          set -euo pipefail
+          flatpak-builder \
+            --user \
+            --install-deps-from=flathub \
+            --repo=flatpak-repo \
+            --force-clean \
+            build-dir \
+            "$MANIFEST"
+          flatpak build-update-repo flatpak-repo
+
+      - name: Build Flatpak bundle
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          flatpak build-bundle \
+            --runtime-repo="$RUNTIME_REPO_URL" \
+            flatpak-repo \
+            "dist/$BUNDLE_NAME" \
+            "$APP_ID" \
+            master
+          ls -lh "dist/$BUNDLE_NAME"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE_NAME }}
+          path: dist/${{ env.BUNDLE_NAME }}
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: |
+          gh release upload \
+            "$RELEASE_TAG" \
+            "dist/$BUNDLE_NAME" \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"
