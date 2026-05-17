@@ -35,7 +35,7 @@ optdepends=(
 conflicts=('rufin-git')
 options=('!lto')
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/screwys/Rufin/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('d68a205c3686c7c52019b002c631817b4664dddf5c45d8ff7dceebfa0657f098')
 
 prepare() {
   cd "Rufin-${pkgver}" || return

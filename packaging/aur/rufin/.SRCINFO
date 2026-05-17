@@ -27,6 +27,6 @@ pkgbase = rufin
 	conflicts = rufin-git
 	options = !lto
 	source = rufin-0.1.4.tar.gz::https://github.com/screwys/Rufin/archive/refs/tags/v0.1.4.tar.gz
-	sha256sums = SKIP
+	sha256sums = d68a205c3686c7c52019b002c631817b4664dddf5c45d8ff7dceebfa0657f098
 
 pkgname = rufin
