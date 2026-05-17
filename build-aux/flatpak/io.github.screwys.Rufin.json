@@ -8,7 +8,10 @@
   ],
   "command": "rufin",
   "build-options": {
-    "append-path": "/usr/lib/sdk/rust-stable/bin"
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {
+      "CARGO_NET_OFFLINE": "true"
+    }
   },
   "finish-args": [
     "--share=ipc",
@@ -24,7 +27,9 @@
       "name": "rufin",
       "buildsystem": "simple",
       "build-commands": [
-        "cargo build --release -p rufin-app",
+        "install -Dm644 cargo/config .cargo/config.toml",
+        "cargo fetch --locked --offline --manifest-path Cargo.toml --verbose",
+        "cargo build --release --locked --offline -p rufin-app",
         "install -Dm755 target/release/rufin /app/bin/rufin",
         "install -Dm644 data/io.github.screwys.Rufin.desktop /app/share/applications/io.github.screwys.Rufin.desktop",
         "install -Dm644 data/io.github.screwys.Rufin.metainfo.xml /app/share/metainfo/io.github.screwys.Rufin.metainfo.xml",
@@ -34,7 +39,8 @@
         {
           "type": "dir",
           "path": "../.."
-        }
+        },
+        "cargo-sources.json"
       ]
     }
   ]
