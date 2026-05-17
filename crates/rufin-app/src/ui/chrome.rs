@@ -30,11 +30,8 @@ pub(super) fn build_main_area() -> MainAreaParts {
     header.set_show_end_title_buttons(false);
 
     let route_title = adw::WindowTitle::new("", "");
-    route_title.add_css_class("route-title");
-    route_title.set_halign(gtk::Align::Start);
     route_title.set_valign(gtk::Align::Center);
-    route_title.set_margin_start(20);
-    header.pack_start(&route_title);
+    header.set_title_widget(Some(&route_title));
 
     let route_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     route_host.set_hexpand(true);
