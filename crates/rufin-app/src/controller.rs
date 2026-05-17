@@ -1849,21 +1849,35 @@ impl AppController {
         self.request_lyrics_for_current_with_cache(true);
     }
 
+    pub fn request_server_lyrics_for_current(&self) {
+        self.request_lyrics_for_current_with_search(true, JellyfinLyricsSearch::ServerOnly);
+    }
+
     pub fn refresh_lyrics_for_current(&self) {
         self.request_lyrics_for_current_with_cache(false);
     }
 
     fn request_lyrics_for_current_with_cache(&self, use_cache: bool) {
+        let settings = self
+            .store
+            .with_store(|store| store.load_settings())
+            .unwrap_or_else(|_| AppSettings::default());
+        self.request_lyrics_for_current_with_search(
+            use_cache,
+            lyrics_search_for_settings(&settings),
+        );
+    }
+
+    fn request_lyrics_for_current_with_search(
+        &self,
+        use_cache: bool,
+        search: JellyfinLyricsSearch,
+    ) {
         let Some((server_id, entry, _position)) = self.current_queue_entry() else {
             debug!("lyrics request skipped because the queue has no current track");
             let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
             return;
         };
-        let settings = self
-            .store
-            .with_store(|store| store.load_settings())
-            .unwrap_or_else(|_| AppSettings::default());
-        let search = lyrics_search_for_settings(&settings);
         let cached = use_cache.then(|| {
             self.store
                 .with_store(|store| store.load_lyrics(&server_id, &entry.track_id))
@@ -4967,6 +4981,38 @@ mod tests {
         let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
 
         controller.request_lyrics_for_current();
+
+        assert!(wait_for_lyrics(&events).is_none());
+    }
+
+    #[test]
+    fn server_lyrics_request_ignores_cached_remote_lyrics() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let track = snapshot.tracks[0].clone();
+        controller.play_now(track.clone());
+        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+        let server_id = controller
+            .store
+            .with_store(|store| store.active_server())
+            .expect("load active server")
+            .expect("active server")
+            .server
+            .id;
+        let remote_lyrics = Lyrics {
+            track_id: track.id,
+            source: LyricsSource::Remote,
+            lines: vec![LyricLine {
+                text: "cached remote line".to_string(),
+                start_millis: None,
+            }],
+        };
+        controller
+            .store
+            .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
+            .expect("save remote lyrics");
+
+        controller.request_server_lyrics_for_current();
 
         assert!(wait_for_lyrics(&events).is_none());
     }

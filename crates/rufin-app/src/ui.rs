@@ -1502,14 +1502,11 @@ impl Shell {
             return;
         }
         let settings = self.state.settings.borrow();
-        if settings.private_mode
-            || !settings.external_lyrics_enabled
-            || !settings.lyrics_panel_visible
-            || auto_lyrics_search_is_suppressed(&settings, &track_id)
-        {
-            return;
-        }
+        let request = auto_lyrics_request_for_settings(&settings, &track_id);
         drop(settings);
+        let Some(request) = request else {
+            return;
+        };
         if !self
             .state
             .lyrics_auto_search_attempted
@@ -1518,7 +1515,10 @@ impl Shell {
         {
             return;
         }
-        self.controller.request_lyrics_for_current();
+        match request {
+            AutoLyricsRequest::Default => self.controller.request_lyrics_for_current(),
+            AutoLyricsRequest::ServerOnly => self.controller.request_server_lyrics_for_current(),
+        }
     }
 
     fn suppress_auto_lyrics_for_current(self: &Rc<Self>) {
@@ -4106,6 +4106,29 @@ fn auto_lyrics_search_is_suppressed(
         .any(|stored| stored == track_id.as_str())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AutoLyricsRequest {
+    Default,
+    ServerOnly,
+}
+
+fn auto_lyrics_request_for_settings(
+    settings: &AppSettings,
+    track_id: &rufin_core::TrackId,
+) -> Option<AutoLyricsRequest> {
+    if !settings.lyrics_panel_visible {
+        return None;
+    }
+    if settings.private_mode
+        || !settings.external_lyrics_enabled
+        || auto_lyrics_search_is_suppressed(settings, track_id)
+    {
+        Some(AutoLyricsRequest::ServerOnly)
+    } else {
+        Some(AutoLyricsRequest::Default)
+    }
+}
+
 fn auto_lyrics_skip_action_enabled(
     settings: &AppSettings,
     track_id: Option<&rufin_core::TrackId>,
@@ -6280,7 +6303,8 @@ mod tests {
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
     };
     use super::{
-        auto_lyrics_skip_action_enabled, current_playback_track_id, seekbar_target_seconds,
+        AutoLyricsRequest, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
+        current_playback_track_id, seekbar_target_seconds,
     };
     use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
 
@@ -6363,6 +6387,45 @@ mod tests {
         settings.private_mode = true;
         assert!(!auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
         assert!(!auto_lyrics_skip_action_enabled(&settings, None));
+    }
+
+    #[test]
+    fn auto_lyrics_request_keeps_server_lookup_when_external_search_is_suppressed() {
+        let track_id = TrackId::fake(12);
+        let mut settings = AppSettings {
+            external_lyrics_enabled: true,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(
+            auto_lyrics_request_for_settings(&settings, &track_id),
+            Some(AutoLyricsRequest::Default)
+        );
+
+        settings
+            .suppressed_auto_lyrics_track_ids
+            .push(track_id.as_str().to_string());
+        assert_eq!(
+            auto_lyrics_request_for_settings(&settings, &track_id),
+            Some(AutoLyricsRequest::ServerOnly)
+        );
+
+        settings.suppressed_auto_lyrics_track_ids.clear();
+        settings.external_lyrics_enabled = false;
+        assert_eq!(
+            auto_lyrics_request_for_settings(&settings, &track_id),
+            Some(AutoLyricsRequest::ServerOnly)
+        );
+
+        settings.external_lyrics_enabled = true;
+        settings.private_mode = true;
+        assert_eq!(
+            auto_lyrics_request_for_settings(&settings, &track_id),
+            Some(AutoLyricsRequest::ServerOnly)
+        );
+
+        settings.lyrics_panel_visible = false;
+        assert_eq!(auto_lyrics_request_for_settings(&settings, &track_id), None);
     }
 
     #[test]
