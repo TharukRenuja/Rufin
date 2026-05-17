@@ -3319,9 +3319,7 @@ fn show_about_dialog(shell: &Shell) {
         .application_icon("io.github.screwys.Rufin")
         .developer_name("screwys")
         .version(env!("CARGO_PKG_VERSION"))
-        .comments(tr(
-            "Thank you for trying out Rufin. It can be consired as an Alpha release yet, if you have issues or suggestions I would appreciate if you open a Github issue/PR.",
-        ))
+        .comments(tr("Thank you for trying out Rufin."))
         .website("https://github.com/screwys/Rufin")
         .build();
     dialog.add_link(&tr("Issues"), "https://github.com/screwys/Rufin/issues");
