@@ -5,6 +5,7 @@ members = [
     "crates/rufin-playback",
     "crates/rufin-provider",
     "crates/rufin-provider-jellyfin",
+    "crates/rufin-provider-local",
     "crates/rufin-provider-subsonic",
     "crates/rufin-secrets",
     "crates/rufin-store",

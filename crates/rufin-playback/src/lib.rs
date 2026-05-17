@@ -1,15 +1,19 @@
 use std::collections::VecDeque;
+use std::f64::consts::FRAC_PI_2;
 use std::fmt;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use gst::glib;
+use gst::prelude::*;
 use gstreamer as gst;
-use gstreamer_play as gst_play;
-use rufin_core::TrackId;
+use rufin_core::{
+    EQUALIZER_BAND_COUNT, PlaybackSettings, PlaybackTransitionMode, ReplayGainMode, TrackId,
+};
 use thiserror::Error;
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, instrument, warn};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlaybackTrack {
@@ -58,6 +62,18 @@ impl fmt::Debug for StreamDescriptor {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreparedPlaybackItem {
+    pub track: PlaybackTrack,
+    pub stream: StreamDescriptor,
+}
+
+impl PreparedPlaybackItem {
+    pub fn new(track: PlaybackTrack, stream: StreamDescriptor) -> Self {
+        Self { track, stream }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PlaybackState {
     #[default]
@@ -74,6 +90,14 @@ pub enum PlaybackCommand {
         stream: StreamDescriptor,
         start_position_seconds: u32,
     },
+    PlayPrepared {
+        item: PreparedPlaybackItem,
+        next: Option<PreparedPlaybackItem>,
+        start_position_seconds: u32,
+        settings: PlaybackSettings,
+    },
+    PrepareNext(Option<PreparedPlaybackItem>),
+    UpdateSettings(PlaybackSettings),
     Resume,
     Pause,
     Stop,
@@ -90,8 +114,37 @@ pub enum PlaybackEvent {
     DurationChanged(u32),
     Buffering(u8),
     EndOfStream,
+    PreparedTrackStarted(PlaybackTrack),
     VolumeChanged { volume: f64, muted: bool },
     Error(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioOutput {
+    pub id: String,
+    pub name: String,
+}
+
+pub fn available_audio_outputs() -> Vec<AudioOutput> {
+    let _ = gst::init();
+    let candidates = [
+        ("autoaudiosink", "System default"),
+        ("pipewiresink", "PipeWire"),
+        ("pulsesink", "PulseAudio"),
+        ("alsasink", "ALSA"),
+        ("jackaudiosink", "JACK"),
+        ("osxaudiosink", "macOS"),
+        ("wasapisink", "WASAPI"),
+        ("directsoundsink", "DirectSound"),
+    ];
+    candidates
+        .into_iter()
+        .filter(|(id, _)| gst::ElementFactory::find(id).is_some())
+        .map(|(id, name)| AudioOutput {
+            id: id.to_string(),
+            name: name.to_string(),
+        })
+        .collect()
 }
 
 #[derive(Debug, Error)]
@@ -111,6 +164,8 @@ pub trait PlaybackBackend: Send {
 pub struct FakePlaybackBackend {
     state: PlaybackState,
     current: Option<PlaybackTrack>,
+    next: Option<PreparedPlaybackItem>,
+    settings: PlaybackSettings,
     position_seconds: u32,
     position_millis: u64,
     duration_seconds: u32,
@@ -121,14 +176,17 @@ pub struct FakePlaybackBackend {
 
 impl FakePlaybackBackend {
     pub fn new() -> Self {
+        let settings = PlaybackSettings::default();
         Self {
             state: PlaybackState::Stopped,
             current: None,
+            next: None,
+            volume: settings.volume,
+            muted: settings.muted,
+            settings,
             position_seconds: 0,
             position_millis: 0,
             duration_seconds: 0,
-            volume: 1.0,
-            muted: false,
             events: VecDeque::new(),
         }
     }
@@ -137,9 +195,31 @@ impl FakePlaybackBackend {
         self.events.push_back(PlaybackEvent::EndOfStream);
     }
 
+    pub fn emit_prepared_track_started_for_test(&mut self) {
+        if let Some(next) = self.next.take() {
+            self.current = Some(next.track.clone());
+            self.duration_seconds = next.track.duration_seconds;
+            self.position_seconds = 0;
+            self.position_millis = 0;
+            self.events
+                .push_back(PlaybackEvent::PreparedTrackStarted(next.track));
+        }
+    }
+
     fn set_state(&mut self, state: PlaybackState) {
         self.state = state;
         self.events.push_back(PlaybackEvent::StateChanged(state));
+    }
+
+    fn play_item(&mut self, item: PreparedPlaybackItem, start_position_seconds: u32) {
+        self.duration_seconds = item.track.duration_seconds;
+        self.position_seconds = start_position_seconds.min(self.duration_seconds);
+        self.position_millis = u64::from(self.position_seconds) * 1_000;
+        self.current = Some(item.track);
+        self.events
+            .push_back(PlaybackEvent::DurationChanged(self.duration_seconds));
+        self.events.push_back(position_event(self.position_millis));
+        self.set_state(PlaybackState::Playing);
     }
 }
 
@@ -148,23 +228,40 @@ impl PlaybackBackend for FakePlaybackBackend {
         match command {
             PlaybackCommand::Play {
                 track,
+                stream,
                 start_position_seconds,
-                ..
+            } => self.play_item(
+                PreparedPlaybackItem::new(track, stream),
+                start_position_seconds,
+            ),
+            PlaybackCommand::PlayPrepared {
+                item,
+                next,
+                start_position_seconds,
+                settings,
             } => {
-                self.duration_seconds = track.duration_seconds;
-                self.position_seconds = start_position_seconds.min(self.duration_seconds);
-                self.position_millis = u64::from(self.position_seconds) * 1_000;
-                self.current = Some(track);
-                self.events
-                    .push_back(PlaybackEvent::DurationChanged(self.duration_seconds));
-                self.events.push_back(position_event(self.position_millis));
-                self.set_state(PlaybackState::Playing);
+                self.settings = settings;
+                self.volume = self.settings.volume;
+                self.muted = self.settings.muted;
+                self.next = next;
+                self.play_item(item, start_position_seconds);
+            }
+            PlaybackCommand::PrepareNext(next) => self.next = next,
+            PlaybackCommand::UpdateSettings(settings) => {
+                self.settings = settings;
+                self.volume = self.settings.volume;
+                self.muted = self.settings.muted;
+                self.events.push_back(PlaybackEvent::VolumeChanged {
+                    volume: self.volume,
+                    muted: self.muted,
+                });
             }
             PlaybackCommand::Resume => self.set_state(PlaybackState::Playing),
             PlaybackCommand::Pause => self.set_state(PlaybackState::Paused),
             PlaybackCommand::Stop => {
                 self.position_seconds = 0;
                 self.position_millis = 0;
+                self.next = None;
                 self.set_state(PlaybackState::Stopped);
                 self.events.push_back(position_event(0));
             }
@@ -231,7 +328,12 @@ impl Default for LazyGStreamerPlaybackBackend {
 
 impl PlaybackBackend for LazyGStreamerPlaybackBackend {
     fn send(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
-        if self.inner.is_none() && !matches!(command, PlaybackCommand::Play { .. }) {
+        if self.inner.is_none()
+            && !matches!(
+                command,
+                PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. }
+            )
+        {
             return Ok(());
         }
         self.backend()?.send(command)
@@ -278,6 +380,613 @@ impl PlaybackBackend for GStreamerPlaybackBackend {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Slot {
+    Primary,
+    Secondary,
+}
+
+#[derive(Clone, Debug)]
+struct CrossfadeState {
+    from: Slot,
+    to: Slot,
+    started_at: Instant,
+    duration: Duration,
+    item: PreparedPlaybackItem,
+}
+
+#[derive(Debug)]
+struct SharedPlaybackState {
+    settings: PlaybackSettings,
+    current: Option<PreparedPlaybackItem>,
+    next: Option<PreparedPlaybackItem>,
+    gapless_pending: Option<PreparedPlaybackItem>,
+    active: Slot,
+    crossfade: Option<CrossfadeState>,
+    volume: f64,
+    muted: bool,
+}
+
+impl SharedPlaybackState {
+    fn new() -> Self {
+        let settings = PlaybackSettings::default();
+        Self {
+            current: None,
+            next: None,
+            gapless_pending: None,
+            active: Slot::Primary,
+            crossfade: None,
+            volume: settings.volume,
+            muted: settings.muted,
+            settings,
+        }
+    }
+}
+
+struct PlayerPipeline {
+    pipeline: gst::Element,
+    bus: gst::Bus,
+    _about_to_finish_id: glib::SignalHandlerId,
+}
+
+impl PlayerPipeline {
+    fn new(
+        slot: Slot,
+        name: &str,
+        shared: Arc<Mutex<SharedPlaybackState>>,
+        events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
+    ) -> Result<Self, String> {
+        let pipeline = make_playbin(name)?;
+        let bus = pipeline
+            .bus()
+            .ok_or_else(|| "GStreamer playbin did not expose a bus".to_string())?;
+        let fakesink = gst::ElementFactory::make("fakesink")
+            .name(format!("{name}-video-sink"))
+            .build()
+            .map_err(|error| error.to_string())?;
+        pipeline.set_property("video-sink", &fakesink);
+
+        let pipeline_for_signal = pipeline.clone();
+        let shared_for_signal = Arc::clone(&shared);
+        let events_for_signal = Arc::clone(&events);
+        let about_to_finish_id = pipeline.connect("about-to-finish", false, move |_| {
+            handle_about_to_finish(&pipeline_for_signal, &shared_for_signal, &events_for_signal);
+            None
+        });
+
+        let _ = slot;
+        Ok(Self {
+            pipeline,
+            bus,
+            _about_to_finish_id: about_to_finish_id,
+        })
+    }
+
+    fn configure_audio(&self, settings: &PlaybackSettings) -> Result<(), String> {
+        let sink = build_audio_sink(settings)?;
+        self.pipeline.set_property("audio-sink", &sink);
+        Ok(())
+    }
+
+    fn play_item(
+        &self,
+        item: &PreparedPlaybackItem,
+        settings: &PlaybackSettings,
+        volume: f64,
+        muted: bool,
+        start_position_seconds: u32,
+    ) -> Result<(), String> {
+        self.pipeline
+            .set_state(gst::State::Ready)
+            .map_err(|error| error.to_string())?;
+        self.configure_audio(settings)?;
+        self.pipeline.set_property("uri", item.stream.uri());
+        self.set_output_volume(volume, muted);
+        self.pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|error| error.to_string())?;
+        if start_position_seconds > 0 {
+            self.seek_millis(u64::from(start_position_seconds) * 1_000);
+        }
+        Ok(())
+    }
+
+    fn set_output_volume(&self, volume: f64, muted: bool) {
+        self.pipeline.set_property("volume", volume.clamp(0.0, 1.0));
+        self.pipeline.set_property("mute", muted);
+    }
+
+    fn set_state(&self, state: gst::State) -> Result<(), String> {
+        self.pipeline
+            .set_state(state)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn stop(&self) {
+        let _ = self.pipeline.set_state(gst::State::Null);
+    }
+
+    fn seek_millis(&self, millis: u64) {
+        let _ = self.pipeline.seek_simple(
+            gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
+            gst::ClockTime::from_mseconds(millis),
+        );
+    }
+
+    fn position(&self) -> Option<gst::ClockTime> {
+        self.pipeline.query_position::<gst::ClockTime>()
+    }
+
+    fn duration(&self) -> Option<gst::ClockTime> {
+        self.pipeline.query_duration::<gst::ClockTime>()
+    }
+}
+
+struct GstEngine {
+    primary: PlayerPipeline,
+    secondary: PlayerPipeline,
+    shared: Arc<Mutex<SharedPlaybackState>>,
+    events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
+    last_position_tick: Instant,
+}
+
+impl GstEngine {
+    fn new(events: Arc<Mutex<VecDeque<PlaybackEvent>>>) -> Result<Self, String> {
+        let shared = Arc::new(Mutex::new(SharedPlaybackState::new()));
+        let primary = PlayerPipeline::new(
+            Slot::Primary,
+            "rufin-primary-player",
+            Arc::clone(&shared),
+            Arc::clone(&events),
+        )?;
+        let secondary = PlayerPipeline::new(
+            Slot::Secondary,
+            "rufin-secondary-player",
+            Arc::clone(&shared),
+            Arc::clone(&events),
+        )?;
+        Ok(Self {
+            primary,
+            secondary,
+            shared,
+            events,
+            last_position_tick: Instant::now(),
+        })
+    }
+
+    fn handle_command(&mut self, command: PlaybackCommand) {
+        let result = match command {
+            PlaybackCommand::Play {
+                track,
+                stream,
+                start_position_seconds,
+            } => {
+                let settings = self.settings();
+                self.play_prepared(
+                    PreparedPlaybackItem::new(track, stream),
+                    None,
+                    start_position_seconds,
+                    settings,
+                )
+            }
+            PlaybackCommand::PlayPrepared {
+                item,
+                next,
+                start_position_seconds,
+                settings,
+            } => self.play_prepared(item, next, start_position_seconds, settings),
+            PlaybackCommand::PrepareNext(next) => {
+                if let Ok(mut shared) = self.shared.lock() {
+                    shared.next = next;
+                }
+                Ok(())
+            }
+            PlaybackCommand::UpdateSettings(mut settings) => {
+                settings.sanitize();
+                if let Ok(mut shared) = self.shared.lock() {
+                    shared.settings = settings;
+                    shared.volume = shared.settings.volume;
+                    shared.muted = shared.settings.muted;
+                }
+                let (volume, muted) = self.output_state();
+                self.primary.set_output_volume(volume, muted);
+                self.secondary.set_output_volume(volume, muted);
+                push_event(&self.events, PlaybackEvent::VolumeChanged { volume, muted });
+                Ok(())
+            }
+            PlaybackCommand::Resume => {
+                self.active_pipeline()
+                    .set_state(gst::State::Playing)
+                    .map(|_| {
+                        push_event(
+                            &self.events,
+                            PlaybackEvent::StateChanged(PlaybackState::Playing),
+                        )
+                    })
+            }
+            PlaybackCommand::Pause => {
+                self.active_pipeline()
+                    .set_state(gst::State::Paused)
+                    .map(|_| {
+                        push_event(
+                            &self.events,
+                            PlaybackEvent::StateChanged(PlaybackState::Paused),
+                        )
+                    })
+            }
+            PlaybackCommand::Stop => {
+                self.primary.stop();
+                self.secondary.stop();
+                if let Ok(mut shared) = self.shared.lock() {
+                    shared.current = None;
+                    shared.next = None;
+                    shared.gapless_pending = None;
+                    shared.crossfade = None;
+                    shared.active = Slot::Primary;
+                }
+                push_event(&self.events, position_event(0));
+                push_event(
+                    &self.events,
+                    PlaybackEvent::StateChanged(PlaybackState::Stopped),
+                );
+                Ok(())
+            }
+            PlaybackCommand::Seek(seconds) => {
+                self.active_pipeline()
+                    .seek_millis(u64::from(seconds) * 1_000);
+                push_event(&self.events, position_event(u64::from(seconds) * 1_000));
+                Ok(())
+            }
+            PlaybackCommand::SeekMillis(millis) => {
+                self.active_pipeline().seek_millis(millis);
+                push_event(&self.events, position_event(millis));
+                Ok(())
+            }
+            PlaybackCommand::SetVolume(volume) => {
+                let volume = volume.clamp(0.0, 1.0);
+                let muted = self.set_volume(volume);
+                push_event(&self.events, PlaybackEvent::VolumeChanged { volume, muted });
+                Ok(())
+            }
+            PlaybackCommand::SetMuted(muted) => {
+                let volume = self.set_muted(muted);
+                push_event(&self.events, PlaybackEvent::VolumeChanged { volume, muted });
+                Ok(())
+            }
+        };
+
+        if let Err(error) = result {
+            push_event(&self.events, PlaybackEvent::Error(error));
+        }
+    }
+
+    fn play_prepared(
+        &mut self,
+        item: PreparedPlaybackItem,
+        next: Option<PreparedPlaybackItem>,
+        start_position_seconds: u32,
+        mut settings: PlaybackSettings,
+    ) -> Result<(), String> {
+        settings.sanitize();
+        self.secondary.stop();
+        let volume = settings.volume;
+        let muted = settings.muted;
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.settings = settings.clone();
+            shared.current = Some(item.clone());
+            shared.next = next;
+            shared.gapless_pending = None;
+            shared.crossfade = None;
+            shared.active = Slot::Primary;
+            shared.volume = volume;
+            shared.muted = muted;
+        }
+        push_event(
+            &self.events,
+            PlaybackEvent::StateChanged(PlaybackState::Buffering),
+        );
+        self.primary
+            .play_item(&item, &settings, volume, muted, start_position_seconds)
+    }
+
+    fn poll_bus(&mut self) {
+        while let Some(message) = self.primary.bus.pop() {
+            self.handle_message(Slot::Primary, &message);
+        }
+        while let Some(message) = self.secondary.bus.pop() {
+            self.handle_message(Slot::Secondary, &message);
+        }
+    }
+
+    fn handle_message(&mut self, slot: Slot, message: &gst::Message) {
+        use gst::MessageView;
+
+        match message.view() {
+            MessageView::StateChanged(state) if self.message_source_is_pipeline(slot, message) => {
+                if self.is_active_slot(slot) {
+                    let playback_state = match state.current() {
+                        gst::State::Null | gst::State::Ready => PlaybackState::Stopped,
+                        gst::State::Paused => PlaybackState::Paused,
+                        gst::State::Playing => PlaybackState::Playing,
+                        _ => PlaybackState::Buffering,
+                    };
+                    push_event(&self.events, PlaybackEvent::StateChanged(playback_state));
+                }
+            }
+            MessageView::StreamStart(_) if self.is_active_slot(slot) => {
+                let started = self
+                    .shared
+                    .lock()
+                    .ok()
+                    .and_then(|mut shared| shared.gapless_pending.take())
+                    .map(|item| {
+                        if let Ok(mut shared) = self.shared.lock() {
+                            shared.current = Some(item.clone());
+                        }
+                        item.track
+                    });
+                if let Some(track) = started {
+                    push_event(&self.events, position_event(0));
+                    push_event(
+                        &self.events,
+                        PlaybackEvent::DurationChanged(track.duration_seconds),
+                    );
+                    push_event(&self.events, PlaybackEvent::PreparedTrackStarted(track));
+                }
+            }
+            MessageView::DurationChanged(_) if self.is_active_slot(slot) => {
+                if let Some(duration) = self.active_pipeline().duration() {
+                    push_event(
+                        &self.events,
+                        PlaybackEvent::DurationChanged(clock_seconds(duration)),
+                    );
+                }
+            }
+            MessageView::Buffering(buffering) if self.is_active_slot(slot) => {
+                push_event(
+                    &self.events,
+                    PlaybackEvent::Buffering(buffering.percent().min(100) as u8),
+                );
+            }
+            MessageView::Eos(_) => self.handle_eos(slot),
+            MessageView::Error(error_message) => {
+                let message = error_message.error().to_string();
+                error!(%message, "GStreamer playback error");
+                push_event(&self.events, PlaybackEvent::Error(message));
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_eos(&mut self, slot: Slot) {
+        if self.finish_crossfade_if_needed(slot) {
+            return;
+        }
+        if self.is_active_slot(slot) {
+            push_event(&self.events, PlaybackEvent::EndOfStream);
+        }
+    }
+
+    fn tick(&mut self) {
+        self.maybe_start_crossfade();
+        self.update_crossfade();
+
+        if self.last_position_tick.elapsed() >= Duration::from_millis(500) {
+            self.last_position_tick = Instant::now();
+            if let Some(position) = self.active_pipeline().position() {
+                push_event(&self.events, position_event(clock_millis(position)));
+            }
+            if let Some(duration) = self.active_pipeline().duration() {
+                push_event(
+                    &self.events,
+                    PlaybackEvent::DurationChanged(clock_seconds(duration)),
+                );
+            }
+        }
+    }
+
+    fn maybe_start_crossfade(&mut self) {
+        let Some(position) = self.active_pipeline().position() else {
+            return;
+        };
+        let Some(duration) = self.active_pipeline().duration() else {
+            return;
+        };
+        let position_ms = clock_millis(position);
+        let duration_ms = clock_millis(duration);
+        if duration_ms == 0 || position_ms >= duration_ms {
+            return;
+        }
+
+        let request = self.shared.lock().ok().and_then(|shared| {
+            if shared.settings.transition_mode != PlaybackTransitionMode::Crossfade
+                || shared.crossfade.is_some()
+            {
+                return None;
+            }
+            let crossfade_ms = u64::from(shared.settings.crossfade_seconds) * 1_000;
+            if duration_ms.saturating_sub(position_ms) > crossfade_ms
+                || duration_ms <= crossfade_ms + 1_000
+            {
+                return None;
+            }
+            Some((
+                shared.next.clone()?,
+                shared.settings.clone(),
+                shared.active,
+                inactive_slot(shared.active),
+                shared.volume,
+                shared.muted,
+                crossfade_ms,
+            ))
+        });
+
+        let Some((next, settings, from, to, volume, muted, crossfade_ms)) = request else {
+            return;
+        };
+        let inactive = self.pipeline_for_slot(to);
+        if let Err(error) = inactive.play_item(&next, &settings, 0.0, muted, 0) {
+            push_event(&self.events, PlaybackEvent::Error(error));
+            return;
+        }
+
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.next = None;
+            shared.crossfade = Some(CrossfadeState {
+                from,
+                to,
+                started_at: Instant::now(),
+                duration: Duration::from_millis(crossfade_ms),
+                item: next.clone(),
+            });
+        }
+        self.pipeline_for_slot(from)
+            .set_output_volume(volume, muted);
+        push_event(&self.events, position_event(0));
+        push_event(
+            &self.events,
+            PlaybackEvent::DurationChanged(next.track.duration_seconds),
+        );
+        push_event(
+            &self.events,
+            PlaybackEvent::PreparedTrackStarted(next.track.clone()),
+        );
+    }
+
+    fn update_crossfade(&mut self) {
+        let Some(crossfade) = self
+            .shared
+            .lock()
+            .ok()
+            .and_then(|shared| shared.crossfade.clone())
+        else {
+            return;
+        };
+        let elapsed = crossfade.started_at.elapsed();
+        let progress = (elapsed.as_secs_f64() / crossfade.duration.as_secs_f64()).clamp(0.0, 1.0);
+        let (volume, muted) = self.output_state();
+        let from_volume = (progress * FRAC_PI_2).cos() * volume;
+        let to_volume = (progress * FRAC_PI_2).sin() * volume;
+        self.pipeline_for_slot(crossfade.from)
+            .set_output_volume(from_volume, muted);
+        self.pipeline_for_slot(crossfade.to)
+            .set_output_volume(to_volume, muted);
+        if progress >= 1.0 {
+            self.finish_crossfade(crossfade);
+        }
+    }
+
+    fn finish_crossfade_if_needed(&mut self, eos_slot: Slot) -> bool {
+        let crossfade = self
+            .shared
+            .lock()
+            .ok()
+            .and_then(|shared| shared.crossfade.clone());
+        if let Some(crossfade) = crossfade
+            && crossfade.from == eos_slot
+        {
+            self.finish_crossfade(crossfade);
+            return true;
+        }
+        false
+    }
+
+    fn finish_crossfade(&mut self, crossfade: CrossfadeState) {
+        self.pipeline_for_slot(crossfade.from).stop();
+        let (volume, muted) = self.output_state();
+        self.pipeline_for_slot(crossfade.to)
+            .set_output_volume(volume, muted);
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.active = crossfade.to;
+            shared.current = Some(crossfade.item);
+            shared.crossfade = None;
+            shared.gapless_pending = None;
+        }
+    }
+
+    fn settings(&self) -> PlaybackSettings {
+        self.shared
+            .lock()
+            .map(|shared| shared.settings.clone())
+            .unwrap_or_default()
+    }
+
+    fn output_state(&self) -> (f64, bool) {
+        self.shared
+            .lock()
+            .map(|shared| (shared.volume, shared.muted))
+            .unwrap_or((1.0, false))
+    }
+
+    fn set_volume(&mut self, volume: f64) -> bool {
+        let muted = self
+            .shared
+            .lock()
+            .map(|mut shared| {
+                shared.volume = volume;
+                shared.settings.volume = volume;
+                shared.muted
+            })
+            .unwrap_or(false);
+        self.primary.set_output_volume(volume, muted);
+        self.secondary.set_output_volume(volume, muted);
+        muted
+    }
+
+    fn set_muted(&mut self, muted: bool) -> f64 {
+        let volume = self
+            .shared
+            .lock()
+            .map(|mut shared| {
+                shared.muted = muted;
+                shared.settings.muted = muted;
+                shared.volume
+            })
+            .unwrap_or(1.0);
+        self.primary.set_output_volume(volume, muted);
+        self.secondary.set_output_volume(volume, muted);
+        volume
+    }
+
+    fn active_pipeline(&self) -> &PlayerPipeline {
+        self.pipeline_for_slot(self.active_slot())
+    }
+
+    fn pipeline_for_slot(&self, slot: Slot) -> &PlayerPipeline {
+        match slot {
+            Slot::Primary => &self.primary,
+            Slot::Secondary => &self.secondary,
+        }
+    }
+
+    fn active_slot(&self) -> Slot {
+        self.shared
+            .lock()
+            .map(|shared| shared.active)
+            .unwrap_or(Slot::Primary)
+    }
+
+    fn is_active_slot(&self, slot: Slot) -> bool {
+        self.active_slot() == slot
+    }
+
+    fn message_source_is_pipeline(&self, slot: Slot, message: &gst::Message) -> bool {
+        message.src().is_some_and(|source| {
+            source
+                == self
+                    .pipeline_for_slot(slot)
+                    .pipeline
+                    .upcast_ref::<gst::Object>()
+        })
+    }
+
+    fn shutdown(&self) {
+        self.primary.stop();
+        self.secondary.stop();
+    }
+}
+
 #[instrument(skip(receiver, events))]
 fn run_gstreamer_thread(
     receiver: Receiver<PlaybackCommand>,
@@ -291,169 +1000,147 @@ fn run_gstreamer_thread(
         return;
     }
 
-    let play = gst_play::Play::default();
-    play.set_video_track_enabled(false);
-    let bus = play.message_bus();
-    let mut last_position_tick = Instant::now();
-    let mut volume = 1.0;
-    let mut muted = false;
+    let mut engine = match GstEngine::new(Arc::clone(&events)) {
+        Ok(engine) => engine,
+        Err(error) => {
+            push_event(&events, PlaybackEvent::Error(error));
+            return;
+        }
+    };
 
     loop {
-        while let Some(message) = bus.pop() {
-            handle_gstreamer_message(&events, &message, &mut volume, &mut muted);
-        }
-
-        match receiver.recv_timeout(Duration::from_millis(80)) {
-            Ok(command) => {
-                if handle_gstreamer_command(&play, &events, command).is_err() {
-                    break;
-                }
-            }
+        engine.poll_bus();
+        match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(command) => engine.handle_command(command),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
-
-        if last_position_tick.elapsed() >= Duration::from_millis(500) {
-            last_position_tick = Instant::now();
-            if let Some(position) = play.position() {
-                push_event(&events, position_event(clock_millis(position)));
-            }
-            if let Some(duration) = play.duration() {
-                push_event(
-                    &events,
-                    PlaybackEvent::DurationChanged(clock_seconds(duration)),
-                );
-            }
-        }
+        engine.tick();
     }
+    engine.shutdown();
 }
 
-fn handle_gstreamer_command(
-    play: &gst_play::Play,
+fn handle_about_to_finish(
+    pipeline: &gst::Element,
+    shared: &Arc<Mutex<SharedPlaybackState>>,
     events: &Arc<Mutex<VecDeque<PlaybackEvent>>>,
-    command: PlaybackCommand,
-) -> Result<(), ()> {
-    match command {
-        PlaybackCommand::Play {
-            track,
-            stream,
-            start_position_seconds,
-        } => {
-            debug!(
-                track_id = %track.id.as_str(),
-                uri = %stream.redacted_uri(),
-                "starting GStreamer playback"
-            );
-            push_event(
-                events,
-                PlaybackEvent::StateChanged(PlaybackState::Buffering),
-            );
-            play.stop();
-            play.set_uri(Some(stream.uri()));
-            play.play();
-            if start_position_seconds > 0 {
-                play.seek(gst::ClockTime::from_seconds(u64::from(
-                    start_position_seconds,
-                )));
-            }
-        }
-        PlaybackCommand::Resume => {
-            play.play();
-            push_event(events, PlaybackEvent::StateChanged(PlaybackState::Playing));
-        }
-        PlaybackCommand::Pause => {
-            play.pause();
-            push_event(events, PlaybackEvent::StateChanged(PlaybackState::Paused));
-        }
-        PlaybackCommand::Stop => {
-            play.stop();
-            push_event(events, position_event(0));
-            push_event(events, PlaybackEvent::StateChanged(PlaybackState::Stopped));
-        }
-        PlaybackCommand::Seek(seconds) => {
-            play.seek(gst::ClockTime::from_seconds(u64::from(seconds)));
-            push_event(events, position_event(u64::from(seconds) * 1_000));
-        }
-        PlaybackCommand::SeekMillis(millis) => {
-            play.seek(gst::ClockTime::from_mseconds(millis));
-            push_event(events, position_event(millis));
-        }
-        PlaybackCommand::SetVolume(volume) => play.set_volume(volume.clamp(0.0, 1.0)),
-        PlaybackCommand::SetMuted(muted) => play.set_mute(muted),
-    }
-    Ok(())
-}
-
-fn handle_gstreamer_message(
-    events: &Arc<Mutex<VecDeque<PlaybackEvent>>>,
-    message: &gst::Message,
-    volume: &mut f64,
-    muted: &mut bool,
 ) {
-    let Ok(message) = gst_play::PlayMessage::parse(message) else {
-        return;
-    };
-    match message {
-        gst_play::PlayMessage::StateChanged(state) => {
-            push_event(
-                events,
-                PlaybackEvent::StateChanged(match state.state() {
-                    gst_play::PlayState::Stopped => PlaybackState::Stopped,
-                    gst_play::PlayState::Buffering => PlaybackState::Buffering,
-                    gst_play::PlayState::Paused => PlaybackState::Paused,
-                    gst_play::PlayState::Playing => PlaybackState::Playing,
-                    _ => PlaybackState::Stopped,
-                }),
-            );
+    let next = shared.lock().ok().and_then(|mut shared| {
+        if shared.settings.transition_mode != PlaybackTransitionMode::Gapless
+            || shared.gapless_pending.is_some()
+        {
+            return None;
         }
-        gst_play::PlayMessage::PositionUpdated(position) => {
-            if let Some(position) = position.position() {
-                push_event(events, position_event(clock_millis(position)));
-            }
+        let next = shared.next.take()?;
+        shared.gapless_pending = Some(next.clone());
+        Some(next)
+    });
+
+    if let Some(next) = next {
+        debug!(
+            track_id = %next.track.id.as_str(),
+            uri = %next.stream.redacted_uri(),
+            "preloading gapless next stream"
+        );
+        pipeline.set_property("uri", next.stream.uri());
+    } else {
+        push_event(
+            events,
+            PlaybackEvent::StateChanged(PlaybackState::Buffering),
+        );
+    }
+}
+
+fn make_playbin(name: &str) -> Result<gst::Element, String> {
+    gst::ElementFactory::make("playbin3")
+        .name(name)
+        .build()
+        .or_else(|_| gst::ElementFactory::make("playbin").name(name).build())
+        .map_err(|error| error.to_string())
+}
+
+fn build_audio_sink(settings: &PlaybackSettings) -> Result<gst::Element, String> {
+    let bin = gst::Bin::new();
+    let convert_in = make_element("audioconvert", "rufin-audio-convert-in")?;
+    let convert_out = make_element("audioconvert", "rufin-audio-convert-out")?;
+    let sink = make_audio_output(settings.audio_output.as_deref())?;
+    let mut elements = vec![convert_in.clone()];
+
+    if settings.replay_gain != ReplayGainMode::Off
+        && let Some(rgvolume) = optional_element("rgvolume", "rufin-replaygain")
+    {
+        if settings.replay_gain == ReplayGainMode::Album {
+            rgvolume.set_property("album-mode", true);
         }
-        gst_play::PlayMessage::DurationChanged(duration) => {
-            if let Some(duration) = duration.duration() {
-                push_event(
-                    events,
-                    PlaybackEvent::DurationChanged(clock_seconds(duration)),
-                );
-            }
+        elements.push(rgvolume);
+        if let Some(rglimiter) = optional_element("rglimiter", "rufin-replaygain-limiter") {
+            elements.push(rglimiter);
         }
-        gst_play::PlayMessage::Buffering(buffering) => {
-            push_event(
-                events,
-                PlaybackEvent::Buffering(buffering.percent().min(100) as u8),
-            );
+    }
+
+    if settings.equalizer.enabled
+        && let Some(equalizer) = optional_element("equalizer-10bands", "rufin-equalizer")
+    {
+        for (index, gain) in settings
+            .equalizer
+            .bands
+            .iter()
+            .copied()
+            .take(EQUALIZER_BAND_COUNT)
+            .enumerate()
+        {
+            equalizer.set_property(format!("band{index}").as_str(), gain);
         }
-        gst_play::PlayMessage::EndOfStream(_) => {
-            push_event(events, PlaybackEvent::EndOfStream);
-        }
-        gst_play::PlayMessage::VolumeChanged(volume_message) => {
-            *volume = volume_message.volume().clamp(0.0, 1.0);
-            push_event(
-                events,
-                PlaybackEvent::VolumeChanged {
-                    volume: *volume,
-                    muted: *muted,
-                },
-            );
-        }
-        gst_play::PlayMessage::MuteChanged(mute) => {
-            *muted = mute.is_muted();
-            push_event(
-                events,
-                PlaybackEvent::VolumeChanged {
-                    volume: *volume,
-                    muted: *muted,
-                },
-            );
-        }
-        gst_play::PlayMessage::Error(error_message) => {
-            let message = error_message.error().to_string();
-            error!(%message, "GStreamer playback error");
-            push_event(events, PlaybackEvent::Error(message));
-        }
-        _ => {}
+        elements.push(equalizer);
+    }
+
+    elements.push(convert_out.clone());
+    elements.push(sink.clone());
+    for element in &elements {
+        bin.add(element).map_err(|error| error.to_string())?;
+    }
+    let refs = elements.iter().collect::<Vec<_>>();
+    gst::Element::link_many(&refs).map_err(|error| error.to_string())?;
+
+    let sink_pad = convert_in
+        .static_pad("sink")
+        .ok_or_else(|| "audio chain is missing an input pad".to_string())?;
+    let ghost_sink = gst::GhostPad::with_target(&sink_pad).map_err(|error| error.to_string())?;
+    ghost_sink
+        .set_active(true)
+        .map_err(|error| error.to_string())?;
+    bin.add_pad(&ghost_sink)
+        .map_err(|error| error.to_string())?;
+    Ok(bin.upcast())
+}
+
+fn make_audio_output(selected: Option<&str>) -> Result<gst::Element, String> {
+    if let Some(selected) = selected
+        && gst::ElementFactory::find(selected).is_some()
+    {
+        return make_element(selected, "rufin-audio-output");
+    }
+    make_element("autoaudiosink", "rufin-audio-output")
+}
+
+fn make_element(factory: &str, name: &str) -> Result<gst::Element, String> {
+    gst::ElementFactory::make(factory)
+        .name(name)
+        .build()
+        .map_err(|error| error.to_string())
+}
+
+fn optional_element(factory: &str, name: &str) -> Option<gst::Element> {
+    gst::ElementFactory::find(factory)?;
+    make_element(factory, name)
+        .inspect_err(|error| warn!(%error, factory, "failed to create optional GStreamer element"))
+        .ok()
+}
+
+fn inactive_slot(slot: Slot) -> Slot {
+    match slot {
+        Slot::Primary => Slot::Secondary,
+        Slot::Secondary => Slot::Primary,
     }
 }
 
@@ -508,9 +1195,9 @@ fn redact_sensitive_uri(uri: &str) -> String {
 mod tests {
     use super::{
         FakePlaybackBackend, PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState,
-        PlaybackTrack, StreamDescriptor,
+        PlaybackTrack, PreparedPlaybackItem, StreamDescriptor,
     };
-    use rufin_core::TrackId;
+    use rufin_core::{PlaybackSettings, PlaybackTransitionMode, TrackId};
 
     #[test]
     fn fake_backend_reports_basic_state_transitions() {
@@ -544,6 +1231,47 @@ mod tests {
             millis: 42_500,
         }));
         assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Stopped)));
+    }
+
+    #[test]
+    fn fake_backend_tracks_prepared_next_item() {
+        let mut backend = FakePlaybackBackend::new();
+        let current = PreparedPlaybackItem::new(track(1), StreamDescriptor::new("fake://track/1"));
+        let next = PreparedPlaybackItem::new(track(2), StreamDescriptor::new("fake://track/2"));
+        let settings = PlaybackSettings {
+            transition_mode: PlaybackTransitionMode::Gapless,
+            ..PlaybackSettings::default()
+        };
+
+        backend
+            .send(PlaybackCommand::PlayPrepared {
+                item: current,
+                next: Some(next.clone()),
+                start_position_seconds: 0,
+                settings,
+            })
+            .expect("play prepared");
+        backend.emit_prepared_track_started_for_test();
+
+        let events = backend.drain_events();
+        assert!(events.contains(&PlaybackEvent::PreparedTrackStarted(next.track)));
+    }
+
+    #[test]
+    fn fake_backend_updates_prepared_next_item() {
+        let mut backend = FakePlaybackBackend::new();
+        let next = PreparedPlaybackItem::new(track(3), StreamDescriptor::new("fake://track/3"));
+
+        backend
+            .send(PlaybackCommand::PrepareNext(Some(next.clone())))
+            .expect("prepare next");
+        backend.emit_prepared_track_started_for_test();
+
+        let events = backend.drain_events();
+        assert_eq!(
+            events,
+            vec![PlaybackEvent::PreparedTrackStarted(next.track)]
+        );
     }
 
     #[test]

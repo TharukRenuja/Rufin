@@ -147,6 +147,8 @@ pub struct Track {
     pub image_ref: Option<ImageRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub genres: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

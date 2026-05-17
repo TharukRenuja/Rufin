@@ -1,0 +1,22 @@
+[package]
+name = "rufin-provider-local"
+version = "0.1.3"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+lofty = "0.22.4"
+percent-encoding = "2.3.2"
+rufin-core = { path = "../rufin-core" }
+rufin-provider = { path = "../rufin-provider" }
+url = "2.5.7"
+walkdir = "2.5.0"
+
+[dev-dependencies]
+tempfile = "3.23.0"
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

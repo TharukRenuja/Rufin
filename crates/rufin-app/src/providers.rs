@@ -3,6 +3,7 @@ use rufin_provider_jellyfin::JellyfinProvider;
 pub use rufin_provider_jellyfin::{
     DiscoveredJellyfinServer, JellyfinLyricsSearch, discover_jellyfin_servers,
 };
+use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
 use rufin_provider_subsonic::{SubsonicFlavor, SubsonicLoginRequest, SubsonicProvider};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -10,10 +11,11 @@ pub enum StreamingProvider {
     Jellyfin,
     Navidrome,
     Subsonic,
+    Local,
 }
 
 impl StreamingProvider {
-    pub const ALL: [Self; 3] = [Self::Jellyfin, Self::Navidrome, Self::Subsonic];
+    pub const ALL: [Self; 4] = [Self::Jellyfin, Self::Navidrome, Self::Subsonic, Self::Local];
 
     pub fn from_index(index: u32) -> Self {
         Self::ALL
@@ -27,6 +29,7 @@ impl StreamingProvider {
             "jellyfin" => Some(Self::Jellyfin),
             "navidrome" => Some(Self::Navidrome),
             "subsonic" | "opensubsonic" => Some(Self::Subsonic),
+            LOCAL_PROVIDER_ID => Some(Self::Local),
             _ => None,
         }
     }
@@ -36,6 +39,7 @@ impl StreamingProvider {
             Self::Jellyfin => "jellyfin",
             Self::Navidrome => "navidrome",
             Self::Subsonic => "subsonic",
+            Self::Local => LOCAL_PROVIDER_ID,
         }
     }
 
@@ -44,6 +48,7 @@ impl StreamingProvider {
             Self::Jellyfin => "Jellyfin",
             Self::Navidrome => "Navidrome",
             Self::Subsonic => "Subsonic / OpenSubsonic",
+            Self::Local => "Local",
         }
     }
 
@@ -52,12 +57,14 @@ impl StreamingProvider {
             Self::Jellyfin => None,
             Self::Navidrome => Some(SubsonicFlavor::Navidrome),
             Self::Subsonic => Some(SubsonicFlavor::Subsonic),
+            Self::Local => None,
         }
     }
 }
 
 pub enum LoadedProvider {
     Jellyfin(JellyfinProvider),
+    Local(LocalProvider),
     Subsonic(SubsonicProvider),
 }
 
@@ -65,6 +72,7 @@ impl LoadedProvider {
     pub fn as_music_provider(&self) -> &dyn MusicProvider {
         match self {
             Self::Jellyfin(provider) => provider,
+            Self::Local(provider) => provider,
             Self::Subsonic(provider) => provider,
         }
     }
@@ -76,6 +84,13 @@ impl LoadedProvider {
     ) -> ProviderResult<Option<rufin_provider::Lyrics>> {
         match self {
             Self::Jellyfin(provider) => provider.lyrics_with_search(track_id, search).await,
+            Self::Local(provider) => {
+                let allow_remote = matches!(
+                    search,
+                    JellyfinLyricsSearch::ServerThenRemote | JellyfinLyricsSearch::RemoteThenServer
+                );
+                provider.lyrics(track_id, allow_remote).await
+            }
             Self::Subsonic(provider) => {
                 let allow_remote = matches!(
                     search,
@@ -94,6 +109,9 @@ pub async fn login_provider(
     password: String,
     trust_invalid_cert: bool,
 ) -> ProviderResult<ProviderSession> {
+    if provider == StreamingProvider::Local {
+        return Err(rufin_provider::ProviderError::Unsupported("local login"));
+    }
     if let Some(flavor) = provider.subsonic_flavor() {
         return SubsonicProvider::login(SubsonicLoginRequest {
             base_url,
@@ -118,6 +136,9 @@ pub fn provider_from_saved(session: SavedProviderSession) -> ProviderResult<Load
     match StreamingProvider::from_provider_id(&session.server.provider) {
         Some(StreamingProvider::Jellyfin) => {
             JellyfinProvider::from_saved_session(session).map(LoadedProvider::Jellyfin)
+        }
+        Some(StreamingProvider::Local) => {
+            LocalProvider::from_server(session.server).map(LoadedProvider::Local)
         }
         Some(StreamingProvider::Navidrome | StreamingProvider::Subsonic) => {
             SubsonicProvider::from_saved_session(session).map(LoadedProvider::Subsonic)

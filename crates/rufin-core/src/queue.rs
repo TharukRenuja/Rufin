@@ -551,6 +551,7 @@ mod tests {
             track_number: number as u16,
             image_ref: None,
             genres: Vec::new(),
+            local_path: None,
         }
     }
 

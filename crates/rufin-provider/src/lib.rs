@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rufin_core::{
     Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, Playlist,
-    PlaylistId, ServerIdentity, Track, TrackId,
+    PlaylistId, ServerIdentity, StreamQuality, Track, TrackId,
 };
 pub use rufin_playback::StreamDescriptor;
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,8 @@ pub struct ProviderCapabilities {
     pub playlist_mutations: bool,
     pub favorite_mutations: bool,
     pub auto_dj: bool,
+    pub random_tracks: bool,
+    pub random_played_filter: bool,
     pub search: bool,
     pub image_metadata: bool,
 }
@@ -45,10 +47,34 @@ impl Default for ProviderCapabilities {
             playlist_mutations: false,
             favorite_mutations: false,
             auto_dj: false,
+            random_tracks: false,
+            random_played_filter: false,
             search: true,
             image_metadata: true,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum PlayedFilter {
+    #[default]
+    All,
+    Unplayed,
+    Played,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RandomTrackRequest {
+    pub limit: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_year: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_year: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genre_id: Option<GenreId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genre_name: Option<String>,
+    pub played_filter: PlayedFilter,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -182,6 +208,7 @@ pub struct SearchResults {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum LyricsSource {
+    Local,
     Server,
     Remote,
 }
@@ -219,6 +246,25 @@ pub struct PlaybackReport {
     pub repeat_one: bool,
     pub repeat_all: bool,
     pub failed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StreamRequest {
+    pub track_id: TrackId,
+    pub quality: StreamQuality,
+}
+
+impl StreamRequest {
+    pub fn original(track_id: TrackId) -> Self {
+        Self {
+            track_id,
+            quality: StreamQuality::Original,
+        }
+    }
+
+    pub fn new(track_id: TrackId, quality: StreamQuality) -> Self {
+        Self { track_id, quality }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -264,7 +310,17 @@ pub trait MusicProvider {
     async fn playlist_detail(&self, playlist_id: &PlaylistId) -> ProviderResult<PlaylistDetail>;
     async fn genre_detail(&self, genre_id: &GenreId) -> ProviderResult<GenreDetail>;
     async fn track(&self, track_id: &TrackId) -> ProviderResult<Track>;
+    async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
+        let _unused = request;
+        Err(ProviderError::Unsupported("random tracks"))
+    }
     async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor>;
+    async fn stream_with_request(
+        &self,
+        request: &StreamRequest,
+    ) -> ProviderResult<StreamDescriptor> {
+        self.stream(&request.track_id).await
+    }
     async fn search(&self, query: &str) -> ProviderResult<SearchResults>;
     async fn image_metadata(&self, item_id: &str, kind: ImageKind)
     -> ProviderResult<ImageMetadata>;
@@ -339,6 +395,8 @@ mod tests {
         assert!(!capabilities.lyrics);
         assert!(!capabilities.playback_reporting);
         assert!(!capabilities.playlist_mutations);
+        assert!(!capabilities.random_tracks);
+        assert!(!capabilities.random_played_filter);
         assert!(capabilities.search);
         assert!(capabilities.image_metadata);
     }

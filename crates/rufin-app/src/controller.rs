@@ -9,19 +9,22 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use directories::ProjectDirs;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode,
-    ServerId, ServerIdentity, Track, TrackId,
+    PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot,
+    RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
-    PlaybackEvent, PlaybackState, PlaybackTrack, StreamDescriptor,
+    PlaybackEvent, PlaybackState, PlaybackTrack, PreparedPlaybackItem, StreamDescriptor,
 };
 use rufin_provider::{
     FavoriteItemId, Lyrics, MusicProvider, PagedRequest, PlaybackReport, PlaybackReportKind,
-    PlaylistEntry, SavedProviderSession, SearchResults,
+    PlaylistEntry, SavedProviderSession, SearchResults, StreamRequest,
 };
+use rufin_provider_local::LocalProvider;
 use rufin_secrets::{MemorySecretStore, SecretServiceStore, SecretStore};
-use rufin_store::{CachedArtistDetail, CachedGenreDetail, SavedServer, Store, StoreError};
+use rufin_store::{
+    CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store, StoreError,
+};
 use rufin_test_support::{FakeProvider, FakeScale};
 use serde::Deserialize;
 use tokio::runtime::Runtime;
@@ -35,8 +38,10 @@ use crate::providers::{
 
 mod covers;
 mod discovery;
+mod random;
 
 pub use discovery::DiscoveredServer;
+pub use random::{RandomPlayAction, RandomPlayRequest};
 
 const PAGE_SIZE: usize = 500;
 const SNAPSHOT_GRID_LIMIT: usize = 500;
@@ -52,6 +57,7 @@ const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
     pub server: Option<ServerIdentity>,
+    pub servers: Vec<ServerIdentity>,
     pub username: Option<String>,
     pub first_run: bool,
     pub sync_status: String,
@@ -120,6 +126,7 @@ impl LibrarySnapshot {
     fn first_run() -> Self {
         Self {
             server: None,
+            servers: Vec::new(),
             username: None,
             first_run: true,
             sync_status: "Add a music server to start.".to_string(),
@@ -566,8 +573,11 @@ impl AppController {
             let settings = load_settings_from_store(&store);
             let queue = restore_queue(&store, snapshot.server.as_ref());
             let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
-            let playback_snapshot =
-                playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled);
+            let playback_snapshot = playback_snapshot_from_queue(
+                queue.as_ref(),
+                settings.auto_dj_enabled,
+                &settings.playback,
+            );
             let controller = Self {
                 store,
                 runtime,
@@ -609,8 +619,11 @@ impl AppController {
         let settings = load_settings_from_store(&store);
         let queue = restore_queue(&store, snapshot.server.as_ref());
         let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
-        let playback_snapshot =
-            playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled);
+        let playback_snapshot = playback_snapshot_from_queue(
+            queue.as_ref(),
+            settings.auto_dj_enabled,
+            &settings.playback,
+        );
         let controller = Self {
             store,
             runtime,
@@ -665,6 +678,8 @@ impl AppController {
             playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
             playback_snapshot: Arc::new(Mutex::new(PlaybackSnapshot {
                 auto_dj_enabled: settings.auto_dj_enabled,
+                volume: settings.playback.volume,
+                muted: settings.playback.muted,
                 ..PlaybackSnapshot::default()
             })),
             pending_seek: Arc::new(Mutex::new(None)),
@@ -686,6 +701,8 @@ impl AppController {
             None,
             PlaybackSnapshot {
                 auto_dj_enabled: settings.auto_dj_enabled,
+                volume: settings.playback.volume,
+                muted: settings.playback.muted,
                 ..PlaybackSnapshot::default()
             },
         )
@@ -1196,6 +1213,9 @@ impl AppController {
         if let Err(error) = self.send_playback_command(PlaybackCommand::SetVolume(volume)) {
             let _sent = self.events.send(ControllerEvent::Error(error));
         } else {
+            self.persist_playback_settings(|settings| {
+                settings.volume = volume;
+            });
             self.update_playback_snapshot(|snapshot| {
                 snapshot.volume = volume;
             });
@@ -1212,11 +1232,37 @@ impl AppController {
         if let Err(error) = self.send_playback_command(PlaybackCommand::SetMuted(muted)) {
             let _sent = self.events.send(ControllerEvent::Error(error));
         } else {
+            self.persist_playback_settings(|settings| {
+                settings.muted = muted;
+            });
             self.update_playback_snapshot(|snapshot| {
                 snapshot.muted = muted;
             });
             self.emit_playback_snapshot();
         }
+    }
+
+    pub fn update_playback_settings(&self, mut playback_settings: PlaybackSettings) {
+        playback_settings.sanitize();
+        let mut settings = self.load_settings();
+        if settings.playback != playback_settings {
+            settings.playback = playback_settings.clone();
+            if let Err(error) = self.save_settings(&settings) {
+                let _sent = self.events.send(ControllerEvent::Error(error));
+                return;
+            }
+        }
+        if let Err(error) =
+            self.send_playback_command(PlaybackCommand::UpdateSettings(playback_settings.clone()))
+        {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.volume = playback_settings.volume;
+            snapshot.muted = playback_settings.muted;
+        });
+        self.prepare_next_stream();
+        self.emit_playback_snapshot();
     }
 
     pub fn poll_playback_events(&self) {
@@ -1264,6 +1310,9 @@ impl AppController {
                     });
                 }
                 PlaybackEvent::EndOfStream => self.advance_after_end_of_stream(),
+                PlaybackEvent::PreparedTrackStarted(track) => {
+                    self.advance_after_prepared_track_started(track);
+                }
                 PlaybackEvent::VolumeChanged { volume, muted } => {
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.volume = volume;
@@ -1409,6 +1458,8 @@ impl AppController {
         username: String,
         password: String,
         trust_invalid_cert: bool,
+        local_access_root: Option<PathBuf>,
+        path_replace_from: Option<String>,
     ) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
@@ -1447,6 +1498,14 @@ impl AppController {
             };
             if let Err(error) = store.with_store(|store| {
                 store.save_server(&saved)?;
+                if let Some(root) = local_access_root.as_ref().and_then(|path| path.to_str()) {
+                    store.save_server_local_access(&ServerLocalAccess {
+                        server_id: saved.server.id.clone(),
+                        root_path: root.to_string(),
+                        path_replace_from: trimmed_optional(path_replace_from.as_deref()),
+                        path_replace_to: Some(root.to_string()),
+                    })?;
+                }
                 store.set_active_server(&saved.server.id)?;
                 Ok(())
             }) {
@@ -1468,6 +1527,7 @@ impl AppController {
             let player = playback_snapshot_from_queue(
                 Some(&QueueEngine::restore(queue_snapshot.clone())),
                 auto_dj_enabled,
+                &load_settings_from_store(&store).playback,
             );
             if let Ok(mut snapshot) = playback_snapshot.lock() {
                 *snapshot = player.clone();
@@ -1488,6 +1548,102 @@ impl AppController {
             }
 
             start_sync_thread(store, runtime, secrets, events, sync_in_flight, saved);
+        });
+    }
+
+    pub fn add_local_server(&self, root_path: PathBuf) {
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let events = self.events.clone();
+        let queue = Arc::clone(&self.queue);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
+        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        thread::spawn(move || {
+            let identity = match LocalProvider::identity_for_root(&root_path) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error.to_string()));
+                    return;
+                }
+            };
+            let saved = SavedServer {
+                server: identity.clone(),
+                user_id: "local".to_string(),
+                username: "Local".to_string(),
+                trust_invalid_cert: false,
+            };
+            let result = store.with_store(|store| {
+                store.save_server(&saved)?;
+                store.save_server_local_access(&ServerLocalAccess {
+                    server_id: saved.server.id.clone(),
+                    root_path: saved.server.base_url.clone(),
+                    path_replace_from: None,
+                    path_replace_to: Some(saved.server.base_url.clone()),
+                })?;
+                store.set_active_server(&saved.server.id)?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            emit_active_server_state(
+                &store,
+                &events,
+                &queue,
+                &playback_snapshot,
+                &auto_dj_enabled,
+                &saved,
+            );
+            start_sync_thread(store, runtime, secrets, events, sync_in_flight, saved);
+        });
+    }
+
+    pub fn activate_server(&self, server_id: ServerId) {
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let events = self.events.clone();
+        let queue = Arc::clone(&self.queue);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
+        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        thread::spawn(move || {
+            let saved = match store.with_store(|store| {
+                let saved = store
+                    .list_servers()?
+                    .into_iter()
+                    .find(|saved| saved.server.id == server_id);
+                if saved.is_some() {
+                    store.set_active_server(&server_id)?;
+                }
+                Ok(saved)
+            }) {
+                Ok(Some(saved)) => saved,
+                Ok(None) => {
+                    let _sent = events.send(ControllerEvent::Error(
+                        "The selected server is no longer saved.".to_string(),
+                    ));
+                    return;
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            emit_active_server_state(
+                &store,
+                &events,
+                &queue,
+                &playback_snapshot,
+                &auto_dj_enabled,
+                &saved,
+            );
+            if active_server_needs_sync(&store, &saved.server.id) {
+                start_sync_thread(store, runtime, secrets, events, sync_in_flight, saved);
+            }
         });
     }
 
@@ -1564,7 +1720,7 @@ impl AppController {
                 return;
             };
 
-            if saved.server.provider != "fake" {
+            if saved.server.provider != "fake" && saved.server.provider != "local" {
                 let result =
                     provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                         runtime
@@ -1707,7 +1863,7 @@ impl AppController {
                 ));
                 return;
             };
-            if saved.server.provider != "fake" {
+            if saved.server.provider != "fake" && saved.server.provider != "local" {
                 let result =
                     provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                         runtime
@@ -1883,6 +2039,16 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
             return;
         };
+        if let Some(lyrics) = local_sidecar_lyrics(&self.store, &server_id, &entry.track_id) {
+            debug!(track_id = %entry.track_id, "loaded lyrics from local sidecar");
+            let _saved = self
+                .store
+                .with_store(|store| store.save_lyrics(&server_id, &lyrics));
+            let _sent = self
+                .events
+                .send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+            return;
+        }
         let cached = use_cache.then(|| {
             self.store
                 .with_store(|store| store.load_lyrics(&server_id, &entry.track_id))
@@ -1979,7 +2145,12 @@ impl AppController {
         });
     }
 
-    pub fn save_lyrics_search_result(&self, track_id: TrackId, result: LyricsSearchResult) {
+    pub fn save_lyrics_search_result(
+        &self,
+        track_id: TrackId,
+        result: LyricsSearchResult,
+        output_path: Option<PathBuf>,
+    ) {
         let Some((server_id, entry, _position)) = self.current_queue_entry() else {
             let _sent = self
                 .events
@@ -1995,8 +2166,8 @@ impl AppController {
 
         let store = self.store.clone();
         let events = self.events.clone();
-        thread::spawn(
-            move || match save_lrclib_result(&server_id, &entry, &result) {
+        thread::spawn(move || {
+            match save_lrclib_result(&store, &server_id, &entry, &result, output_path) {
                 Ok((path, lyrics)) => {
                     let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
                     let _sent = events.send(ControllerEvent::LyricsSaved { path, lyrics });
@@ -2004,8 +2175,8 @@ impl AppController {
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
                 }
-            },
-        );
+            }
+        });
     }
 
     fn with_queue_mut<T>(
@@ -2099,6 +2270,7 @@ impl AppController {
             .events
             .send(ControllerEvent::Queue(Box::new(queue_snapshot)));
         self.emit_playback_snapshot();
+        self.prepare_next_stream();
     }
 
     fn persist_current_queue_snapshot(&self) {
@@ -2205,8 +2377,19 @@ impl AppController {
             .map_err(|error| error.to_string())
     }
 
+    fn persist_playback_settings(&self, update: impl FnOnce(&mut PlaybackSettings)) {
+        let mut settings = self.load_settings();
+        update(&mut settings.playback);
+        settings.playback.sanitize();
+        if let Err(error) = self.save_settings(&settings) {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+    }
+
     fn start_current_track(&self) {
-        let Some((server_id, entry, position_seconds)) = self.current_queue_entry() else {
+        let Some((server_id, entry, next_entry, position_seconds, playback_settings)) =
+            self.current_playback_request()
+        else {
             let _sent = self
                 .events
                 .send(ControllerEvent::Error("Queue is empty.".to_string()));
@@ -2230,18 +2413,41 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let events = self.events.clone();
         thread::spawn(move || {
-            let stream =
-                match resolve_stream(&store, &runtime, &secrets, &server_id, &entry.track_id) {
-                    Ok(stream) => stream,
+            let item = match resolve_prepared_item(
+                &store,
+                &runtime,
+                &secrets,
+                &server_id,
+                &entry,
+                &playback_settings,
+            ) {
+                Ok(item) => item,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            let next = next_entry.and_then(|entry| {
+                match resolve_prepared_item(
+                    &store,
+                    &runtime,
+                    &secrets,
+                    &server_id,
+                    &entry,
+                    &playback_settings,
+                ) {
+                    Ok(item) => Some(item),
                     Err(error) => {
                         let _sent = events.send(ControllerEvent::Error(error));
-                        return;
+                        None
                     }
-                };
-            let command = PlaybackCommand::Play {
-                track: playback_track_from_entry(&entry),
-                stream,
+                }
+            });
+            let command = PlaybackCommand::PlayPrepared {
+                item,
+                next,
                 start_position_seconds: position_seconds,
+                settings: playback_settings,
             };
             if let Err(error) = playback
                 .lock()
@@ -2263,6 +2469,90 @@ impl AppController {
             let snapshot = queue.snapshot();
             let entry = queue.current()?.clone();
             Some((snapshot.server_id, entry, snapshot.progress_seconds))
+        })
+    }
+
+    fn current_playback_request(
+        &self,
+    ) -> Option<(
+        ServerId,
+        QueueEntry,
+        Option<QueueEntry>,
+        u32,
+        PlaybackSettings,
+    )> {
+        let playback_settings = self.load_settings().playback;
+        self.queue.lock().ok().and_then(|queue| {
+            let queue = queue.as_ref()?;
+            let snapshot = queue.snapshot();
+            let entry = queue.current()?.clone();
+            let next = next_queue_entry_after_current(queue);
+            Some((
+                snapshot.server_id,
+                entry,
+                next,
+                snapshot.progress_seconds,
+                playback_settings,
+            ))
+        })
+    }
+
+    fn prepare_next_stream(&self) {
+        let Some((server_id, current_entry_id, next_entry, playback_settings)) =
+            self.next_preload_request()
+        else {
+            let _result = self.send_playback_command(PlaybackCommand::PrepareNext(None));
+            return;
+        };
+
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let playback = Arc::clone(&self.playback);
+        let queue = Arc::clone(&self.queue);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let prepared = match resolve_prepared_item(
+                &store,
+                &runtime,
+                &secrets,
+                &server_id,
+                &next_entry,
+                &playback_settings,
+            ) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            if !queue_current_matches(&queue, &current_entry_id) {
+                return;
+            }
+            if let Err(error) = playback
+                .lock()
+                .map_err(|_| "playback lock was poisoned".to_string())
+                .and_then(|mut playback| {
+                    playback
+                        .send(PlaybackCommand::PrepareNext(Some(prepared)))
+                        .map_err(|error| error.to_string())
+                })
+            {
+                let _sent = events.send(ControllerEvent::Error(error));
+            }
+        });
+    }
+
+    fn next_preload_request(
+        &self,
+    ) -> Option<(ServerId, QueueEntryId, QueueEntry, PlaybackSettings)> {
+        let playback_settings = self.load_settings().playback;
+        self.queue.lock().ok().and_then(|queue| {
+            let queue = queue.as_ref()?;
+            let server_id = queue.snapshot().server_id;
+            let current_entry_id = queue.current()?.id.clone();
+            let next = next_queue_entry_after_current(queue)?;
+            Some((server_id, current_entry_id, next, playback_settings))
         })
     }
 
@@ -2371,6 +2661,42 @@ impl AppController {
         } else {
             self.stop();
         }
+    }
+
+    fn advance_after_prepared_track_started(&self, track: PlaybackTrack) {
+        self.report_playback(PlaybackReportKind::Stopped, false);
+        self.auto_dj_top_up_or_emit_error();
+        let mut has_next = false;
+        let result = self.with_queue_mut(|queue| {
+            has_next = queue.advance_after_end_of_stream().is_some();
+            if has_next && queue.current().is_some_and(|entry| entry.track_id != track.id) {
+                warn!(
+                    expected_track_id = %track.id.as_str(),
+                    actual_track_id = queue.current().map(|entry| entry.track_id.as_str()).unwrap_or(""),
+                    "prepared playback advanced to a different queue entry"
+                );
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        if !has_next {
+            self.stop();
+            return;
+        }
+        self.persist_and_emit_queue();
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.state = PlaybackState::Playing;
+            snapshot.position_seconds = 0;
+            snapshot.position_millis = 0;
+            snapshot.duration_seconds = track.duration_seconds;
+            snapshot.buffering_percent = None;
+            snapshot.last_error = None;
+        });
+        self.emit_playback_snapshot();
+        self.report_playback(PlaybackReportKind::Started, false);
     }
 
     fn start_sync(&self, saved: SavedServer) {
@@ -2920,8 +3246,18 @@ fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
 }
 
 fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
+    let servers = store.with_store(|store| {
+        store.list_servers().map(|servers| {
+            servers
+                .into_iter()
+                .map(|saved| saved.server)
+                .collect::<Vec<_>>()
+        })
+    })?;
     let Some(saved) = store.with_store(|store| store.active_server())? else {
-        return Ok(LibrarySnapshot::first_run());
+        let mut snapshot = LibrarySnapshot::first_run();
+        snapshot.servers = servers;
+        return Ok(snapshot);
     };
     let settings = load_settings_for_saved(store, &saved);
     let sync_state = store
@@ -2979,6 +3315,7 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
 
     Ok(LibrarySnapshot {
         server: Some(saved.server),
+        servers,
         username: Some(saved.username),
         first_run: false,
         sync_status: status,
@@ -3085,6 +3422,59 @@ fn restore_queue(store: &StoreHandle, server: Option<&ServerIdentity>) -> Option
     }
 }
 
+fn emit_active_server_state(
+    store: &StoreHandle,
+    events: &Sender<ControllerEvent>,
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+    saved: &SavedServer,
+) {
+    let queue_engine = restore_queue(store, Some(&saved.server));
+    let queue_snapshot = queue_engine.as_ref().map(QueueEngine::snapshot);
+    if let Ok(mut queue) = queue.lock() {
+        *queue = queue_engine;
+    }
+    let auto_dj_enabled = auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default();
+    let playback_queue = queue_snapshot.clone().map(QueueEngine::restore);
+    let player = playback_snapshot_from_queue(
+        playback_queue.as_ref(),
+        auto_dj_enabled,
+        &load_settings_from_store(store).playback,
+    );
+    if let Ok(mut snapshot) = playback_snapshot.lock() {
+        *snapshot = player.clone();
+    }
+    let _sent = events.send(ControllerEvent::Queue(Box::new(queue_snapshot)));
+    let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
+    match load_snapshot(store) {
+        Ok(snapshot) => {
+            let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+        }
+        Err(error) => {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+    }
+}
+
+fn active_server_needs_sync(store: &StoreHandle, server_id: &ServerId) -> bool {
+    store
+        .with_store(|store| store.sync_completed_age_seconds(server_id))
+        .ok()
+        .flatten()
+        .is_none_or(|age| age > STARTUP_CACHE_STALE_SECONDS)
+}
+
+fn trimmed_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
     let mut settings = store
         .with_store(|store| store.load_settings())
@@ -3119,6 +3509,7 @@ fn settings_for_server(mut settings: AppSettings, server: &ServerIdentity) -> Ap
 fn playback_snapshot_from_queue(
     queue: Option<&QueueEngine>,
     auto_dj_enabled: bool,
+    playback_settings: &PlaybackSettings,
 ) -> PlaybackSnapshot {
     queue
         .map(|queue| PlaybackSnapshot {
@@ -3130,8 +3521,8 @@ fn playback_snapshot_from_queue(
                 .current()
                 .map(|entry| entry.duration_seconds)
                 .unwrap_or_default(),
-            volume: 1.0,
-            muted: false,
+            volume: playback_settings.volume,
+            muted: playback_settings.muted,
             repeat_mode: queue.repeat_mode(),
             shuffle_enabled: queue.shuffle().enabled,
             auto_dj_enabled,
@@ -3140,8 +3531,26 @@ fn playback_snapshot_from_queue(
         })
         .unwrap_or_else(|| PlaybackSnapshot {
             auto_dj_enabled,
+            volume: playback_settings.volume,
+            muted: playback_settings.muted,
             ..PlaybackSnapshot::default()
         })
+}
+
+fn next_queue_entry_after_current(queue: &QueueEngine) -> Option<QueueEntry> {
+    let mut preview = QueueEngine::restore(queue.snapshot());
+    preview.advance_after_end_of_stream().cloned()
+}
+
+fn queue_current_matches(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    current_entry_id: &QueueEntryId,
+) -> bool {
+    queue
+        .lock()
+        .ok()
+        .and_then(|queue| queue.as_ref().and_then(|queue| queue.current().cloned()))
+        .is_some_and(|entry| entry.id == *current_entry_id)
 }
 
 fn seek_position_is_stale(pending: PendingSeek, millis: u64, now: Instant) -> bool {
@@ -3250,12 +3659,36 @@ fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {
     }
 }
 
+fn prepared_item_from_entry(entry: &QueueEntry, stream: StreamDescriptor) -> PreparedPlaybackItem {
+    PreparedPlaybackItem::new(playback_track_from_entry(entry), stream)
+}
+
+fn resolve_prepared_item(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    server_id: &ServerId,
+    entry: &QueueEntry,
+    playback_settings: &PlaybackSettings,
+) -> Result<PreparedPlaybackItem, String> {
+    let stream = resolve_stream(
+        store,
+        runtime,
+        secrets,
+        server_id,
+        &entry.track_id,
+        playback_settings,
+    )?;
+    Ok(prepared_item_from_entry(entry, stream))
+}
+
 fn resolve_stream(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
     server_id: &ServerId,
     track_id: &TrackId,
+    playback_settings: &PlaybackSettings,
 ) -> Result<StreamDescriptor, String> {
     let saved = store
         .with_store(|store| store.active_server())?
@@ -3270,7 +3703,14 @@ fn resolve_stream(
 
     let provider = provider_for_saved(store, runtime, secrets, &saved)?;
     runtime
-        .block_on(provider.as_music_provider().stream(track_id))
+        .block_on(
+            provider
+                .as_music_provider()
+                .stream_with_request(&StreamRequest::new(
+                    track_id.clone(),
+                    playback_settings.stream_quality,
+                )),
+        )
         .map_err(|error| error.to_string())
 }
 
@@ -3470,13 +3910,22 @@ fn lrclib_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
 }
 
 fn save_lrclib_result(
+    store: &StoreHandle,
     server_id: &ServerId,
     entry: &QueueEntry,
     result: &LyricsSearchResult,
+    output_path: Option<PathBuf>,
 ) -> Result<(PathBuf, Lyrics), String> {
     let content = lyrics_result_content(result)
         .ok_or_else(|| "Selected lyric result has no lyrics to save.".to_string())?;
-    let path = lyrics_save_path(&entry.title)?;
+    let settings = load_settings_from_store(store);
+    let path = output_path
+        .or_else(|| {
+            local_audio_path_for_track(store, server_id, &entry.track_id)
+                .map(|path| path.with_extension("lrc"))
+        })
+        .map(Ok)
+        .unwrap_or_else(|| lyrics_save_path(&entry.title, &settings))?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -3501,14 +3950,90 @@ fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
         })
 }
 
-fn lyrics_save_path(track_title: &str) -> Result<PathBuf, String> {
+fn local_sidecar_lyrics(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> Option<Lyrics> {
+    let audio_path = local_audio_path_for_track(store, server_id, track_id)?;
+    let path = audio_path.with_extension("lrc");
+    let content = fs::read_to_string(path).ok()?;
+    let lines = content
+        .lines()
+        .filter_map(lyric_line_from_text)
+        .collect::<Vec<_>>();
+    (!lines.is_empty()).then(|| Lyrics {
+        track_id: track_id.clone(),
+        source: rufin_provider::LyricsSource::Local,
+        lines,
+    })
+}
+
+fn local_audio_path_for_track(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> Option<PathBuf> {
+    let raw = store
+        .with_store(|store| store.track_local_path(server_id, track_id))
+        .ok()
+        .flatten()?;
+    let direct = PathBuf::from(&raw);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let access = store
+        .with_store(|store| store.server_local_access(server_id))
+        .ok()
+        .flatten()?;
+    let mapped = map_server_path_to_local(&raw, &access)?;
+    mapped.is_file().then_some(mapped)
+}
+
+fn map_server_path_to_local(raw: &str, access: &ServerLocalAccess) -> Option<PathBuf> {
+    let replace_to = access
+        .path_replace_to
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&access.root_path);
+    if let Some(prefix) = access
+        .path_replace_from
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        && raw.starts_with(prefix)
+    {
+        let suffix = raw[prefix.len()..].trim_start_matches(['/', '\\']);
+        return Some(PathBuf::from(replace_to).join(path_from_server_suffix(suffix)));
+    }
+    let raw_path = Path::new(raw);
+    if raw_path.is_relative() {
+        return Some(PathBuf::from(&access.root_path).join(raw_path));
+    }
+    None
+}
+
+fn path_from_server_suffix(suffix: &str) -> PathBuf {
+    suffix
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect::<PathBuf>()
+}
+
+fn lyrics_save_path(track_title: &str, settings: &AppSettings) -> Result<PathBuf, String> {
     let user_dirs = directories::UserDirs::new()
         .ok_or_else(|| "Could not find the user home directory.".to_string())?;
-    // Local-library support can replace this with the audio file stem; Music is the fallback.
-    let base = user_dirs
-        .audio_dir()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| user_dirs.home_dir().join("Music"));
+    let base = settings
+        .lyrics_export_folder
+        .as_ref()
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            user_dirs
+                .audio_dir()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| user_dirs.home_dir().join("Music"))
+        });
     Ok(base.join(format!("{}.lrc", lyrics_file_stem(track_title))))
 }
 
@@ -3609,6 +4134,7 @@ fn lyrics_search_for_settings(settings: &AppSettings) -> JellyfinLyricsSearch {
 
 fn cached_lyrics_allowed(lyrics: &Lyrics, search: JellyfinLyricsSearch) -> bool {
     match lyrics.source {
+        rufin_provider::LyricsSource::Local => true,
         rufin_provider::LyricsSource::Server => true,
         rufin_provider::LyricsSource::Remote => !matches!(search, JellyfinLyricsSearch::ServerOnly),
     }
@@ -3621,6 +4147,16 @@ fn provider_for_saved(
     saved: &SavedServer,
 ) -> Result<LoadedProvider, String> {
     let _unused = (store, runtime);
+    if saved.server.provider == "local" {
+        let session = SavedProviderSession {
+            server: saved.server.clone(),
+            user_id: saved.user_id.clone(),
+            username: saved.username.clone(),
+            trust_invalid_cert: saved.trust_invalid_cert,
+            access_token: String::new(),
+        };
+        return provider_from_saved(session).map_err(|error| error.to_string());
+    }
     let token = secrets
         .load_token(&saved.server.id)
         .map_err(|error| error.to_string())?
@@ -3859,12 +4395,12 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AppController, ControllerEvent, LibrarySnapshot, PendingSeek, SNAPSHOT_GRID_LIMIT,
-        SNAPSHOT_TRACK_LIMIT, StoreHandle, auto_dj_candidates, load_settings_from_store,
-        load_snapshot, playback_snapshot_from_queue, prefetch_home_section,
-        promote_prefetched_home_section, refresh_home_section, refresh_home_sections,
-        refresh_home_sections_without_explore, restore_queue, seek_position_is_stale,
-        sync_page_finished, sync_provider,
+        AppController, ControllerEvent, LibrarySnapshot, PendingSeek, RandomPlayAction,
+        RandomPlayRequest, SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle,
+        auto_dj_candidates, load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
+        prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
+        refresh_home_sections, refresh_home_sections_without_explore, restore_queue,
+        seek_position_is_stale, sync_page_finished, sync_provider,
     };
     use rufin_core::{
         AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
@@ -3872,12 +4408,13 @@ mod tests {
     };
     use rufin_playback::{
         PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
+        PlaybackTrack,
     };
     use rufin_provider::{
-        FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest,
+        FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PlayedFilter,
     };
     use rufin_secrets::MemorySecretStore;
-    use rufin_store::{CoverCacheEntry, SavedServer};
+    use rufin_store::{CoverCacheEntry, SavedServer, ServerLocalAccess};
     use rufin_test_support::{FakeProvider, FakeScale};
     use tokio::runtime::Runtime;
 
@@ -3886,6 +4423,52 @@ mod tests {
     struct StalePositionAfterSeekBackend {
         stale_millis: u64,
         events: Vec<PlaybackEvent>,
+    }
+
+    struct RecordingPlaybackBackend {
+        commands: Arc<Mutex<Vec<PlaybackCommand>>>,
+        events: Vec<PlaybackEvent>,
+    }
+
+    impl RecordingPlaybackBackend {
+        fn new(commands: Arc<Mutex<Vec<PlaybackCommand>>>) -> Self {
+            Self {
+                commands,
+                events: Vec::new(),
+            }
+        }
+    }
+
+    impl PlaybackBackend for RecordingPlaybackBackend {
+        fn send(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
+            self.commands
+                .lock()
+                .expect("commands")
+                .push(command.clone());
+            match command {
+                PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. } => {
+                    self.events
+                        .push(PlaybackEvent::StateChanged(PlaybackState::Playing));
+                }
+                PlaybackCommand::PrepareNext(_) => {}
+                PlaybackCommand::SetVolume(volume) => {
+                    self.events.push(PlaybackEvent::VolumeChanged {
+                        volume,
+                        muted: false,
+                    });
+                }
+                PlaybackCommand::SetMuted(muted) => {
+                    self.events
+                        .push(PlaybackEvent::VolumeChanged { volume: 1.0, muted });
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        fn drain_events(&mut self) -> Vec<PlaybackEvent> {
+            std::mem::take(&mut self.events)
+        }
     }
 
     impl StalePositionAfterSeekBackend {
@@ -4508,6 +5091,28 @@ mod tests {
     }
 
     #[test]
+    fn play_tracks_prepares_next_stream_for_backend() {
+        let (controller, _events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        *controller.playback.lock().expect("playback") =
+            Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first.clone(), second.clone()]);
+
+        let command = wait_for_recorded_command(&commands, |command| {
+            matches!(command, PlaybackCommand::PlayPrepared { .. })
+        });
+        let PlaybackCommand::PlayPrepared { item, next, .. } = command else {
+            panic!("expected prepared play command");
+        };
+        assert_eq!(item.track.id, first.id);
+        assert_eq!(next.expect("next").track.id, second.id);
+    }
+
+    #[test]
     fn activate_queue_entry_starts_selected_track() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
@@ -4702,6 +5307,74 @@ mod tests {
     }
 
     #[test]
+    fn random_play_now_replaces_queue_and_starts_first_random_track() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let expected = random_track_ids(&snapshot.tracks, 3);
+
+        controller.play_random_tracks(random_request(RandomPlayAction::PlayNow, 3));
+
+        let queue = wait_for_queue(&events).expect("random queue");
+        assert_eq!(queue.current_index, Some(0));
+        assert_eq!(
+            queue
+                .entries
+                .iter()
+                .map(|entry| entry.track_id.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn random_play_next_inserts_tracks_after_current() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+        let expected_random = random_track_ids(&snapshot.tracks, 2);
+
+        controller.play_tracks_now(vec![first.clone(), second.clone()]);
+        let _queue = wait_for_queue(&events).expect("initial queue");
+        controller.play_random_tracks(random_request(RandomPlayAction::PlayNext, 2));
+
+        let queue = wait_for_queue(&events).expect("random next queue");
+        let ids = queue
+            .entries
+            .iter()
+            .map(|entry| entry.track_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(queue.current_index, Some(0));
+        assert_eq!(ids[0], first.id);
+        assert_eq!(&ids[1..3], expected_random.as_slice());
+        assert_eq!(ids[3], second.id);
+    }
+
+    #[test]
+    fn random_add_last_appends_tracks_without_replacing_current() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+        let expected_random = random_track_ids(&snapshot.tracks, 2);
+
+        controller.play_tracks_now(vec![first.clone(), second.clone()]);
+        let _queue = wait_for_queue(&events).expect("initial queue");
+        controller.play_random_tracks(random_request(RandomPlayAction::AddLast, 2));
+
+        let queue = wait_for_queue(&events).expect("random append queue");
+        let ids = queue
+            .entries
+            .iter()
+            .map(|entry| entry.track_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(queue.current_index, Some(0));
+        assert_eq!(ids[0], first.id);
+        assert_eq!(ids[1], second.id);
+        assert_eq!(&ids[2..4], expected_random.as_slice());
+    }
+
+    #[test]
     fn auto_dj_tops_up_low_queue_from_cached_library() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
@@ -4843,6 +5516,48 @@ mod tests {
         assert_eq!(
             queue.entries[queue.current_index.expect("current")].track_id,
             second.id
+        );
+    }
+
+    #[test]
+    fn prepared_track_started_advances_queue_without_restarting_playback() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        *controller.playback.lock().expect("playback") =
+            Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first, second.clone()]);
+        let _initial_queue = wait_for_queue(&events).expect("initial queue");
+        let _command = wait_for_recorded_command(&commands, |command| {
+            matches!(command, PlaybackCommand::PlayPrepared { .. })
+        });
+        commands.lock().expect("commands").clear();
+
+        controller.advance_after_prepared_track_started(PlaybackTrack {
+            id: second.id.clone(),
+            title: second.title.clone(),
+            artist: second.artist.clone(),
+            album: second.album.clone(),
+            duration_seconds: second.duration_seconds,
+        });
+        let queue = wait_for_queue(&events).expect("queue");
+
+        assert_eq!(
+            queue.entries[queue.current_index.expect("current")].track_id,
+            second.id
+        );
+        assert!(
+            commands
+                .lock()
+                .expect("commands")
+                .iter()
+                .all(|command| !matches!(
+                    command,
+                    PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. }
+                ))
         );
     }
 
@@ -5085,11 +5800,99 @@ mod tests {
 
     #[test]
     fn lyrics_save_path_uses_music_dir_and_track_title() {
-        let path = super::lyrics_save_path("Song Title").expect("lyrics save path");
+        let path = super::lyrics_save_path("Song Title", &AppSettings::default())
+            .expect("lyrics save path");
         let path = path.to_string_lossy();
 
         assert!(path.contains("Music") || path.contains("music"));
         assert!(path.ends_with("Song Title.lrc"));
+    }
+
+    #[test]
+    fn lyrics_save_path_uses_configured_export_folder() {
+        let settings = AppSettings {
+            lyrics_export_folder: Some("/tmp/rufin-lyrics".to_string()),
+            ..AppSettings::default()
+        };
+
+        let path = super::lyrics_save_path("Song Title", &settings).expect("lyrics save path");
+
+        assert_eq!(path, PathBuf::from("/tmp/rufin-lyrics/Song Title.lrc"));
+    }
+
+    #[test]
+    fn local_sidecar_lyrics_use_same_stem_as_audio_file() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = self::saved_server();
+        let generation = store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.begin_sync(&saved.server.id)
+            })
+            .expect("begin sync");
+        let dir = self::unique_test_dir("local-sidecar");
+        fs::create_dir_all(&dir).expect("create dir");
+        let audio = dir.join("07 I'm feeling lucky.flac");
+        let lrc = dir.join("07 I'm feeling lucky.lrc");
+        fs::write(&audio, []).expect("audio");
+        fs::write(&lrc, "[00:01.00]line one").expect("lrc");
+        let mut track = restored_track();
+        track.local_path = Some(audio.to_string_lossy().into_owned());
+        store
+            .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+            .expect("upsert track");
+
+        let lyrics = super::local_sidecar_lyrics(&store, &saved.server.id, &track.id)
+            .expect("sidecar lyrics");
+
+        assert_eq!(lyrics.source, LyricsSource::Local);
+        assert_eq!(lyrics.lines[0].text, "line one");
+        assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
+        let _cleanup = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mapped_local_audio_path_uses_server_prefix_replacement() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = self::saved_server();
+        let generation = store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.save_server_local_access(&ServerLocalAccess {
+                    server_id: saved.server.id.clone(),
+                    root_path: "/unused".to_string(),
+                    path_replace_from: Some("/server/music".to_string()),
+                    path_replace_to: Some(
+                        self::unique_test_dir("mapped-audio")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
+                })?;
+                store.begin_sync(&saved.server.id)
+            })
+            .expect("begin sync");
+        let root = store
+            .with_store(|store| store.server_local_access(&saved.server.id))
+            .expect("access")
+            .expect("access")
+            .path_replace_to
+            .expect("replace to");
+        let root = PathBuf::from(root);
+        let audio = root.join("Album/Track.flac");
+        fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
+        fs::write(&audio, []).expect("audio");
+        let mut track = restored_track();
+        track.local_path = Some("/server/music/Album/Track.flac".to_string());
+        store
+            .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+            .expect("upsert track");
+
+        let mapped = super::local_audio_path_for_track(&store, &saved.server.id, &track.id)
+            .expect("mapped path");
+
+        assert_eq!(mapped, audio);
+        let _cleanup = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -5228,8 +6031,11 @@ mod tests {
         let snapshot = load_snapshot(&store).expect("load snapshot");
         let settings = load_settings_from_store(&store);
         let queue = restore_queue(&store, snapshot.server.as_ref());
-        let playback_snapshot =
-            playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled);
+        let playback_snapshot = playback_snapshot_from_queue(
+            queue.as_ref(),
+            settings.auto_dj_enabled,
+            &settings.playback,
+        );
         let controller = AppController {
             store,
             runtime,
@@ -5276,7 +6082,30 @@ mod tests {
             track_number: 1,
             image_ref: None,
             genres: Vec::new(),
+            local_path: None,
         }
+    }
+
+    fn saved_server() -> SavedServer {
+        SavedServer {
+            server: ServerIdentity {
+                id: ServerId::new("jellyfin:server:test"),
+                provider: "jellyfin".to_string(),
+                name: "Test Server".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        }
+    }
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "rufin-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ))
     }
 
     fn library_track(
@@ -5307,6 +6136,7 @@ mod tests {
             track_number: number as u16,
             image_ref: None,
             genres: genres.iter().map(|genre| genre.to_string()).collect(),
+            local_path: None,
         }
     }
 
@@ -5404,6 +6234,28 @@ mod tests {
         }
     }
 
+    fn random_request(action: RandomPlayAction, limit: usize) -> RandomPlayRequest {
+        RandomPlayRequest {
+            action,
+            limit,
+            min_year: None,
+            max_year: None,
+            genre_id: None,
+            genre_name: None,
+            played_filter: PlayedFilter::All,
+        }
+    }
+
+    fn random_track_ids(tracks: &[Track], limit: usize) -> Vec<TrackId> {
+        let mut ids = tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+        ids.sort_by_key(|id| id.as_str().to_string());
+        ids.truncate(limit);
+        ids
+    }
+
     fn wait_for_cover_ready(events: &Receiver<ControllerEvent>, expected_key: &str) -> PathBuf {
         loop {
             match events
@@ -5447,6 +6299,25 @@ mod tests {
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
         }
+    }
+
+    fn wait_for_recorded_command(
+        commands: &Arc<Mutex<Vec<PlaybackCommand>>>,
+        predicate: impl Fn(&PlaybackCommand) -> bool,
+    ) -> PlaybackCommand {
+        for _ in 0..50 {
+            if let Some(command) = commands
+                .lock()
+                .expect("commands")
+                .iter()
+                .find(|command| predicate(command))
+                .cloned()
+            {
+                return command;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("timed out waiting for playback command");
     }
 
     fn wait_for_playback_state(

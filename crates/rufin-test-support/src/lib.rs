@@ -5,8 +5,8 @@ use rufin_core::{
 };
 use rufin_provider::{
     AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicProvider,
-    PagedRequest, PagedResponse, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
-    ProviderError, ProviderIdentity, ProviderResult, SearchResults,
+    PagedRequest, PagedResponse, PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
+    ProviderError, ProviderIdentity, ProviderResult, RandomTrackRequest, SearchResults,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,7 +59,11 @@ impl FakeProvider {
                     base_url: "fake://local".to_string(),
                 },
             },
-            capabilities: ProviderCapabilities::default(),
+            capabilities: ProviderCapabilities {
+                random_tracks: true,
+                random_played_filter: true,
+                ..ProviderCapabilities::default()
+            },
             library: generate_fake_library(scale),
         }
     }
@@ -230,6 +234,32 @@ impl MusicProvider for FakeProvider {
             .find(|track| track.id == *track_id)
             .cloned()
             .ok_or(ProviderError::NotFound)
+    }
+
+    async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
+        let mut tracks = self
+            .library
+            .tracks
+            .iter()
+            .filter(|track| {
+                request.min_year.is_none_or(|year| track.year >= year)
+                    && request.max_year.is_none_or(|year| track.year <= year)
+                    && request.genre_name.as_ref().is_none_or(|genre| {
+                        track.genres.iter().any(|track_genre| track_genre == genre)
+                    })
+                    && match request.played_filter {
+                        PlayedFilter::All => true,
+                        PlayedFilter::Unplayed => track.last_played.is_none(),
+                        PlayedFilter::Played => track.last_played.is_some(),
+                    }
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        tracks.sort_by_key(|track| track.id.as_str().to_string());
+        Ok(tracks
+            .into_iter()
+            .take(request.limit.clamp(1, 500))
+            .collect())
     }
 
     async fn stream(&self, track_id: &TrackId) -> ProviderResult<rufin_provider::StreamDescriptor> {
@@ -460,6 +490,7 @@ fn fake_track(index: usize, album: &Album, track_number: u16) -> Track {
         track_number,
         image_ref: album.image_ref.clone(),
         genres: album.genres.clone(),
+        local_path: None,
     }
 }
 

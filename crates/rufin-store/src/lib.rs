@@ -31,6 +31,14 @@ pub struct SavedServer {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerLocalAccess {
+    pub server_id: ServerId,
+    pub root_path: String,
+    pub path_replace_from: Option<String>,
+    pub path_replace_to: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SyncState {
     pub server_id: ServerId,
     pub generation: i64,
@@ -116,6 +124,14 @@ impl Store {
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS server_local_access (
+                server_id TEXT PRIMARY KEY REFERENCES servers(server_id) ON DELETE CASCADE,
+                root_path TEXT NOT NULL,
+                path_replace_from TEXT,
+                path_replace_to TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS active_server (
                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE
@@ -172,6 +188,7 @@ impl Store {
                 track_number INTEGER NOT NULL,
                 image_item_id TEXT,
                 image_tag TEXT,
+                local_path TEXT,
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, track_id)
             );
@@ -372,6 +389,7 @@ impl Store {
         self.ensure_column("tracks", "last_played", "TEXT")?;
         self.ensure_column("tracks", "play_count", "INTEGER")?;
         self.ensure_column("tracks", "user_rating", "INTEGER")?;
+        self.ensure_column("tracks", "local_path", "TEXT")?;
         for table in ["artists", "album_artists"] {
             self.ensure_column(table, "last_played", "TEXT")?;
             self.ensure_column(table, "play_count", "INTEGER")?;
@@ -578,6 +596,62 @@ impl Store {
             ",
         )?;
         collect_rows(statement.query_map([], saved_server_from_row)?)
+    }
+
+    pub fn save_server_local_access(&self, access: &ServerLocalAccess) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            INSERT INTO server_local_access (
+                server_id, root_path, path_replace_from, path_replace_to, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id) DO UPDATE SET
+                root_path = excluded.root_path,
+                path_replace_from = excluded.path_replace_from,
+                path_replace_to = excluded.path_replace_to,
+                updated_at = excluded.updated_at
+            ",
+            params![
+                access.server_id.as_str(),
+                access.root_path.as_str(),
+                access.path_replace_from.as_deref(),
+                access.path_replace_to.as_deref(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn server_local_access(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<Option<ServerLocalAccess>> {
+        self.connection
+            .query_row(
+                "
+                SELECT server_id, root_path, path_replace_from, path_replace_to
+                FROM server_local_access
+                WHERE server_id = ?1
+                ",
+                params![server_id.as_str()],
+                |row| {
+                    Ok(ServerLocalAccess {
+                        server_id: ServerId::new(row.get::<_, String>(0)?),
+                        root_path: row.get(1)?,
+                        path_replace_from: row.get(2)?,
+                        path_replace_to: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
+    pub fn delete_server_local_access(&self, server_id: &ServerId) -> StoreResult<()> {
+        self.connection.execute(
+            "DELETE FROM server_local_access WHERE server_id = ?1",
+            params![server_id.as_str()],
+        )?;
+        Ok(())
     }
 
     pub fn sync_state(&self, server_id: &ServerId) -> StoreResult<SyncState> {
@@ -860,9 +934,9 @@ impl Store {
                     server_id, track_id, album_id, title, artist, artist_id, album,
                     year, release_date, date_added, last_played, play_count, user_rating,
                     duration_seconds, favorite, disc_number, track_number,
-                    image_item_id, image_tag, sync_generation
+                    image_item_id, image_tag, local_path, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
                 ON CONFLICT(server_id, track_id) DO UPDATE SET
                     album_id = excluded.album_id,
                     title = excluded.title,
@@ -881,6 +955,7 @@ impl Store {
                     track_number = excluded.track_number,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
+                    local_path = excluded.local_path,
                     sync_generation = excluded.sync_generation
                 ",
             )?;
@@ -955,6 +1030,7 @@ impl Store {
                     i64::from(track.track_number),
                     image_item_id,
                     image_tag,
+                    track.local_path.as_deref(),
                     generation,
                 ])?;
                 delete_genres.execute(params![server_id.as_str(), track.id.as_str()])?;
@@ -1969,6 +2045,26 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
 
+    pub fn track_local_path(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<String>> {
+        self.connection
+            .query_row(
+                "
+                SELECT local_path
+                FROM tracks
+                WHERE server_id = ?1 AND track_id = ?2
+                ",
+                params![server_id.as_str(), track_id.as_str()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map(|value| value.flatten())
+            .map_err(StoreError::from)
+    }
+
     pub fn load_tracks_matching(
         &self,
         server_id: &ServerId,
@@ -2534,6 +2630,7 @@ impl Store {
         let source = match lyrics.source {
             rufin_provider::LyricsSource::Server => "server",
             rufin_provider::LyricsSource::Remote => "remote",
+            rufin_provider::LyricsSource::Local => "local",
         };
         self.connection.execute(
             "
@@ -3499,6 +3596,7 @@ fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<Track> {
         track_number: u16_from_i64(row.get(offset + 15)?),
         image_ref: image_ref_from_row(row, offset + 16, offset + 17)?,
         genres: Vec::new(),
+        local_path: row.get::<_, Option<String>>(offset + 18).ok().flatten(),
     })
 }
 
@@ -4074,7 +4172,7 @@ mod tests {
     use std::fs;
 
     use super::{
-        CoverCacheEntry, SavedServer, Store, image_cache_key, lyrics_cache_key,
+        CoverCacheEntry, SavedServer, ServerLocalAccess, Store, image_cache_key, lyrics_cache_key,
         synthesize_album_from_tracks,
     };
     use rufin_core::{
@@ -4456,6 +4554,52 @@ mod tests {
             .expect("set active server");
 
         assert_eq!(store.active_server().expect("active server"), Some(saved));
+    }
+
+    #[test]
+    fn server_local_access_round_trips() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let access = ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: "/home/me/Music".to_string(),
+            path_replace_from: Some("/media/music".to_string()),
+            path_replace_to: Some("/home/me/Music".to_string()),
+        };
+
+        store
+            .save_server_local_access(&access)
+            .expect("save local access");
+
+        assert_eq!(
+            store
+                .server_local_access(&saved.server.id)
+                .expect("load local access"),
+            Some(access)
+        );
+    }
+
+    #[test]
+    fn track_local_path_round_trips() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let mut track = track(1, &album);
+        track.local_path = Some("/home/me/Music/Track 1.flac".to_string());
+
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+
+        assert_eq!(
+            store
+                .track_local_path(&saved.server.id, &track.id)
+                .expect("track local path"),
+            track.local_path
+        );
     }
 
     #[test]
@@ -6325,6 +6469,7 @@ mod tests {
             track_number: number as u16,
             image_ref: album.image_ref.clone(),
             genres: album.genres.clone(),
+            local_path: None,
         }
     }
 }

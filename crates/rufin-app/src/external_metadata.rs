@@ -381,6 +381,7 @@ mod tests {
             track_number: 1,
             image_ref: None,
             genres: Vec::new(),
+            local_path: None,
         }
     }
 }

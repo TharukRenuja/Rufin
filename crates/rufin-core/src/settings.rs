@@ -25,6 +25,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_volume() -> f64 {
+    1.0
+}
+
+fn default_crossfade_seconds() -> u8 {
+    5
+}
+
 const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 4] = [
     TrackTableColumn::TrackNumber,
     TrackTableColumn::Title,
@@ -784,6 +792,127 @@ impl TrackTableSettings {
     }
 }
 
+pub const EQUALIZER_BAND_COUNT: usize = 10;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum PlaybackTransitionMode {
+    #[default]
+    Gapless,
+    Crossfade,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ReplayGainMode {
+    #[default]
+    Off,
+    Track,
+    Album,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum StreamQuality {
+    #[default]
+    Original,
+    MaxBitrateKbps(u32),
+}
+
+impl StreamQuality {
+    pub fn max_bitrate_kbps(self) -> Option<u32> {
+        match self {
+            Self::Original => None,
+            Self::MaxBitrateKbps(kbps) => Some(kbps),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct EqualizerSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_equalizer_bands")]
+    pub bands: Vec<f64>,
+}
+
+impl Default for EqualizerSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bands: default_equalizer_bands(),
+        }
+    }
+}
+
+impl EqualizerSettings {
+    pub fn sanitize(&mut self) {
+        if self.bands.len() != EQUALIZER_BAND_COUNT {
+            self.bands.resize(EQUALIZER_BAND_COUNT, 0.0);
+        }
+        for gain in &mut self.bands {
+            if !gain.is_finite() {
+                *gain = 0.0;
+            }
+            *gain = gain.clamp(-12.0, 12.0);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PlaybackSettings {
+    #[serde(default)]
+    pub transition_mode: PlaybackTransitionMode,
+    #[serde(default = "default_crossfade_seconds")]
+    pub crossfade_seconds: u8,
+    #[serde(default)]
+    pub replay_gain: ReplayGainMode,
+    #[serde(default)]
+    pub stream_quality: StreamQuality,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_output: Option<String>,
+    #[serde(default)]
+    pub equalizer: EqualizerSettings,
+    #[serde(default = "default_volume")]
+    pub volume: f64,
+    #[serde(default)]
+    pub muted: bool,
+}
+
+impl Default for PlaybackSettings {
+    fn default() -> Self {
+        Self {
+            transition_mode: PlaybackTransitionMode::Gapless,
+            crossfade_seconds: default_crossfade_seconds(),
+            replay_gain: ReplayGainMode::Off,
+            stream_quality: StreamQuality::Original,
+            audio_output: None,
+            equalizer: EqualizerSettings::default(),
+            volume: default_volume(),
+            muted: false,
+        }
+    }
+}
+
+impl PlaybackSettings {
+    pub fn sanitize(&mut self) {
+        self.crossfade_seconds = self.crossfade_seconds.clamp(1, 12);
+        if !self.volume.is_finite() {
+            self.volume = default_volume();
+        }
+        self.volume = self.volume.clamp(0.0, 1.0);
+        if self
+            .audio_output
+            .as_deref()
+            .is_some_and(|output| output.trim().is_empty())
+        {
+            self.audio_output = None;
+        }
+        self.equalizer.sanitize();
+    }
+}
+
+fn default_equalizer_bands() -> Vec<f64> {
+    vec![0.0; EQUALIZER_BAND_COUNT]
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AppSettings {
     pub density_mode: DensityMode,
@@ -795,6 +924,10 @@ pub struct AppSettings {
     pub external_metadata_enabled: bool,
     #[serde(default = "default_true")]
     pub prefer_server_lyrics: bool,
+    #[serde(default)]
+    pub ask_lyrics_save_path: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lyrics_export_folder: Option<String>,
     pub discord_presence_enabled: bool,
     #[serde(default = "default_discord_client_id")]
     pub discord_client_id: String,
@@ -812,6 +945,8 @@ pub struct AppSettings {
     pub lastfm_api_key: String,
     #[serde(default)]
     pub auto_dj_enabled: bool,
+    #[serde(default)]
+    pub playback: PlaybackSettings,
     #[serde(default = "default_home_sections")]
     pub home_sections: Vec<HomeSectionKind>,
     #[serde(default)]
@@ -856,6 +991,8 @@ impl Default for AppSettings {
             external_lyrics_enabled: false,
             external_metadata_enabled: true,
             prefer_server_lyrics: true,
+            ask_lyrics_save_path: false,
+            lyrics_export_folder: None,
             discord_presence_enabled: false,
             discord_client_id: default_discord_client_id(),
             discord_display_type: DiscordDisplayType::Application,
@@ -865,6 +1002,7 @@ impl Default for AppSettings {
             discord_show_state_icon: true,
             lastfm_api_key: String::new(),
             auto_dj_enabled: false,
+            playback: PlaybackSettings::default(),
             home_sections: default_home_sections(),
             home_blocks: default_home_blocks(),
             right_panel_visible: true,
@@ -897,6 +1035,7 @@ impl AppSettings {
             self.discord_presence_enabled = true;
         }
         self.track_table.migrate_defaults();
+        self.playback.sanitize();
         self.migrate_home_blocks();
         self.migrate_library_lists();
     }
@@ -1013,8 +1152,9 @@ fn sanitize_home_blocks(blocks: &mut Vec<HomeBlockKind>) {
 mod tests {
     use super::{
         AppSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType, DiscordLinkType,
-        LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField, LibraryLayout, LibraryListKey,
-        TrackSortKey, TrackTableColumn,
+        EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField, LibraryLayout,
+        LibraryListKey, PlaybackTransitionMode, ReplayGainMode, StreamQuality, TrackSortKey,
+        TrackTableColumn,
     };
 
     #[test]
@@ -1037,6 +1177,21 @@ mod tests {
         assert!(settings.discord_show_state_icon);
         assert_eq!(settings.lastfm_api_key, "");
         assert!(!settings.auto_dj_enabled);
+        assert_eq!(
+            settings.playback.transition_mode,
+            PlaybackTransitionMode::Gapless
+        );
+        assert_eq!(settings.playback.crossfade_seconds, 5);
+        assert_eq!(settings.playback.replay_gain, ReplayGainMode::Off);
+        assert_eq!(settings.playback.stream_quality, StreamQuality::Original);
+        assert_eq!(settings.playback.audio_output, None);
+        assert!(!settings.playback.equalizer.enabled);
+        assert_eq!(
+            settings.playback.equalizer.bands.len(),
+            EQUALIZER_BAND_COUNT
+        );
+        assert_eq!(settings.playback.volume, 1.0);
+        assert!(!settings.playback.muted);
         assert!(settings.right_panel_visible);
         assert!(settings.lyrics_panel_visible);
         assert_eq!(settings.compact_right_panel_position, None);
@@ -1114,6 +1269,12 @@ mod tests {
         assert!(!restored.auto_dj_enabled);
         assert!(restored.external_metadata_enabled);
         assert!(restored.prefer_server_lyrics);
+        assert_eq!(
+            restored.playback.transition_mode,
+            PlaybackTransitionMode::Gapless
+        );
+        assert_eq!(restored.playback.volume, 1.0);
+        assert!(!restored.playback.muted);
         assert_eq!(restored.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
         assert_eq!(
             restored.discord_display_type,

@@ -1,7 +1,11 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{DensityMode, DiscordDisplayType, DiscordLinkType, HomeBlockKind};
+use rufin_core::{
+    DensityMode, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT, HomeBlockKind,
+    PlaybackTransitionMode, ReplayGainMode, StreamQuality,
+};
+use rufin_playback::available_audio_outputs;
 
 use crate::i18n::tr;
 
@@ -16,9 +20,11 @@ pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
         .build();
 
     let general_page = general_page(shell);
+    let playback_page = playback_page(shell);
     let home_page = home_page(shell);
     let library_page = library_page(shell, &dialog);
     dialog.add(&general_page);
+    dialog.add(&playback_page);
     dialog.add(&home_page);
     dialog.add(&library_page);
     dialog.present(Some(&shell.window));
@@ -152,6 +158,53 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     lyrics_group.add(&external_row);
     lyrics_group.add(&prefer_server_row);
+
+    let ask_save_row = adw::SwitchRow::builder()
+        .title(tr("Ask where to save to lyrics"))
+        .subtitle(tr(
+            "If not set, lyrics are exported to the folder you set, or your ~/Music folder.",
+        ))
+        .active(settings.ask_lyrics_save_path)
+        .build();
+    let ask_save_shell = Rc::clone(shell);
+    ask_save_row.connect_active_notify(move |row| {
+        ask_save_shell.set_ask_lyrics_save_path(row.is_active());
+    });
+    lyrics_group.add(&ask_save_row);
+
+    let export_subtitle = settings
+        .lyrics_export_folder
+        .clone()
+        .unwrap_or_else(|| tr("Use ~/Music"));
+    let export_folder_row = adw::ActionRow::builder()
+        .title(tr("Lyrics export folder"))
+        .subtitle(export_subtitle)
+        .build();
+    let export_button = gtk::Button::with_label(&tr("Choose"));
+    export_button.set_valign(gtk::Align::Center);
+    export_folder_row.add_suffix(&export_button);
+    export_folder_row.set_activatable_widget(Some(&export_button));
+    let export_shell = Rc::clone(shell);
+    let export_row = export_folder_row.clone();
+    export_button.connect_clicked(move |_| {
+        let shell = Rc::clone(&export_shell);
+        let row = export_row.clone();
+        gtk::glib::spawn_future_local(async move {
+            let dialog = gtk::FileDialog::builder()
+                .title(tr("Select Lyrics Export Folder"))
+                .build();
+            let Ok(folder) = dialog.select_folder_future(Some(&shell.window)).await else {
+                return;
+            };
+            let Some(path) = folder.path() else {
+                return;
+            };
+            let text = path.display().to_string();
+            row.set_subtitle(&text);
+            shell.set_lyrics_export_folder(Some(text));
+        });
+    });
+    lyrics_group.add(&export_folder_row);
     page.add(&lyrics_group);
 
     let discord_group = adw::PreferencesGroup::builder()
@@ -262,6 +315,178 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page
 }
 
+fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title(tr("Playback"))
+        .icon_name("audio-x-generic-symbolic")
+        .build();
+
+    let settings = shell.state.settings.borrow().playback.clone();
+
+    let transition_group = adw::PreferencesGroup::builder()
+        .title(tr("Transitions"))
+        .build();
+    let transition_titles = [tr("Gapless"), tr("Crossfade")];
+    let transition_refs = transition_titles
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let transition_options = gtk::StringList::new(&transition_refs);
+    let transition_row = adw::ComboRow::builder()
+        .title(tr("Transition mode"))
+        .model(&transition_options)
+        .selected(transition_index(settings.transition_mode))
+        .build();
+    let transition_shell = Rc::clone(shell);
+    transition_row.connect_selected_notify(move |row| {
+        transition_shell.update_playback_settings(|settings| {
+            settings.transition_mode = transition_from_index(row.selected());
+        });
+    });
+    transition_group.add(&transition_row);
+
+    let crossfade_row = adw::ActionRow::builder()
+        .title(tr("Crossfade duration"))
+        .subtitle(tr("Seconds"))
+        .build();
+    let crossfade = gtk::SpinButton::with_range(1.0, 12.0, 1.0);
+    crossfade.set_value(f64::from(settings.crossfade_seconds));
+    crossfade.set_valign(gtk::Align::Center);
+    let crossfade_shell = Rc::clone(shell);
+    crossfade.connect_value_changed(move |spin| {
+        crossfade_shell.update_playback_settings(|settings| {
+            settings.crossfade_seconds = spin.value().round() as u8;
+        });
+    });
+    crossfade_row.add_suffix(&crossfade);
+    crossfade_row.set_activatable_widget(Some(&crossfade));
+    transition_group.add(&crossfade_row);
+    page.add(&transition_group);
+
+    let gain_group = adw::PreferencesGroup::builder()
+        .title(tr("Leveling"))
+        .build();
+    let replay_gain_titles = [tr("Off"), tr("Track"), tr("Album")];
+    let replay_gain_refs = replay_gain_titles
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let replay_gain_options = gtk::StringList::new(&replay_gain_refs);
+    let replay_gain_row = adw::ComboRow::builder()
+        .title(tr("ReplayGain"))
+        .model(&replay_gain_options)
+        .selected(replay_gain_index(settings.replay_gain))
+        .build();
+    let replay_gain_shell = Rc::clone(shell);
+    replay_gain_row.connect_selected_notify(move |row| {
+        replay_gain_shell.update_playback_settings(|settings| {
+            settings.replay_gain = replay_gain_from_index(row.selected());
+        });
+    });
+    gain_group.add(&replay_gain_row);
+    page.add(&gain_group);
+
+    let streaming_group = adw::PreferencesGroup::builder()
+        .title(tr("Streaming"))
+        .build();
+    let quality_titles = [
+        tr("Original"),
+        tr("320 kbps"),
+        tr("256 kbps"),
+        tr("192 kbps"),
+        tr("128 kbps"),
+    ];
+    let quality_refs = quality_titles
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let quality_options = gtk::StringList::new(&quality_refs);
+    let quality_row = adw::ComboRow::builder()
+        .title(tr("Stream quality"))
+        .model(&quality_options)
+        .selected(stream_quality_index(settings.stream_quality))
+        .build();
+    let quality_shell = Rc::clone(shell);
+    quality_row.connect_selected_notify(move |row| {
+        quality_shell.update_playback_settings(|settings| {
+            settings.stream_quality = stream_quality_from_index(row.selected());
+        });
+    });
+    streaming_group.add(&quality_row);
+    page.add(&streaming_group);
+
+    let output_group = adw::PreferencesGroup::builder().title(tr("Output")).build();
+    let outputs = playback_output_options();
+    let output_titles = outputs
+        .iter()
+        .map(|(_, title)| title.as_str())
+        .collect::<Vec<_>>();
+    let output_options = gtk::StringList::new(&output_titles);
+    let output_row = adw::ComboRow::builder()
+        .title(tr("Audio output"))
+        .model(&output_options)
+        .selected(audio_output_index(
+            &outputs,
+            settings.audio_output.as_deref(),
+        ))
+        .build();
+    let output_shell = Rc::clone(shell);
+    output_row.connect_selected_notify(move |row| {
+        let selected = outputs
+            .get(row.selected() as usize)
+            .and_then(|(id, _)| id.clone());
+        output_shell.update_playback_settings(|settings| {
+            settings.audio_output = selected;
+        });
+    });
+    output_group.add(&output_row);
+    page.add(&output_group);
+
+    let equalizer_group = adw::PreferencesGroup::builder()
+        .title(tr("Equalizer"))
+        .build();
+    let equalizer_row = adw::SwitchRow::builder()
+        .title(tr("Enable equalizer"))
+        .active(settings.equalizer.enabled)
+        .build();
+    let equalizer_shell = Rc::clone(shell);
+    equalizer_row.connect_active_notify(move |row| {
+        equalizer_shell.update_playback_settings(|settings| {
+            settings.equalizer.enabled = row.is_active();
+        });
+    });
+    equalizer_group.add(&equalizer_row);
+
+    for index in 0..EQUALIZER_BAND_COUNT {
+        let row = adw::ActionRow::builder()
+            .title(equalizer_band_title(index))
+            .build();
+        let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, -12.0, 12.0, 0.5);
+        scale.set_value(settings.equalizer.bands.get(index).copied().unwrap_or(0.0));
+        scale.set_draw_value(true);
+        scale.set_digits(1);
+        scale.set_width_request(220);
+        scale.set_valign(gtk::Align::Center);
+        let band_shell = Rc::clone(shell);
+        scale.connect_value_changed(move |scale| {
+            band_shell.update_playback_settings(|settings| {
+                if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
+                    settings.equalizer.sanitize();
+                }
+                if let Some(gain) = settings.equalizer.bands.get_mut(index) {
+                    *gain = scale.value();
+                }
+            });
+        });
+        row.add_suffix(&scale);
+        row.set_activatable_widget(Some(&scale));
+        equalizer_group.add(&row);
+    }
+    page.add(&equalizer_group);
+
+    page
+}
+
 fn home_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Home"))
@@ -277,6 +502,83 @@ fn home_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&block_group);
 
     page
+}
+
+fn transition_index(mode: PlaybackTransitionMode) -> u32 {
+    match mode {
+        PlaybackTransitionMode::Gapless => 0,
+        PlaybackTransitionMode::Crossfade => 1,
+    }
+}
+
+fn transition_from_index(index: u32) -> PlaybackTransitionMode {
+    match index {
+        1 => PlaybackTransitionMode::Crossfade,
+        _ => PlaybackTransitionMode::Gapless,
+    }
+}
+
+fn replay_gain_index(mode: ReplayGainMode) -> u32 {
+    match mode {
+        ReplayGainMode::Off => 0,
+        ReplayGainMode::Track => 1,
+        ReplayGainMode::Album => 2,
+    }
+}
+
+fn replay_gain_from_index(index: u32) -> ReplayGainMode {
+    match index {
+        1 => ReplayGainMode::Track,
+        2 => ReplayGainMode::Album,
+        _ => ReplayGainMode::Off,
+    }
+}
+
+fn stream_quality_index(quality: StreamQuality) -> u32 {
+    match quality {
+        StreamQuality::Original => 0,
+        StreamQuality::MaxBitrateKbps(320) => 1,
+        StreamQuality::MaxBitrateKbps(256) => 2,
+        StreamQuality::MaxBitrateKbps(192) => 3,
+        StreamQuality::MaxBitrateKbps(128) => 4,
+        StreamQuality::MaxBitrateKbps(_) => 0,
+    }
+}
+
+fn stream_quality_from_index(index: u32) -> StreamQuality {
+    match index {
+        1 => StreamQuality::MaxBitrateKbps(320),
+        2 => StreamQuality::MaxBitrateKbps(256),
+        3 => StreamQuality::MaxBitrateKbps(192),
+        4 => StreamQuality::MaxBitrateKbps(128),
+        _ => StreamQuality::Original,
+    }
+}
+
+fn playback_output_options() -> Vec<(Option<String>, String)> {
+    let mut outputs = vec![(None, tr("System default"))];
+    outputs.extend(
+        available_audio_outputs()
+            .into_iter()
+            .filter(|output| output.id != "autoaudiosink")
+            .map(|output| (Some(output.id), output.name)),
+    );
+    outputs
+}
+
+fn audio_output_index(outputs: &[(Option<String>, String)], selected: Option<&str>) -> u32 {
+    outputs
+        .iter()
+        .position(|(id, _)| id.as_deref() == selected)
+        .unwrap_or_default() as u32
+}
+
+fn equalizer_band_title(index: usize) -> String {
+    const BANDS: [&str; EQUALIZER_BAND_COUNT] = [
+        "31 Hz", "62 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz",
+        "16 kHz",
+    ];
+    BANDS.get(index).copied().unwrap_or("Band").to_string()
 }
 
 fn populate_home_block_rows(

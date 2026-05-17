@@ -212,6 +212,7 @@ mod tests {
     fn library_with_track(track_id: TrackId) -> LibrarySnapshot {
         LibrarySnapshot {
             server: None,
+            servers: Vec::new(),
             username: None,
             first_run: false,
             sync_status: String::new(),
@@ -242,6 +243,7 @@ mod tests {
                 track_number: 1,
                 image_ref: None,
                 genres: Vec::new(),
+                local_path: None,
             }],
             artists: Vec::new(),
             album_artists: Vec::new(),

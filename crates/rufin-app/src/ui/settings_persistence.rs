@@ -3,7 +3,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use rufin_core::{
     AppSettings, DensityMode, DiscordDisplayType, DiscordLinkType, HomeBlockKind, LibraryListKey,
-    LibraryListSettings, Route, TrackTableSettings,
+    LibraryListSettings, PlaybackSettings, Route, TrackTableSettings,
 };
 use tracing::warn;
 
@@ -103,6 +103,26 @@ impl Shell {
             self.render_lyrics_panel();
             self.controller.refresh_lyrics_for_current();
         }
+    }
+
+    pub(super) fn set_ask_lyrics_save_path(self: &Rc<Self>, enabled: bool) {
+        self.update_app_settings("lyrics save path setting", |settings| {
+            if settings.ask_lyrics_save_path == enabled {
+                return false;
+            }
+            settings.ask_lyrics_save_path = enabled;
+            true
+        });
+    }
+
+    pub(super) fn set_lyrics_export_folder(self: &Rc<Self>, folder: Option<String>) {
+        self.update_app_settings("lyrics export folder setting", |settings| {
+            if settings.lyrics_export_folder == folder {
+                return false;
+            }
+            settings.lyrics_export_folder = folder;
+            true
+        });
     }
 
     pub(super) fn set_private_mode(self: &Rc<Self>, enabled: bool) {
@@ -314,6 +334,21 @@ impl Shell {
             }
             true
         });
+    }
+
+    pub(super) fn update_playback_settings(
+        self: &Rc<Self>,
+        update: impl FnOnce(&mut PlaybackSettings),
+    ) {
+        if let Some(settings) = self.update_app_settings("playback settings", |settings| {
+            update(&mut settings.playback);
+            settings.playback.sanitize();
+            true
+        }) {
+            self.controller
+                .update_playback_settings(settings.playback.clone());
+            self.update_bottom_player();
+        }
     }
 
     pub(super) fn set_home_blocks(self: &Rc<Self>, blocks: Vec<HomeBlockKind>) {

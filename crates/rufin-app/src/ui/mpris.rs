@@ -88,7 +88,7 @@ pub(super) fn install_mpris(shell: &Rc<Shell>) {
         let player = match MprisPlayer::builder("io.github.screwys.Rufin")
             .identity("Rufin")
             .desktop_entry("io.github.screwys.Rufin")
-            .supported_uri_schemes(["http", "https"])
+            .supported_uri_schemes(["http", "https", "file"])
             .supported_mime_types(["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav"])
             .can_play(true)
             .can_pause(true)

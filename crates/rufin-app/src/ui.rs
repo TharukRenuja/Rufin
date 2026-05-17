@@ -19,8 +19,10 @@ mod mpris;
 mod navigation;
 mod paging;
 mod player;
+mod player_icons;
 mod preferences;
 mod queue;
+mod random_play;
 mod right_panel;
 mod settings_persistence;
 
@@ -1116,9 +1118,8 @@ impl Shell {
             .unwrap_or_else(|| self.window.width())
     }
 
-    fn update_server_selector(&self) {
-        let library = self.state.library.borrow();
-        navigation::update_server_selector(&self.server_selector, &library);
+    fn update_server_selector(self: &Rc<Self>) {
+        navigation::update_server_selector(self);
     }
 
     fn set_history_buttons_sensitive(&self, can_back: bool, can_forward: bool) {
@@ -2544,9 +2545,29 @@ impl Shell {
             let save_shell = Rc::clone(self);
             let save_track_id = track_id.clone();
             button.connect_clicked(move |_| {
-                save_shell
-                    .controller
-                    .save_lyrics_search_result(save_track_id.clone(), result.clone());
+                if save_shell.state.settings.borrow().ask_lyrics_save_path {
+                    let shell = Rc::clone(&save_shell);
+                    let track_id = save_track_id.clone();
+                    let result = result.clone();
+                    gtk::glib::spawn_future_local(async move {
+                        let dialog = gtk::FileDialog::builder().title(tr("Save Lyrics")).build();
+                        let Ok(file) = dialog.save_future(Some(&shell.window)).await else {
+                            return;
+                        };
+                        let Some(path) = file.path() else {
+                            return;
+                        };
+                        shell
+                            .controller
+                            .save_lyrics_search_result(track_id, result, Some(path));
+                    });
+                } else {
+                    save_shell.controller.save_lyrics_search_result(
+                        save_track_id.clone(),
+                        result.clone(),
+                        None,
+                    );
+                }
             });
             dialog.list.append(&row);
         }
@@ -5065,6 +5086,7 @@ mod tests {
             track_number: 1,
             image_ref: None,
             genres: Vec::new(),
+            local_path: None,
         }
     }
 }

@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use super::{jellyfin_id, stable_hash};
 
-pub(super) const ITEM_FIELDS: &str = "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
+pub(super) const ITEM_FIELDS: &str = "Path,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -32,6 +32,7 @@ pub(super) struct JellyfinItem {
     artist_items: Option<Vec<NameIdPair>>,
     album: Option<String>,
     pub(super) album_id: Option<String>,
+    path: Option<String>,
     parent_id: Option<String>,
     production_year: Option<i32>,
     date_created: Option<String>,
@@ -164,6 +165,7 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         track_number: u16_from_option(item.index_number),
         image_ref,
         genres: item.genres.unwrap_or_default(),
+        local_path: item.path,
     }
 }
 

@@ -9,9 +9,9 @@ use rufin_core::{
 use rufin_provider::{
     AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
     LoginRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse,
-    PlaybackReport, PlaybackReportKind, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
-    ProviderError, ProviderIdentity, ProviderResult, ProviderSession, SavedProviderSession,
-    SearchResults, StreamDescriptor,
+    PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
+    ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult, ProviderSession,
+    RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::instrument;
@@ -458,6 +458,48 @@ impl MusicProvider for JellyfinProvider {
         ))
     }
 
+    async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
+        let mut url = endpoint(&self.base_url, "Items")?;
+        let limit = request.limit.clamp(1, 500).to_string();
+        let years = jellyfin_year_filter(request.min_year, request.max_year)?;
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("UserId", &self.user_id)
+                .append_pair("Recursive", "true")
+                .append_pair("IncludeItemTypes", "Audio")
+                .append_pair("StartIndex", "0")
+                .append_pair("Limit", &limit)
+                .append_pair("Fields", ITEM_FIELDS)
+                .append_pair("SortBy", "Random")
+                .append_pair("SortOrder", "Ascending");
+            if let Some(years) = years.as_deref() {
+                query.append_pair("Years", years);
+            }
+            if let Some(genre_id) = request.genre_id.as_ref() {
+                query.append_pair("GenreIds", raw_item_id(genre_id.as_str()));
+            } else if let Some(genre_name) = request
+                .genre_name
+                .as_deref()
+                .filter(|name| !name.is_empty())
+            {
+                query.append_pair("Genres", genre_name);
+            }
+            match request.played_filter {
+                PlayedFilter::All => {}
+                PlayedFilter::Unplayed => {
+                    query.append_pair("IsPlayed", "false");
+                }
+                PlayedFilter::Played => {
+                    query.append_pair("IsPlayed", "true");
+                }
+            }
+        }
+
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        Ok(response.items.into_iter().map(track_from_item).collect())
+    }
+
     async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
         let response = self.people_page("Artists", request).await?;
         Ok(PagedResponse::new(
@@ -602,21 +644,55 @@ impl MusicProvider for JellyfinProvider {
     }
 
     async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor> {
-        let raw_track_id = raw_item_id(track_id.as_str());
+        self.stream_with_request(&StreamRequest::original(track_id.clone()))
+            .await
+    }
+
+    async fn stream_with_request(
+        &self,
+        request: &StreamRequest,
+    ) -> ProviderResult<StreamDescriptor> {
+        let raw_track_id = raw_item_id(request.track_id.as_str());
         let mut url = endpoint(&self.base_url, &format!("Audio/{raw_track_id}/stream"))?;
-        url.query_pairs_mut()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("DeviceId", DEVICE_ID)
-            .append_pair("Static", "true")
-            .append_pair("api_key", &self.access_token);
+        let max_bitrate = request
+            .quality
+            .max_bitrate_kbps()
+            .map(|kbps| kbps.saturating_mul(1_000).to_string());
+        let static_stream = if max_bitrate.is_some() {
+            "false"
+        } else {
+            "true"
+        };
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("UserId", &self.user_id)
+                .append_pair("DeviceId", DEVICE_ID)
+                .append_pair("Static", static_stream)
+                .append_pair("api_key", &self.access_token);
+            if let Some(max_bitrate) = &max_bitrate {
+                query
+                    .append_pair("MaxStreamingBitrate", max_bitrate)
+                    .append_pair("TranscodingContainer", "mp3")
+                    .append_pair("AudioCodec", "mp3");
+            }
+        }
         let mut redacted_url = url.clone();
-        redacted_url
-            .query_pairs_mut()
-            .clear()
-            .append_pair("UserId", &self.user_id)
-            .append_pair("DeviceId", DEVICE_ID)
-            .append_pair("Static", "true")
-            .append_pair("api_key", "<redacted>");
+        {
+            let mut redacted_query = redacted_url.query_pairs_mut();
+            redacted_query
+                .clear()
+                .append_pair("UserId", &self.user_id)
+                .append_pair("DeviceId", DEVICE_ID)
+                .append_pair("Static", static_stream)
+                .append_pair("api_key", "<redacted>");
+            if let Some(max_bitrate) = &max_bitrate {
+                redacted_query
+                    .append_pair("MaxStreamingBitrate", max_bitrate)
+                    .append_pair("TranscodingContainer", "mp3")
+                    .append_pair("AudioCodec", "mp3");
+            }
+        }
         Ok(StreamDescriptor::with_redacted(
             url.to_string(),
             redacted_url.to_string(),
@@ -975,12 +1051,36 @@ fn image_kind_path(kind: ImageKind) -> &'static str {
     }
 }
 
+fn jellyfin_year_filter(
+    min_year: Option<u16>,
+    max_year: Option<u16>,
+) -> ProviderResult<Option<String>> {
+    if min_year.is_none() && max_year.is_none() {
+        return Ok(None);
+    }
+    let min = min_year.unwrap_or(1850);
+    let max = max_year.unwrap_or(2050);
+    if min > max {
+        return Err(ProviderError::Other(
+            "minimum year cannot be greater than maximum year".to_string(),
+        ));
+    }
+    Ok(Some(
+        (min..=max)
+            .map(|year| year.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    ))
+}
+
 fn jellyfin_capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
         lyrics: true,
         playback_reporting: true,
         playlist_mutations: true,
         favorite_mutations: true,
+        random_tracks: true,
+        random_played_filter: true,
         ..ProviderCapabilities::default()
     }
 }
@@ -1525,6 +1625,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn random_tracks_use_random_sort_and_requested_filters() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Items"))
+            .and(query_param("UserId", "user-one"))
+            .and(query_param("Recursive", "true"))
+            .and(query_param("IncludeItemTypes", "Audio"))
+            .and(query_param("StartIndex", "0"))
+            .and(query_param("Limit", "37"))
+            .and(query_param("SortBy", "Random"))
+            .and(query_param("Years", "1999,2000,2001"))
+            .and(query_param("GenreIds", "genre-one"))
+            .and(query_param("IsPlayed", "false"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "TotalRecordCount": 1,
+                "Items": [{
+                    "Id": "track-one",
+                    "Name": "First Motion",
+                    "Type": "Audio",
+                    "AlbumId": "album-one",
+                    "Album": "Blue Rooms",
+                    "Artists": ["Astral Kin"],
+                    "Genres": ["Ambient"],
+                    "ProductionYear": 2000,
+                    "RunTimeTicks": 2100000000i64
+                }]
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let tracks = provider
+            .random_tracks(RandomTrackRequest {
+                limit: 37,
+                min_year: Some(1999),
+                max_year: Some(2001),
+                genre_id: Some(GenreId::new("jellyfin:genre:genre-one")),
+                genre_name: Some("Ambient".to_string()),
+                played_filter: PlayedFilter::Unplayed,
+            })
+            .await
+            .expect("random tracks");
+
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].id.as_str(), "jellyfin:track:track-one");
+        assert_eq!(tracks[0].year, 2000);
+    }
+
+    #[tokio::test]
     async fn playlist_detail_paginates_and_maps_ordered_tracks() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1982,6 +2131,27 @@ mod tests {
                 .starts_with(&format!("{}/Audio/track-one/stream?", server.uri()))
         );
         assert!(stream.uri().contains("api_key=secret-token"));
+        assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
+        assert!(!format!("{stream:?}").contains("secret-token"));
+    }
+
+    #[tokio::test]
+    async fn stream_url_adds_transcode_parameters_when_bitrate_limited() {
+        let server = MockServer::start().await;
+        let provider = provider(&server, "secret-token");
+
+        let stream = provider
+            .stream_with_request(&rufin_provider::StreamRequest::new(
+                TrackId::new("jellyfin:track:track-one"),
+                rufin_core::StreamQuality::MaxBitrateKbps(192),
+            ))
+            .await
+            .expect("stream");
+
+        assert!(stream.uri().contains("Static=false"));
+        assert!(stream.uri().contains("MaxStreamingBitrate=192000"));
+        assert!(stream.uri().contains("TranscodingContainer=mp3"));
+        assert!(stream.uri().contains("AudioCodec=mp3"));
         assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
         assert!(!format!("{stream:?}").contains("secret-token"));
     }

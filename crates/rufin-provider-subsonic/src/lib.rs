@@ -12,9 +12,9 @@ use rufin_core::{
 use rufin_provider::{
     AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
     LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse, PlaybackReport,
-    PlaybackReportKind, PlaylistDetail, PlaylistEntry, ProviderCapabilities, ProviderError,
-    ProviderIdentity, ProviderResult, ProviderSession, SavedProviderSession, SearchResults,
-    StreamDescriptor,
+    PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
+    ProviderError, ProviderIdentity, ProviderResult, ProviderSession, RandomTrackRequest,
+    SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
 };
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Visitor};
@@ -429,6 +429,38 @@ impl MusicProvider for SubsonicProvider {
         ))
     }
 
+    async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
+        if request.played_filter != PlayedFilter::All {
+            return Err(ProviderError::Unsupported("random played filter"));
+        }
+
+        let mut extra = vec![("size", request.limit.clamp(1, 500).to_string())];
+        if let Some(min_year) = request.min_year {
+            extra.push(("fromYear", min_year.to_string()));
+        }
+        if let Some(max_year) = request.max_year {
+            extra.push(("toYear", max_year.to_string()));
+        }
+        if let Some(genre) = request
+            .genre_name
+            .as_deref()
+            .filter(|genre| !genre.trim().is_empty())
+        {
+            extra.push(("genre", genre.to_string()));
+        } else if let Some(genre_id) = request.genre_id.as_ref() {
+            extra.push(("genre", raw_item_id(genre_id.as_str()).to_string()));
+        }
+
+        let body: RandomSongsBody = self.get_json("getRandomSongs", &extra).await?;
+        Ok(body
+            .random_songs
+            .map(|songs| songs.song)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|song| track_from_dto(self, song))
+            .collect())
+    }
+
     async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>> {
         let artists = self.get_all_artists().await?;
         Ok(page(artists, request))
@@ -543,10 +575,19 @@ impl MusicProvider for SubsonicProvider {
     }
 
     async fn stream(&self, track_id: &TrackId) -> ProviderResult<StreamDescriptor> {
-        let url = self.authenticated_url(
-            "stream",
-            &[("id", raw_item_id(track_id.as_str()).to_string())],
-        )?;
+        self.stream_with_request(&StreamRequest::original(track_id.clone()))
+            .await
+    }
+
+    async fn stream_with_request(
+        &self,
+        request: &StreamRequest,
+    ) -> ProviderResult<StreamDescriptor> {
+        let mut extra = vec![("id", raw_item_id(request.track_id.as_str()).to_string())];
+        if let Some(kbps) = request.quality.max_bitrate_kbps() {
+            extra.push(("maxBitRate", kbps.to_string()));
+        }
+        let url = self.authenticated_url("stream", &extra)?;
         let redacted = redacted_subsonic_url(&url);
         Ok(StreamDescriptor::with_redacted(url.to_string(), redacted))
     }
@@ -979,6 +1020,7 @@ fn subsonic_capabilities() -> ProviderCapabilities {
         playback_reporting: true,
         playlist_mutations: true,
         favorite_mutations: true,
+        random_tracks: true,
         ..ProviderCapabilities::default()
     }
 }
@@ -1168,6 +1210,7 @@ fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
         track_number: u16_from_option(song.track).max(1),
         image_ref: image_ref(provider, song.cover_art),
         genres: genres_from_item(song.genre, song.genres),
+        local_path: song.path,
     }
 }
 
@@ -1452,6 +1495,8 @@ struct SubsonicSong {
     #[serde(default, rename = "discNumber")]
     disc_number: Option<i32>,
     #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
     starred: Option<serde_json::Value>,
 }
 
@@ -1714,6 +1759,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn random_tracks_use_subsonic_random_song_filters() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/getRandomSongs.view"))
+            .and(query_param("size", "37"))
+            .and(query_param("fromYear", "1999"))
+            .and(query_param("toYear", "2001"))
+            .and(query_param("genre", "Ambient"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subsonic-response": {
+                    "status": "ok",
+                    "version": "1.16.1",
+                    "randomSongs": {
+                        "song": [{
+                            "id": "track-one",
+                            "albumId": "album-one",
+                            "title": "First Motion",
+                            "artist": "Astral Kin",
+                            "album": "Blue Rooms",
+                            "year": 2000,
+                            "duration": 210,
+                            "genre": "Ambient"
+                        }]
+                    }
+                }
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server);
+
+        let tracks = provider
+            .random_tracks(RandomTrackRequest {
+                limit: 37,
+                min_year: Some(1999),
+                max_year: Some(2001),
+                genre_id: Some(GenreId::new("subsonic:genre:ambient")),
+                genre_name: Some("Ambient".to_string()),
+                played_filter: PlayedFilter::All,
+            })
+            .await
+            .expect("random tracks");
+
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].id.as_str(), "subsonic:track:track-one");
+        assert_eq!(tracks[0].genres, vec!["Ambient".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn random_tracks_reject_played_filter_for_subsonic() {
+        let server = MockServer::start().await;
+        let provider = provider(&server);
+
+        let error = provider
+            .random_tracks(RandomTrackRequest {
+                limit: 10,
+                min_year: None,
+                max_year: None,
+                genre_id: None,
+                genre_name: None,
+                played_filter: PlayedFilter::Played,
+            })
+            .await
+            .expect_err("unsupported played filter");
+
+        assert!(matches!(error, ProviderError::Unsupported(_)));
+    }
+
+    #[tokio::test]
     async fn stream_url_redacts_subsonic_credentials() {
         let server = MockServer::start().await;
         let provider = provider(&server);
@@ -1725,6 +1838,24 @@ mod tests {
 
         assert!(stream.uri().contains("t=token"));
         assert!(stream.redacted_uri().contains("t=%3Credacted%3E"));
+        assert!(!stream.redacted_uri().contains("token"));
+    }
+
+    #[tokio::test]
+    async fn stream_url_includes_max_bitrate_when_limited() {
+        let server = MockServer::start().await;
+        let provider = provider(&server);
+
+        let stream = provider
+            .stream_with_request(&rufin_provider::StreamRequest::new(
+                TrackId::new("subsonic:track:track-one"),
+                rufin_core::StreamQuality::MaxBitrateKbps(192),
+            ))
+            .await
+            .expect("stream");
+
+        assert!(stream.uri().contains("maxBitRate=192"));
+        assert!(stream.redacted_uri().contains("maxBitRate=192"));
         assert!(!stream.redacted_uri().contains("token"));
     }
 
