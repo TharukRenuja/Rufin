@@ -9,32 +9,31 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use directories::ProjectDirs;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    ImageRef, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot,
-    RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+    Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode,
+    ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
     PlaybackEvent, PlaybackState, PlaybackTrack, StreamDescriptor,
 };
 use rufin_provider::{
-    FavoriteItemId, ImageKind, ImageRequest, Lyrics, MusicProvider, PagedRequest, PlaybackReport,
-    PlaybackReportKind, PlaylistEntry, SavedProviderSession, SearchResults,
+    FavoriteItemId, Lyrics, MusicProvider, PagedRequest, PlaybackReport, PlaybackReportKind,
+    PlaylistEntry, SavedProviderSession, SearchResults,
 };
 use rufin_secrets::{MemorySecretStore, SecretServiceStore, SecretStore};
-use rufin_store::{
-    CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, SavedServer, Store, StoreError,
-    image_cache_key,
-};
+use rufin_store::{CachedArtistDetail, CachedGenreDetail, SavedServer, Store, StoreError};
 use rufin_test_support::{FakeProvider, FakeScale};
 use serde::Deserialize;
 use tokio::runtime::Runtime;
 use tracing::{debug, info, instrument, warn};
 
+use crate::external_metadata;
 use crate::providers::{
     JellyfinLyricsSearch, LoadedProvider, StreamingProvider, login_provider, provider_display_name,
     provider_from_saved,
 };
 
+mod covers;
 mod discovery;
 
 pub use discovery::DiscoveredServer;
@@ -196,6 +195,7 @@ pub struct AppController {
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     explore_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_in_flight: Arc<Mutex<HashSet<String>>>,
+    external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
 }
 
@@ -281,19 +281,36 @@ impl AppController {
         self.store.with_store(|store| store.save_settings(settings))
     }
 
+    pub fn reload_snapshot(&self) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || match load_snapshot(&store) {
+            Ok(snapshot) => {
+                let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+            }
+            Err(error) => {
+                let _sent = events.send(ControllerEvent::Error(error));
+            }
+        });
+    }
+
     pub fn cached_album_detail(
         &self,
         album_id: &AlbumId,
     ) -> Result<Option<(Album, Vec<Track>)>, String> {
-        let Some(server) = self
-            .store
-            .with_store(|store| store.active_server())?
-            .map(|saved| saved.server)
-        else {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(None);
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
-            .with_store(|store| store.load_album_detail(&server.id, album_id))
+            .with_store(|store| store.load_album_detail(&saved.server.id, album_id))
+            .map(|detail| {
+                detail.map(|(mut album, mut tracks)| {
+                    external_metadata::normalize_album(&mut album, &settings);
+                    external_metadata::normalize_tracks(&mut tracks, &settings);
+                    (album, tracks)
+                })
+            })
     }
 
     pub fn cached_album_tracks(
@@ -303,53 +320,75 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(std::collections::HashMap::new());
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| store.load_tracks_for_albums(&saved.server.id, album_ids))
+            .map(|mut tracks_by_album| {
+                for tracks in tracks_by_album.values_mut() {
+                    external_metadata::normalize_tracks(tracks, &settings);
+                }
+                tracks_by_album
+            })
     }
 
     pub fn cached_artist_detail(
         &self,
         artist_id: &ArtistId,
     ) -> Result<Option<CachedArtistDetail>, String> {
-        let Some(server) = self
-            .store
-            .with_store(|store| store.active_server())?
-            .map(|saved| saved.server)
-        else {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(None);
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
-            .with_store(|store| store.load_artist_detail(&server.id, artist_id))
+            .with_store(|store| store.load_artist_detail(&saved.server.id, artist_id))
+            .map(|detail| {
+                detail.map(|mut detail| {
+                    external_metadata::normalize_albums(&mut detail.albums, &settings);
+                    external_metadata::normalize_albums(&mut detail.appears_on, &settings);
+                    external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+                    detail
+                })
+            })
     }
 
     pub fn cached_playlist_detail(
         &self,
         playlist_id: &PlaylistId,
     ) -> Result<Option<rufin_provider::PlaylistDetail>, String> {
-        let Some(server) = self
-            .store
-            .with_store(|store| store.active_server())?
-            .map(|saved| saved.server)
-        else {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(None);
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
-            .with_store(|store| store.load_playlist_detail(&server.id, playlist_id))
+            .with_store(|store| store.load_playlist_detail(&saved.server.id, playlist_id))
+            .map(|detail| {
+                detail.map(|mut detail| {
+                    external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+                    for entry in &mut detail.entries {
+                        external_metadata::normalize_track(&mut entry.track, &settings);
+                    }
+                    detail
+                })
+            })
     }
 
     pub fn cached_genre_detail(
         &self,
         genre_id: &GenreId,
     ) -> Result<Option<CachedGenreDetail>, String> {
-        let Some(server) = self
-            .store
-            .with_store(|store| store.active_server())?
-            .map(|saved| saved.server)
-        else {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(None);
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
-            .with_store(|store| store.load_genre_detail(&server.id, genre_id))
+            .with_store(|store| store.load_genre_detail(&saved.server.id, genre_id))
+            .map(|detail| {
+                detail.map(|mut detail| {
+                    external_metadata::normalize_albums(&mut detail.albums, &settings);
+                    external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+                    detail
+                })
+            })
     }
 
     pub fn cached_albums_page(
@@ -360,8 +399,13 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| store.load_albums(&saved.server.id, offset, limit))
+            .map(|mut page| {
+                external_metadata::normalize_albums(&mut page.items, &settings);
+                page
+            })
     }
 
     pub fn cached_albums_page_matching(
@@ -373,8 +417,13 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| store.load_albums_matching(&saved.server.id, query, offset, limit))
+            .map(|mut page| {
+                external_metadata::normalize_albums(&mut page.items, &settings);
+                page
+            })
     }
 
     pub fn cached_tracks_page(
@@ -385,8 +434,13 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| store.load_tracks(&saved.server.id, offset, limit))
+            .map(|mut page| {
+                external_metadata::normalize_tracks(&mut page.items, &settings);
+                page
+            })
     }
 
     pub fn cached_tracks_page_matching(
@@ -398,8 +452,13 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| store.load_tracks_matching(&saved.server.id, query, offset, limit))
+            .map(|mut page| {
+                external_metadata::normalize_tracks(&mut page.items, &settings);
+                page
+            })
     }
 
     pub fn cached_artists_page(
@@ -481,180 +540,6 @@ impl AppController {
         })
     }
 
-    #[cfg(test)]
-    pub fn cover_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
-        let server = self
-            .store
-            .with_store(|store| store.active_server())
-            .ok()
-            .flatten()?
-            .server;
-        Some(image_cache_key(
-            &server.id,
-            &image_ref.item_id,
-            image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
-            size,
-        ))
-    }
-
-    #[cfg(test)]
-    pub fn cached_cover_path(&self, image_ref: &ImageRef, size: u32) -> Option<PathBuf> {
-        let saved = self
-            .store
-            .with_store(|store| store.active_server())
-            .ok()
-            .flatten()?;
-        let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-        let entry = self
-            .store
-            .with_store(|store| {
-                store.load_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
-            })
-            .ok()
-            .flatten()?;
-        let path = PathBuf::from(entry.path);
-        if path.exists() {
-            return Some(path);
-        }
-        let _invalidated = self.store.with_store(|store| {
-            store.delete_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
-        });
-        None
-    }
-
-    pub fn cached_cover_path_for_key(&self, key: &str) -> Option<PathBuf> {
-        cached_cover_path_for_key(key)
-    }
-
-    #[cfg(test)]
-    pub fn request_cover(&self, image_ref: ImageRef, size: u32) {
-        let Some(saved) = self
-            .store
-            .with_store(|store| store.active_server())
-            .unwrap_or(None)
-        else {
-            return;
-        };
-        if saved.server.provider == "fake" {
-            return;
-        }
-        if let Some(path) = self.cached_cover_path(&image_ref, size) {
-            if let Some(key) = self.cover_key(&image_ref, size) {
-                let _sent = self.events.send(ControllerEvent::CoverReady { key, path });
-            }
-            return;
-        }
-        let tag = image_ref
-            .tag
-            .clone()
-            .unwrap_or_else(|| IMAGE_TAG_UNTAGGED.to_string());
-        let key = image_cache_key(&saved.server.id, &image_ref.item_id, &tag, size);
-        match self.cover_in_flight.lock() {
-            Ok(mut in_flight) => {
-                if !in_flight.insert(key.clone()) {
-                    return;
-                }
-            }
-            Err(_) => return,
-        }
-
-        let store = self.store.clone();
-        let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
-        let events = self.events.clone();
-        let cover_in_flight = Arc::clone(&self.cover_in_flight);
-        let cover_slots = Arc::clone(&self.cover_slots);
-        thread::spawn(move || {
-            if !acquire_cover_slot(&cover_slots) {
-                if let Ok(mut in_flight) = cover_in_flight.lock() {
-                    in_flight.remove(&key);
-                }
-                return;
-            }
-            let result = fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size);
-            release_cover_slot(&cover_slots);
-            if let Ok(mut in_flight) = cover_in_flight.lock() {
-                in_flight.remove(&key);
-            }
-            match result {
-                Ok(path) => {
-                    let _sent = events.send(ControllerEvent::CoverReady { key, path });
-                }
-                Err(error) => {
-                    warn!(%error, "failed to fetch cover");
-                }
-            }
-        });
-    }
-
-    pub fn request_cover_for_key(&self, key: String, image_ref: ImageRef, size: u32) {
-        match self.cover_in_flight.lock() {
-            Ok(mut in_flight) => {
-                if !in_flight.insert(key.clone()) {
-                    return;
-                }
-            }
-            Err(_) => return,
-        }
-
-        let store = self.store.clone();
-        let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
-        let events = self.events.clone();
-        let cover_in_flight = Arc::clone(&self.cover_in_flight);
-        let cover_slots = Arc::clone(&self.cover_slots);
-        thread::spawn(move || {
-            let result = (|| -> Result<Option<PathBuf>, String> {
-                if let Some(path) = cached_cover_path_for_key(&key) {
-                    return Ok(Some(path));
-                }
-
-                let Some(saved) = store.with_store(|store| store.active_server())? else {
-                    return Ok(None);
-                };
-                if saved.server.provider == "fake" {
-                    return Ok(None);
-                }
-
-                let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-                let expected_key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
-                if expected_key != key {
-                    return Ok(None);
-                }
-
-                if let Some(path) = cached_cover_path_for_saved(&store, &saved, &image_ref, size)? {
-                    return Ok(Some(path));
-                }
-
-                if !acquire_cover_slot(&cover_slots) {
-                    return Ok(None);
-                }
-                let result =
-                    fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size)
-                        .map(Some);
-                release_cover_slot(&cover_slots);
-                result
-            })();
-
-            if let Ok(mut in_flight) = cover_in_flight.lock() {
-                in_flight.remove(&key);
-            }
-            match result {
-                Ok(Some(path)) => {
-                    let _sent = events.send(ControllerEvent::CoverReady { key, path });
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    if is_provider_not_found_error(&error) {
-                        debug!(%error, "cached cover source item is no longer available");
-                    } else {
-                        warn!(%error, "failed to prepare cover");
-                    }
-                }
-            }
-        });
-    }
-
     pub fn bootstrap(
         fake_scale: Option<FakeScale>,
     ) -> (
@@ -699,6 +584,7 @@ impl AppController {
                 home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
+                external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
             };
             return (
@@ -741,6 +627,7 @@ impl AppController {
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
             explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
         };
         (
@@ -789,6 +676,7 @@ impl AppController {
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
             explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
         };
         (
@@ -1607,6 +1495,7 @@ impl AppController {
         let store = self.store.clone();
         let events = self.events.clone();
         thread::spawn(move || {
+            let settings = load_settings_for_active_server(&store);
             let mut snapshot = match load_snapshot(&store) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
@@ -1616,7 +1505,10 @@ impl AppController {
             };
             if let Some(server) = &snapshot.server {
                 match store.with_store(|store| store.search_library(&server.id, &query, 50)) {
-                    Ok(results) => snapshot.search = results,
+                    Ok(mut results) => {
+                        external_metadata::normalize_search_results(&mut results, &settings);
+                        snapshot.search = results;
+                    }
                     Err(error) => {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
@@ -2158,10 +2050,12 @@ impl AppController {
             return Ok(false);
         }
 
-        let tracks = self
+        let settings = load_settings_for_active_server(&self.store);
+        let mut tracks = self
             .store
             .with_store(|store| store.load_tracks(&server_id, 0, AUTO_DJ_LIBRARY_LIMIT))
             .map(|page| page.items)?;
+        external_metadata::normalize_tracks(&mut tracks, &settings);
         let candidates = auto_dj_candidates(&tracks, &current, &queued_track_ids, shuffle_seed());
         if candidates.is_empty() {
             return Ok(false);
@@ -3029,11 +2923,12 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     let Some(saved) = store.with_store(|store| store.active_server())? else {
         return Ok(LibrarySnapshot::first_run());
     };
+    let settings = load_settings_for_saved(store, &saved);
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.server.id))
         .ok();
-    let home_sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
-    let prefetched_explore = store.with_store(|store| {
+    let mut home_sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
+    let mut prefetched_explore = store.with_store(|store| {
         store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
     })?;
     let album_page =
@@ -3042,8 +2937,8 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         store.with_store(|store| store.load_tracks(&saved.server.id, 0, SNAPSHOT_TRACK_LIMIT))?;
     let cached_album_count = album_page.total;
     let cached_track_count = track_page.total;
-    let albums = album_page.items;
-    let tracks = track_page.items;
+    let mut albums = album_page.items;
+    let mut tracks = track_page.items;
     let artists = store.with_store(|store| {
         store
             .load_artists(&saved.server.id, false, 0, SNAPSHOT_GRID_LIMIT)
@@ -3064,7 +2959,14 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
             .load_playlists(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT)
             .map(|page| page.items)
     })?;
-    let favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
+    let mut favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
+    external_metadata::normalize_home_sections(&mut home_sections, &settings);
+    if let Some(section) = &mut prefetched_explore {
+        external_metadata::normalize_home_section(section, &settings);
+    }
+    external_metadata::normalize_albums(&mut albums, &settings);
+    external_metadata::normalize_tracks(&mut tracks, &settings);
+    external_metadata::normalize_tracks(&mut favorites, &settings);
     let status = sync_state
         .as_ref()
         .map(|state| match state.status.as_str() {
@@ -3169,8 +3071,12 @@ fn seed_fake_cache(store: &StoreHandle, scale: FakeScale) -> Result<(), String> 
 
 fn restore_queue(store: &StoreHandle, server: Option<&ServerIdentity>) -> Option<QueueEngine> {
     let server = server?;
+    let settings = load_settings_for_server(store, server);
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
-        Ok(Some(snapshot)) => Some(QueueEngine::restore(snapshot)),
+        Ok(Some(mut snapshot)) => {
+            external_metadata::normalize_queue_snapshot(&mut snapshot, &settings);
+            Some(QueueEngine::restore(snapshot))
+        }
         Ok(None) => Some(QueueEngine::new(server.id.clone())),
         Err(error) => {
             warn!(%error, "failed to restore queue snapshot");
@@ -3184,6 +3090,29 @@ fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
         .with_store(|store| store.load_settings())
         .unwrap_or_default();
     settings.migrate_defaults();
+    settings
+}
+
+fn load_settings_for_active_server(store: &StoreHandle) -> AppSettings {
+    let settings = load_settings_from_store(store);
+    match store.with_store(|store| store.active_server()) {
+        Ok(Some(saved)) => settings_for_server(settings, &saved.server),
+        _ => settings,
+    }
+}
+
+fn load_settings_for_saved(store: &StoreHandle, saved: &SavedServer) -> AppSettings {
+    settings_for_server(load_settings_from_store(store), &saved.server)
+}
+
+fn load_settings_for_server(store: &StoreHandle, server: &ServerIdentity) -> AppSettings {
+    settings_for_server(load_settings_from_store(store), server)
+}
+
+fn settings_for_server(mut settings: AppSettings, server: &ServerIdentity) -> AppSettings {
+    if server.provider == "fake" {
+        settings.external_metadata_enabled = false;
+    }
     settings
 }
 
@@ -3853,84 +3782,6 @@ fn emit_snapshot_result(
             let _sent = events.send(ControllerEvent::Error(error));
         }
     }
-}
-
-fn cached_cover_path_for_saved(
-    store: &StoreHandle,
-    saved: &SavedServer,
-    image_ref: &ImageRef,
-    size: u32,
-) -> Result<Option<PathBuf>, String> {
-    let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-    let Some(entry) = store.with_store(|store| {
-        store.load_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
-    })?
-    else {
-        return Ok(None);
-    };
-    let path = PathBuf::from(entry.path);
-    if path.exists() {
-        return Ok(Some(path));
-    }
-    store.with_store(|store| {
-        store.delete_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
-    })?;
-    Ok(None)
-}
-
-fn cached_cover_path_for_key(key: &str) -> Option<PathBuf> {
-    let path = cache_dir()?.join("covers").join(key);
-    path.exists().then_some(path)
-}
-
-fn fetch_and_cache_cover(
-    store: &StoreHandle,
-    runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
-    image_ref: ImageRef,
-    size: u32,
-) -> Result<PathBuf, String> {
-    let provider = provider_for_saved(store, runtime, secrets, saved)?;
-    let image = runtime
-        .block_on(provider.as_music_provider().image_bytes(ImageRequest {
-            item_id: image_ref.item_id.clone(),
-            kind: ImageKind::Primary,
-            tag: image_ref.tag.clone(),
-            size,
-        }))
-        .map_err(|error| error.to_string())?;
-    if image.bytes.is_empty() {
-        return Err("cover response was empty".to_string());
-    }
-
-    let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-    let key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
-    let path = cache_dir()
-        .map(|dir| dir.join("covers").join(&key))
-        .ok_or_else(|| "cache directory is unavailable".to_string())?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let temp_path = path.with_extension("tmp");
-    fs::write(&temp_path, image.bytes).map_err(|error| error.to_string())?;
-    fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
-
-    store.with_store(|store| {
-        store.save_cover_cache_entry(&CoverCacheEntry {
-            server_id: saved.server.id.clone(),
-            item_id: image_ref.item_id,
-            image_tag: tag.to_string(),
-            size,
-            path: path.to_string_lossy().to_string(),
-        })
-    })?;
-
-    Ok(path)
-}
-
-fn is_provider_not_found_error(error: &str) -> bool {
-    error == "provider item was not found"
 }
 
 fn data_dir() -> Option<PathBuf> {
@@ -5359,10 +5210,10 @@ mod tests {
 
     #[test]
     fn provider_not_found_cover_errors_are_classified() {
-        assert!(super::is_provider_not_found_error(
+        assert!(super::covers::is_provider_not_found_error(
             "provider item was not found"
         ));
-        assert!(!super::is_provider_not_found_error(
+        assert!(!super::covers::is_provider_not_found_error(
             "provider network failed: offline"
         ));
     }
@@ -5397,6 +5248,7 @@ mod tests {
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
             explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
         };
         (controller, receiver)

@@ -70,6 +70,21 @@ impl Shell {
         }
     }
 
+    pub(super) fn set_external_metadata_enabled(self: &Rc<Self>, enabled: bool) {
+        if self
+            .update_app_settings("metadata setting", |settings| {
+                if settings.external_metadata_enabled == enabled {
+                    return false;
+                }
+                settings.external_metadata_enabled = enabled;
+                true
+            })
+            .is_some()
+        {
+            self.controller.reload_snapshot();
+        }
+    }
+
     pub(super) fn set_prefer_server_lyrics(self: &Rc<Self>, enabled: bool) {
         let Some(settings) = self.update_app_settings("lyrics search setting", |settings| {
             if settings.prefer_server_lyrics == enabled {
@@ -104,6 +119,7 @@ impl Shell {
             return;
         }
         self.update_discord_presence(&self.state.player.borrow());
+        self.controller.reload_snapshot();
         *self.state.lyrics.borrow_mut() = None;
         self.state.lyrics_auto_search_attempted.borrow_mut().clear();
         self.render_lyrics_panel();

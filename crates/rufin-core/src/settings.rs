@@ -792,6 +792,8 @@ pub struct AppSettings {
     pub notifications_enabled: bool,
     pub external_lyrics_enabled: bool,
     #[serde(default = "default_true")]
+    pub external_metadata_enabled: bool,
+    #[serde(default = "default_true")]
     pub prefer_server_lyrics: bool,
     pub discord_presence_enabled: bool,
     #[serde(default = "default_discord_client_id")]
@@ -852,6 +854,7 @@ impl Default for AppSettings {
             private_mode: false,
             notifications_enabled: false,
             external_lyrics_enabled: false,
+            external_metadata_enabled: true,
             prefer_server_lyrics: true,
             discord_presence_enabled: false,
             discord_client_id: default_discord_client_id(),
@@ -1015,11 +1018,12 @@ mod tests {
     };
 
     #[test]
-    fn settings_default_to_private_external_features_off() {
+    fn settings_default_to_privacy_preserving_remote_features() {
         let settings = AppSettings::default();
 
         assert!(!settings.notifications_enabled);
         assert!(!settings.external_lyrics_enabled);
+        assert!(settings.external_metadata_enabled);
         assert!(settings.prefer_server_lyrics);
         assert!(!settings.discord_presence_enabled);
         assert_eq!(settings.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
@@ -1108,6 +1112,7 @@ mod tests {
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
         assert!(!restored.auto_dj_enabled);
+        assert!(restored.external_metadata_enabled);
         assert!(restored.prefer_server_lyrics);
         assert_eq!(restored.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
         assert_eq!(

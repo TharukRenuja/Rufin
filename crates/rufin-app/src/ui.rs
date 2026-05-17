@@ -46,6 +46,7 @@ use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,
     PlaybackSnapshot,
 };
+use crate::external_metadata;
 use crate::i18n::tr;
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
 use chrome::{build_content_chrome, build_main_area};
@@ -489,6 +490,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     install_mpris(&shell);
     shell.update_density();
     prime_first_cached_cover(&shell);
+    shell
+        .controller
+        .prefetch_external_metadata_covers(&shell.state.library.borrow());
     shell.render_current_route();
     shell.render_queue_panel();
     shell.render_lyrics_panel();
@@ -2681,6 +2685,11 @@ impl Shell {
         if server.provider == "fake" {
             return None;
         }
+        if external_metadata::is_external_image_ref(image_ref)
+            && !external_metadata::enabled(&self.state.settings.borrow())
+        {
+            return None;
+        }
         Some(image_cache_key(
             &server.id,
             &image_ref.item_id,
@@ -3343,6 +3352,9 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     *shell.state.library.borrow_mut() = *snapshot;
+                    shell
+                        .controller
+                        .prefetch_external_metadata_covers(&shell.state.library.borrow());
                     if entering_first_run {
                         shell.state.server_discovery_started.set(false);
                         shell.state.server_discovery_running.set(false);

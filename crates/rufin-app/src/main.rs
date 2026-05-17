@@ -1,4 +1,5 @@
 mod controller;
+mod external_metadata;
 mod i18n;
 mod lyrics;
 mod providers;

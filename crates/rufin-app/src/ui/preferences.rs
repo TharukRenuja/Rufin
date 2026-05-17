@@ -83,7 +83,7 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let private_row = adw::SwitchRow::builder()
         .title(tr("Private mode"))
         .subtitle(tr(
-            "Stop playback reporting, external lyrics, notifications, and presence.",
+            "Stop playback reporting, external lyrics, external metadata, notifications, and presence.",
         ))
         .active(settings.private_mode)
         .build();
@@ -104,6 +104,24 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     privacy_group.add(&notifications_row);
     page.add(&privacy_group);
+
+    let metadata_group = adw::PreferencesGroup::builder()
+        .title(tr("Metadata"))
+        .description(tr(
+            "External metadata uses public MusicBrainz and Cover Art Archive lookups.",
+        ))
+        .build();
+    let external_metadata_row = adw::SwitchRow::builder()
+        .title(tr("External cover lookup"))
+        .subtitle(tr("Use remote album art when server artwork is missing."))
+        .active(settings.external_metadata_enabled)
+        .build();
+    let metadata_shell = Rc::clone(shell);
+    external_metadata_row.connect_active_notify(move |row| {
+        metadata_shell.set_external_metadata_enabled(row.is_active());
+    });
+    metadata_group.add(&external_metadata_row);
+    page.add(&metadata_group);
 
     let lyrics_group = adw::PreferencesGroup::builder().title(tr("Lyrics")).build();
     let external_row = adw::SwitchRow::builder()

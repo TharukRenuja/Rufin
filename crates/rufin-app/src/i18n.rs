@@ -57,7 +57,11 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Library");
     let _ = tr("Actions");
     let _ = tr("Sync Status");
+    let _ = tr("Metadata");
     let _ = tr("External lyric lookup");
+    let _ = tr("External cover lookup");
+    let _ = tr("External metadata uses public MusicBrainz and Cover Art Archive lookups.");
+    let _ = tr("Use remote album art when server artwork is missing.");
     let _ = tr("Clear Cached Library");
     let _ = tr("Clear Cache");
     let _ = tr("This removes cached library metadata for the active server. Login stays saved.");
@@ -118,6 +122,9 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Prefer server lyrics");
     let _ = tr("Search server lyrics before external providers.");
     let _ = tr("Use remote lyric providers when server lyrics are unavailable.");
+    let _ = tr(
+        "Stop playback reporting, external lyrics, external metadata, notifications, and presence.",
+    );
     let _ = tr("Music Server");
     let _ = tr("Private mode is on");
     let _ = tr("Left sidebar density");
