@@ -415,11 +415,57 @@ impl Shell {
         key: LibraryListKey,
         context: &str,
     ) -> gtk::Widget {
+        let (_empty, search, view) = self.searchable_track_collection(tracks, key);
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        wrapper.set_widget_name(context);
+        wrapper.append(&self.library_toolbar(key, search));
+        wrapper.append(&view);
+        wrapper.upcast()
+    }
+
+    pub(super) fn library_tracks_route_panel(
+        self: &Rc<Self>,
+        tracks: Vec<Track>,
+        key: LibraryListKey,
+        context: &str,
+        empty_body: &str,
+    ) -> gtk::Widget {
+        let (empty, search, view) = self.searchable_track_collection(tracks, key);
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        wrapper.add_css_class("route-content");
+        wrapper.set_margin_top(24);
+        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_vexpand(true);
+        wrapper.set_widget_name(context);
+        wrapper.append(&self.library_toolbar(key, search));
+
+        if empty {
+            wrapper.append(&self.route_empty_view(empty_body));
+        } else {
+            let scroller = gtk::ScrolledWindow::new();
+            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            scroller.set_min_content_width(0);
+            scroller.set_vexpand(true);
+            scroller.set_child(Some(&view));
+            wrapper.append(&scroller);
+        }
+
+        wrapper.upcast()
+    }
+
+    fn searchable_track_collection(
+        self: &Rc<Self>,
+        tracks: Vec<Track>,
+        key: LibraryListKey,
+    ) -> (bool, gtk::SearchEntry, gtk::Widget) {
+        let empty = tracks.is_empty();
         let source_tracks = Rc::new(tracks);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         populate_track_model_for_settings(
             &model,
-            &source_tracks,
+            source_tracks.as_ref(),
             &self.library_settings(key),
             "",
             false,
@@ -434,7 +480,7 @@ impl Shell {
             search.connect_search_changed(move |entry| {
                 populate_track_model_for_settings(
                     &model,
-                    &source_tracks,
+                    source_tracks.as_ref(),
                     &shell.library_settings(key),
                     entry.text().as_str(),
                     false,
@@ -442,11 +488,7 @@ impl Shell {
             });
         }
         let view = track_collection_widget(self, model, key);
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        wrapper.set_widget_name(context);
-        wrapper.append(&self.library_toolbar(key, search));
-        wrapper.append(&view);
-        wrapper.upcast()
+        (empty, search, view)
     }
 
     pub(super) fn library_album_collection_panel(

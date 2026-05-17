@@ -1,13 +1,16 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use gtk::glib;
-use rufin_core::{Album, AlbumId, Artist, ArtistId, Route, Track, TrackId, TrackSortKey};
+use rufin_core::{
+    Album, AlbumId, Artist, ArtistId, LibraryListKey, Route, Track, TrackId, TrackSortKey,
+};
 use rufin_provider::FavoriteItemId;
 
 use crate::controller::LibrarySnapshot;
 
-use super::set_favorite_button_active;
+use super::{Shell, set_favorite_button_active};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) enum FavoriteControlKey {
@@ -67,6 +70,18 @@ pub(super) fn update_favorite_controls(
 
 pub(super) fn clear_favorite_controls(controls: &FavoriteControls) {
     controls.borrow_mut().clear();
+}
+
+impl Shell {
+    pub(super) fn favorites_view(self: &Rc<Self>) -> gtk::Widget {
+        let favorites = self.state.library.borrow().favorites.clone();
+        self.library_tracks_route_panel(
+            favorites,
+            LibraryListKey::Tracks,
+            "favorites",
+            "Favorite tracks will appear here after you add them.",
+        )
+    }
 }
 
 pub(super) fn merge_favorite_snapshot(

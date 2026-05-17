@@ -1413,22 +1413,7 @@ impl Shell {
             Route::Albums => self.library_albums_view(),
             Route::AlbumDetail(album_id) => self.album_detail_view(album_id),
             Route::Tracks => self.library_tracks_route_view(),
-            Route::Favorites => {
-                let favorites = self.state.library.borrow().favorites.clone();
-                let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
-                wrapper.add_css_class("route-content");
-                wrapper.set_margin_top(24);
-                wrapper.set_margin_bottom(28);
-                wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-                wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
-                wrapper.set_vexpand(true);
-                wrapper.append(&self.library_tracks_panel(
-                    favorites,
-                    LibraryListKey::Tracks,
-                    "favorites",
-                ));
-                wrapper.upcast()
-            }
+            Route::Favorites => self.favorites_view(),
             Route::Artists => self.library_artist_list_view(false),
             Route::ArtistDetail(artist_id) => self.artist_detail_view(artist_id),
             Route::ArtistDiscography(artist_id) => self.artist_discography_view(artist_id),
@@ -4043,6 +4028,7 @@ fn route_uses_responsive_cards(route: &Route) -> bool {
             | Route::Albums
             | Route::Artists
             | Route::AlbumArtists
+            | Route::Favorites
             | Route::ArtistDetail(_)
             | Route::ArtistDiscography(_)
             | Route::Genres
