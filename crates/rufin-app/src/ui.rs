@@ -411,6 +411,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 5);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
+    compact_nav.set_margin_end(20);
     let server_selector = build_server_selector();
 
     let main_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -5307,17 +5308,19 @@ fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
             artist.add_css_class("muted");
             artist.add_css_class("table-link-label");
             artist.set_xalign(0.0);
-            artist.set_halign(gtk::Align::Fill);
-            artist.set_hexpand(true);
+            artist.set_halign(gtk::Align::Start);
+            artist.set_hexpand(false);
             artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            artist.set_width_chars(1);
+            artist.set_max_width_chars(28);
 
             if let Some(route) = artist_route {
                 let button = gtk::Button::new();
                 button.add_css_class("flat");
                 button.add_css_class("table-link");
                 button.add_css_class("track-artist-link");
-                button.set_halign(gtk::Align::Fill);
-                button.set_hexpand(true);
+                button.set_halign(gtk::Align::Start);
+                button.set_hexpand(false);
                 button.set_cursor_from_name(Some("pointer"));
                 add_link_hover(button.upcast_ref(), &artist, &artist_text);
                 button.set_child(Some(&artist));
@@ -5374,7 +5377,10 @@ where
         label.add_css_class("table-link-label");
         label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_hexpand(true);
+        label.set_halign(gtk::Align::Start);
+        label.set_hexpand(false);
+        label.set_width_chars(1);
+        label.set_max_width_chars((width / 8).clamp(8, 32));
 
         let Some(route) = route else {
             list_item.set_child(Some(&label));
@@ -5384,8 +5390,8 @@ where
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.add_css_class("table-link");
-        button.set_halign(gtk::Align::Fill);
-        button.set_hexpand(true);
+        button.set_halign(gtk::Align::Start);
+        button.set_hexpand(false);
         button.set_cursor_from_name(Some("pointer"));
 
         add_link_hover(button.upcast_ref(), &label, &text);
