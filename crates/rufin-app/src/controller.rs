@@ -48,6 +48,7 @@ pub struct LibrarySnapshot {
     pub sync_status: String,
     pub last_error: Option<String>,
     pub home_sections: Vec<HomeSection>,
+    pub prefetched_explore: Option<HomeSection>,
     pub albums: Vec<Album>,
     pub tracks: Vec<Track>,
     pub artists: Vec<Artist>,
@@ -113,6 +114,7 @@ impl LibrarySnapshot {
             sync_status: "Add a Jellyfin server to start.".to_string(),
             last_error: None,
             home_sections: Vec::new(),
+            prefetched_explore: None,
             albums: Vec::new(),
             tracks: Vec::new(),
             artists: Vec::new(),
@@ -128,6 +130,10 @@ impl LibrarySnapshot {
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
+    HomeSectionPrefetched {
+        server_id: ServerId,
+        section: HomeSection,
+    },
     FavoriteChanged {
         item_id: FavoriteItemId,
         favorite: bool,
@@ -169,6 +175,7 @@ pub struct AppController {
     events: Sender<ControllerEvent>,
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    explore_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_in_flight: Arc<Mutex<HashSet<String>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
 }
@@ -180,6 +187,21 @@ struct HomeRefreshContext {
     events: Sender<ControllerEvent>,
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+}
+
+struct ExplorePrefetchContext {
+    store: StoreHandle,
+    runtime: Arc<Runtime>,
+    secrets: Arc<dyn SecretStore>,
+    events: Sender<ControllerEvent>,
+    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    explore_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum HomeRefreshTarget {
+    WithoutExplore,
+    Section(HomeSectionKind),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -577,6 +599,7 @@ impl AppController {
                 events,
                 sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
+                explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
             };
@@ -618,6 +641,7 @@ impl AppController {
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
         };
@@ -665,6 +689,7 @@ impl AppController {
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
         };
@@ -733,13 +758,13 @@ impl AppController {
         }
     }
 
-    pub fn refresh_home_sections_for_active(&self) {
+    pub fn refresh_home_sections_without_explore_for_active(&self) {
         let active = self
             .store
             .with_store(|store| store.active_server())
             .unwrap_or(None);
         if let Some(saved) = active {
-            self.start_home_refresh_for_saved(saved, None);
+            self.start_home_refresh_for_saved(saved, HomeRefreshTarget::WithoutExplore);
         }
     }
 
@@ -749,15 +774,54 @@ impl AppController {
             .with_store(|store| store.active_server())
             .unwrap_or(None);
         if let Some(saved) = active {
-            self.start_home_refresh_for_saved(saved, Some(kind));
+            self.start_home_refresh_for_saved(saved, HomeRefreshTarget::Section(kind));
         }
     }
 
-    fn start_home_refresh_for_saved(
-        &self,
-        saved: SavedServer,
-        section_kind: Option<HomeSectionKind>,
-    ) {
+    pub fn prefetch_explore_for_active(&self) {
+        let active = self
+            .store
+            .with_store(|store| store.active_server())
+            .unwrap_or(None);
+        if let Some(saved) = active {
+            self.start_explore_prefetch_for_saved(saved);
+        }
+    }
+
+    pub fn promote_prefetched_explore_for_active(&self, section: HomeSection) {
+        if section.kind != HomeSectionKind::Explore {
+            return;
+        }
+        let active = self
+            .store
+            .with_store(|store| store.active_server())
+            .unwrap_or(None);
+        let Some(saved) = active else {
+            return;
+        };
+        start_prefetched_home_section_promotion_thread(
+            self.store.clone(),
+            self.events.clone(),
+            saved.server.id,
+            section,
+        );
+    }
+
+    fn start_explore_prefetch_for_saved(&self, saved: SavedServer) {
+        start_explore_prefetch_thread(
+            ExplorePrefetchContext {
+                store: self.store.clone(),
+                runtime: Arc::clone(&self.runtime),
+                secrets: Arc::clone(&self.secrets),
+                events: self.events.clone(),
+                sync_in_flight: Arc::clone(&self.sync_in_flight),
+                explore_prefetch_in_flight: Arc::clone(&self.explore_prefetch_in_flight),
+            },
+            saved,
+        );
+    }
+
+    fn start_home_refresh_for_saved(&self, saved: SavedServer, target: HomeRefreshTarget) {
         start_home_refresh_thread(
             HomeRefreshContext {
                 store: self.store.clone(),
@@ -768,7 +832,7 @@ impl AppController {
                 home_refresh_in_flight: Arc::clone(&self.home_refresh_in_flight),
             },
             saved,
-            section_kind,
+            target,
         );
     }
 
@@ -2362,7 +2426,7 @@ fn start_sync_thread(
 fn start_home_refresh_thread(
     context: HomeRefreshContext,
     saved: SavedServer,
-    section_kind: Option<HomeSectionKind>,
+    target: HomeRefreshTarget,
 ) {
     if saved.server.provider == "fake" {
         return;
@@ -2387,15 +2451,15 @@ fn start_home_refresh_thread(
     }
 
     thread::spawn(move || {
-        let result = match section_kind {
-            Some(kind) => refresh_home_section_for_saved(
+        let result = match target {
+            HomeRefreshTarget::Section(kind) => refresh_home_section_for_saved(
                 &context.store,
                 &context.runtime,
                 &context.secrets,
                 &saved,
                 kind,
             ),
-            None => refresh_home_sections_for_saved(
+            HomeRefreshTarget::WithoutExplore => refresh_home_sections_without_explore_for_saved(
                 &context.store,
                 &context.runtime,
                 &context.secrets,
@@ -2412,6 +2476,73 @@ fn start_home_refresh_thread(
             }
             Err(error) => {
                 warn!(%error, "failed to refresh home sections");
+            }
+        }
+    });
+}
+
+fn start_explore_prefetch_thread(context: ExplorePrefetchContext, saved: SavedServer) {
+    if saved.server.provider == "fake" {
+        return;
+    }
+
+    let server_id = saved.server.id.clone();
+    if sync_is_running(&context.sync_in_flight, &server_id) {
+        return;
+    }
+    match context.explore_prefetch_in_flight.lock() {
+        Ok(mut running) => {
+            if !running.insert(server_id.clone()) {
+                return;
+            }
+        }
+        Err(_) => {
+            let _sent = context.events.send(ControllerEvent::Error(
+                "Explore prefetch guard lock was poisoned.".to_string(),
+            ));
+            return;
+        }
+    }
+
+    thread::spawn(move || {
+        let result = prefetch_home_section_for_saved(
+            &context.store,
+            &context.runtime,
+            &context.secrets,
+            &saved,
+            HomeSectionKind::Explore,
+        );
+        if let Ok(mut running) = context.explore_prefetch_in_flight.lock() {
+            running.remove(&server_id);
+        }
+        match result {
+            Ok(section) => {
+                let _sent = context
+                    .events
+                    .send(ControllerEvent::HomeSectionPrefetched { server_id, section });
+            }
+            Err(error) => {
+                warn!(%error, "failed to prefetch Explore section");
+            }
+        }
+    });
+}
+
+fn start_prefetched_home_section_promotion_thread(
+    store: StoreHandle,
+    events: Sender<ControllerEvent>,
+    server_id: ServerId,
+    section: HomeSection,
+) {
+    thread::spawn(move || {
+        let result = promote_prefetched_home_section(&store, &server_id, &section)
+            .and_then(|()| load_snapshot(&store).map(Box::new));
+        match result {
+            Ok(snapshot) => {
+                let _sent = events.send(ControllerEvent::Snapshot(snapshot));
+            }
+            Err(error) => {
+                warn!(%error, "failed to promote prefetched home section");
             }
         }
     });
@@ -2439,14 +2570,18 @@ fn run_sync_job(
     runtime.block_on(sync_provider(store, &saved.server.id, &provider))
 }
 
-fn refresh_home_sections_for_saved(
+fn refresh_home_sections_without_explore_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
 ) -> Result<(), String> {
     let provider = provider_for_saved(store, runtime, secrets, saved)?;
-    runtime.block_on(refresh_home_sections(store, &saved.server.id, &provider))
+    runtime.block_on(refresh_home_sections_without_explore(
+        store,
+        &saved.server.id,
+        &provider,
+    ))
 }
 
 fn refresh_home_section_for_saved(
@@ -2458,6 +2593,22 @@ fn refresh_home_section_for_saved(
 ) -> Result<(), String> {
     let provider = provider_for_saved(store, runtime, secrets, saved)?;
     runtime.block_on(refresh_home_section(
+        store,
+        &saved.server.id,
+        &provider,
+        kind,
+    ))
+}
+
+fn prefetch_home_section_for_saved(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedServer,
+    kind: HomeSectionKind,
+) -> Result<HomeSection, String> {
+    let provider = provider_for_saved(store, runtime, secrets, saved)?;
+    runtime.block_on(prefetch_home_section(
         store,
         &saved.server.id,
         &provider,
@@ -2641,6 +2792,20 @@ async fn refresh_home_sections(
     cache_home_sections(store, server_id, &sections, generation)
 }
 
+async fn refresh_home_sections_without_explore(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &impl MusicProvider,
+) -> Result<(), String> {
+    for kind in home_refresh_section_kinds()
+        .into_iter()
+        .filter(|kind| *kind != HomeSectionKind::Explore)
+    {
+        refresh_home_section(store, server_id, provider, kind).await?;
+    }
+    Ok(())
+}
+
 async fn refresh_home_section(
     store: &StoreHandle,
     server_id: &ServerId,
@@ -2654,6 +2819,36 @@ async fn refresh_home_section(
         .await
         .map_err(|error| error.to_string())?;
     cache_home_section(store, server_id, &section, generation)
+}
+
+async fn prefetch_home_section(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &impl MusicProvider,
+    kind: HomeSectionKind,
+) -> Result<HomeSection, String> {
+    let generation =
+        store.with_store(|store| store.sync_state(server_id).map(|state| state.generation))?;
+    let section = provider
+        .home_section(kind)
+        .await
+        .map_err(|error| error.to_string())?;
+    cache_home_section_items(store, server_id, &section, generation)?;
+    store
+        .with_store(|store| store.upsert_home_section_prefetch(server_id, &section, generation))?;
+    Ok(section)
+}
+
+fn promote_prefetched_home_section(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    section: &HomeSection,
+) -> Result<(), String> {
+    let generation =
+        store.with_store(|store| store.sync_state(server_id).map(|state| state.generation))?;
+    cache_home_section(store, server_id, section, generation)?;
+    store.with_store(|store| store.clear_home_section_prefetch(server_id, section.kind))?;
+    Ok(())
 }
 
 fn cache_home_sections(
@@ -2699,6 +2894,16 @@ fn sync_page_finished(item_count: usize, total: usize, offset: usize) -> bool {
     item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < PAGE_SIZE)
 }
 
+fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
+    [
+        HomeSectionKind::Explore,
+        HomeSectionKind::MostPlayed,
+        HomeSectionKind::NewlyAdded,
+        HomeSectionKind::RecentlyPlayed,
+        HomeSectionKind::RecentlyReleased,
+    ]
+}
+
 fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     let Some(saved) = store.with_store(|store| store.active_server())? else {
         return Ok(LibrarySnapshot::first_run());
@@ -2707,6 +2912,9 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         .with_store(|store| store.sync_state(&saved.server.id))
         .ok();
     let home_sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
+    let prefetched_explore = store.with_store(|store| {
+        store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+    })?;
     let albums = store.with_store(|store| {
         store
             .load_albums(&saved.server.id, 0, 500)
@@ -2755,6 +2963,7 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         sync_status: status,
         last_error,
         home_sections,
+        prefetched_explore,
         albums,
         tracks,
         artists,
@@ -3551,8 +3760,9 @@ mod tests {
     use super::{
         AppController, ControllerEvent, LibrarySnapshot, PendingSeek, StoreHandle,
         auto_dj_candidates, load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
-        refresh_home_section, refresh_home_sections, restore_queue, seek_position_is_stale,
-        sync_page_finished,
+        prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
+        refresh_home_sections, refresh_home_sections_without_explore, restore_queue,
+        seek_position_is_stale, sync_page_finished,
     };
     use rufin_core::{
         AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, ImageRef, PlaylistId,
@@ -3798,6 +4008,153 @@ mod tests {
         assert_eq!(after[0].albums[0].id, AlbumId::fake(1));
         assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
         assert_eq!(after[1].tracks, vec![stale_track]);
+    }
+
+    #[test]
+    fn home_refresh_without_explore_leaves_explore_cache_unchanged() {
+        let runtime = Runtime::new().expect("runtime");
+        let store = StoreHandle::open_memory().expect("memory store");
+        let provider = FakeProvider::new(FakeScale::Small);
+        let saved = SavedServer {
+            server: provider.identity().server.clone(),
+            user_id: "fake-user".to_string(),
+            username: "fake".to_string(),
+            trust_invalid_cert: false,
+        };
+        let stale_album = runtime
+            .block_on(provider.albums(PagedRequest::new(8, 1)))
+            .expect("stale album page")
+            .items
+            .into_iter()
+            .next()
+            .expect("stale album");
+        let stale_track = runtime
+            .block_on(provider.tracks(PagedRequest::new(8, 1)))
+            .expect("stale track page")
+            .items
+            .into_iter()
+            .next()
+            .expect("stale track");
+
+        store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.upsert_albums(&saved.server.id, std::slice::from_ref(&stale_album), 0)?;
+                store.upsert_tracks(&saved.server.id, std::slice::from_ref(&stale_track), 0)?;
+                store.upsert_home_sections(
+                    &saved.server.id,
+                    &[
+                        HomeSection {
+                            kind: HomeSectionKind::Explore,
+                            albums: vec![stale_album.clone()],
+                            tracks: Vec::new(),
+                        },
+                        HomeSection {
+                            kind: HomeSectionKind::MostPlayed,
+                            albums: Vec::new(),
+                            tracks: vec![stale_track],
+                        },
+                    ],
+                    0,
+                )?;
+                Ok(())
+            })
+            .expect("seed stale home sections");
+
+        runtime
+            .block_on(refresh_home_sections_without_explore(
+                &store,
+                &saved.server.id,
+                &provider,
+            ))
+            .expect("refresh non-Explore home sections");
+
+        let after = store
+            .with_store(|store| store.load_home_sections(&saved.server.id))
+            .expect("load refreshed home sections");
+
+        assert_eq!(after[0].kind, HomeSectionKind::Explore);
+        assert_eq!(after[0].albums[0].id, stale_album.id);
+        assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
+        assert_eq!(after[1].tracks[0].id, TrackId::fake(1));
+    }
+
+    #[test]
+    fn explore_prefetch_promotes_only_when_requested() {
+        let runtime = Runtime::new().expect("runtime");
+        let store = StoreHandle::open_memory().expect("memory store");
+        let provider = FakeProvider::new(FakeScale::Small);
+        let saved = SavedServer {
+            server: provider.identity().server.clone(),
+            user_id: "fake-user".to_string(),
+            username: "fake".to_string(),
+            trust_invalid_cert: false,
+        };
+        let stale_album = runtime
+            .block_on(provider.albums(PagedRequest::new(8, 1)))
+            .expect("stale album page")
+            .items
+            .into_iter()
+            .next()
+            .expect("stale album");
+
+        store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.upsert_albums(&saved.server.id, std::slice::from_ref(&stale_album), 0)?;
+                store.upsert_home_section(
+                    &saved.server.id,
+                    &HomeSection {
+                        kind: HomeSectionKind::Explore,
+                        albums: vec![stale_album.clone()],
+                        tracks: Vec::new(),
+                    },
+                    0,
+                )?;
+                Ok(())
+            })
+            .expect("seed stale Explore");
+
+        let prefetched = runtime
+            .block_on(prefetch_home_section(
+                &store,
+                &saved.server.id,
+                &provider,
+                HomeSectionKind::Explore,
+            ))
+            .expect("prefetch Explore");
+        let visible_before = store
+            .with_store(|store| store.load_home_sections(&saved.server.id))
+            .expect("load visible sections");
+
+        assert_eq!(visible_before[0].albums[0].id, stale_album.id);
+        assert_eq!(prefetched.albums[0].id, AlbumId::fake(1));
+        assert!(
+            store
+                .with_store(|store| {
+                    store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+                })
+                .expect("load prefetched Explore")
+                .is_some()
+        );
+
+        promote_prefetched_home_section(&store, &saved.server.id, &prefetched)
+            .expect("promote prefetched Explore");
+
+        let visible_after = store
+            .with_store(|store| store.load_home_sections(&saved.server.id))
+            .expect("load promoted sections");
+        assert_eq!(visible_after[0].albums[0].id, AlbumId::fake(1));
+        assert!(
+            store
+                .with_store(|store| {
+                    store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+                })
+                .expect("load cleared prefetched Explore")
+                .is_none()
+        );
     }
 
     #[test]
@@ -4643,6 +5000,7 @@ mod tests {
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
         };
@@ -4704,6 +5062,7 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -4730,6 +5089,7 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -4751,6 +5111,7 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -4771,6 +5132,7 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -4792,6 +5154,7 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -4812,6 +5175,7 @@ mod tests {
                 | ControllerEvent::LoginStatus(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -4873,6 +5237,7 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::FavoriteChanged { .. }
@@ -4899,6 +5264,7 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::FavoriteChanged { .. }
@@ -4935,6 +5301,7 @@ mod tests {
                     | ControllerEvent::Lyrics(_)
                     | ControllerEvent::LyricsSearchResults { .. }
                     | ControllerEvent::LyricsSaved { .. }
+                    | ControllerEvent::HomeSectionPrefetched { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
                     | ControllerEvent::FavoriteChanged { .. }

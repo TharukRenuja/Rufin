@@ -251,6 +251,16 @@ impl Store {
                 PRIMARY KEY (server_id, section_kind, item_type, item_id)
             );
 
+            CREATE TABLE IF NOT EXISTS home_section_prefetch_items (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                section_kind TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                sync_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, section_kind, item_type, item_id)
+            );
+
             CREATE TABLE IF NOT EXISTS lyrics_cache (
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
                 track_id TEXT NOT NULL,
@@ -298,6 +308,8 @@ impl Store {
                 ON tracks(server_id, album_id, disc_number, track_number);
             CREATE INDEX IF NOT EXISTS home_section_items_order_idx
                 ON home_section_items(server_id, section_kind, position);
+            CREATE INDEX IF NOT EXISTS home_section_prefetch_items_order_idx
+                ON home_section_prefetch_items(server_id, section_kind, position);
             CREATE INDEX IF NOT EXISTS album_genres_server_genre_idx
                 ON album_genres(server_id, genre_name, album_id);
             CREATE INDEX IF NOT EXISTS track_genres_server_genre_idx
@@ -1131,23 +1143,83 @@ impl Store {
         })
     }
 
+    pub fn upsert_home_section_prefetch(
+        &self,
+        server_id: &ServerId,
+        section: &HomeSection,
+        generation: i64,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                DELETE FROM home_section_prefetch_items
+                WHERE server_id = ?1
+                  AND section_kind = ?2
+                ",
+                params![server_id.as_str(), home_section_kind_key(section.kind)],
+            )?;
+            Self::insert_home_section_items_for_table(
+                connection,
+                "home_section_prefetch_items",
+                server_id,
+                section,
+                generation,
+            )
+        })
+    }
+
+    pub fn clear_home_section_prefetch(
+        &self,
+        server_id: &ServerId,
+        kind: HomeSectionKind,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                DELETE FROM home_section_prefetch_items
+                WHERE server_id = ?1
+                  AND section_kind = ?2
+                ",
+                params![server_id.as_str(), home_section_kind_key(kind)],
+            )?;
+            Ok(())
+        })
+    }
+
     fn insert_home_section_items(
         connection: &Connection,
         server_id: &ServerId,
         section: &HomeSection,
         generation: i64,
     ) -> StoreResult<()> {
-        let mut insert_item = connection.prepare(
+        Self::insert_home_section_items_for_table(
+            connection,
+            "home_section_items",
+            server_id,
+            section,
+            generation,
+        )
+    }
+
+    fn insert_home_section_items_for_table(
+        connection: &Connection,
+        table: &str,
+        server_id: &ServerId,
+        section: &HomeSection,
+        generation: i64,
+    ) -> StoreResult<()> {
+        let sql = format!(
             "
-            INSERT INTO home_section_items (
+            INSERT INTO {table} (
                 server_id, section_kind, item_type, item_id, position, sync_generation
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(server_id, section_kind, item_type, item_id) DO UPDATE SET
                 position = excluded.position,
                 sync_generation = excluded.sync_generation
-            ",
-        )?;
+            "
+        );
+        let mut insert_item = connection.prepare(&sql)?;
         let section_kind = home_section_kind_key(section.kind);
         for (position, album) in section.albums.iter().enumerate() {
             insert_item.execute(params![
@@ -1199,6 +1271,32 @@ impl Store {
             .collect())
     }
 
+    pub fn load_home_section_prefetch(
+        &self,
+        server_id: &ServerId,
+        kind: HomeSectionKind,
+    ) -> StoreResult<Option<HomeSection>> {
+        let section = HomeSection {
+            kind,
+            albums: self.load_home_section_albums_from(
+                "home_section_prefetch_items",
+                server_id,
+                kind,
+            )?,
+            tracks: self.load_home_section_tracks_from(
+                "home_section_prefetch_items",
+                server_id,
+                kind,
+            )?,
+        };
+
+        if section.albums.is_empty() && section.tracks.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(section))
+        }
+    }
+
     fn load_legacy_home_sections(&self, server_id: &ServerId) -> StoreResult<Vec<HomeSection>> {
         let sections = [
             (HomeSectionKind::Explore, 0_usize),
@@ -1229,11 +1327,20 @@ impl Store {
         server_id: &ServerId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Album>> {
-        let mut statement = self.connection.prepare(
+        self.load_home_section_albums_from("home_section_items", server_id, kind)
+    }
+
+    fn load_home_section_albums_from(
+        &self,
+        table: &str,
+        server_id: &ServerId,
+        kind: HomeSectionKind,
+    ) -> StoreResult<Vec<Album>> {
+        let sql = format!(
             "
             SELECT a.album_id, a.title, a.artist, a.artist_id, a.year, a.track_count,
                    a.duration_seconds, a.favorite, a.color_seed, a.image_item_id, a.image_tag
-            FROM home_section_items h
+            FROM {table} h
             JOIN albums a
               ON a.server_id = h.server_id
              AND a.album_id = h.item_id
@@ -1241,8 +1348,9 @@ impl Store {
               AND h.section_kind = ?2
               AND h.item_type = 'album'
             ORDER BY h.position
-            ",
-        )?;
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
         let mut albums = collect_rows(statement.query_map(
             params![server_id.as_str(), home_section_kind_key(kind)],
             album_from_row,
@@ -1256,12 +1364,21 @@ impl Store {
         server_id: &ServerId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Track>> {
-        let mut statement = self.connection.prepare(
+        self.load_home_section_tracks_from("home_section_items", server_id, kind)
+    }
+
+    fn load_home_section_tracks_from(
+        &self,
+        table: &str,
+        server_id: &ServerId,
+        kind: HomeSectionKind,
+    ) -> StoreResult<Vec<Track>> {
+        let sql = format!(
             "
             SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                    t.duration_seconds, t.favorite, t.disc_number, t.track_number,
                    t.image_item_id, t.image_tag
-            FROM home_section_items h
+            FROM {table} h
             JOIN tracks t
               ON t.server_id = h.server_id
              AND t.track_id = h.item_id
@@ -1269,8 +1386,9 @@ impl Store {
               AND h.section_kind = ?2
               AND h.item_type = 'track'
             ORDER BY h.position
-            ",
-        )?;
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
         let mut tracks = collect_rows(statement.query_map(
             params![server_id.as_str(), home_section_kind_key(kind)],
             track_from_row,
@@ -2641,6 +2759,7 @@ fn clear_library_cache_on_connection(
     server_id: &ServerId,
 ) -> StoreResult<()> {
     for table in [
+        "home_section_prefetch_items",
         "home_section_items",
         "playlist_tracks",
         "playlists",
@@ -3992,6 +4111,68 @@ mod tests {
         assert_eq!(sections[1].kind, HomeSectionKind::MostPlayed);
         assert_eq!(sections[1].tracks[0].id, track_two.id);
         assert_eq!(sections[1].tracks[1].id, track_one.id);
+    }
+
+    #[test]
+    fn home_section_prefetch_does_not_replace_visible_section() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let visible_album = album(1);
+        let prefetched_album = album(2);
+
+        store
+            .upsert_albums(
+                &saved.server.id,
+                &[visible_album.clone(), prefetched_album.clone()],
+                generation,
+            )
+            .expect("upsert albums");
+        store
+            .upsert_home_section(
+                &saved.server.id,
+                &HomeSection {
+                    kind: HomeSectionKind::Explore,
+                    albums: vec![visible_album.clone()],
+                    tracks: Vec::new(),
+                },
+                generation,
+            )
+            .expect("upsert visible Explore");
+        store
+            .upsert_home_section_prefetch(
+                &saved.server.id,
+                &HomeSection {
+                    kind: HomeSectionKind::Explore,
+                    albums: vec![prefetched_album.clone()],
+                    tracks: Vec::new(),
+                },
+                generation,
+            )
+            .expect("upsert prefetched Explore");
+
+        let visible = store
+            .load_home_sections(&saved.server.id)
+            .expect("load visible sections");
+        let prefetched = store
+            .load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+            .expect("load prefetched Explore")
+            .expect("prefetched Explore");
+
+        assert_eq!(visible[0].albums[0].id, visible_album.id);
+        assert_eq!(prefetched.albums[0].id, prefetched_album.id);
+
+        store
+            .clear_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+            .expect("clear prefetched Explore");
+
+        assert!(
+            store
+                .load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+                .expect("load cleared prefetched Explore")
+                .is_none()
+        );
     }
 
     #[test]

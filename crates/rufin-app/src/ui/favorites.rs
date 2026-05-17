@@ -198,6 +198,7 @@ mod tests {
             sync_status: String::new(),
             last_error: None,
             home_sections: Vec::new(),
+            prefetched_explore: None,
             albums: Vec::new(),
             tracks: vec![Track {
                 id: track_id,

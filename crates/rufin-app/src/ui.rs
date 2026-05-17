@@ -121,6 +121,7 @@ struct AppState {
     responsive_render_queued: Cell<bool>,
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
+    prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
     cover_decodes: RefCell<HashSet<String>>,
     decoded_covers: RefCell<HashMap<String, Pixbuf>>,
@@ -158,6 +159,12 @@ struct ArtworkTile {
 struct HomeSectionState {
     page_start: usize,
     page_size: usize,
+}
+
+#[derive(Clone)]
+struct PrefetchedHomeSection {
+    server_id: rufin_core::ServerId,
+    section: HomeSection,
 }
 
 struct PagedGridCursor {
@@ -329,6 +336,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     );
     let perf_requires_assets =
         options.ui_perf_run && options.fake_scale.is_none() && library_has_image_refs(&library);
+    let prefetched_explore = prefetched_explore_from_snapshot(&library);
 
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
@@ -357,6 +365,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         responsive_render_queued: Cell::new(false),
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
+        prefetched_explore: RefCell::new(prefetched_explore),
         cover_bindings: RefCell::new(HashMap::new()),
         cover_decodes: RefCell::new(HashSet::new()),
         decoded_covers: RefCell::new(HashMap::new()),
@@ -957,6 +966,26 @@ fn initial_cached_grid_covers(shell: &Rc<Shell>) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
+fn prefetched_explore_from_snapshot(snapshot: &LibrarySnapshot) -> Option<PrefetchedHomeSection> {
+    Some(PrefetchedHomeSection {
+        server_id: snapshot.server.as_ref()?.id.clone(),
+        section: snapshot.prefetched_explore.clone()?,
+    })
+}
+
+fn upsert_snapshot_home_section(sections: &mut Vec<HomeSection>, section: HomeSection) {
+    if let Some(existing) = sections
+        .iter_mut()
+        .find(|existing| existing.kind == section.kind)
+    {
+        *existing = section;
+    } else if section.kind == HomeSectionKind::Explore {
+        sections.insert(0, section);
+    } else {
+        sections.push(section);
+    }
+}
+
 impl Shell {
     fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
@@ -965,7 +994,7 @@ impl Shell {
         self.state.routes.borrow_mut().navigate(route);
         self.render_current_route();
         if refresh_home {
-            self.controller.refresh_home_sections_for_active();
+            self.refresh_home_after_route_display();
         }
     }
 
@@ -997,7 +1026,86 @@ impl Shell {
 
     fn refresh_home_sections_for_route(&self, route: &Route) {
         if matches!(route, Route::Home) {
-            self.controller.refresh_home_sections_for_active();
+            self.refresh_home_after_route_display();
+        }
+    }
+
+    fn refresh_home_after_route_display(&self) {
+        self.controller
+            .refresh_home_sections_without_explore_for_active();
+        self.controller.prefetch_explore_for_active();
+    }
+
+    fn refresh_home_section(self: &Rc<Self>, section_kind: HomeSectionKind) {
+        if let Some(state) = self
+            .state
+            .home_section_state
+            .borrow_mut()
+            .get_mut(&section_kind)
+        {
+            state.page_start = 0;
+        }
+
+        if section_kind == HomeSectionKind::Explore && self.apply_prefetched_explore() {
+            return;
+        }
+
+        self.controller
+            .refresh_home_section_for_active(section_kind);
+        if section_kind == HomeSectionKind::Explore {
+            self.controller.prefetch_explore_for_active();
+        }
+    }
+
+    fn apply_prefetched_explore(self: &Rc<Self>) -> bool {
+        let Some(server_id) = self
+            .state
+            .library
+            .borrow()
+            .server
+            .as_ref()
+            .map(|server| server.id.clone())
+        else {
+            return false;
+        };
+        let Some(prefetched) = self.state.prefetched_explore.borrow_mut().take() else {
+            return false;
+        };
+        if prefetched.server_id != server_id {
+            return false;
+        }
+
+        {
+            let mut library = self.state.library.borrow_mut();
+            upsert_snapshot_home_section(&mut library.home_sections, prefetched.section.clone());
+        }
+        self.controller
+            .promote_prefetched_explore_for_active(prefetched.section);
+        self.controller.prefetch_explore_for_active();
+        self.render_current_route_preserving_scroll();
+        true
+    }
+
+    fn update_prefetched_explore_from_snapshot(
+        &self,
+        server_id: Option<rufin_core::ServerId>,
+        prefetched: Option<PrefetchedHomeSection>,
+    ) {
+        if prefetched.is_some() {
+            *self.state.prefetched_explore.borrow_mut() = prefetched;
+            return;
+        }
+
+        let keep_current = {
+            let current = self.state.prefetched_explore.borrow();
+            current.as_ref().is_some_and(|current| {
+                server_id
+                    .as_ref()
+                    .is_some_and(|server_id| &current.server_id == server_id)
+            })
+        };
+        if !keep_current {
+            *self.state.prefetched_explore.borrow_mut() = None;
         }
     }
 
@@ -1503,6 +1611,29 @@ impl Shell {
         self.record_perf_route_render(route_name, render_started.elapsed());
     }
 
+    fn render_current_route_preserving_scroll(self: &Rc<Self>) {
+        let scroll_value = self.current_route_scroll_value();
+        self.render_current_route();
+        if let Some(value) = scroll_value {
+            self.restore_current_route_scroll(value);
+        }
+    }
+
+    fn current_route_scroll_value(&self) -> Option<f64> {
+        find_largest_scrolled_window(&self.route_host.clone().upcast())
+            .map(|scroller| scroller.vadjustment().value())
+    }
+
+    fn restore_current_route_scroll(&self, value: f64) {
+        let route_host = self.route_host.clone();
+        glib::idle_add_local_once(move || {
+            restore_scrolled_window_value(&route_host.clone().upcast(), value);
+            glib::timeout_add_local_once(Duration::from_millis(16), move || {
+                restore_scrolled_window_value(&route_host.clone().upcast(), value);
+            });
+        });
+    }
+
     fn register_favorite_button(&self, key: FavoriteControlKey, button: &gtk::Button) {
         register_favorite_control(&self.state.favorite_controls, key, button);
     }
@@ -1701,17 +1832,7 @@ impl Shell {
 
         let shell = Rc::clone(self);
         refresh.connect_clicked(move |_| {
-            if let Some(state) = shell
-                .state
-                .home_section_state
-                .borrow_mut()
-                .get_mut(&section_kind)
-            {
-                state.page_start = 0;
-            }
-            shell
-                .controller
-                .refresh_home_section_for_active(section_kind);
+            shell.refresh_home_section(section_kind);
         });
 
         render_home_album_page(self, &row, &previous, &next, section_kind, &albums);
@@ -1774,17 +1895,7 @@ impl Shell {
 
         let shell = Rc::clone(self);
         refresh.connect_clicked(move |_| {
-            if let Some(state) = shell
-                .state
-                .home_section_state
-                .borrow_mut()
-                .get_mut(&section_kind)
-            {
-                state.page_start = 0;
-            }
-            shell
-                .controller
-                .refresh_home_section_for_active(section_kind);
+            shell.refresh_home_section(section_kind);
         });
 
         render_home_track_page(self, &row, &previous, &next, section_kind, &tracks);
@@ -4110,7 +4221,7 @@ fn schedule_startup_home_refresh(shell: &Rc<Shell>) {
         Duration::from_millis(STARTUP_HOME_REFRESH_DELAY_MS),
         move || {
             debug!("refreshing home sections after startup");
-            shell.controller.refresh_home_sections_for_active();
+            shell.refresh_home_after_route_display();
         },
     );
 }
@@ -4122,9 +4233,25 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
         while let Ok(event) = receiver.try_recv() {
             match event {
                 ControllerEvent::Snapshot(snapshot) => {
+                    let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
+                    let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     *shell.state.library.borrow_mut() = *snapshot;
+                    shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
                     shell.update_server_selector();
-                    shell.render_current_route();
+                    shell.render_current_route_preserving_scroll();
+                }
+                ControllerEvent::HomeSectionPrefetched { server_id, section } => {
+                    let active_server_id = shell
+                        .state
+                        .library
+                        .borrow()
+                        .server
+                        .as_ref()
+                        .map(|server| server.id.clone());
+                    if active_server_id.as_ref() == Some(&server_id) {
+                        *shell.state.prefetched_explore.borrow_mut() =
+                            Some(PrefetchedHomeSection { server_id, section });
+                    }
                 }
                 ControllerEvent::FavoriteChanged {
                     item_id,
