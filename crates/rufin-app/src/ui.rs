@@ -29,7 +29,7 @@ use rufin_core::{
     TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
-use rufin_provider::{FavoriteItemId, Lyrics};
+use rufin_provider::{FavoriteItemId, Lyrics, LyricsSource};
 use rufin_store::{CachedArtistDetail, CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
@@ -3129,8 +3129,9 @@ impl Shell {
         } else {
             (tr("No track playing"), false)
         };
+        let lyrics = self.state.lyrics.borrow();
         let clear_auto_search_enabled =
-            auto_lyrics_skip_action_enabled(&settings, current_track_id.as_ref());
+            auto_lyrics_skip_action_enabled(&settings, current_track_id.as_ref(), lyrics.as_ref());
         drop(settings);
         self.lyrics_pane
             .set_search_action(&search_label, search_enabled);
@@ -3143,7 +3144,6 @@ impl Shell {
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
             seek_shell.seek_to_lyrics_position(position_millis);
         });
-        let lyrics = self.state.lyrics.borrow();
         self.lyrics_pane
             .set_content(lyrics.as_ref(), empty_status, seek);
         drop(lyrics);
@@ -4132,10 +4132,14 @@ fn auto_lyrics_request_for_settings(
 fn auto_lyrics_skip_action_enabled(
     settings: &AppSettings,
     track_id: Option<&rufin_core::TrackId>,
+    lyrics: Option<&Lyrics>,
 ) -> bool {
     let Some(track_id) = track_id else {
         return false;
     };
+    if lyrics.is_some_and(|lyrics| lyrics.source == LyricsSource::Server) {
+        return false;
+    }
     !settings.private_mode
         && settings.external_lyrics_enabled
         && !auto_lyrics_search_is_suppressed(settings, track_id)
@@ -6307,6 +6311,7 @@ mod tests {
         current_playback_track_id, seekbar_target_seconds,
     };
     use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
+    use rufin_provider::{LyricLine, Lyrics, LyricsSource};
 
     #[test]
     fn queue_lyrics_position_clamps_to_available_height() {
@@ -6372,21 +6377,73 @@ mod tests {
             ..AppSettings::default()
         };
 
-        assert!(auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
+        assert!(auto_lyrics_skip_action_enabled(
+            &settings,
+            Some(&track_id),
+            None
+        ));
 
         settings
             .suppressed_auto_lyrics_track_ids
             .push(track_id.as_str().to_string());
-        assert!(!auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
+        assert!(!auto_lyrics_skip_action_enabled(
+            &settings,
+            Some(&track_id),
+            None
+        ));
 
         settings.suppressed_auto_lyrics_track_ids.clear();
         settings.external_lyrics_enabled = false;
-        assert!(!auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
+        assert!(!auto_lyrics_skip_action_enabled(
+            &settings,
+            Some(&track_id),
+            None
+        ));
 
         settings.external_lyrics_enabled = true;
         settings.private_mode = true;
-        assert!(!auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
-        assert!(!auto_lyrics_skip_action_enabled(&settings, None));
+        assert!(!auto_lyrics_skip_action_enabled(
+            &settings,
+            Some(&track_id),
+            None
+        ));
+        assert!(!auto_lyrics_skip_action_enabled(&settings, None, None));
+    }
+
+    #[test]
+    fn auto_lyrics_skip_action_is_hidden_for_server_lyrics() {
+        let track_id = TrackId::fake(13);
+        let settings = AppSettings {
+            external_lyrics_enabled: true,
+            ..AppSettings::default()
+        };
+        let server_lyrics = Lyrics {
+            track_id: track_id.clone(),
+            source: LyricsSource::Server,
+            lines: vec![LyricLine {
+                text: "server line".to_string(),
+                start_millis: None,
+            }],
+        };
+        let remote_lyrics = Lyrics {
+            track_id: track_id.clone(),
+            source: LyricsSource::Remote,
+            lines: vec![LyricLine {
+                text: "remote line".to_string(),
+                start_millis: None,
+            }],
+        };
+
+        assert!(!auto_lyrics_skip_action_enabled(
+            &settings,
+            Some(&track_id),
+            Some(&server_lyrics)
+        ));
+        assert!(auto_lyrics_skip_action_enabled(
+            &settings,
+            Some(&track_id),
+            Some(&remote_lyrics)
+        ));
     }
 
     #[test]
