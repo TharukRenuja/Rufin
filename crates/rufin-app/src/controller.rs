@@ -138,7 +138,8 @@ pub enum ControllerEvent {
     Lyrics(Box<Option<Lyrics>>),
     LyricsSearchResults {
         track_id: TrackId,
-        query: String,
+        artist_name: String,
+        track_name: String,
         results: Vec<LyricsSearchResult>,
     },
     LyricsSaved {
@@ -1860,9 +1861,10 @@ impl AppController {
         });
     }
 
-    pub fn search_lyrics_for_current(&self, query: String) {
-        let query = query.trim().to_string();
-        if query.is_empty() {
+    pub fn search_lyrics_for_current(&self, artist_name: String, track_name: String) {
+        let artist_name = artist_name.trim().to_string();
+        let track_name = track_name.trim().to_string();
+        if artist_name.is_empty() && track_name.is_empty() {
             return;
         }
         let Some((_server_id, entry, _position)) = self.current_queue_entry() else {
@@ -1873,11 +1875,12 @@ impl AppController {
         };
         let track_id = entry.track_id.clone();
         let events = self.events.clone();
-        thread::spawn(move || match lrclib_search(&query) {
+        thread::spawn(move || match lrclib_search(&artist_name, &track_name) {
             Ok(results) => {
                 let _sent = events.send(ControllerEvent::LyricsSearchResults {
                     track_id,
-                    query,
+                    artist_name,
+                    track_name,
                     results,
                 });
             }
@@ -1885,7 +1888,8 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 let _sent = events.send(ControllerEvent::LyricsSearchResults {
                     track_id,
-                    query,
+                    artist_name,
+                    track_name,
                     results: Vec::new(),
                 });
             }
@@ -3032,7 +3036,7 @@ struct LrcLibLyricsDto {
     #[serde(default)]
     album_name: Option<String>,
     #[serde(default)]
-    duration: Option<u32>,
+    duration: Option<f64>,
     synced_lyrics: Option<String>,
     plain_lyrics: Option<String>,
 }
@@ -3044,17 +3048,25 @@ impl From<LrcLibLyricsDto> for LyricsSearchResult {
             track_name: value.track_name,
             artist_name: value.artist_name,
             album_name: value.album_name.unwrap_or_default(),
-            duration_seconds: value.duration.unwrap_or_default(),
+            duration_seconds: value.duration.unwrap_or_default().round() as u32,
             synced_lyrics: value.synced_lyrics,
             plain_lyrics: value.plain_lyrics,
         }
     }
 }
 
-fn lrclib_search(query: &str) -> Result<Vec<LyricsSearchResult>, String> {
+fn lrclib_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearchResult>, String> {
     let mut url =
         reqwest::Url::parse("https://lrclib.net/api/search").map_err(|error| error.to_string())?;
-    url.query_pairs_mut().append_pair("q", query);
+    {
+        let mut query = url.query_pairs_mut();
+        if !track_name.trim().is_empty() {
+            query.append_pair("track_name", track_name.trim());
+        }
+        if !artist_name.trim().is_empty() {
+            query.append_pair("artist_name", artist_name.trim());
+        }
+    }
     let client = reqwest::blocking::Client::builder()
         .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
         .build()
@@ -4564,6 +4576,27 @@ mod tests {
         assert_eq!(lyrics.lines[0].start_millis, Some(12_340));
         assert_eq!(lyrics.lines[1].text, "second line");
         assert_eq!(lyrics.lines[1].start_millis, Some(13_005));
+    }
+
+    #[test]
+    fn lrclib_duration_accepts_fractional_seconds() {
+        let json = r#"{
+            "id": 7,
+            "trackName": "Imagine",
+            "artistName": "John Lennon",
+            "albumName": "Imagine",
+            "duration": 185.0,
+            "plainLyrics": "line",
+            "syncedLyrics": null
+        }"#;
+
+        let dto =
+            serde_json::from_str::<super::LrcLibLyricsDto>(json).expect("deserialize lrclib dto");
+        let result = super::LyricsSearchResult::from(dto);
+
+        assert_eq!(result.duration_seconds, 185);
+        assert_eq!(result.track_name, "Imagine");
+        assert_eq!(result.artist_name, "John Lennon");
     }
 
     #[test]

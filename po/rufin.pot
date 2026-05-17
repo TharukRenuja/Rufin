@@ -476,6 +476,10 @@ msgstr ""
 msgid "No track playing"
 msgstr ""
 
+#: crates/rufin-app/src/ui.rs:3012
+msgid "Song"
+msgstr ""
+
 #: crates/rufin-app/src/ui.rs:2918
 msgid "Ready"
 msgstr ""
@@ -501,7 +505,7 @@ msgid "Saved to"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:3793
-msgid "Enter a search term."
+msgid "Enter an artist or song."
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:3800
@@ -509,11 +513,19 @@ msgid "Searching..."
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:3840
-msgid "Synced"
+msgid "Synchronized"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:3842
-msgid "Plain"
+msgid "Unsynchronized"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3842
+msgid "Synchronized + Unsynchronized"
+msgstr ""
+
+#: crates/rufin-app/src/ui.rs:3842
+msgid "No lyrics"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2771

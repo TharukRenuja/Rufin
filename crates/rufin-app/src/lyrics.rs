@@ -101,6 +101,13 @@ impl LyricsPane {
         self.search_button.set_sensitive(enabled);
     }
 
+    pub fn present_search_popover(&self, popover: &gtk::Popover) {
+        if popover.parent().is_none() {
+            popover.set_parent(&self.search_button);
+        }
+        popover.popup();
+    }
+
     pub fn set_content(
         &self,
         lyrics: Option<&Lyrics>,

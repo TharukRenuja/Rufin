@@ -131,9 +131,10 @@ struct AppState {
 
 #[derive(Clone)]
 struct LyricsSearchDialog {
-    dialog: adw::Dialog,
+    popover: gtk::Popover,
     track_id: rufin_core::TrackId,
-    entry: gtk::SearchEntry,
+    artist_entry: gtk::Entry,
+    title_entry: gtk::Entry,
     search_button: gtk::Button,
     list: gtk::ListBox,
     status: gtk::Label,
@@ -2980,8 +2981,8 @@ impl Shell {
 
     fn present_lyrics_search_dialog(self: &Rc<Self>) {
         if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref() {
-            dialog.dialog.present(Some(&self.window));
-            dialog.entry.grab_focus();
+            self.lyrics_pane.present_search_popover(&dialog.popover);
+            dialog.title_entry.grab_focus();
             return;
         }
 
@@ -2991,24 +2992,35 @@ impl Shell {
         if self.state.settings.borrow().private_mode {
             return;
         }
-        let default_query = format!("{} {}", current.artist, current.title)
-            .trim()
-            .to_string();
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
         content.set_margin_top(16);
         content.set_margin_bottom(16);
         content.set_margin_start(16);
         content.set_margin_end(16);
+        content.set_width_request(420);
+        content.set_height_request(500);
 
-        let search_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let entry = gtk::SearchEntry::new();
-        entry.set_hexpand(true);
-        entry.set_text(&default_query);
+        let title = gtk::Label::new(Some(&tr("Search Lyrics")));
+        title.add_css_class("title");
+        title.set_xalign(0.0);
+        content.append(&title);
+
+        let artist_entry = gtk::Entry::new();
+        artist_entry.set_placeholder_text(Some(&tr("Artist")));
+        artist_entry.set_text(&current.artist);
+        artist_entry.set_hexpand(true);
+        content.append(&artist_entry);
+
+        let title_entry = gtk::Entry::new();
+        title_entry.set_placeholder_text(Some(&tr("Song")));
+        title_entry.set_text(&current.title);
+        title_entry.set_hexpand(true);
+        content.append(&title_entry);
+
         let search_button = text_button("system-search-symbolic", "Search");
-        search_row.append(&entry);
-        search_row.append(&search_button);
-        content.append(&search_row);
+        search_button.set_halign(gtk::Align::End);
+        content.append(&search_button);
 
         let status = gtk::Label::new(Some(&tr("Ready")));
         status.add_css_class("muted");
@@ -3025,16 +3037,14 @@ impl Shell {
         scroller.set_child(Some(&list));
         content.append(&scroller);
 
-        let dialog = adw::Dialog::builder()
-            .title(tr("Search Lyrics"))
-            .content_width(520)
-            .content_height(520)
-            .child(&content)
-            .build();
+        let popover = gtk::Popover::new();
+        popover.set_autohide(true);
+        popover.set_child(Some(&content));
         let search_dialog = LyricsSearchDialog {
-            dialog: dialog.clone(),
+            popover: popover.clone(),
             track_id: current.track_id,
-            entry: entry.clone(),
+            artist_entry: artist_entry.clone(),
+            title_entry: title_entry.clone(),
             search_button: search_button.clone(),
             list,
             status,
@@ -3042,31 +3052,29 @@ impl Shell {
         *self.state.lyrics_search_dialog.borrow_mut() = Some(search_dialog.clone());
 
         let close_shell = Rc::clone(self);
-        dialog.connect_closed(move |_| {
+        popover.connect_closed(move |popover| {
+            popover.unparent();
             close_shell.state.lyrics_search_dialog.borrow_mut().take();
         });
 
         let search_shell = Rc::clone(self);
-        let search_entry = entry.clone();
-        let search_status = search_dialog.status.clone();
-        search_button.connect_clicked(move |_| {
-            submit_lyrics_search(&search_shell, &search_entry, &search_status);
-        });
+        search_button.connect_clicked(move |_| submit_lyrics_search(&search_shell));
 
         let search_shell = Rc::clone(self);
-        let search_status = search_dialog.status.clone();
-        entry.connect_activate(move |entry| {
-            submit_lyrics_search(&search_shell, entry, &search_status);
-        });
+        artist_entry.connect_activate(move |_| submit_lyrics_search(&search_shell));
 
-        dialog.present(Some(&self.window));
-        search_dialog.entry.grab_focus();
+        let search_shell = Rc::clone(self);
+        title_entry.connect_activate(move |_| submit_lyrics_search(&search_shell));
+
+        self.lyrics_pane.present_search_popover(&popover);
+        search_dialog.title_entry.grab_focus();
     }
 
     fn apply_lyrics_search_results(
         self: &Rc<Self>,
         track_id: rufin_core::TrackId,
-        query: String,
+        _artist_name: String,
+        _track_name: String,
         results: Vec<LyricsSearchResult>,
     ) {
         let Some(dialog) = self.state.lyrics_search_dialog.borrow().clone() else {
@@ -3078,7 +3086,6 @@ impl Shell {
         dialog.search_button.set_sensitive(true);
         clear_list_box(&dialog.list);
         if results.is_empty() {
-            let _unused = query;
             dialog.status.set_text(&tr("No lyrics found."));
             return;
         }
@@ -3882,18 +3889,22 @@ fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
     });
 }
 
-fn submit_lyrics_search(shell: &Rc<Shell>, entry: &gtk::SearchEntry, status: &gtk::Label) {
-    let query = entry.text().trim().to_string();
-    if query.is_empty() {
-        status.set_text(&tr("Enter a search term."));
+fn submit_lyrics_search(shell: &Rc<Shell>) {
+    let Some(dialog) = shell.state.lyrics_search_dialog.borrow().clone() else {
+        return;
+    };
+    let artist_name = dialog.artist_entry.text().trim().to_string();
+    let track_name = dialog.title_entry.text().trim().to_string();
+    if artist_name.is_empty() && track_name.is_empty() {
+        dialog.status.set_text(&tr("Enter an artist or song."));
         return;
     }
-    if let Some(dialog) = shell.state.lyrics_search_dialog.borrow().as_ref() {
-        clear_list_box(&dialog.list);
-        dialog.search_button.set_sensitive(false);
-    }
-    status.set_text(&tr("Searching..."));
-    shell.controller.search_lyrics_for_current(query);
+    clear_list_box(&dialog.list);
+    dialog.search_button.set_sensitive(false);
+    dialog.status.set_text(&tr("Searching..."));
+    shell
+        .controller
+        .search_lyrics_for_current(artist_name, track_name);
 }
 
 fn clear_list_box(list: &gtk::ListBox) {
@@ -3932,9 +3943,23 @@ fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
         .as_deref()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
     {
-        subtitle.push_str(&tr("Synced"));
+        if result
+            .plain_lyrics
+            .as_deref()
+            .is_some_and(|lyrics| !lyrics.trim().is_empty())
+        {
+            subtitle.push_str(&tr("Synchronized + Unsynchronized"));
+        } else {
+            subtitle.push_str(&tr("Synchronized"));
+        }
+    } else if result
+        .plain_lyrics
+        .as_deref()
+        .is_some_and(|lyrics| !lyrics.trim().is_empty())
+    {
+        subtitle.push_str(&tr("Unsynchronized"));
     } else {
-        subtitle.push_str(&tr("Plain"));
+        subtitle.push_str(&tr("No lyrics"));
     }
     subtitle
 }
@@ -4153,10 +4178,11 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 }
                 ControllerEvent::LyricsSearchResults {
                     track_id,
-                    query,
+                    artist_name,
+                    track_name,
                     results,
                 } => {
-                    shell.apply_lyrics_search_results(track_id, query, results);
+                    shell.apply_lyrics_search_results(track_id, artist_name, track_name, results);
                 }
                 ControllerEvent::LyricsSaved { path, lyrics } => {
                     shell.apply_lyrics_saved(path, lyrics);
