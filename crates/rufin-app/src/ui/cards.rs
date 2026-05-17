@@ -26,11 +26,13 @@ enum AlbumCardLabelLayout {
 }
 
 impl Shell {
+    #[allow(dead_code)]
     pub(super) fn album_cards_grid(self: &Rc<Self>, albums: &[Album]) -> gtk::Widget {
         let model = album_model(albums);
         self.album_cards_grid_for_model(model)
     }
 
+    #[allow(dead_code)]
     pub(super) fn album_cards_grid_for_model(
         self: &Rc<Self>,
         model: gio::ListStore,
@@ -72,6 +74,7 @@ impl Shell {
         grid.upcast()
     }
 
+    #[allow(dead_code)]
     pub(super) fn artist_cards_grid_for_model(
         self: &Rc<Self>,
         model: gio::ListStore,
@@ -123,6 +126,7 @@ impl Shell {
         grid.upcast()
     }
 
+    #[allow(dead_code)]
     pub(super) fn genre_cards_grid_for_model(
         self: &Rc<Self>,
         model: gio::ListStore,
@@ -233,7 +237,7 @@ impl Shell {
         )
     }
 
-    fn responsive_card_grid_metrics(&self) -> (usize, i32) {
+    pub(super) fn responsive_card_grid_metrics(&self) -> (usize, i32) {
         let width = home_album_content_width(self);
         let current = nonzero_usize(self.state.card_grid_columns.get());
         let columns = home_album_page_size(width, current);
@@ -478,6 +482,7 @@ fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget 
     overlay.upcast()
 }
 
+#[allow(dead_code)]
 fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widget {
     let card = natural_media_card(size);
     card.append(&shell.cover_tile_for(
@@ -505,6 +510,7 @@ fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -
     card.upcast()
 }
 
+#[allow(dead_code)]
 fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
     let card = natural_media_card(size);
     card.append(&shell.cover_tile_for(

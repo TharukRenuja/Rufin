@@ -1,9 +1,10 @@
 use serde::{Deserialize, Deserializer, Serialize, de};
 
-use crate::domain::HomeSectionKind;
+use crate::domain::{HomeBlockKind, HomeSectionKind};
 use crate::route::DensityMode;
 
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
+pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 1;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
 pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
 const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
@@ -30,6 +31,28 @@ const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 4] = [
     TrackTableColumn::Album,
     TrackTableColumn::Year,
 ];
+
+fn default_home_sections() -> Vec<HomeSectionKind> {
+    vec![
+        HomeSectionKind::Explore,
+        HomeSectionKind::MostPlayed,
+        HomeSectionKind::NewlyAdded,
+        HomeSectionKind::RecentlyPlayed,
+        HomeSectionKind::RecentlyReleased,
+    ]
+}
+
+fn default_home_blocks() -> Vec<HomeBlockKind> {
+    vec![
+        HomeBlockKind::Showcase,
+        HomeBlockKind::Explore,
+        HomeBlockKind::MostPlayed,
+        HomeBlockKind::NewlyAdded,
+        HomeBlockKind::RecentlyPlayed,
+        HomeBlockKind::RecentlyReleased,
+        HomeBlockKind::Genres,
+    ]
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ThemePreference {
@@ -157,6 +180,501 @@ impl TrackSortKey {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub enum LibraryLayout {
+    Row,
+    Grid,
+    Detail,
+}
+
+impl<'de> Deserialize<'de> for LibraryLayout {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "Row" | "row" | "Table" | "table" => Self::Row,
+            "Detail" | "detail" => Self::Detail,
+            "Grid" | "grid" => Self::Grid,
+            _ => Self::Grid,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum LibraryListKey {
+    Albums,
+    Artists,
+    AlbumArtists,
+    Tracks,
+    Genres,
+    AlbumDetailTracks,
+    ArtistAlbums,
+    ArtistTracks,
+    GenreTracks,
+    PlaylistTracks,
+}
+
+impl LibraryListKey {
+    pub fn all() -> [Self; 10] {
+        [
+            Self::Albums,
+            Self::Artists,
+            Self::AlbumArtists,
+            Self::Tracks,
+            Self::Genres,
+            Self::AlbumDetailTracks,
+            Self::ArtistAlbums,
+            Self::ArtistTracks,
+            Self::GenreTracks,
+            Self::PlaylistTracks,
+        ]
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Albums => "Albums",
+            Self::Artists => "Artists",
+            Self::AlbumArtists => "Album artists",
+            Self::Tracks => "Tracks",
+            Self::Genres => "Genres",
+            Self::AlbumDetailTracks => "Album tracks",
+            Self::ArtistAlbums => "Artist albums",
+            Self::ArtistTracks => "Artist tracks",
+            Self::GenreTracks => "Genre tracks",
+            Self::PlaylistTracks => "Playlist tracks",
+        }
+    }
+
+    pub fn supports_layout(self, layout: LibraryLayout) -> bool {
+        match layout {
+            LibraryLayout::Detail => matches!(self, Self::Albums | Self::ArtistAlbums),
+            LibraryLayout::Row | LibraryLayout::Grid => true,
+        }
+    }
+
+    fn default_layout(self) -> LibraryLayout {
+        match self {
+            Self::Tracks
+            | Self::AlbumDetailTracks
+            | Self::ArtistTracks
+            | Self::GenreTracks
+            | Self::PlaylistTracks => LibraryLayout::Row,
+            Self::Albums
+            | Self::Artists
+            | Self::AlbumArtists
+            | Self::Genres
+            | Self::ArtistAlbums => LibraryLayout::Grid,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum LibraryField {
+    RowIndex,
+    Image,
+    Title,
+    TitleMerged,
+    Artist,
+    AlbumArtist,
+    Album,
+    Year,
+    ReleaseDate,
+    DateAdded,
+    LastPlayed,
+    PlayCount,
+    UserRating,
+    Genre,
+    TrackNumber,
+    DiscNumber,
+    SongCount,
+    AlbumCount,
+    Duration,
+    Favorite,
+}
+
+impl LibraryField {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::RowIndex => "#",
+            Self::Image => "Image",
+            Self::Title => "Title",
+            Self::TitleMerged => "Title (merged)",
+            Self::Artist => "Artist",
+            Self::AlbumArtist => "Album artist",
+            Self::Album => "Album",
+            Self::Year => "Year",
+            Self::ReleaseDate => "Release date",
+            Self::DateAdded => "Date added",
+            Self::LastPlayed => "Last played",
+            Self::PlayCount => "Play count",
+            Self::UserRating => "Rating",
+            Self::Genre => "Genre",
+            Self::TrackNumber => "Track",
+            Self::DiscNumber => "Disc",
+            Self::SongCount => "Songs",
+            Self::AlbumCount => "Albums",
+            Self::Duration => "Duration",
+            Self::Favorite => "Favorite",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LibraryListSettings {
+    pub layout: LibraryLayout,
+    pub row_fields: Vec<LibraryField>,
+    pub grid_fields: Vec<LibraryField>,
+    pub detail_track_fields: Vec<LibraryField>,
+    pub sort_key: LibraryField,
+    pub descending: bool,
+    #[serde(default)]
+    pub layout_version: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LibraryListSettingsEntry {
+    pub key: LibraryListKey,
+    pub settings: LibraryListSettings,
+}
+
+impl LibraryListSettings {
+    pub fn for_key(key: LibraryListKey) -> Self {
+        Self {
+            layout: key.default_layout(),
+            row_fields: default_row_fields(key),
+            grid_fields: default_grid_fields(key),
+            detail_track_fields: default_detail_track_fields(),
+            sort_key: default_sort_key(key),
+            descending: false,
+            layout_version: LIBRARY_LIST_LAYOUT_VERSION,
+        }
+    }
+
+    pub fn sanitize(&mut self, key: LibraryListKey) {
+        if !key.supports_layout(self.layout) {
+            self.layout = key.default_layout();
+        }
+        sanitize_fields(
+            &mut self.row_fields,
+            available_row_fields(key),
+            default_row_fields(key),
+        );
+        ensure_usable_row_field(&mut self.row_fields, default_row_fields(key));
+        sanitize_fields(
+            &mut self.grid_fields,
+            available_grid_fields(key),
+            default_grid_fields(key),
+        );
+        sanitize_fields(
+            &mut self.detail_track_fields,
+            available_row_fields(LibraryListKey::Tracks),
+            default_detail_track_fields(),
+        );
+        ensure_usable_row_field(&mut self.detail_track_fields, default_detail_track_fields());
+        if !available_sort_fields(key).contains(&self.sort_key) {
+            self.sort_key = default_sort_key(key);
+        }
+        self.layout_version = LIBRARY_LIST_LAYOUT_VERSION;
+    }
+}
+
+pub fn default_library_list_settings() -> Vec<LibraryListSettingsEntry> {
+    LibraryListKey::all()
+        .into_iter()
+        .map(|key| LibraryListSettingsEntry {
+            key,
+            settings: LibraryListSettings::for_key(key),
+        })
+        .collect()
+}
+
+pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
+    match key {
+        LibraryListKey::Albums | LibraryListKey::ArtistAlbums => &[
+            LibraryField::RowIndex,
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::TitleMerged,
+            LibraryField::AlbumArtist,
+            LibraryField::Year,
+            LibraryField::ReleaseDate,
+            LibraryField::DateAdded,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+            LibraryField::UserRating,
+            LibraryField::Genre,
+            LibraryField::SongCount,
+            LibraryField::Duration,
+            LibraryField::Favorite,
+        ],
+        LibraryListKey::Artists | LibraryListKey::AlbumArtists => &[
+            LibraryField::RowIndex,
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::AlbumCount,
+            LibraryField::SongCount,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+            LibraryField::UserRating,
+            LibraryField::Favorite,
+        ],
+        LibraryListKey::Genres => &[
+            LibraryField::RowIndex,
+            LibraryField::Title,
+            LibraryField::AlbumCount,
+            LibraryField::SongCount,
+        ],
+        LibraryListKey::Tracks
+        | LibraryListKey::AlbumDetailTracks
+        | LibraryListKey::ArtistTracks
+        | LibraryListKey::GenreTracks
+        | LibraryListKey::PlaylistTracks => &[
+            LibraryField::RowIndex,
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::TitleMerged,
+            LibraryField::Artist,
+            LibraryField::AlbumArtist,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::ReleaseDate,
+            LibraryField::DateAdded,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+            LibraryField::UserRating,
+            LibraryField::Genre,
+            LibraryField::DiscNumber,
+            LibraryField::TrackNumber,
+            LibraryField::Duration,
+            LibraryField::Favorite,
+        ],
+    }
+}
+
+pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
+    match key {
+        LibraryListKey::Albums | LibraryListKey::ArtistAlbums => &[
+            LibraryField::AlbumArtist,
+            LibraryField::Year,
+            LibraryField::ReleaseDate,
+            LibraryField::DateAdded,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+            LibraryField::Genre,
+            LibraryField::SongCount,
+            LibraryField::Duration,
+        ],
+        LibraryListKey::Artists | LibraryListKey::AlbumArtists => &[
+            LibraryField::AlbumCount,
+            LibraryField::SongCount,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+        ],
+        LibraryListKey::Genres => &[LibraryField::AlbumCount, LibraryField::SongCount],
+        LibraryListKey::Tracks
+        | LibraryListKey::AlbumDetailTracks
+        | LibraryListKey::ArtistTracks
+        | LibraryListKey::GenreTracks
+        | LibraryListKey::PlaylistTracks => &[
+            LibraryField::Artist,
+            LibraryField::AlbumArtist,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::ReleaseDate,
+            LibraryField::DateAdded,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+            LibraryField::Genre,
+            LibraryField::Duration,
+        ],
+    }
+}
+
+pub fn available_sort_fields(key: LibraryListKey) -> &'static [LibraryField] {
+    match key {
+        LibraryListKey::Albums | LibraryListKey::ArtistAlbums => &[
+            LibraryField::Title,
+            LibraryField::AlbumArtist,
+            LibraryField::Year,
+            LibraryField::ReleaseDate,
+            LibraryField::DateAdded,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+            LibraryField::UserRating,
+            LibraryField::SongCount,
+            LibraryField::Duration,
+            LibraryField::Favorite,
+        ],
+        LibraryListKey::Artists | LibraryListKey::AlbumArtists => &[
+            LibraryField::Title,
+            LibraryField::AlbumCount,
+            LibraryField::SongCount,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+            LibraryField::UserRating,
+            LibraryField::Favorite,
+        ],
+        LibraryListKey::Genres => &[
+            LibraryField::Title,
+            LibraryField::AlbumCount,
+            LibraryField::SongCount,
+        ],
+        LibraryListKey::Tracks
+        | LibraryListKey::AlbumDetailTracks
+        | LibraryListKey::ArtistTracks
+        | LibraryListKey::GenreTracks
+        | LibraryListKey::PlaylistTracks => &[
+            LibraryField::TrackNumber,
+            LibraryField::Title,
+            LibraryField::Artist,
+            LibraryField::AlbumArtist,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::ReleaseDate,
+            LibraryField::DateAdded,
+            LibraryField::LastPlayed,
+            LibraryField::PlayCount,
+            LibraryField::UserRating,
+            LibraryField::Genre,
+            LibraryField::Duration,
+            LibraryField::Favorite,
+        ],
+    }
+}
+
+fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
+    match key {
+        LibraryListKey::Albums | LibraryListKey::ArtistAlbums => vec![
+            LibraryField::RowIndex,
+            LibraryField::TitleMerged,
+            LibraryField::AlbumArtist,
+            LibraryField::Year,
+            LibraryField::Duration,
+            LibraryField::Favorite,
+        ],
+        LibraryListKey::Artists | LibraryListKey::AlbumArtists => vec![
+            LibraryField::RowIndex,
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::AlbumCount,
+            LibraryField::SongCount,
+            LibraryField::Favorite,
+        ],
+        LibraryListKey::Genres => vec![
+            LibraryField::RowIndex,
+            LibraryField::Title,
+            LibraryField::SongCount,
+            LibraryField::AlbumCount,
+        ],
+        LibraryListKey::Tracks => vec![
+            LibraryField::RowIndex,
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Year,
+        ],
+        LibraryListKey::AlbumDetailTracks => default_detail_track_fields(),
+        LibraryListKey::ArtistTracks
+        | LibraryListKey::GenreTracks
+        | LibraryListKey::PlaylistTracks => {
+            vec![
+                LibraryField::RowIndex,
+                LibraryField::TitleMerged,
+                LibraryField::Album,
+                LibraryField::Duration,
+                LibraryField::Favorite,
+            ]
+        }
+    }
+}
+
+fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
+    match key {
+        LibraryListKey::Albums | LibraryListKey::ArtistAlbums => {
+            vec![LibraryField::AlbumArtist, LibraryField::Year]
+        }
+        LibraryListKey::Artists | LibraryListKey::AlbumArtists => vec![LibraryField::AlbumCount],
+        LibraryListKey::Genres => vec![LibraryField::SongCount, LibraryField::AlbumCount],
+        LibraryListKey::Tracks
+        | LibraryListKey::AlbumDetailTracks
+        | LibraryListKey::ArtistTracks
+        | LibraryListKey::GenreTracks
+        | LibraryListKey::PlaylistTracks => {
+            vec![
+                LibraryField::Artist,
+                LibraryField::Album,
+                LibraryField::Duration,
+            ]
+        }
+    }
+}
+
+fn default_detail_track_fields() -> Vec<LibraryField> {
+    vec![
+        LibraryField::TrackNumber,
+        LibraryField::Title,
+        LibraryField::Duration,
+        LibraryField::Favorite,
+    ]
+}
+
+fn default_sort_key(key: LibraryListKey) -> LibraryField {
+    match key {
+        LibraryListKey::Albums
+        | LibraryListKey::Artists
+        | LibraryListKey::AlbumArtists
+        | LibraryListKey::Genres
+        | LibraryListKey::ArtistAlbums => LibraryField::Title,
+        LibraryListKey::Tracks
+        | LibraryListKey::AlbumDetailTracks
+        | LibraryListKey::ArtistTracks
+        | LibraryListKey::GenreTracks
+        | LibraryListKey::PlaylistTracks => LibraryField::TrackNumber,
+    }
+}
+
+fn sanitize_fields(
+    fields: &mut Vec<LibraryField>,
+    available: &[LibraryField],
+    fallback: Vec<LibraryField>,
+) {
+    let mut seen = Vec::new();
+    fields.retain(|field| {
+        if !available.contains(field) || seen.contains(field) {
+            return false;
+        }
+        seen.push(*field);
+        true
+    });
+    if fields.is_empty() {
+        *fields = fallback;
+    }
+}
+
+fn ensure_usable_row_field(fields: &mut Vec<LibraryField>, fallback: Vec<LibraryField>) {
+    if fields.iter().any(|field| row_field_is_usable(*field)) {
+        return;
+    }
+    if let Some(field) = fallback
+        .into_iter()
+        .find(|field| row_field_is_usable(*field))
+    {
+        fields.push(field);
+    }
+}
+
+fn row_field_is_usable(field: LibraryField) -> bool {
+    !matches!(
+        field,
+        LibraryField::RowIndex
+            | LibraryField::Image
+            | LibraryField::TrackNumber
+            | LibraryField::DiscNumber
+            | LibraryField::Favorite
+    )
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TrackTableSettings {
     pub visible_columns: Vec<TrackTableColumn>,
@@ -231,7 +749,10 @@ pub struct AppSettings {
     pub lastfm_api_key: String,
     #[serde(default)]
     pub auto_dj_enabled: bool,
+    #[serde(default = "default_home_sections")]
     pub home_sections: Vec<HomeSectionKind>,
+    #[serde(default)]
+    pub home_blocks: Vec<HomeBlockKind>,
     #[serde(default = "default_right_panel_visible")]
     pub right_panel_visible: bool,
     #[serde(default = "default_lyrics_panel_visible")]
@@ -252,6 +773,8 @@ pub struct AppSettings {
     pub queue_lyrics_layout_version: u8,
     #[serde(default)]
     pub track_table: TrackTableSettings,
+    #[serde(default)]
+    pub library_lists: Vec<LibraryListSettingsEntry>,
     #[serde(default)]
     pub suppressed_auto_lyrics_track_ids: Vec<String>,
 }
@@ -274,13 +797,8 @@ impl Default for AppSettings {
             discord_show_state_icon: true,
             lastfm_api_key: String::new(),
             auto_dj_enabled: false,
-            home_sections: vec![
-                HomeSectionKind::Explore,
-                HomeSectionKind::MostPlayed,
-                HomeSectionKind::NewlyAdded,
-                HomeSectionKind::RecentlyPlayed,
-                HomeSectionKind::RecentlyReleased,
-            ],
+            home_sections: default_home_sections(),
+            home_blocks: default_home_blocks(),
             right_panel_visible: true,
             lyrics_panel_visible: true,
             window_width: None,
@@ -291,6 +809,7 @@ impl Default for AppSettings {
             queue_lyrics_ratio: None,
             queue_lyrics_layout_version: QUEUE_LYRICS_LAYOUT_VERSION,
             track_table: TrackTableSettings::default(),
+            library_lists: default_library_list_settings(),
             suppressed_auto_lyrics_track_ids: Vec::new(),
         }
     }
@@ -308,6 +827,115 @@ impl AppSettings {
             self.discord_presence_enabled = true;
         }
         self.track_table.migrate_defaults();
+        self.migrate_home_blocks();
+        self.migrate_library_lists();
+    }
+
+    fn migrate_home_blocks(&mut self) {
+        if self.home_sections.is_empty() {
+            self.home_sections = default_home_sections();
+        }
+        if self.home_blocks.is_empty() {
+            self.home_blocks = Vec::with_capacity(self.home_sections.len() + 2);
+            self.home_blocks.push(HomeBlockKind::Showcase);
+            for section in &self.home_sections {
+                self.home_blocks.push(match section {
+                    HomeSectionKind::Explore => HomeBlockKind::Explore,
+                    HomeSectionKind::MostPlayed => HomeBlockKind::MostPlayed,
+                    HomeSectionKind::NewlyAdded => HomeBlockKind::NewlyAdded,
+                    HomeSectionKind::RecentlyPlayed => HomeBlockKind::RecentlyPlayed,
+                    HomeSectionKind::RecentlyReleased => HomeBlockKind::RecentlyReleased,
+                });
+            }
+            if !self.home_blocks.contains(&HomeBlockKind::Genres) {
+                self.home_blocks.push(HomeBlockKind::Genres);
+            }
+        }
+        sanitize_home_blocks(&mut self.home_blocks);
+        self.home_sections = self
+            .home_blocks
+            .iter()
+            .filter_map(|block| block.section_kind())
+            .collect();
+    }
+
+    fn migrate_library_lists(&mut self) {
+        if self.library_lists.is_empty() {
+            self.library_lists = default_library_list_settings();
+            if let Some(tracks) = self
+                .library_lists
+                .iter_mut()
+                .find(|entry| entry.key == LibraryListKey::Tracks)
+            {
+                tracks.settings.row_fields = self
+                    .track_table
+                    .visible_columns
+                    .iter()
+                    .map(|column| match column {
+                        TrackTableColumn::TrackNumber => LibraryField::RowIndex,
+                        TrackTableColumn::Title => LibraryField::TitleMerged,
+                        TrackTableColumn::Artist => LibraryField::Artist,
+                        TrackTableColumn::Album => LibraryField::Album,
+                        TrackTableColumn::Year => LibraryField::Year,
+                        TrackTableColumn::Duration => LibraryField::Duration,
+                        TrackTableColumn::Favorite => LibraryField::Favorite,
+                    })
+                    .collect();
+                tracks.settings.sort_key = match self.track_table.sort_key {
+                    TrackSortKey::TrackNumber => LibraryField::TrackNumber,
+                    TrackSortKey::Title => LibraryField::Title,
+                    TrackSortKey::Artist => LibraryField::Artist,
+                    TrackSortKey::Album => LibraryField::Album,
+                    TrackSortKey::Year => LibraryField::Year,
+                    TrackSortKey::Duration => LibraryField::Duration,
+                    TrackSortKey::Favorite => LibraryField::Favorite,
+                };
+                tracks.settings.descending = self.track_table.descending;
+            }
+        }
+
+        for key in LibraryListKey::all() {
+            if !self.library_lists.iter().any(|entry| entry.key == key) {
+                self.library_lists.push(LibraryListSettingsEntry {
+                    key,
+                    settings: LibraryListSettings::for_key(key),
+                });
+            }
+        }
+        self.library_lists
+            .retain(|entry| LibraryListKey::all().contains(&entry.key));
+        self.library_lists.sort_by_key(|entry| {
+            LibraryListKey::all()
+                .iter()
+                .position(|key| *key == entry.key)
+                .unwrap_or(usize::MAX)
+        });
+        for entry in &mut self.library_lists {
+            entry.settings.sanitize(entry.key);
+        }
+    }
+
+    pub fn library_list(&self, key: LibraryListKey) -> LibraryListSettings {
+        self.library_lists
+            .iter()
+            .find(|entry| entry.key == key)
+            .map(|entry| entry.settings.clone())
+            .unwrap_or_else(|| LibraryListSettings::for_key(key))
+    }
+}
+
+fn sanitize_home_blocks(blocks: &mut Vec<HomeBlockKind>) {
+    let mut seen = Vec::new();
+    blocks.retain(|block| {
+        if seen.contains(block) {
+            false
+        } else {
+            seen.push(*block);
+            true
+        }
+    });
+    if blocks.is_empty() {
+        *blocks = default_home_blocks();
     }
 }
 
@@ -315,7 +943,8 @@ impl AppSettings {
 mod tests {
     use super::{
         AppSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType, DiscordLinkType,
-        LEGACY_APPLICATION_DISPLAY_BYTES, TrackSortKey, TrackTableColumn,
+        LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField, LibraryLayout, LibraryListKey,
+        TrackSortKey, TrackTableColumn,
     };
 
     #[test]
@@ -341,6 +970,15 @@ mod tests {
         assert!(settings.lyrics_panel_visible);
         assert_eq!(settings.queue_lyrics_layout_version, 3);
         assert_eq!(settings.home_sections.len(), 5);
+        assert_eq!(settings.home_blocks.len(), 7);
+        assert_eq!(
+            settings.library_list(LibraryListKey::Albums).layout,
+            LibraryLayout::Grid
+        );
+        assert_eq!(
+            settings.library_list(LibraryListKey::Tracks).layout,
+            LibraryLayout::Row
+        );
         assert_eq!(
             settings.track_table.visible_columns,
             vec![
@@ -409,6 +1047,106 @@ mod tests {
         assert!(restored.discord_show_state_icon);
         assert_eq!(restored.lastfm_api_key, "");
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
+    }
+
+    #[test]
+    fn settings_migrate_legacy_home_sections_to_home_blocks() {
+        let json = r#"{
+            "density_mode":"Auto",
+            "theme_preference":"System",
+            "private_mode":false,
+            "notifications_enabled":false,
+            "external_lyrics_enabled":false,
+            "discord_presence_enabled":false,
+            "home_sections":["Explore","RecentlyPlayed"]
+        }"#;
+
+        let mut settings = serde_json::from_str::<AppSettings>(json).expect("deserialize settings");
+        settings.migrate_defaults();
+
+        assert_eq!(
+            settings.home_blocks,
+            vec![
+                crate::domain::HomeBlockKind::Showcase,
+                crate::domain::HomeBlockKind::Explore,
+                crate::domain::HomeBlockKind::RecentlyPlayed,
+                crate::domain::HomeBlockKind::Genres,
+            ]
+        );
+        assert_eq!(
+            settings.home_sections,
+            vec![
+                crate::domain::HomeSectionKind::Explore,
+                crate::domain::HomeSectionKind::RecentlyPlayed
+            ]
+        );
+    }
+
+    #[test]
+    fn library_layout_unknown_values_fall_back_to_grid() {
+        let layout =
+            serde_json::from_str::<LibraryLayout>("\"weird\"").expect("deserialize layout");
+
+        assert_eq!(layout, LibraryLayout::Grid);
+    }
+
+    #[test]
+    fn library_list_settings_sanitize_fields_and_layouts() {
+        let mut settings = AppSettings {
+            library_lists: vec![super::LibraryListSettingsEntry {
+                key: LibraryListKey::Genres,
+                settings: super::LibraryListSettings {
+                    layout: LibraryLayout::Detail,
+                    row_fields: vec![
+                        LibraryField::Title,
+                        LibraryField::Album,
+                        LibraryField::Title,
+                    ],
+                    grid_fields: vec![LibraryField::Artist],
+                    detail_track_fields: Vec::new(),
+                    sort_key: LibraryField::Album,
+                    descending: true,
+                    layout_version: 0,
+                },
+            }],
+            ..AppSettings::default()
+        };
+
+        settings.migrate_defaults();
+        let genres = settings.library_list(LibraryListKey::Genres);
+
+        assert_eq!(genres.layout, LibraryLayout::Grid);
+        assert_eq!(genres.row_fields, vec![LibraryField::Title]);
+        assert_eq!(
+            genres.grid_fields,
+            vec![LibraryField::SongCount, LibraryField::AlbumCount]
+        );
+        assert_eq!(genres.sort_key, LibraryField::Title);
+    }
+
+    #[test]
+    fn library_list_settings_keep_a_usable_row_field() {
+        let mut settings = AppSettings {
+            library_lists: vec![super::LibraryListSettingsEntry {
+                key: LibraryListKey::Tracks,
+                settings: super::LibraryListSettings {
+                    layout: LibraryLayout::Row,
+                    row_fields: vec![LibraryField::RowIndex, LibraryField::Favorite],
+                    grid_fields: vec![LibraryField::Artist],
+                    detail_track_fields: vec![LibraryField::Favorite],
+                    sort_key: LibraryField::TrackNumber,
+                    descending: false,
+                    layout_version: 0,
+                },
+            }],
+            ..AppSettings::default()
+        };
+
+        settings.migrate_defaults();
+        let tracks = settings.library_list(LibraryListKey::Tracks);
+
+        assert!(tracks.row_fields.contains(&LibraryField::TitleMerged));
+        assert!(tracks.detail_track_fields.contains(&LibraryField::Title));
     }
 
     #[test]

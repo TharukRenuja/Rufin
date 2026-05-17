@@ -9,6 +9,7 @@ use tracing::warn;
 use super::*;
 
 impl Shell {
+    #[allow(dead_code)]
     pub(super) fn artist_list_view(self: &Rc<Self>, album_artist: bool) -> gtk::Widget {
         let page = self
             .controller
@@ -227,7 +228,11 @@ impl Shell {
         title.add_css_class("section-heading");
         title.set_xalign(0.0);
         wrapper.append(&title);
-        wrapper.append(&self.artist_tracks_table(detail.tracks, "artist-tracks"));
+        wrapper.append(&self.library_tracks_panel(
+            detail.tracks,
+            LibraryListKey::ArtistTracks,
+            "artist-tracks",
+        ));
 
         wrapper.upcast()
     }
@@ -291,9 +296,11 @@ impl Shell {
     fn artist_album_section(self: &Rc<Self>, title: &str, albums: &[Album]) -> gtk::Widget {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.append(&section_heading(title));
-        let grid = self.album_cards_grid(albums);
-        grid.set_vexpand(false);
-        section.append(&grid);
+        section.append(&self.library_album_collection_panel(
+            albums,
+            LibraryListKey::ArtistAlbums,
+            "artist-albums",
+        ));
         section.upcast()
     }
 }
@@ -394,6 +401,11 @@ fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Option<
         album_artist_credits: Vec::new(),
         artist_credits: Vec::new(),
         year: first.year,
+        release_date: first.release_date.clone(),
+        date_added: first.date_added.clone(),
+        last_played: first.last_played.clone(),
+        play_count: first.play_count,
+        user_rating: first.user_rating,
         track_count: tracks.len().min(usize::from(u16::MAX)) as u16,
         duration_seconds: tracks
             .iter()
@@ -503,6 +515,11 @@ mod tests {
             album_artist_credits: Vec::new(),
             artist_credits: Vec::new(),
             year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
             track_count: 1,
             duration_seconds: 180,
             favorite: false,
@@ -523,6 +540,11 @@ mod tests {
             album_artist_credits: Vec::new(),
             album: "Album".to_string(),
             year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
             duration_seconds: 180,
             favorite: false,
             disc_number: 1,

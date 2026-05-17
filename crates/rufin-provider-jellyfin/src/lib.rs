@@ -1030,6 +1030,34 @@ fn favorite(user_data: &Option<UserData>) -> bool {
         .unwrap_or(false)
 }
 
+fn play_count(user_data: &Option<UserData>) -> Option<u32> {
+    user_data
+        .as_ref()
+        .and_then(|data| data.play_count)
+        .map(|value| value.max(0) as u32)
+}
+
+fn user_rating(user_data: &Option<UserData>) -> Option<u8> {
+    user_data
+        .as_ref()
+        .and_then(|data| data.rating)
+        .map(|value| value.clamp(0, i32::from(u8::MAX)) as u8)
+}
+
+fn normalized_date(value: Option<String>) -> Option<String> {
+    let value = value?.trim().to_string();
+    if value.is_empty() {
+        return None;
+    }
+    if value.len() >= 10 {
+        let prefix = &value[..10];
+        if prefix.as_bytes().get(4) == Some(&b'-') && prefix.as_bytes().get(7) == Some(&b'-') {
+            return Some(prefix.to_string());
+        }
+    }
+    Some(value)
+}
+
 fn artist_credits_from_pairs(pairs: Option<&[NameIdPair]>) -> Vec<ArtistCredit> {
     pairs
         .unwrap_or_default()
@@ -1093,6 +1121,15 @@ fn album_from_item(item: JellyfinItem) -> Album {
         album_artist_credits,
         artist_credits,
         year: u16_from_option(item.production_year),
+        release_date: normalized_date(item.premiere_date),
+        date_added: normalized_date(item.date_created),
+        last_played: normalized_date(
+            item.user_data
+                .as_ref()
+                .and_then(|data| data.last_played_date.clone()),
+        ),
+        play_count: play_count(&item.user_data),
+        user_rating: user_rating(&item.user_data),
         track_count: u16_from_option(item.child_count),
         duration_seconds: duration_seconds(item.run_time_ticks),
         favorite: favorite(&item.user_data),
@@ -1138,6 +1175,15 @@ fn track_from_item(item: JellyfinItem) -> Track {
         album_artist_credits,
         album: item.album.unwrap_or_else(|| "Unknown Album".to_string()),
         year: u16_from_option(item.production_year),
+        release_date: normalized_date(item.premiere_date),
+        date_added: normalized_date(item.date_created),
+        last_played: normalized_date(
+            item.user_data
+                .as_ref()
+                .and_then(|data| data.last_played_date.clone()),
+        ),
+        play_count: play_count(&item.user_data),
+        user_rating: user_rating(&item.user_data),
         duration_seconds: duration_seconds(item.run_time_ticks),
         favorite: favorite(&item.user_data),
         disc_number: u16_from_option(item.parent_index_number),
@@ -1166,6 +1212,13 @@ fn artist_from_item(item: JellyfinItem) -> Artist {
                 .and_then(|counts| counts.song_count)
         })),
         favorite: favorite(&item.user_data),
+        last_played: normalized_date(
+            item.user_data
+                .as_ref()
+                .and_then(|data| data.last_played_date.clone()),
+        ),
+        play_count: play_count(&item.user_data),
+        user_rating: user_rating(&item.user_data),
         image_ref: primary_image_ref("artist", &item.id, &item.image_tags),
     }
 }
@@ -1290,6 +1343,8 @@ struct JellyfinItem {
     album_id: Option<String>,
     parent_id: Option<String>,
     production_year: Option<i32>,
+    date_created: Option<String>,
+    premiere_date: Option<String>,
     run_time_ticks: Option<i64>,
     child_count: Option<i32>,
     album_count: Option<i32>,
@@ -1320,6 +1375,9 @@ struct NameIdPair {
 #[serde(rename_all = "PascalCase")]
 struct UserData {
     is_favorite: Option<bool>,
+    play_count: Option<i32>,
+    last_played_date: Option<String>,
+    rating: Option<i32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1476,9 +1534,16 @@ mod tests {
                     "ArtistItems": [{ "Id": "guest-one", "Name": "Guest Artist" }],
                     "Genres": ["Ambient", "Electronic"],
                     "ProductionYear": 2024,
+                    "PremiereDate": "2024-03-01T00:00:00.0000000Z",
+                    "DateCreated": "2024-03-02T09:10:11.0000000Z",
                     "ChildCount": 9,
                     "RunTimeTicks": 1800000000i64,
-                    "UserData": { "IsFavorite": true },
+                    "UserData": {
+                        "IsFavorite": true,
+                        "PlayCount": 12,
+                        "LastPlayedDate": "2024-04-02T09:10:11.0000000Z",
+                        "Rating": 5
+                    },
                     "ImageTags": { "Primary": "album-tag-one" }
                 }]
             })))
@@ -1513,6 +1578,11 @@ mod tests {
             }
         );
         assert_eq!(page.items[0].genres, vec!["Ambient", "Electronic"]);
+        assert_eq!(page.items[0].release_date.as_deref(), Some("2024-03-01"));
+        assert_eq!(page.items[0].date_added.as_deref(), Some("2024-03-02"));
+        assert_eq!(page.items[0].last_played.as_deref(), Some("2024-04-02"));
+        assert_eq!(page.items[0].play_count, Some(12));
+        assert_eq!(page.items[0].user_rating, Some(5));
         assert_eq!(
             page.items[0].image_ref,
             Some(ImageRef {
@@ -1610,6 +1680,14 @@ mod tests {
                     "Artists": ["Astral Kin"],
                     "AlbumArtists": [{ "Id": "album-artist-one", "Name": "Astral Kin" }],
                     "ArtistItems": [{ "Id": "artist-one", "Name": "Astral Kin" }],
+                    "ProductionYear": 2024,
+                    "PremiereDate": "2024-03-01T00:00:00.0000000Z",
+                    "DateCreated": "2024-03-03T09:10:11.0000000Z",
+                    "UserData": {
+                        "PlayCount": 7,
+                        "LastPlayedDate": "2024-04-03T09:10:11.0000000Z",
+                        "Rating": 4
+                    },
                     "IndexNumber": 1,
                     "RunTimeTicks": 2100000000i64
                 }]
@@ -1636,6 +1714,11 @@ mod tests {
             detail.tracks[0].album_artist_credits[0].id.as_str(),
             "jellyfin:artist:album-artist-one"
         );
+        assert_eq!(detail.tracks[0].release_date.as_deref(), Some("2024-03-01"));
+        assert_eq!(detail.tracks[0].date_added.as_deref(), Some("2024-03-03"));
+        assert_eq!(detail.tracks[0].last_played.as_deref(), Some("2024-04-03"));
+        assert_eq!(detail.tracks[0].play_count, Some(7));
+        assert_eq!(detail.tracks[0].user_rating, Some(4));
         assert_eq!(detail.tracks[0].duration_seconds, 210);
     }
 
@@ -1653,7 +1736,12 @@ mod tests {
                         "AlbumCount": 4,
                         "SongCount": 30
                     },
-                    "UserData": { "IsFavorite": true }
+                    "UserData": {
+                        "IsFavorite": true,
+                        "PlayCount": 22,
+                        "LastPlayedDate": "2024-05-03T09:10:11.0000000Z",
+                        "Rating": 3
+                    }
                 }]
             })))
             .mount(&server)
@@ -1668,6 +1756,9 @@ mod tests {
         assert_eq!(artists.items[0].id.as_str(), "jellyfin:artist:artist-one");
         assert_eq!(artists.items[0].album_count, 4);
         assert_eq!(artists.items[0].track_count, 30);
+        assert_eq!(artists.items[0].last_played.as_deref(), Some("2024-05-03"));
+        assert_eq!(artists.items[0].play_count, Some(22));
+        assert_eq!(artists.items[0].user_rating, Some(3));
         assert!(artists.items[0].favorite);
     }
 

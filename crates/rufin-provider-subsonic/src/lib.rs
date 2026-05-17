@@ -505,6 +505,11 @@ impl MusicProvider for SubsonicProvider {
                     album_artist_credits: Vec::new(),
                     artist_credits: Vec::new(),
                     year: track.year,
+                    release_date: track.release_date.clone(),
+                    date_added: track.date_added.clone(),
+                    last_played: track.last_played.clone(),
+                    play_count: track.play_count,
+                    user_rating: track.user_rating,
                     track_count: 0,
                     duration_seconds: 0,
                     favorite: false,
@@ -1106,6 +1111,17 @@ fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) -> Album {
         album_artist_credits: Vec::new(),
         artist_credits: Vec::new(),
         year: u16_from_option(album.year),
+        release_date: album
+            .year
+            .map(|year| format!("{}-01-01", year.clamp(0, i32::from(u16::MAX)))),
+        date_added: normalized_date(album.created),
+        last_played: normalized_date(album.played),
+        play_count: album
+            .play_count
+            .map(|value| value.min(u64::from(u32::MAX)) as u32),
+        user_rating: album
+            .user_rating
+            .map(|value| value.min(u32::from(u8::MAX)) as u8),
         track_count: u16_from_u32(album.song_count),
         duration_seconds: album.duration.unwrap_or_default(),
         favorite: favorite(&album.starred),
@@ -1135,6 +1151,17 @@ fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
         album_artist_credits: Vec::new(),
         album: song.album.unwrap_or_else(|| "Unknown Album".to_string()),
         year: u16_from_option(song.year),
+        release_date: song
+            .year
+            .map(|year| format!("{}-01-01", year.clamp(0, i32::from(u16::MAX)))),
+        date_added: normalized_date(song.created),
+        last_played: normalized_date(song.played),
+        play_count: song
+            .play_count
+            .map(|value| value.min(u64::from(u32::MAX)) as u32),
+        user_rating: song
+            .user_rating
+            .map(|value| value.min(u32::from(u8::MAX)) as u8),
         duration_seconds: song.duration.unwrap_or_default(),
         favorite: favorite(&song.starred),
         disc_number: u16_from_option(song.disc_number).max(1),
@@ -1152,6 +1179,13 @@ fn artist_from_dto(provider: &SubsonicProvider, artist: SubsonicArtist) -> Artis
         album_count: artist.album_count.unwrap_or_default(),
         track_count: artist.song_count.unwrap_or_default(),
         favorite: favorite(&artist.starred),
+        last_played: normalized_date(artist.played),
+        play_count: artist
+            .play_count
+            .map(|value| value.min(u64::from(u32::MAX)) as u32),
+        user_rating: artist
+            .user_rating
+            .map(|value| value.min(u32::from(u8::MAX)) as u8),
         image_ref: image_ref(provider, artist.cover_art),
     }
 }
@@ -1164,6 +1198,20 @@ fn genre_from_dto(provider: &SubsonicProvider, genre: SubsonicGenre) -> Genre {
         track_count: genre.song_count.unwrap_or_default(),
         image_ref: None,
     }
+}
+
+fn normalized_date(value: Option<String>) -> Option<String> {
+    let value = value?.trim().to_string();
+    if value.is_empty() {
+        return None;
+    }
+    if value.len() >= 10 {
+        let prefix = &value[..10];
+        if prefix.as_bytes().get(4) == Some(&b'-') && prefix.as_bytes().get(7) == Some(&b'-') {
+            return Some(prefix.to_string());
+        }
+    }
+    Some(value)
 }
 
 fn playlist_from_dto(provider: &SubsonicProvider, playlist: SubsonicPlaylist) -> Playlist {
@@ -1349,6 +1397,14 @@ struct SubsonicAlbum {
     #[serde(default)]
     year: Option<i32>,
     #[serde(default)]
+    created: Option<String>,
+    #[serde(default)]
+    played: Option<String>,
+    #[serde(default, rename = "playCount")]
+    play_count: Option<u64>,
+    #[serde(default, rename = "userRating")]
+    user_rating: Option<u32>,
+    #[serde(default)]
     genre: Option<String>,
     #[serde(default)]
     genres: Vec<GenreName>,
@@ -1382,6 +1438,14 @@ struct SubsonicSong {
     #[serde(default)]
     year: Option<i32>,
     #[serde(default)]
+    created: Option<String>,
+    #[serde(default)]
+    played: Option<String>,
+    #[serde(default, rename = "playCount")]
+    play_count: Option<u64>,
+    #[serde(default, rename = "userRating")]
+    user_rating: Option<u32>,
+    #[serde(default)]
     genre: Option<String>,
     #[serde(default)]
     genres: Vec<GenreName>,
@@ -1402,6 +1466,12 @@ struct SubsonicArtist {
     album_count: Option<u32>,
     #[serde(default, rename = "songCount")]
     song_count: Option<u32>,
+    #[serde(default)]
+    played: Option<String>,
+    #[serde(default, rename = "playCount")]
+    play_count: Option<u64>,
+    #[serde(default, rename = "userRating")]
+    user_rating: Option<u32>,
     #[serde(default)]
     starred: Option<serde_json::Value>,
 }
@@ -1550,6 +1620,10 @@ mod tests {
                             "year": 2024,
                             "genre": "Ambient",
                             "coverArt": "cover-one",
+                            "created": "2024-03-02T09:10:11Z",
+                            "played": "2024-04-02T09:10:11Z",
+                            "playCount": 12,
+                            "userRating": 5,
                             "starred": "2024-01-01T00:00:00Z"
                         }]
                     }
@@ -1577,7 +1651,66 @@ mod tests {
                 .map(|image| image.item_id.as_str()),
             Some("subsonic:cover:cover-one")
         );
+        assert_eq!(page.items[0].release_date.as_deref(), Some("2024-01-01"));
+        assert_eq!(page.items[0].date_added.as_deref(), Some("2024-03-02"));
+        assert_eq!(page.items[0].last_played.as_deref(), Some("2024-04-02"));
+        assert_eq!(page.items[0].play_count, Some(12));
+        assert_eq!(page.items[0].user_rating, Some(5));
         assert!(page.items[0].favorite);
+    }
+
+    #[tokio::test]
+    async fn album_detail_maps_subsonic_song_metadata() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/getAlbum.view"))
+            .and(query_param("id", "album-one"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subsonic-response": {
+                    "status": "ok",
+                    "version": "1.16.1",
+                    "album": {
+                        "id": "album-one",
+                        "name": "Blue Rooms",
+                        "artist": "Astral Kin",
+                        "artistId": "artist-one",
+                        "songCount": 1,
+                        "duration": 210,
+                        "year": 2024,
+                        "song": [{
+                            "id": "track-one",
+                            "albumId": "album-one",
+                            "title": "First Motion",
+                            "artist": "Astral Kin",
+                            "artistId": "artist-one",
+                            "album": "Blue Rooms",
+                            "year": 2024,
+                            "duration": 210,
+                            "discNumber": 1,
+                            "track": 1,
+                            "created": "2024-03-03T09:10:11Z",
+                            "played": "2024-04-03T09:10:11Z",
+                            "playCount": 7,
+                            "userRating": 4
+                        }]
+                    }
+                }
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server);
+
+        let detail = provider
+            .album_detail(&AlbumId::new("subsonic:album:album-one"))
+            .await
+            .expect("detail");
+
+        assert_eq!(detail.tracks[0].id.as_str(), "subsonic:track:track-one");
+        assert_eq!(detail.tracks[0].release_date.as_deref(), Some("2024-01-01"));
+        assert_eq!(detail.tracks[0].date_added.as_deref(), Some("2024-03-03"));
+        assert_eq!(detail.tracks[0].last_played.as_deref(), Some("2024-04-03"));
+        assert_eq!(detail.tracks[0].play_count, Some(7));
+        assert_eq!(detail.tracks[0].user_rating, Some(4));
     }
 
     #[tokio::test]

@@ -96,6 +96,16 @@ pub struct Album {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artist_credits: Vec<ArtistCredit>,
     pub year: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_added: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_played: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_rating: Option<u8>,
     pub track_count: u16,
     pub duration_seconds: u32,
     pub favorite: bool,
@@ -119,6 +129,16 @@ pub struct Track {
     pub album_artist_credits: Vec<ArtistCredit>,
     pub album: String,
     pub year: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_added: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_played: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_rating: Option<u8>,
     pub duration_seconds: u32,
     pub favorite: bool,
     pub disc_number: u16,
@@ -136,6 +156,12 @@ pub struct Artist {
     pub album_count: u32,
     pub track_count: u32,
     pub favorite: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_played: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_rating: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_ref: Option<ImageRef>,
 }
@@ -169,6 +195,17 @@ pub enum HomeSectionKind {
     RecentlyReleased,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum HomeBlockKind {
+    Showcase,
+    Explore,
+    MostPlayed,
+    NewlyAdded,
+    RecentlyPlayed,
+    RecentlyReleased,
+    Genres,
+}
+
 pub const HOME_SECTION_ITEM_LIMIT: usize = 24;
 
 impl HomeSectionKind {
@@ -179,6 +216,43 @@ impl HomeSectionKind {
             Self::NewlyAdded => "Newly added",
             Self::RecentlyPlayed => "Recently played",
             Self::RecentlyReleased => "Recently released",
+        }
+    }
+}
+
+impl HomeBlockKind {
+    pub fn all() -> [Self; 7] {
+        [
+            Self::Showcase,
+            Self::Explore,
+            Self::MostPlayed,
+            Self::NewlyAdded,
+            Self::RecentlyPlayed,
+            Self::RecentlyReleased,
+            Self::Genres,
+        ]
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Showcase => "Showcase",
+            Self::Explore => HomeSectionKind::Explore.title(),
+            Self::MostPlayed => HomeSectionKind::MostPlayed.title(),
+            Self::NewlyAdded => HomeSectionKind::NewlyAdded.title(),
+            Self::RecentlyPlayed => HomeSectionKind::RecentlyPlayed.title(),
+            Self::RecentlyReleased => HomeSectionKind::RecentlyReleased.title(),
+            Self::Genres => "Featured genres",
+        }
+    }
+
+    pub fn section_kind(self) -> Option<HomeSectionKind> {
+        match self {
+            Self::Explore => Some(HomeSectionKind::Explore),
+            Self::MostPlayed => Some(HomeSectionKind::MostPlayed),
+            Self::NewlyAdded => Some(HomeSectionKind::NewlyAdded),
+            Self::RecentlyPlayed => Some(HomeSectionKind::RecentlyPlayed),
+            Self::RecentlyReleased => Some(HomeSectionKind::RecentlyReleased),
+            Self::Showcase | Self::Genres => None,
         }
     }
 }

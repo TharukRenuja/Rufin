@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{DensityMode, DiscordDisplayType, DiscordLinkType};
+use rufin_core::{DensityMode, DiscordDisplayType, DiscordLinkType, HomeBlockKind};
 
 use crate::i18n::tr;
 
@@ -16,8 +16,10 @@ pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
         .build();
 
     let general_page = general_page(shell);
+    let home_page = home_page(shell);
     let library_page = library_page(shell, &dialog);
     dialog.add(&general_page);
+    dialog.add(&home_page);
     dialog.add(&library_page);
     dialog.present(Some(&shell.window));
 }
@@ -240,6 +242,136 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&discord_group);
 
     page
+}
+
+fn home_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title(tr("Home"))
+        .icon_name("go-home-symbolic")
+        .build();
+
+    let block_group = adw::PreferencesGroup::builder()
+        .title(tr("Blocks"))
+        .description(tr("Choose which Home blocks are visible and their order."))
+        .build();
+    let rows = Rc::new(std::cell::RefCell::new(Vec::new()));
+    populate_home_block_rows(shell, &block_group, &rows);
+    page.add(&block_group);
+
+    page
+}
+
+fn populate_home_block_rows(
+    shell: &Rc<Shell>,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<std::cell::RefCell<Vec<adw::ActionRow>>>,
+) {
+    for row in rows.borrow_mut().drain(..) {
+        group.remove(&row);
+    }
+
+    let visible_blocks = shell.state.settings.borrow().home_blocks.clone();
+    let ordered_blocks = home_block_row_order(&visible_blocks);
+    for block in ordered_blocks {
+        let active = visible_blocks.contains(&block);
+        let visible_index = visible_blocks
+            .iter()
+            .position(|candidate| *candidate == block);
+        let row = adw::ActionRow::builder()
+            .title(tr(block.title()))
+            .subtitle(home_block_subtitle(block, active, visible_index))
+            .build();
+
+        let up = gtk::Button::from_icon_name("go-up-symbolic");
+        up.add_css_class("flat");
+        up.set_tooltip_text(Some(&tr("Move up")));
+        up.set_valign(gtk::Align::Center);
+        up.set_sensitive(visible_index.is_some_and(|index| index > 0));
+        let shell_for_up = Rc::clone(shell);
+        let group_for_up = group.clone();
+        let rows_for_up = Rc::clone(rows);
+        up.connect_clicked(move |_| {
+            let mut blocks = shell_for_up.state.settings.borrow().home_blocks.clone();
+            if let Some(index) = blocks.iter().position(|candidate| *candidate == block)
+                && index > 0
+            {
+                blocks.swap(index - 1, index);
+                shell_for_up.set_home_blocks(blocks);
+                populate_home_block_rows(&shell_for_up, &group_for_up, &rows_for_up);
+            }
+        });
+        row.add_suffix(&up);
+
+        let down = gtk::Button::from_icon_name("go-down-symbolic");
+        down.add_css_class("flat");
+        down.set_tooltip_text(Some(&tr("Move down")));
+        down.set_valign(gtk::Align::Center);
+        down.set_sensitive(visible_index.is_some_and(|index| index + 1 < visible_blocks.len()));
+        let shell_for_down = Rc::clone(shell);
+        let group_for_down = group.clone();
+        let rows_for_down = Rc::clone(rows);
+        down.connect_clicked(move |_| {
+            let mut blocks = shell_for_down.state.settings.borrow().home_blocks.clone();
+            if let Some(index) = blocks.iter().position(|candidate| *candidate == block)
+                && index + 1 < blocks.len()
+            {
+                blocks.swap(index, index + 1);
+                shell_for_down.set_home_blocks(blocks);
+                populate_home_block_rows(&shell_for_down, &group_for_down, &rows_for_down);
+            }
+        });
+        row.add_suffix(&down);
+
+        let toggle = gtk::Switch::builder()
+            .active(active)
+            .valign(gtk::Align::Center)
+            .sensitive(!active || visible_blocks.len() > 1)
+            .build();
+        let shell_for_toggle = Rc::clone(shell);
+        let group_for_toggle = group.clone();
+        let rows_for_toggle = Rc::clone(rows);
+        toggle.connect_active_notify(move |toggle| {
+            let mut blocks = shell_for_toggle.state.settings.borrow().home_blocks.clone();
+            let currently_active = blocks.contains(&block);
+            let requested = toggle.is_active();
+            if requested == currently_active {
+                return;
+            }
+            if requested {
+                blocks.push(block);
+            } else if blocks.len() > 1 {
+                blocks.retain(|candidate| *candidate != block);
+            }
+            shell_for_toggle.set_home_blocks(blocks);
+            populate_home_block_rows(&shell_for_toggle, &group_for_toggle, &rows_for_toggle);
+        });
+        row.add_suffix(&toggle);
+        row.set_activatable_widget(Some(&toggle));
+
+        group.add(&row);
+        rows.borrow_mut().push(row);
+    }
+}
+
+fn home_block_row_order(visible_blocks: &[HomeBlockKind]) -> Vec<HomeBlockKind> {
+    let mut blocks = visible_blocks.to_vec();
+    for block in HomeBlockKind::all() {
+        if !blocks.contains(&block) {
+            blocks.push(block);
+        }
+    }
+    blocks
+}
+
+fn home_block_subtitle(block: HomeBlockKind, active: bool, visible_index: Option<usize>) -> String {
+    if let Some(index) = visible_index {
+        return format!("{} {}", tr("Position"), index + 1);
+    }
+    match block.section_kind() {
+        Some(_) => tr("Hidden server section"),
+        None if active => tr("Visible"),
+        None => tr("Hidden"),
+    }
 }
 
 fn library_page(shell: &Rc<Shell>, dialog: &adw::PreferencesDialog) -> adw::PreferencesPage {

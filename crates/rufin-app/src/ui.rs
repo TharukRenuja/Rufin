@@ -12,6 +12,7 @@ mod chrome;
 mod discord;
 mod favorites;
 mod layout;
+mod library;
 mod login;
 mod mpris;
 mod navigation;
@@ -29,9 +30,9 @@ use gtk::glib;
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, DensityMode, DiscordDisplayType, DiscordLinkType,
-    EffectiveDensity, Genre, HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId,
-    QueueSnapshot, Route, RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn,
-    TrackTableSettings, format_duration,
+    EffectiveDensity, Genre, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef, LibraryListKey,
+    LibraryListSettings, Playlist, PlaylistId, QueueSnapshot, Route, RouteStack, SearchKind, Track,
+    TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, Lyrics, LyricsSource};
@@ -952,6 +953,30 @@ fn upsert_snapshot_home_section(sections: &mut Vec<HomeSection>, section: HomeSe
     }
 }
 
+fn showcase_album(library: &LibrarySnapshot) -> Option<Album> {
+    library
+        .home_sections
+        .iter()
+        .find(|section| section.kind == HomeSectionKind::Explore)
+        .and_then(|section| section.albums.first())
+        .cloned()
+        .or_else(|| library.albums.first().cloned())
+}
+
+fn home_showcase_facts(album: &Album) -> String {
+    let mut parts = Vec::new();
+    if album.year > 0 {
+        parts.push(album.year.to_string());
+    }
+    if album.track_count > 0 {
+        parts.push(format!("{} {}", album.track_count, tr("tracks")));
+    }
+    if album.duration_seconds > 0 {
+        parts.push(format_duration(album.duration_seconds));
+    }
+    parts.join(" • ")
+}
+
 impl Shell {
     fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
@@ -1306,6 +1331,50 @@ impl Shell {
         }
     }
 
+    fn update_library_list_settings(
+        &self,
+        key: LibraryListKey,
+        update: impl FnOnce(&mut LibraryListSettings),
+    ) {
+        let mut settings = self.state.settings.borrow_mut();
+        if !settings.library_lists.iter().any(|entry| entry.key == key) {
+            settings
+                .library_lists
+                .push(rufin_core::LibraryListSettingsEntry {
+                    key,
+                    settings: LibraryListSettings::for_key(key),
+                });
+        }
+        if let Some(entry) = settings
+            .library_lists
+            .iter_mut()
+            .find(|entry| entry.key == key)
+        {
+            update(&mut entry.settings);
+            entry.settings.sanitize(key);
+        }
+        if let Err(error) = self.controller.save_settings(&settings) {
+            warn!(%error, "failed to save library list settings");
+        }
+    }
+
+    pub(super) fn set_home_blocks(self: &Rc<Self>, blocks: Vec<HomeBlockKind>) {
+        {
+            let mut settings = self.state.settings.borrow_mut();
+            if settings.home_blocks == blocks {
+                return;
+            }
+            settings.home_blocks = blocks;
+            settings.migrate_defaults();
+            if let Err(error) = self.controller.save_settings(&settings) {
+                warn!(%error, "failed to save home block settings");
+            }
+        }
+        if matches!(self.state.routes.borrow().current(), Route::Home) {
+            self.render_current_route();
+        }
+    }
+
     fn update_density(self: &Rc<Self>) {
         let width = self.density_width().max(1);
         self.update_density_for_width(width);
@@ -1604,19 +1673,31 @@ impl Shell {
 
         let view = match route {
             Route::Home => self.home_view(),
-            Route::Albums => self.albums_view(),
+            Route::Albums => self.library_albums_view(),
             Route::AlbumDetail(album_id) => self.album_detail_view(album_id),
-            Route::Tracks => self.tracks_route_view(),
+            Route::Tracks => self.library_tracks_route_view(),
             Route::Favorites => {
                 let favorites = self.state.library.borrow().favorites.clone();
-                self.tracks_view(favorites, "favorites")
+                let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
+                wrapper.add_css_class("route-content");
+                wrapper.set_margin_top(24);
+                wrapper.set_margin_bottom(28);
+                wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+                wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+                wrapper.set_vexpand(true);
+                wrapper.append(&self.library_tracks_panel(
+                    favorites,
+                    LibraryListKey::Tracks,
+                    "favorites",
+                ));
+                wrapper.upcast()
             }
-            Route::Artists => self.artist_list_view(false),
+            Route::Artists => self.library_artist_list_view(false),
             Route::ArtistDetail(artist_id) => self.artist_detail_view(artist_id),
             Route::ArtistDiscography(artist_id) => self.artist_discography_view(artist_id),
             Route::ArtistTracks(artist_id) => self.artist_tracks_view(artist_id),
-            Route::AlbumArtists => self.artist_list_view(true),
-            Route::Genres => self.genre_list_view(),
+            Route::AlbumArtists => self.library_artist_list_view(true),
+            Route::Genres => self.library_genre_list_view(),
             Route::GenreDetail(genre_id) => self.genre_detail_view(genre_id),
             Route::Playlists => self.playlist_list_view(),
             Route::PlaylistDetail(playlist_id) => self.playlist_detail_view(playlist_id),
@@ -1700,11 +1781,30 @@ impl Shell {
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
 
-        for section in &self.state.library.borrow().home_sections {
-            content.append(&self.home_section(section));
+        let blocks = self.state.settings.borrow().home_blocks.clone();
+        let library = self.state.library.borrow().clone();
+        let mut appended = false;
+        for block in blocks {
+            let child = match block {
+                HomeBlockKind::Showcase => self.home_showcase_block(&library),
+                HomeBlockKind::Genres => self.home_genres_block(&library.genres),
+                _ => block
+                    .section_kind()
+                    .and_then(|kind| {
+                        library
+                            .home_sections
+                            .iter()
+                            .find(|section| section.kind == kind)
+                    })
+                    .map(|section| self.home_section(section)),
+            };
+            if let Some(child) = child {
+                content.append(&child);
+                appended = true;
+            }
         }
 
-        if self.state.library.borrow().home_sections.is_empty() {
+        if !appended {
             content
                 .append(&self.route_empty_view(
                     "Cached library data will appear here as sync pages finish.",
@@ -1713,6 +1813,137 @@ impl Shell {
 
         scroller.set_child(Some(&content));
         scroller.upcast()
+    }
+
+    fn home_showcase_block(self: &Rc<Self>, library: &LibrarySnapshot) -> Option<gtk::Widget> {
+        let album = showcase_album(library)?;
+
+        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        section.set_hexpand(true);
+
+        let heading = gtk::Label::new(Some(&tr(HomeBlockKind::Showcase.title())));
+        heading.add_css_class("section-heading");
+        heading.set_xalign(0.0);
+        section.append(&heading);
+
+        let body = gtk::Box::new(gtk::Orientation::Horizontal, 18);
+        body.add_css_class("home-showcase");
+        body.set_hexpand(true);
+        body.set_valign(gtk::Align::Start);
+        body.append(&self.cover_tile_for(
+            album.image_ref.as_ref(),
+            album.color_seed,
+            168,
+            GRID_COVER_SIZE,
+        ));
+
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        metadata.set_hexpand(true);
+        metadata.set_valign(gtk::Align::Center);
+
+        let title = gtk::Label::new(Some(&album.title));
+        title.add_css_class("home-showcase-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        metadata.append(&title);
+
+        let artist = gtk::Label::new(Some(&album.artist));
+        artist.add_css_class("muted");
+        artist.set_xalign(0.0);
+        artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        metadata.append(&artist);
+
+        let facts = gtk::Label::new(Some(&home_showcase_facts(&album)));
+        facts.add_css_class("muted");
+        facts.set_xalign(0.0);
+        metadata.append(&facts);
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let play = icon_button("media-playback-start-symbolic", "Play album");
+        play.add_css_class("suggested-action");
+        let controller = self.controller.clone();
+        let album_id = album.id.clone();
+        play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
+        actions.append(&play);
+
+        let open = icon_button("go-next-symbolic", "Open album");
+        let shell = Rc::clone(self);
+        let album_id = album.id.clone();
+        open.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
+        actions.append(&open);
+        metadata.append(&actions);
+
+        body.append(&metadata);
+        section.append(&body);
+        Some(section.upcast())
+    }
+
+    fn home_genres_block(self: &Rc<Self>, genres: &[Genre]) -> Option<gtk::Widget> {
+        if genres.is_empty() {
+            return None;
+        }
+
+        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        section.set_hexpand(true);
+
+        let heading = gtk::Label::new(Some(&tr(HomeBlockKind::Genres.title())));
+        heading.add_css_class("section-heading");
+        heading.set_xalign(0.0);
+        section.append(&heading);
+
+        let flow = gtk::FlowBox::new();
+        flow.add_css_class("home-genre-flow");
+        flow.set_column_spacing(8);
+        flow.set_row_spacing(8);
+        flow.set_selection_mode(gtk::SelectionMode::None);
+        flow.set_max_children_per_line(6);
+        flow.set_min_children_per_line(2);
+
+        for genre in genres.iter().take(12) {
+            flow.insert(&self.home_genre_chip(genre), -1);
+        }
+
+        section.append(&flow);
+        Some(section.upcast())
+    }
+
+    fn home_genre_chip(self: &Rc<Self>, genre: &Genre) -> gtk::Widget {
+        let button = gtk::Button::new();
+        button.add_css_class("flat");
+        button.add_css_class("home-genre-chip");
+        button.set_hexpand(true);
+        button.set_halign(gtk::Align::Fill);
+
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        labels.set_margin_top(8);
+        labels.set_margin_bottom(8);
+        labels.set_margin_start(10);
+        labels.set_margin_end(10);
+
+        let name = gtk::Label::new(Some(&genre.name));
+        name.add_css_class("album-title");
+        name.set_xalign(0.0);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        labels.append(&name);
+
+        let counts = gtk::Label::new(Some(&format!(
+            "{} {} • {} {}",
+            genre.album_count,
+            tr("albums"),
+            genre.track_count,
+            tr("tracks")
+        )));
+        counts.add_css_class("muted");
+        counts.set_xalign(0.0);
+        counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        labels.append(&counts);
+
+        button.set_child(Some(&labels));
+        let shell = Rc::clone(self);
+        let genre_id = genre.id.clone();
+        button.connect_clicked(move |_| shell.navigate(Route::GenreDetail(genre_id.clone())));
+        button.upcast()
     }
 
     fn home_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
@@ -1849,6 +2080,7 @@ impl Shell {
         section.upcast()
     }
 
+    #[allow(dead_code)]
     fn albums_view(self: &Rc<Self>) -> gtk::Widget {
         let page = self
             .controller
@@ -2013,17 +2245,20 @@ impl Shell {
         header.append(&metadata);
         content.append(&header);
 
-        let table = self.tracks_table(tracks, "album-detail");
+        let table =
+            self.library_tracks_panel(tracks, LibraryListKey::AlbumDetailTracks, "album-detail");
         content.append(&table);
 
         scroller.set_child(Some(&content));
         scroller.upcast()
     }
 
+    #[allow(dead_code)]
     fn tracks_view(self: &Rc<Self>, tracks: Vec<Track>, context: &str) -> gtk::Widget {
         self.tracks_view_with_paging(tracks, context, None)
     }
 
+    #[allow(dead_code)]
     fn tracks_route_view(self: &Rc<Self>) -> gtk::Widget {
         let page = self
             .controller
@@ -2049,6 +2284,7 @@ impl Shell {
         self.tracks_view_with_paging(page.items, "tracks", Some((offset, total)))
     }
 
+    #[allow(dead_code)]
     fn tracks_view_with_paging(
         self: &Rc<Self>,
         tracks: Vec<Track>,
@@ -2067,6 +2303,7 @@ impl Shell {
         wrapper.upcast()
     }
 
+    #[allow(dead_code)]
     fn tracks_table(self: &Rc<Self>, tracks: Vec<Track>, context: &str) -> gtk::Widget {
         self.tracks_table_with_paging(tracks, context, None)
     }
@@ -2088,6 +2325,7 @@ impl Shell {
         )
     }
 
+    #[allow(dead_code)]
     fn tracks_table_with_paging(
         self: &Rc<Self>,
         tracks: Vec<Track>,
@@ -2106,6 +2344,7 @@ impl Shell {
         )
     }
 
+    #[allow(dead_code)]
     fn artist_tracks_table(self: &Rc<Self>, tracks: Vec<Track>, context: &str) -> gtk::Widget {
         self.tracks_table_with_options(
             tracks,
@@ -2327,6 +2566,7 @@ impl Shell {
         wrapper.upcast()
     }
 
+    #[allow(dead_code)]
     fn genre_list_view(self: &Rc<Self>) -> gtk::Widget {
         let page = self
             .controller
@@ -2786,12 +3026,18 @@ impl Shell {
             wrapper
                 .append(&self.placeholder_view("Tracks", "No cached tracks are linked here yet."));
         } else {
-            wrapper.append(&self.tracks_table(data.tracks, data.table_context));
+            let key = if data.table_context == "genre-detail" {
+                LibraryListKey::GenreTracks
+            } else {
+                LibraryListKey::Tracks
+            };
+            wrapper.append(&self.library_tracks_panel(data.tracks, key, data.table_context));
         }
         scroller.set_child(Some(&wrapper));
         scroller.upcast()
     }
 
+    #[allow(dead_code)]
     fn media_grid_view(
         self: &Rc<Self>,
         empty: bool,
@@ -2856,7 +3102,11 @@ impl Shell {
         }
 
         if has_tracks {
-            wrapper.append(&self.tracks_table(library.search.tracks, "search"));
+            wrapper.append(&self.library_tracks_panel(
+                library.search.tracks,
+                LibraryListKey::Tracks,
+                "search",
+            ));
         } else if !has_albums && !has_artists && !has_playlists {
             wrapper.append(&self.route_empty_view("No cached results found."));
         }
@@ -4351,12 +4601,14 @@ fn collect_largest_scrolled_window(
     }
 }
 
+#[allow(dead_code)]
 fn album_model(albums: &[Album]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     append_albums_to_model(&model, albums.iter().cloned());
     model
 }
 
+#[allow(dead_code)]
 fn append_albums_to_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
     let additions = albums
         .into_iter()
@@ -4375,12 +4627,14 @@ fn replace_albums_in_model(model: &gio::ListStore, albums: impl IntoIterator<Ite
     model.splice(0, model.n_items(), &additions);
 }
 
+#[allow(dead_code)]
 fn artist_model(artists: &[Artist]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     append_artists_to_model(&model, artists.iter().cloned());
     model
 }
 
+#[allow(dead_code)]
 fn append_artists_to_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
     let additions = artists
         .into_iter()
@@ -4399,12 +4653,14 @@ fn replace_artists_in_model(model: &gio::ListStore, artists: impl IntoIterator<I
     model.splice(0, model.n_items(), &additions);
 }
 
+#[allow(dead_code)]
 fn genre_model(genres: &[Genre]) -> gio::ListStore {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     append_genres_to_model(&model, genres.iter().cloned());
     model
 }
 
+#[allow(dead_code)]
 fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
     let additions = genres
         .into_iter()
@@ -5614,6 +5870,11 @@ mod tests {
             album_artist_credits: Vec::new(),
             artist_credits: Vec::new(),
             year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
             track_count: 1,
             duration_seconds: 180,
             favorite: false,
@@ -5634,6 +5895,11 @@ mod tests {
             album_artist_credits: Vec::new(),
             album: "Album".to_string(),
             year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
             duration_seconds: 180,
             favorite: false,
             disc_number: 1,

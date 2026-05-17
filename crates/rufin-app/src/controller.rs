@@ -296,6 +296,17 @@ impl AppController {
             .with_store(|store| store.load_album_detail(&server.id, album_id))
     }
 
+    pub fn cached_album_tracks(
+        &self,
+        album_ids: &[AlbumId],
+    ) -> Result<std::collections::HashMap<AlbumId, Vec<Track>>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(std::collections::HashMap::new());
+        };
+        self.store
+            .with_store(|store| store.load_tracks_for_albums(&saved.server.id, album_ids))
+    }
+
     pub fn cached_artist_detail(
         &self,
         artist_id: &ArtistId,
@@ -4005,8 +4016,8 @@ mod tests {
         sync_page_finished, sync_provider,
     };
     use rufin_core::{
-        AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, ImageRef, PlaylistId,
-        QueueEngine, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+        AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
+        PlaylistId, QueueEngine, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
     };
     use rufin_playback::{
         PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
@@ -4287,7 +4298,13 @@ mod tests {
         assert_eq!(after[0].kind, HomeSectionKind::Explore);
         assert_eq!(after[0].albums[0].id, AlbumId::fake(1));
         assert_eq!(after[1].kind, HomeSectionKind::MostPlayed);
-        assert_eq!(after[1].tracks, vec![stale_track]);
+        let mut expected_track = stale_track;
+        let expected_credit = ArtistCredit {
+            id: expected_track.artist_id.clone().expect("artist id"),
+            name: expected_track.artist.clone(),
+        };
+        expected_track.artist_credits = vec![expected_credit];
+        assert_eq!(after[1].tracks, vec![expected_track]);
     }
 
     #[test]
@@ -5396,6 +5413,11 @@ mod tests {
             album_artist_credits: Vec::new(),
             album: "Album".to_string(),
             year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
             duration_seconds: 180,
             favorite: false,
             disc_number: 1,
@@ -5422,6 +5444,11 @@ mod tests {
             album_artist_credits: Vec::new(),
             album: "Album".to_string(),
             year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
             duration_seconds: 180,
             favorite: false,
             disc_number: 1,
