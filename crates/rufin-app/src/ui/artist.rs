@@ -86,7 +86,7 @@ impl Shell {
         }
 
         if !appears_on.is_empty() {
-            wrapper.append(&self.artist_album_section("Appears on", &appears_on));
+            wrapper.append(&self.artist_album_section("Appears On", &appears_on));
         }
 
         if !has_favorite_tracks && albums.is_empty() && appears_on.is_empty() {
@@ -140,7 +140,7 @@ impl Shell {
             wrapper.append(&self.artist_album_section("Albums", &detail.albums));
         }
         if !detail.appears_on.is_empty() {
-            wrapper.append(&self.artist_album_section("Appears on", &detail.appears_on));
+            wrapper.append(&self.artist_album_section("Appears On", &detail.appears_on));
         }
         if detail.albums.is_empty() && detail.appears_on.is_empty() {
             wrapper.append(&self.placeholder_view(

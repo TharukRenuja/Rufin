@@ -1078,6 +1078,10 @@ impl Store {
                     WHERE albums.server_id = album_artists.server_id
                       AND (
                           albums.artist_id = album_artists.artist_id
+                          OR (
+                              TRIM(album_artists.name) != ''
+                              AND LOWER(albums.artist) = LOWER(album_artists.name)
+                          )
                           OR EXISTS (
                               SELECT 1
                               FROM album_artist_links aal
@@ -1093,6 +1097,10 @@ impl Store {
                     WHERE albums.server_id = album_artists.server_id
                       AND (
                           albums.artist_id = album_artists.artist_id
+                          OR (
+                              TRIM(album_artists.name) != ''
+                              AND LOWER(albums.artist) = LOWER(album_artists.name)
+                          )
                           OR EXISTS (
                               SELECT 1
                               FROM album_artist_links aal
@@ -1785,7 +1793,6 @@ impl Store {
                   )
                   OR (
                       ?3 IS NOT NULL
-                      AND artist_id IS NULL
                       AND LOWER(artist) = ?3
                   )
               )
@@ -1832,8 +1839,8 @@ impl Store {
                   OR (
                       ?3 IS NOT NULL
                       AND (
-                          (t.artist_id IS NULL AND LOWER(t.artist) = ?3)
-                          OR (a.artist_id IS NULL AND LOWER(a.artist) = ?3)
+                          LOWER(t.artist) = ?3
+                          OR LOWER(a.artist) = ?3
                       )
                   )
               )
@@ -1993,13 +2000,15 @@ impl Store {
         } else {
             "artists"
         };
-        let total = self.count(table, server_id)?;
+        let artist_filter = artist_list_filter(album_artist);
+        let total = self.count_artists(server_id, album_artist)?;
         let sql = format!(
             "
             SELECT artist_id, name, album_count, track_count, favorite,
                    last_played, play_count, user_rating, image_item_id, image_tag
             FROM {table}
             WHERE server_id = ?1
+              {artist_filter}
             ORDER BY name COLLATE NOCASE
             LIMIT ?2 OFFSET ?3
             "
@@ -2029,7 +2038,8 @@ impl Store {
             "artist"
         };
         if let Some(query) = fts_query(query) {
-            let total = self.count_fts_matches(server_id, item_type, &query)?;
+            let total =
+                self.count_artist_fts_matches(server_id, album_artist, item_type, &query)?;
             if total > 0 {
                 return self.search_artists_page(
                     server_id,
@@ -2901,6 +2911,7 @@ impl Store {
         } else {
             "artist"
         };
+        let artist_filter = artist_list_filter_for_alias(album_artist, "a");
         let sql = format!(
             "
             SELECT a.artist_id, a.name, a.album_count, a.track_count, a.favorite,
@@ -2911,6 +2922,7 @@ impl Store {
             WHERE f.server_id = ?1
               AND f.item_type = ?2
               AND library_fts MATCH ?3
+              {artist_filter}
             ORDER BY bm25(library_fts)
             LIMIT ?4 OFFSET ?5
             "
@@ -2942,12 +2954,14 @@ impl Store {
         } else {
             "artists"
         };
+        let artist_filter = artist_list_filter(album_artist);
         let total_sql = format!(
             "
             SELECT COUNT(*)
             FROM {table}
             WHERE server_id = ?1
               AND LOWER(name) LIKE ?2 ESCAPE '\\'
+              {artist_filter}
             "
         );
         let total =
@@ -2962,6 +2976,7 @@ impl Store {
             FROM {table}
             WHERE server_id = ?1
               AND LOWER(name) LIKE ?2 ESCAPE '\\'
+              {artist_filter}
             ORDER BY name COLLATE NOCASE
             LIMIT ?3 OFFSET ?4
             "
@@ -3065,6 +3080,39 @@ impl Store {
                 params![server_id.as_str(), item_type, query],
                 |row| row.get::<_, i64>(0),
             )
+            .map(|count| count.max(0) as usize)
+            .map_err(StoreError::from)
+    }
+
+    fn count_artist_fts_matches(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+        item_type: &str,
+        query: &str,
+    ) -> StoreResult<usize> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let artist_filter = artist_list_filter_for_alias(album_artist, "a");
+        let sql = format!(
+            "
+            SELECT COUNT(*)
+            FROM library_fts f
+            JOIN {table} a
+                ON a.server_id = f.server_id AND a.artist_id = f.item_id
+            WHERE f.server_id = ?1
+              AND f.item_type = ?2
+              AND library_fts MATCH ?3
+              {artist_filter}
+            "
+        );
+        self.connection
+            .query_row(&sql, params![server_id.as_str(), item_type, query], |row| {
+                row.get::<_, i64>(0)
+            })
             .map(|count| count.max(0) as usize)
             .map_err(StoreError::from)
     }
@@ -3232,6 +3280,29 @@ impl Store {
 
     fn count(&self, table: &str, server_id: &ServerId) -> StoreResult<usize> {
         let sql = format!("SELECT COUNT(*) FROM {table} WHERE server_id = ?1");
+        let count = self
+            .connection
+            .query_row(&sql, params![server_id.as_str()], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        Ok(count.max(0) as usize)
+    }
+
+    fn count_artists(&self, server_id: &ServerId, album_artist: bool) -> StoreResult<usize> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let artist_filter = artist_list_filter(album_artist);
+        let sql = format!(
+            "
+            SELECT COUNT(*)
+            FROM {table}
+            WHERE server_id = ?1
+              {artist_filter}
+            "
+        );
         let count = self
             .connection
             .query_row(&sql, params![server_id.as_str()], |row| {
@@ -3473,6 +3544,54 @@ fn image_ref_parts(image_ref: Option<&ImageRef>) -> (Option<&str>, Option<&str>)
     match image_ref {
         Some(image_ref) => (Some(image_ref.item_id.as_str()), image_ref.tag.as_deref()),
         None => (None, None),
+    }
+}
+
+fn artist_list_filter(album_artist: bool) -> &'static str {
+    if album_artist {
+        ""
+    } else {
+        "
+              AND track_count > 0
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM tracks t
+                      WHERE t.server_id = artists.server_id
+                        AND t.artist_id = artists.artist_id
+                  )
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM track_artist_links tal
+                      WHERE tal.server_id = artists.server_id
+                        AND tal.artist_id = artists.artist_id
+                  )
+              )"
+    }
+}
+
+fn artist_list_filter_for_alias(album_artist: bool, alias: &str) -> String {
+    if album_artist {
+        String::new()
+    } else {
+        format!(
+            "
+              AND {alias}.track_count > 0
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM tracks t
+                      WHERE t.server_id = {alias}.server_id
+                        AND t.artist_id = {alias}.artist_id
+                  )
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM track_artist_links tal
+                      WHERE tal.server_id = {alias}.server_id
+                        AND tal.artist_id = {alias}.artist_id
+                  )
+              )"
+        )
     }
 }
 
@@ -5430,6 +5549,151 @@ mod tests {
         assert!(detail.appears_on.is_empty());
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].id, track.id);
+    }
+
+    #[test]
+    fn artist_detail_matches_album_artist_name_when_link_is_missing() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album_artist = Artist {
+            id: ArtistId::fake(8),
+            name: "Linked Album Artist".to_string(),
+            album_count: 1,
+            track_count: 0,
+            favorite: false,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            image_ref: None,
+        };
+        let mut album = album(7);
+        album.artist = album_artist.name.clone();
+        album.artist_id = Some(ArtistId::fake(99));
+        album.album_artist_credits = Vec::new();
+        let mut track = track(1, &album);
+        track.artist = "Different Track Artist".to_string();
+        track.artist_id = Some(ArtistId::fake(10));
+        track.artist_credits = vec![credit(
+            track.artist_id.clone().expect("track artist id"),
+            &track.artist,
+        )];
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&album_artist),
+                true,
+                generation,
+            )
+            .expect("upsert album artist");
+        store
+            .refresh_library_counts(&saved.server.id)
+            .expect("refresh counts");
+
+        let loaded_artist = store
+            .load_artists(&saved.server.id, true, 0, 10)
+            .expect("load album artists")
+            .items
+            .into_iter()
+            .find(|artist| artist.id == album_artist.id)
+            .expect("album artist");
+        assert_eq!(loaded_artist.album_count, 1);
+        assert_eq!(loaded_artist.track_count, u32::from(album.track_count));
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &album_artist.id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(detail.artist, loaded_artist);
+        assert_eq!(detail.albums.len(), 1);
+        assert_eq!(detail.albums[0].id, album.id);
+        assert!(detail.appears_on.is_empty());
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].id, track.id);
+    }
+
+    #[test]
+    fn artist_lists_hide_appears_on_only_artists() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let primary_artist = Artist {
+            id: ArtistId::fake(1),
+            name: "Primary Artist".to_string(),
+            album_count: 1,
+            track_count: 1,
+            favorite: false,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            image_ref: None,
+        };
+        let linked_artist = Artist {
+            id: ArtistId::fake(2),
+            name: "Featured Artist".to_string(),
+            album_count: 1,
+            track_count: 1,
+            favorite: false,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            image_ref: None,
+        };
+        let mut album = album(1);
+        album.artist = primary_artist.name.clone();
+        album.artist_id = Some(primary_artist.id.clone());
+        let mut track = track(1, &album);
+        track.artist = primary_artist.name.clone();
+        track.artist_id = Some(primary_artist.id.clone());
+        track.artist_credits = vec![
+            credit(primary_artist.id.clone(), &primary_artist.name),
+            credit(linked_artist.id.clone(), &linked_artist.name),
+        ];
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                &[primary_artist.clone(), linked_artist.clone()],
+                false,
+                generation,
+            )
+            .expect("upsert artists");
+        store
+            .refresh_library_counts(&saved.server.id)
+            .expect("refresh counts");
+
+        let artist_page = store
+            .load_artists(&saved.server.id, false, 0, 10)
+            .expect("load artists");
+        assert_eq!(artist_page.items, vec![primary_artist]);
+
+        let linked_search = store
+            .load_artists_matching(&saved.server.id, false, "Featured Artist", 0, 10)
+            .expect("search artists");
+        assert!(linked_search.items.is_empty());
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &linked_artist.id)
+            .expect("load artist detail")
+            .expect("artist detail");
+        assert_eq!(detail.appears_on.len(), 1);
+        assert_eq!(detail.appears_on[0].id, album.id);
     }
 
     #[test]
