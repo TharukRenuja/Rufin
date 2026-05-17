@@ -143,7 +143,12 @@ window {
 
 .server-selector-popover {
   padding: 6px;
-  min-width: 260px;
+  min-width: 280px;
+}
+
+.server-section-label {
+  color: @dim_label_color;
+  font-size: 0.9em;
 }
 
 .server-option {

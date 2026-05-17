@@ -1,7 +1,9 @@
+use std::path::Path;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use rufin_core::{Route, ServerIdentity};
+use rufin_store::ServerLocalAccess;
 
 use super::{Shell, icon_button, layout::COMPACT_RAIL_WIDTH};
 use crate::controller::LibrarySnapshot;
@@ -27,6 +29,7 @@ struct ServerSelectorContent {
     detail: String,
     active_server: Option<ServerIdentity>,
     servers: Vec<ServerIdentity>,
+    local_access: Option<ServerLocalAccess>,
     has_server: bool,
 }
 
@@ -182,6 +185,7 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
             detail: tr("No server"),
             active_server: None,
             servers: library.servers,
+            local_access: None,
             has_server: false,
         };
     };
@@ -200,6 +204,7 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
         detail,
         active_server: Some(server.clone()),
         servers: library.servers,
+        local_access: library.local_access,
         has_server: true,
     }
 }
@@ -235,6 +240,7 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
     let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 4);
     wrapper.add_css_class("server-selector-popover");
 
+    wrapper.append(&server_section_label(&tr("Select Server")));
     if content.servers.is_empty() {
         let row = server_option_row(None, &content.name, &content.detail, content.has_server);
         row.set_sensitive(false);
@@ -257,6 +263,34 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
             });
             wrapper.append(&row);
         }
+    }
+
+    if let Some(server) = &content.active_server {
+        let manage = server_action_row(
+            "document-edit-symbolic",
+            &tr("Manage Server"),
+            &tr("Configure local folder access"),
+            false,
+        );
+        let row_popover = popover.clone();
+        let manage_shell = Rc::clone(shell);
+        let managed_server = server.clone();
+        manage.connect_clicked(move |_| {
+            row_popover.popdown();
+            manage_shell.present_manage_server_dialog(managed_server.clone());
+        });
+        wrapper.append(&manage);
+
+        let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+        wrapper.append(&separator);
+        wrapper.append(&server_section_label(&tr("Music Folder")));
+        append_music_folder_rows(
+            shell,
+            &popover,
+            &wrapper,
+            &server,
+            content.local_access.as_ref(),
+        );
     }
 
     let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
@@ -282,6 +316,63 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
 
     popover.set_child(Some(&wrapper));
     popover
+}
+
+fn append_music_folder_rows(
+    shell: &Rc<Shell>,
+    popover: &gtk::Popover,
+    wrapper: &gtk::Box,
+    server: &ServerIdentity,
+    access: Option<&ServerLocalAccess>,
+) {
+    if server.provider != "local" {
+        let none = server_action_row(
+            "audio-volume-muted-symbolic",
+            &tr("None"),
+            &tr("Use server streams only"),
+            access.is_none(),
+        );
+        let row_popover = popover.clone();
+        let controller = shell.controller.clone();
+        let server_id = server.id.clone();
+        none.connect_clicked(move |_| {
+            row_popover.popdown();
+            controller.clear_server_local_access(server_id.clone());
+        });
+        wrapper.append(&none);
+    }
+
+    match access {
+        Some(access) => {
+            let title = local_folder_title(access);
+            let detail = local_folder_path(access);
+            let folder = server_action_row("folder-music-symbolic", &title, &detail, true);
+            let row_popover = popover.clone();
+            let manage_shell = Rc::clone(shell);
+            let server = server.clone();
+            folder.connect_clicked(move |_| {
+                row_popover.popdown();
+                manage_shell.present_manage_server_dialog(server.clone());
+            });
+            wrapper.append(&folder);
+        }
+        None => {
+            let choose = server_action_row(
+                "folder-open-symbolic",
+                &tr("Choose Folder"),
+                &tr("Add local folder access"),
+                false,
+            );
+            let row_popover = popover.clone();
+            let manage_shell = Rc::clone(shell);
+            let server = server.clone();
+            choose.connect_clicked(move |_| {
+                row_popover.popdown();
+                manage_shell.present_manage_server_dialog(server.clone());
+            });
+            wrapper.append(&choose);
+        }
+    }
 }
 
 fn server_option_row(
@@ -323,12 +414,71 @@ fn server_option_row(
     row
 }
 
+fn server_action_row(icon_name: &str, title: &str, detail: &str, active: bool) -> gtk::Button {
+    let row = gtk::Button::new();
+    row.add_css_class("flat");
+    row.add_css_class("server-option");
+    if active {
+        row.add_css_class("active");
+    }
+
+    let row_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row_content.set_halign(gtk::Align::Fill);
+    row_content.append(&gtk::Image::from_icon_name(icon_name));
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+    let name = gtk::Label::new(Some(title));
+    name.set_xalign(0.0);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let detail = gtk::Label::new(Some(detail));
+    detail.add_css_class("muted");
+    detail.set_xalign(0.0);
+    detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    labels.append(&name);
+    labels.append(&detail);
+    row_content.append(&labels);
+    if active {
+        row_content.append(&gtk::Image::from_icon_name("object-select-symbolic"));
+    }
+    row.set_child(Some(&row_content));
+    row
+}
+
+fn server_section_label(label: &str) -> gtk::Label {
+    let section = gtk::Label::new(Some(label));
+    section.add_css_class("server-section-label");
+    section.set_xalign(0.0);
+    section.set_margin_top(2);
+    section.set_margin_start(4);
+    section
+}
+
 fn server_detail(server: &ServerIdentity) -> String {
     if server.base_url.trim().is_empty() {
         provider_display_name(&server.provider)
     } else {
         server.base_url.clone()
     }
+}
+
+fn local_folder_path(access: &ServerLocalAccess) -> String {
+    access
+        .path_replace_to
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&access.root_path)
+        .to_string()
+}
+
+fn local_folder_title(access: &ServerLocalAccess) -> String {
+    let path = local_folder_path(access);
+    Path::new(&path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or(path)
 }
 
 fn normal_history_controls(shell: &Rc<Shell>) -> gtk::Box {

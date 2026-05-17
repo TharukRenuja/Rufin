@@ -3,20 +3,176 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use adw::prelude::*;
+use rufin_core::ServerIdentity;
+use rufin_store::ServerLocalAccess;
 
 use crate::i18n::tr;
 use crate::providers::StreamingProvider;
 
-use super::{Shell, text_button};
+use super::{Shell, icon_button, text_button};
 
 impl Shell {
     pub(super) fn present_add_server_dialog(self: &Rc<Self>) {
+        let toolbar = adw::ToolbarView::new();
+        let header = adw::HeaderBar::new();
+        let title = adw::WindowTitle::new(&tr("Add Server"), "");
+        header.set_title_widget(Some(&title));
+        let close = icon_button("window-close-symbolic", "Close");
+        header.pack_end(&close);
+        toolbar.add_top_bar(&header);
+
         let child = self.add_server_view();
+        toolbar.set_content(Some(&child));
         let dialog = adw::Dialog::builder()
             .content_width(620)
-            .content_height(720)
-            .child(&child)
+            .content_height(680)
+            .child(&toolbar)
             .build();
+        let dialog_for_close = dialog.clone();
+        close.connect_clicked(move |_| {
+            dialog_for_close.close();
+        });
+        dialog.present(Some(&self.window));
+    }
+
+    pub(super) fn present_manage_server_dialog(self: &Rc<Self>, server: ServerIdentity) {
+        let access = {
+            let library = self.state.library.borrow();
+            library
+                .server
+                .as_ref()
+                .filter(|active| active.id == server.id)
+                .and_then(|_| library.local_access.clone())
+        };
+        let toolbar = adw::ToolbarView::new();
+        let header = adw::HeaderBar::new();
+        let title = adw::WindowTitle::new(&tr("Manage Server"), &server_display_name(&server));
+        header.set_title_widget(Some(&title));
+        let close = icon_button("window-close-symbolic", "Close");
+        header.pack_end(&close);
+        toolbar.add_top_bar(&header);
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        content.set_margin_top(18);
+        content.set_margin_bottom(18);
+        content.set_margin_start(18);
+        content.set_margin_end(18);
+
+        let folder = Rc::new(RefCell::new(access.as_ref().map(|access| {
+            PathBuf::from(
+                access
+                    .path_replace_to
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(&access.root_path),
+            )
+        })));
+        let folder_row = adw::ActionRow::builder()
+            .title(tr("Local Folder"))
+            .subtitle(
+                access
+                    .as_ref()
+                    .map(local_access_display_path)
+                    .unwrap_or_else(|| tr("No folder selected")),
+            )
+            .build();
+        let folder_button = gtk::Button::with_label(&tr("Choose"));
+        folder_button.set_valign(gtk::Align::Center);
+        folder_row.add_suffix(&folder_button);
+        folder_row.set_activatable_widget(Some(&folder_button));
+
+        let prefix = adw::EntryRow::builder()
+            .title(tr("Server Path Prefix"))
+            .text(
+                access
+                    .as_ref()
+                    .and_then(|access| access.path_replace_from.as_deref())
+                    .unwrap_or_default(),
+            )
+            .build();
+        prefix.set_visible(server.provider != "local");
+
+        let group_title = if server.provider == "local" {
+            tr("Local Library")
+        } else {
+            tr("Local Folder Access")
+        };
+        let group_description = if server.provider == "local" {
+            tr("Choose the folder to scan and play directly from this computer.")
+        } else {
+            tr("Optional. Match server paths to local files for sidecar lyrics and exports.")
+        };
+        let group = adw::PreferencesGroup::builder()
+            .title(group_title)
+            .description(group_description)
+            .build();
+        group.add(&folder_row);
+        group.add(&prefix);
+        content.append(&group);
+
+        let status = gtk::Label::new(None);
+        status.add_css_class("muted");
+        status.set_wrap(true);
+        status.set_xalign(0.0);
+        content.append(&status);
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.set_halign(gtk::Align::End);
+        let remove = text_button("edit-clear-symbolic", "Remove Local Folder");
+        remove.set_visible(server.provider != "local" && access.is_some());
+        let save = text_button("document-save-symbolic", "Save");
+        save.add_css_class("suggested-action");
+        actions.append(&remove);
+        actions.append(&save);
+        content.append(&actions);
+
+        toolbar.set_content(Some(&content));
+        let dialog = adw::Dialog::builder()
+            .content_width(560)
+            .child(&toolbar)
+            .build();
+
+        let dialog_for_close = dialog.clone();
+        close.connect_clicked(move |_| {
+            dialog_for_close.close();
+        });
+        connect_folder_button(
+            &self.window,
+            &folder_button,
+            &folder_row,
+            Rc::clone(&folder),
+        );
+
+        let controller = self.controller.clone();
+        let server_id = server.id.clone();
+        let dialog_for_remove = dialog.clone();
+        remove.connect_clicked(move |_| {
+            controller.clear_server_local_access(server_id.clone());
+            dialog_for_remove.close();
+        });
+
+        let controller = self.controller.clone();
+        let server_id = server.id.clone();
+        let provider = server.provider.clone();
+        let status_for_save = status.clone();
+        let dialog_for_save = dialog.clone();
+        save.connect_clicked(move |_| {
+            let Some(root) = folder.borrow().clone() else {
+                status_for_save.set_text(&tr("Choose a local music folder."));
+                return;
+            };
+            if provider == "local" {
+                controller.add_local_server(root);
+            } else {
+                controller.save_server_local_access(
+                    server_id.clone(),
+                    root,
+                    Some(prefix.text().to_string()),
+                );
+            }
+            dialog_for_save.close();
+        });
+
         dialog.present(Some(&self.window));
     }
 
@@ -34,19 +190,26 @@ impl Shell {
         clamp.set_margin_bottom(36);
         clamp.set_margin_start(24);
         clamp.set_margin_end(24);
-        clamp.set_valign(gtk::Align::Center);
+        clamp.set_valign(gtk::Align::Start);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
         content.add_css_class("first-run-content");
         content.set_hexpand(true);
 
-        let intro = adw::StatusPage::builder()
-            .icon_name("network-server-symbolic")
-            .title(tr("Connect to Music Server"))
-            .description(tr(
-                "Choose a provider, pick a discovered server, or enter the address manually.",
-            ))
-            .build();
+        let intro = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        intro.set_margin_bottom(4);
+        let intro_title = gtk::Label::new(Some(&tr("Connect to Music Server")));
+        intro_title.add_css_class("title-1");
+        intro_title.set_xalign(0.0);
+        intro_title.set_wrap(true);
+        let intro_description = gtk::Label::new(Some(&tr(
+            "Choose a provider, pick a discovered server, or enter the address manually.",
+        )));
+        intro_description.add_css_class("muted");
+        intro_description.set_xalign(0.0);
+        intro_description.set_wrap(true);
+        intro.append(&intro_title);
+        intro.append(&intro_description);
         content.append(&intro);
 
         let provider_titles = StreamingProvider::ALL
@@ -339,4 +502,23 @@ fn connect_folder_button(
             *target.borrow_mut() = Some(path);
         });
     });
+}
+
+fn server_display_name(server: &ServerIdentity) -> String {
+    if server.name.trim().is_empty() {
+        StreamingProvider::from_provider_id(&server.provider)
+            .map(|provider| tr(provider.title()))
+            .unwrap_or_else(|| server.provider.clone())
+    } else {
+        server.name.clone()
+    }
+}
+
+fn local_access_display_path(access: &ServerLocalAccess) -> String {
+    access
+        .path_replace_to
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&access.root_path)
+        .to_string()
 }

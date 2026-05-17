@@ -213,6 +213,7 @@ mod tests {
         LibrarySnapshot {
             server: None,
             servers: Vec::new(),
+            local_access: None,
             username: None,
             first_run: false,
             sync_status: String::new(),

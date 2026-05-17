@@ -67,6 +67,15 @@ fn catalog_strings_for_extraction() {
     let _ = tr("This removes cached library metadata for the active server. Login stays saved.");
     let _ = tr("No active server");
     let _ = tr("Add Server");
+    let _ = tr("Manage Server");
+    let _ = tr("Configure local folder access");
+    let _ = tr("Select Server");
+    let _ = tr("None");
+    let _ = tr("Use server streams only");
+    let _ = tr("Choose Folder");
+    let _ = tr("Add local folder access");
+    let _ = tr("Remove Local Folder");
+    let _ = tr("Save");
     let _ = tr("Connect");
     let _ = tr("Connect to Music Server");
     let _ = tr("Choose a provider, pick a discovered server, or enter the address manually.");

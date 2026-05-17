@@ -58,6 +58,7 @@ const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
 pub struct LibrarySnapshot {
     pub server: Option<ServerIdentity>,
     pub servers: Vec<ServerIdentity>,
+    pub local_access: Option<ServerLocalAccess>,
     pub username: Option<String>,
     pub first_run: bool,
     pub sync_status: String,
@@ -127,6 +128,7 @@ impl LibrarySnapshot {
         Self {
             server: None,
             servers: Vec::new(),
+            local_access: None,
             username: None,
             first_run: true,
             sync_status: "Add a music server to start.".to_string(),
@@ -1643,6 +1645,65 @@ impl AppController {
             );
             if active_server_needs_sync(&store, &saved.server.id) {
                 start_sync_thread(store, runtime, secrets, events, sync_in_flight, saved);
+            }
+        });
+    }
+
+    pub fn save_server_local_access(
+        &self,
+        server_id: ServerId,
+        root_path: PathBuf,
+        path_replace_from: Option<String>,
+    ) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let Some(root_path) = root_path.to_str().map(ToString::to_string) else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "Could not use the selected local folder path.".to_string(),
+                ));
+                return;
+            };
+            let result = store.with_store(|store| {
+                store.save_server_local_access(&ServerLocalAccess {
+                    server_id,
+                    root_path: root_path.clone(),
+                    path_replace_from: trimmed_optional(path_replace_from.as_deref()),
+                    path_replace_to: Some(root_path),
+                })
+            });
+            if let Err(error) = result {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            match load_snapshot(&store) {
+                Ok(snapshot) => {
+                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                }
+            }
+        });
+    }
+
+    pub fn clear_server_local_access(&self, server_id: ServerId) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            if let Err(error) =
+                store.with_store(|store| store.delete_server_local_access(&server_id))
+            {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            match load_snapshot(&store) {
+                Ok(snapshot) => {
+                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                }
             }
         });
     }
@@ -3259,6 +3320,7 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         snapshot.servers = servers;
         return Ok(snapshot);
     };
+    let local_access = store.with_store(|store| store.server_local_access(&saved.server.id))?;
     let settings = load_settings_for_saved(store, &saved);
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.server.id))
@@ -3316,6 +3378,7 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     Ok(LibrarySnapshot {
         server: Some(saved.server),
         servers,
+        local_access,
         username: Some(saved.username),
         first_run: false,
         sync_status: status,
@@ -5893,6 +5956,29 @@ mod tests {
 
         assert_eq!(mapped, audio);
         let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_includes_active_server_local_access() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = self::saved_server();
+        let access = ServerLocalAccess {
+            server_id: saved.server.id.clone(),
+            root_path: "/home/demo/Music".to_string(),
+            path_replace_from: Some("/server/music".to_string()),
+            path_replace_to: Some("/home/demo/Music".to_string()),
+        };
+        store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.save_server_local_access(&access)?;
+                store.set_active_server(&saved.server.id)
+            })
+            .expect("save server");
+
+        let snapshot = super::load_snapshot(&store).expect("load snapshot");
+
+        assert_eq!(snapshot.local_access, Some(access));
     }
 
     #[test]
