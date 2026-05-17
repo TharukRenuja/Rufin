@@ -5440,6 +5440,19 @@ fn track_artist_route(track: &Track) -> Option<Route> {
     }
 }
 
+fn album_artist_route(album: &Album) -> Option<Route> {
+    if let Some(artist_id) = album.artist_id.clone() {
+        Some(Route::ArtistDetail(artist_id))
+    } else if !album.artist.trim().is_empty() {
+        Some(Route::Search {
+            query: album.artist.clone(),
+            kind: SearchKind::Artists,
+        })
+    } else {
+        None
+    }
+}
+
 fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -5676,7 +5689,13 @@ fn album_card_widget_with_size(
             clipped_card_label_with_lines(&artist, size, HOME_ALBUM_ARTIST_LINES)
         }
     };
-    add_link_hover(&artist_clip, &artist, &album.artist);
+    add_card_label_link(
+        shell,
+        &artist_clip,
+        &artist,
+        &album.artist,
+        album_artist_route(album),
+    );
     let year = gtk::Label::new(Some(&album.year.to_string()));
     year.add_css_class("muted");
     year.set_xalign(0.0);
@@ -5809,6 +5828,13 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     artist.set_xalign(0.0);
     constrain_wrapped_card_label(&artist, size, HOME_ALBUM_ARTIST_LINES);
     let artist_clip = clipped_card_label_with_lines(&artist, size, HOME_ALBUM_ARTIST_LINES);
+    add_card_label_link(
+        shell,
+        &artist_clip,
+        &artist,
+        &track.artist,
+        track_artist_route(track),
+    );
 
     let album = gtk::Label::new(Some(&track.album));
     album.add_css_class("muted");
@@ -6201,9 +6227,36 @@ fn clip_rounded_rect(context: &gtk::cairo::Context, width: i32, height: i32, rad
 }
 
 fn add_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
+    add_widget_click(label.upcast_ref(), callback);
+}
+
+fn add_widget_click(target: &gtk::Widget, callback: impl Fn() + 'static) {
     let click = gtk::GestureClick::new();
-    click.connect_released(move |_, _, _, _| callback());
-    label.add_controller(click);
+    click.set_button(1);
+    click.connect_released(move |gesture, press_count, _, _| {
+        if press_count == 1 {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            callback();
+        }
+    });
+    target.add_controller(click);
+}
+
+fn add_card_label_link(
+    shell: &Rc<Shell>,
+    target: &gtk::Widget,
+    label: &gtk::Label,
+    text: &str,
+    route: Option<Route>,
+) {
+    let Some(route) = route else {
+        return;
+    };
+    target.set_cursor_from_name(Some("pointer"));
+    label.set_cursor_from_name(Some("pointer"));
+    add_link_hover(target, label, text);
+    let shell = Rc::clone(shell);
+    add_widget_click(target, move || shell.navigate(route.clone()));
 }
 
 fn current_playback_track_id(snapshot: &PlaybackSnapshot) -> Option<rufin_core::TrackId> {
@@ -6340,7 +6393,10 @@ mod tests {
         AutoLyricsRequest, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
         current_playback_track_id, seekbar_target_seconds,
     };
-    use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
+    use rufin_core::{
+        Album, AlbumId, AppSettings, ArtistId, QueueEntry, QueueEntryId, Route, SearchKind, Track,
+        TrackId,
+    };
     use rufin_provider::{LyricLine, Lyrics, LyricsSource};
 
     #[test]
@@ -6388,6 +6444,46 @@ mod tests {
             current_playback_track_id(&super::PlaybackSnapshot::default()),
             None
         );
+    }
+
+    #[test]
+    fn track_artist_route_prefers_detail_and_falls_back_to_artist_search() {
+        let track = test_track("Track Artist", Some(ArtistId::fake(3)));
+        assert_eq!(
+            super::track_artist_route(&track),
+            Some(Route::ArtistDetail(ArtistId::fake(3)))
+        );
+
+        let track = test_track("Loose Artist", None);
+        assert_eq!(
+            super::track_artist_route(&track),
+            Some(Route::Search {
+                query: "Loose Artist".to_string(),
+                kind: SearchKind::Artists,
+            })
+        );
+
+        assert_eq!(super::track_artist_route(&test_track("   ", None)), None);
+    }
+
+    #[test]
+    fn album_artist_route_prefers_detail_and_falls_back_to_artist_search() {
+        let album = test_album("Album Artist", Some(ArtistId::fake(5)));
+        assert_eq!(
+            super::album_artist_route(&album),
+            Some(Route::ArtistDetail(ArtistId::fake(5)))
+        );
+
+        let album = test_album("Compilation Artist", None);
+        assert_eq!(
+            super::album_artist_route(&album),
+            Some(Route::Search {
+                query: "Compilation Artist".to_string(),
+                kind: SearchKind::Artists,
+            })
+        );
+
+        assert_eq!(super::album_artist_route(&test_album("", None)), None);
     }
 
     #[test]
@@ -6529,5 +6625,39 @@ mod tests {
         assert!((rect.scale - 0.44).abs() < f64::EPSILON);
         assert!((rect.x + 22.0).abs() < f64::EPSILON);
         assert!((rect.y - 0.0).abs() < f64::EPSILON);
+    }
+
+    fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Album {
+        Album {
+            id: AlbumId::fake(1),
+            title: "Album".to_string(),
+            artist: artist.to_string(),
+            artist_id,
+            year: 2026,
+            track_count: 1,
+            duration_seconds: 180,
+            favorite: false,
+            color_seed: 1,
+            image_ref: None,
+            genres: Vec::new(),
+        }
+    }
+
+    fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Track {
+        Track {
+            id: TrackId::fake(1),
+            album_id: AlbumId::fake(1),
+            title: "Track".to_string(),
+            artist: artist.to_string(),
+            artist_id,
+            album: "Album".to_string(),
+            year: 2026,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number: 1,
+            track_number: 1,
+            image_ref: None,
+            genres: Vec::new(),
+        }
     }
 }
