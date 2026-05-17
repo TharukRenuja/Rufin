@@ -1539,7 +1539,6 @@ impl Shell {
                 }
             }
         }
-        *self.state.lyrics.borrow_mut() = None;
         self.render_lyrics_panel();
     }
 
@@ -3121,7 +3120,8 @@ impl Shell {
 
     fn render_lyrics_panel(self: &Rc<Self>) {
         let settings = self.state.settings.borrow();
-        let has_current_track = current_playback_track_id(&self.state.player.borrow()).is_some();
+        let current_track_id = current_playback_track_id(&self.state.player.borrow());
+        let has_current_track = current_track_id.is_some();
         let (search_label, search_enabled) = if settings.private_mode {
             (tr("Private mode is on"), false)
         } else if has_current_track {
@@ -3129,12 +3129,14 @@ impl Shell {
         } else {
             (tr("No track playing"), false)
         };
+        let clear_auto_search_enabled =
+            auto_lyrics_skip_action_enabled(&settings, current_track_id.as_ref());
         drop(settings);
         self.lyrics_pane
             .set_search_action(&search_label, search_enabled);
         self.lyrics_pane.set_clear_auto_search_action(
-            &tr("Skip automatic lyric search for this track"),
-            has_current_track,
+            &tr("Disable automatic lyric search for this track"),
+            clear_auto_search_enabled,
         );
         let empty_status = self.lyrics_empty_status();
         let seek_shell = Rc::clone(self);
@@ -4102,6 +4104,18 @@ fn auto_lyrics_search_is_suppressed(
         .suppressed_auto_lyrics_track_ids
         .iter()
         .any(|stored| stored == track_id.as_str())
+}
+
+fn auto_lyrics_skip_action_enabled(
+    settings: &AppSettings,
+    track_id: Option<&rufin_core::TrackId>,
+) -> bool {
+    let Some(track_id) = track_id else {
+        return false;
+    };
+    !settings.private_mode
+        && settings.external_lyrics_enabled
+        && !auto_lyrics_search_is_suppressed(settings, track_id)
 }
 
 fn clear_list_box(list: &gtk::ListBox) {
@@ -6265,8 +6279,10 @@ mod tests {
         clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_initial_position,
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
     };
-    use super::{current_playback_track_id, seekbar_target_seconds};
-    use rufin_core::{QueueEntry, QueueEntryId, TrackId};
+    use super::{
+        auto_lyrics_skip_action_enabled, current_playback_track_id, seekbar_target_seconds,
+    };
+    use rufin_core::{AppSettings, QueueEntry, QueueEntryId, TrackId};
 
     #[test]
     fn queue_lyrics_position_clamps_to_available_height() {
@@ -6322,6 +6338,31 @@ mod tests {
         assert_eq!(seekbar_target_seconds(-10.0, 180), 0);
         assert_eq!(seekbar_target_seconds(220.0, 180), 180);
         assert_eq!(seekbar_target_seconds(f64::NAN, 180), 0);
+    }
+
+    #[test]
+    fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_external_tracks() {
+        let track_id = TrackId::fake(11);
+        let mut settings = AppSettings {
+            external_lyrics_enabled: true,
+            ..AppSettings::default()
+        };
+
+        assert!(auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
+
+        settings
+            .suppressed_auto_lyrics_track_ids
+            .push(track_id.as_str().to_string());
+        assert!(!auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
+
+        settings.suppressed_auto_lyrics_track_ids.clear();
+        settings.external_lyrics_enabled = false;
+        assert!(!auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
+
+        settings.external_lyrics_enabled = true;
+        settings.private_mode = true;
+        assert!(!auto_lyrics_skip_action_enabled(&settings, Some(&track_id)));
+        assert!(!auto_lyrics_skip_action_enabled(&settings, None));
     }
 
     #[test]

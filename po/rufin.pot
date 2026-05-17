@@ -493,7 +493,7 @@ msgid "Close"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:3132
-msgid "Skip automatic lyric search for this track"
+msgid "Disable automatic lyric search for this track"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2987
