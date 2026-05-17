@@ -2342,6 +2342,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/md5/md5-0.8.0.crate",
+        "sha256": "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0",
+        "dest": "cargo/vendor/md5-0.8.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0\", \"files\": {}}",
+        "dest": "cargo/vendor/md5-0.8.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/mime/mime-0.3.17.crate",
         "sha256": "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a",
         "dest": "cargo/vendor/mime-0.3.17"
