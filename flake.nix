@@ -83,8 +83,7 @@
               install -Dm644 data/io.github.screwys.Rufin.desktop \
                 "$out/share/applications/io.github.screwys.Rufin.desktop"
               substituteInPlace "$out/share/applications/io.github.screwys.Rufin.desktop" \
-                --replace-fail "Exec=rufin" "Exec=$out/bin/rufin" \
-                --replace-fail "TryExec=rufin" "TryExec=$out/bin/rufin"
+                --replace-fail "Exec=rufin" "Exec=$out/bin/rufin"
               install -Dm644 data/io.github.screwys.Rufin.metainfo.xml \
                 "$out/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
               install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg \

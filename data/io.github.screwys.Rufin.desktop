@@ -2,7 +2,6 @@
 Name=Rufin
 Comment=Native music client
 Exec=rufin
-TryExec=rufin
 Icon=io.github.screwys.Rufin
 Terminal=false
 Type=Application
