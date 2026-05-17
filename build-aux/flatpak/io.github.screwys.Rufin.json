@@ -20,6 +20,8 @@
     "--socket=wayland",
     "--socket=pulseaudio",
     "--device=dri",
+    "--filesystem=xdg-run/discord-ipc-0",
+    "--filesystem=xdg-run/app/com.discordapp.Discord:create",
     "--talk-name=org.freedesktop.secrets"
   ],
   "modules": [
