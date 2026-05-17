@@ -18,7 +18,7 @@ window {
 }
 
 .compact-rail {
-  padding: 0 2px 4px;
+  padding: 0 1px 4px;
 }
 
 .main-area,
@@ -86,14 +86,14 @@ window {
 }
 
 .rail-button {
-  margin: 0 2px;
-  padding: 6px 2px;
-  min-width: 58px;
-  min-height: 56px;
+  margin: 0 1px;
+  padding: 4px 1px;
+  min-width: 52px;
+  min-height: 50px;
 }
 
 .rail-label {
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .sidebar-history-controls {
@@ -102,15 +102,21 @@ window {
 }
 
 .rail-history-controls {
-  min-width: 58px;
-  min-height: 48px;
-  margin: 0 2px 6px;
+  min-width: 52px;
+  min-height: 42px;
+  margin: 0 1px 4px;
 }
 
 .sidebar-history-button {
   min-width: 30px;
   min-height: 30px;
   padding: 5px;
+}
+
+.rail-history-controls .sidebar-history-button {
+  min-width: 26px;
+  min-height: 28px;
+  padding: 4px;
 }
 
 .nav-button:hover,

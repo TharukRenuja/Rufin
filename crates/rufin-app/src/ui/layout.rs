@@ -3,7 +3,7 @@ use rufin_core::{AppSettings, EffectiveDensity};
 
 use super::Shell;
 
-pub(super) const COMPACT_RAIL_WIDTH: i32 = 72;
+pub(super) const COMPACT_RAIL_WIDTH: i32 = 64;
 pub(super) const NORMAL_SIDEBAR_WIDTH: i32 = 176;
 pub(super) const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
@@ -24,6 +24,8 @@ const MAIN_PANEL_UNITS: i32 = 7;
 const TOTAL_PANEL_UNITS: i32 = 10;
 const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
 const RIGHT_PANEL_MAX_PERCENT: i32 = 50;
+const COMPACT_RIGHT_PANEL_MAX_PERCENT: i32 = 38;
+const COMPACT_PRIMARY_MIN_WIDTH: i32 = 560;
 const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
 pub(super) const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
 const MAX_RESTORED_WINDOW_WIDTH: i32 = 1400;
@@ -54,14 +56,28 @@ pub(super) fn home_album_page_size(width: i32, current_page_size: Option<usize>)
     page_size
 }
 
-pub(super) fn clamp_content_split_position(split_width: i32, position: i32) -> i32 {
+pub(super) fn clamp_content_split_position_for_density(
+    split_width: i32,
+    position: i32,
+    density: EffectiveDensity,
+) -> i32 {
     if split_width <= 1 {
         return position;
     }
+    let max_right_percent = match density {
+        EffectiveDensity::Normal => RIGHT_PANEL_MAX_PERCENT,
+        EffectiveDensity::Compact => COMPACT_RIGHT_PANEL_MAX_PERCENT,
+    };
+    let primary_min_width = match density {
+        EffectiveDensity::Normal => 0,
+        EffectiveDensity::Compact => COMPACT_PRIMARY_MIN_WIDTH,
+    };
     let min_right_width = split_width * RIGHT_PANEL_MIN_PERCENT / 100;
-    let max_right_width = split_width * RIGHT_PANEL_MAX_PERCENT / 100;
-    let min_position = split_width - max_right_width;
     let max_position = split_width - min_right_width;
+    let max_right_width = split_width * max_right_percent / 100;
+    let min_position = (split_width - max_right_width)
+        .max(primary_min_width.min(max_position))
+        .min(max_position);
     position.clamp(min_position, max_position)
 }
 
@@ -73,35 +89,52 @@ fn right_panel_position_ratio(split_width: i32, position: i32) -> f64 {
     f64::from(right_width) / f64::from(split_width)
 }
 
-fn content_split_position_from_right_panel_ratio(split_width: i32, ratio: f64) -> i32 {
+fn content_split_position_from_right_panel_ratio_for_density(
+    split_width: i32,
+    ratio: f64,
+    density: EffectiveDensity,
+) -> i32 {
     let right_width = (f64::from(split_width) * ratio.clamp(0.0, 1.0)).round() as i32;
-    clamp_content_split_position(split_width, split_width - right_width)
+    clamp_content_split_position_for_density(split_width, split_width - right_width, density)
 }
 
-pub(super) fn content_split_initial_position(split_width: i32, saved_ratio: Option<f64>) -> i32 {
+pub(super) fn content_split_initial_position_for_density(
+    split_width: i32,
+    saved_ratio: Option<f64>,
+    density: EffectiveDensity,
+) -> i32 {
     saved_ratio
         .filter(|ratio| ratio.is_finite())
-        .map(|ratio| content_split_position_from_right_panel_ratio(split_width, ratio))
-        .unwrap_or_else(|| default_content_split_position(split_width))
+        .map(|ratio| {
+            content_split_position_from_right_panel_ratio_for_density(split_width, ratio, density)
+        })
+        .unwrap_or_else(|| {
+            clamp_content_split_position_for_density(
+                split_width,
+                default_content_split_position(split_width),
+                density,
+            )
+        })
 }
 
-pub(super) fn content_split_target_position(
+pub(super) fn content_split_target_position_for_density(
     split_width: i32,
     previous_width: i32,
     stored_position: i32,
     current_position: i32,
     saved_ratio: Option<f64>,
+    density: EffectiveDensity,
 ) -> i32 {
     let target_position = if previous_width <= 1 {
-        content_split_initial_position(split_width, saved_ratio)
+        content_split_initial_position_for_density(split_width, saved_ratio, density)
     } else if previous_width != split_width && stored_position > 1 {
         stored_position * split_width / previous_width
     } else if current_position > 1 {
         current_position
     } else {
-        content_split_initial_position(split_width, saved_ratio)
+        content_split_initial_position_for_density(split_width, saved_ratio, density)
     };
-    clamp_content_split_position(split_width, target_position)
+    clamp_content_split_position_for_density(split_width, target_position, density)
 }
 
 fn default_content_split_position(split_width: i32) -> i32 {
@@ -128,7 +161,7 @@ pub(super) fn update_right_panel_split_settings(
         return false;
     }
 
-    let position = clamp_content_split_position(split_width, position);
+    let position = clamp_content_split_position_for_density(split_width, position, density);
     let ratio = right_panel_position_ratio(split_width, position);
     match density {
         EffectiveDensity::Normal => {
@@ -364,20 +397,39 @@ mod tests {
 
     #[test]
     fn content_split_position_limits_right_panel() {
-        assert_eq!(clamp_content_split_position(1_000, 100), 500);
-        assert_eq!(clamp_content_split_position(1_000, 950), 900);
-        assert_eq!(clamp_content_split_position(1_000, 625), 625);
-        assert_eq!(default_content_split_position(1_000), 700);
-        assert_eq!(content_split_initial_position(1_000, None), 700);
-        assert_eq!(content_split_initial_position(1_000, Some(0.25)), 750);
+        let density = rufin_core::EffectiveDensity::Normal;
         assert_eq!(
-            content_split_position_from_right_panel_ratio(1_000, 0.25),
+            clamp_content_split_position_for_density(1_000, 100, density),
+            500
+        );
+        assert_eq!(
+            clamp_content_split_position_for_density(1_000, 950, density),
+            900
+        );
+        assert_eq!(
+            clamp_content_split_position_for_density(1_000, 625, density),
+            625
+        );
+        assert_eq!(default_content_split_position(1_000), 700);
+        assert_eq!(
+            content_split_initial_position_for_density(1_000, None, density),
+            700
+        );
+        assert_eq!(
+            content_split_initial_position_for_density(1_000, Some(0.25), density),
+            750
+        );
+        assert_eq!(
+            content_split_position_from_right_panel_ratio_for_density(1_000, 0.25, density),
             750
         );
         assert_eq!(right_panel_position_ratio(1_000, 750), 0.25);
-        assert_eq!(content_split_target_position(1_000, 0, 0, 600, None), 700);
         assert_eq!(
-            content_split_target_position(1_400, 1_000, 500, 700, None),
+            content_split_target_position_for_density(1_000, 0, 0, 600, None, density),
+            700
+        );
+        assert_eq!(
+            content_split_target_position_for_density(1_400, 1_000, 500, 700, None, density),
             700
         );
         let mut settings = AppSettings::default();
@@ -405,6 +457,44 @@ mod tests {
             right_panel_saved_ratio(&settings, rufin_core::EffectiveDensity::Compact),
             Some(0.24)
         );
+    }
+
+    #[test]
+    fn compact_content_split_preserves_primary_width() {
+        assert_eq!(
+            clamp_content_split_position_for_density(
+                1_000,
+                100,
+                rufin_core::EffectiveDensity::Compact
+            ),
+            620
+        );
+        assert_eq!(
+            clamp_content_split_position_for_density(
+                1_000,
+                950,
+                rufin_core::EffectiveDensity::Compact
+            ),
+            900
+        );
+        assert_eq!(
+            content_split_initial_position_for_density(
+                1_000,
+                Some(0.5),
+                rufin_core::EffectiveDensity::Compact
+            ),
+            620
+        );
+
+        let mut settings = AppSettings::default();
+        assert!(update_right_panel_split_settings(
+            &mut settings,
+            1_000,
+            500,
+            rufin_core::EffectiveDensity::Compact,
+        ));
+        assert_eq!(settings.compact_right_panel_position, Some(620));
+        assert_eq!(settings.compact_right_panel_ratio, Some(0.38));
     }
 
     #[test]

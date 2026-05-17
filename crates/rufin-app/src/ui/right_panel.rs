@@ -11,8 +11,9 @@ use crate::lyrics::LyricsPane;
 use super::{
     Shell, icon_button,
     layout::{
-        MAX_RESTORED_WINDOW_HEIGHT, MIN_RESTORED_WINDOW_HEIGHT, clamp_content_split_position,
-        content_split_initial_position, update_right_panel_split_settings,
+        MAX_RESTORED_WINDOW_HEIGHT, MIN_RESTORED_WINDOW_HEIGHT,
+        clamp_content_split_position_for_density, content_split_initial_position_for_density,
+        update_right_panel_split_settings,
     },
     player::BOTTOM_PLAYER_HEIGHT,
 };
@@ -183,8 +184,10 @@ impl Shell {
         if current_position <= 1 || current_position >= split_width {
             return;
         }
-        let position = clamp_content_split_position(split_width, current_position);
-        self.set_right_panel_split_position_for(self.right_panel_density(), position);
+        let density = self.right_panel_density();
+        let position =
+            clamp_content_split_position_for_density(split_width, current_position, density);
+        self.set_right_panel_split_position_for(density, position);
         self.save_right_panel_split_position(split_width, position);
     }
 
@@ -196,9 +199,9 @@ impl Shell {
         } else {
             let saved_ratio =
                 super::layout::right_panel_saved_ratio(&self.state.settings.borrow(), density);
-            content_split_initial_position(split_width, saved_ratio)
+            content_split_initial_position_for_density(split_width, saved_ratio, density)
         };
-        clamp_content_split_position(split_width, target)
+        clamp_content_split_position_for_density(split_width, target, density)
     }
 
     pub(super) fn toggle_right_panel(self: &Rc<Self>) {

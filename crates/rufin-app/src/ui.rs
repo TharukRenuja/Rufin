@@ -58,8 +58,8 @@ use favorites::{
 };
 use layout::{
     COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, content_split_initial_position, content_split_target_position,
-    restored_window_size, right_panel_saved_ratio,
+    PRIMARY_ROUTE_MARGIN_START, content_split_initial_position_for_density,
+    content_split_target_position_for_density, restored_window_size, right_panel_saved_ratio,
 };
 use mpris::install_mpris;
 use navigation::{
@@ -418,7 +418,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     normal_nav.add_css_class("wide-sidebar");
     normal_nav.set_width_request(NORMAL_SIDEBAR_WIDTH);
 
-    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 3);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
     let server_selector = build_server_selector();
@@ -1142,7 +1142,11 @@ impl Shell {
         {
             self.set_right_panel_split_position_for(
                 previous_density,
-                layout::clamp_content_split_position(split_width, current_position),
+                layout::clamp_content_split_position_for_density(
+                    split_width,
+                    current_position,
+                    previous_density,
+                ),
             );
         }
         let stored_position = self.right_panel_split_position_for(density);
@@ -1164,17 +1168,22 @@ impl Shell {
 
         let position = if density_changed {
             if stored_position > 1 {
-                layout::clamp_content_split_position(split_width, stored_position)
+                layout::clamp_content_split_position_for_density(
+                    split_width,
+                    stored_position,
+                    density,
+                )
             } else {
-                content_split_initial_position(split_width, saved_ratio)
+                content_split_initial_position_for_density(split_width, saved_ratio, density)
             }
         } else {
-            content_split_target_position(
+            content_split_target_position_for_density(
                 split_width,
                 previous_width,
                 stored_position,
                 current_position,
                 saved_ratio,
+                density,
             )
         };
         let position_changed = self.right_panel_split_position_for(density) != position;

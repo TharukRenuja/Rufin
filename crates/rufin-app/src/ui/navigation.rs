@@ -3,9 +3,13 @@ use std::rc::Rc;
 use adw::prelude::*;
 use rufin_core::{Route, ServerIdentity};
 
-use super::{Shell, icon_button};
+use super::{Shell, icon_button, layout::COMPACT_RAIL_WIDTH};
 use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
+
+const COMPACT_RAIL_ICON_SIZE: i32 = 22;
+const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
+const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 
 pub(super) struct ServerSelector {
     pub normal_button: gtk::MenuButton,
@@ -54,10 +58,10 @@ pub(super) fn build_server_selector() -> ServerSelector {
     compact_button.add_css_class("flat");
     compact_button.add_css_class("rail-button");
     compact_button.add_css_class("server-selector");
-    let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 4);
     compact_content.set_halign(gtk::Align::Center);
     let icon = gtk::Image::from_icon_name("network-server-symbolic");
-    icon.set_pixel_size(24);
+    icon.set_pixel_size(COMPACT_RAIL_ICON_SIZE);
     compact_content.append(&icon);
     let compact_label = gtk::Label::new(None);
     configure_rail_label(&compact_label);
@@ -335,7 +339,7 @@ fn nav_button(
     let icon = gtk::Image::from_icon_name(icon_name);
     content.append(&icon);
     if compact {
-        icon.set_pixel_size(24);
+        icon.set_pixel_size(COMPACT_RAIL_ICON_SIZE);
         let text = gtk::Label::new(Some(&compact_sidebar_label_text(label)));
         configure_rail_label(&text);
         content.append(&text);
@@ -373,6 +377,10 @@ fn configure_rail_label(label: &gtk::Label) {
     label.set_wrap(true);
     label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_request(COMPACT_RAIL_LABEL_WIDTH);
+    label.set_size_request(COMPACT_RAIL_LABEL_WIDTH, -1);
+    label.set_width_chars(1);
+    label.set_max_width_chars(COMPACT_RAIL_LABEL_WIDTH_CHARS);
 }
 
 fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) -> gtk::Button {
