@@ -39,7 +39,8 @@ use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
 
 use crate::controller::{
-    AppController, ControllerEvent, LibrarySnapshot, LyricsSearchResult, PlaybackSnapshot,
+    AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,
+    PlaybackSnapshot,
 };
 use crate::i18n::tr;
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
@@ -126,6 +127,10 @@ struct AppState {
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
+    discovered_servers: RefCell<Vec<DiscoveredServer>>,
+    server_discovery_status: RefCell<String>,
+    server_discovery_running: Cell<bool>,
+    server_discovery_started: Cell<bool>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
     cover_decodes: RefCell<HashSet<String>>,
     decoded_covers: RefCell<HashMap<String, Pixbuf>>,
@@ -360,6 +365,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
+        discovered_servers: RefCell::new(Vec::new()),
+        server_discovery_status: RefCell::new("Searching will start automatically.".to_string()),
+        server_discovery_running: Cell::new(false),
+        server_discovery_started: Cell::new(false),
         cover_bindings: RefCell::new(HashMap::new()),
         cover_decodes: RefCell::new(HashSet::new()),
         decoded_covers: RefCell::new(HashMap::new()),
@@ -1574,7 +1583,7 @@ impl Shell {
         let first_run = self.state.library.borrow().first_run;
         if first_run {
             let route_name = "FirstRun".to_string();
-            self.route_title.set_title(&tr("Add Jellyfin Server"));
+            self.route_title.set_title(&tr("Connect to Jellyfin"));
             self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
             self.route_host.append(&view);
@@ -1676,52 +1685,59 @@ impl Shell {
     }
 
     fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(42);
-        wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(48);
-        wrapper.set_margin_end(48);
-        wrapper.set_hexpand(true);
-        wrapper.set_halign(gtk::Align::Fill);
+        self.start_server_discovery_once();
 
-        let heading = gtk::Label::new(Some(&tr("Add Jellyfin Server")));
-        heading.add_css_class("detail-title");
-        heading.set_xalign(0.0);
-        let subtitle = gtk::Label::new(Some(&tr(
-            "Tokens are saved in native Secret Service. Cached library metadata is saved in SQLite.",
-        )));
-        subtitle.add_css_class("muted");
-        subtitle.set_wrap(true);
-        subtitle.set_xalign(0.0);
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_vexpand(true);
 
-        let url = gtk::Entry::new();
-        url.set_placeholder_text(Some(&tr("Server URL")));
+        let clamp = adw::Clamp::new();
+        clamp.set_maximum_size(560);
+        clamp.set_tightening_threshold(360);
+        clamp.set_margin_top(36);
+        clamp.set_margin_bottom(36);
+        clamp.set_margin_start(24);
+        clamp.set_margin_end(24);
+        clamp.set_valign(gtk::Align::Center);
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        content.add_css_class("first-run-content");
+        content.set_hexpand(true);
+
+        let intro = adw::StatusPage::builder()
+            .icon_name("network-server-symbolic")
+            .title(tr("Connect to Jellyfin"))
+            .description(tr(
+                "Choose a discovered server or enter your Jellyfin address manually.",
+            ))
+            .build();
+        content.append(&intro);
+
+        let url = adw::EntryRow::builder().title(tr("Server Address")).build();
         url.set_text("http://");
-        let username = gtk::Entry::new();
-        username.set_placeholder_text(Some(&tr("Username")));
-        let password = gtk::PasswordEntry::new();
-        password.set_placeholder_text(Some(&tr("Password")));
-        let trust = gtk::Switch::new();
-        trust.set_active(false);
-        let trust_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        let trust_label = gtk::Label::new(Some(&tr("Trust invalid certificate for this server")));
-        trust_label.set_xalign(0.0);
-        trust_label.set_hexpand(true);
-        trust_label.set_wrap(true);
-        trust_row.append(&trust_label);
-        trust_row.append(&trust);
+        let username = adw::EntryRow::builder().title(tr("Username")).build();
+        let password = adw::PasswordEntryRow::builder()
+            .title(tr("Password"))
+            .build();
+        let trust = adw::SwitchRow::builder()
+            .title(tr("Trust invalid certificate"))
+            .subtitle(tr("Only use this for a server you control."))
+            .active(false)
+            .build();
 
-        let status = gtk::Label::new(Some(&self.state.library.borrow().sync_status));
-        status.add_css_class("muted");
-        status.set_wrap(true);
-        status.set_xalign(0.0);
-        if let Some(error) = &self.state.library.borrow().last_error {
-            status.set_text(error);
-            status.add_css_class("error-text");
-        }
+        let server_group = adw::PreferencesGroup::builder().title(tr("Server")).build();
+        server_group.add(&url);
+        server_group.add(&username);
+        server_group.add(&password);
+        server_group.add(&trust);
+        content.append(&server_group);
 
+        content.append(&self.discovered_servers_group(&url));
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        actions.set_halign(gtk::Align::End);
         let login = text_button("network-server-symbolic", "Connect");
+        login.add_css_class("suggested-action");
         let controller = self.controller.clone();
         let url_input = url.clone();
         let username_input = username.clone();
@@ -1735,16 +1751,104 @@ impl Shell {
                 trust_input.is_active(),
             );
         });
+        actions.append(&login);
+        content.append(&actions);
 
-        wrapper.append(&heading);
-        wrapper.append(&subtitle);
-        wrapper.append(&url);
-        wrapper.append(&username);
-        wrapper.append(&password);
-        wrapper.append(&trust_row);
-        wrapper.append(&login);
-        wrapper.append(&status);
-        wrapper.upcast()
+        let status = gtk::Label::new(Some(&self.state.library.borrow().sync_status));
+        status.add_css_class("muted");
+        status.set_wrap(true);
+        status.set_xalign(0.0);
+        if let Some(error) = &self.state.library.borrow().last_error {
+            status.set_text(error);
+            status.add_css_class("error-text");
+        }
+        content.append(&status);
+
+        clamp.set_child(Some(&content));
+        scroller.set_child(Some(&clamp));
+        scroller.upcast()
+    }
+
+    fn start_server_discovery_once(&self) {
+        if self.state.server_discovery_started.replace(true) {
+            return;
+        }
+        self.state.server_discovery_running.set(true);
+        *self.state.server_discovery_status.borrow_mut() =
+            "Searching for Jellyfin servers on the local network...".to_string();
+        self.controller.discover_servers();
+    }
+
+    fn refresh_server_discovery(self: &Rc<Self>) {
+        if self.state.server_discovery_running.get() {
+            return;
+        }
+        self.state.server_discovery_running.set(true);
+        *self.state.discovered_servers.borrow_mut() = Vec::new();
+        *self.state.server_discovery_status.borrow_mut() =
+            "Searching for Jellyfin servers on the local network...".to_string();
+        self.controller.discover_servers();
+        self.render_current_route();
+    }
+
+    fn discovered_servers_group(self: &Rc<Self>, url: &adw::EntryRow) -> adw::PreferencesGroup {
+        let status = self.state.server_discovery_status.borrow().clone();
+        let running = self.state.server_discovery_running.get();
+        let servers = self.state.discovered_servers.borrow().clone();
+        let group = adw::PreferencesGroup::builder()
+            .title(tr("Found Servers"))
+            .description(status)
+            .build();
+
+        if servers.is_empty() {
+            let row_title = if running {
+                tr("Searching Local Network")
+            } else {
+                tr("No Servers Found")
+            };
+            let row = adw::ActionRow::builder().title(row_title).build();
+            row.add_prefix(&gtk::Image::from_icon_name("network-server-symbolic"));
+            if running {
+                let spinner = gtk::Spinner::new();
+                spinner.start();
+                row.add_suffix(&spinner);
+            }
+            group.add(&row);
+        } else {
+            for server in servers {
+                let subtitle = format!("{} - {}", server.provider, server.address);
+                let row = adw::ActionRow::builder()
+                    .title(server.name)
+                    .subtitle(subtitle)
+                    .build();
+                row.add_prefix(&gtk::Image::from_icon_name("network-server-symbolic"));
+                row.set_activatable(true);
+                let url = url.clone();
+                let address = server.address;
+                row.connect_activated(move |_| {
+                    url.set_text(&address);
+                });
+                group.add(&row);
+            }
+        }
+
+        let search_title = if running {
+            tr("Searching...")
+        } else {
+            tr("Search Again")
+        };
+        let search = adw::ButtonRow::builder()
+            .title(search_title)
+            .start_icon_name("view-refresh-symbolic")
+            .build();
+        search.set_sensitive(!running);
+        let shell = Rc::clone(self);
+        search.connect_activated(move |_| {
+            shell.refresh_server_discovery();
+        });
+        group.add(&search);
+
+        group
     }
 
     fn home_view(self: &Rc<Self>) -> gtk::Widget {
@@ -3946,9 +4050,18 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
         while let Ok(event) = receiver.try_recv() {
             match event {
                 ControllerEvent::Snapshot(snapshot) => {
+                    let entering_first_run =
+                        snapshot.first_run && !shell.state.library.borrow().first_run;
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     *shell.state.library.borrow_mut() = *snapshot;
+                    if entering_first_run {
+                        shell.state.server_discovery_started.set(false);
+                        shell.state.server_discovery_running.set(false);
+                        *shell.state.discovered_servers.borrow_mut() = Vec::new();
+                        *shell.state.server_discovery_status.borrow_mut() =
+                            "Searching will start automatically.".to_string();
+                    }
                     shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
                     shell.update_server_selector();
                     shell.render_current_route_preserving_scroll();
@@ -4027,6 +4140,18 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 }
                 ControllerEvent::CoverReady { key, path } => {
                     shell.apply_cover_ready(&key, &path);
+                }
+                ControllerEvent::ServerDiscovery {
+                    servers,
+                    status,
+                    running,
+                } => {
+                    *shell.state.discovered_servers.borrow_mut() = servers;
+                    *shell.state.server_discovery_status.borrow_mut() = status;
+                    shell.state.server_discovery_running.set(running);
+                    if shell.state.library.borrow().first_run {
+                        shell.render_current_route();
+                    }
                 }
                 ControllerEvent::LoginStatus(status) => {
                     let should_render = {

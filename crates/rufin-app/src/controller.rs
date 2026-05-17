@@ -20,7 +20,9 @@ use rufin_provider::{
     FavoriteItemId, ImageKind, ImageRequest, LoginRequest, Lyrics, MusicProvider, PagedRequest,
     PlaybackReport, PlaybackReportKind, PlaylistEntry, SavedProviderSession, SearchResults,
 };
-use rufin_provider_jellyfin::{JellyfinLyricsSearch, JellyfinProvider};
+use rufin_provider_jellyfin::{
+    DiscoveredJellyfinServer, JellyfinLyricsSearch, JellyfinProvider, discover_jellyfin_servers,
+};
 use rufin_secrets::{MemorySecretStore, SecretServiceStore, SecretStore};
 use rufin_store::{
     CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, SavedServer, Store, StoreError,
@@ -39,6 +41,7 @@ const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(900);
 const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
+const SERVER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1_800);
 
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
@@ -84,6 +87,25 @@ pub struct LyricsSearchResult {
     pub duration_seconds: u32,
     pub synced_lyrics: Option<String>,
     pub plain_lyrics: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiscoveredServer {
+    pub provider: String,
+    pub name: String,
+    pub address: String,
+    pub id: Option<String>,
+}
+
+impl From<DiscoveredJellyfinServer> for DiscoveredServer {
+    fn from(server: DiscoveredJellyfinServer) -> Self {
+        Self {
+            provider: "Jellyfin".to_string(),
+            name: server.name,
+            address: server.address,
+            id: server.id,
+        }
+    }
 }
 
 impl Default for PlaybackSnapshot {
@@ -155,6 +177,11 @@ pub enum ControllerEvent {
     CoverReady {
         key: String,
         path: PathBuf,
+    },
+    ServerDiscovery {
+        servers: Vec<DiscoveredServer>,
+        status: String,
+        running: bool,
     },
     LoginStatus(String),
     Error(String),
@@ -1480,6 +1507,37 @@ impl AppController {
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(
                 LibrarySnapshot::first_run(),
             )));
+        });
+    }
+
+    pub fn discover_servers(&self) {
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let _sent = events.send(ControllerEvent::ServerDiscovery {
+                servers: Vec::new(),
+                status: "Searching for Jellyfin servers on the local network...".to_string(),
+                running: true,
+            });
+
+            match discover_jellyfin_servers(SERVER_DISCOVERY_TIMEOUT) {
+                Ok(servers) => {
+                    let servers: Vec<DiscoveredServer> =
+                        servers.into_iter().map(DiscoveredServer::from).collect();
+                    let status = discovery_finished_status(&servers);
+                    let _sent = events.send(ControllerEvent::ServerDiscovery {
+                        servers,
+                        status,
+                        running: false,
+                    });
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::ServerDiscovery {
+                        servers: Vec::new(),
+                        status: format!("Server discovery failed: {error}"),
+                        running: false,
+                    });
+                }
+            }
         });
     }
 
@@ -3949,6 +4007,14 @@ fn sync_is_running(sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>, server_id: &S
         .unwrap_or(true)
 }
 
+fn discovery_finished_status(servers: &[DiscoveredServer]) -> String {
+    match servers.len() {
+        0 => "No Jellyfin servers found. Enter the address manually or search again.".to_string(),
+        1 => "Found 1 Jellyfin server.".to_string(),
+        count => format!("Found {count} Jellyfin servers."),
+    }
+}
+
 fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
     let (lock, ready) = &**slots;
     let Ok(mut active) = lock.lock() else {
@@ -5385,6 +5451,7 @@ mod tests {
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -5412,6 +5479,7 @@ mod tests {
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -5434,6 +5502,7 @@ mod tests {
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -5455,6 +5524,7 @@ mod tests {
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -5477,6 +5547,7 @@ mod tests {
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -5498,6 +5569,7 @@ mod tests {
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }
@@ -5527,6 +5599,7 @@ mod tests {
                     | ControllerEvent::LyricsSearchResults { .. }
                     | ControllerEvent::LyricsSaved { .. }
                     | ControllerEvent::HomeSectionPrefetched { .. }
+                    | ControllerEvent::ServerDiscovery { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
                     | ControllerEvent::FavoriteChanged { .. }
@@ -5561,6 +5634,7 @@ mod tests {
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::FavoriteChanged { .. }
@@ -5588,6 +5662,7 @@ mod tests {
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::FavoriteChanged { .. }
@@ -5625,6 +5700,7 @@ mod tests {
                     | ControllerEvent::LyricsSearchResults { .. }
                     | ControllerEvent::LyricsSaved { .. }
                     | ControllerEvent::HomeSectionPrefetched { .. }
+                    | ControllerEvent::ServerDiscovery { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
                     | ControllerEvent::FavoriteChanged { .. }

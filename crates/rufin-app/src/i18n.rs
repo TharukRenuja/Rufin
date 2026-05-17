@@ -58,6 +58,15 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Actions");
     let _ = tr("Sync Status");
     let _ = tr("Connect");
+    let _ = tr("Connect to Jellyfin");
+    let _ = tr("Choose a discovered server or enter your Jellyfin address manually.");
+    let _ = tr("Server Address");
+    let _ = tr("Trust invalid certificate");
+    let _ = tr("Only use this for a server you control.");
+    let _ = tr("Found Servers");
+    let _ = tr("Searching Local Network");
+    let _ = tr("No Servers Found");
+    let _ = tr("Search Again");
     let _ = tr("Resync Library");
     let _ = tr("Play");
     let _ = tr("Resume");
