@@ -13,9 +13,10 @@ use tracing::warn;
 
 use super::{
     GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START,
-    Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, connect_paged_grid_loader,
-    favorite_button_is_active, favorite_icon_button, finish_grid_page, replace_albums_in_model,
-    replace_artists_in_model, replace_genres_in_model, set_favorite_button_active, stable_seed,
+    Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, append_tracks_to_model,
+    connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button, finish_grid_page,
+    replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
+    set_favorite_button_active, stable_seed,
 };
 use crate::i18n::tr;
 
@@ -562,14 +563,14 @@ impl Shell {
                 ) {
                     Ok(page) => {
                         let count = page.items.len();
-                        tracks.borrow_mut().extend(page.items);
-                        populate_track_model_for_settings(
-                            &model,
-                            &tracks.borrow(),
+                        let mut items = page.items;
+                        sort_tracks(
+                            &mut items,
                             &shell.library_settings(LibraryListKey::Tracks),
-                            "",
                             false,
                         );
+                        tracks.borrow_mut().extend(items.iter().cloned());
+                        append_tracks_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
                     }
                     Err(error) => {
