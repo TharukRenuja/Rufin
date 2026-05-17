@@ -1819,21 +1819,11 @@ impl Shell {
                 ) {
                     Ok(page) => {
                         let count = page.items.len();
-                        let items = page.items;
+                        let mut items = page.items;
                         tracks_for_page.borrow_mut().extend(items.iter().cloned());
-                        if query.is_empty() {
-                            append_tracks_to_model(&model_for_page, items);
-                        } else {
-                            let settings = shell.state.settings.borrow().track_table.clone();
-                            let tracks = tracks_for_page.borrow();
-                            populate_track_model_with_options(
-                                &model_for_page,
-                                &tracks,
-                                &settings,
-                                "",
-                                options.favorite_first,
-                            );
-                        }
+                        let settings = shell.state.settings.borrow().track_table.clone();
+                        sort_tracks_with_options(&mut items, &settings, options.favorite_first);
+                        append_tracks_to_model(&model_for_page, items);
                         finish_grid_page(&cursor, offset, count, page.total);
                     }
                     Err(error) => {
@@ -3842,6 +3832,10 @@ fn replace_albums_in_model(model: &gio::ListStore, albums: impl IntoIterator<Ite
     model.splice(0, model.n_items(), &additions);
 }
 
+fn append_albums_to_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
+    append_boxed_items_to_model(model, albums);
+}
+
 fn replace_artists_in_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
     let additions = artists
         .into_iter()
@@ -3850,12 +3844,20 @@ fn replace_artists_in_model(model: &gio::ListStore, artists: impl IntoIterator<I
     model.splice(0, model.n_items(), &additions);
 }
 
+fn append_artists_to_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
+    append_boxed_items_to_model(model, artists);
+}
+
 fn replace_genres_in_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
     let additions = genres
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
+}
+
+fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
+    append_boxed_items_to_model(model, genres);
 }
 
 fn playlist_model(playlists: &[Playlist]) -> gio::ListStore {
@@ -3879,13 +3881,7 @@ fn append_playlists_to_model(
     model: &gio::ListStore,
     playlists: impl IntoIterator<Item = Playlist>,
 ) {
-    let additions = playlists
-        .into_iter()
-        .map(glib::BoxedAnyObject::new)
-        .collect::<Vec<_>>();
-    if !additions.is_empty() {
-        model.splice(model.n_items(), 0, &additions);
-    }
+    append_boxed_items_to_model(model, playlists);
 }
 
 fn set_track_sort_button_content(button: &gtk::Button, settings: &TrackTableSettings) {
@@ -3962,12 +3958,21 @@ fn populate_track_model_with_options(
     model.splice(0, model.n_items(), &additions);
 }
 
-fn append_tracks_to_model(model: &gio::ListStore, tracks: Vec<Track>) {
-    let additions = tracks
+fn append_tracks_to_model(model: &gio::ListStore, tracks: impl IntoIterator<Item = Track>) {
+    append_boxed_items_to_model(model, tracks);
+}
+
+fn append_boxed_items_to_model<T: 'static>(
+    model: &gio::ListStore,
+    items: impl IntoIterator<Item = T>,
+) {
+    let additions = items
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
-    model.splice(model.n_items(), 0, &additions);
+    if !additions.is_empty() {
+        model.splice(model.n_items(), 0, &additions);
+    }
 }
 
 fn track_matches_query(track: &Track, query: &str) -> bool {

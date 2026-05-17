@@ -13,7 +13,8 @@ use tracing::warn;
 
 use super::{
     GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START,
-    Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, append_tracks_to_model,
+    Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, append_albums_to_model,
+    append_artists_to_model, append_genres_to_model, append_tracks_to_model,
     connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button, finish_grid_page,
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     set_favorite_button_active, stable_seed,
@@ -113,13 +114,11 @@ impl Shell {
                 ) {
                     Ok(page) => {
                         let count = page.items.len();
-                        albums.borrow_mut().extend(page.items);
+                        let mut items = page.items;
+                        sort_albums(&mut items, &shell.library_settings(LibraryListKey::Albums));
+                        albums.borrow_mut().extend(items.iter().cloned());
                         *album_tracks.borrow_mut() = shell.album_tracks_for(&albums.borrow());
-                        populate_album_model(
-                            &model,
-                            &albums.borrow(),
-                            &shell.library_settings(LibraryListKey::Albums),
-                        );
+                        append_albums_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
                     }
                     Err(error) => {
@@ -269,12 +268,10 @@ impl Shell {
                 ) {
                     Ok(page) => {
                         let count = page.items.len();
-                        artists.borrow_mut().extend(page.items);
-                        populate_artist_model(
-                            &model,
-                            &artists.borrow(),
-                            &shell.library_settings(key),
-                        );
+                        let mut items = page.items;
+                        sort_artists(&mut items, &shell.library_settings(key));
+                        artists.borrow_mut().extend(items.iter().cloned());
+                        append_artists_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
                     }
                     Err(error) => {
@@ -383,12 +380,10 @@ impl Shell {
                 ) {
                     Ok(page) => {
                         let count = page.items.len();
-                        genres.borrow_mut().extend(page.items);
-                        populate_genre_model(
-                            &model,
-                            &genres.borrow(),
-                            &shell.library_settings(LibraryListKey::Genres),
-                        );
+                        let mut items = page.items;
+                        sort_genres(&mut items, &shell.library_settings(LibraryListKey::Genres));
+                        genres.borrow_mut().extend(items.iter().cloned());
+                        append_genres_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
                     }
                     Err(error) => {
