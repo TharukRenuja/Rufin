@@ -305,7 +305,7 @@ struct Shell {
     compact_nav: gtk::Box,
     server_selector: ServerSelector,
     content_split: gtk::Paned,
-    route_title: gtk::Label,
+    route_title: adw::WindowTitle,
     route_host: gtk::Box,
     normal_back_button: gtk::Button,
     normal_forward_button: gtk::Button,
@@ -411,41 +411,36 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
     let server_selector = build_server_selector();
 
-    let main_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let main_area = adw::ToolbarView::new();
     main_area.add_css_class("main-area");
     main_area.set_hexpand(true);
     main_area.set_vexpand(true);
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let header = adw::HeaderBar::new();
     header.add_css_class("route-header");
-    header.set_valign(gtk::Align::Center);
-    header.set_margin_end(52);
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
 
     let normal_back_button = sidebar_history_button("go-previous-symbolic", "Back");
     let normal_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
     let compact_back_button = sidebar_history_button("go-previous-symbolic", "Back");
     let compact_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
-    let route_title = gtk::Label::new(None);
+    let route_title = adw::WindowTitle::new("", "");
     route_title.add_css_class("route-title");
-    route_title.set_xalign(0.0);
-    route_title.set_single_line_mode(true);
-    route_title.set_lines(1);
-    route_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    route_title.set_halign(gtk::Align::Fill);
+    route_title.set_halign(gtk::Align::Start);
     route_title.set_valign(gtk::Align::Center);
-    route_title.set_margin_top(2);
     route_title.set_margin_start(20);
-    route_title.set_hexpand(true);
     let main_menu = primary_menu_button();
 
-    header.append(&route_title);
+    header.pack_start(&route_title);
+    header.pack_end(&main_menu);
 
     let route_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     route_host.set_hexpand(true);
     route_host.set_vexpand(true);
 
-    main_area.append(&header);
-    main_area.append(&route_host);
+    main_area.add_top_bar(&header);
+    main_area.set_content(Some(&route_host));
 
     let right_panel_parts = build_right_panel();
     let right_panel = right_panel_parts.root;
@@ -471,17 +466,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     upper.append(&compact_nav);
     upper.append(&content_split);
 
-    let upper_overlay = gtk::Overlay::new();
-    upper_overlay.set_hexpand(true);
-    upper_overlay.set_vexpand(true);
-    upper_overlay.set_child(Some(&upper));
-    main_menu.set_halign(gtk::Align::End);
-    main_menu.set_valign(gtk::Align::Start);
-    main_menu.set_margin_top(9);
-    main_menu.set_margin_end(8);
-    upper_overlay.add_overlay(&main_menu);
-
-    root.append(&upper_overlay);
+    root.append(&upper);
     root.append(&player_controls.root);
 
     window.set_content(Some(&root));
@@ -1624,8 +1609,7 @@ impl Shell {
         let first_run = self.state.library.borrow().first_run;
         if first_run {
             let route_name = "FirstRun".to_string();
-            self.route_title.set_text(&tr("Add Jellyfin Server"));
-            self.queue_route_title_redraw();
+            self.route_title.set_title(&tr("Add Jellyfin Server"));
             self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
             self.route_host.append(&view);
@@ -1635,8 +1619,7 @@ impl Shell {
 
         let route = self.state.routes.borrow().current().clone();
         let route_name = format!("{route:?}");
-        self.route_title.set_text(&tr(route.title()));
-        self.queue_route_title_redraw();
+        self.route_title.set_title(&tr(route.title()));
         self.set_history_buttons_sensitive(
             self.state.routes.borrow().can_back(),
             self.state.routes.borrow().can_forward(),
@@ -1668,13 +1651,6 @@ impl Shell {
 
         self.route_host.append(&view);
         self.record_perf_route_render(route_name, render_started.elapsed());
-    }
-
-    fn queue_route_title_redraw(&self) {
-        self.route_title.queue_draw();
-        if let Some(header) = self.route_title.parent() {
-            header.queue_draw();
-        }
     }
 
     fn render_current_route_preserving_scroll(self: &Rc<Self>) {
