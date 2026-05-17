@@ -446,7 +446,7 @@ impl MusicProvider for SubsonicProvider {
             .into_iter()
             .map(|genre| genre_from_dto(self, genre))
             .collect::<Vec<_>>();
-        genres.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+        genres.sort_by_key(|genre| genre.name.to_lowercase());
         Ok(page(genres, request))
     }
 
@@ -459,7 +459,7 @@ impl MusicProvider for SubsonicProvider {
             .into_iter()
             .map(|playlist| playlist_from_dto(self, playlist))
             .collect::<Vec<_>>();
-        playlists.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+        playlists.sort_by_key(|playlist| playlist.name.to_lowercase());
         Ok(page(playlists, request))
     }
 
@@ -502,6 +502,8 @@ impl MusicProvider for SubsonicProvider {
                     title: track.album.clone(),
                     artist: track.artist.clone(),
                     artist_id: track.artist_id.clone(),
+                    album_artist_credits: Vec::new(),
+                    artist_credits: Vec::new(),
                     year: track.year,
                     track_count: 0,
                     duration_seconds: 0,
@@ -1101,6 +1103,8 @@ fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) -> Album {
         artist_id: album
             .artist_id
             .map(|id| ArtistId::new(provider.id("artist", &id.0))),
+        album_artist_credits: Vec::new(),
+        artist_credits: Vec::new(),
         year: u16_from_option(album.year),
         track_count: u16_from_u32(album.song_count),
         duration_seconds: album.duration.unwrap_or_default(),
@@ -1127,6 +1131,8 @@ fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
         artist_id: song
             .artist_id
             .map(|id| ArtistId::new(provider.id("artist", &id.0))),
+        artist_credits: Vec::new(),
+        album_artist_credits: Vec::new(),
         album: song.album.unwrap_or_else(|| "Unknown Album".to_string()),
         year: u16_from_option(song.year),
         duration_seconds: song.duration.unwrap_or_default(),

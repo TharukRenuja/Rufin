@@ -1,16 +1,16 @@
 use std::{collections::HashMap, path::Path};
 
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
-    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueSnapshot, ServerId,
-    ServerIdentity, Track, TrackId,
+    Album, AlbumId, AppSettings, Artist, ArtistCredit, ArtistId, Genre, GenreId,
+    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId,
+    QueueSnapshot, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use thiserror::Error;
 
 const SETTINGS_KEY: &str = "default";
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -232,6 +232,27 @@ impl Store {
                 PRIMARY KEY (server_id, track_id, genre_name)
             );
 
+            CREATE TABLE IF NOT EXISTS album_artist_links (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                album_id TEXT NOT NULL,
+                artist_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                sync_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, album_id, artist_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS track_artist_links (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                track_id TEXT NOT NULL,
+                album_id TEXT NOT NULL,
+                artist_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                sync_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, track_id, artist_id)
+            );
+
             CREATE TABLE IF NOT EXISTS playlist_tracks (
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
                 playlist_id TEXT NOT NULL,
@@ -315,6 +336,10 @@ impl Store {
                 ON album_genres(server_id, genre_name, album_id);
             CREATE INDEX IF NOT EXISTS track_genres_server_genre_idx
                 ON track_genres(server_id, genre_name, track_id);
+            CREATE INDEX IF NOT EXISTS album_artist_links_server_artist_idx
+                ON album_artist_links(server_id, artist_id, album_id);
+            CREATE INDEX IF NOT EXISTS track_artist_links_server_artist_idx
+                ON track_artist_links(server_id, artist_id, track_id);
             ",
         )?;
         self.ensure_column("albums", "image_item_id", "TEXT")?;
@@ -696,11 +721,26 @@ impl Store {
             let mut delete_genres = connection.prepare(
                 "DELETE FROM album_genres WHERE server_id = ?1 AND album_id = ?2",
             )?;
+            let mut delete_artist_links = connection.prepare(
+                "DELETE FROM album_artist_links WHERE server_id = ?1 AND album_id = ?2",
+            )?;
             let mut insert_genre = connection.prepare(
                 "
                 INSERT INTO album_genres (server_id, album_id, genre_name, sync_generation)
                 VALUES (?1, ?2, ?3, ?4)
                 ON CONFLICT(server_id, album_id, genre_name) DO UPDATE SET
+                    sync_generation = excluded.sync_generation
+                ",
+            )?;
+            let mut insert_artist_link = connection.prepare(
+                "
+                INSERT INTO album_artist_links (
+                    server_id, album_id, artist_id, name, position, sync_generation
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(server_id, album_id, artist_id) DO UPDATE SET
+                    name = excluded.name,
+                    position = excluded.position,
                     sync_generation = excluded.sync_generation
                 ",
             )?;
@@ -732,6 +772,7 @@ impl Store {
                     generation,
                 ])?;
                 delete_genres.execute(params![server_id.as_str(), album.id.as_str()])?;
+                delete_artist_links.execute(params![server_id.as_str(), album.id.as_str()])?;
                 for genre in &album.genres {
                     if !genre.trim().is_empty() {
                         insert_genre.execute(params![
@@ -741,6 +782,16 @@ impl Store {
                             generation,
                         ])?;
                     }
+                }
+                for (position, artist) in album_artist_credits(album).iter().enumerate() {
+                    insert_artist_link.execute(params![
+                        server_id.as_str(),
+                        album.id.as_str(),
+                        artist.id.as_str(),
+                        artist.name.trim(),
+                        position as i64,
+                        generation,
+                    ])?;
                 }
                 delete_fts.execute(params![server_id.as_str(), album.id.as_str()])?;
                 insert_fts.execute(params![
@@ -788,11 +839,27 @@ impl Store {
             let mut delete_genres = connection.prepare(
                 "DELETE FROM track_genres WHERE server_id = ?1 AND track_id = ?2",
             )?;
+            let mut delete_artist_links = connection.prepare(
+                "DELETE FROM track_artist_links WHERE server_id = ?1 AND track_id = ?2",
+            )?;
             let mut insert_genre = connection.prepare(
                 "
                 INSERT INTO track_genres (server_id, track_id, genre_name, sync_generation)
                 VALUES (?1, ?2, ?3, ?4)
                 ON CONFLICT(server_id, track_id, genre_name) DO UPDATE SET
+                    sync_generation = excluded.sync_generation
+                ",
+            )?;
+            let mut insert_artist_link = connection.prepare(
+                "
+                INSERT INTO track_artist_links (
+                    server_id, track_id, album_id, artist_id, name, position, sync_generation
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(server_id, track_id, artist_id) DO UPDATE SET
+                    album_id = excluded.album_id,
+                    name = excluded.name,
+                    position = excluded.position,
                     sync_generation = excluded.sync_generation
                 ",
             )?;
@@ -826,6 +893,7 @@ impl Store {
                     generation,
                 ])?;
                 delete_genres.execute(params![server_id.as_str(), track.id.as_str()])?;
+                delete_artist_links.execute(params![server_id.as_str(), track.id.as_str()])?;
                 for genre in &track.genres {
                     if !genre.trim().is_empty() {
                         insert_genre.execute(params![
@@ -835,6 +903,17 @@ impl Store {
                             generation,
                         ])?;
                     }
+                }
+                for (position, artist) in track_artist_credits(track).iter().enumerate() {
+                    insert_artist_link.execute(params![
+                        server_id.as_str(),
+                        track.id.as_str(),
+                        track.album_id.as_str(),
+                        artist.id.as_str(),
+                        artist.name.trim(),
+                        position as i64,
+                        generation,
+                    ])?;
                 }
                 delete_fts.execute(params![server_id.as_str(), track.id.as_str()])?;
                 insert_fts.execute(params![
@@ -883,16 +962,30 @@ impl Store {
                 "
                 UPDATE artists
                 SET track_count = MAX(track_count, (
-                    SELECT COUNT(*)
+                    SELECT COUNT(DISTINCT tracks.track_id)
                     FROM tracks
+                    LEFT JOIN track_artist_links tal
+                        ON tal.server_id = tracks.server_id
+                       AND tal.track_id = tracks.track_id
+                       AND tal.artist_id = artists.artist_id
                     WHERE tracks.server_id = artists.server_id
-                      AND tracks.artist_id = artists.artist_id
+                      AND (
+                          tracks.artist_id = artists.artist_id
+                          OR tal.artist_id IS NOT NULL
+                      )
                 )),
                     album_count = MAX(album_count, (
-                    SELECT COUNT(DISTINCT album_id)
+                    SELECT COUNT(DISTINCT tracks.album_id)
                     FROM tracks
+                    LEFT JOIN track_artist_links tal
+                        ON tal.server_id = tracks.server_id
+                       AND tal.track_id = tracks.track_id
+                       AND tal.artist_id = artists.artist_id
                     WHERE tracks.server_id = artists.server_id
-                      AND tracks.artist_id = artists.artist_id
+                      AND (
+                          tracks.artist_id = artists.artist_id
+                          OR tal.artist_id IS NOT NULL
+                      )
                 ))
                 WHERE server_id = ?1
                 ",
@@ -905,13 +998,31 @@ impl Store {
                     SELECT COALESCE(SUM(track_count), 0)
                     FROM albums
                     WHERE albums.server_id = album_artists.server_id
-                      AND albums.artist_id = album_artists.artist_id
+                      AND (
+                          albums.artist_id = album_artists.artist_id
+                          OR EXISTS (
+                              SELECT 1
+                              FROM album_artist_links aal
+                              WHERE aal.server_id = albums.server_id
+                                AND aal.album_id = albums.album_id
+                                AND aal.artist_id = album_artists.artist_id
+                          )
+                      )
                 )),
                     album_count = MAX(album_count, (
-                    SELECT COUNT(*)
+                    SELECT COUNT(DISTINCT album_id)
                     FROM albums
                     WHERE albums.server_id = album_artists.server_id
-                      AND albums.artist_id = album_artists.artist_id
+                      AND (
+                          albums.artist_id = album_artists.artist_id
+                          OR EXISTS (
+                              SELECT 1
+                              FROM album_artist_links aal
+                              WHERE aal.server_id = albums.server_id
+                                AND aal.album_id = albums.album_id
+                                AND aal.artist_id = album_artists.artist_id
+                          )
+                      )
                 ))
                 WHERE server_id = ?1
                 ",
@@ -1529,6 +1640,13 @@ impl Store {
             WHERE server_id = ?1
               AND (
                   artist_id = ?2
+                  OR EXISTS (
+                      SELECT 1
+                      FROM album_artist_links aal
+                      WHERE aal.server_id = albums.server_id
+                        AND aal.album_id = albums.album_id
+                        AND aal.artist_id = ?2
+                  )
                   OR (
                       ?3 IS NOT NULL
                       AND artist_id IS NULL
@@ -1559,7 +1677,21 @@ impl Store {
             WHERE t.server_id = ?1
               AND (
                   t.artist_id = ?2
+                  OR EXISTS (
+                      SELECT 1
+                      FROM track_artist_links tal
+                      WHERE tal.server_id = t.server_id
+                        AND tal.track_id = t.track_id
+                        AND tal.artist_id = ?2
+                  )
                   OR a.artist_id = ?2
+                  OR EXISTS (
+                      SELECT 1
+                      FROM album_artist_links aal
+                      WHERE aal.server_id = t.server_id
+                        AND aal.album_id = t.album_id
+                        AND aal.artist_id = ?2
+                  )
                   OR (
                       ?3 IS NOT NULL
                       AND (
@@ -1612,6 +1744,25 @@ impl Store {
         tracks: &[Track],
     ) -> StoreResult<Vec<Album>> {
         let mut album_ids = Vec::new();
+        let mut statement = self.connection.prepare(
+            "
+            SELECT DISTINCT album_id
+            FROM track_artist_links
+            WHERE server_id = ?1 AND artist_id = ?2
+            ORDER BY album_id
+            ",
+        )?;
+        let linked_album_ids = collect_rows(
+            statement.query_map(params![server_id.as_str(), artist_id.as_str()], |row| {
+                row.get::<_, String>(0).map(AlbumId::new)
+            })?,
+        )?;
+        for album_id in linked_album_ids {
+            if albums.iter().any(|album| album.id == album_id) || album_ids.contains(&album_id) {
+                continue;
+            }
+            album_ids.push(album_id);
+        }
         for track in tracks
             .iter()
             .filter(|track| track_matches_artist(track, artist_id, artist_name_lower))
@@ -2858,6 +3009,8 @@ impl Store {
                 "genres",
                 "album_genres",
                 "track_genres",
+                "album_artist_links",
+                "track_artist_links",
                 "playlists",
                 "playlist_tracks",
                 "home_section_items",
@@ -2983,6 +3136,8 @@ fn album_from_row(row: &Row<'_>) -> rusqlite::Result<Album> {
         title: row.get(1)?,
         artist: row.get(2)?,
         artist_id,
+        album_artist_credits: Vec::new(),
+        artist_credits: Vec::new(),
         year: u16_from_i64(row.get(4)?),
         track_count: u16_from_i64(row.get(5)?),
         duration_seconds: u32_from_i64(row.get(6)?),
@@ -3012,6 +3167,8 @@ fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<Track> {
         title: row.get(offset + 2)?,
         artist: row.get(offset + 3)?,
         artist_id,
+        artist_credits: Vec::new(),
+        album_artist_credits: Vec::new(),
         album: row.get(offset + 5)?,
         year: u16_from_i64(row.get(offset + 6)?),
         duration_seconds: u32_from_i64(row.get(offset + 7)?),
@@ -3055,6 +3212,63 @@ fn image_ref_parts(image_ref: Option<&ImageRef>) -> (Option<&str>, Option<&str>)
     }
 }
 
+fn album_artist_credits(album: &Album) -> Vec<ArtistCredit> {
+    artist_credits_or_scalar(
+        &album.album_artist_credits,
+        album.artist_id.as_ref(),
+        &album.artist,
+    )
+}
+
+fn track_artist_credits(track: &Track) -> Vec<ArtistCredit> {
+    artist_credits_or_scalar(
+        &track.artist_credits,
+        track.artist_id.as_ref(),
+        &track.artist,
+    )
+}
+
+fn artist_credits_or_scalar(
+    credits: &[ArtistCredit],
+    scalar_id: Option<&ArtistId>,
+    scalar_name: &str,
+) -> Vec<ArtistCredit> {
+    let mut result = Vec::new();
+    for credit in credits {
+        if result
+            .iter()
+            .any(|existing: &ArtistCredit| existing.id == credit.id)
+        {
+            continue;
+        }
+        let name = credit.name.trim();
+        result.push(ArtistCredit {
+            id: credit.id.clone(),
+            name: if name.is_empty() {
+                credit.id.as_str().to_string()
+            } else {
+                name.to_string()
+            },
+        });
+    }
+
+    if result.is_empty()
+        && let Some(artist_id) = scalar_id
+    {
+        let name = scalar_name.trim();
+        result.push(ArtistCredit {
+            id: artist_id.clone(),
+            name: if name.is_empty() {
+                artist_id.as_str().to_string()
+            } else {
+                name.to_string()
+            },
+        });
+    }
+
+    result
+}
+
 fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
     let first = tracks
         .first()
@@ -3064,6 +3278,8 @@ fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
         title: first.album.clone(),
         artist: first.artist.clone(),
         artist_id: first.artist_id.clone(),
+        album_artist_credits: first.album_artist_credits.clone(),
+        artist_credits: Vec::new(),
         year: first.year,
         track_count: tracks.len().min(usize::from(u16::MAX)) as u16,
         duration_seconds: tracks
@@ -3083,6 +3299,13 @@ fn track_matches_artist(
     artist_name_lower: Option<&str>,
 ) -> bool {
     if track.artist_id.as_ref() == Some(artist_id) {
+        return true;
+    }
+    if track
+        .artist_credits
+        .iter()
+        .any(|artist| &artist.id == artist_id)
+    {
         return true;
     }
 
@@ -3193,6 +3416,31 @@ fn repair_linked_artists(
     )?;
     connection.execute(
         "
+        INSERT INTO artists (
+            server_id, artist_id, name, album_count, track_count, favorite,
+            sync_generation
+        )
+        SELECT tal.server_id,
+               tal.artist_id,
+               MIN(tal.name),
+               COUNT(DISTINCT tal.album_id),
+               COUNT(DISTINCT tal.track_id),
+               COALESCE(MAX(t.favorite), 0),
+               ?2
+        FROM track_artist_links tal
+        LEFT JOIN tracks t
+            ON t.server_id = tal.server_id AND t.track_id = tal.track_id
+        WHERE tal.server_id = ?1
+          AND NOT EXISTS (
+              SELECT 1 FROM artists a
+              WHERE a.server_id = tal.server_id AND a.artist_id = tal.artist_id
+          )
+        GROUP BY tal.server_id, tal.artist_id
+        ",
+        params![server_id.as_str(), generation],
+    )?;
+    connection.execute(
+        "
         INSERT INTO album_artists (
             server_id, artist_id, name, album_count, track_count, favorite,
             sync_generation
@@ -3212,6 +3460,31 @@ fn repair_linked_artists(
               WHERE aa.server_id = a.server_id AND aa.artist_id = a.artist_id
           )
         GROUP BY a.server_id, a.artist_id
+        ",
+        params![server_id.as_str(), generation],
+    )?;
+    connection.execute(
+        "
+        INSERT INTO album_artists (
+            server_id, artist_id, name, album_count, track_count, favorite,
+            sync_generation
+        )
+        SELECT aal.server_id,
+               aal.artist_id,
+               MIN(aal.name),
+               COUNT(DISTINCT aal.album_id),
+               COALESCE(SUM(a.track_count), 0),
+               COALESCE(MAX(a.favorite), 0),
+               ?2
+        FROM album_artist_links aal
+        LEFT JOIN albums a
+            ON a.server_id = aal.server_id AND a.album_id = aal.album_id
+        WHERE aal.server_id = ?1
+          AND NOT EXISTS (
+              SELECT 1 FROM album_artists aa
+              WHERE aa.server_id = aal.server_id AND aa.artist_id = aal.artist_id
+          )
+        GROUP BY aal.server_id, aal.artist_id
         ",
         params![server_id.as_str(), generation],
     )?;
@@ -3308,6 +3581,8 @@ fn clear_library_cache_on_connection(
         "genres",
         "track_genres",
         "album_genres",
+        "track_artist_links",
+        "album_artist_links",
         "album_artists",
         "artists",
         "tracks",
@@ -3412,7 +3687,7 @@ mod tests {
         synthesize_album_from_tracks,
     };
     use rufin_core::{
-        Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection,
+        Album, AlbumId, AppSettings, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection,
         HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEngine, ServerId, ServerIdentity,
         ThemePreference, Track, TrackId,
     };
@@ -3422,7 +3697,7 @@ mod tests {
     fn migrations_run_from_empty_database() {
         let store = Store::open_memory().expect("open store");
 
-        assert_eq!(store.schema_version().expect("schema version"), 5);
+        assert_eq!(store.schema_version().expect("schema version"), 6);
         assert!(store.foreign_keys_enabled().expect("foreign keys"));
         assert!(store.fts5_available().expect("fts5 table"));
     }
@@ -3439,6 +3714,8 @@ mod tests {
             ("playlists", "playlists_server_name_nocase_idx"),
             ("album_genres", "album_genres_server_genre_idx"),
             ("track_genres", "track_genres_server_genre_idx"),
+            ("album_artist_links", "album_artist_links_server_artist_idx"),
+            ("track_artist_links", "track_artist_links_server_artist_idx"),
         ] {
             assert!(index_exists(&store, table, index), "{index} should exist");
         }
@@ -3562,7 +3839,7 @@ mod tests {
         store.migrate().expect("migrate");
 
         let server_id = ServerId::new("jellyfin:server:test");
-        assert_eq!(store.schema_version().expect("schema version"), 5);
+        assert_eq!(store.schema_version().expect("schema version"), 6);
         for table in [
             "albums",
             "tracks",
@@ -3699,7 +3976,7 @@ mod tests {
         store.configure_pragmas(true).expect("configure pragmas");
         store.migrate().expect("migrate");
 
-        assert_eq!(store.schema_version().expect("schema version"), 5);
+        assert_eq!(store.schema_version().expect("schema version"), 6);
         assert!(table_has_column(&store, "playlist_tracks", "entry_id"));
         assert!(table_has_column(&store, "lyrics_cache", "value"));
         let entry_id: String = store
@@ -4777,6 +5054,95 @@ mod tests {
     }
 
     #[test]
+    fn artist_detail_uses_track_artist_links_as_appears_on() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(6);
+        album.artist = "Primary Artist".to_string();
+        album.artist_id = Some(ArtistId::fake(99));
+        let credited_artist = ArtistId::fake(7);
+        let mut track = track(1, &album);
+        track.artist = "Primary Artist".to_string();
+        track.artist_id = Some(ArtistId::fake(99));
+        track.artist_credits = vec![credit(credited_artist.clone(), "Featured Artist")];
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .refresh_library_counts(&saved.server.id)
+            .expect("refresh counts");
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &credited_artist)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(detail.artist.name, "Featured Artist");
+        assert_eq!(detail.artist.album_count, 1);
+        assert_eq!(detail.artist.track_count, 1);
+        assert!(detail.albums.is_empty());
+        assert_eq!(detail.appears_on.len(), 1);
+        assert_eq!(detail.appears_on[0].id, album.id);
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].id, track.id);
+    }
+
+    #[test]
+    fn artist_detail_uses_album_artist_links_as_primary_albums() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album_artist_id = ArtistId::fake(8);
+        let mut album = album(7);
+        album.artist = "Various Artists".to_string();
+        album.artist_id = Some(ArtistId::fake(99));
+        album.album_artist_credits = vec![credit(album_artist_id.clone(), "Linked Album Artist")];
+        let mut track = track(1, &album);
+        track.artist = "Different Track Artist".to_string();
+        track.artist_id = Some(ArtistId::fake(10));
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .refresh_library_counts(&saved.server.id)
+            .expect("refresh counts");
+
+        let album_artist = store
+            .load_artists(&saved.server.id, true, 0, 10)
+            .expect("load album artists")
+            .items
+            .into_iter()
+            .find(|artist| artist.id == album_artist_id)
+            .expect("linked album artist");
+        assert_eq!(album_artist.name, "Linked Album Artist");
+        assert_eq!(album_artist.album_count, 1);
+        assert_eq!(album_artist.track_count, u32::from(album.track_count));
+
+        let detail = store
+            .load_artist_detail(&saved.server.id, &album_artist_id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(detail.artist, album_artist);
+        assert_eq!(detail.albums.len(), 1);
+        assert_eq!(detail.albums[0].id, album.id);
+        assert!(detail.appears_on.is_empty());
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].id, track.id);
+    }
+
+    #[test]
     fn search_uses_local_fts_rows() {
         let store = Store::open_memory().expect("open store");
         let saved = saved_server();
@@ -5139,6 +5505,8 @@ mod tests {
             title: format!("Album {number}"),
             artist: "Artist".to_string(),
             artist_id: Some(ArtistId::fake(1)),
+            album_artist_credits: Vec::new(),
+            artist_credits: Vec::new(),
             year: 2026,
             track_count: 2,
             duration_seconds: 360,
@@ -5157,6 +5525,13 @@ mod tests {
             )),
             genres: vec!["Dream Pop".to_string()],
             ..album(number)
+        }
+    }
+
+    fn credit(id: ArtistId, name: &str) -> ArtistCredit {
+        ArtistCredit {
+            id,
+            name: name.to_string(),
         }
     }
 
@@ -5257,6 +5632,8 @@ mod tests {
             title: format!("Track {number}"),
             artist: album.artist.clone(),
             artist_id: album.artist_id.clone(),
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
             album: album.title.clone(),
             year: album.year,
             duration_seconds: 180,

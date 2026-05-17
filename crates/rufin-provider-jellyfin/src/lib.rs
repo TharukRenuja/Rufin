@@ -4,8 +4,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
-    HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
+    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track,
+    TrackId,
 };
 use rufin_provider::{
     AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
@@ -25,6 +26,7 @@ const CLIENT_NAME: &str = "Rufin";
 const DEVICE_NAME: &str = "Linux Desktop";
 const DEVICE_ID: &str = "rufin-native";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ITEM_FIELDS: &str = "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JellyfinClientConfig {
@@ -189,7 +191,7 @@ impl JellyfinProvider {
             .append_pair("IncludeItemTypes", include_types)
             .append_pair("StartIndex", &request.offset.to_string())
             .append_pair("Limit", &request.limit.to_string())
-            .append_pair("Fields", "Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount")
+            .append_pair("Fields", ITEM_FIELDS)
             .append_pair("SortBy", sort_by)
             .append_pair("SortOrder", sort_order);
 
@@ -423,7 +425,8 @@ impl MusicProvider for JellyfinProvider {
         let mut album_url = endpoint(&self.base_url, &format!("Items/{raw_album_id}"))?;
         album_url
             .query_pairs_mut()
-            .append_pair("UserId", &self.user_id);
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Fields", ITEM_FIELDS);
         let album = album_from_item(self.get_json::<JellyfinItem>(album_url).await?);
 
         let mut url = endpoint(&self.base_url, "Items")?;
@@ -433,10 +436,7 @@ impl MusicProvider for JellyfinProvider {
             .append_pair("Recursive", "true")
             .append_pair("IncludeItemTypes", "Audio")
             .append_pair("SortBy", "ParentIndexNumber,IndexNumber,SortName")
-            .append_pair(
-                "Fields",
-                "Genres,ProductionYear,RunTimeTicks,ParentId,UserData,ImageTags",
-            )
+            .append_pair("Fields", ITEM_FIELDS)
             .append_pair("StartIndex", "0")
             .append_pair("Limit", "500");
         let response = self.get_json::<ItemQueryResult>(url).await?;
@@ -504,10 +504,7 @@ impl MusicProvider for JellyfinProvider {
                 .append_pair("UserId", &self.user_id)
                 .append_pair("StartIndex", &offset.to_string())
                 .append_pair("Limit", "500")
-                .append_pair(
-                    "Fields",
-                    "Genres,ProductionYear,RunTimeTicks,ParentId,AlbumId,ArtistItems,UserData,ImageTags",
-                );
+                .append_pair("Fields", ITEM_FIELDS);
             let response = self.get_json::<ItemQueryResult>(url).await?;
             let item_count = response.items.len();
             entries.extend(response.items.into_iter().map(|item| {
@@ -553,10 +550,7 @@ impl MusicProvider for JellyfinProvider {
             .append_pair("IncludeItemTypes", "MusicAlbum")
             .append_pair("Genres", &genre.name)
             .append_pair("Limit", "500")
-            .append_pair(
-                "Fields",
-                "Genres,ProductionYear,RunTimeTicks,ParentId,UserData,ImageTags",
-            );
+            .append_pair("Fields", ITEM_FIELDS);
         let albums = self
             .get_json::<ItemQueryResult>(albums_url)
             .await?
@@ -573,7 +567,7 @@ impl MusicProvider for JellyfinProvider {
             .append_pair("IncludeItemTypes", "Audio")
             .append_pair("Genres", &genre.name)
             .append_pair("Limit", "500")
-            .append_pair("Fields", "Genres,ProductionYear,RunTimeTicks,ParentId,AlbumId,ArtistItems,UserData,ImageTags");
+            .append_pair("Fields", ITEM_FIELDS);
         let tracks = self
             .get_json::<ItemQueryResult>(tracks_url)
             .await?
@@ -594,7 +588,9 @@ impl MusicProvider for JellyfinProvider {
             &self.base_url,
             &format!("Items/{}", raw_item_id(track_id.as_str())),
         )?;
-        url.query_pairs_mut().append_pair("UserId", &self.user_id);
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("Fields", ITEM_FIELDS);
         self.get_json::<JellyfinItem>(url)
             .await
             .map(track_from_item)
@@ -634,10 +630,7 @@ impl MusicProvider for JellyfinProvider {
             .append_pair("SearchTerm", query)
             .append_pair("IncludeItemTypes", "Audio,MusicAlbum,MusicArtist,Playlist")
             .append_pair("Limit", "100")
-            .append_pair(
-                "Fields",
-                "Genres,ProductionYear,RunTimeTicks,ParentId,UserData,ImageTags",
-            );
+            .append_pair("Fields", ITEM_FIELDS);
         let response = self.get_json::<ItemQueryResult>(url).await?;
         let mut results = SearchResults::default();
         for item in response.items {
@@ -1037,20 +1030,59 @@ fn favorite(user_data: &Option<UserData>) -> bool {
         .unwrap_or(false)
 }
 
+fn artist_credits_from_pairs(pairs: Option<&[NameIdPair]>) -> Vec<ArtistCredit> {
+    pairs
+        .unwrap_or_default()
+        .iter()
+        .filter(|pair| !pair.id.trim().is_empty())
+        .map(|pair| ArtistCredit {
+            id: ArtistId::new(jellyfin_id("artist", &pair.id)),
+            name: pair
+                .name
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or("Unknown Artist")
+                .to_string(),
+        })
+        .collect()
+}
+
+fn joined_credit_names(credits: &[ArtistCredit]) -> Option<String> {
+    let names = credits
+        .iter()
+        .map(|credit| credit.name.trim())
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    (!names.is_empty()).then(|| names.join(", "))
+}
+
+fn joined_artist_names(artists: Option<&[String]>) -> Option<String> {
+    let names = artists
+        .unwrap_or_default()
+        .iter()
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    (!names.is_empty()).then(|| names.join(", "))
+}
+
 fn album_from_item(item: JellyfinItem) -> Album {
     let item_id = item.id.clone();
-    let artist_id = item
-        .artist_items
-        .as_ref()
-        .and_then(|items| items.first())
-        .map(|artist| ArtistId::new(jellyfin_id("artist", &artist.id)));
+    let album_artist_credits = artist_credits_from_pairs(item.album_artists.as_deref());
+    let artist_credits = artist_credits_from_pairs(item.artist_items.as_deref());
+    let artist_id = album_artist_credits
+        .first()
+        .or_else(|| artist_credits.first())
+        .map(|artist| artist.id.clone());
     let artist = item
         .album_artist
         .clone()
+        .filter(|artist| !artist.trim().is_empty())
+        .or_else(|| joined_credit_names(&album_artist_credits))
         .or_else(|| {
             item.artists
                 .as_ref()
-                .and_then(|artists| artists.first().cloned())
+                .and_then(|artists| joined_artist_names(Some(artists)))
         })
         .unwrap_or_else(|| "Unknown Artist".to_string());
     Album {
@@ -1058,6 +1090,8 @@ fn album_from_item(item: JellyfinItem) -> Album {
         title: item.name.unwrap_or_else(|| "Untitled Album".to_string()),
         artist,
         artist_id,
+        album_artist_credits,
+        artist_credits,
         year: u16_from_option(item.production_year),
         track_count: u16_from_option(item.child_count),
         duration_seconds: duration_seconds(item.run_time_ticks),
@@ -1075,11 +1109,12 @@ fn track_from_item(item: JellyfinItem) -> Track {
             tag: None,
         })
     });
-    let artist_id = item
-        .artist_items
-        .as_ref()
-        .and_then(|items| items.first())
-        .map(|artist| ArtistId::new(jellyfin_id("artist", &artist.id)));
+    let artist_credits = artist_credits_from_pairs(item.artist_items.as_deref());
+    let album_artist_credits = artist_credits_from_pairs(item.album_artists.as_deref());
+    let artist_id = artist_credits
+        .first()
+        .or_else(|| album_artist_credits.first())
+        .map(|artist| artist.id.clone());
     let album_id = item
         .album_id
         .as_deref()
@@ -1092,12 +1127,15 @@ fn track_from_item(item: JellyfinItem) -> Track {
         artist: item
             .artists
             .as_ref()
-            .and_then(|artists| artists.first().cloned())
+            .and_then(|artists| joined_artist_names(Some(artists)))
+            .or_else(|| joined_credit_names(&artist_credits))
             .unwrap_or_else(|| {
                 item.album_artist
                     .unwrap_or_else(|| "Unknown Artist".to_string())
             }),
         artist_id,
+        artist_credits,
+        album_artist_credits,
         album: item.album.unwrap_or_else(|| "Unknown Album".to_string()),
         year: u16_from_option(item.production_year),
         duration_seconds: duration_seconds(item.run_time_ticks),
@@ -1244,6 +1282,7 @@ struct JellyfinItem {
     #[serde(rename = "Type")]
     item_type: Option<String>,
     album_artist: Option<String>,
+    album_artists: Option<Vec<NameIdPair>>,
     artists: Option<Vec<String>>,
     genres: Option<Vec<String>>,
     artist_items: Option<Vec<NameIdPair>>,
@@ -1273,7 +1312,6 @@ struct JellyfinItemCounts {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct NameIdPair {
-    #[allow(dead_code)]
     name: Option<String>,
     id: String,
 }
@@ -1430,10 +1468,12 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "TotalRecordCount": 20,
                     "Items": [{
-                        "Id": "album-one",
-                        "Name": "Blue Rooms",
+                    "Id": "album-one",
+                    "Name": "Blue Rooms",
                     "Type": "MusicAlbum",
                     "AlbumArtist": "Astral Kin",
+                    "AlbumArtists": [{ "Id": "album-artist-one", "Name": "Astral Kin" }],
+                    "ArtistItems": [{ "Id": "guest-one", "Name": "Guest Artist" }],
                     "Genres": ["Ambient", "Electronic"],
                     "ProductionYear": 2024,
                     "ChildCount": 9,
@@ -1454,6 +1494,24 @@ mod tests {
         assert_eq!(page.total, 20);
         assert_eq!(page.items[0].id.as_str(), "jellyfin:album:album-one");
         assert_eq!(page.items[0].title, "Blue Rooms");
+        assert_eq!(
+            page.items[0].artist_id.as_ref().map(ArtistId::as_str),
+            Some("jellyfin:artist:album-artist-one")
+        );
+        assert_eq!(
+            page.items[0].album_artist_credits[0],
+            ArtistCredit {
+                id: ArtistId::new("jellyfin:artist:album-artist-one"),
+                name: "Astral Kin".to_string(),
+            }
+        );
+        assert_eq!(
+            page.items[0].artist_credits[0],
+            ArtistCredit {
+                id: ArtistId::new("jellyfin:artist:guest-one"),
+                name: "Guest Artist".to_string(),
+            }
+        );
         assert_eq!(page.items[0].genres, vec!["Ambient", "Electronic"]);
         assert_eq!(
             page.items[0].image_ref,
@@ -1532,6 +1590,7 @@ mod tests {
                 "Name": "Blue Rooms",
                 "Type": "MusicAlbum",
                 "AlbumArtist": "Astral Kin",
+                "AlbumArtists": [{ "Id": "album-artist-one", "Name": "Astral Kin" }],
                 "ChildCount": 1
             })))
             .mount(&server)
@@ -1549,6 +1608,8 @@ mod tests {
                     "AlbumId": "album-one",
                     "Album": "Blue Rooms",
                     "Artists": ["Astral Kin"],
+                    "AlbumArtists": [{ "Id": "album-artist-one", "Name": "Astral Kin" }],
+                    "ArtistItems": [{ "Id": "artist-one", "Name": "Astral Kin" }],
                     "IndexNumber": 1,
                     "RunTimeTicks": 2100000000i64
                 }]
@@ -1566,6 +1627,14 @@ mod tests {
         assert_eq!(
             detail.tracks[0].album_id.as_str(),
             "jellyfin:album:album-one"
+        );
+        assert_eq!(
+            detail.tracks[0].artist_credits[0].id.as_str(),
+            "jellyfin:artist:artist-one"
+        );
+        assert_eq!(
+            detail.tracks[0].album_artist_credits[0].id.as_str(),
+            "jellyfin:artist:album-artist-one"
         );
         assert_eq!(detail.tracks[0].duration_seconds, 210);
     }

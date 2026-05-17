@@ -1880,8 +1880,8 @@ impl Shell {
             |controller, query, offset, limit| {
                 controller.cached_albums_page_matching(query, offset, limit)
             },
-            |model, items| replace_albums_in_model(model, items),
-            |model, items| append_albums_to_model(model, items),
+            replace_albums_in_model,
+            append_albums_to_model,
         );
         self.media_grid_view(
             albums.borrow().is_empty(),
@@ -2358,8 +2358,8 @@ impl Shell {
             |controller, query, offset, limit| {
                 controller.cached_genres_page_matching(query, offset, limit)
             },
-            |model, items| replace_genres_in_model(model, items),
-            |model, items| append_genres_to_model(model, items),
+            replace_genres_in_model,
+            append_genres_to_model,
         );
         self.media_grid_view(
             genres.borrow().is_empty(),
@@ -2404,8 +2404,8 @@ impl Shell {
             |controller, query, offset, limit| {
                 controller.cached_playlists_page_matching(query, offset, limit)
             },
-            |model, items| replace_playlists_in_model(model, items),
-            |model, items| append_playlists_to_model(model, items),
+            replace_playlists_in_model,
+            append_playlists_to_model,
         );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
@@ -3406,6 +3406,7 @@ impl Shell {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn track_table_popover(
         self: &Rc<Self>,
         table: &gtk::ColumnView,
@@ -5610,6 +5611,8 @@ mod tests {
             title: "Album".to_string(),
             artist: artist.to_string(),
             artist_id,
+            album_artist_credits: Vec::new(),
+            artist_credits: Vec::new(),
             year: 2026,
             track_count: 1,
             duration_seconds: 180,
@@ -5627,6 +5630,8 @@ mod tests {
             title: "Track".to_string(),
             artist: artist.to_string(),
             artist_id,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
             album: "Album".to_string(),
             year: 2026,
             duration_seconds: 180,

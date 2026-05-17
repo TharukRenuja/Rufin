@@ -47,8 +47,8 @@ impl Shell {
             move |controller, query, offset, limit| {
                 controller.cached_artists_page_matching(album_artist, query, offset, limit)
             },
-            |model, items| replace_artists_in_model(model, items),
-            |model, items| append_artists_to_model(model, items),
+            replace_artists_in_model,
+            append_artists_to_model,
         );
         self.media_grid_view(
             artists.borrow().is_empty(),
@@ -251,6 +251,10 @@ impl Shell {
                     .iter()
                     .filter(|album| {
                         album.artist_id.as_ref().map(ArtistId::as_str) == Some(artist_id.as_str())
+                            || album
+                                .album_artist_credits
+                                .iter()
+                                .any(|artist| artist.id.as_str() == artist_id.as_str())
                             || (album.artist_id.is_none()
                                 && artist_name_lower
                                     .as_deref()
@@ -387,6 +391,8 @@ fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Option<
         title: first.album.clone(),
         artist: first.artist.clone(),
         artist_id: first.artist_id.clone(),
+        album_artist_credits: Vec::new(),
+        artist_credits: Vec::new(),
         year: first.year,
         track_count: tracks.len().min(usize::from(u16::MAX)) as u16,
         duration_seconds: tracks
@@ -406,6 +412,13 @@ fn track_matches_artist(
     artist_name_lower: Option<&str>,
 ) -> bool {
     if track.artist_id.as_ref() == Some(artist_id) {
+        return true;
+    }
+    if track
+        .artist_credits
+        .iter()
+        .any(|artist| &artist.id == artist_id)
+    {
         return true;
     }
 
@@ -487,6 +500,8 @@ mod tests {
             title: "Album".to_string(),
             artist: artist.to_string(),
             artist_id,
+            album_artist_credits: Vec::new(),
+            artist_credits: Vec::new(),
             year: 2026,
             track_count: 1,
             duration_seconds: 180,
@@ -504,6 +519,8 @@ mod tests {
             title: "Track".to_string(),
             artist: artist.to_string(),
             artist_id,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
             album: "Album".to_string(),
             year: 2026,
             duration_seconds: 180,

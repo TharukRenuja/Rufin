@@ -212,6 +212,8 @@ mod tests {
                 title: "Track".to_string(),
                 artist: "Artist".to_string(),
                 artist_id: None,
+                artist_credits: Vec::new(),
+                album_artist_credits: Vec::new(),
                 album: "Album".to_string(),
                 year: 2026,
                 duration_seconds: 180,

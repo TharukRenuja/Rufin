@@ -23,6 +23,10 @@ pub(super) struct PagedGridConfig {
     pub(super) page_name: &'static str,
 }
 
+type GridPageLoader<T> =
+    dyn Fn(&AppController, &str, usize, usize) -> Result<rufin_provider::PagedResponse<T>, String>;
+type GridModelMutator<T> = dyn Fn(&gio::ListStore, Vec<T>);
+
 impl Shell {
     pub(super) fn searchable_grid_controls<T>(
         self: &Rc<Self>,
@@ -52,16 +56,9 @@ impl Shell {
             loading: Cell::new(false),
         });
         let query = Rc::new(RefCell::new(String::new()));
-        let load_page: Rc<
-            dyn Fn(
-                &AppController,
-                &str,
-                usize,
-                usize,
-            ) -> Result<rufin_provider::PagedResponse<T>, String>,
-        > = Rc::new(load_page);
-        let replace_model: Rc<dyn Fn(&gio::ListStore, Vec<T>)> = Rc::new(replace_model);
-        let append_model: Rc<dyn Fn(&gio::ListStore, Vec<T>)> = Rc::new(append_model);
+        let load_page: Rc<GridPageLoader<T>> = Rc::new(load_page);
+        let replace_model: Rc<GridModelMutator<T>> = Rc::new(replace_model);
+        let append_model: Rc<GridModelMutator<T>> = Rc::new(append_model);
         let route = config.route;
         let page_name = config.page_name;
 

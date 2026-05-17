@@ -80,11 +80,21 @@ pub struct ServerIdentity {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ArtistCredit {
+    pub id: ArtistId,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Album {
     pub id: AlbumId,
     pub title: String,
     pub artist: String,
     pub artist_id: Option<ArtistId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub album_artist_credits: Vec<ArtistCredit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artist_credits: Vec<ArtistCredit>,
     pub year: u16,
     pub track_count: u16,
     pub duration_seconds: u32,
@@ -103,6 +113,10 @@ pub struct Track {
     pub title: String,
     pub artist: String,
     pub artist_id: Option<ArtistId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artist_credits: Vec<ArtistCredit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub album_artist_credits: Vec<ArtistCredit>,
     pub album: String,
     pub year: u16,
     pub duration_seconds: u32,
