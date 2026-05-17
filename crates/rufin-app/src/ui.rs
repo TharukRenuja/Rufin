@@ -7,6 +7,8 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 mod artist;
+mod cards;
+mod chrome;
 mod discord;
 mod favorites;
 mod layout;
@@ -41,6 +43,8 @@ use crate::controller::{
 };
 use crate::i18n::tr;
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
+use cards::{render_home_album_page, render_home_track_page};
+use chrome::{build_content_chrome, build_main_area};
 use discord::DiscordPresence;
 use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, artist_favorite_key,
@@ -49,12 +53,8 @@ use favorites::{
     update_favorite_controls,
 };
 use layout::{
-    COMPACT_RAIL_WIDTH, HOME_ALBUM_ARTIST_LINES, HOME_ALBUM_CARD_LABEL_GAP, HOME_ALBUM_GAP,
-    HOME_ALBUM_TITLE_LINES, HOME_ALBUM_YEAR_LINES, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, clamp_home_album_page_start, clipped_card_label,
-    clipped_card_label_with_lines, constrain_single_line_card_label, constrain_wrapped_card_label,
-    content_split_target_position, home_album_card_height, home_album_card_size,
-    home_album_content_width, home_album_page_size, restored_window_size,
+    COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
+    PRIMARY_ROUTE_MARGIN_START, content_split_target_position, restored_window_size,
     update_right_panel_split_settings,
 };
 use mpris::install_mpris;
@@ -263,12 +263,6 @@ enum UiPerfScenario {
     DragSweep,
 }
 
-#[derive(Clone, Copy)]
-enum AlbumCardLabelLayout {
-    Natural,
-    StableHome,
-}
-
 impl UiPerfScenario {
     const ALL: [Self; 4] = [
         Self::HumanScroll,
@@ -411,36 +405,14 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
     let server_selector = build_server_selector();
 
-    let main_area = adw::ToolbarView::new();
-    main_area.add_css_class("main-area");
-    main_area.set_hexpand(true);
-    main_area.set_vexpand(true);
-
-    let header = adw::HeaderBar::new();
-    header.add_css_class("route-header");
-    header.set_show_start_title_buttons(false);
-    header.set_show_end_title_buttons(false);
-
     let normal_back_button = sidebar_history_button("go-previous-symbolic", "Back");
     let normal_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
     let compact_back_button = sidebar_history_button("go-previous-symbolic", "Back");
     let compact_forward_button = sidebar_history_button("go-next-symbolic", "Forward");
-    let route_title = adw::WindowTitle::new("", "");
-    route_title.add_css_class("route-title");
-    route_title.set_halign(gtk::Align::Start);
-    route_title.set_valign(gtk::Align::Center);
-    route_title.set_margin_start(20);
-    let main_menu = primary_menu_button();
-
-    header.pack_start(&route_title);
-    header.pack_end(&main_menu);
-
-    let route_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    route_host.set_hexpand(true);
-    route_host.set_vexpand(true);
-
-    main_area.add_top_bar(&header);
-    main_area.set_content(Some(&route_host));
+    let main_area_parts = build_main_area();
+    let main_area = main_area_parts.root;
+    let route_title = main_area_parts.route_title;
+    let route_host = main_area_parts.route_host;
 
     let right_panel_parts = build_right_panel();
     let right_panel = right_panel_parts.root;
@@ -450,21 +422,14 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let queue_lyrics_split = right_panel_parts.queue_lyrics_split;
     let lyrics_pane = right_panel_parts.lyrics_pane;
 
-    let content_split = gtk::Paned::new(gtk::Orientation::Horizontal);
-    content_split.set_hexpand(true);
-    content_split.set_vexpand(true);
-    content_split.set_wide_handle(false);
-    content_split.set_resize_start_child(true);
-    content_split.set_resize_end_child(true);
-    content_split.set_shrink_start_child(true);
-    content_split.set_shrink_end_child(true);
-    content_split.set_start_child(Some(&main_area));
-    content_split.set_end_child(Some(&right_panel));
+    let content_chrome = build_content_chrome(&main_area, &right_panel);
+    let content_split = content_chrome.content_split;
+    let main_menu = content_chrome.main_menu;
     let player_controls = build_bottom_player();
 
     upper.append(&normal_nav);
     upper.append(&compact_nav);
-    upper.append(&content_split);
+    upper.append(&content_chrome.root);
 
     root.append(&upper);
     root.append(&player_controls.root);
@@ -3498,233 +3463,6 @@ impl Shell {
         }
     }
 
-    fn album_cards_grid(self: &Rc<Self>, albums: &[Album]) -> gtk::Widget {
-        let model = album_model(albums);
-        self.album_cards_grid_for_model(model)
-    }
-
-    fn album_cards_grid_for_model(self: &Rc<Self>, model: gio::ListStore) -> gtk::Widget {
-        let width = home_album_content_width(self);
-        let current = nonzero_usize(self.state.card_grid_columns.get());
-        let columns = home_album_page_size(width, current);
-        self.state.card_grid_columns.set(columns);
-        let card_size = home_album_card_size(width, columns);
-
-        let shell_for_factory = Rc::clone(self);
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_bind(move |_, list_item| {
-            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(item) = list_item.item() else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            let album = boxed.borrow::<Album>();
-            list_item.set_child(Some(&album_card_widget_with_size(
-                &shell_for_factory,
-                &album,
-                card_size,
-                Some(&shell_for_factory.controller),
-                AlbumCardLabelLayout::Natural,
-            )));
-        });
-        factory.connect_unbind(|_, list_item| {
-            if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-                list_item.set_child(None::<&gtk::Widget>);
-            }
-        });
-
-        let grid = gtk::GridView::new(Some(selection), Some(factory));
-        grid.add_css_class("album-grid");
-        grid.set_min_columns(columns as u32);
-        grid.set_max_columns(columns as u32);
-        grid.set_single_click_activate(false);
-        grid.set_hexpand(true);
-        grid.set_vexpand(true);
-
-        grid.upcast()
-    }
-
-    fn artist_cards_grid_for_model(self: &Rc<Self>, model: gio::ListStore) -> gtk::Widget {
-        let width = home_album_content_width(self);
-        let current = nonzero_usize(self.state.card_grid_columns.get());
-        let columns = home_album_page_size(width, current);
-        self.state.card_grid_columns.set(columns);
-        let card_size = home_album_card_size(width, columns);
-
-        let shell_for_factory = Rc::clone(self);
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_bind(move |_, list_item| {
-            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(item) = list_item.item() else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            let artist = boxed.borrow::<Artist>();
-            list_item.set_child(Some(&artist_card_widget_with_size(
-                &shell_for_factory,
-                &artist,
-                card_size,
-            )));
-        });
-        factory.connect_unbind(|_, list_item| {
-            if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-                list_item.set_child(None::<&gtk::Widget>);
-            }
-        });
-
-        let grid = gtk::GridView::new(Some(selection), Some(factory));
-        grid.add_css_class("album-grid");
-        grid.set_min_columns(columns as u32);
-        grid.set_max_columns(columns as u32);
-        grid.set_single_click_activate(true);
-        grid.set_hexpand(true);
-        grid.set_vexpand(true);
-
-        let shell = Rc::clone(self);
-        let model_for_activate = model.clone();
-        grid.connect_activate(move |_, position| {
-            let Some(item) = model_for_activate.item(position) else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            shell.navigate(Route::ArtistDetail(boxed.borrow::<Artist>().id.clone()));
-        });
-
-        grid.upcast()
-    }
-
-    fn genre_cards_grid_for_model(self: &Rc<Self>, model: gio::ListStore) -> gtk::Widget {
-        let width = home_album_content_width(self);
-        let current = nonzero_usize(self.state.card_grid_columns.get());
-        let columns = home_album_page_size(width, current);
-        self.state.card_grid_columns.set(columns);
-        let card_size = home_album_card_size(width, columns);
-
-        let shell_for_factory = Rc::clone(self);
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_bind(move |_, list_item| {
-            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(item) = list_item.item() else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            let genre = boxed.borrow::<Genre>();
-            list_item.set_child(Some(&genre_card_widget_with_size(
-                &shell_for_factory,
-                &genre,
-                card_size,
-            )));
-        });
-        factory.connect_unbind(|_, list_item| {
-            if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-                list_item.set_child(None::<&gtk::Widget>);
-            }
-        });
-
-        let grid = gtk::GridView::new(Some(selection), Some(factory));
-        grid.add_css_class("album-grid");
-        grid.set_min_columns(columns as u32);
-        grid.set_max_columns(columns as u32);
-        grid.set_single_click_activate(true);
-        grid.set_hexpand(true);
-        grid.set_vexpand(true);
-
-        let shell = Rc::clone(self);
-        let model_for_activate = model.clone();
-        grid.connect_activate(move |_, position| {
-            let Some(item) = model_for_activate.item(position) else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            shell.navigate(Route::GenreDetail(boxed.borrow::<Genre>().id.clone()));
-        });
-        grid.upcast()
-    }
-
-    fn playlist_cards_grid_for_model(self: &Rc<Self>, model: gio::ListStore) -> gtk::Widget {
-        let width = home_album_content_width(self);
-        let current = nonzero_usize(self.state.card_grid_columns.get());
-        let columns = home_album_page_size(width, current);
-        self.state.card_grid_columns.set(columns);
-        let card_size = home_album_card_size(width, columns);
-
-        let shell_for_factory = Rc::clone(self);
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_bind(move |_, list_item| {
-            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(item) = list_item.item() else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            let playlist = boxed.borrow::<Playlist>();
-            list_item.set_child(Some(&playlist_card_widget_with_size(
-                &shell_for_factory,
-                &playlist,
-                card_size,
-            )));
-        });
-        factory.connect_unbind(|_, list_item| {
-            if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-                list_item.set_child(None::<&gtk::Widget>);
-            }
-        });
-
-        let grid = gtk::GridView::new(Some(selection), Some(factory));
-        grid.add_css_class("album-grid");
-        grid.set_min_columns(columns as u32);
-        grid.set_max_columns(columns as u32);
-        grid.set_single_click_activate(true);
-        grid.set_hexpand(true);
-        grid.set_vexpand(true);
-
-        let shell = Rc::clone(self);
-        let model_for_activate = model.clone();
-        grid.connect_activate(move |_, position| {
-            let Some(item) = model_for_activate.item(position) else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            shell.navigate(Route::PlaylistDetail(boxed.borrow::<Playlist>().id.clone()));
-        });
-        grid.upcast()
-    }
-
-    fn album_card_with_size(self: &Rc<Self>, album: &Album, size: i32) -> gtk::Widget {
-        album_card_widget_with_size(
-            self,
-            album,
-            size,
-            Some(&self.controller),
-            AlbumCardLabelLayout::StableHome,
-        )
-    }
-
     fn track_table_popover(
         self: &Rc<Self>,
         table: &gtk::ColumnView,
@@ -4937,10 +4675,6 @@ fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
     first_run
 }
 
-fn nonzero_usize(value: usize) -> Option<usize> {
-    if value == 0 { None } else { Some(value) }
-}
-
 fn stable_seed(value: &str) -> u32 {
     value.bytes().fold(0x811c_9dc5, |hash, byte| {
         hash.wrapping_mul(16_777_619) ^ u32::from(byte)
@@ -5275,514 +5009,6 @@ fn add_dynamic_link_hover(target: &gtk::Widget, label: &gtk::Label) {
     target.add_controller(motion);
 }
 
-fn render_home_album_page(
-    shell: &Rc<Shell>,
-    row: &gtk::Box,
-    previous: &gtk::Button,
-    next: &gtk::Button,
-    section_kind: HomeSectionKind,
-    albums: &[Album],
-) {
-    while let Some(child) = row.first_child() {
-        row.remove(&child);
-    }
-
-    if albums.is_empty() {
-        previous.set_sensitive(false);
-        next.set_sensitive(false);
-        return;
-    }
-
-    let width = home_album_content_width(shell);
-    let page_start = {
-        let mut states = shell.state.home_section_state.borrow_mut();
-        let existing_page_size = states.get(&section_kind).map(|state| state.page_size);
-        let page_size = home_album_page_size(width, existing_page_size);
-        let state = states.entry(section_kind).or_insert(HomeSectionState {
-            page_start: 0,
-            page_size,
-        });
-        if state.page_size != page_size {
-            state.page_start -= state.page_start % page_size.max(1);
-            state.page_size = page_size;
-        }
-        state.page_start = clamp_home_album_page_start(state.page_start, page_size, albums.len());
-        state.page_start
-    };
-    let page_size = {
-        shell
-            .state
-            .home_section_state
-            .borrow()
-            .get(&section_kind)
-            .map(|state| state.page_size)
-            .unwrap_or_else(|| home_album_page_size(width, None))
-    };
-    let card_size = home_album_card_size(width, page_size);
-    let page_end = page_start.saturating_add(page_size).min(albums.len());
-
-    previous.set_sensitive(page_start > 0);
-    next.set_sensitive(page_end < albums.len());
-
-    for album in &albums[page_start..page_end] {
-        let card = shell.album_card_with_size(album, card_size);
-        row.append(&card);
-    }
-}
-
-fn render_home_track_page(
-    shell: &Rc<Shell>,
-    row: &gtk::Box,
-    previous: &gtk::Button,
-    next: &gtk::Button,
-    section_kind: HomeSectionKind,
-    tracks: &[Track],
-) {
-    while let Some(child) = row.first_child() {
-        row.remove(&child);
-    }
-
-    if tracks.is_empty() {
-        previous.set_sensitive(false);
-        next.set_sensitive(false);
-        return;
-    }
-
-    let width = home_album_content_width(shell);
-    let page_start = {
-        let mut states = shell.state.home_section_state.borrow_mut();
-        let existing_page_size = states.get(&section_kind).map(|state| state.page_size);
-        let page_size = home_album_page_size(width, existing_page_size);
-        let state = states.entry(section_kind).or_insert(HomeSectionState {
-            page_start: 0,
-            page_size,
-        });
-        if state.page_size != page_size {
-            state.page_start -= state.page_start % page_size.max(1);
-            state.page_size = page_size;
-        }
-        state.page_start = clamp_home_album_page_start(state.page_start, page_size, tracks.len());
-        state.page_start
-    };
-    let page_size = {
-        shell
-            .state
-            .home_section_state
-            .borrow()
-            .get(&section_kind)
-            .map(|state| state.page_size)
-            .unwrap_or_else(|| home_album_page_size(width, None))
-    };
-    let card_size = home_album_card_size(width, page_size);
-    let page_end = page_start.saturating_add(page_size).min(tracks.len());
-
-    previous.set_sensitive(page_start > 0);
-    next.set_sensitive(page_end < tracks.len());
-
-    for track in &tracks[page_start..page_end] {
-        row.append(&track_card_widget_with_size(shell, track, card_size));
-    }
-}
-
-fn album_card_widget_with_size(
-    shell: &Rc<Shell>,
-    album: &Album,
-    size: i32,
-    controller: Option<&AppController>,
-    label_layout: AlbumCardLabelLayout,
-) -> gtk::Widget {
-    let card = gtk::Box::new(
-        gtk::Orientation::Vertical,
-        match label_layout {
-            AlbumCardLabelLayout::Natural => 6,
-            AlbumCardLabelLayout::StableHome => HOME_ALBUM_CARD_LABEL_GAP,
-        },
-    );
-    card.add_css_class("album-card");
-    card.set_width_request(size);
-    match label_layout {
-        AlbumCardLabelLayout::Natural => card.set_size_request(size, -1),
-        AlbumCardLabelLayout::StableHome => {
-            card.set_size_request(size, home_album_card_height(size))
-        }
-    };
-    card.set_hexpand(false);
-    card.set_halign(gtk::Align::Start);
-    let cover = album_cover_tile(shell, album, size, controller);
-    card.append(&cover);
-
-    let title = gtk::Label::new(Some(&album.title));
-    title.add_css_class("album-title");
-    title.set_xalign(0.0);
-    constrain_wrapped_card_label(&title, size, 2);
-    let title_clip = match label_layout {
-        AlbumCardLabelLayout::Natural => clipped_card_label(&title, size),
-        AlbumCardLabelLayout::StableHome => {
-            clipped_card_label_with_lines(&title, size, HOME_ALBUM_TITLE_LINES)
-        }
-    };
-    add_link_hover(&title_clip, &title, &album.title);
-    let artist = gtk::Label::new(Some(&album.artist));
-    artist.add_css_class("muted");
-    artist.set_xalign(0.0);
-    match label_layout {
-        AlbumCardLabelLayout::Natural => constrain_single_line_card_label(&artist, size),
-        AlbumCardLabelLayout::StableHome => {
-            constrain_wrapped_card_label(&artist, size, HOME_ALBUM_ARTIST_LINES)
-        }
-    };
-    let artist_clip = match label_layout {
-        AlbumCardLabelLayout::Natural => clipped_card_label(&artist, size),
-        AlbumCardLabelLayout::StableHome => {
-            clipped_card_label_with_lines(&artist, size, HOME_ALBUM_ARTIST_LINES)
-        }
-    };
-    add_card_label_link(
-        shell,
-        &artist_clip,
-        &artist,
-        &album.artist,
-        album_artist_route(album),
-    );
-    let year = gtk::Label::new(Some(&album.year.to_string()));
-    year.add_css_class("muted");
-    year.set_xalign(0.0);
-    constrain_single_line_card_label(&year, size);
-    let year_clip = match label_layout {
-        AlbumCardLabelLayout::Natural => clipped_card_label(&year, size),
-        AlbumCardLabelLayout::StableHome => {
-            clipped_card_label_with_lines(&year, size, HOME_ALBUM_YEAR_LINES)
-        }
-    };
-
-    card.append(&title_clip);
-    card.append(&artist_clip);
-    card.append(&year_clip);
-    card.upcast()
-}
-
-fn album_cover_tile(
-    shell: &Rc<Shell>,
-    album: &Album,
-    size: i32,
-    controller: Option<&AppController>,
-) -> gtk::Widget {
-    let overlay = gtk::Overlay::new();
-    overlay.set_width_request(size);
-    overlay.set_height_request(size);
-    overlay.set_size_request(size, size);
-    overlay.set_hexpand(false);
-    overlay.set_halign(gtk::Align::Start);
-
-    let album_button = gtk::Button::new();
-    album_button.add_css_class("album-cover-button");
-    album_button.add_css_class("flat");
-    album_button.set_width_request(size);
-    album_button.set_height_request(size);
-    album_button.set_size_request(size, size);
-    album_button.set_hexpand(false);
-    album_button.set_halign(gtk::Align::Start);
-    album_button.set_child(Some(&shell.cover_tile_for(
-        album.image_ref.as_ref(),
-        album.color_seed,
-        size,
-        GRID_COVER_SIZE,
-    )));
-    let open_shell = Rc::clone(shell);
-    let open_album_id = album.id.clone();
-    album_button
-        .connect_clicked(move |_| open_shell.navigate(Route::AlbumDetail(open_album_id.clone())));
-    overlay.set_child(Some(&album_button));
-
-    let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    shade.add_css_class("cover-hover-layer");
-    shade.set_width_request(size);
-    shade.set_height_request(size);
-    shade.set_size_request(size, size);
-    shade.set_can_target(false);
-    shade.set_visible(false);
-    overlay.add_overlay(&shade);
-
-    let play = icon_button("media-playback-start-symbolic", "Play album");
-    play.add_css_class("cover-hover-button");
-    play.add_css_class("cover-play-button");
-    play.set_halign(gtk::Align::Center);
-    play.set_valign(gtk::Align::Center);
-    play.set_visible(false);
-    if let Some(controller) = controller {
-        let controller = controller.clone();
-        let album_id = album.id.clone();
-        play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
-    }
-    overlay.add_overlay(&play);
-
-    let favorite = favorite_icon_button("Favorite");
-    favorite.add_css_class("cover-hover-button");
-    favorite.add_css_class("cover-favorite-button");
-    favorite.set_halign(gtk::Align::End);
-    favorite.set_valign(gtk::Align::Start);
-    favorite.set_margin_top(8);
-    favorite.set_margin_end(8);
-    favorite.set_visible(false);
-    set_favorite_button_active(&favorite, album.favorite);
-    shell.register_favorite_button(album_favorite_key(&album.id), &favorite);
-    if let Some(controller) = controller {
-        let controller = controller.clone();
-        let album_id = album.id.clone();
-        favorite.connect_clicked(move |button| {
-            controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
-        });
-    }
-    overlay.add_overlay(&favorite);
-
-    let motion = gtk::EventControllerMotion::new();
-    let shade_for_enter = shade.clone();
-    let play_for_enter = play.clone();
-    let favorite_for_enter = favorite.clone();
-    motion.connect_enter(move |_, _, _| {
-        shade_for_enter.set_visible(true);
-        play_for_enter.set_visible(true);
-        favorite_for_enter.set_visible(true);
-    });
-    motion.connect_leave(move |_| {
-        shade.set_visible(false);
-        play.set_visible(false);
-        favorite.set_visible(false);
-    });
-    overlay.add_controller(motion);
-
-    overlay.upcast()
-}
-
-fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, HOME_ALBUM_CARD_LABEL_GAP);
-    card.add_css_class("album-card");
-    card.set_width_request(size);
-    card.set_size_request(size, home_album_card_height(size));
-    card.set_hexpand(false);
-    card.set_halign(gtk::Align::Start);
-
-    card.append(&track_cover_tile(shell, track, size));
-
-    let title = gtk::Label::new(Some(&track.title));
-    title.add_css_class("album-title");
-    title.set_xalign(0.0);
-    constrain_wrapped_card_label(&title, size, HOME_ALBUM_TITLE_LINES);
-    let title_clip = clipped_card_label_with_lines(&title, size, HOME_ALBUM_TITLE_LINES);
-    add_link_hover(&title_clip, &title, &track.title);
-
-    let artist = gtk::Label::new(Some(&track.artist));
-    artist.add_css_class("muted");
-    artist.set_xalign(0.0);
-    constrain_wrapped_card_label(&artist, size, HOME_ALBUM_ARTIST_LINES);
-    let artist_clip = clipped_card_label_with_lines(&artist, size, HOME_ALBUM_ARTIST_LINES);
-    add_card_label_link(
-        shell,
-        &artist_clip,
-        &artist,
-        &track.artist,
-        track_artist_route(track),
-    );
-
-    let album = gtk::Label::new(Some(&track.album));
-    album.add_css_class("muted");
-    album.set_xalign(0.0);
-    constrain_single_line_card_label(&album, size);
-    let album_clip = clipped_card_label_with_lines(&album, size, 1);
-
-    card.append(&title_clip);
-    card.append(&artist_clip);
-    card.append(&album_clip);
-    card.upcast()
-}
-
-fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
-    let overlay = gtk::Overlay::new();
-    overlay.set_width_request(size);
-    overlay.set_height_request(size);
-    overlay.set_size_request(size, size);
-    overlay.set_hexpand(false);
-    overlay.set_halign(gtk::Align::Start);
-
-    let cover_button = gtk::Button::new();
-    cover_button.add_css_class("album-cover-button");
-    cover_button.add_css_class("flat");
-    cover_button.set_width_request(size);
-    cover_button.set_height_request(size);
-    cover_button.set_size_request(size, size);
-    cover_button.set_hexpand(false);
-    cover_button.set_halign(gtk::Align::Start);
-    cover_button.set_child(Some(&shell.cover_tile_for(
-        track.image_ref.as_ref(),
-        stable_seed(track.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    )));
-    let controller = shell.controller.clone();
-    let track_for_play = track.clone();
-    cover_button.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
-    overlay.set_child(Some(&cover_button));
-
-    let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    shade.add_css_class("cover-hover-layer");
-    shade.set_width_request(size);
-    shade.set_height_request(size);
-    shade.set_size_request(size, size);
-    shade.set_can_target(false);
-    shade.set_visible(false);
-    overlay.add_overlay(&shade);
-
-    let play = icon_button("media-playback-start-symbolic", "Play track");
-    play.add_css_class("cover-hover-button");
-    play.add_css_class("cover-play-button");
-    play.set_halign(gtk::Align::Center);
-    play.set_valign(gtk::Align::Center);
-    play.set_visible(false);
-    let controller = shell.controller.clone();
-    let track_for_play = track.clone();
-    play.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
-    overlay.add_overlay(&play);
-
-    let favorite = favorite_icon_button("Favorite");
-    favorite.add_css_class("cover-hover-button");
-    favorite.add_css_class("cover-favorite-button");
-    favorite.set_halign(gtk::Align::End);
-    favorite.set_valign(gtk::Align::Start);
-    favorite.set_margin_top(8);
-    favorite.set_margin_end(8);
-    favorite.set_visible(false);
-    set_favorite_button_active(&favorite, track.favorite);
-    shell.register_favorite_button(track_favorite_key(&track.id), &favorite);
-    let controller = shell.controller.clone();
-    let track_id = track.id.clone();
-    favorite.connect_clicked(move |button| {
-        controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
-    });
-    overlay.add_overlay(&favorite);
-
-    let motion = gtk::EventControllerMotion::new();
-    let shade_for_enter = shade.clone();
-    let play_for_enter = play.clone();
-    let favorite_for_enter = favorite.clone();
-    motion.connect_enter(move |_, _, _| {
-        shade_for_enter.set_visible(true);
-        play_for_enter.set_visible(true);
-        favorite_for_enter.set_visible(true);
-    });
-    motion.connect_leave(move |_| {
-        shade.set_visible(false);
-        play.set_visible(false);
-        favorite.set_visible(false);
-    });
-    overlay.add_controller(motion);
-
-    overlay.upcast()
-}
-
-fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widget {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    card.add_css_class("album-card");
-    card.set_width_request(size);
-    card.set_size_request(size, -1);
-    card.set_hexpand(false);
-    card.set_halign(gtk::Align::Start);
-    card.append(&shell.cover_tile_for(
-        artist.image_ref.as_ref(),
-        stable_seed(artist.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
-
-    let name = gtk::Label::new(Some(&artist.name));
-    name.add_css_class("album-title");
-    name.set_xalign(0.0);
-    constrain_wrapped_card_label(&name, size, 2);
-    let name_clip = clipped_card_label(&name, size);
-
-    let counts = gtk::Label::new(Some(&format!(
-        "{} {} / {} {}",
-        artist.album_count,
-        tr("albums"),
-        artist.track_count,
-        tr("tracks")
-    )));
-    counts.add_css_class("muted");
-    counts.set_xalign(0.0);
-    constrain_single_line_card_label(&counts, size);
-    let counts_clip = clipped_card_label(&counts, size);
-
-    card.append(&name_clip);
-    card.append(&counts_clip);
-    card.upcast()
-}
-
-fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    card.add_css_class("album-card");
-    card.set_width_request(size);
-    card.set_size_request(size, -1);
-    card.set_hexpand(false);
-    card.set_halign(gtk::Align::Start);
-    card.append(&shell.cover_tile_for(
-        genre.image_ref.as_ref(),
-        stable_seed(genre.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
-
-    let name = gtk::Label::new(Some(&genre.name));
-    name.add_css_class("album-title");
-    name.set_xalign(0.0);
-    constrain_wrapped_card_label(&name, size, 2);
-    let name_clip = clipped_card_label(&name, size);
-    let counts = gtk::Label::new(Some(&format!("{} {}", genre.track_count, tr("tracks"))));
-    counts.add_css_class("muted");
-    counts.set_xalign(0.0);
-    constrain_single_line_card_label(&counts, size);
-    let counts_clip = clipped_card_label(&counts, size);
-    card.append(&name_clip);
-    card.append(&counts_clip);
-    card.upcast()
-}
-
-fn playlist_card_widget_with_size(
-    shell: &Rc<Shell>,
-    playlist: &Playlist,
-    size: i32,
-) -> gtk::Widget {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    card.add_css_class("album-card");
-    card.set_width_request(size);
-    card.set_size_request(size, -1);
-    card.set_hexpand(false);
-    card.set_halign(gtk::Align::Start);
-    card.append(&shell.cover_tile_for(
-        playlist.image_ref.as_ref(),
-        stable_seed(playlist.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
-
-    let name = gtk::Label::new(Some(&playlist.name));
-    name.add_css_class("album-title");
-    name.set_xalign(0.0);
-    constrain_wrapped_card_label(&name, size, 2);
-    let name_clip = clipped_card_label(&name, size);
-    let counts = gtk::Label::new(Some(&format!(
-        "{} {} • {}",
-        playlist.track_count,
-        tr("tracks"),
-        format_duration(playlist.duration_seconds)
-    )));
-    counts.add_css_class("muted");
-    counts.set_xalign(0.0);
-    constrain_single_line_card_label(&counts, size);
-    let counts_clip = clipped_card_label(&counts, size);
-    card.append(&name_clip);
-    card.append(&counts_clip);
-    card.upcast()
-}
-
 impl ArtworkTile {
     fn new(size: i32, seed: u32) -> Self {
         let area = gtk::DrawingArea::new();
@@ -6050,40 +5276,6 @@ fn set_favorite_button_active(button: &gtk::Button, active: bool) {
 
 fn favorite_button_is_active(button: &gtk::Button) -> bool {
     button.label().as_deref() == Some(FAVORITE_FILLED_GLYPH)
-}
-
-fn primary_menu_button() -> gtk::MenuButton {
-    let button = gtk::MenuButton::new();
-    button.add_css_class("icon-button");
-    button.add_css_class("flat");
-    button.add_css_class("circular");
-    button.set_icon_name("open-menu-symbolic");
-    button.set_primary(true);
-    let label = tr("Main Menu");
-    button.set_tooltip_text(Some(&label));
-    button.update_property(&[gtk::accessible::Property::Label(&label)]);
-    button.set_menu_model(Some(&primary_menu_model()));
-    button
-}
-
-fn primary_menu_model() -> gio::Menu {
-    let menu = gio::Menu::new();
-    let view = gio::Menu::new();
-    view.append(
-        Some(&tr("Toggle Fullscreen")),
-        Some("win.toggle-fullscreen"),
-    );
-    menu.append_section(None, &view);
-
-    let preferences = gio::Menu::new();
-    preferences.append(Some(&tr("Preferences")), Some("win.preferences"));
-    preferences.append(Some(&tr("Keyboard Shortcuts")), Some("win.show-shortcuts"));
-    menu.append_section(None, &preferences);
-
-    let about = gio::Menu::new();
-    about.append(Some(&tr("About Rufin")), Some("win.about"));
-    menu.append_section(None, &about);
-    menu
 }
 
 fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
