@@ -17,11 +17,8 @@ use rufin_playback::{
     PlaybackEvent, PlaybackState, PlaybackTrack, StreamDescriptor,
 };
 use rufin_provider::{
-    FavoriteItemId, ImageKind, ImageRequest, LoginRequest, Lyrics, MusicProvider, PagedRequest,
-    PlaybackReport, PlaybackReportKind, PlaylistEntry, SavedProviderSession, SearchResults,
-};
-use rufin_provider_jellyfin::{
-    DiscoveredJellyfinServer, JellyfinLyricsSearch, JellyfinProvider, discover_jellyfin_servers,
+    FavoriteItemId, ImageKind, ImageRequest, Lyrics, MusicProvider, PagedRequest, PlaybackReport,
+    PlaybackReportKind, PlaylistEntry, SavedProviderSession, SearchResults,
 };
 use rufin_secrets::{MemorySecretStore, SecretServiceStore, SecretStore};
 use rufin_store::{
@@ -33,6 +30,15 @@ use serde::Deserialize;
 use tokio::runtime::Runtime;
 use tracing::{debug, info, instrument, warn};
 
+use crate::providers::{
+    JellyfinLyricsSearch, LoadedProvider, StreamingProvider, login_provider, provider_display_name,
+    provider_from_saved,
+};
+
+mod discovery;
+
+pub use discovery::DiscoveredServer;
+
 const PAGE_SIZE: usize = 500;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
@@ -41,7 +47,6 @@ const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(900);
 const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
-const SERVER_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1_800);
 
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
@@ -89,25 +94,6 @@ pub struct LyricsSearchResult {
     pub plain_lyrics: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DiscoveredServer {
-    pub provider: String,
-    pub name: String,
-    pub address: String,
-    pub id: Option<String>,
-}
-
-impl From<DiscoveredJellyfinServer> for DiscoveredServer {
-    fn from(server: DiscoveredJellyfinServer) -> Self {
-        Self {
-            provider: "Jellyfin".to_string(),
-            name: server.name,
-            address: server.address,
-            id: server.id,
-        }
-    }
-}
-
 impl Default for PlaybackSnapshot {
     fn default() -> Self {
         Self {
@@ -133,7 +119,7 @@ impl LibrarySnapshot {
             server: None,
             username: None,
             first_run: true,
-            sync_status: "Add a Jellyfin server to start.".to_string(),
+            sync_status: "Add a music server to start.".to_string(),
             last_error: None,
             home_sections: Vec::new(),
             prefetched_explore: None,
@@ -848,7 +834,7 @@ impl AppController {
             self.start_sync(saved);
         } else {
             let _sent = self.events.send(ControllerEvent::Error(
-                "No active Jellyfin server is saved.".to_string(),
+                "No active music server is saved.".to_string(),
             ));
         }
     }
@@ -1402,7 +1388,7 @@ impl AppController {
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active Jellyfin server is saved.".to_string(),
+                    "No active music server is saved.".to_string(),
                 ));
                 return;
             };
@@ -1510,40 +1496,10 @@ impl AppController {
         });
     }
 
-    pub fn discover_servers(&self) {
-        let events = self.events.clone();
-        thread::spawn(move || {
-            let _sent = events.send(ControllerEvent::ServerDiscovery {
-                servers: Vec::new(),
-                status: "Searching for Jellyfin servers on the local network...".to_string(),
-                running: true,
-            });
-
-            match discover_jellyfin_servers(SERVER_DISCOVERY_TIMEOUT) {
-                Ok(servers) => {
-                    let servers: Vec<DiscoveredServer> =
-                        servers.into_iter().map(DiscoveredServer::from).collect();
-                    let status = discovery_finished_status(&servers);
-                    let _sent = events.send(ControllerEvent::ServerDiscovery {
-                        servers,
-                        status,
-                        running: false,
-                    });
-                }
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::ServerDiscovery {
-                        servers: Vec::new(),
-                        status: format!("Server discovery failed: {error}"),
-                        running: false,
-                    });
-                }
-            }
-        });
-    }
-
-    #[instrument(skip(self, password), fields(server_url = %server_url, username = %username, trust_invalid_cert = trust_invalid_cert))]
+    #[instrument(skip(self, password), fields(provider = provider.provider_id(), server_url = %server_url, username = %username, trust_invalid_cert = trust_invalid_cert))]
     pub fn login(
         &self,
+        provider: StreamingProvider,
         server_url: String,
         username: String,
         password: String,
@@ -1558,15 +1514,17 @@ impl AppController {
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
-            let _sent = events.send(ControllerEvent::LoginStatus(
-                "Checking Jellyfin server...".to_string(),
-            ));
-            let result = runtime.block_on(JellyfinProvider::login(LoginRequest {
-                base_url: server_url,
+            let provider_name = provider.title();
+            let _sent = events.send(ControllerEvent::LoginStatus(format!(
+                "Checking {provider_name} server..."
+            )));
+            let result = runtime.block_on(login_provider(
+                provider,
+                server_url,
                 username,
                 password,
                 trust_invalid_cert,
-            }));
+            ));
 
             let session = match result {
                 Ok(session) => session,
@@ -1692,7 +1650,7 @@ impl AppController {
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active Jellyfin server is saved.".to_string(),
+                    "No active music server is saved.".to_string(),
                 ));
                 return;
             };
@@ -1701,7 +1659,11 @@ impl AppController {
                 let result =
                     provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                         runtime
-                            .block_on(provider.set_favorite(item_id.clone(), favorite))
+                            .block_on(
+                                provider
+                                    .as_music_provider()
+                                    .set_favorite(item_id.clone(), favorite),
+                            )
                             .map_err(|error| error.to_string())
                     });
                 if let Err(error) = result {
@@ -1773,7 +1735,7 @@ impl AppController {
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active Jellyfin server is saved.".to_string(),
+                    "No active music server is saved.".to_string(),
                 ));
                 return;
             };
@@ -1789,7 +1751,11 @@ impl AppController {
             } else {
                 match provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                     runtime
-                        .block_on(provider.create_playlist(&name, &track_ids))
+                        .block_on(
+                            provider
+                                .as_music_provider()
+                                .create_playlist(&name, &track_ids),
+                        )
                         .map_err(|error| error.to_string())
                 }) {
                     Ok(playlist_id) => playlist_id,
@@ -1828,7 +1794,7 @@ impl AppController {
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active Jellyfin server is saved.".to_string(),
+                    "No active music server is saved.".to_string(),
                 ));
                 return;
             };
@@ -1836,7 +1802,11 @@ impl AppController {
                 let result =
                     provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
                         runtime
-                            .block_on(provider.rename_playlist(&playlist_id, &name))
+                            .block_on(
+                                provider
+                                    .as_music_provider()
+                                    .rename_playlist(&playlist_id, &name),
+                            )
                             .map_err(|error| error.to_string())
                     });
                 if let Err(error) = result {
@@ -1912,7 +1882,7 @@ impl AppController {
                 .unwrap_or(None)
             else {
                 let _sent = events.send(ControllerEvent::Error(
-                    "No active Jellyfin server is saved.".to_string(),
+                    "No active music server is saved.".to_string(),
                 ));
                 return;
             };
@@ -2531,9 +2501,10 @@ fn start_sync_thread(
     }
 
     thread::spawn(move || {
-        let _sent = events.send(ControllerEvent::LoginStatus(
-            "Syncing Jellyfin library...".to_string(),
-        ));
+        let provider_name = provider_display_name(&saved.server.provider);
+        let _sent = events.send(ControllerEvent::LoginStatus(format!(
+            "Syncing {provider_name} library..."
+        )));
         let sync_result = run_sync_job(&store, &runtime, &secrets, &saved);
         if let Ok(mut running) = sync_in_flight.lock() {
             running.remove(&server_id);
@@ -2694,20 +2665,12 @@ fn run_sync_job(
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
 ) -> Result<(), String> {
-    let token = secrets
-        .load_token(&saved.server.id)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "No saved token found for the active server.".to_string())?;
-    let session = SavedProviderSession {
-        server: saved.server.clone(),
-        user_id: saved.user_id.clone(),
-        username: saved.username.clone(),
-        trust_invalid_cert: saved.trust_invalid_cert,
-        access_token: token,
-    };
-    let provider =
-        JellyfinProvider::from_saved_session(session).map_err(|error| error.to_string())?;
-    runtime.block_on(sync_provider(store, &saved.server.id, &provider))
+    let provider = provider_for_saved(store, runtime, secrets, saved)?;
+    runtime.block_on(sync_provider(
+        store,
+        &saved.server.id,
+        provider.as_music_provider(),
+    ))
 }
 
 fn refresh_home_sections_without_explore_for_saved(
@@ -2720,7 +2683,7 @@ fn refresh_home_sections_without_explore_for_saved(
     runtime.block_on(refresh_home_sections_without_explore(
         store,
         &saved.server.id,
-        &provider,
+        provider.as_music_provider(),
     ))
 }
 
@@ -2735,7 +2698,7 @@ fn refresh_home_section_for_saved(
     runtime.block_on(refresh_home_section(
         store,
         &saved.server.id,
-        &provider,
+        provider.as_music_provider(),
         kind,
     ))
 }
@@ -2751,7 +2714,7 @@ fn prefetch_home_section_for_saved(
     runtime.block_on(prefetch_home_section(
         store,
         &saved.server.id,
-        &provider,
+        provider.as_music_provider(),
         kind,
     ))
 }
@@ -2760,10 +2723,10 @@ fn prefetch_home_section_for_saved(
 async fn sync_provider(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
 ) -> Result<(), String> {
     let generation = store.with_store(|store| store.begin_sync(server_id))?;
-    info!(generation, "started Jellyfin cache sync");
+    info!(generation, "started provider cache sync");
     sync_album_pages(store, server_id, provider, generation).await?;
     sync_track_pages(store, server_id, provider, generation).await?;
     sync_artist_pages(store, server_id, provider, generation, false).await?;
@@ -2773,14 +2736,14 @@ async fn sync_provider(
     sync_home_sections(store, server_id, provider, generation).await?;
     store.with_store(|store| store.refresh_library_counts(server_id))?;
     store.with_store(|store| store.complete_sync(server_id, generation))?;
-    info!(generation, "completed Jellyfin cache sync");
+    info!(generation, "completed provider cache sync");
     Ok(())
 }
 
 async fn sync_album_pages(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
     generation: i64,
 ) -> Result<(), String> {
     let mut offset = 0;
@@ -2801,7 +2764,7 @@ async fn sync_album_pages(
 async fn sync_track_pages(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
     generation: i64,
 ) -> Result<(), String> {
     let mut offset = 0;
@@ -2822,7 +2785,7 @@ async fn sync_track_pages(
 async fn sync_artist_pages(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
     generation: i64,
     album_artist: bool,
 ) -> Result<(), String> {
@@ -2850,7 +2813,7 @@ async fn sync_artist_pages(
 async fn sync_genre_pages(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
     generation: i64,
 ) -> Result<(), String> {
     let mut offset = 0;
@@ -2871,7 +2834,7 @@ async fn sync_genre_pages(
 async fn sync_playlist_pages(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
     generation: i64,
 ) -> Result<(), String> {
     let mut offset = 0;
@@ -2908,7 +2871,7 @@ async fn sync_playlist_pages(
 async fn sync_home_sections(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
     generation: i64,
 ) -> Result<(), String> {
     let sections = provider
@@ -2922,7 +2885,7 @@ async fn sync_home_sections(
 async fn refresh_home_sections(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
 ) -> Result<(), String> {
     let generation =
         store.with_store(|store| store.sync_state(server_id).map(|state| state.generation))?;
@@ -2936,7 +2899,7 @@ async fn refresh_home_sections(
 async fn refresh_home_sections_without_explore(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
 ) -> Result<(), String> {
     for kind in home_refresh_section_kinds()
         .into_iter()
@@ -2950,7 +2913,7 @@ async fn refresh_home_sections_without_explore(
 async fn refresh_home_section(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
     kind: HomeSectionKind,
 ) -> Result<(), String> {
     let generation =
@@ -2965,7 +2928,7 @@ async fn refresh_home_section(
 async fn prefetch_home_section(
     store: &StoreHandle,
     server_id: &ServerId,
-    provider: &impl MusicProvider,
+    provider: &(impl MusicProvider + ?Sized),
     kind: HomeSectionKind,
 ) -> Result<HomeSection, String> {
     let generation =
@@ -3359,21 +3322,9 @@ fn resolve_stream(
         )));
     }
 
-    let token = secrets
-        .load_token(&saved.server.id)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "No saved token found for the active server.".to_string())?;
-    let session = SavedProviderSession {
-        server: saved.server.clone(),
-        user_id: saved.user_id.clone(),
-        username: saved.username.clone(),
-        trust_invalid_cert: saved.trust_invalid_cert,
-        access_token: token,
-    };
-    let provider =
-        JellyfinProvider::from_saved_session(session).map_err(|error| error.to_string())?;
+    let provider = provider_for_saved(store, runtime, secrets, &saved)?;
     runtime
-        .block_on(provider.stream(track_id))
+        .block_on(provider.as_music_provider().stream(track_id))
         .map_err(|error| error.to_string())
 }
 
@@ -3722,7 +3673,7 @@ fn provider_for_saved(
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
-) -> Result<JellyfinProvider, String> {
+) -> Result<LoadedProvider, String> {
     let _unused = (store, runtime);
     let token = secrets
         .load_token(&saved.server.id)
@@ -3735,7 +3686,7 @@ fn provider_for_saved(
         trust_invalid_cert: saved.trust_invalid_cert,
         access_token: token,
     };
-    JellyfinProvider::from_saved_session(session).map_err(|error| error.to_string())
+    provider_from_saved(session).map_err(|error| error.to_string())
 }
 
 fn sync_playlist_mutation(
@@ -3766,7 +3717,11 @@ fn sync_playlist_mutation(
         .collect::<Vec<_>>();
     if !removed.is_empty() {
         runtime
-            .block_on(provider.remove_playlist_entries(&before.playlist.id, &removed))
+            .block_on(
+                provider
+                    .as_music_provider()
+                    .remove_playlist_entries(&before.playlist.id, &removed),
+            )
             .map_err(|error| error.to_string())?;
     }
 
@@ -3778,7 +3733,11 @@ fn sync_playlist_mutation(
         .collect::<Vec<_>>();
     if !added.is_empty() {
         runtime
-            .block_on(provider.add_playlist_tracks(&before.playlist.id, &added))
+            .block_on(
+                provider
+                    .as_music_provider()
+                    .add_playlist_tracks(&before.playlist.id, &added),
+            )
             .map_err(|error| error.to_string())?;
     }
 
@@ -3792,7 +3751,7 @@ fn sync_playlist_mutation(
         };
         if old_index != new_index && before_ids.contains(entry.entry_id.as_str()) {
             runtime
-                .block_on(provider.move_playlist_entry(
+                .block_on(provider.as_music_provider().move_playlist_entry(
                     &before.playlist.id,
                     &entry.entry_id,
                     new_index,
@@ -3802,7 +3761,11 @@ fn sync_playlist_mutation(
     }
 
     runtime
-        .block_on(provider.playlist_detail(&before.playlist.id))
+        .block_on(
+            provider
+                .as_music_provider()
+                .playlist_detail(&before.playlist.id),
+        )
         .map(Some)
         .map_err(|error| error.to_string())
 }
@@ -3828,7 +3791,7 @@ fn report_playback_async(
         }
         let result = provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
             runtime
-                .block_on(provider.report_playback(report))
+                .block_on(provider.as_music_provider().report_playback(report))
                 .map_err(|error| error.to_string())
         });
         if let Err(error) = result {
@@ -3911,21 +3874,9 @@ fn fetch_and_cache_cover(
     image_ref: ImageRef,
     size: u32,
 ) -> Result<PathBuf, String> {
-    let token = secrets
-        .load_token(&saved.server.id)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "No saved token found for the active server.".to_string())?;
-    let session = SavedProviderSession {
-        server: saved.server.clone(),
-        user_id: saved.user_id.clone(),
-        username: saved.username.clone(),
-        trust_invalid_cert: saved.trust_invalid_cert,
-        access_token: token,
-    };
-    let provider =
-        JellyfinProvider::from_saved_session(session).map_err(|error| error.to_string())?;
+    let provider = provider_for_saved(store, runtime, secrets, saved)?;
     let image = runtime
-        .block_on(provider.image_bytes(ImageRequest {
+        .block_on(provider.as_music_provider().image_bytes(ImageRequest {
             item_id: image_ref.item_id.clone(),
             kind: ImageKind::Primary,
             tag: image_ref.tag.clone(),
@@ -4007,14 +3958,6 @@ fn sync_is_running(sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>, server_id: &S
         .unwrap_or(true)
 }
 
-fn discovery_finished_status(servers: &[DiscoveredServer]) -> String {
-    match servers.len() {
-        0 => "No Jellyfin servers found. Enter the address manually or search again.".to_string(),
-        1 => "Found 1 Jellyfin server.".to_string(),
-        count => format!("Found {count} Jellyfin servers."),
-    }
-}
-
 fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
     let (lock, ready) = &**slots;
     let Ok(mut active) = lock.lock() else {
@@ -4064,11 +4007,12 @@ mod tests {
     use rufin_provider::{
         FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest,
     };
-    use rufin_provider_jellyfin::JellyfinLyricsSearch;
     use rufin_secrets::MemorySecretStore;
     use rufin_store::{CoverCacheEntry, SavedServer};
     use rufin_test_support::{FakeProvider, FakeScale};
     use tokio::runtime::Runtime;
+
+    use crate::providers::JellyfinLyricsSearch;
 
     struct StalePositionAfterSeekBackend {
         stale_millis: u64,

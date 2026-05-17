@@ -1,6 +1,7 @@
 mod controller;
 mod i18n;
 mod lyrics;
+mod providers;
 mod ui;
 
 use std::path::PathBuf;
@@ -75,9 +76,9 @@ fn main() {
 
     if cli.clear_cache {
         match controller::AppController::clear_active_server_cache_for_app() {
-            Ok(()) => info!("cleared active Jellyfin cache"),
+            Ok(()) => info!("cleared active server cache"),
             Err(error) => {
-                eprintln!("Failed to clear active Jellyfin cache: {error}");
+                eprintln!("Failed to clear active server cache: {error}");
                 std::process::exit(1);
             }
         }
@@ -86,9 +87,9 @@ fn main() {
 
     if cli.forget_active_server {
         match controller::AppController::forget_active_server_for_app() {
-            Ok(()) => info!("forgot active Jellyfin server"),
+            Ok(()) => info!("forgot active server"),
             Err(error) => {
-                eprintln!("Failed to forget active Jellyfin server: {error}");
+                eprintln!("Failed to forget active server: {error}");
                 std::process::exit(1);
             }
         }

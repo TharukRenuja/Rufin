@@ -22,6 +22,7 @@ rufin-core = { path = "../rufin-core" }
 rufin-playback = { path = "../rufin-playback" }
 rufin-provider = { path = "../rufin-provider" }
 rufin-provider-jellyfin = { path = "../rufin-provider-jellyfin" }
+rufin-provider-subsonic = { path = "../rufin-provider-subsonic" }
 rufin-secrets = { path = "../rufin-secrets" }
 rufin-store = { path = "../rufin-store" }
 rufin-test-support = { path = "../rufin-test-support" }

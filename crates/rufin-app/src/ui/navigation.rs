@@ -191,7 +191,9 @@ fn server_display_name(server: &ServerIdentity) -> String {
 
 fn provider_display_name(provider: &str) -> String {
     match provider {
-        "jellyfin" => "Jellyfin".to_string(),
+        "jellyfin" => tr("Jellyfin"),
+        "navidrome" => tr("Navidrome"),
+        "subsonic" | "opensubsonic" => tr("Subsonic / OpenSubsonic"),
         "fake" => tr("Local"),
         provider => provider.to_string(),
     }

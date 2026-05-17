@@ -107,14 +107,14 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let external_row = adw::SwitchRow::builder()
         .title(tr("External lyric lookup"))
         .subtitle(tr(
-            "Use Jellyfin remote lyric providers when server lyrics are unavailable.",
+            "Use remote lyric providers when server lyrics are unavailable.",
         ))
         .active(settings.external_lyrics_enabled)
         .build();
 
     let prefer_server_row = adw::SwitchRow::builder()
         .title(tr("Prefer server lyrics"))
-        .subtitle(tr("Search Jellyfin lyrics before external providers."))
+        .subtitle(tr("Search server lyrics before external providers."))
         .active(settings.prefer_server_lyrics)
         .sensitive(settings.external_lyrics_enabled)
         .build();
@@ -269,7 +269,7 @@ fn library_page(shell: &Rc<Shell>, dialog: &adw::PreferencesDialog) -> adw::Pref
         .unwrap_or_else(|| tr("No active server"));
 
     let server_group = adw::PreferencesGroup::builder()
-        .title(tr("Jellyfin Server"))
+        .title(tr("Music Server"))
         .build();
     let server_row = adw::ActionRow::builder()
         .title(server_name)
