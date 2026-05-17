@@ -4,7 +4,7 @@ use crate::domain::{HomeBlockKind, HomeSectionKind};
 use crate::route::DensityMode;
 
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
-pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 1;
+pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 2;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
 pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
 const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
@@ -327,6 +327,12 @@ pub struct LibraryListSettings {
     pub row_fields: Vec<LibraryField>,
     pub grid_fields: Vec<LibraryField>,
     pub detail_track_fields: Vec<LibraryField>,
+    #[serde(default)]
+    pub row_field_order: Vec<LibraryField>,
+    #[serde(default)]
+    pub grid_field_order: Vec<LibraryField>,
+    #[serde(default)]
+    pub detail_track_field_order: Vec<LibraryField>,
     pub sort_key: LibraryField,
     pub descending: bool,
     #[serde(default)]
@@ -346,6 +352,9 @@ impl LibraryListSettings {
             row_fields: default_row_fields(key),
             grid_fields: default_grid_fields(key),
             detail_track_fields: default_detail_track_fields(),
+            row_field_order: available_row_fields(key).to_vec(),
+            grid_field_order: available_grid_fields(key).to_vec(),
+            detail_track_field_order: available_row_fields(LibraryListKey::Tracks).to_vec(),
             sort_key: default_sort_key(key),
             descending: false,
             layout_version: LIBRARY_LIST_LAYOUT_VERSION,
@@ -361,18 +370,44 @@ impl LibraryListSettings {
             available_row_fields(key),
             default_row_fields(key),
         );
+        sanitize_field_order(
+            &mut self.row_field_order,
+            available_row_fields(key),
+            &self.row_fields,
+        );
+        order_visible_fields(&mut self.row_fields, &self.row_field_order);
         ensure_usable_row_field(&mut self.row_fields, default_row_fields(key));
+        order_visible_fields(&mut self.row_fields, &self.row_field_order);
         sanitize_fields(
             &mut self.grid_fields,
             available_grid_fields(key),
             default_grid_fields(key),
         );
+        sanitize_field_order(
+            &mut self.grid_field_order,
+            available_grid_fields(key),
+            &self.grid_fields,
+        );
+        order_visible_fields(&mut self.grid_fields, &self.grid_field_order);
         sanitize_fields(
             &mut self.detail_track_fields,
             available_row_fields(LibraryListKey::Tracks),
             default_detail_track_fields(),
         );
+        sanitize_field_order(
+            &mut self.detail_track_field_order,
+            available_row_fields(LibraryListKey::Tracks),
+            &self.detail_track_fields,
+        );
+        order_visible_fields(
+            &mut self.detail_track_fields,
+            &self.detail_track_field_order,
+        );
         ensure_usable_row_field(&mut self.detail_track_fields, default_detail_track_fields());
+        order_visible_fields(
+            &mut self.detail_track_fields,
+            &self.detail_track_field_order,
+        );
         if !available_sort_fields(key).contains(&self.sort_key) {
             self.sort_key = default_sort_key(key);
         }
@@ -462,6 +497,7 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::DateAdded,
             LibraryField::LastPlayed,
             LibraryField::PlayCount,
+            LibraryField::UserRating,
             LibraryField::Genre,
             LibraryField::SongCount,
             LibraryField::Duration,
@@ -471,6 +507,7 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::SongCount,
             LibraryField::LastPlayed,
             LibraryField::PlayCount,
+            LibraryField::UserRating,
         ],
         LibraryListKey::Genres => &[LibraryField::AlbumCount, LibraryField::SongCount],
         LibraryListKey::Tracks
@@ -486,6 +523,7 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::DateAdded,
             LibraryField::LastPlayed,
             LibraryField::PlayCount,
+            LibraryField::UserRating,
             LibraryField::Genre,
             LibraryField::Duration,
         ],
@@ -652,6 +690,29 @@ fn sanitize_fields(
     }
 }
 
+fn sanitize_field_order(
+    order: &mut Vec<LibraryField>,
+    available: &[LibraryField],
+    visible_fields: &[LibraryField],
+) {
+    let mut next = Vec::with_capacity(available.len());
+    for field in order.iter().chain(visible_fields).chain(available) {
+        if available.contains(field) && !next.contains(field) {
+            next.push(*field);
+        }
+    }
+    *order = next;
+}
+
+fn order_visible_fields(fields: &mut [LibraryField], order: &[LibraryField]) {
+    fields.sort_by_key(|field| {
+        order
+            .iter()
+            .position(|candidate| candidate == field)
+            .unwrap_or(usize::MAX)
+    });
+}
+
 fn ensure_usable_row_field(fields: &mut Vec<LibraryField>, fallback: Vec<LibraryField>) {
     if fields.iter().any(|field| row_field_is_usable(*field)) {
         return;
@@ -766,6 +827,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub right_panel_ratio: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_right_panel_position: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_right_panel_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lyrics_position: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_lyrics_ratio: Option<f64>,
@@ -805,6 +870,8 @@ impl Default for AppSettings {
             window_height: None,
             right_panel_position: None,
             right_panel_ratio: None,
+            compact_right_panel_position: None,
+            compact_right_panel_ratio: None,
             queue_lyrics_position: None,
             queue_lyrics_ratio: None,
             queue_lyrics_layout_version: QUEUE_LYRICS_LAYOUT_VERSION,
@@ -968,6 +1035,8 @@ mod tests {
         assert!(!settings.auto_dj_enabled);
         assert!(settings.right_panel_visible);
         assert!(settings.lyrics_panel_visible);
+        assert_eq!(settings.compact_right_panel_position, None);
+        assert_eq!(settings.compact_right_panel_ratio, None);
         assert_eq!(settings.queue_lyrics_layout_version, 3);
         assert_eq!(settings.home_sections.len(), 5);
         assert_eq!(settings.home_blocks.len(), 7);
@@ -1001,6 +1070,8 @@ mod tests {
             window_height: Some(760),
             right_panel_position: Some(820),
             right_panel_ratio: Some(0.3),
+            compact_right_panel_position: Some(680),
+            compact_right_panel_ratio: Some(0.42),
             queue_lyrics_position: Some(520),
             queue_lyrics_ratio: Some(0.7),
             ..AppSettings::default()
@@ -1032,6 +1103,8 @@ mod tests {
         assert!(restored.lyrics_panel_visible);
         assert_eq!(restored.right_panel_position, None);
         assert_eq!(restored.right_panel_ratio, None);
+        assert_eq!(restored.compact_right_panel_position, None);
+        assert_eq!(restored.compact_right_panel_ratio, None);
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
         assert!(!restored.auto_dj_enabled);
@@ -1104,6 +1177,9 @@ mod tests {
                     ],
                     grid_fields: vec![LibraryField::Artist],
                     detail_track_fields: Vec::new(),
+                    row_field_order: Vec::new(),
+                    grid_field_order: Vec::new(),
+                    detail_track_field_order: Vec::new(),
                     sort_key: LibraryField::Album,
                     descending: true,
                     layout_version: 0,
@@ -1117,6 +1193,15 @@ mod tests {
 
         assert_eq!(genres.layout, LibraryLayout::Grid);
         assert_eq!(genres.row_fields, vec![LibraryField::Title]);
+        assert_eq!(
+            genres.row_field_order,
+            vec![
+                LibraryField::Title,
+                LibraryField::RowIndex,
+                LibraryField::AlbumCount,
+                LibraryField::SongCount
+            ]
+        );
         assert_eq!(
             genres.grid_fields,
             vec![LibraryField::SongCount, LibraryField::AlbumCount]
@@ -1134,6 +1219,9 @@ mod tests {
                     row_fields: vec![LibraryField::RowIndex, LibraryField::Favorite],
                     grid_fields: vec![LibraryField::Artist],
                     detail_track_fields: vec![LibraryField::Favorite],
+                    row_field_order: Vec::new(),
+                    grid_field_order: Vec::new(),
+                    detail_track_field_order: Vec::new(),
                     sort_key: LibraryField::TrackNumber,
                     descending: false,
                     layout_version: 0,
@@ -1147,6 +1235,12 @@ mod tests {
 
         assert!(tracks.row_fields.contains(&LibraryField::TitleMerged));
         assert!(tracks.detail_track_fields.contains(&LibraryField::Title));
+        assert!(tracks.row_field_order.contains(&LibraryField::TitleMerged));
+        assert!(
+            tracks
+                .detail_track_field_order
+                .contains(&LibraryField::Title)
+        );
     }
 
     #[test]

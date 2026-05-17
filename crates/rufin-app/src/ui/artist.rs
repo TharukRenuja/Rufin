@@ -1,65 +1,12 @@
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use rufin_core::{Album, AlbumId, ArtistId, Route, Track};
 use rufin_store::CachedArtistDetail;
-use tracing::warn;
 
 use super::*;
 
 impl Shell {
-    #[allow(dead_code)]
-    pub(super) fn artist_list_view(self: &Rc<Self>, album_artist: bool) -> gtk::Widget {
-        let page = self
-            .controller
-            .cached_artists_page(album_artist, 0, GRID_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, album_artist, "failed to load cached artists page");
-                let library = self.state.library.borrow();
-                let fallback = if album_artist {
-                    &library.album_artists
-                } else {
-                    &library.artists
-                };
-                let artists = fallback
-                    .iter()
-                    .take(GRID_ROUTE_PAGE_SIZE)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(artists, fallback.len())
-            });
-        let artists = Rc::new(RefCell::new(page.items));
-        let model = artist_model(&artists.borrow());
-        let route = if album_artist {
-            Route::AlbumArtists
-        } else {
-            Route::Artists
-        };
-        let (search, load_next) = self.searchable_grid_controls(
-            model.clone(),
-            Rc::clone(&artists),
-            PagedGridConfig {
-                route,
-                offset: artists.borrow().len(),
-                total: page.total,
-                page_name: "artists",
-            },
-            move |controller, query, offset, limit| {
-                controller.cached_artists_page_matching(album_artist, query, offset, limit)
-            },
-            replace_artists_in_model,
-            append_artists_to_model,
-        );
-        self.media_grid_view(
-            artists.borrow().is_empty(),
-            "Cached rows will appear here after the background sync finishes.",
-            self.artist_cards_grid_for_model(model),
-            Some(load_next),
-            Some(search),
-        )
-    }
-
     pub(super) fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
         let detail = self.artist_detail_data(&artist_id);
         let Some(detail) = detail else {

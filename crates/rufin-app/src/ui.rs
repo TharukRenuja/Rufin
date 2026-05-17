@@ -11,6 +11,7 @@ mod cards;
 mod chrome;
 mod discord;
 mod favorites;
+mod home;
 mod layout;
 mod library;
 mod login;
@@ -21,6 +22,7 @@ mod player;
 mod preferences;
 mod queue;
 mod right_panel;
+mod settings_persistence;
 
 use adw::prelude::*;
 use gdk_pixbuf::Pixbuf;
@@ -29,10 +31,10 @@ use gtk::gio;
 use gtk::glib;
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, DensityMode, DiscordDisplayType, DiscordLinkType,
-    EffectiveDensity, Genre, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef, LibraryListKey,
-    LibraryListSettings, Playlist, PlaylistId, QueueSnapshot, Route, RouteStack, SearchKind, Track,
-    TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
+    Album, AlbumId, AppSettings, Artist, DensityMode, EffectiveDensity, Genre, HomeSection,
+    HomeSectionKind, ImageRef, LibraryListKey, Playlist, PlaylistId, QueueSnapshot, Route,
+    RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn, TrackTableSettings,
+    format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, Lyrics, LyricsSource};
@@ -46,7 +48,6 @@ use crate::controller::{
 };
 use crate::i18n::tr;
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
-use cards::{render_home_album_page, render_home_track_page};
 use chrome::{build_content_chrome, build_main_area};
 use discord::DiscordPresence;
 use favorites::{
@@ -57,8 +58,8 @@ use favorites::{
 };
 use layout::{
     COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, content_split_target_position, restored_window_size,
-    update_right_panel_split_settings,
+    PRIMARY_ROUTE_MARGIN_START, content_split_initial_position, content_split_target_position,
+    restored_window_size, right_panel_saved_ratio,
 };
 use mpris::install_mpris;
 use navigation::{
@@ -123,7 +124,9 @@ struct AppState {
     right_panel_visible: Cell<bool>,
     lyrics_panel_visible: Cell<bool>,
     split_width: Cell<i32>,
-    split_position: Cell<i32>,
+    normal_split_position: Cell<i32>,
+    compact_split_position: Cell<i32>,
+    split_density: Cell<EffectiveDensity>,
     queue_lyrics_position_save_suppressed: Rc<Cell<u32>>,
     responsive_render_queued: Cell<bool>,
     card_grid_columns: Cell<usize>,
@@ -363,7 +366,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         right_panel_visible: Cell::new(settings.right_panel_visible),
         lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
         split_width: Cell::new(0),
-        split_position: Cell::new(0),
+        normal_split_position: Cell::new(0),
+        compact_split_position: Cell::new(0),
+        split_density: Cell::new(EffectiveDensity::Compact),
         queue_lyrics_position_save_suppressed: Rc::new(Cell::new(0)),
         responsive_render_queued: Cell::new(false),
         card_grid_columns: Cell::new(0),
@@ -953,30 +958,6 @@ fn upsert_snapshot_home_section(sections: &mut Vec<HomeSection>, section: HomeSe
     }
 }
 
-fn showcase_album(library: &LibrarySnapshot) -> Option<Album> {
-    library
-        .home_sections
-        .iter()
-        .find(|section| section.kind == HomeSectionKind::Explore)
-        .and_then(|section| section.albums.first())
-        .cloned()
-        .or_else(|| library.albums.first().cloned())
-}
-
-fn home_showcase_facts(album: &Album) -> String {
-    let mut parts = Vec::new();
-    if album.year > 0 {
-        parts.push(album.year.to_string());
-    }
-    if album.track_count > 0 {
-        parts.push(format!("{} {}", album.track_count, tr("tracks")));
-    }
-    if album.duration_seconds > 0 {
-        parts.push(format_duration(album.duration_seconds));
-    }
-    parts.join(" • ")
-}
-
 impl Shell {
     fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
@@ -1100,281 +1081,6 @@ impl Shell {
         }
     }
 
-    fn set_density_mode(self: &Rc<Self>, density_mode: DensityMode) {
-        self.state.density_mode.set(density_mode);
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            settings.density_mode = density_mode;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save density setting");
-            }
-        }
-        self.update_density();
-    }
-
-    fn set_external_lyrics_enabled(self: &Rc<Self>, enabled: bool) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.external_lyrics_enabled == enabled {
-                return;
-            }
-            settings.external_lyrics_enabled = enabled;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save lyrics setting");
-            }
-        }
-        *self.state.lyrics.borrow_mut() = None;
-        self.state.lyrics_auto_search_attempted.borrow_mut().clear();
-        self.render_lyrics_panel();
-        if current_playback_track_id(&self.state.player.borrow()).is_some() {
-            self.controller.refresh_lyrics_for_current();
-        }
-    }
-
-    pub(super) fn set_prefer_server_lyrics(self: &Rc<Self>, enabled: bool) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.prefer_server_lyrics == enabled {
-                return;
-            }
-            settings.prefer_server_lyrics = enabled;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save lyrics search setting");
-            }
-        }
-        if self.state.settings.borrow().external_lyrics_enabled
-            && current_playback_track_id(&self.state.player.borrow()).is_some()
-        {
-            *self.state.lyrics.borrow_mut() = None;
-            self.state.lyrics_auto_search_attempted.borrow_mut().clear();
-            self.render_lyrics_panel();
-            self.controller.refresh_lyrics_for_current();
-        }
-    }
-
-    fn set_private_mode(self: &Rc<Self>, enabled: bool) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.private_mode == enabled {
-                return;
-            }
-            settings.private_mode = enabled;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save private mode setting");
-            }
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-        *self.state.lyrics.borrow_mut() = None;
-        self.state.lyrics_auto_search_attempted.borrow_mut().clear();
-        self.render_lyrics_panel();
-        if current_playback_track_id(&self.state.player.borrow()).is_some() {
-            self.controller.refresh_lyrics_for_current();
-        }
-    }
-
-    fn set_notifications_enabled(self: &Rc<Self>, enabled: bool) {
-        let mut settings = self.state.settings.borrow_mut();
-        if settings.notifications_enabled == enabled {
-            return;
-        }
-        settings.notifications_enabled = enabled;
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save notification setting");
-        }
-    }
-
-    fn set_discord_presence_enabled(self: &Rc<Self>, enabled: bool) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.discord_presence_enabled == enabled {
-                return;
-            }
-            settings.discord_presence_enabled = enabled;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save Discord presence setting");
-            }
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-    }
-
-    fn set_discord_display_type(self: &Rc<Self>, display_type: DiscordDisplayType) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.discord_display_type == display_type {
-                return;
-            }
-            settings.discord_display_type = display_type;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save Discord display setting");
-            }
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-    }
-
-    fn set_discord_link_type(self: &Rc<Self>, link_type: DiscordLinkType) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.discord_link_type == link_type {
-                return;
-            }
-            settings.discord_link_type = link_type;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save Discord link setting");
-            }
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-    }
-
-    fn set_discord_show_paused(self: &Rc<Self>, enabled: bool) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.discord_show_paused == enabled {
-                return;
-            }
-            settings.discord_show_paused = enabled;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save Discord paused setting");
-            }
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-    }
-
-    fn set_discord_show_as_listening(self: &Rc<Self>, enabled: bool) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.discord_show_as_listening == enabled {
-                return;
-            }
-            settings.discord_show_as_listening = enabled;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save Discord activity type setting");
-            }
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-    }
-
-    fn set_discord_show_state_icon(self: &Rc<Self>, enabled: bool) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.discord_show_state_icon == enabled {
-                return;
-            }
-            settings.discord_show_state_icon = enabled;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save Discord state icon setting");
-            }
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-    }
-
-    fn set_lastfm_api_key(self: &Rc<Self>, api_key: String) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            let api_key = api_key.trim().to_string();
-            if settings.lastfm_api_key == api_key {
-                return;
-            }
-            settings.lastfm_api_key = api_key;
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save Last.fm API key setting");
-            }
-        }
-        self.update_discord_presence(&self.state.player.borrow());
-    }
-
-    fn save_window_state(&self) {
-        let mut settings = self.state.settings.borrow_mut();
-        let mut changed = false;
-
-        if !self.window.is_maximized()
-            && !self.window.is_fullscreen()
-            && let Some((width, height)) =
-                restored_window_size(Some(self.window.width()), Some(self.window.height()))
-            && (settings.window_width != Some(width) || settings.window_height != Some(height))
-        {
-            settings.window_width = Some(width);
-            settings.window_height = Some(height);
-            changed = true;
-        }
-
-        let split_position = if self.state.right_panel_visible.get() {
-            self.content_split.position()
-        } else {
-            self.state.split_position.get()
-        };
-        if update_right_panel_split_settings(
-            &mut settings,
-            self.content_split.width(),
-            split_position,
-        ) {
-            changed = true;
-        }
-        let right_panel_visible = self.state.right_panel_visible.get();
-        if settings.right_panel_visible != right_panel_visible {
-            settings.right_panel_visible = right_panel_visible;
-            changed = true;
-        }
-
-        if !changed {
-            return;
-        }
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save window state");
-        }
-    }
-
-    fn update_track_table_settings(&self, update: impl FnOnce(&mut TrackTableSettings)) {
-        let mut settings = self.state.settings.borrow_mut();
-        update(&mut settings.track_table);
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save track table settings");
-        }
-    }
-
-    fn update_library_list_settings(
-        &self,
-        key: LibraryListKey,
-        update: impl FnOnce(&mut LibraryListSettings),
-    ) {
-        let mut settings = self.state.settings.borrow_mut();
-        if !settings.library_lists.iter().any(|entry| entry.key == key) {
-            settings
-                .library_lists
-                .push(rufin_core::LibraryListSettingsEntry {
-                    key,
-                    settings: LibraryListSettings::for_key(key),
-                });
-        }
-        if let Some(entry) = settings
-            .library_lists
-            .iter_mut()
-            .find(|entry| entry.key == key)
-        {
-            update(&mut entry.settings);
-            entry.settings.sanitize(key);
-        }
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save library list settings");
-        }
-    }
-
-    pub(super) fn set_home_blocks(self: &Rc<Self>, blocks: Vec<HomeBlockKind>) {
-        {
-            let mut settings = self.state.settings.borrow_mut();
-            if settings.home_blocks == blocks {
-                return;
-            }
-            settings.home_blocks = blocks;
-            settings.migrate_defaults();
-            if let Err(error) = self.controller.save_settings(&settings) {
-                warn!(%error, "failed to save home block settings");
-            }
-        }
-        if matches!(self.state.routes.borrow().current(), Route::Home) {
-            self.render_current_route();
-        }
-    }
-
     fn update_density(self: &Rc<Self>) {
         let width = self.density_width().max(1);
         self.update_density_for_width(width);
@@ -1425,9 +1131,22 @@ impl Shell {
         }
 
         let previous_width = self.state.split_width.replace(split_width);
+        let density = self.right_panel_density();
+        let previous_density = self.state.split_density.replace(density);
+        let density_changed = previous_density != density;
         let current_position = self.content_split.position().clamp(0, split_width);
-        let stored_position = self.state.split_position.get();
-        let saved_ratio = self.state.settings.borrow().right_panel_ratio;
+        if density_changed
+            && self.state.right_panel_visible.get()
+            && current_position > 1
+            && current_position < split_width
+        {
+            self.set_right_panel_split_position_for(
+                previous_density,
+                layout::clamp_content_split_position(split_width, current_position),
+            );
+        }
+        let stored_position = self.right_panel_split_position_for(density);
+        let saved_ratio = right_panel_saved_ratio(&self.state.settings.borrow(), density);
         let width_changed = previous_width != split_width;
 
         if !self.state.right_panel_visible.get() {
@@ -1443,15 +1162,24 @@ impl Shell {
             return width_changed || position_changed;
         }
 
-        let position = content_split_target_position(
-            split_width,
-            previous_width,
-            stored_position,
-            current_position,
-            saved_ratio,
-        );
-        let position_changed = self.state.split_position.replace(position) != position;
-        if position_changed && !width_changed && current_position == position {
+        let position = if density_changed {
+            if stored_position > 1 {
+                layout::clamp_content_split_position(split_width, stored_position)
+            } else {
+                content_split_initial_position(split_width, saved_ratio)
+            }
+        } else {
+            content_split_target_position(
+                split_width,
+                previous_width,
+                stored_position,
+                current_position,
+                saved_ratio,
+            )
+        };
+        let position_changed = self.right_panel_split_position_for(density) != position;
+        self.set_right_panel_split_position_for(density, position);
+        if position_changed && !width_changed && !density_changed && current_position == position {
             self.save_right_panel_split_position(split_width, position);
         }
 
@@ -1768,362 +1496,6 @@ impl Shell {
         }
     }
 
-    fn home_view(self: &Rc<Self>) -> gtk::Widget {
-        let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_vexpand(true);
-
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        content.add_css_class("route-content");
-        content.set_margin_top(24);
-        content.set_margin_bottom(36);
-        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
-
-        let blocks = self.state.settings.borrow().home_blocks.clone();
-        let library = self.state.library.borrow().clone();
-        let mut appended = false;
-        for block in blocks {
-            let child = match block {
-                HomeBlockKind::Showcase => self.home_showcase_block(&library),
-                HomeBlockKind::Genres => self.home_genres_block(&library.genres),
-                _ => block
-                    .section_kind()
-                    .and_then(|kind| {
-                        library
-                            .home_sections
-                            .iter()
-                            .find(|section| section.kind == kind)
-                    })
-                    .map(|section| self.home_section(section)),
-            };
-            if let Some(child) = child {
-                content.append(&child);
-                appended = true;
-            }
-        }
-
-        if !appended {
-            content
-                .append(&self.route_empty_view(
-                    "Cached library data will appear here as sync pages finish.",
-                ));
-        }
-
-        scroller.set_child(Some(&content));
-        scroller.upcast()
-    }
-
-    fn home_showcase_block(self: &Rc<Self>, library: &LibrarySnapshot) -> Option<gtk::Widget> {
-        let album = showcase_album(library)?;
-
-        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        section.set_hexpand(true);
-
-        let heading = gtk::Label::new(Some(&tr(HomeBlockKind::Showcase.title())));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        section.append(&heading);
-
-        let body = gtk::Box::new(gtk::Orientation::Horizontal, 18);
-        body.add_css_class("home-showcase");
-        body.set_hexpand(true);
-        body.set_valign(gtk::Align::Start);
-        body.append(&self.cover_tile_for(
-            album.image_ref.as_ref(),
-            album.color_seed,
-            168,
-            GRID_COVER_SIZE,
-        ));
-
-        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        metadata.set_hexpand(true);
-        metadata.set_valign(gtk::Align::Center);
-
-        let title = gtk::Label::new(Some(&album.title));
-        title.add_css_class("home-showcase-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        metadata.append(&title);
-
-        let artist = gtk::Label::new(Some(&album.artist));
-        artist.add_css_class("muted");
-        artist.set_xalign(0.0);
-        artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        metadata.append(&artist);
-
-        let facts = gtk::Label::new(Some(&home_showcase_facts(&album)));
-        facts.add_css_class("muted");
-        facts.set_xalign(0.0);
-        metadata.append(&facts);
-
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let play = icon_button("media-playback-start-symbolic", "Play album");
-        play.add_css_class("suggested-action");
-        let controller = self.controller.clone();
-        let album_id = album.id.clone();
-        play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
-        actions.append(&play);
-
-        let open = icon_button("go-next-symbolic", "Open album");
-        let shell = Rc::clone(self);
-        let album_id = album.id.clone();
-        open.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
-        actions.append(&open);
-        metadata.append(&actions);
-
-        body.append(&metadata);
-        section.append(&body);
-        Some(section.upcast())
-    }
-
-    fn home_genres_block(self: &Rc<Self>, genres: &[Genre]) -> Option<gtk::Widget> {
-        if genres.is_empty() {
-            return None;
-        }
-
-        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        section.set_hexpand(true);
-
-        let heading = gtk::Label::new(Some(&tr(HomeBlockKind::Genres.title())));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        section.append(&heading);
-
-        let flow = gtk::FlowBox::new();
-        flow.add_css_class("home-genre-flow");
-        flow.set_column_spacing(8);
-        flow.set_row_spacing(8);
-        flow.set_selection_mode(gtk::SelectionMode::None);
-        flow.set_max_children_per_line(6);
-        flow.set_min_children_per_line(2);
-
-        for genre in genres.iter().take(12) {
-            flow.insert(&self.home_genre_chip(genre), -1);
-        }
-
-        section.append(&flow);
-        Some(section.upcast())
-    }
-
-    fn home_genre_chip(self: &Rc<Self>, genre: &Genre) -> gtk::Widget {
-        let button = gtk::Button::new();
-        button.add_css_class("flat");
-        button.add_css_class("home-genre-chip");
-        button.set_hexpand(true);
-        button.set_halign(gtk::Align::Fill);
-
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        labels.set_margin_top(8);
-        labels.set_margin_bottom(8);
-        labels.set_margin_start(10);
-        labels.set_margin_end(10);
-
-        let name = gtk::Label::new(Some(&genre.name));
-        name.add_css_class("album-title");
-        name.set_xalign(0.0);
-        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        labels.append(&name);
-
-        let counts = gtk::Label::new(Some(&format!(
-            "{} {} • {} {}",
-            genre.album_count,
-            tr("albums"),
-            genre.track_count,
-            tr("tracks")
-        )));
-        counts.add_css_class("muted");
-        counts.set_xalign(0.0);
-        counts.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        labels.append(&counts);
-
-        button.set_child(Some(&labels));
-        let shell = Rc::clone(self);
-        let genre_id = genre.id.clone();
-        button.connect_clicked(move |_| shell.navigate(Route::GenreDetail(genre_id.clone())));
-        button.upcast()
-    }
-
-    fn home_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
-        if !section_data.tracks.is_empty() {
-            self.home_track_section(section_data)
-        } else {
-            self.home_album_section(section_data)
-        }
-    }
-
-    fn home_album_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
-        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        section.set_hexpand(true);
-        let section_kind = section_data.kind;
-        let albums = section_data.albums.clone();
-
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        heading.set_hexpand(true);
-        header.append(&heading);
-
-        let previous = icon_button("go-previous-symbolic", "Previous page");
-        let next = icon_button("go-next-symbolic", "Next page");
-        let refresh = icon_button("view-refresh-symbolic", "Refresh section");
-        header.append(&previous);
-        header.append(&next);
-        header.append(&refresh);
-        section.append(&header);
-
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
-        row.add_css_class("album-strip");
-        row.set_hexpand(true);
-        section.append(&row);
-
-        let shell = Rc::clone(self);
-        previous.connect_clicked(move |_| {
-            let mut states = shell.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            state.page_start = state.page_start.saturating_sub(state.page_size);
-            drop(states);
-            shell.render_current_route();
-        });
-
-        let shell = Rc::clone(self);
-        let albums_for_next = albums.clone();
-        next.connect_clicked(move |_| {
-            let mut states = shell.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            let next_page = state.page_start.saturating_add(state.page_size);
-            if next_page < albums_for_next.len() {
-                state.page_start = next_page;
-            }
-            drop(states);
-            shell.render_current_route();
-        });
-
-        let shell = Rc::clone(self);
-        refresh.connect_clicked(move |_| {
-            shell.refresh_home_section(section_kind);
-        });
-
-        render_home_album_page(self, &row, &previous, &next, section_kind, &albums);
-        section.upcast()
-    }
-
-    fn home_track_section(self: &Rc<Self>, section_data: &HomeSection) -> gtk::Widget {
-        let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        section.set_hexpand(true);
-        let section_kind = section_data.kind;
-        let tracks = section_data.tracks.clone();
-
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        heading.set_hexpand(true);
-        header.append(&heading);
-
-        let previous = icon_button("go-previous-symbolic", "Previous page");
-        let next = icon_button("go-next-symbolic", "Next page");
-        let refresh = icon_button("view-refresh-symbolic", "Refresh section");
-        header.append(&previous);
-        header.append(&next);
-        header.append(&refresh);
-        section.append(&header);
-
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, HOME_ALBUM_GAP);
-        row.add_css_class("album-strip");
-        row.set_hexpand(true);
-        section.append(&row);
-
-        let shell = Rc::clone(self);
-        previous.connect_clicked(move |_| {
-            let mut states = shell.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            state.page_start = state.page_start.saturating_sub(state.page_size);
-            drop(states);
-            shell.render_current_route();
-        });
-
-        let shell = Rc::clone(self);
-        let tracks_for_next = tracks.clone();
-        next.connect_clicked(move |_| {
-            let mut states = shell.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            let next_page = state.page_start.saturating_add(state.page_size);
-            if next_page < tracks_for_next.len() {
-                state.page_start = next_page;
-            }
-            drop(states);
-            shell.render_current_route();
-        });
-
-        let shell = Rc::clone(self);
-        refresh.connect_clicked(move |_| {
-            shell.refresh_home_section(section_kind);
-        });
-
-        render_home_track_page(self, &row, &previous, &next, section_kind, &tracks);
-        section.upcast()
-    }
-
-    #[allow(dead_code)]
-    fn albums_view(self: &Rc<Self>) -> gtk::Widget {
-        let page = self
-            .controller
-            .cached_albums_page(0, GRID_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, "failed to load cached albums page");
-                let albums = self
-                    .state
-                    .library
-                    .borrow()
-                    .albums
-                    .iter()
-                    .take(GRID_ROUTE_PAGE_SIZE)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(albums, self.state.library.borrow().albums.len())
-            });
-        let albums = Rc::new(RefCell::new(page.items));
-        let model = album_model(&albums.borrow());
-        let (search, load_next) = self.searchable_grid_controls(
-            model.clone(),
-            Rc::clone(&albums),
-            PagedGridConfig {
-                route: Route::Albums,
-                offset: albums.borrow().len(),
-                total: page.total,
-                page_name: "albums",
-            },
-            |controller, query, offset, limit| {
-                controller.cached_albums_page_matching(query, offset, limit)
-            },
-            replace_albums_in_model,
-            append_albums_to_model,
-        );
-        self.media_grid_view(
-            albums.borrow().is_empty(),
-            "Cached albums will appear here after the background sync finishes.",
-            self.album_cards_grid_for_model(model),
-            Some(load_next),
-            Some(search),
-        )
-    }
-
     fn album_detail_view(self: &Rc<Self>, album_id: AlbumId) -> gtk::Widget {
         let detail = self
             .controller
@@ -2253,61 +1625,6 @@ impl Shell {
         scroller.upcast()
     }
 
-    #[allow(dead_code)]
-    fn tracks_view(self: &Rc<Self>, tracks: Vec<Track>, context: &str) -> gtk::Widget {
-        self.tracks_view_with_paging(tracks, context, None)
-    }
-
-    #[allow(dead_code)]
-    fn tracks_route_view(self: &Rc<Self>) -> gtk::Widget {
-        let page = self
-            .controller
-            .cached_tracks_page(0, TRACK_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, "failed to load cached tracks page");
-                let tracks = self
-                    .state
-                    .library
-                    .borrow()
-                    .tracks
-                    .iter()
-                    .take(TRACK_ROUTE_PAGE_SIZE)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(
-                    tracks,
-                    self.state.library.borrow().cached_track_count,
-                )
-            });
-        let offset = page.items.len();
-        let total = page.total;
-        self.tracks_view_with_paging(page.items, "tracks", Some((offset, total)))
-    }
-
-    #[allow(dead_code)]
-    fn tracks_view_with_paging(
-        self: &Rc<Self>,
-        tracks: Vec<Track>,
-        context: &str,
-        paging: Option<(usize, usize)>,
-    ) -> gtk::Widget {
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
-        wrapper.set_vexpand(true);
-
-        wrapper.append(&self.tracks_table_with_paging(tracks, context, paging));
-        wrapper.upcast()
-    }
-
-    #[allow(dead_code)]
-    fn tracks_table(self: &Rc<Self>, tracks: Vec<Track>, context: &str) -> gtk::Widget {
-        self.tracks_table_with_paging(tracks, context, None)
-    }
-
     fn compact_artist_tracks_table(
         self: &Rc<Self>,
         tracks: Vec<Track>,
@@ -2320,39 +1637,6 @@ impl Shell {
                 paging: None,
                 expand: false,
                 max_visible_rows: Some(5),
-                favorite_first: true,
-            },
-        )
-    }
-
-    #[allow(dead_code)]
-    fn tracks_table_with_paging(
-        self: &Rc<Self>,
-        tracks: Vec<Track>,
-        context: &str,
-        paging: Option<(usize, usize)>,
-    ) -> gtk::Widget {
-        self.tracks_table_with_options(
-            tracks,
-            context,
-            TrackTableOptions {
-                paging,
-                expand: true,
-                max_visible_rows: None,
-                favorite_first: false,
-            },
-        )
-    }
-
-    #[allow(dead_code)]
-    fn artist_tracks_table(self: &Rc<Self>, tracks: Vec<Track>, context: &str) -> gtk::Widget {
-        self.tracks_table_with_options(
-            tracks,
-            context,
-            TrackTableOptions {
-                paging: None,
-                expand: true,
-                max_visible_rows: None,
                 favorite_first: true,
             },
         )
@@ -2564,50 +1848,6 @@ impl Shell {
         wrapper.append(&scroller);
         wrapper.set_widget_name(context);
         wrapper.upcast()
-    }
-
-    #[allow(dead_code)]
-    fn genre_list_view(self: &Rc<Self>) -> gtk::Widget {
-        let page = self
-            .controller
-            .cached_genres_page(0, GRID_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, "failed to load cached genres page");
-                let genres = self
-                    .state
-                    .library
-                    .borrow()
-                    .genres
-                    .iter()
-                    .take(GRID_ROUTE_PAGE_SIZE)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(genres, self.state.library.borrow().genres.len())
-            });
-        let genres = Rc::new(RefCell::new(page.items));
-        let model = genre_model(&genres.borrow());
-        let (search, load_next) = self.searchable_grid_controls(
-            model.clone(),
-            Rc::clone(&genres),
-            PagedGridConfig {
-                route: Route::Genres,
-                offset: genres.borrow().len(),
-                total: page.total,
-                page_name: "genres",
-            },
-            |controller, query, offset, limit| {
-                controller.cached_genres_page_matching(query, offset, limit)
-            },
-            replace_genres_in_model,
-            append_genres_to_model,
-        );
-        self.media_grid_view(
-            genres.borrow().is_empty(),
-            "Cached rows will appear here after the background sync finishes.",
-            self.genre_cards_grid_for_model(model),
-            Some(load_next),
-            Some(search),
-        )
     }
 
     fn playlist_list_view(self: &Rc<Self>) -> gtk::Widget {
@@ -3035,42 +2275,6 @@ impl Shell {
         }
         scroller.set_child(Some(&wrapper));
         scroller.upcast()
-    }
-
-    #[allow(dead_code)]
-    fn media_grid_view(
-        self: &Rc<Self>,
-        empty: bool,
-        empty_body: &str,
-        grid: gtk::Widget,
-        load_next: Option<Rc<dyn Fn()>>,
-        search: Option<gtk::SearchEntry>,
-    ) -> gtk::Widget {
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
-        wrapper.set_vexpand(true);
-        if let Some(search) = search {
-            wrapper.append(&search);
-        }
-
-        if empty {
-            wrapper.append(&self.route_empty_view(empty_body));
-        } else {
-            let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-            scroller.set_min_content_width(0);
-            scroller.set_vexpand(true);
-            scroller.set_child(Some(&grid));
-            if let Some(load_next) = load_next {
-                connect_paged_grid_loader(&scroller, load_next);
-            }
-            wrapper.append(&scroller);
-        }
-        wrapper.upcast()
     }
 
     fn search_view(self: &Rc<Self>, _query: &str, library: LibrarySnapshot) -> gtk::Widget {
@@ -4195,7 +3399,9 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     let lyrics_timing_changed = previous_track != next_track
                         || previous_player.state != next_snapshot.state
                         || previous_player.position_millis != next_snapshot.position_millis;
+                    let auto_dj_enabled = next_snapshot.auto_dj_enabled;
                     *shell.state.player.borrow_mut() = next_snapshot.clone();
+                    shell.sync_auto_dj_setting_from_playback(auto_dj_enabled);
                     if previous_track != next_track {
                         *shell.state.lyrics.borrow_mut() = None;
                         *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
@@ -4601,24 +3807,6 @@ fn collect_largest_scrolled_window(
     }
 }
 
-#[allow(dead_code)]
-fn album_model(albums: &[Album]) -> gio::ListStore {
-    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    append_albums_to_model(&model, albums.iter().cloned());
-    model
-}
-
-#[allow(dead_code)]
-fn append_albums_to_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
-    let additions = albums
-        .into_iter()
-        .map(glib::BoxedAnyObject::new)
-        .collect::<Vec<_>>();
-    if !additions.is_empty() {
-        model.splice(model.n_items(), 0, &additions);
-    }
-}
-
 fn replace_albums_in_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
     let additions = albums
         .into_iter()
@@ -4627,48 +3815,12 @@ fn replace_albums_in_model(model: &gio::ListStore, albums: impl IntoIterator<Ite
     model.splice(0, model.n_items(), &additions);
 }
 
-#[allow(dead_code)]
-fn artist_model(artists: &[Artist]) -> gio::ListStore {
-    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    append_artists_to_model(&model, artists.iter().cloned());
-    model
-}
-
-#[allow(dead_code)]
-fn append_artists_to_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
-    let additions = artists
-        .into_iter()
-        .map(glib::BoxedAnyObject::new)
-        .collect::<Vec<_>>();
-    if !additions.is_empty() {
-        model.splice(model.n_items(), 0, &additions);
-    }
-}
-
 fn replace_artists_in_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
     let additions = artists
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
-}
-
-#[allow(dead_code)]
-fn genre_model(genres: &[Genre]) -> gio::ListStore {
-    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    append_genres_to_model(&model, genres.iter().cloned());
-    model
-}
-
-#[allow(dead_code)]
-fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
-    let additions = genres
-        .into_iter()
-        .map(glib::BoxedAnyObject::new)
-        .collect::<Vec<_>>();
-    if !additions.is_empty() {
-        model.splice(model.n_items(), 0, &additions);
-    }
 }
 
 fn replace_genres_in_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {

@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
-use tracing::warn;
+use rufin_core::EffectiveDensity;
 
 use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
@@ -89,6 +89,28 @@ pub(super) fn build_right_panel() -> RightPanelParts {
 }
 
 impl Shell {
+    pub(super) fn right_panel_density(&self) -> EffectiveDensity {
+        self.state.effective_density.get()
+    }
+
+    pub(super) fn right_panel_split_position_for(&self, density: EffectiveDensity) -> i32 {
+        match density {
+            EffectiveDensity::Normal => self.state.normal_split_position.get(),
+            EffectiveDensity::Compact => self.state.compact_split_position.get(),
+        }
+    }
+
+    pub(super) fn set_right_panel_split_position_for(
+        &self,
+        density: EffectiveDensity,
+        position: i32,
+    ) {
+        match density {
+            EffectiveDensity::Normal => self.state.normal_split_position.set(position),
+            EffectiveDensity::Compact => self.state.compact_split_position.set(position),
+        }
+    }
+
     fn save_queue_lyrics_split_position(&self, available_height: i32, position: i32) {
         if !self.state.lyrics_panel_visible.get()
             || self.state.queue_lyrics_position_save_suppressed.get() > 0
@@ -100,17 +122,16 @@ impl Shell {
         }
         let position = clamp_queue_lyrics_position(available_height, position);
         let ratio = queue_lyrics_position_ratio(available_height, position);
-        let mut settings = self.state.settings.borrow_mut();
-        if settings.queue_lyrics_position == Some(position)
-            && settings.queue_lyrics_ratio == Some(ratio)
-        {
-            return;
-        }
-        settings.queue_lyrics_position = Some(position);
-        settings.queue_lyrics_ratio = Some(ratio);
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save queue lyrics split position");
-        }
+        self.update_app_settings("queue lyrics split position", |settings| {
+            if settings.queue_lyrics_position == Some(position)
+                && settings.queue_lyrics_ratio == Some(ratio)
+            {
+                return false;
+            }
+            settings.queue_lyrics_position = Some(position);
+            settings.queue_lyrics_ratio = Some(ratio);
+            true
+        });
     }
 
     pub(super) fn remember_queue_lyrics_open_position(&self) {
@@ -127,35 +148,30 @@ impl Shell {
         if !self.state.right_panel_visible.get() {
             return;
         }
-        let mut settings = self.state.settings.borrow_mut();
-        if !update_right_panel_split_settings(&mut settings, split_width, position) {
-            return;
-        }
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save right panel split position");
-        }
+        let density = self.right_panel_density();
+        self.update_app_settings("right panel split position", |settings| {
+            update_right_panel_split_settings(settings, split_width, position, density)
+        });
     }
 
     pub(super) fn save_right_panel_visibility(&self, visible: bool) {
-        let mut settings = self.state.settings.borrow_mut();
-        if settings.right_panel_visible == visible {
-            return;
-        }
-        settings.right_panel_visible = visible;
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save right panel visibility");
-        }
+        self.update_app_settings("right panel visibility", |settings| {
+            if settings.right_panel_visible == visible {
+                return false;
+            }
+            settings.right_panel_visible = visible;
+            true
+        });
     }
 
     fn save_lyrics_panel_visibility(&self, visible: bool) {
-        let mut settings = self.state.settings.borrow_mut();
-        if settings.lyrics_panel_visible == visible {
-            return;
-        }
-        settings.lyrics_panel_visible = visible;
-        if let Err(error) = self.controller.save_settings(&settings) {
-            warn!(%error, "failed to save lyrics panel visibility");
-        }
+        self.update_app_settings("lyrics panel visibility", |settings| {
+            if settings.lyrics_panel_visible == visible {
+                return false;
+            }
+            settings.lyrics_panel_visible = visible;
+            true
+        });
     }
 
     pub(super) fn remember_right_panel_open_position(&self) {
@@ -168,16 +184,18 @@ impl Shell {
             return;
         }
         let position = clamp_content_split_position(split_width, current_position);
-        self.state.split_position.set(position);
+        self.set_right_panel_split_position_for(self.right_panel_density(), position);
         self.save_right_panel_split_position(split_width, position);
     }
 
     pub(super) fn right_panel_open_position(&self, split_width: i32) -> i32 {
-        let stored = self.state.split_position.get();
+        let density = self.right_panel_density();
+        let stored = self.right_panel_split_position_for(density);
         let target = if stored > 1 && stored < split_width {
             stored
         } else {
-            let saved_ratio = self.state.settings.borrow().right_panel_ratio;
+            let saved_ratio =
+                super::layout::right_panel_saved_ratio(&self.state.settings.borrow(), density);
             content_split_initial_position(split_width, saved_ratio)
         };
         clamp_content_split_position(split_width, target)

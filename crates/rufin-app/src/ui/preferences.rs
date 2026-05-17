@@ -338,7 +338,8 @@ fn populate_home_block_rows(
                 return;
             }
             if requested {
-                blocks.push(block);
+                let order = home_block_row_order(&blocks);
+                insert_home_block_in_order(&mut blocks, block, &order);
             } else if blocks.len() > 1 {
                 blocks.retain(|candidate| *candidate != block);
             }
@@ -361,6 +362,31 @@ fn home_block_row_order(visible_blocks: &[HomeBlockKind]) -> Vec<HomeBlockKind> 
         }
     }
     blocks
+}
+
+fn insert_home_block_in_order(
+    blocks: &mut Vec<HomeBlockKind>,
+    block: HomeBlockKind,
+    order: &[HomeBlockKind],
+) {
+    if blocks.contains(&block) {
+        return;
+    }
+    let target_order = order
+        .iter()
+        .position(|candidate| *candidate == block)
+        .unwrap_or(usize::MAX);
+    let insert_at = blocks
+        .iter()
+        .position(|candidate| {
+            order
+                .iter()
+                .position(|ordered| ordered == candidate)
+                .unwrap_or(usize::MAX)
+                > target_order
+        })
+        .unwrap_or(blocks.len());
+    blocks.insert(insert_at, block);
 }
 
 fn home_block_subtitle(block: HomeBlockKind, active: bool, visible_index: Option<usize>) -> String {

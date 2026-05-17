@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use rufin_core::{Album, Artist, Genre, HomeSectionKind, Playlist, Route, Track, format_duration};
+use rufin_core::{Album, HomeSectionKind, Playlist, Route, Track, format_duration};
 
 use crate::controller::AppController;
 use crate::i18n::tr;
@@ -15,7 +15,7 @@ use super::layout::{
 };
 use super::{
     GRID_COVER_SIZE, HomeSectionState, Shell, add_card_label_link, add_link_hover,
-    album_artist_route, album_model, favorite_button_is_active, favorite_icon_button, icon_button,
+    album_artist_route, favorite_button_is_active, favorite_icon_button, icon_button,
     set_favorite_button_active, stable_seed, track_artist_route,
 };
 
@@ -26,157 +26,6 @@ enum AlbumCardLabelLayout {
 }
 
 impl Shell {
-    #[allow(dead_code)]
-    pub(super) fn album_cards_grid(self: &Rc<Self>, albums: &[Album]) -> gtk::Widget {
-        let model = album_model(albums);
-        self.album_cards_grid_for_model(model)
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn album_cards_grid_for_model(
-        self: &Rc<Self>,
-        model: gio::ListStore,
-    ) -> gtk::Widget {
-        let (columns, card_size) = self.responsive_card_grid_metrics();
-
-        let shell_for_factory = Rc::clone(self);
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_bind(move |_, list_item| {
-            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(item) = list_item.item() else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            let album = boxed.borrow::<Album>();
-            list_item.set_child(Some(&album_card_widget_with_size(
-                &shell_for_factory,
-                &album,
-                card_size,
-                Some(&shell_for_factory.controller),
-                AlbumCardLabelLayout::Natural,
-            )));
-        });
-        factory.connect_unbind(clear_list_item_child);
-
-        let grid = gtk::GridView::new(Some(selection), Some(factory));
-        grid.add_css_class("album-grid");
-        grid.set_min_columns(columns as u32);
-        grid.set_max_columns(columns as u32);
-        grid.set_single_click_activate(false);
-        grid.set_hexpand(true);
-        grid.set_vexpand(true);
-
-        grid.upcast()
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn artist_cards_grid_for_model(
-        self: &Rc<Self>,
-        model: gio::ListStore,
-    ) -> gtk::Widget {
-        let (columns, card_size) = self.responsive_card_grid_metrics();
-
-        let shell_for_factory = Rc::clone(self);
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_bind(move |_, list_item| {
-            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(item) = list_item.item() else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            let artist = boxed.borrow::<Artist>();
-            list_item.set_child(Some(&artist_card_widget_with_size(
-                &shell_for_factory,
-                &artist,
-                card_size,
-            )));
-        });
-        factory.connect_unbind(clear_list_item_child);
-
-        let grid = gtk::GridView::new(Some(selection), Some(factory));
-        grid.add_css_class("album-grid");
-        grid.set_min_columns(columns as u32);
-        grid.set_max_columns(columns as u32);
-        grid.set_single_click_activate(true);
-        grid.set_hexpand(true);
-        grid.set_vexpand(true);
-
-        let shell = Rc::clone(self);
-        let model_for_activate = model.clone();
-        grid.connect_activate(move |_, position| {
-            let Some(item) = model_for_activate.item(position) else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            shell.navigate(Route::ArtistDetail(boxed.borrow::<Artist>().id.clone()));
-        });
-
-        grid.upcast()
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn genre_cards_grid_for_model(
-        self: &Rc<Self>,
-        model: gio::ListStore,
-    ) -> gtk::Widget {
-        let (columns, card_size) = self.responsive_card_grid_metrics();
-
-        let shell_for_factory = Rc::clone(self);
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        let factory = gtk::SignalListItemFactory::new();
-        factory.connect_bind(move |_, list_item| {
-            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(item) = list_item.item() else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            let genre = boxed.borrow::<Genre>();
-            list_item.set_child(Some(&genre_card_widget_with_size(
-                &shell_for_factory,
-                &genre,
-                card_size,
-            )));
-        });
-        factory.connect_unbind(clear_list_item_child);
-
-        let grid = gtk::GridView::new(Some(selection), Some(factory));
-        grid.add_css_class("album-grid");
-        grid.set_min_columns(columns as u32);
-        grid.set_max_columns(columns as u32);
-        grid.set_single_click_activate(true);
-        grid.set_hexpand(true);
-        grid.set_vexpand(true);
-
-        let shell = Rc::clone(self);
-        let model_for_activate = model.clone();
-        grid.connect_activate(move |_, position| {
-            let Some(item) = model_for_activate.item(position) else {
-                return;
-            };
-            let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
-                return;
-            };
-            shell.navigate(Route::GenreDetail(boxed.borrow::<Genre>().id.clone()));
-        });
-        grid.upcast()
-    }
-
     pub(super) fn playlist_cards_grid_for_model(
         self: &Rc<Self>,
         model: gio::ListStore,
@@ -480,56 +329,6 @@ fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget 
     connect_cover_hover(&overlay, &shade, &play, &favorite);
 
     overlay.upcast()
-}
-
-#[allow(dead_code)]
-fn artist_card_widget_with_size(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widget {
-    let card = natural_media_card(size);
-    card.append(&shell.cover_tile_for(
-        artist.image_ref.as_ref(),
-        stable_seed(artist.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
-
-    let name = single_line_card_label(&artist.name, size, &["album-title"]);
-    let counts = single_line_card_label(
-        &format!(
-            "{} {} / {} {}",
-            artist.album_count,
-            tr("albums"),
-            artist.track_count,
-            tr("tracks")
-        ),
-        size,
-        &["muted"],
-    );
-
-    card.append(&clipped_card_label(&name, size));
-    card.append(&clipped_card_label(&counts, size));
-    card.upcast()
-}
-
-#[allow(dead_code)]
-fn genre_card_widget_with_size(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
-    let card = natural_media_card(size);
-    card.append(&shell.cover_tile_for(
-        genre.image_ref.as_ref(),
-        stable_seed(genre.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
-
-    let name = single_line_card_label(&genre.name, size, &["album-title"]);
-    let counts = single_line_card_label(
-        &format!("{} {}", genre.track_count, tr("tracks")),
-        size,
-        &["muted"],
-    );
-
-    card.append(&clipped_card_label(&name, size));
-    card.append(&clipped_card_label(&counts, size));
-    card.upcast()
 }
 
 fn playlist_card_widget_with_size(

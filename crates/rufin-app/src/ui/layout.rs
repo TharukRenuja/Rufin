@@ -1,5 +1,5 @@
 use adw::prelude::*;
-use rufin_core::AppSettings;
+use rufin_core::{AppSettings, EffectiveDensity};
 
 use super::Shell;
 
@@ -108,10 +108,21 @@ fn default_content_split_position(split_width: i32) -> i32 {
     split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS
 }
 
+pub(super) fn right_panel_saved_ratio(
+    settings: &AppSettings,
+    density: EffectiveDensity,
+) -> Option<f64> {
+    match density {
+        EffectiveDensity::Normal => settings.right_panel_ratio,
+        EffectiveDensity::Compact => settings.compact_right_panel_ratio,
+    }
+}
+
 pub(super) fn update_right_panel_split_settings(
     settings: &mut AppSettings,
     split_width: i32,
     position: i32,
+    density: EffectiveDensity,
 ) -> bool {
     if split_width <= 1 || position <= 0 || position >= split_width {
         return false;
@@ -119,13 +130,26 @@ pub(super) fn update_right_panel_split_settings(
 
     let position = clamp_content_split_position(split_width, position);
     let ratio = right_panel_position_ratio(split_width, position);
-    if settings.right_panel_position == Some(position) && settings.right_panel_ratio == Some(ratio)
-    {
-        return false;
+    match density {
+        EffectiveDensity::Normal => {
+            if settings.right_panel_position == Some(position)
+                && settings.right_panel_ratio == Some(ratio)
+            {
+                return false;
+            }
+            settings.right_panel_position = Some(position);
+            settings.right_panel_ratio = Some(ratio);
+        }
+        EffectiveDensity::Compact => {
+            if settings.compact_right_panel_position == Some(position)
+                && settings.compact_right_panel_ratio == Some(ratio)
+            {
+                return false;
+            }
+            settings.compact_right_panel_position = Some(position);
+            settings.compact_right_panel_ratio = Some(ratio);
+        }
     }
-
-    settings.right_panel_position = Some(position);
-    settings.right_panel_ratio = Some(ratio);
     true
 }
 
@@ -357,9 +381,30 @@ mod tests {
             700
         );
         let mut settings = AppSettings::default();
-        assert!(update_right_panel_split_settings(&mut settings, 1_000, 650));
+        assert!(update_right_panel_split_settings(
+            &mut settings,
+            1_000,
+            650,
+            rufin_core::EffectiveDensity::Normal,
+        ));
         assert_eq!(settings.right_panel_position, Some(650));
         assert_eq!(settings.right_panel_ratio, Some(0.35));
+        assert!(update_right_panel_split_settings(
+            &mut settings,
+            1_000,
+            760,
+            rufin_core::EffectiveDensity::Compact,
+        ));
+        assert_eq!(settings.compact_right_panel_position, Some(760));
+        assert_eq!(settings.compact_right_panel_ratio, Some(0.24));
+        assert_eq!(
+            right_panel_saved_ratio(&settings, rufin_core::EffectiveDensity::Normal),
+            Some(0.35)
+        );
+        assert_eq!(
+            right_panel_saved_ratio(&settings, rufin_core::EffectiveDensity::Compact),
+            Some(0.24)
+        );
     }
 
     #[test]

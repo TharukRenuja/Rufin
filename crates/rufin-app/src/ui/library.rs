@@ -6,9 +6,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use rufin_core::{
-    Album, AlbumId, Artist, Genre, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, Track, available_grid_fields, available_row_fields, available_sort_fields,
-    format_duration,
+    Album, AlbumId, Artist, EffectiveDensity, Genre, LibraryField, LibraryLayout, LibraryListKey,
+    LibraryListSettings, Track, available_sort_fields, format_duration,
 };
 use tracing::warn;
 
@@ -680,7 +679,11 @@ impl Shell {
 
         let layout = gtk::Button::from_icon_name(layout_icon(settings.layout));
         layout.add_css_class("flat");
-        layout.set_tooltip_text(Some(&tr("Change layout")));
+        layout.set_tooltip_text(Some(&format!(
+            "{}: {}",
+            tr("Layout"),
+            tr(layout_title(settings.layout))
+        )));
         {
             let shell = Rc::clone(self);
             layout.connect_clicked(move |_| {
@@ -692,101 +695,96 @@ impl Shell {
         }
         toolbar.append(&layout);
 
-        let configure = gtk::MenuButton::new();
+        let configure = gtk::Button::from_icon_name("view-more-symbolic");
         configure.add_css_class("flat");
-        configure.set_icon_name("view-more-symbolic");
         configure.set_tooltip_text(Some(&tr("Customize display")));
-        configure.set_popover(Some(&self.library_config_popover(key)));
+        {
+            let shell = Rc::clone(self);
+            configure.connect_clicked(move |_| {
+                shell.present_library_config_dialog(key);
+            });
+        }
         toolbar.append(&configure);
         toolbar.upcast()
     }
 
-    fn library_config_popover(self: &Rc<Self>, key: LibraryListKey) -> gtk::Popover {
-        let settings = self.library_settings(key);
-        let popover = gtk::Popover::new();
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        content.set_margin_top(12);
-        content.set_margin_bottom(12);
-        content.set_margin_start(12);
-        content.set_margin_end(12);
-        content.set_width_request(260);
-        let heading = gtk::Label::new(Some(&tr(match settings.layout {
-            LibraryLayout::Grid => "Grid labels",
-            LibraryLayout::Detail => "Detail track columns",
-            LibraryLayout::Row => "Columns",
-        })));
-        heading.add_css_class("muted");
-        heading.set_xalign(0.0);
-        content.append(&heading);
+    fn present_library_config_dialog(self: &Rc<Self>, key: LibraryListKey) {
+        let toolbar = adw::ToolbarView::new();
+        let header = adw::HeaderBar::new();
+        let title = adw::WindowTitle::new(&tr("Customize display"), &tr(key.title()));
+        header.set_title_widget(Some(&title));
+        toolbar.add_top_bar(&header);
 
-        let active = active_fields(&settings).to_vec();
-        let available = available_fields_for_layout(key, settings.layout);
-        let mut fields = active.clone();
-        for field in available {
-            if !fields.contains(field) {
-                fields.push(*field);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        content.set_margin_top(18);
+        content.set_margin_bottom(18);
+        content.set_margin_start(18);
+        content.set_margin_end(18);
+
+        let layout_group = adw::PreferencesGroup::builder()
+            .title(tr("Layout"))
+            .description(tr("Choose the current page layout."))
+            .build();
+        let layout_row = adw::ActionRow::builder().title(tr("View")).build();
+        let layout_buttons = Rc::new(RefCell::new(
+            Vec::<(LibraryLayout, gtk::ToggleButton)>::new(),
+        ));
+        let layout_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        layout_box.add_css_class("linked");
+        let mut first_button: Option<gtk::ToggleButton> = None;
+        for layout in supported_layouts(key) {
+            let button = gtk::ToggleButton::new();
+            button.set_child(Some(&layout_button_content(layout)));
+            button.set_tooltip_text(Some(&tr(layout_title(layout))));
+            if let Some(first) = &first_button {
+                button.set_group(Some(first));
+            } else {
+                first_button = Some(button.clone());
             }
+            button.set_active(layout == self.library_settings(key).layout);
+            layout_box.append(&button);
+            layout_buttons.borrow_mut().push((layout, button));
+        }
+        layout_row.add_suffix(&layout_box);
+        layout_group.add(&layout_row);
+        content.append(&layout_group);
+
+        let fields_group = adw::PreferencesGroup::builder().build();
+        let rows = Rc::new(RefCell::new(Vec::<adw::ActionRow>::new()));
+        content.append(&fields_group);
+
+        for (layout, button) in layout_buttons.borrow().iter() {
+            let shell = Rc::clone(self);
+            let fields_group = fields_group.clone();
+            let rows = Rc::clone(&rows);
+            let layout_buttons = Rc::clone(&layout_buttons);
+            let layout = *layout;
+            button.connect_toggled(move |button| {
+                if !button.is_active() || shell.library_settings(key).layout == layout {
+                    return;
+                }
+                shell.update_library_list_settings(key, |settings| {
+                    settings.layout = layout;
+                });
+                sync_layout_buttons(&layout_buttons, layout);
+                populate_library_field_rows(&shell, key, &fields_group, &rows);
+                shell.render_current_route_preserving_scroll();
+            });
         }
 
-        for field in fields {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            row.set_valign(gtk::Align::Center);
-            let check = gtk::CheckButton::new();
-            check.set_active(active.contains(&field));
-            let label = gtk::Label::new(Some(&tr(field.title())));
-            label.set_xalign(0.0);
-            label.set_hexpand(true);
-            let up = gtk::Button::from_icon_name("go-up-symbolic");
-            let down = gtk::Button::from_icon_name("go-down-symbolic");
-            up.add_css_class("flat");
-            down.add_css_class("flat");
-            up.set_sensitive(active.contains(&field));
-            down.set_sensitive(active.contains(&field));
+        populate_library_field_rows(self, key, &fields_group, &rows);
 
-            {
-                let shell = Rc::clone(self);
-                check.connect_toggled(move |check| {
-                    shell.update_library_list_settings(key, |settings| {
-                        let fields = active_fields_mut(settings);
-                        if check.is_active() {
-                            if !fields.contains(&field) {
-                                fields.push(field);
-                            }
-                        } else {
-                            fields.retain(|candidate| *candidate != field);
-                        }
-                    });
-                    shell.render_current_route_preserving_scroll();
-                });
-            }
-            {
-                let shell = Rc::clone(self);
-                up.connect_clicked(move |_| {
-                    shell.update_library_list_settings(key, |settings| {
-                        move_field(active_fields_mut(settings), field, -1)
-                    });
-                    shell.render_current_route_preserving_scroll();
-                });
-            }
-            {
-                let shell = Rc::clone(self);
-                down.connect_clicked(move |_| {
-                    shell.update_library_list_settings(key, |settings| {
-                        move_field(active_fields_mut(settings), field, 1)
-                    });
-                    shell.render_current_route_preserving_scroll();
-                });
-            }
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_child(Some(&content));
+        toolbar.set_content(Some(&scroller));
 
-            row.append(&check);
-            row.append(&label);
-            row.append(&up);
-            row.append(&down);
-            content.append(&row);
-        }
-
-        popover.set_child(Some(&content));
-        popover
+        let dialog = adw::Dialog::builder()
+            .content_width(620)
+            .content_height(560)
+            .child(&toolbar)
+            .build();
+        dialog.present(Some(&self.window));
     }
 
     fn library_settings(&self, key: LibraryListKey) -> LibraryListSettings {
@@ -1113,19 +1111,28 @@ fn album_detail_row(
     tracks: Vec<Track>,
     key: LibraryListKey,
 ) -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+    let compact = compact_detail_layout(shell);
+    let (cover_size, meta_width, spacing) = if compact {
+        (148, 168, 14)
+    } else {
+        (220, 240, 24)
+    };
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, spacing);
     row.add_css_class("album-detail-row");
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
     row.set_margin_top(12);
     row.set_margin_bottom(16);
     row.set_margin_start(4);
     row.set_margin_end(4);
 
     let meta = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    meta.set_width_request(240);
+    meta.set_width_request(meta_width);
+    meta.set_hexpand(false);
     meta.append(&shell.cover_tile_for(
         album.image_ref.as_ref(),
         album.color_seed,
-        220,
+        cover_size,
         super::DETAIL_COVER_SIZE,
     ));
     meta.append(&center_label(&album.title, "track-title"));
@@ -1149,8 +1156,15 @@ fn album_detail_row(
     );
     let table = track_table(shell, model, key, true);
     table.set_vexpand(false);
+    table.set_hexpand(true);
+    table.set_halign(gtk::Align::Fill);
     row.append(&table);
     row.upcast()
+}
+
+fn compact_detail_layout(shell: &Shell) -> bool {
+    shell.state.effective_density.get() == EffectiveDensity::Compact
+        || shell.route_host.width() < 760
 }
 
 fn album_card(shell: &Rc<Shell>, album: &Album, key: LibraryListKey, size: i32) -> gtk::Widget {
@@ -1235,19 +1249,22 @@ fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn
         LibraryField::Image => image_column::<Album, _, _>(
             shell,
             "Image",
-            64,
+            column_width(LibraryField::Image),
             |album| album.image_ref.clone(),
             |album| album.color_seed,
         ),
         LibraryField::TitleMerged => merged_column::<Album, _, _, _, _>(
             shell,
             "Title",
-            320,
+            column_width(LibraryField::TitleMerged),
             |album| album.title.clone(),
             |album| album.artist.clone(),
             |album| album.image_ref.clone(),
             |album| album.color_seed,
         ),
+        LibraryField::Title => {
+            expanding_text_column::<Album, _>("Title", 220, |album| album.title.clone())
+        }
         LibraryField::Favorite => album_favorite_column(shell),
         _ => text_column::<Album, _>(field.title(), column_width(field), move |album| {
             album_field(album, field)
@@ -1261,12 +1278,12 @@ fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColum
         LibraryField::Image => image_column::<Artist, _, _>(
             shell,
             "Image",
-            64,
+            column_width(LibraryField::Image),
             |artist| artist.image_ref.clone(),
             |artist| stable_seed(artist.id.as_str()),
         ),
         LibraryField::TitleMerged | LibraryField::Title => {
-            text_column::<Artist, _>("Title", 260, |artist| artist.name.clone())
+            expanding_text_column::<Artist, _>("Title", 220, |artist| artist.name.clone())
         }
         LibraryField::Favorite => artist_favorite_column(shell),
         _ => text_column::<Artist, _>(field.title(), column_width(field), move |artist| {
@@ -1278,6 +1295,9 @@ fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColum
 fn genre_column(field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
+        LibraryField::Title | LibraryField::TitleMerged => {
+            expanding_text_column::<Genre, _>("Title", 180, |genre| genre.name.clone())
+        }
         _ => text_column::<Genre, _>(field.title(), column_width(field), move |genre| {
             genre_field(genre, field)
         }),
@@ -1290,19 +1310,22 @@ fn track_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn
         LibraryField::Image => image_column::<Track, _, _>(
             shell,
             "Image",
-            64,
+            column_width(LibraryField::Image),
             |track| track.image_ref.clone(),
             |track| stable_seed(track.id.as_str()),
         ),
         LibraryField::TitleMerged => merged_column::<Track, _, _, _, _>(
             shell,
             "Title",
-            320,
+            column_width(LibraryField::TitleMerged),
             |track| track.title.clone(),
             |track| track.artist.clone(),
             |track| track.image_ref.clone(),
             |track| stable_seed(track.id.as_str()),
         ),
+        LibraryField::Title => {
+            expanding_text_column::<Track, _>("Title", 180, |track| track.title.clone())
+        }
         LibraryField::Favorite => track_favorite_column(shell),
         _ => text_column::<Track, _>(field.title(), column_width(field), move |track| {
             track_field(track, field)
@@ -1311,6 +1334,27 @@ fn track_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn
 }
 
 fn text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
+where
+    T: Clone + 'static,
+    F: Fn(&T) -> String + 'static,
+{
+    text_column_with_expand(title, width, false, value)
+}
+
+fn expanding_text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
+where
+    T: Clone + 'static,
+    F: Fn(&T) -> String + 'static,
+{
+    text_column_with_expand(title, width, true, value)
+}
+
+fn text_column_with_expand<T, F>(
+    title: &str,
+    width: i32,
+    expand: bool,
+    value: F,
+) -> gtk::ColumnViewColumn
 where
     T: Clone + 'static,
     F: Fn(&T) -> String + 'static,
@@ -1347,6 +1391,7 @@ where
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
     column.set_resizable(true);
+    column.set_expand(expand);
     column
 }
 
@@ -1373,7 +1418,7 @@ fn row_index_column() -> gtk::ColumnViewColumn {
         label.set_text(&(item.position() + 1).to_string());
     });
     let column = gtk::ColumnViewColumn::new(Some("#"), Some(factory));
-    column.set_fixed_width(54);
+    column.set_fixed_width(column_width(LibraryField::RowIndex));
     column
 }
 
@@ -1478,6 +1523,7 @@ where
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
     column.set_resizable(true);
+    column.set_expand(true);
     column
 }
 
@@ -1501,7 +1547,7 @@ fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     });
     factory.connect_unbind(clear_list_item_child);
     let column = gtk::ColumnViewColumn::new(Some(""), Some(factory));
-    column.set_fixed_width(64);
+    column.set_fixed_width(column_width(LibraryField::Favorite));
     column
 }
 
@@ -1525,7 +1571,7 @@ fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     });
     factory.connect_unbind(clear_list_item_child);
     let column = gtk::ColumnViewColumn::new(Some(""), Some(factory));
-    column.set_fixed_width(64);
+    column.set_fixed_width(column_width(LibraryField::Favorite));
     column
 }
 
@@ -1549,7 +1595,7 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     });
     factory.connect_unbind(clear_list_item_child);
     let column = gtk::ColumnViewColumn::new(Some(""), Some(factory));
-    column.set_fixed_width(64);
+    column.set_fixed_width(column_width(LibraryField::Favorite));
     column
 }
 
@@ -1875,43 +1921,409 @@ fn album_fact_text(album: &Album) -> String {
     )
 }
 
-fn active_fields(settings: &LibraryListSettings) -> &[LibraryField] {
-    match settings.layout {
-        LibraryLayout::Grid => &settings.grid_fields,
-        LibraryLayout::Detail => &settings.detail_track_fields,
-        LibraryLayout::Row => &settings.row_fields,
-    }
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum LibraryFieldSet {
+    Row,
+    Grid,
+    Detail,
 }
 
-fn active_fields_mut(settings: &mut LibraryListSettings) -> &mut Vec<LibraryField> {
-    match settings.layout {
-        LibraryLayout::Grid => &mut settings.grid_fields,
-        LibraryLayout::Detail => &mut settings.detail_track_fields,
-        LibraryLayout::Row => &mut settings.row_fields,
-    }
-}
-
-fn available_fields_for_layout(
+fn populate_library_field_rows(
+    shell: &Rc<Shell>,
     key: LibraryListKey,
-    layout: LibraryLayout,
-) -> &'static [LibraryField] {
-    match layout {
-        LibraryLayout::Grid => available_grid_fields(key),
-        LibraryLayout::Detail => available_row_fields(LibraryListKey::Tracks),
-        LibraryLayout::Row => available_row_fields(key),
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+) {
+    for row in rows.borrow_mut().drain(..) {
+        group.remove(&row);
+    }
+
+    let settings = shell.library_settings(key);
+    let field_set = field_set_for_layout(settings.layout);
+    group.set_title(&tr(field_group_title(field_set)));
+
+    let active = active_fields_for_set(&settings, field_set).to_vec();
+    let order = field_order_for_set(&settings, field_set).to_vec();
+    for field in order {
+        let row = library_field_config_row(shell, key, field_set, field, &active, group, rows);
+        group.add(&row);
+        rows.borrow_mut().push(row);
     }
 }
 
-fn move_field(fields: &mut [LibraryField], field: LibraryField, delta: isize) {
-    let Some(index) = fields.iter().position(|candidate| *candidate == field) else {
+fn library_field_config_row(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    field_set: LibraryFieldSet,
+    field: LibraryField,
+    active: &[LibraryField],
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+) -> adw::ActionRow {
+    let enabled = active.contains(&field);
+    let row = adw::ActionRow::builder()
+        .title(tr(field.title()))
+        .subtitle(if enabled { tr("Visible") } else { tr("Hidden") })
+        .build();
+
+    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    drag.add_css_class("dim-label");
+    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+    row.add_prefix(&drag);
+
+    let check = gtk::CheckButton::new();
+    check.set_active(enabled);
+    check.set_sensitive(can_toggle_field(active, field_set, field));
+    check.set_valign(gtk::Align::Center);
+    row.add_prefix(&check);
+    row.set_activatable_widget(Some(&check));
+
+    let up = gtk::Button::from_icon_name("go-up-symbolic");
+    up.add_css_class("flat");
+    up.set_tooltip_text(Some(&tr("Move up")));
+    up.set_valign(gtk::Align::Center);
+    row.add_suffix(&up);
+
+    let down = gtk::Button::from_icon_name("go-down-symbolic");
+    down.add_css_class("flat");
+    down.set_tooltip_text(Some(&tr("Move down")));
+    down.set_valign(gtk::Align::Center);
+    row.add_suffix(&down);
+
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        check.connect_toggled(move |check| {
+            shell.update_library_list_settings(key, |settings| {
+                set_field_enabled(settings, field_set, field, check.is_active());
+            });
+            populate_library_field_rows(&shell, key, &group, &rows);
+            shell.render_current_route_preserving_scroll();
+        });
+    }
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        up.connect_clicked(move |_| {
+            shell.update_library_list_settings(key, |settings| {
+                move_ordered_field(settings, field_set, field, -1);
+            });
+            populate_library_field_rows(&shell, key, &group, &rows);
+            shell.render_current_route_preserving_scroll();
+        });
+    }
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        down.connect_clicked(move |_| {
+            shell.update_library_list_settings(key, |settings| {
+                move_ordered_field(settings, field_set, field, 1);
+            });
+            populate_library_field_rows(&shell, key, &group, &rows);
+            shell.render_current_route_preserving_scroll();
+        });
+    }
+
+    let source = gtk::DragSource::builder()
+        .actions(gtk::gdk::DragAction::MOVE)
+        .build();
+    let field_id = library_field_drag_id(field).to_string();
+    source.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(&field_id.to_value()))
+    });
+    drag.add_controller(source);
+
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let shell = Rc::clone(shell);
+    let group = group.clone();
+    let rows = Rc::clone(rows);
+    let row_for_drop = row.clone();
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(source_id) = value.get::<String>() else {
+            return false;
+        };
+        let Some(source_field) = library_field_from_drag_id(&source_id) else {
+            return false;
+        };
+        if source_field == field {
+            return false;
+        }
+        let after = y > f64::from(row_for_drop.height()) / 2.0;
+        shell.update_library_list_settings(key, |settings| {
+            reorder_ordered_field(settings, field_set, source_field, field, after);
+        });
+        populate_library_field_rows(&shell, key, &group, &rows);
+        shell.render_current_route_preserving_scroll();
+        true
+    });
+    row.add_controller(drop_target);
+
+    row
+}
+
+fn layout_button_content(layout: LibraryLayout) -> gtk::Widget {
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.set_margin_top(6);
+    content.set_margin_bottom(6);
+    content.set_margin_start(10);
+    content.set_margin_end(10);
+    content.append(&gtk::Image::from_icon_name(layout_icon(layout)));
+    content.append(&gtk::Label::new(Some(&tr(layout_title(layout)))));
+    content.upcast()
+}
+
+fn sync_layout_buttons(
+    buttons: &Rc<RefCell<Vec<(LibraryLayout, gtk::ToggleButton)>>>,
+    active_layout: LibraryLayout,
+) {
+    for (layout, button) in buttons.borrow().iter() {
+        button.set_active(*layout == active_layout);
+    }
+}
+
+fn supported_layouts(key: LibraryListKey) -> Vec<LibraryLayout> {
+    let mut layouts = vec![LibraryLayout::Row, LibraryLayout::Grid];
+    if key.supports_layout(LibraryLayout::Detail) {
+        layouts.push(LibraryLayout::Detail);
+    }
+    layouts
+}
+
+fn field_group_title(field_set: LibraryFieldSet) -> &'static str {
+    match field_set {
+        LibraryFieldSet::Row => "Columns",
+        LibraryFieldSet::Grid => "Grid labels",
+        LibraryFieldSet::Detail => "Detail track columns",
+    }
+}
+
+fn field_set_for_layout(layout: LibraryLayout) -> LibraryFieldSet {
+    match layout {
+        LibraryLayout::Grid => LibraryFieldSet::Grid,
+        LibraryLayout::Detail => LibraryFieldSet::Detail,
+        LibraryLayout::Row => LibraryFieldSet::Row,
+    }
+}
+
+fn active_fields_for_set(
+    settings: &LibraryListSettings,
+    field_set: LibraryFieldSet,
+) -> &[LibraryField] {
+    match field_set {
+        LibraryFieldSet::Grid => &settings.grid_fields,
+        LibraryFieldSet::Detail => &settings.detail_track_fields,
+        LibraryFieldSet::Row => &settings.row_fields,
+    }
+}
+
+fn active_fields_for_set_mut(
+    settings: &mut LibraryListSettings,
+    field_set: LibraryFieldSet,
+) -> &mut Vec<LibraryField> {
+    match field_set {
+        LibraryFieldSet::Grid => &mut settings.grid_fields,
+        LibraryFieldSet::Detail => &mut settings.detail_track_fields,
+        LibraryFieldSet::Row => &mut settings.row_fields,
+    }
+}
+
+fn field_order_for_set(
+    settings: &LibraryListSettings,
+    field_set: LibraryFieldSet,
+) -> &[LibraryField] {
+    match field_set {
+        LibraryFieldSet::Grid => &settings.grid_field_order,
+        LibraryFieldSet::Detail => &settings.detail_track_field_order,
+        LibraryFieldSet::Row => &settings.row_field_order,
+    }
+}
+
+fn field_order_for_set_mut(
+    settings: &mut LibraryListSettings,
+    field_set: LibraryFieldSet,
+) -> &mut Vec<LibraryField> {
+    match field_set {
+        LibraryFieldSet::Grid => &mut settings.grid_field_order,
+        LibraryFieldSet::Detail => &mut settings.detail_track_field_order,
+        LibraryFieldSet::Row => &mut settings.row_field_order,
+    }
+}
+
+fn set_field_enabled(
+    settings: &mut LibraryListSettings,
+    field_set: LibraryFieldSet,
+    field: LibraryField,
+    enabled: bool,
+) {
+    let order = field_order_for_set(settings, field_set).to_vec();
+    let fields = active_fields_for_set_mut(settings, field_set);
+    if enabled {
+        insert_field_in_order(fields, field, &order);
+    } else {
+        fields.retain(|candidate| *candidate != field);
+    }
+}
+
+fn insert_field_in_order(
+    fields: &mut Vec<LibraryField>,
+    field: LibraryField,
+    order: &[LibraryField],
+) {
+    if fields.contains(&field) {
+        return;
+    }
+    let target_order = order
+        .iter()
+        .position(|candidate| *candidate == field)
+        .unwrap_or(usize::MAX);
+    let insert_at = fields
+        .iter()
+        .position(|candidate| {
+            order
+                .iter()
+                .position(|ordered| ordered == candidate)
+                .unwrap_or(usize::MAX)
+                > target_order
+        })
+        .unwrap_or(fields.len());
+    fields.insert(insert_at, field);
+}
+
+fn move_ordered_field(
+    settings: &mut LibraryListSettings,
+    field_set: LibraryFieldSet,
+    field: LibraryField,
+    delta: isize,
+) {
+    let order = field_order_for_set_mut(settings, field_set);
+    let Some(index) = order.iter().position(|candidate| *candidate == field) else {
         return;
     };
     let new_index = if delta < 0 {
         index.saturating_sub(1)
     } else {
-        (index + 1).min(fields.len().saturating_sub(1))
+        (index + 1).min(order.len().saturating_sub(1))
     };
-    fields.swap(index, new_index);
+    order.swap(index, new_index);
+    reorder_active_fields_by_order(settings, field_set);
+}
+
+fn reorder_ordered_field(
+    settings: &mut LibraryListSettings,
+    field_set: LibraryFieldSet,
+    source: LibraryField,
+    target: LibraryField,
+    after: bool,
+) {
+    let order = field_order_for_set_mut(settings, field_set);
+    let Some(source_index) = order.iter().position(|field| *field == source) else {
+        return;
+    };
+    let field = order.remove(source_index);
+    let Some(mut target_index) = order.iter().position(|field| *field == target) else {
+        order.insert(source_index.min(order.len()), field);
+        return;
+    };
+    if after {
+        target_index += 1;
+    }
+    order.insert(target_index.min(order.len()), field);
+    reorder_active_fields_by_order(settings, field_set);
+}
+
+fn reorder_active_fields_by_order(settings: &mut LibraryListSettings, field_set: LibraryFieldSet) {
+    let order = field_order_for_set(settings, field_set).to_vec();
+    active_fields_for_set_mut(settings, field_set).sort_by_key(|field| {
+        order
+            .iter()
+            .position(|candidate| candidate == field)
+            .unwrap_or(usize::MAX)
+    });
+}
+
+fn can_toggle_field(
+    active: &[LibraryField],
+    field_set: LibraryFieldSet,
+    field: LibraryField,
+) -> bool {
+    if !active.contains(&field) {
+        return true;
+    }
+    if field_set == LibraryFieldSet::Grid {
+        return active.len() > 1;
+    }
+    !row_field_is_usable(field)
+        || active
+            .iter()
+            .filter(|field| row_field_is_usable(**field))
+            .count()
+            > 1
+}
+
+fn row_field_is_usable(field: LibraryField) -> bool {
+    !matches!(
+        field,
+        LibraryField::RowIndex
+            | LibraryField::Image
+            | LibraryField::TrackNumber
+            | LibraryField::DiscNumber
+            | LibraryField::Favorite
+    )
+}
+
+fn library_field_drag_id(field: LibraryField) -> &'static str {
+    match field {
+        LibraryField::RowIndex => "RowIndex",
+        LibraryField::Image => "Image",
+        LibraryField::Title => "Title",
+        LibraryField::TitleMerged => "TitleMerged",
+        LibraryField::Artist => "Artist",
+        LibraryField::AlbumArtist => "AlbumArtist",
+        LibraryField::Album => "Album",
+        LibraryField::Year => "Year",
+        LibraryField::ReleaseDate => "ReleaseDate",
+        LibraryField::DateAdded => "DateAdded",
+        LibraryField::LastPlayed => "LastPlayed",
+        LibraryField::PlayCount => "PlayCount",
+        LibraryField::UserRating => "UserRating",
+        LibraryField::Genre => "Genre",
+        LibraryField::TrackNumber => "TrackNumber",
+        LibraryField::DiscNumber => "DiscNumber",
+        LibraryField::SongCount => "SongCount",
+        LibraryField::AlbumCount => "AlbumCount",
+        LibraryField::Duration => "Duration",
+        LibraryField::Favorite => "Favorite",
+    }
+}
+
+fn library_field_from_drag_id(id: &str) -> Option<LibraryField> {
+    [
+        LibraryField::RowIndex,
+        LibraryField::Image,
+        LibraryField::Title,
+        LibraryField::TitleMerged,
+        LibraryField::Artist,
+        LibraryField::AlbumArtist,
+        LibraryField::Album,
+        LibraryField::Year,
+        LibraryField::ReleaseDate,
+        LibraryField::DateAdded,
+        LibraryField::LastPlayed,
+        LibraryField::PlayCount,
+        LibraryField::UserRating,
+        LibraryField::Genre,
+        LibraryField::TrackNumber,
+        LibraryField::DiscNumber,
+        LibraryField::SongCount,
+        LibraryField::AlbumCount,
+        LibraryField::Duration,
+        LibraryField::Favorite,
+    ]
+    .into_iter()
+    .find(|field| library_field_drag_id(*field) == id)
 }
 
 fn next_layout(key: LibraryListKey, layout: LibraryLayout) -> LibraryLayout {
@@ -1933,26 +2345,34 @@ fn layout_icon(layout: LibraryLayout) -> &'static str {
     match layout {
         LibraryLayout::Grid => "view-grid-symbolic",
         LibraryLayout::Row => "view-list-symbolic",
-        LibraryLayout::Detail => "view-sidebar-symbolic",
+        LibraryLayout::Detail => "view-list-details-symbolic",
+    }
+}
+
+fn layout_title(layout: LibraryLayout) -> &'static str {
+    match layout {
+        LibraryLayout::Grid => "Grid",
+        LibraryLayout::Row => "Rows",
+        LibraryLayout::Detail => "Detail",
     }
 }
 
 fn column_width(field: LibraryField) -> i32 {
     match field {
-        LibraryField::RowIndex => 54,
-        LibraryField::Image | LibraryField::Favorite => 64,
-        LibraryField::Title | LibraryField::TitleMerged => 300,
+        LibraryField::RowIndex => 48,
+        LibraryField::Image | LibraryField::Favorite => 56,
+        LibraryField::Title | LibraryField::TitleMerged => 220,
         LibraryField::Album
         | LibraryField::Artist
         | LibraryField::AlbumArtist
-        | LibraryField::Genre => 220,
-        LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 130,
+        | LibraryField::Genre => 170,
+        LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 118,
         LibraryField::PlayCount
         | LibraryField::UserRating
         | LibraryField::SongCount
-        | LibraryField::AlbumCount => 110,
-        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 80,
-        LibraryField::Duration => 90,
+        | LibraryField::AlbumCount => 96,
+        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 68,
+        LibraryField::Duration => 76,
     }
 }
 
