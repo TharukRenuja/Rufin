@@ -430,9 +430,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let route_title = gtk::Label::new(None);
     route_title.add_css_class("route-title");
     route_title.set_xalign(0.0);
+    route_title.set_single_line_mode(true);
+    route_title.set_lines(1);
     route_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
     route_title.set_halign(gtk::Align::Fill);
     route_title.set_valign(gtk::Align::Center);
+    route_title.set_margin_top(2);
     route_title.set_hexpand(true);
     let main_menu = primary_menu_button();
 
@@ -4767,6 +4770,15 @@ fn find_largest_scrolled_window(widget: &gtk::Widget) -> Option<gtk::ScrolledWin
     let mut best = None;
     collect_largest_scrolled_window(widget, &mut best);
     best.map(|(scroller, _)| scroller)
+}
+
+fn restore_scrolled_window_value(widget: &gtk::Widget, value: f64) {
+    let Some(scroller) = find_largest_scrolled_window(widget) else {
+        return;
+    };
+    let adjustment = scroller.vadjustment();
+    let max_value = (adjustment.upper() - adjustment.page_size()).max(0.0);
+    adjustment.set_value(value.clamp(0.0, max_value));
 }
 
 fn collect_largest_scrolled_window(

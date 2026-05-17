@@ -5458,6 +5458,7 @@ mod tests {
                     | ControllerEvent::Lyrics(_)
                     | ControllerEvent::LyricsSearchResults { .. }
                     | ControllerEvent::LyricsSaved { .. }
+                    | ControllerEvent::HomeSectionPrefetched { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
                     | ControllerEvent::FavoriteChanged { .. }

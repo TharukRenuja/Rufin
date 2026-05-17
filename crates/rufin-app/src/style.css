@@ -36,8 +36,16 @@ window {
 .route-header,
 .sidebar-header {
   min-height: 48px;
-  background: transparent;
   color: @window_fg_color;
+}
+
+.route-header {
+  min-height: 52px;
+  background: @window_bg_color;
+}
+
+.sidebar-header {
+  background: transparent;
 }
 
 .queue-toolbar {
@@ -53,6 +61,8 @@ window {
 .route-title {
   font-size: 21px;
   font-weight: 700;
+  min-height: 30px;
+  padding: 2px 0 0;
 }
 
 .nav-heading,
