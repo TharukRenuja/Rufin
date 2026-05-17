@@ -411,7 +411,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 5);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
-    compact_nav.set_margin_end(20);
     let server_selector = build_server_selector();
 
     let main_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -437,6 +436,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     route_title.set_halign(gtk::Align::Fill);
     route_title.set_valign(gtk::Align::Center);
     route_title.set_margin_top(2);
+    route_title.set_margin_start(20);
     route_title.set_hexpand(true);
     let main_menu = primary_menu_button();
 
@@ -2450,6 +2450,11 @@ impl Shell {
         let albums = detail.albums;
         let tracks = detail.tracks;
 
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
+        scroller.set_vexpand(true);
+
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(28);
@@ -2503,7 +2508,8 @@ impl Shell {
             wrapper.append(&self.tracks_table(tracks, "artist-detail"));
         }
 
-        wrapper.upcast()
+        scroller.set_child(Some(&wrapper));
+        scroller.upcast()
     }
 
     fn genre_list_view(self: &Rc<Self>) -> gtk::Widget {
@@ -3041,6 +3047,11 @@ impl Shell {
     }
 
     fn search_view(self: &Rc<Self>, _query: &str, library: LibrarySnapshot) -> gtk::Widget {
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
+        scroller.set_vexpand(true);
+
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -3069,7 +3080,8 @@ impl Shell {
             wrapper.append(&self.route_empty_view("No cached results found."));
         }
 
-        wrapper.upcast()
+        scroller.set_child(Some(&wrapper));
+        scroller.upcast()
     }
 
     fn confirm_clear_cache(self: &Rc<Self>) {

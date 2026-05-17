@@ -15,7 +15,7 @@ pub enum EffectiveDensity {
 }
 
 impl DensityMode {
-    pub const AUTO_COMPACT_THRESHOLD: i32 = 1_180;
+    pub const AUTO_COMPACT_THRESHOLD: i32 = 1_500;
 
     pub fn resolve(self, window_width: i32) -> EffectiveDensity {
         match self {
@@ -170,6 +170,7 @@ mod tests {
     #[test]
     fn density_auto_uses_compact_threshold() {
         assert_eq!(DensityMode::Auto.resolve(900), EffectiveDensity::Compact);
+        assert_eq!(DensityMode::Auto.resolve(1_499), EffectiveDensity::Compact);
         assert_eq!(DensityMode::Auto.resolve(1_500), EffectiveDensity::Normal);
         assert_eq!(DensityMode::Normal.resolve(900), EffectiveDensity::Normal);
         assert_eq!(
