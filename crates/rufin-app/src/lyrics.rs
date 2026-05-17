@@ -26,7 +26,7 @@ pub struct LyricsPane {
 
 #[derive(Clone)]
 struct LyricsRow {
-    row: gtk::Button,
+    row: gtk::Widget,
     label: gtk::Label,
 }
 
@@ -148,18 +148,22 @@ impl LyricsPane {
                 label.set_hexpand(true);
                 label.add_css_class("lyrics-line");
 
-                let row = gtk::Button::new();
-                row.add_css_class("lyrics-row");
-                row.add_css_class("flat");
-                row.set_hexpand(true);
-                row.set_child(Some(&label));
+                let row: gtk::Widget = if let Some(start_millis) = line.start_millis {
+                    let row = gtk::Button::new();
+                    row.add_css_class("flat");
+                    row.set_hexpand(true);
+                    row.set_child(Some(&label));
 
-                if let Some(start_millis) = line.start_millis {
                     let seek = Rc::clone(&seek);
                     row.connect_clicked(move |_| seek(start_millis));
+                    row.upcast()
                 } else {
-                    row.set_sensitive(false);
-                }
+                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                    row.set_hexpand(true);
+                    row.append(&label);
+                    row.upcast()
+                };
+                row.add_css_class("lyrics-row");
 
                 self.body.append(&row);
                 self.rows.borrow_mut().push(LyricsRow { row, label });
@@ -178,12 +182,14 @@ impl LyricsPane {
     pub fn update_highlight(&self, lyrics: Option<&Lyrics>, position_millis: u64) {
         let active_index = lyrics
             .and_then(|lyrics| active_lyrics_line_index(lyrics.lines.as_slice(), position_millis));
+        let highlight_all_lines =
+            lyrics.is_some_and(|lyrics| should_highlight_all_lyrics_lines(lyrics.lines.as_slice()));
         let previous_index = self.active_index.replace(active_index);
         let follow_pause = self.follow_scroll_pause();
         let scroll_target = {
             let rows = self.rows.borrow();
             for (index, row) in rows.iter().enumerate() {
-                let active = Some(index) == active_index;
+                let active = highlight_all_lines || Some(index) == active_index;
                 if active {
                     row.row.add_css_class("lyrics-row-active");
                     row.label.add_css_class("lyrics-line-active");
@@ -195,7 +201,7 @@ impl LyricsPane {
 
             lyrics_follow_scroll_target(active_index, previous_index, follow_pause).and_then(
                 |index| {
-                    let row = rows.get(index)?.row.clone().upcast::<gtk::Widget>();
+                    let row = rows.get(index)?.row.clone();
                     let duration = lyrics
                         .map(|lyrics| {
                             lyrics_scroll_animation_millis(
@@ -319,6 +325,10 @@ pub fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Op
         .or(first_timed_index)
 }
 
+pub fn should_highlight_all_lyrics_lines(lines: &[LyricLine]) -> bool {
+    !lines.is_empty() && lines.iter().all(|line| line.start_millis.is_none())
+}
+
 pub fn next_lyrics_line_start_after(lines: &[LyricLine], position_millis: u64) -> Option<u64> {
     lines
         .iter()
@@ -381,6 +391,7 @@ mod tests {
     use super::{
         LyricsFollowScrollPause, active_lyrics_line_index, lyrics_follow_scroll_pause_state,
         lyrics_follow_scroll_target, lyrics_scroll_animation_millis, next_lyrics_line_start_after,
+        should_highlight_all_lyrics_lines,
     };
     use rufin_provider::LyricLine;
     use std::time::{Duration, Instant};
@@ -415,13 +426,46 @@ mod tests {
     }
 
     #[test]
-    fn synced_lyrics_without_timed_lines_have_no_highlight() {
+    fn unsynchronized_lyrics_have_no_active_timed_line() {
         let lines = vec![LyricLine {
             text: "plain".to_string(),
             start_millis: None,
         }];
 
         assert_eq!(active_lyrics_line_index(&lines, 0), None);
+    }
+
+    #[test]
+    fn unsynchronized_lyrics_highlight_every_line() {
+        let lines = vec![
+            LyricLine {
+                text: "first".to_string(),
+                start_millis: None,
+            },
+            LyricLine {
+                text: "second".to_string(),
+                start_millis: None,
+            },
+        ];
+
+        assert!(should_highlight_all_lyrics_lines(&lines));
+    }
+
+    #[test]
+    fn synchronized_lyrics_do_not_highlight_every_line() {
+        let lines = vec![
+            LyricLine {
+                text: "first".to_string(),
+                start_millis: Some(1_000),
+            },
+            LyricLine {
+                text: "untimed note".to_string(),
+                start_millis: None,
+            },
+        ];
+
+        assert!(!should_highlight_all_lyrics_lines(&lines));
+        assert!(!should_highlight_all_lyrics_lines(&[]));
     }
 
     #[test]
