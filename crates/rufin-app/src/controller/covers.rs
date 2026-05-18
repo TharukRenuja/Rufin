@@ -6,7 +6,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use rufin_core::{Album, AppSettings, ImageRef, ServerId};
+use rufin_core::{Album, AppSettings, Artist, ImageRef, ServerId};
 use rufin_provider::{ImageKind, ImageRequest};
 use rufin_secrets::SecretStore;
 use rufin_store::{CoverCacheEntry, SavedServer, image_cache_key};
@@ -194,7 +194,7 @@ impl AppController {
     }
 }
 
-pub(super) fn start_external_album_cover_prefetch_thread(
+pub(super) fn start_external_metadata_cover_prefetch_thread(
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
@@ -219,7 +219,7 @@ pub(super) fn start_external_album_cover_prefetch_thread(
     }
 
     thread::spawn(move || {
-        let result = prefetch_synced_album_covers(
+        let result = prefetch_synced_external_images(
             &store,
             &runtime,
             &secrets,
@@ -229,12 +229,52 @@ pub(super) fn start_external_album_cover_prefetch_thread(
             &saved,
         );
         if let Err(error) = result {
-            warn!(%error, "failed to prefetch synced external album covers");
+            warn!(%error, "failed to prefetch synced external images");
         }
         if let Ok(mut running) = external_cover_prefetch_in_flight.lock() {
             running.remove(&server_id);
         }
     });
+}
+
+fn prefetch_synced_external_images(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    events: &Sender<ControllerEvent>,
+    cover_in_flight: &Arc<Mutex<HashSet<String>>>,
+    cover_slots: &Arc<(Mutex<usize>, Condvar)>,
+    saved: &SavedServer,
+) -> Result<(), String> {
+    prefetch_synced_album_covers(
+        store,
+        runtime,
+        secrets,
+        events,
+        cover_in_flight,
+        cover_slots,
+        saved,
+    )?;
+    prefetch_synced_artist_covers(
+        store,
+        runtime,
+        secrets,
+        events,
+        cover_in_flight,
+        cover_slots,
+        saved,
+        false,
+    )?;
+    prefetch_synced_artist_covers(
+        store,
+        runtime,
+        secrets,
+        events,
+        cover_in_flight,
+        cover_slots,
+        saved,
+        true,
+    )
 }
 
 fn prefetch_synced_album_covers(
@@ -269,7 +309,7 @@ fn prefetch_synced_album_covers(
             {
                 return Ok(());
             }
-            if prefetch_external_album_cover(
+            if prefetch_external_image(
                 store,
                 runtime,
                 secrets,
@@ -286,7 +326,63 @@ fn prefetch_synced_album_covers(
     }
 }
 
-fn prefetch_external_album_cover(
+fn prefetch_synced_artist_covers(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    events: &Sender<ControllerEvent>,
+    cover_in_flight: &Arc<Mutex<HashSet<String>>>,
+    cover_slots: &Arc<(Mutex<usize>, Condvar)>,
+    saved: &SavedServer,
+    album_artist: bool,
+) -> Result<(), String> {
+    let mut offset = 0;
+    loop {
+        let settings = load_settings_from_store(store);
+        if !external_metadata::enabled(&settings)
+            || settings.lastfm_api_key.trim().is_empty()
+            || active_server_changed(store, saved)?
+        {
+            return Ok(());
+        }
+        let artists = store.with_store(|store| {
+            store.load_artists_without_image_ref(
+                &saved.server.id,
+                album_artist,
+                offset,
+                EXTERNAL_PREFETCH_PAGE_SIZE,
+            )
+        })?;
+        if artists.is_empty() {
+            return Ok(());
+        }
+        let artist_count = artists.len();
+        for image_ref in external_artist_image_refs_from_artists(artists, &settings) {
+            let settings = load_settings_from_store(store);
+            if !external_metadata::enabled(&settings)
+                || settings.lastfm_api_key.trim().is_empty()
+                || active_server_changed(store, saved)?
+            {
+                return Ok(());
+            }
+            if prefetch_external_image(
+                store,
+                runtime,
+                secrets,
+                events,
+                cover_in_flight,
+                cover_slots,
+                saved,
+                image_ref,
+            )? {
+                thread::sleep(EXTERNAL_PREFETCH_DELAY);
+            }
+        }
+        offset += artist_count;
+    }
+}
+
+fn prefetch_external_image(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -345,7 +441,7 @@ fn prefetch_external_album_cover(
             if external_metadata::is_expected_lookup_miss(&error) {
                 debug!(%error, "synced external album cover was not available");
             } else {
-                warn!(%error, "failed to prefetch synced external album cover");
+                warn!(%error, "failed to prefetch synced external image");
             }
         }
     }
@@ -368,6 +464,29 @@ fn external_album_image_refs_from_albums(
     for image_ref in albums
         .iter()
         .filter_map(|album| album.image_ref.as_ref())
+        .filter(|image_ref| external_metadata::is_external_image_ref(image_ref))
+    {
+        let key = (
+            image_ref.item_id.clone(),
+            image_ref.tag.clone().unwrap_or_default(),
+        );
+        if seen.insert(key) {
+            image_refs.push(image_ref.clone());
+        }
+    }
+    image_refs
+}
+
+fn external_artist_image_refs_from_artists(
+    mut artists: Vec<Artist>,
+    settings: &AppSettings,
+) -> Vec<ImageRef> {
+    let mut image_refs = Vec::new();
+    let mut seen = HashSet::new();
+    external_metadata::normalize_artists(&mut artists, settings);
+    for image_ref in artists
+        .iter()
+        .filter_map(|artist| artist.image_ref.as_ref())
         .filter(|image_ref| external_metadata::is_external_image_ref(image_ref))
     {
         let key = (
@@ -423,6 +542,12 @@ fn fetch_and_cache_cover(
             return Err("external metadata lookup is disabled".to_string());
         }
         external_metadata::fetch_album_cover(&art, size, settings.lastfm_api_key.trim())?
+    } else if let Some(image) = external_metadata::artist_image_from_image_ref(&image_ref) {
+        let settings = load_settings_from_store(store);
+        if !external_metadata::enabled(&settings) {
+            return Err("external metadata lookup is disabled".to_string());
+        }
+        external_metadata::fetch_artist_image(&image, settings.lastfm_api_key.trim())?
     } else {
         let provider = provider_for_saved(store, runtime, secrets, saved)?;
         let image = runtime
@@ -470,9 +595,9 @@ pub(super) fn is_provider_not_found_error(error: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use rufin_core::{Album, AlbumId, AppSettings, ArtistId, ImageRef};
+    use rufin_core::{Album, AlbumId, AppSettings, Artist, ArtistId, ImageRef};
 
-    use super::external_album_image_refs_from_albums;
+    use super::{external_album_image_refs_from_albums, external_artist_image_refs_from_artists};
     use crate::external_metadata;
 
     #[test]
@@ -515,6 +640,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn synced_external_cover_candidates_include_artists_when_lastfm_is_configured() {
+        let settings = AppSettings {
+            external_metadata_enabled: true,
+            lastfm_api_key: "key".to_string(),
+            ..AppSettings::default()
+        };
+        let refs = external_artist_image_refs_from_artists(
+            vec![
+                artist_without_cover(1, "Slowdive"),
+                artist_with_cover(2, "Ride"),
+                artist_without_cover(3, "Slowdive"),
+            ],
+            &settings,
+        );
+
+        assert_eq!(refs.len(), 1);
+        assert!(external_metadata::is_external_image_ref(&refs[0]));
+        assert_eq!(
+            external_metadata::artist_image_from_image_ref(&refs[0]).map(|image| image.artist),
+            Some("Slowdive".to_string())
+        );
+    }
+
+    #[test]
+    fn synced_external_artist_candidates_require_lastfm_key() {
+        assert!(
+            external_artist_image_refs_from_artists(
+                vec![artist_without_cover(1, "Slowdive")],
+                &AppSettings {
+                    external_metadata_enabled: true,
+                    ..AppSettings::default()
+                },
+            )
+            .is_empty()
+        );
+    }
+
     fn album_without_cover(number: u32, title: &str, artist: &str) -> Album {
         Album {
             id: AlbumId::fake(number),
@@ -545,6 +708,30 @@ mod tests {
                 Some(format!("tag-{number}")),
             )),
             ..album_without_cover(number, title, artist)
+        }
+    }
+
+    fn artist_without_cover(number: u32, name: &str) -> Artist {
+        Artist {
+            id: ArtistId::fake(number),
+            name: name.to_string(),
+            album_count: 1,
+            track_count: 1,
+            favorite: false,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            image_ref: None,
+        }
+    }
+
+    fn artist_with_cover(number: u32, name: &str) -> Artist {
+        Artist {
+            image_ref: Some(ImageRef::new(
+                format!("provider-artist-{number}"),
+                Some(format!("tag-{number}")),
+            )),
+            ..artist_without_cover(number, name)
         }
     }
 }

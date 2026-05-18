@@ -2504,6 +2504,38 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
 
+    pub fn load_artists_without_image_ref(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<Vec<Artist>> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let artist_filter = artist_list_filter(album_artist);
+        let sql = format!(
+            "
+            SELECT artist_id, name, album_count, track_count, favorite,
+                   last_played, play_count, user_rating, image_item_id, image_tag
+            FROM {table}
+            WHERE server_id = ?1
+              AND image_item_id IS NULL
+              {artist_filter}
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?2 OFFSET ?3
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        collect_rows(statement.query_map(
+            params![server_id.as_str(), limit as i64, offset as i64],
+            artist_from_row,
+        )?)
+    }
+
     pub fn load_artists_matching(
         &self,
         server_id: &ServerId,
@@ -5278,6 +5310,38 @@ mod tests {
         assert_eq!(
             albums.into_iter().map(|album| album.id).collect::<Vec<_>>(),
             vec![AlbumId::fake(1), AlbumId::fake(3)]
+        );
+    }
+
+    #[test]
+    fn artists_without_image_ref_can_be_loaded_for_external_art_prefetch() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+
+        store
+            .upsert_artists(
+                &saved.server.id,
+                &[
+                    artist(1, None),
+                    artist(2, Some(image_ref("artist-two", "tag-two"))),
+                ],
+                false,
+                generation,
+            )
+            .expect("upsert artists");
+
+        let artists = store
+            .load_artists_without_image_ref(&saved.server.id, false, 0, 10)
+            .expect("load artists without image ref");
+
+        assert_eq!(
+            artists
+                .into_iter()
+                .map(|artist| artist.id)
+                .collect::<Vec<_>>(),
+            vec![ArtistId::fake(1)]
         );
     }
 

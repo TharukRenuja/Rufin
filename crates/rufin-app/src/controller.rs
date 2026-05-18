@@ -371,6 +371,7 @@ impl AppController {
             .with_store(|store| store.load_artist_detail(&saved.server.id, artist_id))
             .map(|detail| {
                 detail.map(|mut detail| {
+                    external_metadata::normalize_artist(&mut detail.artist, &settings);
                     external_metadata::normalize_albums(&mut detail.albums, &settings);
                     external_metadata::normalize_albums(&mut detail.appears_on, &settings);
                     external_metadata::normalize_tracks(&mut detail.tracks, &settings);
@@ -498,8 +499,13 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| store.load_artists(&saved.server.id, album_artist, offset, limit))
+            .map(|mut page| {
+                external_metadata::normalize_artists(&mut page.items, &settings);
+                page
+            })
     }
 
     pub fn cached_artists_page_matching(
@@ -512,9 +518,15 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
-        self.store.with_store(|store| {
-            store.load_artists_matching(&saved.server.id, album_artist, query, offset, limit)
-        })
+        let settings = load_settings_for_saved(&self.store, &saved);
+        self.store
+            .with_store(|store| {
+                store.load_artists_matching(&saved.server.id, album_artist, query, offset, limit)
+            })
+            .map(|mut page| {
+                external_metadata::normalize_artists(&mut page.items, &settings);
+                page
+            })
     }
 
     pub fn cached_genres_page(
@@ -2863,7 +2875,7 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
         }
         match sync_result {
             Ok(()) => {
-                covers::start_external_album_cover_prefetch_thread(
+                covers::start_external_metadata_cover_prefetch_thread(
                     context.store.clone(),
                     Arc::clone(&context.runtime),
                     Arc::clone(&context.secrets),
@@ -3580,12 +3592,12 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     let cached_track_count = track_page.total;
     let mut albums = album_page.items;
     let mut tracks = track_page.items;
-    let artists = store.with_store(|store| {
+    let mut artists = store.with_store(|store| {
         store
             .load_artists(&saved.server.id, false, 0, SNAPSHOT_GRID_LIMIT)
             .map(|page| page.items)
     })?;
-    let album_artists = store.with_store(|store| {
+    let mut album_artists = store.with_store(|store| {
         store
             .load_artists(&saved.server.id, true, 0, SNAPSHOT_GRID_LIMIT)
             .map(|page| page.items)
@@ -3607,6 +3619,8 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     }
     external_metadata::normalize_albums(&mut albums, &settings);
     external_metadata::normalize_tracks(&mut tracks, &settings);
+    external_metadata::normalize_artists(&mut artists, &settings);
+    external_metadata::normalize_artists(&mut album_artists, &settings);
     external_metadata::normalize_tracks(&mut favorites, &settings);
     let status = sync_state
         .as_ref()

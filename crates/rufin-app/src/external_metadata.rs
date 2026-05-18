@@ -2,13 +2,17 @@ use std::time::Duration;
 
 use reqwest::Url;
 use reqwest::blocking::Client;
-use rufin_core::{Album, AppSettings, HomeSection, ImageRef, QueueEntry, QueueSnapshot, Track};
+use rufin_core::{
+    Album, AppSettings, Artist, HomeSection, ImageRef, QueueEntry, QueueSnapshot, Track,
+};
 use rufin_provider::SearchResults;
 use serde_json::Value;
 
 const EXTERNAL_ALBUM_IMAGE_PREFIX: &str = "external:album:";
+const EXTERNAL_ARTIST_IMAGE_PREFIX: &str = "external:artist:";
 const EXTERNAL_ALBUM_IMAGE_TAG_VERSION: &str = "external-v1";
-const LASTFM_ALBUM_INFO_URL: &str = "https://ws.audioscrobbler.com/2.0/";
+const EXTERNAL_ARTIST_IMAGE_TAG_VERSION: &str = "external-artist-v1";
+const LASTFM_API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 const MUSICBRAINZ_RELEASE_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release/";
 const MUSICBRAINZ_RELEASE_GROUP_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release-group/";
 const COVER_ART_ARCHIVE_RELEASE_URL: &str = "https://coverartarchive.org/release";
@@ -25,12 +29,18 @@ pub struct ExternalAlbumArt {
     pub album: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternalArtistImage {
+    pub artist: String,
+}
+
 pub fn enabled(settings: &AppSettings) -> bool {
     settings.external_metadata_enabled && !settings.private_mode
 }
 
 pub fn is_external_image_ref(image_ref: &ImageRef) -> bool {
     image_ref.item_id.starts_with(EXTERNAL_ALBUM_IMAGE_PREFIX)
+        || image_ref.item_id.starts_with(EXTERNAL_ARTIST_IMAGE_PREFIX)
 }
 
 pub fn album_art_from_image_ref(image_ref: &ImageRef) -> Option<ExternalAlbumArt> {
@@ -41,6 +51,15 @@ pub fn album_art_from_image_ref(image_ref: &ImageRef) -> Option<ExternalAlbumArt
     Some(ExternalAlbumArt {
         artist: percent_decode_component(artist)?,
         album: percent_decode_component(album)?,
+    })
+}
+
+pub fn artist_image_from_image_ref(image_ref: &ImageRef) -> Option<ExternalArtistImage> {
+    let artist = image_ref
+        .item_id
+        .strip_prefix(EXTERNAL_ARTIST_IMAGE_PREFIX)?;
+    Some(ExternalArtistImage {
+        artist: percent_decode_component(artist)?,
     })
 }
 
@@ -58,6 +77,14 @@ pub fn normalize_track(track: &mut Track, settings: &AppSettings) {
     }
 }
 
+pub fn normalize_artist(artist: &mut Artist, settings: &AppSettings) {
+    normalize_image_ref(&mut artist.image_ref, settings);
+    if enabled(settings) && !settings.lastfm_api_key.trim().is_empty() && artist.image_ref.is_none()
+    {
+        artist.image_ref = external_artist_image_ref(&artist.name);
+    }
+}
+
 pub fn normalize_albums(albums: &mut [Album], settings: &AppSettings) {
     for album in albums {
         normalize_album(album, settings);
@@ -67,6 +94,12 @@ pub fn normalize_albums(albums: &mut [Album], settings: &AppSettings) {
 pub fn normalize_tracks(tracks: &mut [Track], settings: &AppSettings) {
     for track in tracks {
         normalize_track(track, settings);
+    }
+}
+
+pub fn normalize_artists(artists: &mut [Artist], settings: &AppSettings) {
+    for artist in artists {
+        normalize_artist(artist, settings);
     }
 }
 
@@ -84,6 +117,7 @@ pub fn normalize_home_section(section: &mut HomeSection, settings: &AppSettings)
 pub fn normalize_search_results(results: &mut SearchResults, settings: &AppSettings) {
     normalize_albums(&mut results.albums, settings);
     normalize_tracks(&mut results.tracks, settings);
+    normalize_artists(&mut results.artists, settings);
 }
 
 pub fn normalize_queue_snapshot(snapshot: &mut QueueSnapshot, settings: &AppSettings) {
@@ -152,6 +186,27 @@ pub fn fetch_album_cover(
     ))
 }
 
+pub fn fetch_artist_image(
+    image: &ExternalArtistImage,
+    lastfm_api_key: &str,
+) -> Result<Vec<u8>, String> {
+    let lastfm_api_key = lastfm_api_key.trim();
+    if lastfm_api_key.is_empty() {
+        return Err("Last.fm API key is required for external artist images".to_string());
+    }
+    let client = Client::builder()
+        .timeout(Duration::from_secs(8))
+        .user_agent(EXTERNAL_METADATA_USER_AGENT)
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    match lastfm_artist_image_url(&client, image, lastfm_api_key) {
+        Ok(Some(url)) => download_image(&client, &url),
+        Ok(None) => Err("Last.fm did not return artist image".to_string()),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn is_expected_lookup_miss(error: &str) -> bool {
     if error.contains("error sending request")
         || error.contains("timed out")
@@ -168,7 +223,9 @@ pub fn is_expected_lookup_miss(error: &str) -> bool {
 
     error.contains("404 Not Found")
         || error.contains("did not return album art")
+        || error.contains("did not return artist image")
         || error.contains("did not return matching")
+        || error.contains("API key is required for external artist images")
 }
 
 fn download_image(client: &Client, url: &str) -> Result<Vec<u8>, String> {
@@ -192,7 +249,7 @@ fn lastfm_album_cover_url(
     api_key: &str,
 ) -> Result<Option<String>, String> {
     let url = Url::parse_with_params(
-        LASTFM_ALBUM_INFO_URL,
+        LASTFM_API_URL,
         [
             ("method", "album.getinfo"),
             ("api_key", api_key.trim()),
@@ -207,7 +264,35 @@ fn lastfm_album_cover_url(
     lastfm_album_image_url(&value)
 }
 
+fn lastfm_artist_image_url(
+    client: &Client,
+    image: &ExternalArtistImage,
+    api_key: &str,
+) -> Result<Option<String>, String> {
+    let url = Url::parse_with_params(
+        LASTFM_API_URL,
+        [
+            ("method", "artist.getinfo"),
+            ("api_key", api_key.trim()),
+            ("artist", image.artist.as_str()),
+            ("autocorrect", "1"),
+            ("format", "json"),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let value = fetch_json(client, url, "Last.fm artist lookup")?;
+    lastfm_artist_image_url_from_value(&value)
+}
+
 fn lastfm_album_image_url(value: &Value) -> Result<Option<String>, String> {
+    lastfm_image_url(value, "/album/image")
+}
+
+fn lastfm_artist_image_url_from_value(value: &Value) -> Result<Option<String>, String> {
+    lastfm_image_url(value, "/artist/image")
+}
+
+fn lastfm_image_url(value: &Value, image_pointer: &str) -> Result<Option<String>, String> {
     if let Some(error_code) = value.get("error").and_then(Value::as_i64) {
         if error_code == 6 {
             return Ok(None);
@@ -221,7 +306,7 @@ fn lastfm_album_image_url(value: &Value) -> Result<Option<String>, String> {
         ));
     }
 
-    let Some(images) = value.pointer("/album/image").and_then(Value::as_array) else {
+    let Some(images) = value.pointer(image_pointer).and_then(Value::as_array) else {
         return Ok(None);
     };
     Ok(images
@@ -355,6 +440,19 @@ fn external_album_image_ref(artist: &str, album: &str) -> Option<ImageRef> {
     Some(ImageRef::new(item_id, Some(tag)))
 }
 
+fn external_artist_image_ref(artist: &str) -> Option<ImageRef> {
+    let artist = normalized_lookup_value(artist)?;
+    let item_id = format!(
+        "{EXTERNAL_ARTIST_IMAGE_PREFIX}{}",
+        percent_encode_component(&artist)
+    );
+    let tag = format!(
+        "{EXTERNAL_ARTIST_IMAGE_TAG_VERSION}-{:016x}",
+        stable_artist_hash(&artist)
+    );
+    Some(ImageRef::new(item_id, Some(tag)))
+}
+
 fn normalized_lookup_value(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -400,6 +498,10 @@ fn stable_album_hash(artist: &str, album: &str) -> u64 {
     hash
 }
 
+fn stable_artist_hash(artist: &str) -> u64 {
+    stable_album_hash(artist, "")
+}
+
 fn percent_encode_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.as_bytes() {
@@ -440,10 +542,11 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        album_art_from_image_ref, cover_art_size_path, enabled, is_expected_lookup_miss,
-        is_external_image_ref, json_ids, lastfm_album_image_url, normalize_album, normalize_track,
+        album_art_from_image_ref, artist_image_from_image_ref, cover_art_size_path, enabled,
+        is_expected_lookup_miss, is_external_image_ref, json_ids, lastfm_album_image_url,
+        lastfm_artist_image_url_from_value, normalize_album, normalize_artist, normalize_track,
     };
-    use rufin_core::{Album, AlbumId, AppSettings, Track, TrackId};
+    use rufin_core::{Album, AlbumId, AppSettings, Artist, ArtistId, Track, TrackId};
     use serde_json::json;
 
     #[test]
@@ -503,6 +606,37 @@ mod tests {
     }
 
     #[test]
+    fn artist_external_image_refs_require_lastfm_key_and_round_trip_lookup_values() {
+        let mut artist = artist_without_cover("Slowdive");
+        normalize_artist(
+            &mut artist,
+            &AppSettings {
+                external_metadata_enabled: true,
+                ..AppSettings::default()
+            },
+        );
+        assert_eq!(artist.image_ref, None);
+
+        normalize_artist(
+            &mut artist,
+            &AppSettings {
+                external_metadata_enabled: true,
+                lastfm_api_key: "key".to_string(),
+                ..AppSettings::default()
+            },
+        );
+
+        let image_ref = artist.image_ref.expect("external artist image ref");
+        assert!(is_external_image_ref(&image_ref));
+        assert_eq!(
+            artist_image_from_image_ref(&image_ref),
+            Some(super::ExternalArtistImage {
+                artist: "Slowdive".to_string(),
+            })
+        );
+    }
+
+    #[test]
     fn unknown_album_metadata_does_not_create_external_cover_ref() {
         let mut album = album_without_cover("Unknown Album", "Unknown Artist");
         normalize_album(
@@ -545,6 +679,23 @@ mod tests {
     }
 
     #[test]
+    fn lastfm_artist_image_url_uses_largest_available_image() {
+        let value = json!({
+            "artist": {
+                "image": [
+                    { "#text": "https://example.test/small.jpg", "size": "small" },
+                    { "#text": "https://example.test/large.jpg", "size": "extralarge" }
+                ]
+            }
+        });
+
+        assert_eq!(
+            lastfm_artist_image_url_from_value(&value).unwrap(),
+            Some("https://example.test/large.jpg".to_string())
+        );
+    }
+
+    #[test]
     fn musicbrainz_id_extraction_deduplicates_empty_and_repeated_ids() {
         let value = json!({
             "release-groups": [
@@ -578,6 +729,9 @@ mod tests {
         ));
         assert!(!is_expected_lookup_miss(
             "MusicBrainz release lookup failed with status 503 Service Unavailable"
+        ));
+        assert!(is_expected_lookup_miss(
+            "Last.fm did not return artist image"
         ));
     }
 
@@ -627,6 +781,20 @@ mod tests {
             image_ref: None,
             genres: Vec::new(),
             local_path: None,
+        }
+    }
+
+    fn artist_without_cover(name: &str) -> Artist {
+        Artist {
+            id: ArtistId::new(format!("artist-{name}")),
+            name: name.to_string(),
+            album_count: 1,
+            track_count: 1,
+            favorite: false,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            image_ref: None,
         }
     }
 }
