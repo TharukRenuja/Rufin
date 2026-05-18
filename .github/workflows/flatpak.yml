@@ -25,7 +25,7 @@ concurrency:
 env:
   APP_ID: io.github.screwys.Rufin
   BUNDLE_NAME: io.github.screwys.Rufin.flatpak
-  MANIFEST: build-aux/flatpak/io.github.screwys.Rufin.json
+  MANIFEST: packaging/flatpak/io.github.screwys.Rufin.json
   RUNTIME_REPO_URL: https://flathub.org/repo/flathub.flatpakrepo
 
 jobs:
