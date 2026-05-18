@@ -29,6 +29,14 @@ const BOTTOM_PLAYER_SIDE_BUTTON_SIZE: i32 = 50;
 const BOTTOM_PLAYER_PLAY_BUTTON_SIZE: i32 = 45;
 const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 3.0;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 52.0;
+const BOTTOM_PLAYER_ACTION_BUTTON_SIZE: i32 = 34;
+const BOTTOM_PLAYER_ACTION_BUTTON_COUNT: i32 = 4;
+const BOTTOM_PLAYER_ACTION_SPACING: i32 = 5;
+const BOTTOM_PLAYER_VOLUME_SPACING: i32 = 2;
+const BOTTOM_PLAYER_VOLUME_MIN_WIDTH: i32 = 48;
+const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 88;
+const BOTTOM_PLAYER_RIGHT_EDGE_GAP: i32 = 8;
+const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 18;
 
 pub(super) struct PlayerControls {
     pub(super) root: gtk::Overlay,
@@ -304,6 +312,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
 
     root.set_child(Some(&bar));
     root.add_overlay(&transport_slot);
+    connect_bottom_player_volume_resize(&root, &volume);
 
     PlayerControls {
         root,
@@ -467,22 +476,26 @@ fn build_transport_controls() -> TransportControls {
 }
 
 fn build_player_action_controls() -> PlayerActionControls {
-    let root = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    root.set_valign(gtk::Align::Center);
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_ACTION_SPACING);
+    root.set_valign(gtk::Align::Start);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
     let (lyrics_button, lyrics_icon, lyrics_icon_open) = lyrics_icon_button("Hide lyrics");
     root.append(&lyrics_button);
     root.append(&queue_button);
     let favorite_button = favorite_icon_button("Favorite");
     root.append(&favorite_button);
+
+    let volume_group = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_VOLUME_SPACING);
+    volume_group.set_valign(gtk::Align::Center);
     let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
-    root.append(&mute_button);
+    volume_group.append(&mute_button);
     let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
     volume.add_css_class("volume-slider");
-    volume.set_width_request(88);
+    volume.set_width_request(BOTTOM_PLAYER_VOLUME_MAX_WIDTH);
     volume.set_value(1.0);
     volume.set_draw_value(false);
-    root.append(&volume);
+    volume_group.append(&volume);
+    root.append(&volume_group);
 
     PlayerActionControls {
         root,
@@ -514,6 +527,31 @@ fn configure_play_button(button: &gtk::Button) {
         BOTTOM_PLAYER_PLAY_BUTTON_SIZE,
         BOTTOM_PLAYER_PLAY_BUTTON_SIZE,
     );
+}
+
+fn connect_bottom_player_volume_resize(root: &gtk::Overlay, volume: &gtk::Scale) {
+    let volume = volume.clone();
+    root.connect_notify_local(Some("width"), move |root, _| {
+        let width = root.width();
+        if width > 0 {
+            volume.set_width_request(bottom_player_volume_width(width));
+        }
+    });
+}
+
+fn bottom_player_volume_width(player_width: i32) -> i32 {
+    let right_side_width = (player_width - BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2;
+    let action_width_without_volume = BOTTOM_PLAYER_ACTION_BUTTON_SIZE
+        * BOTTOM_PLAYER_ACTION_BUTTON_COUNT
+        + BOTTOM_PLAYER_ACTION_SPACING * 3
+        + BOTTOM_PLAYER_VOLUME_SPACING
+        + BOTTOM_PLAYER_RIGHT_EDGE_GAP
+        + BOTTOM_PLAYER_TRANSPORT_CLEARANCE;
+
+    (right_side_width - action_width_without_volume).clamp(
+        BOTTOM_PLAYER_VOLUME_MIN_WIDTH,
+        BOTTOM_PLAYER_VOLUME_MAX_WIDTH,
+    )
 }
 
 fn put_transport_button(buttons: &gtk::Fixed, button: &gtk::Button, slot: f64, size: i32) {
@@ -708,4 +746,14 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
             }
             volume_shell.controller.set_volume(scale.value());
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn volume_width_scales_down_when_bottom_player_narrows() {
+        assert_eq!(super::bottom_player_volume_width(1080), 88);
+        assert_eq!(super::bottom_player_volume_width(925), 73);
+        assert_eq!(super::bottom_player_volume_width(820), 48);
+    }
 }
