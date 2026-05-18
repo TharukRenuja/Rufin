@@ -8,8 +8,11 @@ use serde_json::Value;
 
 const EXTERNAL_ALBUM_IMAGE_PREFIX: &str = "external:album:";
 const EXTERNAL_ALBUM_IMAGE_TAG_VERSION: &str = "external-v1";
+const LASTFM_ALBUM_INFO_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 const MUSICBRAINZ_RELEASE_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release/";
+const MUSICBRAINZ_RELEASE_GROUP_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release-group/";
 const COVER_ART_ARCHIVE_RELEASE_URL: &str = "https://coverartarchive.org/release";
+const COVER_ART_ARCHIVE_RELEASE_GROUP_URL: &str = "https://coverartarchive.org/release-group";
 const EXTERNAL_METADATA_USER_AGENT: &str = concat!(
     "Rufin/",
     env!("CARGO_PKG_VERSION"),
@@ -96,23 +99,83 @@ pub fn normalize_queue_entry(entry: &mut QueueEntry, settings: &AppSettings) {
     }
 }
 
-pub fn fetch_album_cover(art: &ExternalAlbumArt, size: u32) -> Result<Vec<u8>, String> {
+pub fn fetch_album_cover(
+    art: &ExternalAlbumArt,
+    size: u32,
+    lastfm_api_key: &str,
+) -> Result<Vec<u8>, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(8))
         .user_agent(EXTERNAL_METADATA_USER_AGENT)
         .build()
         .map_err(|error| error.to_string())?;
-    let release_id = musicbrainz_release_id(&client, art)?;
-    let url = format!(
-        "{}/{}/{}",
-        COVER_ART_ARCHIVE_RELEASE_URL,
-        release_id,
-        cover_art_size_path(size)
-    );
+
+    let mut errors = Vec::new();
+    if !lastfm_api_key.trim().is_empty() {
+        match lastfm_album_cover_url(&client, art, lastfm_api_key) {
+            Ok(Some(url)) => match download_image(&client, &url) {
+                Ok(bytes) => return Ok(bytes),
+                Err(error) => errors.push(error),
+            },
+            Ok(None) => errors.push("Last.fm did not return album art".to_string()),
+            Err(error) => errors.push(error),
+        }
+    }
+
+    match cover_art_archive_release_group_urls(&client, art, size) {
+        Ok(urls) => {
+            for url in urls {
+                match download_image(&client, &url) {
+                    Ok(bytes) => return Ok(bytes),
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+        Err(error) => errors.push(error),
+    }
+
+    match cover_art_archive_release_urls(&client, art, size) {
+        Ok(urls) => {
+            for url in urls {
+                match download_image(&client, &url) {
+                    Ok(bytes) => return Ok(bytes),
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+        Err(error) => errors.push(error),
+    }
+
+    Err(format!(
+        "external cover lookup found no usable image: {}",
+        errors.join("; ")
+    ))
+}
+
+pub fn is_expected_lookup_miss(error: &str) -> bool {
+    if error.contains("error sending request")
+        || error.contains("timed out")
+        || error.contains("status 401")
+        || error.contains("status 403")
+        || error.contains("status 429")
+        || error.contains("status 500")
+        || error.contains("status 502")
+        || error.contains("status 503")
+        || error.contains("status 504")
+    {
+        return false;
+    }
+
+    error.contains("404 Not Found")
+        || error.contains("did not return album art")
+        || error.contains("did not return matching")
+}
+
+fn download_image(client: &Client, url: &str) -> Result<Vec<u8>, String> {
     let response = client.get(url).send().map_err(|error| error.to_string())?;
     if !response.status().is_success() {
         return Err(format!(
-            "external cover lookup failed with status {}",
+            "external cover image failed with status {}",
             response.status()
         ));
     }
@@ -121,6 +184,151 @@ pub fn fetch_album_cover(art: &ExternalAlbumArt, size: u32) -> Result<Vec<u8>, S
         return Err("external cover response was empty".to_string());
     }
     Ok(bytes.to_vec())
+}
+
+fn lastfm_album_cover_url(
+    client: &Client,
+    art: &ExternalAlbumArt,
+    api_key: &str,
+) -> Result<Option<String>, String> {
+    let url = Url::parse_with_params(
+        LASTFM_ALBUM_INFO_URL,
+        [
+            ("method", "album.getinfo"),
+            ("api_key", api_key.trim()),
+            ("artist", art.artist.as_str()),
+            ("album", art.album.as_str()),
+            ("autocorrect", "1"),
+            ("format", "json"),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let value = fetch_json(client, url, "Last.fm lookup")?;
+    lastfm_album_image_url(&value)
+}
+
+fn lastfm_album_image_url(value: &Value) -> Result<Option<String>, String> {
+    if let Some(error_code) = value.get("error").and_then(Value::as_i64) {
+        if error_code == 6 {
+            return Ok(None);
+        }
+        let message = value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown error");
+        return Err(format!(
+            "Last.fm lookup returned error {error_code}: {message}"
+        ));
+    }
+
+    let Some(images) = value.pointer("/album/image").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    Ok(images
+        .iter()
+        .rev()
+        .filter_map(|image| image.get("#text").and_then(Value::as_str))
+        .map(str::trim)
+        .find(|url| !url.is_empty())
+        .map(str::to_string))
+}
+
+fn cover_art_archive_release_group_urls(
+    client: &Client,
+    art: &ExternalAlbumArt,
+    size: u32,
+) -> Result<Vec<String>, String> {
+    let ids = musicbrainz_release_group_ids(client, art)?;
+    let cover_path = cover_art_size_path(size);
+    Ok(ids
+        .into_iter()
+        .map(|id| format!("{COVER_ART_ARCHIVE_RELEASE_GROUP_URL}/{id}/{cover_path}"))
+        .collect())
+}
+
+fn cover_art_archive_release_urls(
+    client: &Client,
+    art: &ExternalAlbumArt,
+    size: u32,
+) -> Result<Vec<String>, String> {
+    let ids = musicbrainz_release_ids(client, art)?;
+    let cover_path = cover_art_size_path(size);
+    Ok(ids
+        .into_iter()
+        .map(|id| format!("{COVER_ART_ARCHIVE_RELEASE_URL}/{id}/{cover_path}"))
+        .collect())
+}
+
+fn musicbrainz_release_group_ids(
+    client: &Client,
+    art: &ExternalAlbumArt,
+) -> Result<Vec<String>, String> {
+    let query = format!(
+        "artist:\"{}\" AND releasegroup:\"{}\"",
+        musicbrainz_phrase(&art.artist),
+        musicbrainz_phrase(&art.album)
+    );
+    let url = Url::parse_with_params(
+        MUSICBRAINZ_RELEASE_GROUP_SEARCH_URL,
+        [("query", query.as_str()), ("fmt", "json"), ("limit", "5")],
+    )
+    .map_err(|error| error.to_string())?;
+    let value = fetch_json(client, url, "MusicBrainz release-group lookup")?;
+    let ids = json_ids(&value, "/release-groups");
+    if ids.is_empty() {
+        Err("MusicBrainz did not return matching release groups".to_string())
+    } else {
+        Ok(ids)
+    }
+}
+
+fn musicbrainz_release_ids(client: &Client, art: &ExternalAlbumArt) -> Result<Vec<String>, String> {
+    let query = format!(
+        "artist:\"{}\" AND release:\"{}\"",
+        musicbrainz_phrase(&art.artist),
+        musicbrainz_phrase(&art.album)
+    );
+    let url = Url::parse_with_params(
+        MUSICBRAINZ_RELEASE_SEARCH_URL,
+        [("query", query.as_str()), ("fmt", "json"), ("limit", "5")],
+    )
+    .map_err(|error| error.to_string())?;
+    let value = fetch_json(client, url, "MusicBrainz release lookup")?;
+    let ids = json_ids(&value, "/releases");
+    if ids.is_empty() {
+        Err("MusicBrainz did not return matching releases".to_string())
+    } else {
+        Ok(ids)
+    }
+}
+
+fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Value, String> {
+    let response = client.get(url).send().map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "{context} failed with status {}",
+            response.status()
+        ));
+    }
+    response.json::<Value>().map_err(|error| error.to_string())
+}
+
+fn json_ids(value: &Value, collection_pointer: &str) -> Vec<String> {
+    let Some(items) = value.pointer(collection_pointer).and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for id in items
+        .iter()
+        .filter_map(|item| item.get("id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        if !ids.iter().any(|existing| existing == id) {
+            ids.push(id.to_string());
+        }
+    }
+    ids
 }
 
 fn normalize_image_ref(image_ref: &mut Option<ImageRef>, settings: &AppSettings) {
@@ -160,36 +368,6 @@ fn normalized_lookup_value(value: &str) -> Option<String> {
         return None;
     }
     Some(value.to_string())
-}
-
-fn musicbrainz_release_id(client: &Client, art: &ExternalAlbumArt) -> Result<String, String> {
-    let query = format!(
-        "artist:\"{}\" AND release:\"{}\"",
-        musicbrainz_phrase(&art.artist),
-        musicbrainz_phrase(&art.album)
-    );
-    let url = Url::parse_with_params(
-        MUSICBRAINZ_RELEASE_SEARCH_URL,
-        [("query", query.as_str()), ("fmt", "json"), ("limit", "1")],
-    )
-    .map_err(|error| error.to_string())?;
-    let response = client.get(url).send().map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "MusicBrainz lookup failed with status {}",
-            response.status()
-        ));
-    }
-    let value = response
-        .json::<Value>()
-        .map_err(|error| error.to_string())?;
-    value
-        .pointer("/releases/0/id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|release_id| !release_id.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| "MusicBrainz did not return a matching release".to_string())
 }
 
 fn cover_art_size_path(size: u32) -> &'static str {
@@ -262,9 +440,11 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        album_art_from_image_ref, enabled, is_external_image_ref, normalize_album, normalize_track,
+        album_art_from_image_ref, cover_art_size_path, enabled, is_expected_lookup_miss,
+        is_external_image_ref, json_ids, lastfm_album_image_url, normalize_album, normalize_track,
     };
     use rufin_core::{Album, AlbumId, AppSettings, Track, TrackId};
+    use serde_json::json;
 
     #[test]
     fn external_metadata_requires_setting_and_non_private_mode() {
@@ -334,6 +514,71 @@ mod tests {
         );
 
         assert_eq!(album.image_ref, None);
+    }
+
+    #[test]
+    fn lastfm_album_image_url_uses_largest_available_image() {
+        let value = json!({
+            "album": {
+                "image": [
+                    { "#text": "https://example.test/small.jpg", "size": "small" },
+                    { "#text": "", "size": "medium" },
+                    { "#text": "https://example.test/large.jpg", "size": "extralarge" }
+                ]
+            }
+        });
+
+        assert_eq!(
+            lastfm_album_image_url(&value).unwrap(),
+            Some("https://example.test/large.jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn lastfm_album_not_found_is_a_lookup_miss() {
+        let value = json!({
+            "error": 6,
+            "message": "Album not found"
+        });
+
+        assert_eq!(lastfm_album_image_url(&value).unwrap(), None);
+    }
+
+    #[test]
+    fn musicbrainz_id_extraction_deduplicates_empty_and_repeated_ids() {
+        let value = json!({
+            "release-groups": [
+                { "id": "first" },
+                { "id": "" },
+                { "id": "first" },
+                { "id": "second" }
+            ]
+        });
+
+        assert_eq!(json_ids(&value, "/release-groups"), vec!["first", "second"]);
+    }
+
+    #[test]
+    fn cover_art_archive_thumbnail_size_uses_supported_steps() {
+        assert_eq!(cover_art_size_path(96), "front-250");
+        assert_eq!(cover_art_size_path(250), "front-250");
+        assert_eq!(cover_art_size_path(256), "front-500");
+    }
+
+    #[test]
+    fn expected_lookup_misses_exclude_network_and_service_errors() {
+        assert!(is_expected_lookup_miss(
+            "external cover image failed with status 404 Not Found"
+        ));
+        assert!(is_expected_lookup_miss(
+            "MusicBrainz did not return matching release groups"
+        ));
+        assert!(!is_expected_lookup_miss(
+            "error sending request for url (https://coverartarchive.org/release/id/front-500)"
+        ));
+        assert!(!is_expected_lookup_miss(
+            "MusicBrainz release lookup failed with status 503 Service Unavailable"
+        ));
     }
 
     fn album_without_cover(title: &str, artist: &str) -> Album {

@@ -134,11 +134,10 @@ impl AppController {
         let cover_in_flight = Arc::clone(&self.cover_in_flight);
         let cover_slots = Arc::clone(&self.cover_slots);
         thread::spawn(move || {
+            let is_external_cover = external_metadata::is_external_image_ref(&image_ref);
             let result = (|| -> Result<Option<PathBuf>, String> {
                 let settings = load_settings_from_store(&store);
-                if external_metadata::is_external_image_ref(&image_ref)
-                    && !external_metadata::enabled(&settings)
-                {
+                if is_external_cover && !external_metadata::enabled(&settings) {
                     return Ok(None);
                 }
                 if let Some(path) = cached_cover_path_for_key(&key) {
@@ -181,7 +180,9 @@ impl AppController {
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    if is_provider_not_found_error(&error) {
+                    if is_external_cover && external_metadata::is_expected_lookup_miss(&error) {
+                        debug!(%error, "external metadata cover was not available");
+                    } else if is_provider_not_found_error(&error) {
                         debug!(%error, "cached cover source item is no longer available");
                     } else {
                         warn!(%error, "failed to prepare cover");
@@ -399,7 +400,11 @@ fn fetch_and_cache_cover(
     size: u32,
 ) -> Result<PathBuf, String> {
     let bytes = if let Some(art) = external_metadata::album_art_from_image_ref(&image_ref) {
-        external_metadata::fetch_album_cover(&art, size)?
+        let settings = load_settings_from_store(store);
+        if !external_metadata::enabled(&settings) {
+            return Err("external metadata lookup is disabled".to_string());
+        }
+        external_metadata::fetch_album_cover(&art, size, settings.lastfm_api_key.trim())?
     } else {
         let provider = provider_for_saved(store, runtime, secrets, saved)?;
         let image = runtime
