@@ -69,6 +69,18 @@ jobs:
             master
           ls -lh "dist/$BUNDLE_NAME"
 
+      - name: Verify Flatpak bundle
+        run: |
+          set -euo pipefail
+          flatpak install --user --noninteractive --bundle "dist/$BUNDLE_NAME"
+          flatpak info --user "$APP_ID"
+          flatpak run --command=sh "$APP_ID" -c '
+            test -x /app/bin/rufin
+            /app/bin/rufin --help >/dev/null
+            test -f /app/share/applications/io.github.screwys.Rufin.desktop
+            test -f /app/share/metainfo/io.github.screwys.Rufin.metainfo.xml
+          '
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:

@@ -35,6 +35,8 @@ jobs:
           pacman -Syu --noconfirm --needed \
             base-devel \
             curl \
+            appstream \
+            desktop-file-utils \
             gdk-pixbuf2 \
             gettext \
             git \
@@ -139,6 +141,34 @@ jobs:
               makepkg --cleanbuild --clean --noconfirm --noprogressbar
               makepkg --printsrcinfo > .SRCINFO
             "
+          done
+
+      - name: Verify built packages
+        run: |
+          set -euo pipefail
+
+          package="${{ inputs.package || 'rufin' }}"
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            package="rufin"
+          fi
+
+          case "$package" in
+            both) packages=(rufin rufin-git) ;;
+            rufin) packages=(rufin) ;;
+            rufin-git) packages=(rufin-git) ;;
+            *) echo "unknown package: $package" >&2; exit 1 ;;
+          esac
+
+          for aur_package in "${packages[@]}"; do
+            pkgfile="$(find "$GITHUB_WORKSPACE/packaging/aur/$aur_package" -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)"
+            test -n "$pkgfile"
+
+            pacman -U --noconfirm "$pkgfile"
+            test -x /usr/bin/rufin
+            rufin --help >/dev/null
+            desktop-file-validate /usr/share/applications/io.github.screwys.Rufin.desktop
+            appstreamcli validate --no-net /usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml
+            pacman -Rns --noconfirm "$aur_package"
           done
 
       - name: Publish packages

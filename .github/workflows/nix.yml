@@ -47,3 +47,6 @@ jobs:
 
       - name: Check flake
         run: nix flake check --print-build-logs
+
+      - name: Verify wrapped app
+        run: nix run .# -- --help
