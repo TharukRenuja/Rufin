@@ -3,7 +3,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use rufin_core::{
     AppSettings, DensityMode, DiscordDisplayType, DiscordLinkType, HomeBlockKind, LibraryListKey,
-    LibraryListSettings, PlaybackSettings, Route, TrackTableSettings,
+    LibraryListSettings, PlaybackSettings, Route, ScrobblingSettings, TrackTableSettings,
 };
 use tracing::warn;
 
@@ -262,6 +262,20 @@ impl Shell {
         {
             self.update_discord_presence(&self.state.player.borrow());
         }
+    }
+
+    pub(super) fn update_scrobbling_settings(
+        self: &Rc<Self>,
+        warning_action: &'static str,
+        update: impl FnOnce(&mut ScrobblingSettings) -> bool,
+    ) {
+        self.update_app_settings(warning_action, |settings| {
+            let changed = update(&mut settings.scrobbling);
+            if changed {
+                settings.scrobbling.sanitize();
+            }
+            changed
+        });
     }
 
     pub(super) fn save_window_state(&self) {

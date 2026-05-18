@@ -11,9 +11,10 @@ pub use domain::{
 pub use queue::{QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ShuffleState};
 pub use route::{DensityMode, EffectiveDensity, Route, RouteStack, SearchKind};
 pub use settings::{
-    AppSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType, DiscordLinkType,
-    EQUALIZER_BAND_COUNT, EqualizerSettings, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, LibraryListSettingsEntry, PlaybackSettings, PlaybackTransitionMode,
-    ReplayGainMode, StreamQuality, ThemePreference, TrackSortKey, TrackTableColumn,
-    TrackTableSettings, available_grid_fields, available_row_fields, available_sort_fields,
+    AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType,
+    DiscordLinkType, EQUALIZER_BAND_COUNT, EqualizerSettings, LibraryField, LibraryLayout,
+    LibraryListKey, LibraryListSettings, LibraryListSettingsEntry, ListenBrainzScrobbleSettings,
+    PlaybackSettings, PlaybackTransitionMode, ReplayGainMode, ScrobblingSettings, StreamQuality,
+    ThemePreference, TrackSortKey, TrackTableColumn, TrackTableSettings, available_grid_fields,
+    available_row_fields, available_sort_fields,
 };

@@ -31,6 +31,7 @@ use tokio::runtime::Runtime;
 use tracing::{debug, info, instrument, warn};
 
 use crate::external_metadata;
+use crate::external_scrobbling::{self, ExternalScrobbleState};
 use crate::providers::{
     JellyfinLyricsSearch, LoadedProvider, StreamingProvider, login_provider, provider_display_name,
     provider_from_saved,
@@ -199,6 +200,7 @@ pub struct AppController {
     auto_dj_enabled: Arc<Mutex<bool>>,
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
+    external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
     events: Sender<ControllerEvent>,
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
@@ -591,6 +593,7 @@ impl AppController {
                 auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
                 last_progress_snapshot: Arc::new(Mutex::new(None)),
                 last_report_snapshot: Arc::new(Mutex::new(None)),
+                external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
                 events,
                 sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -637,6 +640,7 @@ impl AppController {
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
+            external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -688,6 +692,7 @@ impl AppController {
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
+            external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -2682,6 +2687,14 @@ impl AppController {
         if settings.private_mode {
             return;
         }
+        external_scrobbling::report(
+            &settings,
+            &self.external_scrobble_state,
+            kind,
+            failed,
+            &snapshot,
+            &current,
+        );
         let report = PlaybackReport {
             kind,
             track_id: current.track_id,
@@ -4465,6 +4478,7 @@ mod tests {
         refresh_home_sections, refresh_home_sections_without_explore, restore_queue,
         seek_position_is_stale, sync_page_finished, sync_provider,
     };
+    use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
         AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
         PlaylistId, QueueEngine, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
@@ -6135,6 +6149,7 @@ mod tests {
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
+            external_scrobble_state: Arc::new(Mutex::new(ExternalScrobbleState::default())),
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),

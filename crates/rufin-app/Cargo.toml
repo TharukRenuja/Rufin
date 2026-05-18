@@ -16,8 +16,9 @@ gettext-rs = { version = "0.7.7", features = ["gettext-system"] }
 gdk-pixbuf = "0.22.0"
 gtk = { package = "gtk4", version = "0.11.3", features = ["v4_20"] }
 adw = { package = "libadwaita", version = "0.9.1", features = ["v1_8", "gtk_v4_20"] }
+md5 = "0.8.0"
 mpris-server = "0.10.0"
-reqwest = { version = "0.13.3", features = ["blocking", "json"] }
+reqwest = { version = "0.13.3", features = ["blocking", "form", "json"] }
 rufin-core = { path = "../rufin-core" }
 rufin-playback = { path = "../rufin-playback" }
 rufin-provider = { path = "../rufin-provider" }

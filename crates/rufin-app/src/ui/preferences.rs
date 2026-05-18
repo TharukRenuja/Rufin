@@ -20,10 +20,12 @@ pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
         .build();
 
     let general_page = general_page(shell);
+    let scrobbling_page = scrobbling_page(shell);
     let playback_page = playback_page(shell);
     let home_page = home_page(shell);
     let library_page = library_page(shell, &dialog);
     dialog.add(&general_page);
+    dialog.add(&scrobbling_page);
     dialog.add(&playback_page);
     dialog.add(&home_page);
     dialog.add(&library_page);
@@ -311,6 +313,285 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     discord_group.add(&lastfm_row);
 
     page.add(&discord_group);
+
+    page
+}
+
+fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title(tr("Scrobbling"))
+        .icon_name("emblem-shared-symbolic")
+        .build();
+    let settings = shell.state.settings.borrow().scrobbling.clone();
+
+    let lastfm_group = adw::PreferencesGroup::builder()
+        .title(tr("Last.fm"))
+        .description(tr(
+            "Scrobble directly with your own Last.fm API credentials and session key.",
+        ))
+        .build();
+    let lastfm_enabled = adw::SwitchRow::builder()
+        .title(tr("Last.fm scrobbling"))
+        .active(settings.lastfm.enabled)
+        .build();
+    let lastfm_enabled_shell = Rc::clone(shell);
+    lastfm_enabled.connect_active_notify(move |row| {
+        lastfm_enabled_shell.update_scrobbling_settings("Last.fm scrobbling setting", |settings| {
+            if settings.lastfm.enabled == row.is_active() {
+                return false;
+            }
+            settings.lastfm.enabled = row.is_active();
+            true
+        });
+    });
+    lastfm_group.add(&lastfm_enabled);
+
+    let lastfm_api_key = adw::EntryRow::builder()
+        .title(tr("API key"))
+        .text(&settings.lastfm.api_key)
+        .show_apply_button(true)
+        .build();
+    let lastfm_api_shell = Rc::clone(shell);
+    lastfm_api_key.connect_apply(move |row| {
+        let api_key = row.text().trim().to_string();
+        lastfm_api_shell.update_scrobbling_settings("Last.fm API key setting", |settings| {
+            if settings.lastfm.api_key == api_key {
+                return false;
+            }
+            settings.lastfm.api_key = api_key;
+            true
+        });
+    });
+    lastfm_group.add(&lastfm_api_key);
+
+    let lastfm_api_secret = adw::PasswordEntryRow::builder()
+        .title(tr("Shared secret"))
+        .text(&settings.lastfm.api_secret)
+        .show_apply_button(true)
+        .build();
+    let lastfm_secret_shell = Rc::clone(shell);
+    lastfm_api_secret.connect_apply(move |row| {
+        let api_secret = row.text().trim().to_string();
+        lastfm_secret_shell.update_scrobbling_settings(
+            "Last.fm shared secret setting",
+            |settings| {
+                if settings.lastfm.api_secret == api_secret {
+                    return false;
+                }
+                settings.lastfm.api_secret = api_secret;
+                true
+            },
+        );
+    });
+    lastfm_group.add(&lastfm_api_secret);
+
+    let lastfm_session = adw::PasswordEntryRow::builder()
+        .title(tr("Session key"))
+        .text(&settings.lastfm.session_key)
+        .show_apply_button(true)
+        .build();
+    let lastfm_session_shell = Rc::clone(shell);
+    lastfm_session.connect_apply(move |row| {
+        let session_key = row.text().trim().to_string();
+        lastfm_session_shell.update_scrobbling_settings(
+            "Last.fm session key setting",
+            |settings| {
+                if settings.lastfm.session_key == session_key {
+                    return false;
+                }
+                settings.lastfm.session_key = session_key;
+                true
+            },
+        );
+    });
+    lastfm_group.add(&lastfm_session);
+
+    let lastfm_now_playing = adw::SwitchRow::builder()
+        .title(tr("Now playing updates"))
+        .active(settings.lastfm.now_playing_enabled)
+        .build();
+    let lastfm_now_playing_shell = Rc::clone(shell);
+    lastfm_now_playing.connect_active_notify(move |row| {
+        lastfm_now_playing_shell.update_scrobbling_settings(
+            "Last.fm now playing setting",
+            |settings| {
+                if settings.lastfm.now_playing_enabled == row.is_active() {
+                    return false;
+                }
+                settings.lastfm.now_playing_enabled = row.is_active();
+                true
+            },
+        );
+    });
+    lastfm_group.add(&lastfm_now_playing);
+    page.add(&lastfm_group);
+
+    let librefm_group = adw::PreferencesGroup::builder()
+        .title(tr("Libre.fm"))
+        .description(tr("Use the Libre.fm Last.fm-compatible scrobbling API."))
+        .build();
+    let librefm_enabled = adw::SwitchRow::builder()
+        .title(tr("Libre.fm scrobbling"))
+        .active(settings.librefm.enabled)
+        .build();
+    let librefm_enabled_shell = Rc::clone(shell);
+    librefm_enabled.connect_active_notify(move |row| {
+        librefm_enabled_shell.update_scrobbling_settings(
+            "Libre.fm scrobbling setting",
+            |settings| {
+                if settings.librefm.enabled == row.is_active() {
+                    return false;
+                }
+                settings.librefm.enabled = row.is_active();
+                true
+            },
+        );
+    });
+    librefm_group.add(&librefm_enabled);
+
+    let librefm_api_key = adw::EntryRow::builder()
+        .title(tr("API key"))
+        .text(&settings.librefm.api_key)
+        .show_apply_button(true)
+        .build();
+    let librefm_api_shell = Rc::clone(shell);
+    librefm_api_key.connect_apply(move |row| {
+        let api_key = row.text().trim().to_string();
+        librefm_api_shell.update_scrobbling_settings("Libre.fm API key setting", |settings| {
+            if settings.librefm.api_key == api_key {
+                return false;
+            }
+            settings.librefm.api_key = api_key;
+            true
+        });
+    });
+    librefm_group.add(&librefm_api_key);
+
+    let librefm_api_secret = adw::PasswordEntryRow::builder()
+        .title(tr("Shared secret"))
+        .text(&settings.librefm.api_secret)
+        .show_apply_button(true)
+        .build();
+    let librefm_secret_shell = Rc::clone(shell);
+    librefm_api_secret.connect_apply(move |row| {
+        let api_secret = row.text().trim().to_string();
+        librefm_secret_shell.update_scrobbling_settings(
+            "Libre.fm shared secret setting",
+            |settings| {
+                if settings.librefm.api_secret == api_secret {
+                    return false;
+                }
+                settings.librefm.api_secret = api_secret;
+                true
+            },
+        );
+    });
+    librefm_group.add(&librefm_api_secret);
+
+    let librefm_session = adw::PasswordEntryRow::builder()
+        .title(tr("Session key"))
+        .text(&settings.librefm.session_key)
+        .show_apply_button(true)
+        .build();
+    let librefm_session_shell = Rc::clone(shell);
+    librefm_session.connect_apply(move |row| {
+        let session_key = row.text().trim().to_string();
+        librefm_session_shell.update_scrobbling_settings(
+            "Libre.fm session key setting",
+            |settings| {
+                if settings.librefm.session_key == session_key {
+                    return false;
+                }
+                settings.librefm.session_key = session_key;
+                true
+            },
+        );
+    });
+    librefm_group.add(&librefm_session);
+
+    let librefm_now_playing = adw::SwitchRow::builder()
+        .title(tr("Now playing updates"))
+        .active(settings.librefm.now_playing_enabled)
+        .build();
+    let librefm_now_playing_shell = Rc::clone(shell);
+    librefm_now_playing.connect_active_notify(move |row| {
+        librefm_now_playing_shell.update_scrobbling_settings(
+            "Libre.fm now playing setting",
+            |settings| {
+                if settings.librefm.now_playing_enabled == row.is_active() {
+                    return false;
+                }
+                settings.librefm.now_playing_enabled = row.is_active();
+                true
+            },
+        );
+    });
+    librefm_group.add(&librefm_now_playing);
+    page.add(&librefm_group);
+
+    let listenbrainz_group = adw::PreferencesGroup::builder()
+        .title(tr("ListenBrainz"))
+        .description(tr("Scrobble with a ListenBrainz user token."))
+        .build();
+    let listenbrainz_enabled = adw::SwitchRow::builder()
+        .title(tr("ListenBrainz scrobbling"))
+        .active(settings.listenbrainz.enabled)
+        .build();
+    let listenbrainz_enabled_shell = Rc::clone(shell);
+    listenbrainz_enabled.connect_active_notify(move |row| {
+        listenbrainz_enabled_shell.update_scrobbling_settings(
+            "ListenBrainz scrobbling setting",
+            |settings| {
+                if settings.listenbrainz.enabled == row.is_active() {
+                    return false;
+                }
+                settings.listenbrainz.enabled = row.is_active();
+                true
+            },
+        );
+    });
+    listenbrainz_group.add(&listenbrainz_enabled);
+
+    let listenbrainz_token = adw::PasswordEntryRow::builder()
+        .title(tr("User token"))
+        .text(&settings.listenbrainz.user_token)
+        .show_apply_button(true)
+        .build();
+    let listenbrainz_token_shell = Rc::clone(shell);
+    listenbrainz_token.connect_apply(move |row| {
+        let token = row.text().trim().to_string();
+        listenbrainz_token_shell.update_scrobbling_settings(
+            "ListenBrainz token setting",
+            |settings| {
+                if settings.listenbrainz.user_token == token {
+                    return false;
+                }
+                settings.listenbrainz.user_token = token;
+                true
+            },
+        );
+    });
+    listenbrainz_group.add(&listenbrainz_token);
+
+    let listenbrainz_now_playing = adw::SwitchRow::builder()
+        .title(tr("Now playing updates"))
+        .active(settings.listenbrainz.now_playing_enabled)
+        .build();
+    let listenbrainz_now_playing_shell = Rc::clone(shell);
+    listenbrainz_now_playing.connect_active_notify(move |row| {
+        listenbrainz_now_playing_shell.update_scrobbling_settings(
+            "ListenBrainz now playing setting",
+            |settings| {
+                if settings.listenbrainz.now_playing_enabled == row.is_active() {
+                    return false;
+                }
+                settings.listenbrainz.now_playing_enabled = row.is_active();
+                true
+            },
+        );
+    });
+    listenbrainz_group.add(&listenbrainz_now_playing);
+    page.add(&listenbrainz_group);
 
     page
 }

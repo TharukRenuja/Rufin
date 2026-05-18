@@ -114,6 +114,120 @@ pub enum DiscordLinkType {
     None,
 }
 
+fn default_librefm_api_key() -> String {
+    "rufin".to_string()
+}
+
+fn default_librefm_api_secret() -> String {
+    "rufin".to_string()
+}
+
+fn default_now_playing_enabled() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AudioscrobblerScrobbleSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_secret: String,
+    #[serde(default)]
+    pub session_key: String,
+    #[serde(default = "default_now_playing_enabled")]
+    pub now_playing_enabled: bool,
+}
+
+impl Default for AudioscrobblerScrobbleSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: String::new(),
+            api_secret: String::new(),
+            session_key: String::new(),
+            now_playing_enabled: true,
+        }
+    }
+}
+
+impl AudioscrobblerScrobbleSettings {
+    fn sanitize(&mut self) {
+        self.api_key = self.api_key.trim().to_string();
+        self.api_secret = self.api_secret.trim().to_string();
+        self.session_key = self.session_key.trim().to_string();
+    }
+
+    fn with_librefm_defaults() -> Self {
+        Self {
+            api_key: default_librefm_api_key(),
+            api_secret: default_librefm_api_secret(),
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ListenBrainzScrobbleSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub user_token: String,
+    #[serde(default = "default_now_playing_enabled")]
+    pub now_playing_enabled: bool,
+}
+
+impl Default for ListenBrainzScrobbleSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            user_token: String::new(),
+            now_playing_enabled: true,
+        }
+    }
+}
+
+impl ListenBrainzScrobbleSettings {
+    fn sanitize(&mut self) {
+        self.user_token = self.user_token.trim().to_string();
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ScrobblingSettings {
+    #[serde(default)]
+    pub lastfm: AudioscrobblerScrobbleSettings,
+    #[serde(default)]
+    pub librefm: AudioscrobblerScrobbleSettings,
+    #[serde(default)]
+    pub listenbrainz: ListenBrainzScrobbleSettings,
+}
+
+impl Default for ScrobblingSettings {
+    fn default() -> Self {
+        Self {
+            lastfm: AudioscrobblerScrobbleSettings::default(),
+            librefm: AudioscrobblerScrobbleSettings::with_librefm_defaults(),
+            listenbrainz: ListenBrainzScrobbleSettings::default(),
+        }
+    }
+}
+
+impl ScrobblingSettings {
+    pub fn sanitize(&mut self) {
+        self.lastfm.sanitize();
+        self.librefm.sanitize();
+        if self.librefm.api_key.is_empty() {
+            self.librefm.api_key = default_librefm_api_key();
+        }
+        if self.librefm.api_secret.is_empty() {
+            self.librefm.api_secret = default_librefm_api_secret();
+        }
+        self.listenbrainz.sanitize();
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum TrackTableColumn {
     TrackNumber,
@@ -944,6 +1058,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub lastfm_api_key: String,
     #[serde(default)]
+    pub scrobbling: ScrobblingSettings,
+    #[serde(default)]
     pub auto_dj_enabled: bool,
     #[serde(default)]
     pub playback: PlaybackSettings,
@@ -1001,6 +1117,7 @@ impl Default for AppSettings {
             discord_show_as_listening: false,
             discord_show_state_icon: true,
             lastfm_api_key: String::new(),
+            scrobbling: ScrobblingSettings::default(),
             auto_dj_enabled: false,
             playback: PlaybackSettings::default(),
             home_sections: default_home_sections(),
@@ -1036,6 +1153,7 @@ impl AppSettings {
         }
         self.track_table.migrate_defaults();
         self.playback.sanitize();
+        self.scrobbling.sanitize();
         self.migrate_home_blocks();
         self.migrate_library_lists();
     }
@@ -1176,6 +1294,19 @@ mod tests {
         assert!(!settings.discord_show_as_listening);
         assert!(settings.discord_show_state_icon);
         assert_eq!(settings.lastfm_api_key, "");
+        assert!(!settings.scrobbling.lastfm.enabled);
+        assert_eq!(settings.scrobbling.lastfm.api_key, "");
+        assert_eq!(settings.scrobbling.lastfm.api_secret, "");
+        assert_eq!(settings.scrobbling.lastfm.session_key, "");
+        assert!(settings.scrobbling.lastfm.now_playing_enabled);
+        assert!(!settings.scrobbling.librefm.enabled);
+        assert_eq!(settings.scrobbling.librefm.api_key, "rufin");
+        assert_eq!(settings.scrobbling.librefm.api_secret, "rufin");
+        assert_eq!(settings.scrobbling.librefm.session_key, "");
+        assert!(settings.scrobbling.librefm.now_playing_enabled);
+        assert!(!settings.scrobbling.listenbrainz.enabled);
+        assert_eq!(settings.scrobbling.listenbrainz.user_token, "");
+        assert!(settings.scrobbling.listenbrainz.now_playing_enabled);
         assert!(!settings.auto_dj_enabled);
         assert_eq!(
             settings.playback.transition_mode,
@@ -1285,6 +1416,10 @@ mod tests {
         assert!(!restored.discord_show_as_listening);
         assert!(restored.discord_show_state_icon);
         assert_eq!(restored.lastfm_api_key, "");
+        assert!(!restored.scrobbling.lastfm.enabled);
+        assert_eq!(restored.scrobbling.librefm.api_key, "rufin");
+        assert_eq!(restored.scrobbling.librefm.api_secret, "rufin");
+        assert!(!restored.scrobbling.listenbrainz.enabled);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
     }
 

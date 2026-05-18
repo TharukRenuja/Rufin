@@ -160,6 +160,21 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Prefer server lyrics");
     let _ = tr("Search server lyrics before external providers.");
     let _ = tr("Use remote lyric providers when server lyrics are unavailable.");
+    let _ = tr("Scrobbling");
+    let _ = tr("Last.fm");
+    let _ = tr("Scrobble directly with your own Last.fm API credentials and session key.");
+    let _ = tr("Last.fm scrobbling");
+    let _ = tr("API key");
+    let _ = tr("Shared secret");
+    let _ = tr("Session key");
+    let _ = tr("Now playing updates");
+    let _ = tr("Libre.fm");
+    let _ = tr("Use the Libre.fm Last.fm-compatible scrobbling API.");
+    let _ = tr("Libre.fm scrobbling");
+    let _ = tr("ListenBrainz");
+    let _ = tr("Scrobble with a ListenBrainz user token.");
+    let _ = tr("ListenBrainz scrobbling");
+    let _ = tr("User token");
     let _ = tr(
         "Stop playback reporting, external lyrics, external metadata, notifications, and presence.",
     );
