@@ -34,7 +34,8 @@ const BOTTOM_PLAYER_ACTION_BUTTON_COUNT: i32 = 4;
 const BOTTOM_PLAYER_ACTION_SPACING: i32 = 5;
 const BOTTOM_PLAYER_VOLUME_SPACING: i32 = 2;
 const BOTTOM_PLAYER_VOLUME_MIN_WIDTH: i32 = 48;
-const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 88;
+const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 160;
+const BOTTOM_PLAYER_VOLUME_WIDTH_RATIO: f64 = 1.0 / 16.0;
 const BOTTOM_PLAYER_RIGHT_EDGE_GAP: i32 = 8;
 const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 18;
 
@@ -312,7 +313,6 @@ pub(super) fn build_bottom_player() -> PlayerControls {
 
     root.set_child(Some(&bar));
     root.add_overlay(&transport_slot);
-    connect_bottom_player_volume_resize(&root, &volume);
 
     PlayerControls {
         root,
@@ -477,21 +477,26 @@ fn build_transport_controls() -> TransportControls {
 
 fn build_player_action_controls() -> PlayerActionControls {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_ACTION_SPACING);
-    root.set_valign(gtk::Align::Start);
+    root.set_valign(gtk::Align::Center);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
     let (lyrics_button, lyrics_icon, lyrics_icon_open) = lyrics_icon_button("Hide lyrics");
+    configure_player_action_button(&lyrics_button);
     root.append(&lyrics_button);
+    configure_player_action_button(&queue_button);
     root.append(&queue_button);
     let favorite_button = favorite_icon_button("Favorite");
+    configure_player_action_button(&favorite_button);
     root.append(&favorite_button);
 
     let volume_group = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_VOLUME_SPACING);
     volume_group.set_valign(gtk::Align::Center);
     let (mute_button, mute_icon) = icon_button_with_image("audio-volume-high-symbolic", "Mute");
+    configure_player_action_button(&mute_button);
     volume_group.append(&mute_button);
     let volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
     volume.add_css_class("volume-slider");
-    volume.set_width_request(BOTTOM_PLAYER_VOLUME_MAX_WIDTH);
+    volume.set_valign(gtk::Align::Center);
+    volume.set_width_request(BOTTOM_PLAYER_VOLUME_MIN_WIDTH);
     volume.set_value(1.0);
     volume.set_draw_value(false);
     volume_group.append(&volume);
@@ -529,14 +534,8 @@ fn configure_play_button(button: &gtk::Button) {
     );
 }
 
-fn connect_bottom_player_volume_resize(root: &gtk::Overlay, volume: &gtk::Scale) {
-    let volume = volume.clone();
-    root.connect_notify_local(Some("width"), move |root, _| {
-        let width = root.width();
-        if width > 0 {
-            volume.set_width_request(bottom_player_volume_width(width));
-        }
-    });
+fn configure_player_action_button(button: &gtk::Button) {
+    button.set_valign(gtk::Align::Center);
 }
 
 fn bottom_player_volume_width(player_width: i32) -> i32 {
@@ -547,8 +546,11 @@ fn bottom_player_volume_width(player_width: i32) -> i32 {
         + BOTTOM_PLAYER_VOLUME_SPACING
         + BOTTOM_PLAYER_RIGHT_EDGE_GAP
         + BOTTOM_PLAYER_TRANSPORT_CLEARANCE;
+    let available_width = right_side_width - action_width_without_volume;
+    let proportional_width =
+        (f64::from(player_width) * BOTTOM_PLAYER_VOLUME_WIDTH_RATIO).round() as i32;
 
-    (right_side_width - action_width_without_volume).clamp(
+    proportional_width.min(available_width).clamp(
         BOTTOM_PLAYER_VOLUME_MIN_WIDTH,
         BOTTOM_PLAYER_VOLUME_MAX_WIDTH,
     )
@@ -595,6 +597,8 @@ fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
 }
 
 pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
+    connect_bottom_player_volume_resize(shell);
+
     let controller = shell.controller.clone();
     shell
         .player_controls
@@ -748,12 +752,56 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         });
 }
 
+fn connect_bottom_player_volume_resize(shell: &Rc<Shell>) {
+    let resize_shell = Rc::clone(shell);
+    shell
+        .window
+        .connect_notify_local(Some("width"), move |window, _| {
+            resize_shell.set_bottom_player_volume_width(window.width());
+        });
+
+    let window = shell.window.clone();
+    let resize_shell = Rc::clone(shell);
+    window.connect_realize(move |window| {
+        let Some(surface) = window.surface() else {
+            return;
+        };
+        let surface_resize_shell = Rc::clone(&resize_shell);
+        surface.connect_width_notify(move |surface| {
+            surface_resize_shell.set_bottom_player_volume_width(surface.width());
+        });
+        resize_shell.set_bottom_player_volume_width(surface.width());
+    });
+
+    let resize_shell = Rc::clone(shell);
+    shell.player_controls.root.add_tick_callback(move |_, _| {
+        let width = resize_shell.window.width();
+        if width > 0 {
+            resize_shell.set_bottom_player_volume_width(width);
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
+impl Shell {
+    fn set_bottom_player_volume_width(&self, player_width: i32) {
+        if player_width > 0 {
+            self.player_controls
+                .volume
+                .set_width_request(bottom_player_volume_width(player_width));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
     fn volume_width_scales_down_when_bottom_player_narrows() {
-        assert_eq!(super::bottom_player_volume_width(1080), 88);
-        assert_eq!(super::bottom_player_volume_width(925), 73);
+        assert_eq!(super::bottom_player_volume_width(2560), 160);
+        assert_eq!(super::bottom_player_volume_width(1920), 120);
+        assert_eq!(super::bottom_player_volume_width(960), 60);
         assert_eq!(super::bottom_player_volume_width(820), 48);
     }
 }
