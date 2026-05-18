@@ -37,7 +37,7 @@ jobs:
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y elfutils flatpak flatpak-builder
+          sudo apt-get install --no-install-recommends -y elfutils flatpak flatpak-builder librsvg2-common
           flatpak remote-add --user --if-not-exists flathub "$RUNTIME_REPO_URL"
 
       - name: Check out repository
