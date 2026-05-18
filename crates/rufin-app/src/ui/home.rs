@@ -123,11 +123,6 @@ impl Shell {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
 
-        let heading = gtk::Label::new(Some(&tr(HomeBlockKind::Showcase.title())));
-        heading.add_css_class("section-heading");
-        heading.set_xalign(0.0);
-        section.append(&heading);
-
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 24);
         body.add_css_class("home-showcase");
         add_album_seed_gradient_class(&body, album.color_seed);

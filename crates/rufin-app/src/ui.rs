@@ -90,7 +90,7 @@ const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
-const STARTUP_HOME_REFRESH_DELAY_MS: u64 = 750;
+const HOME_REFRESH_AFTER_LEAVE_DELAY_MS: u64 = 1_500;
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -135,6 +135,7 @@ struct AppState {
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
+    home_refresh_pending_after_leave: Cell<bool>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
     server_discovery_status: RefCell<String>,
     server_discovery_running: Cell<bool>,
@@ -377,6 +378,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
+        home_refresh_pending_after_leave: Cell::new(true),
         discovered_servers: RefCell::new(Vec::new()),
         server_discovery_status: RefCell::new("Searching will start automatically.".to_string()),
         server_discovery_running: Cell::new(false),
@@ -512,7 +514,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     install_event_pump(&shell, events);
 
     if options.fake_scale.is_none() && !options.ui_perf_run {
-        schedule_startup_home_refresh(&shell);
         schedule_startup_sync(&shell);
     }
 
@@ -967,32 +968,32 @@ fn upsert_snapshot_home_section(sections: &mut Vec<HomeSection>, section: HomeSe
 impl Shell {
     fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
-        let refresh_home = matches!(route, Route::Home);
+        let previous = self.state.routes.borrow().current().clone();
         self.refresh_search_results_for_route(&route);
-        self.state.routes.borrow_mut().navigate(route);
+        self.state.routes.borrow_mut().navigate(route.clone());
+        self.handle_home_route_transition(&previous, &route);
         self.render_current_route();
-        if refresh_home {
-            self.refresh_home_after_route_display();
-        }
     }
 
     fn go_back(self: &Rc<Self>) {
+        let previous = self.state.routes.borrow().current().clone();
         let route = self.state.routes.borrow_mut().back().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate back");
             self.refresh_search_results_for_route(&route);
+            self.handle_home_route_transition(&previous, &route);
             self.render_current_route();
-            self.refresh_home_sections_for_route(&route);
         }
     }
 
     fn go_forward(self: &Rc<Self>) {
+        let previous = self.state.routes.borrow().current().clone();
         let route = self.state.routes.borrow_mut().forward().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate forward");
             self.refresh_search_results_for_route(&route);
+            self.handle_home_route_transition(&previous, &route);
             self.render_current_route();
-            self.refresh_home_sections_for_route(&route);
         }
     }
 
@@ -1002,13 +1003,34 @@ impl Shell {
         }
     }
 
-    fn refresh_home_sections_for_route(&self, route: &Route) {
-        if matches!(route, Route::Home) {
-            self.refresh_home_after_route_display();
+    fn handle_home_route_transition(self: &Rc<Self>, previous: &Route, next: &Route) {
+        let was_home = matches!(previous, Route::Home);
+        let is_home = matches!(next, Route::Home);
+
+        if is_home && !was_home {
+            self.state.home_refresh_pending_after_leave.set(true);
+        } else if was_home && !is_home && self.state.home_refresh_pending_after_leave.replace(false)
+        {
+            self.schedule_home_refresh_after_leave();
         }
     }
 
-    fn refresh_home_after_route_display(&self) {
+    fn schedule_home_refresh_after_leave(self: &Rc<Self>) {
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(HOME_REFRESH_AFTER_LEAVE_DELAY_MS),
+            move || {
+                if matches!(shell.state.routes.borrow().current(), Route::Home) {
+                    shell.state.home_refresh_pending_after_leave.set(true);
+                    return;
+                }
+                shell.refresh_home_after_route_exit();
+            },
+        );
+    }
+
+    fn refresh_home_after_route_exit(self: &Rc<Self>) {
+        self.promote_prefetched_explore_after_route_exit();
         self.controller
             .refresh_home_sections_without_explore_for_active();
         self.controller.prefetch_explore_for_active();
@@ -1036,6 +1058,28 @@ impl Shell {
     }
 
     fn apply_prefetched_explore(self: &Rc<Self>) -> bool {
+        let prefetched = self.state.prefetched_explore.borrow_mut().take();
+        let promoted = prefetched
+            .map(|prefetched| self.promote_prefetched_explore(prefetched, true))
+            .unwrap_or(false);
+        if promoted {
+            self.controller.prefetch_explore_for_active();
+        }
+        promoted
+    }
+
+    fn promote_prefetched_explore_after_route_exit(self: &Rc<Self>) -> bool {
+        let prefetched = self.state.prefetched_explore.borrow_mut().take();
+        prefetched
+            .map(|prefetched| self.promote_prefetched_explore(prefetched, false))
+            .unwrap_or(false)
+    }
+
+    fn promote_prefetched_explore(
+        self: &Rc<Self>,
+        prefetched: PrefetchedHomeSection,
+        render_current_route: bool,
+    ) -> bool {
         let Some(server_id) = self
             .state
             .library
@@ -1046,10 +1090,8 @@ impl Shell {
         else {
             return false;
         };
-        let Some(prefetched) = self.state.prefetched_explore.borrow_mut().take() else {
-            return false;
-        };
         if prefetched.server_id != server_id {
+            *self.state.prefetched_explore.borrow_mut() = Some(prefetched);
             return false;
         }
 
@@ -1059,8 +1101,9 @@ impl Shell {
         }
         self.controller
             .promote_prefetched_explore_for_active(prefetched.section);
-        self.controller.prefetch_explore_for_active();
-        self.render_current_route_preserving_scroll();
+        if render_current_route {
+            self.render_current_route_preserving_scroll();
+        }
         true
     }
 
@@ -3358,17 +3401,6 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
     });
 }
 
-fn schedule_startup_home_refresh(shell: &Rc<Shell>) {
-    let shell = Rc::clone(shell);
-    glib::timeout_add_local_once(
-        Duration::from_millis(STARTUP_HOME_REFRESH_DELAY_MS),
-        move || {
-            debug!("refreshing home sections after startup");
-            shell.refresh_home_after_route_display();
-        },
-    );
-}
-
 fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local(Duration::from_millis(33), move || {
@@ -3404,8 +3436,12 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         .as_ref()
                         .map(|server| server.id.clone());
                     if active_server_id.as_ref() == Some(&server_id) {
-                        *shell.state.prefetched_explore.borrow_mut() =
-                            Some(PrefetchedHomeSection { server_id, section });
+                        let prefetched = PrefetchedHomeSection { server_id, section };
+                        if matches!(shell.state.routes.borrow().current(), Route::Home) {
+                            *shell.state.prefetched_explore.borrow_mut() = Some(prefetched);
+                        } else {
+                            shell.promote_prefetched_explore(prefetched, false);
+                        }
                     }
                 }
                 ControllerEvent::FavoriteChanged {
