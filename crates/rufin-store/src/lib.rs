@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use thiserror::Error;
 
 const SETTINGS_KEY: &str = "default";
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -366,6 +366,16 @@ impl Store {
                 PRIMARY KEY (server_id, item_id, image_tag, size)
             );
 
+            CREATE TABLE IF NOT EXISTS external_image_lookup_misses (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                item_id TEXT NOT NULL,
+                image_tag TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, item_id, image_tag, size)
+            );
+
             CREATE VIRTUAL TABLE IF NOT EXISTS library_fts USING fts5(
                 server_id UNINDEXED,
                 item_type UNINDEXED,
@@ -378,6 +388,8 @@ impl Store {
                 ON albums(server_id, title);
             CREATE INDEX IF NOT EXISTS albums_server_title_nocase_idx
                 ON albums(server_id, title COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS albums_server_artist_idx
+                ON albums(server_id, artist_id, album_id);
             CREATE INDEX IF NOT EXISTS tracks_server_title_idx
                 ON tracks(server_id, title);
             CREATE INDEX IF NOT EXISTS tracks_server_title_nocase_idx
@@ -392,6 +404,8 @@ impl Store {
                 ON playlists(server_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS tracks_server_album_idx
                 ON tracks(server_id, album_id, disc_number, track_number);
+            CREATE INDEX IF NOT EXISTS tracks_server_artist_idx
+                ON tracks(server_id, artist_id, album_id);
             CREATE INDEX IF NOT EXISTS home_section_items_order_idx
                 ON home_section_items(server_id, section_kind, position);
             CREATE INDEX IF NOT EXISTS home_section_prefetch_items_order_idx
@@ -2278,7 +2292,12 @@ impl Store {
         )?;
 
         let artist = match artist {
-            Some(artist) => artist,
+            Some(mut artist) => {
+                if artist.image_ref.is_none() {
+                    artist.image_ref = artist_fallback_image_ref(&albums, &appears_on, &tracks);
+                }
+                artist
+            }
             None if albums.is_empty() && tracks.is_empty() => return Ok(None),
             None => synthesize_artist_from_links(artist_id, &albums, &appears_on, &tracks),
         };
@@ -2497,10 +2516,11 @@ impl Store {
             "
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![server_id.as_str(), limit as i64, offset as i64],
             artist_from_row,
         )?)?;
+        self.attach_artist_fallback_image_refs(server_id, &mut items, album_artist)?;
         Ok(PagedResponse::new(items, total))
     }
 
@@ -3144,11 +3164,17 @@ impl Store {
             ",
             params![
                 entry.server_id.as_str(),
-                entry.item_id,
-                entry.image_tag,
+                entry.item_id.as_str(),
+                entry.image_tag.as_str(),
                 i64::from(entry.size),
-                entry.path,
+                entry.path.as_str(),
             ],
+        )?;
+        self.delete_external_image_lookup_miss(
+            &entry.server_id,
+            &entry.item_id,
+            &entry.image_tag,
+            entry.size,
         )?;
         Ok(())
     }
@@ -3192,6 +3218,73 @@ impl Store {
         self.connection.execute(
             "
             DELETE FROM cover_cache
+            WHERE server_id = ?1 AND item_id = ?2 AND image_tag = ?3 AND size = ?4
+            ",
+            params![server_id.as_str(), item_id, image_tag, i64::from(size)],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_external_image_lookup_miss(
+        &self,
+        server_id: &ServerId,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+        reason: &str,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            INSERT INTO external_image_lookup_misses (
+                server_id, item_id, image_tag, size, reason, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id, item_id, image_tag, size) DO UPDATE SET
+                reason = excluded.reason,
+                updated_at = excluded.updated_at
+            ",
+            params![
+                server_id.as_str(),
+                item_id,
+                image_tag,
+                i64::from(size),
+                reason,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_external_image_lookup_miss(
+        &self,
+        server_id: &ServerId,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<bool> {
+        let found = self.connection.query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1
+                FROM external_image_lookup_misses
+                WHERE server_id = ?1 AND item_id = ?2 AND image_tag = ?3 AND size = ?4
+            )
+            ",
+            params![server_id.as_str(), item_id, image_tag, i64::from(size)],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(found)
+    }
+
+    pub fn delete_external_image_lookup_miss(
+        &self,
+        server_id: &ServerId,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            DELETE FROM external_image_lookup_misses
             WHERE server_id = ?1 AND item_id = ?2 AND image_tag = ?3 AND size = ?4
             ",
             params![server_id.as_str(), item_id, image_tag, i64::from(size)],
@@ -3570,7 +3663,7 @@ impl Store {
             "
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![
                 server_id.as_str(),
                 item_type,
@@ -3580,6 +3673,7 @@ impl Store {
             ],
             artist_from_row,
         )?)?;
+        self.attach_artist_fallback_image_refs(server_id, &mut items, album_artist)?;
         Ok(PagedResponse::new(items, total))
     }
 
@@ -3624,10 +3718,11 @@ impl Store {
             "
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![server_id.as_str(), pattern, limit as i64, offset as i64],
             artist_from_row,
         )?)?;
+        self.attach_artist_fallback_image_refs(server_id, &mut items, album_artist)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
 
@@ -3869,6 +3964,60 @@ impl Store {
                 .get(track.album_id.as_str())
                 .cloned()
                 .unwrap_or_default();
+        }
+        Ok(())
+    }
+
+    fn attach_artist_fallback_image_refs(
+        &self,
+        server_id: &ServerId,
+        artists: &mut [Artist],
+        album_artist: bool,
+    ) -> StoreResult<()> {
+        let missing_ids = artists
+            .iter()
+            .filter(|artist| artist.image_ref.is_none())
+            .map(|artist| artist.id.as_str().to_string())
+            .collect::<Vec<_>>();
+        if missing_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut fallback_by_artist = HashMap::<String, ImageRef>::new();
+        for chunk in missing_ids.chunks(500) {
+            let values_placeholders = std::iter::repeat_n("(?)", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = artist_fallback_image_refs_sql(album_artist, &values_placeholders);
+            let mut values = Vec::with_capacity(chunk.len() + if album_artist { 2 } else { 4 });
+            values.extend(chunk.iter().map(String::as_str));
+            values.extend(std::iter::repeat_n(
+                server_id.as_str(),
+                if album_artist { 2 } else { 4 },
+            ));
+
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    ImageRef {
+                        item_id: row.get(1)?,
+                        tag: row.get(2)?,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (artist_id, image_ref) = row?;
+                fallback_by_artist.entry(artist_id).or_insert(image_ref);
+            }
+        }
+
+        for artist in artists {
+            if artist.image_ref.is_none()
+                && let Some(image_ref) = fallback_by_artist.remove(artist.id.as_str())
+            {
+                artist.image_ref = Some(image_ref);
+            }
         }
         Ok(())
     }
@@ -4293,6 +4442,86 @@ fn image_ref_parts(image_ref: Option<&ImageRef>) -> (Option<&str>, Option<&str>)
     }
 }
 
+fn artist_fallback_image_refs_sql(album_artist: bool, values_placeholders: &str) -> String {
+    if album_artist {
+        return format!(
+            "
+            WITH wanted(artist_id) AS (VALUES {values_placeholders}),
+                 candidates AS (
+                    SELECT w.artist_id, a.image_item_id, a.image_tag,
+                           0 AS priority, a.year, a.title
+                    FROM wanted w
+                    JOIN albums a
+                        ON a.artist_id = w.artist_id
+                    WHERE a.server_id = ?
+                      AND a.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT w.artist_id, a.image_item_id, a.image_tag,
+                           1 AS priority, a.year, a.title
+                    FROM wanted w
+                    JOIN album_artist_links aal
+                        ON aal.artist_id = w.artist_id
+                    JOIN albums a
+                        ON a.server_id = aal.server_id AND a.album_id = aal.album_id
+                    WHERE aal.server_id = ?
+                      AND a.image_item_id IS NOT NULL
+                 )
+            SELECT artist_id, image_item_id, image_tag
+            FROM candidates
+            ORDER BY priority, year, title COLLATE NOCASE
+            "
+        );
+    }
+
+    format!(
+        "
+        WITH wanted(artist_id) AS (VALUES {values_placeholders}),
+             candidates AS (
+                SELECT w.artist_id, a.image_item_id, a.image_tag,
+                       0 AS priority, a.year, a.title
+                FROM wanted w
+                JOIN albums a
+                    ON a.artist_id = w.artist_id
+                WHERE a.server_id = ?
+                  AND a.image_item_id IS NOT NULL
+                UNION ALL
+                SELECT w.artist_id, a.image_item_id, a.image_tag,
+                       1 AS priority, a.year, a.title
+                FROM wanted w
+                JOIN tracks t
+                    ON t.artist_id = w.artist_id
+                JOIN albums a
+                    ON a.server_id = t.server_id AND a.album_id = t.album_id
+                WHERE t.server_id = ?
+                  AND a.image_item_id IS NOT NULL
+                UNION ALL
+                SELECT w.artist_id, a.image_item_id, a.image_tag,
+                       2 AS priority, a.year, a.title
+                FROM wanted w
+                JOIN track_artist_links tal
+                    ON tal.artist_id = w.artist_id
+                JOIN albums a
+                    ON a.server_id = tal.server_id AND a.album_id = tal.album_id
+                WHERE tal.server_id = ?
+                  AND a.image_item_id IS NOT NULL
+                UNION ALL
+                SELECT w.artist_id, a.image_item_id, a.image_tag,
+                       3 AS priority, a.year, a.title
+                FROM wanted w
+                JOIN album_artist_links aal
+                    ON aal.artist_id = w.artist_id
+                JOIN albums a
+                    ON a.server_id = aal.server_id AND a.album_id = aal.album_id
+                WHERE aal.server_id = ?
+                  AND a.image_item_id IS NOT NULL
+             )
+        SELECT artist_id, image_item_id, image_tag
+        FROM candidates
+        ORDER BY priority, year, title COLLATE NOCASE
+        "
+    )
+}
+
 fn artist_list_filter(album_artist: bool) -> &'static str {
     if album_artist {
         ""
@@ -4449,6 +4678,18 @@ fn track_matches_artist(
             .unwrap_or(false)
 }
 
+fn artist_fallback_image_ref(
+    albums: &[Album],
+    appears_on: &[Album],
+    tracks: &[Track],
+) -> Option<ImageRef> {
+    albums
+        .first()
+        .and_then(|album| album.image_ref.clone())
+        .or_else(|| appears_on.first().and_then(|album| album.image_ref.clone()))
+        .or_else(|| tracks.first().and_then(|track| track.image_ref.clone()))
+}
+
 fn synthesize_artist_from_links(
     artist_id: &ArtistId,
     albums: &[Album],
@@ -4489,10 +4730,7 @@ fn synthesize_artist_from_links(
         last_played: None,
         play_count: None,
         user_rating: None,
-        image_ref: albums
-            .first()
-            .and_then(|album| album.image_ref.clone())
-            .or_else(|| tracks.first().and_then(|track| track.image_ref.clone())),
+        image_ref: artist_fallback_image_ref(albums, appears_on, tracks),
     }
 }
 
@@ -4729,6 +4967,7 @@ fn clear_library_cache_on_connection(
         "albums",
         "lyrics_cache",
         "cover_cache",
+        "external_image_lookup_misses",
     ] {
         let sql = format!("DELETE FROM {table} WHERE server_id = ?1");
         connection.execute(&sql, params![server_id.as_str()])?;
@@ -4837,7 +5076,7 @@ mod tests {
     fn migrations_run_from_empty_database() {
         let store = Store::open_memory().expect("open store");
 
-        assert_eq!(store.schema_version().expect("schema version"), 8);
+        assert_eq!(store.schema_version().expect("schema version"), 9);
         assert!(store.foreign_keys_enabled().expect("foreign keys"));
         assert!(store.fts5_available().expect("fts5 table"));
     }
@@ -4848,6 +5087,8 @@ mod tests {
 
         for (table, index) in [
             ("albums", "albums_server_title_nocase_idx"),
+            ("albums", "albums_server_artist_idx"),
+            ("tracks", "tracks_server_artist_idx"),
             ("artists", "artists_server_name_nocase_idx"),
             ("album_artists", "album_artists_server_name_nocase_idx"),
             ("genres", "genres_server_name_nocase_idx"),
@@ -4982,7 +5223,7 @@ mod tests {
         store.migrate().expect("migrate");
 
         let server_id = ServerId::new("jellyfin:server:test");
-        assert_eq!(store.schema_version().expect("schema version"), 8);
+        assert_eq!(store.schema_version().expect("schema version"), 9);
         for table in [
             "albums",
             "tracks",
@@ -5135,7 +5376,7 @@ mod tests {
         store.configure_pragmas(true).expect("configure pragmas");
         store.migrate().expect("migrate");
 
-        assert_eq!(store.schema_version().expect("schema version"), 8);
+        assert_eq!(store.schema_version().expect("schema version"), 9);
         assert!(table_has_column(&store, "playlist_tracks", "entry_id"));
         assert!(table_has_column(&store, "lyrics_cache", "value"));
         assert!(table_has_column(
@@ -5343,6 +5584,137 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![ArtistId::fake(1)]
         );
+    }
+
+    #[test]
+    fn artists_without_provider_images_use_album_cover_fallback() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album_with_image(1);
+        let track = track(1, &album);
+        let artist = artist(1, None);
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+
+        let loaded = store
+            .load_artists(&saved.server.id, false, 0, 10)
+            .expect("load artists")
+            .items
+            .remove(0);
+        let matching = store
+            .load_artists_matching(&saved.server.id, false, "Artist 1", 0, 10)
+            .expect("search artists")
+            .items
+            .remove(0);
+        let global_search = store
+            .search_library(&saved.server.id, "Artist 1", 10)
+            .expect("search library");
+        let detail = store
+            .load_artist_detail(&saved.server.id, &artist.id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(loaded.image_ref, album.image_ref);
+        assert_eq!(matching.image_ref, album.image_ref);
+        assert_eq!(global_search.artists[0].image_ref, album.image_ref);
+        assert_eq!(detail.artist.image_ref, album.image_ref);
+    }
+
+    #[test]
+    fn artist_provider_image_wins_over_album_cover_fallback() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album_with_image(1);
+        let track = track(1, &album);
+        let artist_image = image_ref("artist-one", "artist-tag-one");
+        let artist = artist(1, Some(artist_image.clone()));
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+            .expect("upsert track");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&artist),
+                false,
+                generation,
+            )
+            .expect("upsert artist");
+
+        let loaded = store
+            .load_artists(&saved.server.id, false, 0, 10)
+            .expect("load artists")
+            .items
+            .remove(0);
+        let detail = store
+            .load_artist_detail(&saved.server.id, &artist.id)
+            .expect("load artist detail")
+            .expect("artist detail");
+
+        assert_eq!(loaded.image_ref, Some(artist_image.clone()));
+        assert_eq!(detail.artist.image_ref, Some(artist_image));
+    }
+
+    #[test]
+    fn album_artists_without_provider_images_use_album_cover_fallback() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album_artist_id = ArtistId::fake(8);
+        let mut album = album_with_image(8);
+        album.artist_id = Some(ArtistId::fake(99));
+        album.album_artist_credits = vec![credit(album_artist_id.clone(), "Linked Album Artist")];
+        let mut album_artist = artist(8, None);
+        album_artist.name = "Linked Album Artist".to_string();
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_artists(
+                &saved.server.id,
+                std::slice::from_ref(&album_artist),
+                true,
+                generation,
+            )
+            .expect("upsert album artist");
+
+        let loaded = store
+            .load_artists(&saved.server.id, true, 0, 10)
+            .expect("load album artists")
+            .items
+            .into_iter()
+            .find(|artist| artist.id == album_artist_id)
+            .expect("album artist");
+        let matching = store
+            .load_artists_matching(&saved.server.id, true, "Linked Album Artist", 0, 10)
+            .expect("search album artists")
+            .items
+            .remove(0);
+
+        assert_eq!(loaded.image_ref, album.image_ref);
+        assert_eq!(matching.image_ref, album.image_ref);
     }
 
     #[test]
@@ -7044,6 +7416,86 @@ mod tests {
     }
 
     #[test]
+    fn external_image_lookup_miss_index_round_trips() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+
+        store
+            .save_external_image_lookup_miss(
+                &saved.server.id,
+                "external:album:artist:album",
+                "external-v1-tag",
+                256,
+                "not found",
+            )
+            .expect("save lookup miss");
+
+        assert!(
+            store
+                .load_external_image_lookup_miss(
+                    &saved.server.id,
+                    "external:album:artist:album",
+                    "external-v1-tag",
+                    256,
+                )
+                .expect("load lookup miss")
+        );
+
+        store
+            .delete_external_image_lookup_miss(
+                &saved.server.id,
+                "external:album:artist:album",
+                "external-v1-tag",
+                256,
+            )
+            .expect("delete lookup miss");
+
+        assert!(
+            !store
+                .load_external_image_lookup_miss(
+                    &saved.server.id,
+                    "external:album:artist:album",
+                    "external-v1-tag",
+                    256,
+                )
+                .expect("load deleted lookup miss")
+        );
+    }
+
+    #[test]
+    fn cover_cache_success_clears_external_image_lookup_miss() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let entry = cover_entry(&saved.server.id);
+
+        store
+            .save_external_image_lookup_miss(
+                &saved.server.id,
+                &entry.item_id,
+                &entry.image_tag,
+                entry.size,
+                "not found",
+            )
+            .expect("save lookup miss");
+        store
+            .save_cover_cache_entry(&entry)
+            .expect("save cover cache");
+
+        assert!(
+            !store
+                .load_external_image_lookup_miss(
+                    &saved.server.id,
+                    &entry.item_id,
+                    &entry.image_tag,
+                    entry.size,
+                )
+                .expect("load cleared lookup miss")
+        );
+    }
+
+    #[test]
     fn clear_library_cache_removes_library_search_and_cover_rows_only() {
         let store = Store::open_memory().expect("open store");
         let saved = saved_server();
@@ -7066,6 +7518,15 @@ mod tests {
         store
             .save_cover_cache_entry(&cover_entry(&saved.server.id))
             .expect("save cover cache");
+        store
+            .save_external_image_lookup_miss(
+                &saved.server.id,
+                "external:album:artist:album",
+                "external-v1-tag",
+                256,
+                "not found",
+            )
+            .expect("save lookup miss");
 
         store
             .clear_library_cache(&saved.server.id)
@@ -7098,6 +7559,16 @@ mod tests {
                 .load_cover_cache_entry(&queue.snapshot().server_id, "album-one", "tag-one", 256)
                 .expect("cover cache"),
             None
+        );
+        assert!(
+            !store
+                .load_external_image_lookup_miss(
+                    &queue.snapshot().server_id,
+                    "external:album:artist:album",
+                    "external-v1-tag",
+                    256,
+                )
+                .expect("lookup miss")
         );
         let sync_state = store
             .sync_state(&queue.snapshot().server_id)
