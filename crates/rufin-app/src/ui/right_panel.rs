@@ -11,9 +11,8 @@ use crate::lyrics::LyricsPane;
 use super::{
     Shell, icon_button,
     layout::{
-        MAX_RESTORED_WINDOW_HEIGHT, MIN_RESTORED_WINDOW_HEIGHT,
-        clamp_content_split_position_for_density, content_split_initial_position_for_density,
-        update_right_panel_split_settings,
+        MIN_RESTORED_WINDOW_HEIGHT, clamp_content_split_position_for_density,
+        content_split_initial_position_for_density, update_right_panel_split_settings,
     },
     player::BOTTOM_PLAYER_HEIGHT,
 };
@@ -22,6 +21,7 @@ const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
 const QUEUE_LYRICS_READY_MIN_HEIGHT: i32 = QUEUE_LYRICS_MIN_PANE_HEIGHT * 3;
 const QUEUE_LYRICS_DEFAULT_QUEUE_UNITS: i32 = 5;
 const QUEUE_LYRICS_DEFAULT_LYRICS_UNITS: i32 = 2;
+const QUEUE_LYRICS_FALLBACK_WINDOW_HEIGHT: i32 = 900;
 
 pub(super) struct RightPanelParts {
     pub(super) root: gtk::Box,
@@ -389,8 +389,7 @@ fn queue_lyrics_available_height(shell: &Shell) -> i32 {
         .borrow()
         .window_height
         .filter(|height| *height >= MIN_RESTORED_WINDOW_HEIGHT)
-        .map(|height| height.clamp(MIN_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_HEIGHT))
-        .unwrap_or(MAX_RESTORED_WINDOW_HEIGHT);
+        .unwrap_or(QUEUE_LYRICS_FALLBACK_WINDOW_HEIGHT);
     (restored_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2)
 }
 

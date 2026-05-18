@@ -28,8 +28,6 @@ const COMPACT_RIGHT_PANEL_MAX_PERCENT: i32 = 38;
 const COMPACT_PRIMARY_MIN_WIDTH: i32 = 560;
 const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
 pub(super) const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
-const MAX_RESTORED_WINDOW_WIDTH: i32 = 1400;
-pub(super) const MAX_RESTORED_WINDOW_HEIGHT: i32 = 900;
 
 pub(super) fn home_album_page_size(width: i32, current_page_size: Option<usize>) -> usize {
     let width = width.max(1);
@@ -247,10 +245,7 @@ pub(super) fn restored_window_size(width: Option<i32>, height: Option<i32>) -> O
     if width < MIN_RESTORED_WINDOW_WIDTH || height < MIN_RESTORED_WINDOW_HEIGHT {
         return None;
     }
-    Some((
-        width.clamp(MIN_RESTORED_WINDOW_WIDTH, MAX_RESTORED_WINDOW_WIDTH),
-        height.clamp(MIN_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_HEIGHT),
-    ))
+    Some((width, height))
 }
 
 fn card_label_width_chars(size: i32) -> i32 {
@@ -498,16 +493,16 @@ mod tests {
     }
 
     #[test]
-    fn restored_window_size_ignores_tiny_and_clamps_huge_geometry() {
+    fn restored_window_size_ignores_tiny_geometry() {
         assert_eq!(restored_window_size(None, Some(700)), None);
         assert_eq!(restored_window_size(Some(400), Some(700)), None);
         assert_eq!(
             restored_window_size(Some(1061), Some(2251)),
-            Some((1061, 900))
+            Some((1061, 2251))
         );
         assert_eq!(
             restored_window_size(Some(1800), Some(1200)),
-            Some((1400, 900))
+            Some((1800, 1200))
         );
     }
 }
