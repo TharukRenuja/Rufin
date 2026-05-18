@@ -320,10 +320,14 @@ msgid "Type a query in the sidebar search field to search the local cache."
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:94 crates/rufin-app/src/ui.rs:4070
-msgid "Thank you for trying out Rufin."
+msgid "Thank you for trying out Rufin! If you have problems or suggestions, please open an issue in Github."
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:95 crates/rufin-app/src/ui.rs:4073
+#: crates/rufin-app/src/i18n.rs:97 crates/rufin-app/src/ui.rs:4073
+msgid "Website"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:98 crates/rufin-app/src/ui.rs:4074
 msgid "Issues"
 msgstr ""
 

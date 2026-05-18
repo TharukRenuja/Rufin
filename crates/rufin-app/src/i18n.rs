@@ -211,6 +211,9 @@ fn catalog_strings_for_extraction() {
     let _ = tr("No cached results found.");
     let _ = tr("Cached rows will appear here after the background sync finishes.");
     let _ = tr("Type a query in the sidebar search field to search the local cache.");
-    let _ = tr("Thank you for trying out Rufin.");
+    let _ = tr(
+        "Thank you for trying out Rufin! If you have problems or suggestions, please open an issue in Github.",
+    );
+    let _ = tr("Website");
     let _ = tr("Issues");
 }
