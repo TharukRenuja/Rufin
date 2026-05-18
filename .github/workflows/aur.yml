@@ -160,7 +160,14 @@ jobs:
           esac
 
           for aur_package in "${packages[@]}"; do
-            pkgfile="$(find "$GITHUB_WORKSPACE/packaging/aur/$aur_package" -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)"
+            pkgfile="$(
+              find "$GITHUB_WORKSPACE/packaging/aur/$aur_package" \
+                -maxdepth 1 \
+                -name "${aur_package}-*.pkg.tar.zst" \
+                ! -name "${aur_package}-debug-*.pkg.tar.zst" \
+                -print \
+                -quit
+            )"
             test -n "$pkgfile"
 
             pacman -U --noconfirm "$pkgfile"
