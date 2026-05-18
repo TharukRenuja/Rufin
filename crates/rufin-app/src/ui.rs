@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod artist;
 mod cards;
@@ -90,7 +91,7 @@ const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
-const HOME_REFRESH_AFTER_LEAVE_DELAY_MS: u64 = 1_500;
+static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -135,7 +136,8 @@ struct AppState {
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
-    home_refresh_pending_after_leave: Cell<bool>,
+    home_refresh_started_for_visit: Cell<bool>,
+    home_showcase_seed: Cell<u64>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
     server_discovery_status: RefCell<String>,
     server_discovery_running: Cell<bool>,
@@ -378,7 +380,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
-        home_refresh_pending_after_leave: Cell::new(true),
+        home_refresh_started_for_visit: Cell::new(false),
+        home_showcase_seed: Cell::new(next_home_showcase_seed()),
         discovered_servers: RefCell::new(Vec::new()),
         server_discovery_status: RefCell::new("Searching will start automatically.".to_string()),
         server_discovery_running: Cell::new(false),
@@ -498,6 +501,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         .controller
         .prefetch_external_metadata_covers(&shell.state.library.borrow());
     shell.render_current_route();
+    shell.refresh_home_for_current_visit();
     shell.render_queue_panel();
     shell.render_lyrics_panel();
     shell.update_bottom_player();
@@ -965,6 +969,10 @@ fn upsert_snapshot_home_section(sections: &mut Vec<HomeSection>, section: HomeSe
     }
 }
 
+fn reset_home_section_pages(states: &mut HashMap<HomeSectionKind, HomeSectionState>) {
+    states.clear();
+}
+
 impl Shell {
     fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
@@ -973,6 +981,9 @@ impl Shell {
         self.state.routes.borrow_mut().navigate(route.clone());
         self.handle_home_route_transition(&previous, &route);
         self.render_current_route();
+        if matches!(route, Route::Home) {
+            self.refresh_home_for_current_visit();
+        }
     }
 
     fn go_back(self: &Rc<Self>) {
@@ -983,6 +994,9 @@ impl Shell {
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
             self.render_current_route();
+            if matches!(route, Route::Home) {
+                self.refresh_home_for_current_visit();
+            }
         }
     }
 
@@ -994,6 +1008,9 @@ impl Shell {
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
             self.render_current_route();
+            if matches!(route, Route::Home) {
+                self.refresh_home_for_current_visit();
+            }
         }
     }
 
@@ -1008,29 +1025,20 @@ impl Shell {
         let is_home = matches!(next, Route::Home);
 
         if is_home && !was_home {
-            self.state.home_refresh_pending_after_leave.set(true);
-        } else if was_home && !is_home && self.state.home_refresh_pending_after_leave.replace(false)
-        {
-            self.schedule_home_refresh_after_leave();
+            self.state.home_refresh_started_for_visit.set(false);
+            self.state.home_showcase_seed.set(next_home_showcase_seed());
+            reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
         }
     }
 
-    fn schedule_home_refresh_after_leave(self: &Rc<Self>) {
-        let shell = Rc::clone(self);
-        glib::timeout_add_local_once(
-            Duration::from_millis(HOME_REFRESH_AFTER_LEAVE_DELAY_MS),
-            move || {
-                if matches!(shell.state.routes.borrow().current(), Route::Home) {
-                    shell.state.home_refresh_pending_after_leave.set(true);
-                    return;
-                }
-                shell.refresh_home_after_route_exit();
-            },
-        );
-    }
-
-    fn refresh_home_after_route_exit(self: &Rc<Self>) {
-        self.promote_prefetched_explore_after_route_exit();
+    fn refresh_home_for_current_visit(self: &Rc<Self>) {
+        if !matches!(self.state.routes.borrow().current(), Route::Home) {
+            return;
+        }
+        if self.state.home_refresh_started_for_visit.replace(true) {
+            return;
+        }
+        self.promote_cached_prefetched_explore();
         self.controller
             .refresh_home_sections_without_explore_for_active();
         self.controller.prefetch_explore_for_active();
@@ -1068,7 +1076,7 @@ impl Shell {
         promoted
     }
 
-    fn promote_prefetched_explore_after_route_exit(self: &Rc<Self>) -> bool {
+    fn promote_cached_prefetched_explore(self: &Rc<Self>) -> bool {
         let prefetched = self.state.prefetched_explore.borrow_mut().take();
         prefetched
             .map(|prefetched| self.promote_prefetched_explore(prefetched, false))
@@ -1099,6 +1107,7 @@ impl Shell {
             let mut library = self.state.library.borrow_mut();
             upsert_snapshot_home_section(&mut library.home_sections, prefetched.section.clone());
         }
+        reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
         self.controller
             .promote_prefetched_explore_for_active(prefetched.section);
         if render_current_route {
@@ -3427,6 +3436,17 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     shell.update_server_selector();
                     shell.render_current_route_preserving_scroll();
                 }
+                ControllerEvent::HomeSectionsUpdated(snapshot) => {
+                    let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
+                    let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
+                    reset_home_section_pages(&mut shell.state.home_section_state.borrow_mut());
+                    *shell.state.library.borrow_mut() = *snapshot;
+                    shell
+                        .controller
+                        .prefetch_external_metadata_covers(&shell.state.library.borrow());
+                    shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
+                    shell.update_server_selector();
+                }
                 ControllerEvent::HomeSectionPrefetched { server_id, section } => {
                     let active_server_id = shell
                         .state
@@ -3437,11 +3457,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         .map(|server| server.id.clone());
                     if active_server_id.as_ref() == Some(&server_id) {
                         let prefetched = PrefetchedHomeSection { server_id, section };
-                        if matches!(shell.state.routes.borrow().current(), Route::Home) {
-                            *shell.state.prefetched_explore.borrow_mut() = Some(prefetched);
-                        } else {
-                            shell.promote_prefetched_explore(prefetched, false);
-                        }
+                        shell.promote_prefetched_explore(prefetched, false);
                     }
                 }
                 ControllerEvent::FavoriteChanged {
@@ -4141,6 +4157,17 @@ fn stable_seed(value: &str) -> u32 {
     })
 }
 
+fn next_home_showcase_seed() -> u64 {
+    let counter = HOME_SHOWCASE_COUNTER
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1);
+    let time_seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or_else(|_| stable_seed("home-showcase") as u64);
+    time_seed.rotate_left(17) ^ counter.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+}
+
 fn add_album_seed_gradient_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
     let class_name = format!("album-seed-gradient-{:08x}", seed);
     widget.add_css_class(&class_name);
@@ -4835,10 +4862,26 @@ mod tests {
         current_playback_track_id, seekbar_target_seconds,
     };
     use rufin_core::{
-        Album, AlbumId, AppSettings, ArtistId, QueueEntry, QueueEntryId, Route, SearchKind, Track,
-        TrackId, TrackSortKey, TrackTableSettings,
+        Album, AlbumId, AppSettings, ArtistId, HomeSectionKind, QueueEntry, QueueEntryId, Route,
+        SearchKind, Track, TrackId, TrackSortKey, TrackTableSettings,
     };
     use rufin_provider::{LyricLine, Lyrics, LyricsSource};
+    use std::collections::HashMap;
+
+    #[test]
+    fn home_section_pages_reset_for_new_home_data() {
+        let mut states = HashMap::from([(
+            HomeSectionKind::Explore,
+            super::HomeSectionState {
+                page_start: 6,
+                page_size: 3,
+            },
+        )]);
+
+        super::reset_home_section_pages(&mut states);
+
+        assert!(states.is_empty());
+    }
 
     #[test]
     fn queue_lyrics_position_clamps_to_available_height() {

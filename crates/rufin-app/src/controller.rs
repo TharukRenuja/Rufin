@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -9,8 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use directories::ProjectDirs;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot,
-    RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+    MusicFolder, MusicFolderId, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry,
+    QueueEntryId, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -60,6 +60,8 @@ pub struct LibrarySnapshot {
     pub server: Option<ServerIdentity>,
     pub servers: Vec<ServerIdentity>,
     pub local_access: Option<ServerLocalAccess>,
+    pub music_folders: Vec<MusicFolder>,
+    pub selected_music_folder_id: Option<MusicFolderId>,
     pub username: Option<String>,
     pub first_run: bool,
     pub sync_status: String,
@@ -130,6 +132,8 @@ impl LibrarySnapshot {
             server: None,
             servers: Vec::new(),
             local_access: None,
+            music_folders: Vec::new(),
+            selected_music_folder_id: None,
             username: None,
             first_run: true,
             sync_status: "Add a music server to start.".to_string(),
@@ -153,6 +157,7 @@ impl LibrarySnapshot {
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
+    HomeSectionsUpdated(Box<LibrarySnapshot>),
     HomeSectionPrefetched {
         server_id: ServerId,
         section: HomeSection,
@@ -1661,6 +1666,7 @@ impl AppController {
         path_replace_from: Option<String>,
     ) {
         let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(root_path) = root_path.to_str().map(ToString::to_string) else {
@@ -1669,6 +1675,7 @@ impl AppController {
                 ));
                 return;
             };
+            let matched_server_id = server_id.clone();
             let result = store.with_store(|store| {
                 store.save_server_local_access(&ServerLocalAccess {
                     server_id,
@@ -1680,6 +1687,11 @@ impl AppController {
             if let Err(error) = result {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
+            }
+            if let Err(error) =
+                runtime.block_on(refresh_local_track_matches(&store, &matched_server_id))
+            {
+                warn!(%error, "failed to refresh local track matches");
             }
             match load_snapshot(&store) {
                 Ok(snapshot) => {
@@ -1696,9 +1708,31 @@ impl AppController {
         let store = self.store.clone();
         let events = self.events.clone();
         thread::spawn(move || {
-            if let Err(error) =
-                store.with_store(|store| store.delete_server_local_access(&server_id))
-            {
+            if let Err(error) = store.with_store(|store| {
+                store.delete_server_local_access(&server_id)?;
+                store.delete_track_local_matches(&server_id)
+            }) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            match load_snapshot(&store) {
+                Ok(snapshot) => {
+                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                }
+            }
+        });
+    }
+
+    pub fn set_selected_music_folder(&self, server_id: ServerId, folder_id: Option<MusicFolderId>) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            if let Err(error) = store.with_store(|store| {
+                store.set_selected_music_folder_id(&server_id, folder_id.as_ref())
+            }) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
@@ -2894,7 +2928,13 @@ fn start_home_refresh_thread(
         }
         match result {
             Ok(snapshot) => {
-                let _sent = context.events.send(ControllerEvent::Snapshot(snapshot));
+                let event = match target {
+                    HomeRefreshTarget::WithoutExplore => {
+                        ControllerEvent::HomeSectionsUpdated(snapshot)
+                    }
+                    HomeRefreshTarget::Section(_) => ControllerEvent::Snapshot(snapshot),
+                };
+                let _sent = context.events.send(event);
             }
             Err(error) => {
                 warn!(%error, "failed to refresh home sections");
@@ -2961,7 +3001,7 @@ fn start_prefetched_home_section_promotion_thread(
             .and_then(|()| load_snapshot(&store).map(Box::new));
         match result {
             Ok(snapshot) => {
-                let _sent = events.send(ControllerEvent::Snapshot(snapshot));
+                let _sent = events.send(ControllerEvent::HomeSectionsUpdated(snapshot));
             }
             Err(error) => {
                 warn!(%error, "failed to promote prefetched home section");
@@ -3040,6 +3080,7 @@ async fn sync_provider(
     info!(generation, "started provider cache sync");
     sync_album_pages(store, server_id, provider, generation).await?;
     sync_track_pages(store, server_id, provider, generation).await?;
+    sync_music_folders(store, server_id, provider, generation).await?;
     sync_artist_pages(store, server_id, provider, generation, false).await?;
     sync_artist_pages(store, server_id, provider, generation, true).await?;
     sync_genre_pages(store, server_id, provider, generation).await?;
@@ -3047,6 +3088,9 @@ async fn sync_provider(
     sync_home_sections(store, server_id, provider, generation).await?;
     store.with_store(|store| store.refresh_library_counts(server_id))?;
     store.with_store(|store| store.complete_sync(server_id, generation))?;
+    if let Err(error) = refresh_local_track_matches(store, server_id).await {
+        warn!(%error, "failed to refresh local track matches");
+    }
     info!(generation, "completed provider cache sync");
     Ok(())
 }
@@ -3091,6 +3135,170 @@ async fn sync_track_pages(
             return Ok(());
         }
     }
+}
+
+async fn sync_music_folders(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &(impl MusicProvider + ?Sized),
+    generation: i64,
+) -> Result<(), String> {
+    if !provider.capabilities().music_folders {
+        return Ok(());
+    }
+    let folders = provider
+        .music_folders()
+        .await
+        .map_err(|error| error.to_string())?;
+    store.with_store(|store| store.upsert_music_folders(server_id, &folders, generation))?;
+    for folder in folders {
+        let mut offset = 0;
+        loop {
+            let page = provider
+                .tracks_in_music_folder(&folder.id, PagedRequest::new(offset, PAGE_SIZE))
+                .await
+                .map_err(|error| error.to_string())?;
+            store.with_store(|store| store.upsert_tracks(server_id, &page.items, generation))?;
+            store.with_store(|store| {
+                store.upsert_track_music_folder_memberships(
+                    server_id,
+                    &folder.id,
+                    &page.items,
+                    generation,
+                )
+            })?;
+            let item_count = page.items.len();
+            offset += item_count;
+            if sync_page_finished(item_count, page.total, offset) {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn refresh_local_track_matches(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<usize, String> {
+    let Some(access) = store.with_store(|store| store.server_local_access(server_id))? else {
+        return Ok(0);
+    };
+    let saved = store
+        .with_store(|store| {
+            store.list_servers().map(|servers| {
+                servers
+                    .into_iter()
+                    .find(|saved| saved.server.id == *server_id)
+            })
+        })?
+        .ok_or_else(|| "The server is no longer saved.".to_string())?;
+    if saved.server.provider == "local" {
+        return Ok(0);
+    }
+    let remote_tracks =
+        store.with_store(|store| store.load_tracks_for_local_matching(server_id))?;
+    if remote_tracks.is_empty() {
+        store.with_store(|store| store.replace_track_local_matches(server_id, &[]))?;
+        return Ok(0);
+    }
+    let local_provider = LocalProvider::from_root(PathBuf::from(&access.root_path))
+        .map_err(|error| error.to_string())?;
+    let local_tracks = load_all_local_tracks_for_matching(&local_provider).await?;
+    let matches = conservative_local_matches(&remote_tracks, &local_tracks);
+    let count = matches.len();
+    store.with_store(|store| store.replace_track_local_matches(server_id, &matches))?;
+    debug!(server_id = %server_id, count, "refreshed local track matches");
+    Ok(count)
+}
+
+async fn load_all_local_tracks_for_matching(
+    provider: &LocalProvider,
+) -> Result<Vec<Track>, String> {
+    let mut tracks = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = provider
+            .tracks(PagedRequest::new(offset, PAGE_SIZE))
+            .await
+            .map_err(|error| error.to_string())?;
+        let item_count = page.items.len();
+        tracks.extend(page.items);
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            return Ok(tracks);
+        }
+    }
+}
+
+#[derive(Hash, Eq, PartialEq)]
+struct LocalMatchKey {
+    title: String,
+    album: String,
+    artist: String,
+    disc_number: u16,
+    track_number: u16,
+}
+
+fn conservative_local_matches(
+    remote_tracks: &[Track],
+    local_tracks: &[Track],
+) -> Vec<(TrackId, String, String)> {
+    let mut index = HashMap::<LocalMatchKey, Vec<&Track>>::new();
+    for track in local_tracks {
+        if track.local_path.is_none() {
+            continue;
+        }
+        index.entry(local_match_key(track)).or_default().push(track);
+    }
+
+    let mut matches = Vec::new();
+    for remote in remote_tracks {
+        let Some(candidates) = index.get(&local_match_key(remote)) else {
+            continue;
+        };
+        let matched = candidates
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                durations_close(remote.duration_seconds, candidate.duration_seconds)
+            })
+            .collect::<Vec<_>>();
+        if matched.len() != 1 {
+            continue;
+        }
+        let Some(local_path) = matched[0].local_path.clone() else {
+            continue;
+        };
+        matches.push((remote.id.clone(), local_path, "metadata".to_string()));
+    }
+    matches
+}
+
+fn local_match_key(track: &Track) -> LocalMatchKey {
+    LocalMatchKey {
+        title: normalize_match_text(&track.title),
+        album: normalize_match_text(&track.album),
+        artist: normalize_match_text(&track.artist),
+        disc_number: track.disc_number,
+        track_number: track.track_number,
+    }
+}
+
+fn durations_close(left: u32, right: u32) -> bool {
+    left == 0 || right == 0 || left.abs_diff(right) <= 3
+}
+
+fn normalize_match_text(value: &str) -> String {
+    let mut normalized = String::new();
+    for character in value.chars() {
+        if character.is_alphanumeric() {
+            normalized.extend(character.to_lowercase());
+        } else {
+            normalized.push(' ');
+        }
+    }
+    normalized.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 async fn sync_artist_pages(
@@ -3334,6 +3542,9 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         return Ok(snapshot);
     };
     let local_access = store.with_store(|store| store.server_local_access(&saved.server.id))?;
+    let music_folders = store.with_store(|store| store.list_music_folders(&saved.server.id))?;
+    let selected_music_folder_id =
+        store.with_store(|store| store.selected_music_folder_id(&saved.server.id))?;
     let settings = load_settings_for_saved(store, &saved);
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.server.id))
@@ -3392,6 +3603,8 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         server: Some(saved.server),
         servers,
         local_access,
+        music_folders,
+        selected_music_folder_id,
         username: Some(saved.username),
         first_run: false,
         sync_status: status,
@@ -3776,6 +3989,23 @@ fn resolve_stream(
             track_id.as_str()
         )));
     }
+    if saved.server.provider != "local"
+        && let Some(local_path) = local_audio_path_for_track(store, server_id, track_id)
+    {
+        let url = reqwest::Url::from_file_path(&local_path).map_err(|()| {
+            format!(
+                "Could not turn local track path into a file URI: {}",
+                local_path.display()
+            )
+        })?;
+        debug!(
+            server_id = %server_id,
+            track_id = %track_id.as_str(),
+            path = %local_path.display(),
+            "resolved remote track to local playback file"
+        );
+        return Ok(StreamDescriptor::new(url.to_string()));
+    }
 
     let provider = provider_for_saved(store, runtime, secrets, &saved)?;
     runtime
@@ -4050,18 +4280,43 @@ fn local_audio_path_for_track(
     server_id: &ServerId,
     track_id: &TrackId,
 ) -> Option<PathBuf> {
+    let saved = store
+        .with_store(|store| {
+            store.list_servers().map(|servers| {
+                servers
+                    .into_iter()
+                    .find(|saved| saved.server.id == *server_id)
+            })
+        })
+        .ok()
+        .flatten()?;
     let raw = store
         .with_store(|store| store.track_local_path(server_id, track_id))
         .ok()
-        .flatten()?;
-    let direct = PathBuf::from(&raw);
-    if direct.is_file() {
-        return Some(direct);
+        .flatten();
+    if saved.server.provider == "local" {
+        let direct = PathBuf::from(raw?);
+        return direct.is_file().then_some(direct);
     }
     let access = store
         .with_store(|store| store.server_local_access(server_id))
         .ok()
         .flatten()?;
+    if let Some(matched) = store
+        .with_store(|store| store.track_local_match_path(server_id, track_id))
+        .ok()
+        .flatten()
+    {
+        let matched = PathBuf::from(matched);
+        if matched.is_file() {
+            return Some(matched);
+        }
+    }
+    let raw = raw?;
+    let direct = PathBuf::from(&raw);
+    if direct.is_file() {
+        return Some(direct);
+    }
     let mapped = map_server_path_to_local(&raw, &access)?;
     mapped.is_file().then_some(mapped)
 }
@@ -4344,7 +4599,7 @@ fn report_playback_async(
         else {
             return;
         };
-        if saved.server.provider == "fake" {
+        if saved.server.provider == "fake" || saved.server.provider == "local" {
             return;
         }
         let result = provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
@@ -4481,7 +4736,8 @@ mod tests {
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
         AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
-        PlaylistId, QueueEngine, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+        PlaybackSettings, PlaylistId, QueueEngine, RepeatMode, ServerId, ServerIdentity, Track,
+        TrackId,
     };
     use rufin_playback::{
         PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
@@ -4490,7 +4746,7 @@ mod tests {
     use rufin_provider::{
         FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PlayedFilter,
     };
-    use rufin_secrets::MemorySecretStore;
+    use rufin_secrets::{MemorySecretStore, SecretStore};
     use rufin_store::{CoverCacheEntry, SavedServer, ServerLocalAccess};
     use rufin_test_support::{FakeProvider, FakeScale};
     use tokio::runtime::Runtime;
@@ -5901,15 +6157,21 @@ mod tests {
     fn local_sidecar_lyrics_use_same_stem_as_audio_file() {
         let store = StoreHandle::open_memory().expect("memory store");
         let saved = self::saved_server();
+        let dir = self::unique_test_dir("local-sidecar");
+        fs::create_dir_all(&dir).expect("create dir");
         let generation = store
             .with_store(|store| {
                 store.save_server(&saved)?;
                 store.set_active_server(&saved.server.id)?;
+                store.save_server_local_access(&ServerLocalAccess {
+                    server_id: saved.server.id.clone(),
+                    root_path: dir.to_string_lossy().into_owned(),
+                    path_replace_from: None,
+                    path_replace_to: Some(dir.to_string_lossy().into_owned()),
+                })?;
                 store.begin_sync(&saved.server.id)
             })
             .expect("begin sync");
-        let dir = self::unique_test_dir("local-sidecar");
-        fs::create_dir_all(&dir).expect("create dir");
         let audio = dir.join("07 I'm feeling lucky.flac");
         let lrc = dir.join("07 I'm feeling lucky.lrc");
         fs::write(&audio, []).expect("audio");
@@ -5970,6 +6232,164 @@ mod tests {
 
         assert_eq!(mapped, audio);
         let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_local_audio_path_requires_configured_access() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = self::saved_server();
+        let generation = store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.begin_sync(&saved.server.id)
+            })
+            .expect("begin sync");
+        let dir = self::unique_test_dir("remote-no-local-access");
+        fs::create_dir_all(&dir).expect("create dir");
+        let audio = dir.join("Track.flac");
+        fs::write(&audio, []).expect("audio");
+        let mut track = restored_track();
+        track.local_path = Some(audio.to_string_lossy().into_owned());
+        store
+            .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+            .expect("upsert track");
+
+        let mapped = super::local_audio_path_for_track(&store, &saved.server.id, &track.id);
+
+        assert_eq!(mapped, None);
+        let _cleanup = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolve_stream_prefers_local_file_for_remote_server_with_access() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = self::saved_server();
+        let root = self::unique_test_dir("local-playback-stream");
+        let audio = root.join("Album/Track.flac");
+        fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
+        fs::write(&audio, []).expect("audio");
+        let generation = store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.save_server_local_access(&ServerLocalAccess {
+                    server_id: saved.server.id.clone(),
+                    root_path: root.to_string_lossy().into_owned(),
+                    path_replace_from: Some("/server/music".to_string()),
+                    path_replace_to: Some(root.to_string_lossy().into_owned()),
+                })?;
+                store.begin_sync(&saved.server.id)
+            })
+            .expect("begin sync");
+        let mut track = restored_track();
+        track.local_path = Some("/server/music/Album/Track.flac".to_string());
+        store
+            .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+            .expect("upsert track");
+        let runtime = Arc::new(Runtime::new().expect("runtime"));
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+        let stream = super::resolve_stream(
+            &store,
+            &runtime,
+            &secrets,
+            &saved.server.id,
+            &track.id,
+            &PlaybackSettings::default(),
+        )
+        .expect("stream");
+
+        assert!(stream.uri().starts_with("file://"));
+        assert!(stream.uri().contains("Track.flac"));
+        let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_stream_uses_cached_local_match_without_server_path() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = self::saved_server();
+        let root = self::unique_test_dir("cached-local-match-stream");
+        let audio = root.join("Album/Track.flac");
+        fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
+        fs::write(&audio, []).expect("audio");
+        let generation = store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.save_server_local_access(&ServerLocalAccess {
+                    server_id: saved.server.id.clone(),
+                    root_path: root.to_string_lossy().into_owned(),
+                    path_replace_from: None,
+                    path_replace_to: Some(root.to_string_lossy().into_owned()),
+                })?;
+                store.begin_sync(&saved.server.id)
+            })
+            .expect("begin sync");
+        let track = restored_track();
+        store
+            .with_store(|store| {
+                store.upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)?;
+                store.replace_track_local_matches(
+                    &saved.server.id,
+                    &[(
+                        track.id.clone(),
+                        audio.to_string_lossy().into_owned(),
+                        "metadata".to_string(),
+                    )],
+                )
+            })
+            .expect("seed track");
+        let runtime = Arc::new(Runtime::new().expect("runtime"));
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+        let stream = super::resolve_stream(
+            &store,
+            &runtime,
+            &secrets,
+            &saved.server.id,
+            &track.id,
+            &PlaybackSettings::default(),
+        )
+        .expect("stream");
+
+        assert!(stream.uri().starts_with("file://"));
+        assert!(stream.uri().contains("Track.flac"));
+        let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conservative_local_matches_only_accept_unique_duration_matches() {
+        let album = AlbumId::fake(1);
+        let mut remote = restored_track();
+        remote.album_id = album.clone();
+        remote.title = "First Motion".to_string();
+        remote.album = "Blue Rooms".to_string();
+        remote.artist = "Astral Kin".to_string();
+        remote.duration_seconds = 210;
+        remote.disc_number = 1;
+        remote.track_number = 7;
+
+        let mut local = remote.clone();
+        local.id = TrackId::new("local:track:one");
+        local.local_path = Some("/home/me/Music/Blue Rooms/07 First Motion.flac".to_string());
+        local.duration_seconds = 212;
+
+        let matches = super::conservative_local_matches(&[remote.clone()], &[local.clone()]);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].0, remote.id);
+        assert_eq!(
+            matches[0].1,
+            "/home/me/Music/Blue Rooms/07 First Motion.flac"
+        );
+
+        let local_one = local.clone();
+        let mut duplicate = local;
+        duplicate.id = TrackId::new("local:track:two");
+        duplicate.local_path = Some("/home/me/Music/Other/07 First Motion.flac".to_string());
+
+        assert!(super::conservative_local_matches(&[remote], &[local_one, duplicate]).is_empty());
     }
 
     #[test]
@@ -6247,7 +6667,8 @@ mod tests {
                 .recv_timeout(Duration::from_secs(5))
                 .expect("controller event")
             {
-                ControllerEvent::Snapshot(snapshot) => return *snapshot,
+                ControllerEvent::Snapshot(snapshot)
+                | ControllerEvent::HomeSectionsUpdated(snapshot) => return *snapshot,
                 ControllerEvent::Queue(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Playback(_)
@@ -6277,6 +6698,7 @@ mod tests {
                     snapshot,
                 } => return (item_id, favorite, *snapshot),
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::HomeSectionsUpdated(_)
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Lyrics(_)
@@ -6299,6 +6721,7 @@ mod tests {
             {
                 ControllerEvent::LoginStatus(status) => return status,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::HomeSectionsUpdated(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -6321,6 +6744,7 @@ mod tests {
             {
                 ControllerEvent::Queue(queue) => return *queue,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::HomeSectionsUpdated(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
@@ -6365,6 +6789,7 @@ mod tests {
             {
                 ControllerEvent::CoverReady { key, path } if key == expected_key => return path,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::HomeSectionsUpdated(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -6388,6 +6813,7 @@ mod tests {
             {
                 ControllerEvent::Lyrics(lyrics) => return *lyrics,
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::HomeSectionsUpdated(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -6447,6 +6873,7 @@ mod tests {
                     | ControllerEvent::ServerDiscovery { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
+                    | ControllerEvent::HomeSectionsUpdated(_)
                     | ControllerEvent::FavoriteChanged { .. }
                     | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -6482,6 +6909,7 @@ mod tests {
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::HomeSectionsUpdated(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -6510,6 +6938,7 @@ mod tests {
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::HomeSectionsUpdated(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -6548,6 +6977,7 @@ mod tests {
                     | ControllerEvent::ServerDiscovery { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
+                    | ControllerEvent::HomeSectionsUpdated(_)
                     | ControllerEvent::FavoriteChanged { .. }
                     | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),

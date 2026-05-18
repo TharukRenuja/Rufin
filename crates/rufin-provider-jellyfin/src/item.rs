@@ -25,6 +25,7 @@ pub(super) struct JellyfinItem {
     pub(super) name: Option<String>,
     #[serde(rename = "Type")]
     pub(super) item_type: Option<String>,
+    pub(super) collection_type: Option<String>,
     album_artist: Option<String>,
     album_artists: Option<Vec<NameIdPair>>,
     artists: Option<Vec<String>>,

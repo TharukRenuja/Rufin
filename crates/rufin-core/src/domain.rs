@@ -52,6 +52,7 @@ opaque_id!(ArtistId, "artist-");
 opaque_id!(GenreId, "genre-");
 opaque_id!(PlaylistId, "playlist-");
 opaque_id!(ServerId, "server-");
+opaque_id!(MusicFolderId, "music-folder-");
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ImageRef {
@@ -77,6 +78,12 @@ pub struct ServerIdentity {
     pub provider: String,
     pub name: String,
     pub base_url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MusicFolder {
+    pub id: MusicFolderId,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

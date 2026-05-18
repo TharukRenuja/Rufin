@@ -2,15 +2,15 @@ use std::{collections::HashMap, path::Path};
 
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistCredit, ArtistId, Genre, GenreId,
-    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId,
-    QueueSnapshot, ServerId, ServerIdentity, Track, TrackId,
+    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId,
+    Playlist, PlaylistId, QueueSnapshot, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use thiserror::Error;
 
 const SETTINGS_KEY: &str = "default";
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -129,6 +129,37 @@ impl Store {
                 root_path TEXT NOT NULL,
                 path_replace_from TEXT,
                 path_replace_to TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS server_music_folders (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                folder_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                sync_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, folder_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS track_music_folders (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                track_id TEXT NOT NULL,
+                folder_id TEXT NOT NULL,
+                sync_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, track_id, folder_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS track_local_matches (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                track_id TEXT NOT NULL,
+                local_path TEXT NOT NULL,
+                match_kind TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, track_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS server_library_preferences (
+                server_id TEXT PRIMARY KEY REFERENCES servers(server_id) ON DELETE CASCADE,
+                selected_music_folder_id TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -373,6 +404,12 @@ impl Store {
                 ON album_artist_links(server_id, artist_id, album_id);
             CREATE INDEX IF NOT EXISTS track_artist_links_server_artist_idx
                 ON track_artist_links(server_id, artist_id, track_id);
+            CREATE INDEX IF NOT EXISTS track_music_folders_folder_idx
+                ON track_music_folders(server_id, folder_id, track_id);
+            CREATE INDEX IF NOT EXISTS track_music_folders_track_idx
+                ON track_music_folders(server_id, track_id, folder_id);
+            CREATE INDEX IF NOT EXISTS track_local_matches_track_idx
+                ON track_local_matches(server_id, track_id);
             ",
         )?;
         self.ensure_column("albums", "image_item_id", "TEXT")?;
@@ -652,6 +689,177 @@ impl Store {
             params![server_id.as_str()],
         )?;
         Ok(())
+    }
+
+    pub fn upsert_music_folders(
+        &self,
+        server_id: &ServerId,
+        folders: &[MusicFolder],
+        generation: i64,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            let mut statement = connection.prepare(
+                "
+                INSERT INTO server_music_folders (server_id, folder_id, name, sync_generation)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(server_id, folder_id) DO UPDATE SET
+                    name = excluded.name,
+                    sync_generation = excluded.sync_generation
+                ",
+            )?;
+            for folder in folders {
+                statement.execute(params![
+                    server_id.as_str(),
+                    folder.id.as_str(),
+                    folder.name.as_str(),
+                    generation,
+                ])?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn list_music_folders(&self, server_id: &ServerId) -> StoreResult<Vec<MusicFolder>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT folder_id, name
+            FROM server_music_folders
+            WHERE server_id = ?1
+            ORDER BY name COLLATE NOCASE
+            ",
+        )?;
+        collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+            Ok(MusicFolder {
+                id: MusicFolderId::new(row.get::<_, String>(0)?),
+                name: row.get(1)?,
+            })
+        })?)
+    }
+
+    pub fn selected_music_folder_id(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<Option<MusicFolderId>> {
+        self.connection
+            .query_row(
+                "
+                SELECT selected_music_folder_id
+                FROM server_library_preferences
+                WHERE server_id = ?1
+                ",
+                params![server_id.as_str()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map(|value| value.flatten().map(MusicFolderId::new))
+            .map_err(StoreError::from)
+    }
+
+    pub fn set_selected_music_folder_id(
+        &self,
+        server_id: &ServerId,
+        folder_id: Option<&MusicFolderId>,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            INSERT INTO server_library_preferences (
+                server_id, selected_music_folder_id, updated_at
+            )
+            VALUES (?1, ?2, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id) DO UPDATE SET
+                selected_music_folder_id = excluded.selected_music_folder_id,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str(), folder_id.map(MusicFolderId::as_str)],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_track_music_folder_memberships(
+        &self,
+        server_id: &ServerId,
+        folder_id: &MusicFolderId,
+        tracks: &[Track],
+        generation: i64,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            let mut statement = connection.prepare(
+                "
+                INSERT INTO track_music_folders (
+                    server_id, track_id, folder_id, sync_generation
+                )
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(server_id, track_id, folder_id) DO UPDATE SET
+                    sync_generation = excluded.sync_generation
+                ",
+            )?;
+            for track in tracks {
+                statement.execute(params![
+                    server_id.as_str(),
+                    track.id.as_str(),
+                    folder_id.as_str(),
+                    generation,
+                ])?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn replace_track_local_matches(
+        &self,
+        server_id: &ServerId,
+        matches: &[(TrackId, String, String)],
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            connection.execute(
+                "DELETE FROM track_local_matches WHERE server_id = ?1",
+                params![server_id.as_str()],
+            )?;
+            let mut statement = connection.prepare(
+                "
+                INSERT INTO track_local_matches (
+                    server_id, track_id, local_path, match_kind, updated_at
+                )
+                VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+                ",
+            )?;
+            for (track_id, local_path, match_kind) in matches {
+                statement.execute(params![
+                    server_id.as_str(),
+                    track_id.as_str(),
+                    local_path.as_str(),
+                    match_kind.as_str(),
+                ])?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn delete_track_local_matches(&self, server_id: &ServerId) -> StoreResult<()> {
+        self.connection.execute(
+            "DELETE FROM track_local_matches WHERE server_id = ?1",
+            params![server_id.as_str()],
+        )?;
+        Ok(())
+    }
+
+    pub fn track_local_match_path(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<String>> {
+        self.connection
+            .query_row(
+                "
+                SELECT local_path
+                FROM track_local_matches
+                WHERE server_id = ?1 AND track_id = ?2
+                ",
+                params![server_id.as_str(), track_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(StoreError::from)
     }
 
     pub fn sync_state(&self, server_id: &ServerId) -> StoreResult<SyncState> {
@@ -1655,27 +1863,63 @@ impl Store {
         server_id: &ServerId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Track>> {
-        let sql = format!(
-            "
-            SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
-                   t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
-                   t.duration_seconds, t.favorite, t.disc_number, t.track_number,
-                   t.image_item_id, t.image_tag
-            FROM {table} h
-            JOIN tracks t
-              ON t.server_id = h.server_id
-             AND t.track_id = h.item_id
-            WHERE h.server_id = ?1
-              AND h.section_kind = ?2
-              AND h.item_type = 'track'
-            ORDER BY h.position
-            "
-        );
-        let mut statement = self.connection.prepare(&sql)?;
-        let mut tracks = collect_rows(statement.query_map(
-            params![server_id.as_str(), home_section_kind_key(kind)],
-            track_from_row,
-        )?)?;
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
+            let sql = format!(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, t.favorite, t.disc_number, t.track_number,
+                       t.image_item_id, t.image_tag
+                FROM {table} h
+                JOIN tracks t
+                  ON t.server_id = h.server_id
+                 AND t.track_id = h.item_id
+                WHERE h.server_id = ?1
+                  AND h.section_kind = ?2
+                  AND h.item_type = 'track'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?3
+                  )
+                ORDER BY h.position
+                "
+            );
+            let mut statement = self.connection.prepare(&sql)?;
+            collect_rows(statement.query_map(
+                params![
+                    server_id.as_str(),
+                    home_section_kind_key(kind),
+                    folder_id.as_str()
+                ],
+                track_from_row,
+            )?)?
+        } else {
+            let sql = format!(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, t.favorite, t.disc_number, t.track_number,
+                       t.image_item_id, t.image_tag
+                FROM {table} h
+                JOIN tracks t
+                  ON t.server_id = h.server_id
+                 AND t.track_id = h.item_id
+                WHERE h.server_id = ?1
+                  AND h.section_kind = ?2
+                  AND h.item_type = 'track'
+                ORDER BY h.position
+                "
+            );
+            let mut statement = self.connection.prepare(&sql)?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), home_section_kind_key(kind)],
+                track_from_row,
+            )?)?
+        };
         self.attach_track_metadata(server_id, &mut tracks)?;
         Ok(tracks)
     }
@@ -1686,22 +1930,59 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Album>> {
-        let total = self.count("albums", server_id)?;
-        let mut statement = self.connection.prepare(
-            "
-            SELECT album_id, title, artist, artist_id, year, release_date, date_added,
-                   last_played, play_count, user_rating, track_count, duration_seconds,
-                   favorite, color_seed, image_item_id, image_tag
-            FROM albums
-            WHERE server_id = ?1
-            ORDER BY title COLLATE NOCASE
-            LIMIT ?2 OFFSET ?3
-            ",
-        )?;
-        let mut items = collect_rows(statement.query_map(
-            params![server_id.as_str(), limit as i64, offset as i64],
-            album_from_row,
-        )?)?;
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let total = if let Some(folder_id) = selected_folder.as_ref() {
+            self.count_albums_in_music_folder(server_id, folder_id)?
+        } else {
+            self.count("albums", server_id)?
+        };
+        let mut items = if let Some(folder_id) = selected_folder.as_ref() {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT a.album_id, a.title, a.artist, a.artist_id, a.year, a.release_date, a.date_added,
+                       a.last_played, a.play_count, a.user_rating, a.track_count, a.duration_seconds,
+                       a.favorite, a.color_seed, a.image_item_id, a.image_tag
+                FROM albums a
+                WHERE a.server_id = ?1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM tracks t
+                      JOIN track_music_folders tmf
+                        ON tmf.server_id = t.server_id AND tmf.track_id = t.track_id
+                      WHERE t.server_id = a.server_id
+                        AND t.album_id = a.album_id
+                        AND tmf.folder_id = ?4
+                  )
+                ORDER BY a.title COLLATE NOCASE
+                LIMIT ?2 OFFSET ?3
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![
+                    server_id.as_str(),
+                    limit as i64,
+                    offset as i64,
+                    folder_id.as_str()
+                ],
+                album_from_row,
+            )?)?
+        } else {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT album_id, title, artist, artist_id, year, release_date, date_added,
+                       last_played, play_count, user_rating, track_count, duration_seconds,
+                       favorite, color_seed, image_item_id, image_tag
+                FROM albums
+                WHERE server_id = ?1
+                ORDER BY title COLLATE NOCASE
+                LIMIT ?2 OFFSET ?3
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), limit as i64, offset as i64],
+                album_from_row,
+            )?)?
+        };
         self.attach_album_metadata(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
@@ -1744,26 +2025,55 @@ impl Store {
                 album_from_row,
             )
             .optional()?;
-        let mut statement = self.connection.prepare(
-            "
-            SELECT track_id, album_id, title, artist, artist_id, album, year,
-                   release_date, date_added, last_played, play_count, user_rating,
-                   duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
-            FROM tracks
-            WHERE server_id = ?1 AND album_id = ?2
-            ORDER BY disc_number, track_number, title COLLATE NOCASE
-            ",
-        )?;
-        let mut tracks = collect_rows(statement.query_map(
-            params![server_id.as_str(), album_id.as_str()],
-            track_from_row,
-        )?)?;
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, t.favorite, t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                FROM tracks t
+                WHERE t.server_id = ?1
+                  AND t.album_id = ?2
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?3
+                  )
+                ORDER BY t.disc_number, t.track_number, t.title COLLATE NOCASE
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), album_id.as_str(), folder_id.as_str()],
+                track_from_row,
+            )?)?
+        } else {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT track_id, album_id, title, artist, artist_id, album, year,
+                       release_date, date_added, last_played, play_count, user_rating,
+                       duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
+                FROM tracks
+                WHERE server_id = ?1 AND album_id = ?2
+                ORDER BY disc_number, track_number, title COLLATE NOCASE
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), album_id.as_str()],
+                track_from_row,
+            )?)?
+        };
         self.attach_track_metadata(server_id, &mut tracks)?;
         let mut album = match album {
             Some(album) => album,
             None if tracks.is_empty() => return Ok(None),
             None => synthesize_album_from_tracks(album_id, &tracks),
         };
+        if selected_folder.is_some() && tracks.is_empty() {
+            return Ok(None);
+        }
         self.attach_album_metadata(server_id, std::slice::from_mut(&mut album))?;
         Ok(Some((album, tracks)))
     }
@@ -2025,22 +2335,58 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let total = self.count("tracks", server_id)?;
-        let mut statement = self.connection.prepare(
-            "
-            SELECT track_id, album_id, title, artist, artist_id, album, year,
-                   release_date, date_added, last_played, play_count, user_rating,
-                   duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
-            FROM tracks
-            WHERE server_id = ?1
-            ORDER BY title COLLATE NOCASE
-            LIMIT ?2 OFFSET ?3
-            ",
-        )?;
-        let mut items = collect_rows(statement.query_map(
-            params![server_id.as_str(), limit as i64, offset as i64],
-            track_from_row,
-        )?)?;
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let total = if let Some(folder_id) = selected_folder.as_ref() {
+            self.count_tracks_in_music_folder(server_id, folder_id)?
+        } else {
+            self.count("tracks", server_id)?
+        };
+        let mut items = if let Some(folder_id) = selected_folder.as_ref() {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, t.favorite, t.disc_number, t.track_number,
+                       t.image_item_id, t.image_tag
+                FROM tracks t
+                WHERE t.server_id = ?1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?4
+                  )
+                ORDER BY t.title COLLATE NOCASE
+                LIMIT ?2 OFFSET ?3
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![
+                    server_id.as_str(),
+                    limit as i64,
+                    offset as i64,
+                    folder_id.as_str()
+                ],
+                track_from_row,
+            )?)?
+        } else {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT track_id, album_id, title, artist, artist_id, album, year,
+                       release_date, date_added, last_played, play_count, user_rating,
+                       duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
+                FROM tracks
+                WHERE server_id = ?1
+                ORDER BY title COLLATE NOCASE
+                LIMIT ?2 OFFSET ?3
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), limit as i64, offset as i64],
+                track_from_row,
+            )?)?
+        };
         self.attach_track_metadata(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
@@ -2065,6 +2411,21 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    pub fn load_tracks_for_local_matching(&self, server_id: &ServerId) -> StoreResult<Vec<Track>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT track_id, album_id, title, artist, artist_id, album, year,
+                   release_date, date_added, last_played, play_count, user_rating,
+                   duration_seconds, favorite, disc_number, track_number, image_item_id,
+                   image_tag, local_path
+            FROM tracks
+            WHERE server_id = ?1
+            ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE
+            ",
+        )?;
+        collect_rows(statement.query_map(params![server_id.as_str()], track_from_row)?)
+    }
+
     pub fn load_tracks_matching(
         &self,
         server_id: &ServerId,
@@ -2076,7 +2437,7 @@ impl Store {
             return self.load_tracks(server_id, offset, limit);
         };
         if let Some(query) = fts_query(query) {
-            let total = self.count_fts_matches(server_id, "track", &query)?;
+            let total = self.count_track_fts_matches(server_id, &query)?;
             if total > 0 {
                 return self.search_tracks_page(server_id, &query, offset, limit, total);
             }
@@ -2535,19 +2896,45 @@ impl Store {
     }
 
     pub fn load_favorite_tracks(&self, server_id: &ServerId) -> StoreResult<Vec<Track>> {
-        let mut statement = self.connection.prepare(
-            "
-            SELECT track_id, album_id, title, artist, artist_id, album, year,
-                   release_date, date_added, last_played, play_count, user_rating,
-                   duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
-            FROM tracks
-            WHERE server_id = ?1 AND favorite = 1
-            ORDER BY title COLLATE NOCASE
-            LIMIT 500
-            ",
-        )?;
-        let mut tracks =
-            collect_rows(statement.query_map(params![server_id.as_str()], track_from_row)?)?;
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, t.favorite, t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                FROM tracks t
+                WHERE t.server_id = ?1
+                  AND t.favorite = 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?2
+                  )
+                ORDER BY t.title COLLATE NOCASE
+                LIMIT 500
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), folder_id.as_str()],
+                track_from_row,
+            )?)?
+        } else {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT track_id, album_id, title, artist, artist_id, album, year,
+                       release_date, date_added, last_played, play_count, user_rating,
+                       duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
+                FROM tracks
+                WHERE server_id = ?1 AND favorite = 1
+                ORDER BY title COLLATE NOCASE
+                LIMIT 500
+                ",
+            )?;
+            collect_rows(statement.query_map(params![server_id.as_str()], track_from_row)?)?
+        };
         self.attach_track_metadata(server_id, &mut tracks)?;
         Ok(tracks)
     }
@@ -2908,26 +3295,63 @@ impl Store {
         limit: usize,
         total: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let mut statement = self.connection.prepare(
-            "
-            SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
-                   t.album, t.year, t.release_date, t.date_added, t.last_played,
-                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
-                   t.disc_number, t.track_number, t.image_item_id, t.image_tag
-            FROM library_fts f
-            JOIN tracks t
-                ON t.server_id = f.server_id AND t.track_id = f.item_id
-            WHERE f.server_id = ?1
-              AND f.item_type = 'track'
-              AND library_fts MATCH ?2
-            ORDER BY bm25(library_fts)
-            LIMIT ?3 OFFSET ?4
-            ",
-        )?;
-        let mut tracks = collect_rows(statement.query_map(
-            params![server_id.as_str(), query, limit as i64, offset as i64],
-            track_from_row,
-        )?)?;
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
+                       t.album, t.year, t.release_date, t.date_added, t.last_played,
+                       t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                       t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                FROM library_fts f
+                JOIN tracks t
+                    ON t.server_id = f.server_id AND t.track_id = f.item_id
+                WHERE f.server_id = ?1
+                  AND f.item_type = 'track'
+                  AND library_fts MATCH ?2
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?5
+                  )
+                ORDER BY bm25(library_fts)
+                LIMIT ?3 OFFSET ?4
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![
+                    server_id.as_str(),
+                    query,
+                    limit as i64,
+                    offset as i64,
+                    folder_id.as_str()
+                ],
+                track_from_row,
+            )?)?
+        } else {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
+                       t.album, t.year, t.release_date, t.date_added, t.last_played,
+                       t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                       t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                FROM library_fts f
+                JOIN tracks t
+                    ON t.server_id = f.server_id AND t.track_id = f.item_id
+                WHERE f.server_id = ?1
+                  AND f.item_type = 'track'
+                  AND library_fts MATCH ?2
+                ORDER BY bm25(library_fts)
+                LIMIT ?3 OFFSET ?4
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), query, limit as i64, offset as i64],
+                track_from_row,
+            )?)?
+        };
         self.attach_track_metadata(server_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total))
     }
@@ -2939,42 +3363,105 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
-        let total = self.connection.query_row(
-            "
-            SELECT COUNT(*)
-            FROM tracks
-            WHERE server_id = ?1
-              AND (
-                  LOWER(title) LIKE ?2 ESCAPE '\\'
-                  OR LOWER(artist) LIKE ?2 ESCAPE '\\'
-                  OR LOWER(album) LIKE ?2 ESCAPE '\\'
-                  OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
-              )
-            ",
-            params![server_id.as_str(), pattern],
-            |row| row.get::<_, i64>(0),
-        )?;
-        let mut statement = self.connection.prepare(
-            "
-            SELECT track_id, album_id, title, artist, artist_id, album, year,
-                   release_date, date_added, last_played, play_count, user_rating,
-                   duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
-            FROM tracks
-            WHERE server_id = ?1
-              AND (
-                  LOWER(title) LIKE ?2 ESCAPE '\\'
-                  OR LOWER(artist) LIKE ?2 ESCAPE '\\'
-                  OR LOWER(album) LIKE ?2 ESCAPE '\\'
-                  OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
-              )
-            ORDER BY title COLLATE NOCASE
-            LIMIT ?3 OFFSET ?4
-            ",
-        )?;
-        let mut tracks = collect_rows(statement.query_map(
-            params![server_id.as_str(), pattern, limit as i64, offset as i64],
-            track_from_row,
-        )?)?;
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let total = if let Some(folder_id) = selected_folder.as_ref() {
+            self.connection.query_row(
+                "
+                SELECT COUNT(*)
+                FROM tracks t
+                WHERE t.server_id = ?1
+                  AND (
+                      LOWER(t.title) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(t.album) LIKE ?2 ESCAPE '\\'
+                      OR CAST(t.year AS TEXT) LIKE ?2 ESCAPE '\\'
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?3
+                  )
+                ",
+                params![server_id.as_str(), pattern, folder_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )?
+        } else {
+            self.connection.query_row(
+                "
+                SELECT COUNT(*)
+                FROM tracks
+                WHERE server_id = ?1
+                  AND (
+                      LOWER(title) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(artist) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(album) LIKE ?2 ESCAPE '\\'
+                      OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
+                  )
+                ",
+                params![server_id.as_str(), pattern],
+                |row| row.get::<_, i64>(0),
+            )?
+        };
+        let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, t.favorite, t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                FROM tracks t
+                WHERE t.server_id = ?1
+                  AND (
+                      LOWER(t.title) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(t.artist) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(t.album) LIKE ?2 ESCAPE '\\'
+                      OR CAST(t.year AS TEXT) LIKE ?2 ESCAPE '\\'
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?5
+                  )
+                ORDER BY t.title COLLATE NOCASE
+                LIMIT ?3 OFFSET ?4
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![
+                    server_id.as_str(),
+                    pattern,
+                    limit as i64,
+                    offset as i64,
+                    folder_id.as_str()
+                ],
+                track_from_row,
+            )?)?
+        } else {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT track_id, album_id, title, artist, artist_id, album, year,
+                       release_date, date_added, last_played, play_count, user_rating,
+                       duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
+                FROM tracks
+                WHERE server_id = ?1
+                  AND (
+                      LOWER(title) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(artist) LIKE ?2 ESCAPE '\\'
+                      OR LOWER(album) LIKE ?2 ESCAPE '\\'
+                      OR CAST(year AS TEXT) LIKE ?2 ESCAPE '\\'
+                  )
+                ORDER BY title COLLATE NOCASE
+                LIMIT ?3 OFFSET ?4
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), pattern, limit as i64, offset as i64],
+                track_from_row,
+            )?)?
+        };
         self.attach_track_metadata(server_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total.max(0) as usize))
     }
@@ -3181,6 +3668,37 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    fn count_track_fts_matches(&self, server_id: &ServerId, query: &str) -> StoreResult<usize> {
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        if let Some(folder_id) = selected_folder.as_ref() {
+            self.connection
+                .query_row(
+                    "
+                    SELECT COUNT(*)
+                    FROM library_fts f
+                    JOIN tracks t
+                        ON t.server_id = f.server_id AND t.track_id = f.item_id
+                    WHERE f.server_id = ?1
+                      AND f.item_type = 'track'
+                      AND library_fts MATCH ?2
+                      AND EXISTS (
+                          SELECT 1
+                          FROM track_music_folders tmf
+                          WHERE tmf.server_id = t.server_id
+                            AND tmf.track_id = t.track_id
+                            AND tmf.folder_id = ?3
+                      )
+                    ",
+                    params![server_id.as_str(), query, folder_id.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count.max(0) as usize)
+                .map_err(StoreError::from)
+        } else {
+            self.count_fts_matches(server_id, "track", query)
+        }
+    }
+
     fn count_artist_fts_matches(
         &self,
         server_id: &ServerId,
@@ -3385,6 +3903,60 @@ impl Store {
         Ok(count.max(0) as usize)
     }
 
+    fn count_tracks_in_music_folder(
+        &self,
+        server_id: &ServerId,
+        folder_id: &MusicFolderId,
+    ) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM tracks t
+                WHERE t.server_id = ?1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?2
+                  )
+                ",
+                params![server_id.as_str(), folder_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as usize)
+            .map_err(StoreError::from)
+    }
+
+    fn count_albums_in_music_folder(
+        &self,
+        server_id: &ServerId,
+        folder_id: &MusicFolderId,
+    ) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM albums a
+                WHERE a.server_id = ?1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM tracks t
+                      JOIN track_music_folders tmf
+                        ON tmf.server_id = t.server_id AND tmf.track_id = t.track_id
+                      WHERE t.server_id = a.server_id
+                        AND t.album_id = a.album_id
+                        AND tmf.folder_id = ?2
+                  )
+                ",
+                params![server_id.as_str(), folder_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as usize)
+            .map_err(StoreError::from)
+    }
+
     fn count_artists(&self, server_id: &ServerId, album_artist: bool) -> StoreResult<usize> {
         let table = if album_artist {
             "album_artists"
@@ -3420,6 +3992,8 @@ impl Store {
                 "track_genres",
                 "album_artist_links",
                 "track_artist_links",
+                "server_music_folders",
+                "track_music_folders",
                 "playlists",
                 "playlist_tracks",
                 "home_section_items",
@@ -3428,6 +4002,22 @@ impl Store {
                     format!("DELETE FROM {table} WHERE server_id = ?1 AND sync_generation < ?2");
                 connection.execute(&sql, params![server_id.as_str(), generation])?;
             }
+
+            connection.execute(
+                "
+                UPDATE server_library_preferences
+                SET selected_music_folder_id = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE server_id = ?1
+                  AND selected_music_folder_id IS NOT NULL
+                  AND selected_music_folder_id NOT IN (
+                      SELECT folder_id
+                      FROM server_music_folders
+                      WHERE server_id = ?1
+                  )
+                ",
+                params![server_id.as_str()],
+            )?;
 
             connection.execute(
                 "
@@ -4069,6 +4659,9 @@ fn clear_library_cache_on_connection(
         "playlists",
         "genres",
         "track_genres",
+        "track_music_folders",
+        "track_local_matches",
+        "server_music_folders",
         "album_genres",
         "track_artist_links",
         "album_artist_links",
@@ -4177,8 +4770,8 @@ mod tests {
     };
     use rufin_core::{
         Album, AlbumId, AppSettings, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection,
-        HomeSectionKind, ImageRef, Playlist, PlaylistId, QueueEngine, ServerId, ServerIdentity,
-        ThemePreference, Track, TrackId,
+        HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId, QueueEngine,
+        ServerId, ServerIdentity, ThemePreference, Track, TrackId,
     };
     use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
 
@@ -4186,7 +4779,7 @@ mod tests {
     fn migrations_run_from_empty_database() {
         let store = Store::open_memory().expect("open store");
 
-        assert_eq!(store.schema_version().expect("schema version"), 7);
+        assert_eq!(store.schema_version().expect("schema version"), 8);
         assert!(store.foreign_keys_enabled().expect("foreign keys"));
         assert!(store.fts5_available().expect("fts5 table"));
     }
@@ -4205,6 +4798,9 @@ mod tests {
             ("track_genres", "track_genres_server_genre_idx"),
             ("album_artist_links", "album_artist_links_server_artist_idx"),
             ("track_artist_links", "track_artist_links_server_artist_idx"),
+            ("track_music_folders", "track_music_folders_folder_idx"),
+            ("track_music_folders", "track_music_folders_track_idx"),
+            ("track_local_matches", "track_local_matches_track_idx"),
         ] {
             assert!(index_exists(&store, table, index), "{index} should exist");
         }
@@ -4328,7 +4924,7 @@ mod tests {
         store.migrate().expect("migrate");
 
         let server_id = ServerId::new("jellyfin:server:test");
-        assert_eq!(store.schema_version().expect("schema version"), 7);
+        assert_eq!(store.schema_version().expect("schema version"), 8);
         for table in [
             "albums",
             "tracks",
@@ -4340,6 +4936,22 @@ mod tests {
             assert!(table_has_column(&store, table, "image_item_id"));
             assert!(table_has_column(&store, table, "image_tag"));
         }
+        assert!(table_has_column(
+            &store,
+            "server_music_folders",
+            "folder_id"
+        ));
+        assert!(table_has_column(&store, "track_music_folders", "folder_id"));
+        assert!(table_has_column(
+            &store,
+            "track_local_matches",
+            "local_path"
+        ));
+        assert!(table_has_column(
+            &store,
+            "server_library_preferences",
+            "selected_music_folder_id"
+        ));
         assert_eq!(
             store
                 .load_albums(&server_id, 0, 10)
@@ -4465,9 +5077,25 @@ mod tests {
         store.configure_pragmas(true).expect("configure pragmas");
         store.migrate().expect("migrate");
 
-        assert_eq!(store.schema_version().expect("schema version"), 7);
+        assert_eq!(store.schema_version().expect("schema version"), 8);
         assert!(table_has_column(&store, "playlist_tracks", "entry_id"));
         assert!(table_has_column(&store, "lyrics_cache", "value"));
+        assert!(table_has_column(
+            &store,
+            "server_music_folders",
+            "folder_id"
+        ));
+        assert!(table_has_column(&store, "track_music_folders", "folder_id"));
+        assert!(table_has_column(
+            &store,
+            "track_local_matches",
+            "local_path"
+        ));
+        assert!(table_has_column(
+            &store,
+            "server_library_preferences",
+            "selected_music_folder_id"
+        ));
         let entry_id: String = store
             .connection
             .query_row(
@@ -4599,6 +5227,136 @@ mod tests {
                 .track_local_path(&saved.server.id, &track.id)
                 .expect("track local path"),
             track.local_path
+        );
+    }
+
+    #[test]
+    fn track_local_matches_round_trip_and_replace() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let track_id = TrackId::fake(1);
+        store
+            .replace_track_local_matches(
+                &saved.server.id,
+                &[(
+                    track_id.clone(),
+                    "/home/me/Music/Track 1.flac".to_string(),
+                    "metadata".to_string(),
+                )],
+            )
+            .expect("replace local matches");
+
+        assert_eq!(
+            store
+                .track_local_match_path(&saved.server.id, &track_id)
+                .expect("match path")
+                .as_deref(),
+            Some("/home/me/Music/Track 1.flac")
+        );
+
+        store
+            .replace_track_local_matches(&saved.server.id, &[])
+            .expect("clear local matches");
+        assert_eq!(
+            store
+                .track_local_match_path(&saved.server.id, &track_id)
+                .expect("match path"),
+            None
+        );
+    }
+
+    #[test]
+    fn selected_music_folder_filters_cached_tracks_and_search() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let tracks = vec![track(1, &album), track(2, &album)];
+        let folder = MusicFolder {
+            id: MusicFolderId::fake(1),
+            name: "Music".to_string(),
+        };
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, &tracks, generation)
+            .expect("upsert tracks");
+        store
+            .upsert_music_folders(&saved.server.id, std::slice::from_ref(&folder), generation)
+            .expect("upsert folder");
+        store
+            .upsert_track_music_folder_memberships(
+                &saved.server.id,
+                &folder.id,
+                std::slice::from_ref(&tracks[1]),
+                generation,
+            )
+            .expect("upsert membership");
+        store
+            .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+            .expect("select folder");
+
+        let page = store
+            .load_tracks(&saved.server.id, 0, 10)
+            .expect("load tracks");
+        let search = store
+            .load_tracks_matching(&saved.server.id, "Track", 0, 10)
+            .expect("search tracks");
+        let favorites = store
+            .load_favorite_tracks(&saved.server.id)
+            .expect("load favorites");
+
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id, tracks[1].id);
+        assert_eq!(search.total, 1);
+        assert_eq!(search.items[0].id, tracks[1].id);
+        assert!(favorites.is_empty());
+    }
+
+    #[test]
+    fn stale_selected_music_folder_is_cleared_after_sync() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let folder = MusicFolder {
+            id: MusicFolderId::fake(1),
+            name: "Music".to_string(),
+        };
+        let first_generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        store
+            .upsert_music_folders(
+                &saved.server.id,
+                std::slice::from_ref(&folder),
+                first_generation,
+            )
+            .expect("upsert folder");
+        store
+            .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+            .expect("select folder");
+        store
+            .complete_sync(&saved.server.id, first_generation)
+            .expect("complete first sync");
+
+        let second_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
+        store
+            .complete_sync(&saved.server.id, second_generation)
+            .expect("complete second sync");
+
+        assert!(
+            store
+                .list_music_folders(&saved.server.id)
+                .expect("list folders")
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .selected_music_folder_id(&saved.server.id)
+                .expect("selected folder"),
+            None
         );
     }
 

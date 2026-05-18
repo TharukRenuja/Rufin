@@ -2,7 +2,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{Route, ServerIdentity};
+use rufin_core::{MusicFolder, MusicFolderId, Route, ServerIdentity};
 use rufin_store::ServerLocalAccess;
 
 use super::{Shell, icon_button, layout::COMPACT_RAIL_WIDTH};
@@ -30,6 +30,8 @@ struct ServerSelectorContent {
     active_server: Option<ServerIdentity>,
     servers: Vec<ServerIdentity>,
     local_access: Option<ServerLocalAccess>,
+    music_folders: Vec<MusicFolder>,
+    selected_music_folder_id: Option<MusicFolderId>,
     has_server: bool,
 }
 
@@ -186,12 +188,24 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
             active_server: None,
             servers: library.servers,
             local_access: None,
+            music_folders: Vec::new(),
+            selected_music_folder_id: None,
             has_server: false,
         };
     };
 
     let name = server_display_name(server);
-    let subtitle = tr("Current server");
+    let subtitle = library
+        .selected_music_folder_id
+        .as_ref()
+        .and_then(|selected| {
+            library
+                .music_folders
+                .iter()
+                .find(|folder| folder.id == *selected)
+        })
+        .map(|folder| format!("{} · {}", tr("Current server"), folder.name))
+        .unwrap_or_else(|| tr("Current server"));
     let detail = if server.base_url.trim().is_empty() {
         provider_display_name(&server.provider)
     } else {
@@ -205,6 +219,8 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
         active_server: Some(server.clone()),
         servers: library.servers,
         local_access: library.local_access,
+        music_folders: library.music_folders,
+        selected_music_folder_id: library.selected_music_folder_id,
         has_server: true,
     }
 }
@@ -283,8 +299,13 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
 
         let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
         wrapper.append(&separator);
-        wrapper.append(&server_section_label(&tr("Music Folder")));
-        append_music_folder_rows(
+        wrapper.append(&server_section_label(&tr("Server Library")));
+        append_server_music_folder_rows(shell, &popover, &wrapper, server, content);
+
+        let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+        wrapper.append(&separator);
+        wrapper.append(&server_section_label(&tr("Local Files")));
+        append_local_file_rows(
             shell,
             &popover,
             &wrapper,
@@ -318,7 +339,43 @@ fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) 
     popover
 }
 
-fn append_music_folder_rows(
+fn append_server_music_folder_rows(
+    shell: &Rc<Shell>,
+    popover: &gtk::Popover,
+    wrapper: &gtk::Box,
+    server: &ServerIdentity,
+    content: &ServerSelectorContent,
+) {
+    let all_active = content.selected_music_folder_id.is_none();
+    let all = server_action_row("folder-symbolic", &tr("All Music"), "", all_active);
+    let row_popover = popover.clone();
+    let controller = shell.controller.clone();
+    let server_id = server.id.clone();
+    all.connect_clicked(move |_| {
+        row_popover.popdown();
+        controller.set_selected_music_folder(server_id.clone(), None);
+    });
+    wrapper.append(&all);
+
+    for folder in &content.music_folders {
+        let active = content
+            .selected_music_folder_id
+            .as_ref()
+            .is_some_and(|selected| *selected == folder.id);
+        let row = server_action_row("folder-music-symbolic", &folder.name, "", active);
+        let row_popover = popover.clone();
+        let controller = shell.controller.clone();
+        let server_id = server.id.clone();
+        let folder_id = folder.id.clone();
+        row.connect_clicked(move |_| {
+            row_popover.popdown();
+            controller.set_selected_music_folder(server_id.clone(), Some(folder_id.clone()));
+        });
+        wrapper.append(&row);
+    }
+}
+
+fn append_local_file_rows(
     shell: &Rc<Shell>,
     popover: &gtk::Popover,
     wrapper: &gtk::Box,

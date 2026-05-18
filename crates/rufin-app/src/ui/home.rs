@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -14,7 +15,7 @@ use super::{
     PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class, icon_button,
 };
 
-fn showcase_album(library: &LibrarySnapshot) -> Option<Album> {
+fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
     let explore_first_id = library
         .home_sections
         .iter()
@@ -22,36 +23,29 @@ fn showcase_album(library: &LibrarySnapshot) -> Option<Album> {
         .and_then(|section| section.albums.first())
         .map(|album| album.id.clone());
 
-    library
+    let mut seen = HashSet::new();
+    let candidates = library
         .home_sections
         .iter()
         .filter(|section| section.kind != HomeSectionKind::Explore)
         .flat_map(|section| section.albums.iter())
-        .find(|album| explore_first_id.as_ref() != Some(&album.id))
+        .chain(library.albums.iter())
+        .filter(|album| explore_first_id.as_ref() != Some(&album.id))
+        .filter(|album| seen.insert(album.id.clone()))
+        .collect::<Vec<_>>();
+
+    if !candidates.is_empty() {
+        return candidates
+            .get((seed as usize) % candidates.len())
+            .map(|album| (*album).clone());
+    }
+
+    library
+        .home_sections
+        .iter()
+        .find(|section| section.kind == HomeSectionKind::Explore)
+        .and_then(|section| section.albums.first())
         .cloned()
-        .or_else(|| {
-            library
-                .home_sections
-                .iter()
-                .find(|section| section.kind == HomeSectionKind::Explore)
-                .and_then(|section| section.albums.get(1))
-                .cloned()
-        })
-        .or_else(|| {
-            library
-                .albums
-                .iter()
-                .find(|album| explore_first_id.as_ref() != Some(&album.id))
-                .cloned()
-        })
-        .or_else(|| {
-            library
-                .home_sections
-                .iter()
-                .find(|section| section.kind == HomeSectionKind::Explore)
-                .and_then(|section| section.albums.first())
-                .cloned()
-        })
         .or_else(|| library.albums.first().cloned())
 }
 
@@ -88,7 +82,9 @@ impl Shell {
         let mut appended = false;
         for block in blocks {
             let child = match block {
-                HomeBlockKind::Showcase => self.home_showcase_block(&library),
+                HomeBlockKind::Showcase => {
+                    self.home_showcase_block(&library, self.state.home_showcase_seed.get())
+                }
                 HomeBlockKind::Genres => self.home_genres_block(&library.genres),
                 _ => block
                     .section_kind()
@@ -117,8 +113,12 @@ impl Shell {
         scroller.upcast()
     }
 
-    fn home_showcase_block(self: &Rc<Self>, library: &LibrarySnapshot) -> Option<gtk::Widget> {
-        let album = showcase_album(library)?;
+    fn home_showcase_block(
+        self: &Rc<Self>,
+        library: &LibrarySnapshot,
+        seed: u64,
+    ) -> Option<gtk::Widget> {
+        let album = showcase_album(library, seed)?;
 
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
@@ -387,5 +387,86 @@ impl Shell {
 
         render_home_track_page(self, &row, &previous, &next, section_kind, &tracks);
         section.upcast()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rufin_core::AlbumId;
+    use rufin_provider::SearchResults;
+
+    #[test]
+    fn showcase_album_uses_visit_seed_to_rotate_candidates() {
+        let library = snapshot_with_albums(vec![album(1), album(2), album(3)]);
+
+        let first = showcase_album(&library, 0).expect("first showcase album");
+        let second = showcase_album(&library, 1).expect("second showcase album");
+
+        assert_eq!(first.id, AlbumId::fake(1));
+        assert_eq!(second.id, AlbumId::fake(2));
+    }
+
+    #[test]
+    fn showcase_album_avoids_first_visible_explore_album_when_possible() {
+        let mut library = snapshot_with_albums(vec![album(1), album(2)]);
+        library.home_sections = vec![HomeSection {
+            kind: HomeSectionKind::Explore,
+            albums: vec![album(1)],
+            tracks: Vec::new(),
+        }];
+
+        let selected = showcase_album(&library, 0).expect("showcase album");
+
+        assert_eq!(selected.id, AlbumId::fake(2));
+    }
+
+    fn snapshot_with_albums(albums: Vec<Album>) -> LibrarySnapshot {
+        LibrarySnapshot {
+            server: None,
+            servers: Vec::new(),
+            local_access: None,
+            music_folders: Vec::new(),
+            selected_music_folder_id: None,
+            username: None,
+            first_run: false,
+            sync_status: String::new(),
+            last_error: None,
+            cached_album_count: albums.len(),
+            cached_track_count: 0,
+            home_sections: Vec::new(),
+            prefetched_explore: None,
+            albums,
+            tracks: Vec::new(),
+            artists: Vec::new(),
+            album_artists: Vec::new(),
+            genres: Vec::new(),
+            playlists: Vec::new(),
+            favorites: Vec::new(),
+            search: SearchResults::default(),
+        }
+    }
+
+    fn album(number: u32) -> Album {
+        Album {
+            id: AlbumId::fake(number),
+            title: format!("Album {number}"),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            album_artist_credits: Vec::new(),
+            artist_credits: Vec::new(),
+            year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            track_count: 1,
+            duration_seconds: 60,
+            favorite: false,
+            color_seed: number,
+            image_ref: None,
+            genres: Vec::new(),
+        }
     }
 }

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, Playlist,
-    PlaylistId, ServerIdentity, StreamQuality, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, MusicFolder,
+    MusicFolderId, Playlist, PlaylistId, ServerIdentity, StreamQuality, Track, TrackId,
 };
 pub use rufin_playback::StreamDescriptor;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,7 @@ pub struct ProviderCapabilities {
     pub random_played_filter: bool,
     pub search: bool,
     pub image_metadata: bool,
+    pub music_folders: bool,
 }
 
 impl Default for ProviderCapabilities {
@@ -51,6 +52,7 @@ impl Default for ProviderCapabilities {
             random_played_filter: false,
             search: true,
             image_metadata: true,
+            music_folders: false,
         }
     }
 }
@@ -303,6 +305,17 @@ pub trait MusicProvider {
     async fn albums(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Album>>;
     async fn album_detail(&self, album_id: &rufin_core::AlbumId) -> ProviderResult<AlbumDetail>;
     async fn tracks(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Track>>;
+    async fn music_folders(&self) -> ProviderResult<Vec<MusicFolder>> {
+        Err(ProviderError::Unsupported("music folders"))
+    }
+    async fn tracks_in_music_folder(
+        &self,
+        folder_id: &MusicFolderId,
+        request: PagedRequest,
+    ) -> ProviderResult<PagedResponse<Track>> {
+        let _unused = folder_id;
+        self.tracks(request).await
+    }
     async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>>;
     async fn album_artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>>;
     async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>>;

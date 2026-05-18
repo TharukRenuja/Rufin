@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
     Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
-    HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerId,
+    ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
     AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
@@ -415,6 +416,50 @@ impl MusicProvider for SubsonicProvider {
                     ("albumOffset", "0".to_string()),
                     ("songCount", request.limit.to_string()),
                     ("songOffset", request.offset.to_string()),
+                ],
+            )
+            .await?;
+        Ok(PagedResponse::new(
+            body.search_result
+                .and_then(|result| result.song)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|song| track_from_dto(self, song))
+                .collect(),
+            0,
+        ))
+    }
+
+    async fn music_folders(&self) -> ProviderResult<Vec<MusicFolder>> {
+        let body: MusicFoldersBody = self.get_json("getMusicFolders", &[]).await?;
+        Ok(body
+            .music_folders
+            .music_folder
+            .into_iter()
+            .map(|folder| MusicFolder {
+                id: MusicFolderId::new(self.id("music-folder", folder.id.0.as_str())),
+                name: folder.name,
+            })
+            .collect())
+    }
+
+    async fn tracks_in_music_folder(
+        &self,
+        folder_id: &MusicFolderId,
+        request: PagedRequest,
+    ) -> ProviderResult<PagedResponse<Track>> {
+        let body: SearchBody = self
+            .get_json(
+                "search3",
+                &[
+                    ("query", String::new()),
+                    ("artistCount", "0".to_string()),
+                    ("artistOffset", "0".to_string()),
+                    ("albumCount", "0".to_string()),
+                    ("albumOffset", "0".to_string()),
+                    ("songCount", request.limit.to_string()),
+                    ("songOffset", request.offset.to_string()),
+                    ("musicFolderId", raw_item_id(folder_id.as_str()).to_string()),
                 ],
             )
             .await?;
@@ -1021,6 +1066,7 @@ fn subsonic_capabilities() -> ProviderCapabilities {
         playlist_mutations: true,
         favorite_mutations: true,
         random_tracks: true,
+        music_folders: true,
         ..ProviderCapabilities::default()
     }
 }
@@ -1336,6 +1382,24 @@ struct SearchResult {
     artist: Option<Vec<SubsonicArtist>>,
     #[serde(default)]
     song: Option<Vec<SubsonicSong>>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct MusicFoldersBody {
+    #[serde(default, rename = "musicFolders")]
+    music_folders: MusicFolders,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct MusicFolders {
+    #[serde(default, rename = "musicFolder")]
+    music_folder: Vec<SubsonicMusicFolder>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct SubsonicMusicFolder {
+    id: SubsonicId,
+    name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1887,6 +1951,71 @@ mod tests {
 
         assert_eq!(image.bytes, vec![1, 2, 3]);
         assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
+    }
+
+    #[tokio::test]
+    async fn music_folders_load_subsonic_music_folders() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/getMusicFolders.view"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subsonic-response": {
+                    "status": "ok",
+                    "version": "1.16.1",
+                    "musicFolders": {
+                        "musicFolder": [
+                            { "id": 1, "name": "Music" }
+                        ]
+                    }
+                }
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server);
+
+        let folders = provider.music_folders().await.expect("folders");
+
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].id.as_str(), "subsonic:music-folder:1");
+        assert_eq!(folders[0].name, "Music");
+    }
+
+    #[tokio::test]
+    async fn tracks_in_music_folder_passes_music_folder_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/search3.view"))
+            .and(query_param("musicFolderId", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subsonic-response": {
+                    "status": "ok",
+                    "version": "1.16.1",
+                    "searchResult3": {
+                        "song": [{
+                            "id": "track-one",
+                            "title": "First Motion",
+                            "album": "Blue Rooms",
+                            "albumId": "album-one",
+                            "artist": "Astral Kin",
+                            "artistId": "artist-one",
+                            "duration": 210
+                        }]
+                    }
+                }
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server);
+
+        let page = provider
+            .tracks_in_music_folder(
+                &MusicFolderId::new("subsonic:music-folder:1"),
+                PagedRequest::new(0, 50),
+            )
+            .await
+            .expect("tracks");
+
+        assert_eq!(page.items[0].id.as_str(), "subsonic:track:track-one");
     }
 
     fn provider(server: &MockServer) -> SubsonicProvider {

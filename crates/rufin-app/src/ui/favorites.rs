@@ -214,6 +214,8 @@ mod tests {
             server: None,
             servers: Vec::new(),
             local_access: None,
+            music_folders: Vec::new(),
+            selected_music_folder_id: None,
             username: None,
             first_run: false,
             sync_status: String::new(),

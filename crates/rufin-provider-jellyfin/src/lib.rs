@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
     Album, AlbumId, Artist, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind,
-    Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
     AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
@@ -455,6 +455,51 @@ impl MusicProvider for JellyfinProvider {
         Ok(PagedResponse::new(
             response.items.into_iter().map(track_from_item).collect(),
             response.total,
+        ))
+    }
+
+    async fn music_folders(&self) -> ProviderResult<Vec<MusicFolder>> {
+        let mut url = endpoint(&self.base_url, &format!("Users/{}/Views", self.user_id))?;
+        url.query_pairs_mut()
+            .append_pair("IncludeExternalContent", "false");
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        Ok(response
+            .items
+            .into_iter()
+            .filter(|item| {
+                item.collection_type
+                    .as_deref()
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("music"))
+            })
+            .filter_map(|item| {
+                item.name.map(|name| MusicFolder {
+                    id: MusicFolderId::new(jellyfin_id("music-folder", &item.id)),
+                    name,
+                })
+            })
+            .collect())
+    }
+
+    async fn tracks_in_music_folder(
+        &self,
+        folder_id: &MusicFolderId,
+        request: PagedRequest,
+    ) -> ProviderResult<PagedResponse<Track>> {
+        let mut url = endpoint(&self.base_url, "Items")?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("ParentId", raw_item_id(folder_id.as_str()))
+            .append_pair("Recursive", "true")
+            .append_pair("IncludeItemTypes", "Audio")
+            .append_pair("StartIndex", &request.offset.to_string())
+            .append_pair("Limit", &request.limit.to_string())
+            .append_pair("Fields", ITEM_FIELDS)
+            .append_pair("SortBy", "SortName")
+            .append_pair("SortOrder", "Ascending");
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        Ok(PagedResponse::new(
+            response.items.into_iter().map(track_from_item).collect(),
+            response.total_record_count.unwrap_or(0),
         ))
     }
 
@@ -1081,6 +1126,7 @@ fn jellyfin_capabilities() -> ProviderCapabilities {
         favorite_mutations: true,
         random_tracks: true,
         random_played_filter: true,
+        music_folders: true,
         ..ProviderCapabilities::default()
     }
 }
@@ -1537,6 +1583,75 @@ mod tests {
         assert_eq!(detail.tracks[0].play_count, Some(7));
         assert_eq!(detail.tracks[0].user_rating, Some(4));
         assert_eq!(detail.tracks[0].duration_seconds, 210);
+    }
+
+    #[tokio::test]
+    async fn music_folders_load_music_user_views() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Users/user-one/Views"))
+            .and(query_param("IncludeExternalContent", "false"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Items": [
+                    {
+                        "Id": "music-one",
+                        "Name": "Music",
+                        "CollectionType": "music"
+                    },
+                    {
+                        "Id": "movies-one",
+                        "Name": "Movies",
+                        "CollectionType": "movies"
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let folders = provider.music_folders().await.expect("folders");
+
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].id.as_str(), "jellyfin:music-folder:music-one");
+        assert_eq!(folders[0].name, "Music");
+    }
+
+    #[tokio::test]
+    async fn tracks_in_music_folder_scope_items_by_parent_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Items"))
+            .and(query_param("ParentId", "music-one"))
+            .and(query_param("IncludeItemTypes", "Audio"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "TotalRecordCount": 1,
+                "Items": [{
+                    "Id": "track-one",
+                    "Name": "First Motion",
+                    "Type": "Audio",
+                    "AlbumId": "album-one",
+                    "Album": "Blue Rooms",
+                    "Artists": ["Astral Kin"],
+                    "AlbumArtists": [{ "Id": "album-artist-one", "Name": "Astral Kin" }],
+                    "ArtistItems": [{ "Id": "artist-one", "Name": "Astral Kin" }],
+                    "IndexNumber": 1,
+                    "RunTimeTicks": 2100000000i64
+                }]
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let page = provider
+            .tracks_in_music_folder(
+                &MusicFolderId::new("jellyfin:music-folder:music-one"),
+                PagedRequest::new(0, 50),
+            )
+            .await
+            .expect("tracks");
+
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id.as_str(), "jellyfin:track:track-one");
     }
 
     #[tokio::test]
