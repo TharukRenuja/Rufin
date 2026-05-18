@@ -286,7 +286,7 @@ window {
 }
 
 .player-identity {
-  min-width: 180px;
+  min-width: 0;
 }
 
 .player-transport {
