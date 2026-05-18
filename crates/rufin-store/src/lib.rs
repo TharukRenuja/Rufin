@@ -1987,6 +1987,32 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
 
+    pub fn load_albums_without_image_ref(
+        &self,
+        server_id: &ServerId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<Vec<Album>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT album_id, title, artist, artist_id, year, release_date, date_added,
+                   last_played, play_count, user_rating, track_count, duration_seconds,
+                   favorite, color_seed, image_item_id, image_tag
+            FROM albums
+            WHERE server_id = ?1
+              AND image_item_id IS NULL
+            ORDER BY title COLLATE NOCASE, album_id
+            LIMIT ?2 OFFSET ?3
+            ",
+        )?;
+        let mut albums = collect_rows(statement.query_map(
+            params![server_id.as_str(), limit as i64, offset as i64],
+            album_from_row,
+        )?)?;
+        self.attach_album_metadata(server_id, &mut albums)?;
+        Ok(albums)
+    }
+
     pub fn load_albums_matching(
         &self,
         server_id: &ServerId,
@@ -5227,6 +5253,31 @@ mod tests {
                 .track_local_path(&saved.server.id, &track.id)
                 .expect("track local path"),
             track.local_path
+        );
+    }
+
+    #[test]
+    fn albums_without_image_ref_can_be_loaded_for_external_art_prefetch() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+
+        store
+            .upsert_albums(
+                &saved.server.id,
+                &[album(1), album_with_image(2), album(3)],
+                generation,
+            )
+            .expect("upsert albums");
+
+        let albums = store
+            .load_albums_without_image_ref(&saved.server.id, 0, 10)
+            .expect("load albums without image ref");
+
+        assert_eq!(
+            albums.into_iter().map(|album| album.id).collect::<Vec<_>>(),
+            vec![AlbumId::fake(1), AlbumId::fake(3)]
         );
     }
 

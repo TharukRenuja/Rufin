@@ -224,6 +224,18 @@ struct HomeRefreshContext {
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
 }
 
+#[derive(Clone)]
+struct SyncContext {
+    store: StoreHandle,
+    runtime: Arc<Runtime>,
+    secrets: Arc<dyn SecretStore>,
+    events: Sender<ControllerEvent>,
+    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    cover_in_flight: Arc<Mutex<HashSet<String>>>,
+    external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    cover_slots: Arc<(Mutex<usize>, Condvar)>,
+}
+
 struct ExplorePrefetchContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
@@ -851,6 +863,19 @@ impl AppController {
         );
     }
 
+    fn sync_context(&self) -> SyncContext {
+        SyncContext {
+            store: self.store.clone(),
+            runtime: Arc::clone(&self.runtime),
+            secrets: Arc::clone(&self.secrets),
+            events: self.events.clone(),
+            sync_in_flight: Arc::clone(&self.sync_in_flight),
+            cover_in_flight: Arc::clone(&self.cover_in_flight),
+            external_cover_prefetch_in_flight: Arc::clone(&self.external_cover_prefetch_in_flight),
+            cover_slots: Arc::clone(&self.cover_slots),
+        }
+    }
+
     pub fn startup_sync_delay_ms(&self) -> Option<u64> {
         let saved = self
             .store
@@ -1473,14 +1498,14 @@ impl AppController {
         local_access_root: Option<PathBuf>,
         path_replace_from: Option<String>,
     ) {
-        let store = self.store.clone();
-        let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
-        let events = self.events.clone();
+        let sync_context = self.sync_context();
+        let store = sync_context.store.clone();
+        let runtime = Arc::clone(&sync_context.runtime);
+        let secrets = Arc::clone(&sync_context.secrets);
+        let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
             let provider_name = provider.title();
             let _sent = events.send(ControllerEvent::LoginStatus(format!(
@@ -1559,19 +1584,17 @@ impl AppController {
                 }
             }
 
-            start_sync_thread(store, runtime, secrets, events, sync_in_flight, saved);
+            start_sync_thread(sync_context, saved);
         });
     }
 
     pub fn add_local_server(&self, root_path: PathBuf) {
-        let store = self.store.clone();
-        let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
-        let events = self.events.clone();
+        let sync_context = self.sync_context();
+        let store = sync_context.store.clone();
+        let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
             let identity = match LocalProvider::identity_for_root(&root_path) {
                 Ok(identity) => identity,
@@ -1609,19 +1632,17 @@ impl AppController {
                 &auto_dj_enabled,
                 &saved,
             );
-            start_sync_thread(store, runtime, secrets, events, sync_in_flight, saved);
+            start_sync_thread(sync_context, saved);
         });
     }
 
     pub fn activate_server(&self, server_id: ServerId) {
-        let store = self.store.clone();
-        let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
-        let events = self.events.clone();
+        let sync_context = self.sync_context();
+        let store = sync_context.store.clone();
+        let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let sync_in_flight = Arc::clone(&self.sync_in_flight);
         thread::spawn(move || {
             let saved = match store.with_store(|store| {
                 let saved = store
@@ -1654,7 +1675,7 @@ impl AppController {
                 &saved,
             );
             if active_server_needs_sync(&store, &saved.server.id) {
-                start_sync_thread(store, runtime, secrets, events, sync_in_flight, saved);
+                start_sync_thread(sync_context, saved);
             }
         });
     }
@@ -2808,37 +2829,23 @@ impl AppController {
     }
 
     fn start_sync(&self, saved: SavedServer) {
-        start_sync_thread(
-            self.store.clone(),
-            Arc::clone(&self.runtime),
-            Arc::clone(&self.secrets),
-            self.events.clone(),
-            Arc::clone(&self.sync_in_flight),
-            saved,
-        );
+        start_sync_thread(self.sync_context(), saved);
     }
 }
 
-fn start_sync_thread(
-    store: StoreHandle,
-    runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
-    events: Sender<ControllerEvent>,
-    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    saved: SavedServer,
-) {
+fn start_sync_thread(context: SyncContext, saved: SavedServer) {
     let server_id = saved.server.id.clone();
-    match sync_in_flight.lock() {
+    match context.sync_in_flight.lock() {
         Ok(mut running) => {
             if !running.insert(server_id.clone()) {
-                let _sent = events.send(ControllerEvent::LoginStatus(
+                let _sent = context.events.send(ControllerEvent::LoginStatus(
                     "Sync already running.".to_string(),
                 ));
                 return;
             }
         }
         Err(_) => {
-            let _sent = events.send(ControllerEvent::Error(
+            let _sent = context.events.send(ControllerEvent::Error(
                 "Sync guard lock was poisoned.".to_string(),
             ));
             return;
@@ -2847,33 +2854,45 @@ fn start_sync_thread(
 
     thread::spawn(move || {
         let provider_name = provider_display_name(&saved.server.provider);
-        let _sent = events.send(ControllerEvent::LoginStatus(format!(
+        let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
             "Syncing {provider_name} library..."
         )));
-        let sync_result = run_sync_job(&store, &runtime, &secrets, &saved);
-        if let Ok(mut running) = sync_in_flight.lock() {
+        let sync_result = run_sync_job(&context.store, &context.runtime, &context.secrets, &saved);
+        if let Ok(mut running) = context.sync_in_flight.lock() {
             running.remove(&server_id);
         }
         match sync_result {
             Ok(()) => {
-                let _sent = events.send(ControllerEvent::LoginStatus(
+                covers::start_external_album_cover_prefetch_thread(
+                    context.store.clone(),
+                    Arc::clone(&context.runtime),
+                    Arc::clone(&context.secrets),
+                    context.events.clone(),
+                    Arc::clone(&context.cover_in_flight),
+                    Arc::clone(&context.external_cover_prefetch_in_flight),
+                    Arc::clone(&context.cover_slots),
+                    saved.clone(),
+                );
+                let _sent = context.events.send(ControllerEvent::LoginStatus(
                     "Library sync complete.".to_string(),
                 ));
-                match load_snapshot(&store) {
+                match load_snapshot(&context.store) {
                     Ok(snapshot) => {
-                        let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+                        let _sent = context
+                            .events
+                            .send(ControllerEvent::Snapshot(Box::new(snapshot)));
                     }
                     Err(error) => {
-                        let _sent = events.send(ControllerEvent::Error(error));
+                        let _sent = context.events.send(ControllerEvent::Error(error));
                     }
                 }
             }
             Err(error) => {
-                let _failed = store.with_store(|store| {
+                let _failed = context.store.with_store(|store| {
                     store.fail_sync(&saved.server.id, &error)?;
                     Ok(())
                 });
-                let _sent = events.send(ControllerEvent::Error(error));
+                let _sent = context.events.send(ControllerEvent::Error(error));
             }
         }
     });

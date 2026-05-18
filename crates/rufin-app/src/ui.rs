@@ -497,9 +497,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     install_mpris(&shell);
     shell.update_density();
     prime_first_cached_cover(&shell);
-    shell
-        .controller
-        .prefetch_external_metadata_covers(&shell.state.library.borrow());
     shell.render_current_route();
     shell.refresh_home_for_current_visit();
     shell.render_queue_panel();
@@ -3422,9 +3419,6 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     *shell.state.library.borrow_mut() = *snapshot;
-                    shell
-                        .controller
-                        .prefetch_external_metadata_covers(&shell.state.library.borrow());
                     if entering_first_run {
                         shell.state.server_discovery_started.set(false);
                         shell.state.server_discovery_running.set(false);
@@ -3441,9 +3435,6 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     reset_home_section_pages(&mut shell.state.home_section_state.borrow_mut());
                     *shell.state.library.borrow_mut() = *snapshot;
-                    shell
-                        .controller
-                        .prefetch_external_metadata_covers(&shell.state.library.borrow());
                     shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
                     shell.update_server_selector();
                 }
