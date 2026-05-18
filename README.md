@@ -1,13 +1,20 @@
 # Rufin
 
-<img align="left" alt="Rufin" src="data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" width="120"> Native GTK4 music client in Rust, built for speed. Currently it is daily-driveable with Jellyfin/Subsonic/Navidrome/Local folder support, Discord IPC, and automatic lyrics/cover art caching, built-in scrobble support for Lastfm, Librefm and ListenBrainz. Greatly influenced by [feishin](https://github.com/jeffvli/feishin), it is not as feature-rich, but aims to offer a similar experience without any web stack.
-
+<img align="left" alt="Rufin" src="data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" width="120"> Rufin is a native GTK4/libadwaita music client written in Rust, with some minimal CSS for essentials. Greatly influenced by [feishin](https://github.com/jeffvli/feishin), it is not as feature-rich, but it aims to offer a similar experience without any web stack.
 <br clear="left">
+
+# Features
+
+- Supports Jellyfin, Subsonic, Navidrome and local folders. You can also configure a local folder while playing from the server, Rufin tries a best-effort path match with the actual tracks. This doesn't disable server reporting.
+- Built-in scrobble support for these Last fm, Libre fm, and ListenBrainz.
+- Discord Rich Presence support
+- Automatic metadata caching for missing lyrics/cover art 
+- Rich customization while preserving GTK4 menus
 
 # To do
 
 - Try to break things and fix them
-- Better performance
+- Better performance (I think it is sufficiently fast currently, but we can probably do things smarter)
 
 # Installation
 
