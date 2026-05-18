@@ -1,8 +1,4 @@
-# SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the Rufin package.
-# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
-#
+
 #, fuzzy
 msgid ""
 msgstr ""
@@ -128,7 +124,7 @@ msgid "Toggle Fullscreen"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:47 crates/rufin-app/src/ui.rs:6569
-msgid "About Rufin"
+msgid "About"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:48 crates/rufin-app/src/ui.rs:4046
@@ -292,31 +288,31 @@ msgid "Queue a track to begin"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:87
-msgid "Artist detail will use cached album and track groups."
+msgid "Artist detail will use cached album and track group"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:88
-msgid "Genre detail keeps albums above tracks."
+msgid "Genre detail keeps albums above tracks"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:89
-msgid "Playlist detail will use the track table."
+msgid "Playlist detail will use the track table"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:90
-msgid "Cached library data will appear here as sync pages finish."
+msgid "Caching"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:91
-msgid "The selected cached album was not found."
+msgid "Album not cached"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:92
-msgid "Cached rows will appear here after the background sync finishes."
+msgid "No entries"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:93
-msgid "Type a query in the sidebar search field to search the local cache."
+msgid "Type a query to search"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:94 crates/rufin-app/src/ui.rs:4070
@@ -340,15 +336,15 @@ msgid "Lyrics"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:1356
-msgid "No server lyrics for the current track. Private mode is on."
+msgid "No server lyrics for the current track, disable private mode for external lyrics lookup"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:1358
-msgid "No server lyrics for the current track. External lyric lookup is off."
+msgid "No lyrics found in the server, you can enable external lyrics lookup"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:1360
-msgid "No lyrics for the current track."
+msgid "No lyrics found"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:1432 crates/rufin-app/src/ui.rs:1485
@@ -357,8 +353,7 @@ msgstr ""
 
 #: crates/rufin-app/src/ui.rs:1489
 msgid ""
-"Tokens are saved in native Secret Service. Cached library metadata is saved "
-"in SQLite."
+"Tokens are saved in safe storage"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:1496
@@ -374,7 +369,7 @@ msgid "Password"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:1505
-msgid "Trust invalid certificate for this server"
+msgid "Trust self-signed certificates"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:1749 crates/rufin-app/src/ui.rs:2098
@@ -399,7 +394,7 @@ msgid "New Playlist"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2244
-msgid "Create a playlist. If a track is playing, it will be added."
+msgid "Create a playlist. If a track is playing, it will be added"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2247 crates/rufin-app/src/ui.rs:2531
@@ -421,7 +416,7 @@ msgid "Rename Playlist"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2529
-msgid "Enter a new playlist name."
+msgid "Enter a new playlist name"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2532
@@ -433,7 +428,7 @@ msgid "Left sidebar density"
 msgstr ""
 
 #: crates/rufin-app/src/ui/preferences.rs:43
-msgid "Choose when the left sidebar uses compact navigation."
+msgid "Choose when the left sidebar uses compact navigation"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2684
@@ -457,7 +452,7 @@ msgid "External lyric lookup"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2726
-msgid "Use Jellyfin remote lyric providers when server lyrics are unavailable."
+msgid "Use remote lyric providers when server lyrics are unavailable"
 msgstr ""
 
 #: crates/rufin-app/src/ui/preferences.rs:117
@@ -465,7 +460,7 @@ msgid "Prefer server lyrics"
 msgstr ""
 
 #: crates/rufin-app/src/ui/preferences.rs:118
-msgid "Search Jellyfin lyrics before external providers."
+msgid "Use server lyrics before external providers."
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2865
@@ -562,8 +557,7 @@ msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2825
 msgid ""
-"This removes cached Jellyfin library metadata for the active server. Login "
-"stays saved."
+"This removes library cache for the active server, you stay logged in"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2829
@@ -576,8 +570,7 @@ msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2850
 msgid ""
-"This removes the active server, cached library metadata, queue snapshot, and "
-"saved token."
+"This removes the server, cached and your server token"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2873 crates/rufin-app/src/ui.rs:2877
@@ -585,11 +578,11 @@ msgid "Clear queue"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2874
-msgid "This removes all queued tracks and stops playback."
+msgid "This removes all queued tracks and stops playback"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:2929
-msgid "Add music to start a queue."
+msgid "Add music to start a queue"
 msgstr ""
 
 #: crates/rufin-app/src/ui.rs:3757
