@@ -16,10 +16,14 @@ use super::{
     Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, append_albums_to_model,
     append_artists_to_model, append_genres_to_model, append_tracks_to_model,
     connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button, finish_grid_page,
+    layout::{large_popup_content_height, large_popup_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     set_favorite_button_active, stable_seed,
 };
 use crate::i18n::tr;
+
+const LIBRARY_CONFIG_DIALOG_WIDTH: i32 = 620;
+const LIBRARY_CONFIG_DIALOG_HEIGHT: i32 = 560;
 
 impl Shell {
     pub(super) fn library_albums_view(self: &Rc<Self>) -> gtk::Widget {
@@ -818,8 +822,11 @@ impl Shell {
         toolbar.set_content(Some(&scroller));
 
         let dialog = adw::Dialog::builder()
-            .content_width(620)
-            .content_height(560)
+            .content_width(large_popup_content_width(LIBRARY_CONFIG_DIALOG_WIDTH))
+            .content_height(large_popup_content_height(
+                self.window.height(),
+                LIBRARY_CONFIG_DIALOG_HEIGHT,
+            ))
             .child(&toolbar)
             .build();
         dialog.present(Some(&self.window));

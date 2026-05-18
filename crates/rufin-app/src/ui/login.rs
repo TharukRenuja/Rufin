@@ -9,7 +9,15 @@ use rufin_store::ServerLocalAccess;
 use crate::i18n::tr;
 use crate::providers::StreamingProvider;
 
-use super::{Shell, icon_button, text_button};
+use super::{
+    Shell, icon_button,
+    layout::{large_popup_content_height, large_popup_content_width},
+    text_button,
+};
+
+const ADD_SERVER_DIALOG_WIDTH: i32 = 620;
+const ADD_SERVER_DIALOG_HEIGHT: i32 = 680;
+const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
 
 impl Shell {
     pub(super) fn present_add_server_dialog(self: &Rc<Self>) {
@@ -24,8 +32,11 @@ impl Shell {
         let child = self.add_server_view();
         toolbar.set_content(Some(&child));
         let dialog = adw::Dialog::builder()
-            .content_width(620)
-            .content_height(680)
+            .content_width(large_popup_content_width(ADD_SERVER_DIALOG_WIDTH))
+            .content_height(large_popup_content_height(
+                self.window.height(),
+                ADD_SERVER_DIALOG_HEIGHT,
+            ))
             .child(&toolbar)
             .build();
         let dialog_for_close = dialog.clone();
@@ -184,7 +195,7 @@ impl Shell {
         scroller.set_vexpand(true);
 
         let clamp = adw::Clamp::new();
-        clamp.set_maximum_size(560);
+        clamp.set_maximum_size(large_popup_content_width(ADD_SERVER_CLAMP_WIDTH));
         clamp.set_tightening_threshold(360);
         clamp.set_margin_top(36);
         clamp.set_margin_bottom(36);

@@ -28,6 +28,9 @@ const COMPACT_RIGHT_PANEL_MAX_PERCENT: i32 = 38;
 const COMPACT_PRIMARY_MIN_WIDTH: i32 = 560;
 const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
 pub(super) const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
+const LARGE_POPUP_HEIGHT_PERCENT: i32 = 85;
+const LARGE_POPUP_WIDTH_NUMERATOR: i32 = 11;
+const LARGE_POPUP_WIDTH_DENOMINATOR: i32 = 10;
 
 pub(super) fn home_album_page_size(width: i32, current_page_size: Option<usize>) -> usize {
     let width = width.max(1);
@@ -246,6 +249,18 @@ pub(super) fn restored_window_size(width: Option<i32>, height: Option<i32>) -> O
         return None;
     }
     Some((width, height))
+}
+
+pub(super) fn large_popup_content_height(app_height: i32, fallback_height: i32) -> i32 {
+    if app_height <= 0 {
+        return fallback_height;
+    }
+    (app_height * LARGE_POPUP_HEIGHT_PERCENT + 50) / 100
+}
+
+pub(super) fn large_popup_content_width(base_width: i32) -> i32 {
+    (base_width * LARGE_POPUP_WIDTH_NUMERATOR + LARGE_POPUP_WIDTH_DENOMINATOR / 2)
+        / LARGE_POPUP_WIDTH_DENOMINATOR
 }
 
 fn card_label_width_chars(size: i32) -> i32 {
@@ -504,5 +519,13 @@ mod tests {
             restored_window_size(Some(1800), Some(1200)),
             Some((1800, 1200))
         );
+    }
+
+    #[test]
+    fn large_popup_sizing_tracks_window_height_and_width_scale() {
+        assert_eq!(large_popup_content_height(1_000, 640), 850);
+        assert_eq!(large_popup_content_height(0, 640), 640);
+        assert_eq!(large_popup_content_width(560), 616);
+        assert_eq!(large_popup_content_width(620), 682);
     }
 }

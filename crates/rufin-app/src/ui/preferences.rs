@@ -9,14 +9,23 @@ use rufin_playback::available_audio_outputs;
 
 use crate::i18n::tr;
 
-use super::Shell;
+use super::{
+    Shell,
+    layout::{large_popup_content_height, large_popup_content_width},
+};
+
+const PREFERENCES_DIALOG_WIDTH: i32 = 560;
+const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
 
 pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
     let dialog = adw::PreferencesDialog::builder()
         .title(tr("Preferences"))
         .search_enabled(true)
-        .content_width(560)
-        .content_height(640)
+        .content_width(large_popup_content_width(PREFERENCES_DIALOG_WIDTH))
+        .content_height(large_popup_content_height(
+            shell.window.height(),
+            PREFERENCES_DIALOG_HEIGHT,
+        ))
         .build();
 
     let general_page = general_page(shell);
