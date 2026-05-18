@@ -1542,7 +1542,7 @@ impl Shell {
         };
         let header = gtk::Box::new(header_orientation, if compact { 16 } else { 24 });
         header.add_css_class("album-detail-showcase");
-        add_album_showcase_seed_class(&header, album.color_seed);
+        add_album_seed_gradient_class(&header, album.color_seed);
         header.set_hexpand(true);
         let cover = self.cover_tile_for(
             album.image_ref.as_ref(),
@@ -1616,6 +1616,7 @@ impl Shell {
         actions.append(&play_next);
 
         let favorite = favorite_icon_button("Favorite");
+        favorite.add_css_class("album-detail-action-button");
         set_favorite_button_active(&favorite, album.favorite);
         self.register_favorite_button(album_favorite_key(&album.id), &favorite);
         let controller = self.controller.clone();
@@ -4102,8 +4103,8 @@ fn stable_seed(value: &str) -> u32 {
     })
 }
 
-fn add_album_showcase_seed_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
-    let class_name = format!("album-detail-showcase-{:08x}", seed);
+fn add_album_seed_gradient_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
+    let class_name = format!("album-seed-gradient-{:08x}", seed);
     widget.add_css_class(&class_name);
 
     let Some(display) = gtk::gdk::Display::default() else {
@@ -4116,9 +4117,9 @@ fn add_album_showcase_seed_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
     let css = format!(
         ".{class_name} {{
             background: linear-gradient(135deg,
-                color-mix(in srgb, rgba({red}, {green}, {blue}, 0.62) 44%, @window_bg_color),
-                color-mix(in srgb, rgba({red_two}, {green_two}, {blue_two}, 0.52) 34%, @card_bg_color) 58%,
-                color-mix(in srgb, @window_bg_color 76%, rgba({red_three}, {green_three}, {blue_three}, 0.48)));
+                color-mix(in srgb, rgba({red}, {green}, {blue}, 0.78) 58%, @window_bg_color),
+                color-mix(in srgb, rgba({red_two}, {green_two}, {blue_two}, 0.64) 44%, @card_bg_color) 58%,
+                color-mix(in srgb, @window_bg_color 62%, rgba({red_three}, {green_three}, {blue_three}, 0.56)));
         }}"
     );
     let provider = gtk::CssProvider::new();

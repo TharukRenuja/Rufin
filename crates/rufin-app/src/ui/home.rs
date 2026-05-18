@@ -11,7 +11,7 @@ use crate::i18n::tr;
 use super::cards::{render_home_album_page, render_home_track_page};
 use super::{
     GRID_COVER_SIZE, HOME_ALBUM_GAP, HomeSectionState, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, Shell, icon_button,
+    PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class, icon_button,
 };
 
 fn showcase_album(library: &LibrarySnapshot) -> Option<Album> {
@@ -128,18 +128,21 @@ impl Shell {
         heading.set_xalign(0.0);
         section.append(&heading);
 
-        let body = gtk::Box::new(gtk::Orientation::Horizontal, 18);
+        let body = gtk::Box::new(gtk::Orientation::Horizontal, 24);
         body.add_css_class("home-showcase");
+        add_album_seed_gradient_class(&body, album.color_seed);
         body.set_hexpand(true);
         body.set_valign(gtk::Align::Start);
-        body.append(&self.cover_tile_for(
+        let cover = self.cover_tile_for(
             album.image_ref.as_ref(),
             album.color_seed,
-            168,
+            196,
             GRID_COVER_SIZE,
-        ));
+        );
+        cover.add_css_class("home-showcase-cover");
+        body.append(&cover);
 
-        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_hexpand(true);
         metadata.set_valign(gtk::Align::Center);
 
@@ -162,18 +165,27 @@ impl Shell {
         metadata.append(&facts);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.add_css_class("home-showcase-actions");
         let play = icon_button("media-playback-start-symbolic", "Play album");
-        play.add_css_class("suggested-action");
+        play.add_css_class("home-showcase-action-button");
+        play.add_css_class("home-showcase-play-button");
         let controller = self.controller.clone();
         let album_id = album.id.clone();
         play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
         actions.append(&play);
 
-        let open = icon_button("go-next-symbolic", "Open album");
-        let shell = Rc::clone(self);
+        let play_next = icon_button("media-skip-forward-symbolic", "Play next");
+        play_next.add_css_class("home-showcase-action-button");
+        let controller = self.controller.clone();
         let album_id = album.id.clone();
-        open.connect_clicked(move |_| shell.navigate(Route::AlbumDetail(album_id.clone())));
-        actions.append(&open);
+        play_next.connect_clicked(move |_| {
+            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+                for track in tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
+            }
+        });
+        actions.append(&play_next);
         metadata.append(&actions);
 
         body.append(&metadata);

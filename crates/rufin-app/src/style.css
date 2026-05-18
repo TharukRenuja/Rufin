@@ -169,12 +169,31 @@ window {
 }
 
 .home-showcase {
-  padding: 2px 0 4px;
+  padding: 18px;
+  border-radius: 8px;
+  color: @window_fg_color;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 10%, transparent),
+    0 18px 42px rgba(0, 0, 0, 0.2);
 }
 
 .home-showcase-title {
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 36px;
+  font-weight: 800;
+}
+
+.home-showcase .muted {
+  color: color-mix(in srgb, @window_fg_color 72%, transparent);
+}
+
+.home-showcase-cover {
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 14%, transparent);
+}
+
+.home-showcase-actions {
+  margin-top: 6px;
 }
 
 .home-genre-flow {
@@ -496,7 +515,8 @@ scale.volume-slider trough {
   margin-top: 4px;
 }
 
-.album-detail-action-button {
+.album-detail-action-button,
+.home-showcase-action-button {
   min-width: 48px;
   min-height: 48px;
   background: color-mix(in srgb, @window_fg_color 14%, transparent);
@@ -504,16 +524,19 @@ scale.volume-slider trough {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
-.album-detail-action-button:hover {
+.album-detail-action-button:hover,
+.home-showcase-action-button:hover {
   background: color-mix(in srgb, @window_fg_color 20%, transparent);
 }
 
-.album-detail-play-button {
+.album-detail-play-button,
+.home-showcase-play-button {
   background: color-mix(in srgb, @window_fg_color 90%, transparent);
   color: @window_bg_color;
 }
 
-.album-detail-play-button:hover {
+.album-detail-play-button:hover,
+.home-showcase-play-button:hover {
   background: @window_fg_color;
 }
 
