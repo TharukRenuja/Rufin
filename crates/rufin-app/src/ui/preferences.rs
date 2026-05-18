@@ -16,6 +16,7 @@ use super::{
 
 const PREFERENCES_DIALOG_WIDTH: i32 = 560;
 const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
+const SURFACE_SCROLL_FACTOR: f64 = 2.5;
 
 pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
     let dialog = adw::PreferencesDialog::builder()
@@ -765,6 +766,7 @@ fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         scale.set_digits(1);
         scale.set_width_request(220);
         scale.set_valign(gtk::Align::Center);
+        install_equalizer_vertical_scroll_passthrough(&scale);
         let band_shell = Rc::clone(shell);
         let scale_reset_guard = Rc::clone(&resetting_equalizer);
         scale.connect_value_changed(move |scale| {
@@ -814,6 +816,51 @@ fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&equalizer_group);
 
     page
+}
+
+fn install_equalizer_vertical_scroll_passthrough(scale: &gtk::Scale) {
+    let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let scale_weak = scale.downgrade();
+    controller.connect_scroll(move |controller, _, dy| {
+        if dy == 0.0 {
+            return gtk::glib::Propagation::Proceed;
+        }
+
+        let Some(scale) = scale_weak.upgrade() else {
+            return gtk::glib::Propagation::Stop;
+        };
+        let scale_widget = scale.upcast::<gtk::Widget>();
+        scroll_nearest_parent_vertically(&scale_widget, dy, controller.unit());
+        gtk::glib::Propagation::Stop
+    });
+    scale.add_controller(controller);
+}
+
+fn scroll_nearest_parent_vertically(widget: &gtk::Widget, dy: f64, unit: gtk::gdk::ScrollUnit) {
+    let Some(scroller) = nearest_parent_scrolled_window(widget) else {
+        return;
+    };
+    let adjustment = scroller.vadjustment();
+    let page_size = adjustment.page_size();
+    let multiplier = match unit {
+        gtk::gdk::ScrollUnit::Surface => SURFACE_SCROLL_FACTOR,
+        _ => page_size.powf(2.0 / 3.0),
+    };
+    let max_value = (adjustment.upper() - page_size).max(adjustment.lower());
+    let value = (adjustment.value() + dy * multiplier).clamp(adjustment.lower(), max_value);
+    adjustment.set_value(value);
+}
+
+fn nearest_parent_scrolled_window(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+    let mut parent = widget.parent();
+    while let Some(widget) = parent {
+        if let Ok(scroller) = widget.clone().downcast::<gtk::ScrolledWindow>() {
+            return Some(scroller);
+        }
+        parent = widget.parent();
+    }
+    None
 }
 
 fn home_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
