@@ -1099,6 +1099,9 @@ fn track_table(
     detail: bool,
 ) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
+    selection.set_autoselect(false);
+    selection.set_can_unselect(true);
+    selection.set_selected(gtk::INVALID_LIST_POSITION);
     let table = gtk::ColumnView::new(Some(selection));
     table.add_css_class("track-table");
     table.set_hexpand(true);

@@ -1527,22 +1527,35 @@ impl Shell {
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 22);
         content.add_css_class("route-content");
-        content.set_margin_top(28);
+        content.set_margin_top(20);
         content.set_margin_bottom(36);
         content.set_margin_start(32);
         content.set_margin_end(32);
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
+        let compact = self.state.effective_density.get() == EffectiveDensity::Compact
+            || self.route_host.width() < 760;
+        let cover_size = if compact { 164 } else { 204 };
+        let header_orientation = if compact {
+            gtk::Orientation::Vertical
+        } else {
+            gtk::Orientation::Horizontal
+        };
+        let header = gtk::Box::new(header_orientation, if compact { 16 } else { 24 });
+        header.add_css_class("album-detail-showcase");
+        add_album_showcase_seed_class(&header, album.color_seed);
+        header.set_hexpand(true);
         let cover = self.cover_tile_for(
             album.image_ref.as_ref(),
             album.color_seed,
-            188,
+            cover_size,
             DETAIL_COVER_SIZE,
         );
+        cover.add_css_class("album-detail-cover");
         header.append(&cover);
 
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_valign(gtk::Align::Center);
+        metadata.set_hexpand(true);
         let kind = gtk::Label::new(Some(&tr("Album")));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
@@ -1582,13 +1595,17 @@ impl Shell {
         facts.set_xalign(0.0);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let play_album = text_button("media-playback-start-symbolic", "Play");
+        actions.add_css_class("album-detail-actions");
+        let play_album = icon_button("media-playback-start-symbolic", "Play");
+        play_album.add_css_class("album-detail-action-button");
+        play_album.add_css_class("album-detail-play-button");
         let controller = self.controller.clone();
         let album_tracks = tracks.clone();
         play_album.connect_clicked(move |_| controller.play_tracks_now(album_tracks.clone()));
         actions.append(&play_album);
 
-        let play_next = text_button("media-skip-forward-symbolic", "Play next");
+        let play_next = icon_button("media-skip-forward-symbolic", "Play next");
+        play_next.add_css_class("album-detail-action-button");
         let controller = self.controller.clone();
         let next_tracks = tracks.clone();
         play_next.connect_clicked(move |_| {
@@ -4083,6 +4100,47 @@ fn stable_seed(value: &str) -> u32 {
     value.bytes().fold(0x811c_9dc5, |hash, byte| {
         hash.wrapping_mul(16_777_619) ^ u32::from(byte)
     })
+}
+
+fn add_album_showcase_seed_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
+    let class_name = format!("album-detail-showcase-{:08x}", seed);
+    widget.add_css_class(&class_name);
+
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+    let (red, green, blue) = showcase_seed_rgb(seed);
+    let (red_two, green_two, blue_two) = showcase_seed_rgb(seed.rotate_left(11) ^ 0x5bd1_e995);
+    let (red_three, green_three, blue_three) =
+        showcase_seed_rgb(seed.rotate_right(7) ^ 0x9e37_79b9);
+    let css = format!(
+        ".{class_name} {{
+            background: linear-gradient(135deg,
+                color-mix(in srgb, rgba({red}, {green}, {blue}, 0.62) 44%, @window_bg_color),
+                color-mix(in srgb, rgba({red_two}, {green_two}, {blue_two}, 0.52) 34%, @card_bg_color) 58%,
+                color-mix(in srgb, @window_bg_color 76%, rgba({red_three}, {green_three}, {blue_three}, 0.48)));
+        }}"
+    );
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(&css);
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+}
+
+fn showcase_seed_rgb(seed: u32) -> (u8, u8, u8) {
+    (
+        showcase_color_component(seed, 0),
+        showcase_color_component(seed, 8),
+        showcase_color_component(seed, 16),
+    )
+}
+
+fn showcase_color_component(seed: u32, shift: u8) -> u8 {
+    let value = ((seed >> shift) & 0xff) as f64;
+    (value * 0.72 + 48.0).round().clamp(0.0, 232.0) as u8
 }
 
 fn track_column<F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
