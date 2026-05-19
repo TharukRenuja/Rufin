@@ -3,18 +3,30 @@
 <img align="left" alt="Rufin" src="data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" width="120"> Rufin is a native GTK4/libadwaita music client written in Rust, with some minimal CSS for essentials. Greatly influenced by [feishin](https://github.com/jeffvli/feishin), it is not as feature-rich, but it aims to offer a similar experience without any web stack.
 <br clear="left">
 
+
+![Rufin](data/Rufin.png)
+
 # Features
 
-- Supports Jellyfin, Subsonic, Navidrome and local folders. You can also configure a local folder while playing from the server, Rufin tries a best-effort path match with the actual tracks. This doesn't disable server reporting.
-- Built-in scrobble support for these Last fm, Libre fm, and ListenBrainz.
+- Supports playing Jellyfin, Subsonic, Navidrome servers and local folders
+- Built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz
 - Discord Rich Presence support
 - Automatic metadata caching for missing lyrics/cover art 
+- Music player basics like Gapless/Crossfade/ReplayGain/Equalizer 
+- Best-effort path matching (also configurable manually) with your music server and local folders if enabled, you can play from your local files while keeping server reporting
 - Rich customization while preserving GTK4 menus
+
+<p align="center">
+  <img src="data/customization.png">
+  &nbsp;&nbsp;
+  <img src="data/customization 2.png">
+</p>
 
 # To do
 
 - Try to break things and fix them
 - Better performance (I think it is sufficiently fast currently, but we can probably do things smarter)
+- Actually make packaging other than Flatpak/AUR/nix work
 
 # Installation
 
@@ -46,7 +58,7 @@ To use Rufin directly without building, run:
 ```bash
 nix run github:screwys/Rufin
 ```
-This downloads the binary through project cache. You can also add it to your profile.
+This downloads the binary through project cache. You can also add it to your profile:
 
 ```bash
 nix profile install github:screwys/Rufin
@@ -55,5 +67,7 @@ nix profile install github:screwys/Rufin
 To build it from source:
 
 ```bash
+git clone https://github.com/screwys/Rufin.git
+cd Rufin
 cargo run -p rufin-app
 ```
