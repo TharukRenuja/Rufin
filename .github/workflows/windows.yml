@@ -1,0 +1,121 @@
+name: Windows
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: true
+        default: main
+      upload_release_tag:
+        description: Optional existing GitHub release tag to upload the installer to
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MSYSTEM: UCRT64
+  CHERE_INVOKING: 1
+
+jobs:
+  setup:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            git
+            mingw-w64-ucrt-x86_64-adwaita-icon-theme
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-gdk-pixbuf2
+            mingw-w64-ucrt-x86_64-gettext-runtime
+            mingw-w64-ucrt-x86_64-gettext-tools
+            mingw-w64-ucrt-x86_64-gst-libav
+            mingw-w64-ucrt-x86_64-gst-plugins-bad
+            mingw-w64-ucrt-x86_64-gst-plugins-base
+            mingw-w64-ucrt-x86_64-gst-plugins-good
+            mingw-w64-ucrt-x86_64-gst-plugins-ugly
+            mingw-w64-ucrt-x86_64-gstreamer
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-hicolor-icon-theme
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-perl
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-shared-mime-info
+            mingw-w64-ucrt-x86_64-toolchain
+
+      - name: Build Rufin
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p rufin-app
+          target/release/rufin.exe --help >/dev/null
+
+      - name: Stage Windows runtime
+        shell: pwsh
+        run: |
+          ./packaging/windows/package.ps1 -MsysPrefix C:\msys64\ucrt64
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build setup.exe
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path crates/rufin-app/Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $stage = Join-Path $PWD "dist/windows/Rufin"
+          $output = Join-Path $PWD "dist"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DRUFIN_STAGE_DIR=$stage" "/DRUFIN_OUTPUT_DIR=$output" "/DRUFIN_VERSION=$version" packaging/windows/rufin.iss
+          Get-ChildItem dist -Filter "Rufin-*-setup.exe"
+
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist -Filter "Rufin-*-setup.exe" | Select-Object -First 1
+          if (-not $installer) {
+            throw "Windows installer was not produced"
+          }
+          $installDir = Join-Path $env:RUNNER_TEMP "Rufin"
+          & $installer.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="$installDir"
+          & (Join-Path $installDir "rufin.exe") --help | Out-Null
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rufin-setup.exe
+          path: dist/Rufin-*-setup.exe
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: |
+          $installer = Get-ChildItem dist -Filter "Rufin-*-setup.exe" | Select-Object -First 1
+          gh release upload $env:RELEASE_TAG $installer.FullName --clobber --repo $env:GITHUB_REPOSITORY

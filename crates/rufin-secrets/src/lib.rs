@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rufin_core::ServerId;
+#[cfg(unix)]
 use secret_service::{EncryptionType, blocking::SecretService};
 use thiserror::Error;
 
@@ -53,17 +54,20 @@ impl SecretStore for MemorySecretStore {
     }
 }
 
+#[cfg(unix)]
 #[derive(Clone, Debug)]
 pub struct SecretServiceStore {
     application: String,
 }
 
+#[cfg(unix)]
 impl Default for SecretServiceStore {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(unix)]
 impl SecretServiceStore {
     pub fn new() -> Self {
         Self {
@@ -77,6 +81,7 @@ impl SecretServiceStore {
     }
 }
 
+#[cfg(unix)]
 impl SecretStore for SecretServiceStore {
     fn save_token(&self, server_id: &ServerId, token: &str) -> SecretResult<()> {
         let service = self.connect()?;
@@ -151,7 +156,9 @@ impl SecretStore for SecretServiceStore {
 
 #[cfg(test)]
 mod tests {
-    use super::{MemorySecretStore, SecretServiceStore, SecretStore};
+    #[cfg(unix)]
+    use super::SecretServiceStore;
+    use super::{MemorySecretStore, SecretStore};
     use rufin_core::ServerId;
 
     #[test]
@@ -169,6 +176,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn secret_service_store_is_constructible_without_dbus_work() {
         let _store = SecretServiceStore::new();
     }

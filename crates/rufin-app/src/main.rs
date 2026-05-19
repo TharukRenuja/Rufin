@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod controller;
 mod external_metadata;
 mod external_scrobbling;
@@ -153,12 +155,13 @@ fn app_icon_search_paths() -> Vec<PathBuf> {
     }
 
     if let Ok(exe) = std::env::current_exe()
-        && let Some(repo_root) = exe
-            .parent()
-            .and_then(|path| path.parent())
-            .and_then(|path| path.parent())
+        && let Some(exe_dir) = exe.parent()
     {
-        paths.push(repo_root.join("data/icons"));
+        paths.push(exe_dir.join("data/icons"));
+        paths.push(exe_dir.join("share/icons"));
+        if let Some(repo_root) = exe_dir.parent().and_then(|path| path.parent()) {
+            paths.push(repo_root.join("data/icons"));
+        }
     }
 
     if let Ok(current_dir) = std::env::current_dir() {

@@ -85,12 +85,16 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Subsonic / OpenSubsonic");
     let _ = tr("Local");
     let _ = tr("Local Library");
-    let _ = tr("Choose a folder to scan and play locally from the computer (For flatpak users, if the folder is not in ~/Music, you need to give folder permissions from Flatseal)");
+    let _ = tr(
+        "Choose a folder to scan and play locally from the computer (For flatpak users, if the folder is not in ~/Music, you need to give folder permissions from Flatseal)",
+    );
     let _ = tr("Music Folder");
     let _ = tr("No folder selected");
     let _ = tr("Choose");
     let _ = tr("Local Folder Access");
-    let _ = tr("Optional, match server paths to local files to export found lyrics and play from your folders directly");
+    let _ = tr(
+        "Optional, match server paths to local files to export found lyrics and play from your folders directly",
+    );
     let _ = tr("Local Folder");
     let _ = tr("Server Path Prefix");
     let _ = tr("Select Music Folder");

@@ -7,8 +7,10 @@ rust-version.workspace = true
 
 [dependencies]
 rufin-core = { path = "../rufin-core" }
-secret-service = { version = "5.1.0", features = ["rt-tokio-crypto-rust"] }
 thiserror = "2.0.18"
+
+[target.'cfg(unix)'.dependencies]
+secret-service = { version = "5.1.0", features = ["rt-tokio-crypto-rust"] }
 
 [lints]
 workspace = true

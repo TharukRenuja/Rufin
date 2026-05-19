@@ -420,9 +420,9 @@ fn lyric_highlight_target_index(lines: &[LyricLine], index: usize) -> Option<usi
 #[cfg(test)]
 mod tests {
     use super::{
-        active_lyrics_line_index, lyrics_follow_scroll_pause_state, lyrics_follow_scroll_target,
-        lyrics_scroll_animation_millis, next_lyrics_line_start_after,
-        should_highlight_all_lyrics_lines, LyricsFollowScrollPause,
+        LyricsFollowScrollPause, active_lyrics_line_index, lyrics_follow_scroll_pause_state,
+        lyrics_follow_scroll_target, lyrics_scroll_animation_millis, next_lyrics_line_start_after,
+        should_highlight_all_lyrics_lines,
     };
     use rufin_provider::LyricLine;
     use std::time::{Duration, Instant};

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use reqwest::blocking::Client;
 use reqwest::Url;
+use reqwest::blocking::Client;
 use serde_json::Value;
 
 use super::ExternalAlbumArt;

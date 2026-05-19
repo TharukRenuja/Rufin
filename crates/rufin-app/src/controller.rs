@@ -21,7 +21,9 @@ use rufin_provider::{
     PlaylistEntry, SavedProviderSession, SearchResults, StreamRequest,
 };
 use rufin_provider_local::LocalProvider;
-use rufin_secrets::{MemorySecretStore, SecretServiceStore, SecretStore};
+#[cfg(unix)]
+use rufin_secrets::SecretServiceStore;
+use rufin_secrets::{MemorySecretStore, SecretStore};
 use rufin_store::{
     CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store, StoreError,
 };
@@ -661,7 +663,7 @@ impl AppController {
         let controller = Self {
             store,
             runtime,
-            secrets: Arc::new(SecretServiceStore::new()),
+            secrets: platform_secret_store(),
             queue: Arc::new(Mutex::new(queue)),
             playback: Arc::new(Mutex::new(playback_backend(false))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
@@ -762,7 +764,7 @@ impl AppController {
         let Some(saved) = store.with_store(|store| store.active_server())? else {
             return Err("No active server is saved.".to_string());
         };
-        SecretServiceStore::new()
+        platform_secret_store()
             .delete_token(&saved.server.id)
             .map_err(|error| error.to_string())?;
         store.with_store(|store| {
@@ -3969,6 +3971,17 @@ fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
         return Box::new(FakePlaybackBackend::new());
     }
     Box::new(LazyGStreamerPlaybackBackend::new())
+}
+
+fn platform_secret_store() -> Arc<dyn SecretStore> {
+    #[cfg(unix)]
+    {
+        Arc::new(SecretServiceStore::new())
+    }
+    #[cfg(not(unix))]
+    {
+        Arc::new(MemorySecretStore::new())
+    }
 }
 
 fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {

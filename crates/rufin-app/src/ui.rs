@@ -16,6 +16,7 @@ mod home;
 mod layout;
 mod library;
 mod login;
+#[cfg(unix)]
 mod mpris;
 mod navigation;
 mod paging;
@@ -32,6 +33,7 @@ use gdk_pixbuf::Pixbuf;
 use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
+#[cfg(unix)]
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, Genre, HomeSection, HomeSectionKind, ImageRef,
@@ -64,6 +66,7 @@ use layout::{
     COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
     PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, resolve_layout,
 };
+#[cfg(unix)]
 use mpris::install_mpris;
 use navigation::{
     ServerSelector, build_compact_navigation, build_normal_navigation, build_server_selector,
@@ -117,6 +120,7 @@ struct AppState {
     lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
+    #[cfg(unix)]
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     discord_presence: RefCell<DiscordPresence>,
     updating_player_controls: Cell<bool>,
@@ -358,6 +362,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         lyrics_search_dialog: RefCell::new(None),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
+        #[cfg(unix)]
         mpris_player: RefCell::new(None),
         discord_presence: RefCell::new(DiscordPresence::new()),
         updating_player_controls: Cell::new(false),
@@ -483,6 +488,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     connect_queue_lyrics_split(&shell);
     connect_lyrics_search_controls(&shell);
     connect_player_controls(&shell);
+    #[cfg(unix)]
     install_mpris(&shell);
     shell.update_layout();
     prime_first_cached_cover(&shell);
@@ -3413,6 +3419,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     if lyrics_timing_changed {
                         shell.update_lyrics_highlight();
                     }
+                    #[cfg(unix)]
                     shell.update_mpris_player();
                     shell.update_discord_presence(&next_snapshot);
                 }
