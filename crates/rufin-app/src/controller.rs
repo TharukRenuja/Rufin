@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -56,6 +57,8 @@ const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(900);
 const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
+const DATABASE_FILE_NAME: &str = "rufin.sqlite";
+const SETTINGS_FILE_NAME: &str = "settings.json";
 
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
@@ -274,25 +277,42 @@ struct PendingSeek {
 
 #[derive(Clone)]
 enum StoreHandle {
-    Path(PathBuf),
-    Memory(Arc<Mutex<Store>>),
+    Path {
+        database_path: PathBuf,
+        settings_path: PathBuf,
+    },
+    Memory {
+        store: Arc<Mutex<Store>>,
+        settings: Arc<Mutex<AppSettings>>,
+    },
 }
 
 impl StoreHandle {
     fn open_for_app() -> Result<Self, String> {
-        let path = data_dir()
-            .map(|dir| dir.join("rufin.sqlite"))
-            .unwrap_or_else(|| PathBuf::from("rufin.sqlite"));
-        if let Some(parent) = path.parent() {
+        let database_path = data_dir()
+            .map(|dir| dir.join(DATABASE_FILE_NAME))
+            .unwrap_or_else(|| PathBuf::from(DATABASE_FILE_NAME));
+        if let Some(parent) = database_path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        Store::open(&path).map_err(|error| error.to_string())?;
-        Ok(Self::Path(path))
+        Store::open(&database_path).map_err(|error| error.to_string())?;
+
+        let settings_path = config_dir()
+            .map(|dir| dir.join(SETTINGS_FILE_NAME))
+            .unwrap_or_else(|| PathBuf::from(SETTINGS_FILE_NAME));
+        let handle = Self::Path {
+            database_path,
+            settings_path,
+        };
+        Ok(handle)
     }
 
     fn open_memory() -> Result<Self, String> {
         Store::open_memory()
-            .map(|store| Self::Memory(Arc::new(Mutex::new(store))))
+            .map(|store| Self::Memory {
+                store: Arc::new(Mutex::new(store)),
+                settings: Arc::new(Mutex::new(AppSettings::default())),
+            })
             .map_err(|error| error.to_string())
     }
 
@@ -301,15 +321,55 @@ impl StoreHandle {
         operation: impl FnOnce(&Store) -> Result<T, StoreError>,
     ) -> Result<T, String> {
         match self {
-            Self::Path(path) => {
-                let store = Store::open(path).map_err(|error| error.to_string())?;
+            Self::Path { database_path, .. } => {
+                let store = Store::open(database_path).map_err(|error| error.to_string())?;
                 operation(&store).map_err(|error| error.to_string())
             }
-            Self::Memory(store) => {
+            Self::Memory { store, .. } => {
                 let store = store
                     .lock()
                     .map_err(|_| "store lock was poisoned".to_string())?;
                 operation(&store).map_err(|error| error.to_string())
+            }
+        }
+    }
+
+    fn load_settings(&self) -> Result<AppSettings, String> {
+        match self {
+            Self::Path { settings_path, .. } => match fs::read_to_string(settings_path) {
+                Ok(value) => serde_json::from_str(&value).map_err(|error| error.to_string()),
+                Err(error) if error.kind() == ErrorKind::NotFound => Ok(AppSettings::default()),
+                Err(error) => Err(error.to_string()),
+            },
+            Self::Memory { settings, .. } => settings
+                .lock()
+                .map(|settings| settings.clone())
+                .map_err(|_| "settings lock was poisoned".to_string()),
+        }
+    }
+
+    fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
+        match self {
+            Self::Path { settings_path, .. } => {
+                if let Some(parent) = settings_path.parent() {
+                    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                }
+                let value =
+                    serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
+                let temp_path = settings_path.with_extension("json.tmp");
+                fs::write(&temp_path, format!("{value}\n")).map_err(|error| error.to_string())?;
+                restrict_settings_file(&temp_path).map_err(|error| error.to_string())?;
+                fs::rename(&temp_path, settings_path).map_err(|error| error.to_string())?;
+                Ok(())
+            }
+            Self::Memory {
+                settings: stored, ..
+            } => {
+                let mut stored = stored
+                    .lock()
+                    .map_err(|_| "settings lock was poisoned".to_string())?;
+                *stored = settings.clone();
+                Ok(())
             }
         }
     }
@@ -321,7 +381,7 @@ impl AppController {
     }
 
     pub fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
-        self.store.with_store(|store| store.save_settings(settings))
+        self.store.save_settings(settings)
     }
 
     pub fn reload_snapshot(&self) {
@@ -2193,10 +2253,7 @@ impl AppController {
     }
 
     fn request_lyrics_for_current_with_cache(&self, use_cache: bool) {
-        let settings = self
-            .store
-            .with_store(|store| store.load_settings())
-            .unwrap_or_else(|_| AppSettings::default());
+        let settings = load_settings_from_store(&self.store);
         self.request_lyrics_for_current_with_search(
             use_cache,
             lyrics_search_for_settings(&settings),
@@ -3888,9 +3945,7 @@ fn trimmed_optional(value: Option<&str>) -> Option<String> {
 }
 
 fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
-    let mut settings = store
-        .with_store(|store| store.load_settings())
-        .unwrap_or_default();
+    let mut settings = store.load_settings().unwrap_or_default();
     settings.migrate_defaults();
     settings
 }
@@ -4860,8 +4915,22 @@ fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.data_dir().to_path_buf())
 }
 
+fn config_dir() -> Option<PathBuf> {
+    ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.config_dir().to_path_buf())
+}
+
 fn cache_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.cache_dir().to_path_buf())
+}
+
+fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
@@ -4931,18 +5000,19 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AppController, ControllerEvent, LibrarySnapshot, PendingSeek, RandomPlayAction,
-        RandomPlayRequest, SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle,
-        auto_dj_candidates, load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
-        prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
-        refresh_home_sections, refresh_home_sections_without_explore, restore_queue,
-        seek_position_is_stale, sync_page_finished, sync_provider,
+        AppController, ControllerEvent, DATABASE_FILE_NAME, LibrarySnapshot, PendingSeek,
+        RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME, SNAPSHOT_GRID_LIMIT,
+        SNAPSHOT_TRACK_LIMIT, StoreHandle, auto_dj_candidates, load_settings_from_store,
+        load_snapshot, playback_snapshot_from_queue, prefetch_home_section,
+        promote_prefetched_home_section, refresh_home_section, refresh_home_sections,
+        refresh_home_sections_without_explore, restore_queue, seek_position_is_stale,
+        sync_page_finished, sync_provider,
     };
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
         AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
-        PlaybackSettings, PlaylistId, QueueEngine, RepeatMode, ServerId, ServerIdentity, Track,
-        TrackId,
+        PlaybackSettings, PlaylistId, QueueEngine, RepeatMode, ServerId, ServerIdentity,
+        ThemePreference, Track, TrackId,
     };
     use rufin_playback::{
         PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
@@ -5875,6 +5945,42 @@ mod tests {
         controller.cycle_repeat();
         let queue = wait_for_queue(&events).expect("repeat off");
         assert_eq!(queue.repeat_mode, RepeatMode::Off);
+    }
+
+    #[test]
+    fn path_settings_round_trip_uses_config_file_without_sqlite() {
+        let dir = unique_test_dir("settings-round-trip");
+        let settings_path = dir.join("config").join(SETTINGS_FILE_NAME);
+        let database_path = dir.join(DATABASE_FILE_NAME);
+        let store = StoreHandle::Path {
+            database_path: database_path.clone(),
+            settings_path: settings_path.clone(),
+        };
+        let settings = AppSettings {
+            theme_preference: ThemePreference::Dark,
+            auto_dj_enabled: true,
+            ..AppSettings::default()
+        };
+
+        store.save_settings(&settings).expect("save settings");
+
+        assert_eq!(load_settings_from_store(&store), settings);
+        assert!(settings_path.exists());
+        assert!(!database_path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                fs::metadata(&settings_path)
+                    .expect("settings metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        let _cleanup = fs::remove_dir_all(dir);
     }
 
     #[test]

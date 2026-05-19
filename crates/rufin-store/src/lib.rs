@@ -1,15 +1,14 @@
 use std::{collections::HashMap, path::Path};
 
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistCredit, ArtistId, Genre, GenreId,
-    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId,
-    Playlist, PlaylistId, QueueSnapshot, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
+    HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId,
+    QueueSnapshot, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use thiserror::Error;
 
-const SETTINGS_KEY: &str = "default";
 const SCHEMA_VERSION: i64 = 9;
 
 #[derive(Debug, Error)]
@@ -99,11 +98,6 @@ impl Store {
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY,
                 applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS queue_snapshots (
@@ -514,32 +508,18 @@ impl Store {
         Ok(())
     }
 
-    pub fn load_settings(&self) -> StoreResult<AppSettings> {
-        let value = self
-            .connection
-            .query_row(
-                "SELECT value FROM app_settings WHERE key = ?1",
-                params![SETTINGS_KEY],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-
-        value
-            .map(|json| serde_json::from_str(&json).map_err(StoreError::from))
-            .unwrap_or_else(|| Ok(AppSettings::default()))
-    }
-
-    pub fn save_settings(&self, settings: &AppSettings) -> StoreResult<()> {
-        let value = serde_json::to_string(settings)?;
-        self.connection.execute(
+    #[cfg(test)]
+    fn table_exists(&self, table: &str) -> StoreResult<bool> {
+        let count = self.connection.query_row(
             "
-            INSERT INTO app_settings (key, value)
-            VALUES (?1, ?2)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = ?1
             ",
-            params![SETTINGS_KEY, value],
+            params![table],
+            |row| row.get::<_, i64>(0),
         )?;
-        Ok(())
+        Ok(count > 0)
     }
 
     pub fn load_queue_snapshot(&self, server_id: &ServerId) -> StoreResult<Option<QueueSnapshot>> {
@@ -5083,9 +5063,9 @@ mod tests {
         synthesize_album_from_tracks,
     };
     use rufin_core::{
-        Album, AlbumId, AppSettings, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection,
+        Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection,
         HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId, QueueEngine,
-        ServerId, ServerIdentity, ThemePreference, Track, TrackId,
+        ServerId, ServerIdentity, Track, TrackId,
     };
     use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
 
@@ -5096,6 +5076,10 @@ mod tests {
         assert_eq!(store.schema_version().expect("schema version"), 9);
         assert!(store.foreign_keys_enabled().expect("foreign keys"));
         assert!(store.fts5_available().expect("fts5 table"));
+        assert!(
+            !store.table_exists("app_settings").expect("table lookup"),
+            "settings are persisted outside the SQLite store"
+        );
     }
 
     #[test]
@@ -5437,29 +5421,6 @@ mod tests {
 
         drop(store);
         let _cleanup = fs::remove_file(path);
-    }
-
-    #[test]
-    fn settings_round_trip() {
-        let store = Store::open_memory().expect("open store");
-        let settings = AppSettings {
-            theme_preference: ThemePreference::Dark,
-            ..AppSettings::default()
-        };
-
-        store.save_settings(&settings).expect("save settings");
-
-        assert_eq!(store.load_settings().expect("load settings"), settings);
-    }
-
-    #[test]
-    fn missing_settings_return_defaults() {
-        let store = Store::open_memory().expect("open store");
-
-        assert_eq!(
-            store.load_settings().expect("load settings"),
-            AppSettings::default()
-        );
     }
 
     #[test]
@@ -7528,10 +7489,6 @@ mod tests {
     fn clear_library_cache_removes_library_search_and_cover_rows_only() {
         let store = Store::open_memory().expect("open store");
         let saved = saved_server();
-        let settings = AppSettings {
-            theme_preference: ThemePreference::Dark,
-            ..AppSettings::default()
-        };
         let mut queue = QueueEngine::new(saved.server.id.clone());
         queue.append(&track(1, &album(1)));
 
@@ -7539,7 +7496,6 @@ mod tests {
         store
             .set_active_server(&saved.server.id)
             .expect("set active");
-        store.save_settings(&settings).expect("save settings");
         store
             .save_queue_snapshot(&queue.snapshot())
             .expect("save queue");
@@ -7562,7 +7518,6 @@ mod tests {
             .expect("clear cache");
 
         assert_eq!(store.active_server().expect("active server"), Some(saved));
-        assert_eq!(store.load_settings().expect("settings"), settings);
         assert_eq!(
             store
                 .load_queue_snapshot(&queue.snapshot().server_id)
@@ -7608,13 +7563,9 @@ mod tests {
     }
 
     #[test]
-    fn forget_server_removes_server_local_state_but_keeps_app_settings() {
+    fn forget_server_removes_server_local_state() {
         let store = Store::open_memory().expect("open store");
         let saved = saved_server();
-        let settings = AppSettings {
-            theme_preference: ThemePreference::Dark,
-            ..AppSettings::default()
-        };
         let mut queue = QueueEngine::new(saved.server.id.clone());
         queue.append(&track(1, &album(1)));
 
@@ -7622,7 +7573,6 @@ mod tests {
         store
             .set_active_server(&saved.server.id)
             .expect("set active");
-        store.save_settings(&settings).expect("save settings");
         store
             .save_queue_snapshot(&queue.snapshot())
             .expect("save queue");
@@ -7640,7 +7590,6 @@ mod tests {
                 .expect("queue snapshot"),
             None
         );
-        assert_eq!(store.load_settings().expect("settings"), settings);
         assert_eq!(
             store
                 .load_tracks(&saved.server.id, 0, 10)
