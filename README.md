@@ -28,6 +28,8 @@ flatpak install --user --or-update --bundle io.github.screwys.Rufin.flatpak
 flatpak run io.github.screwys.Rufin
 ```
 
+For convenience, you can update the flatpak with `flatpak.sh` script. It also asks to create a systemd service to check for updates daily.
+
 ## AUR
 
 - `rufin` for tagged binary releases, `rufin-git` to track this repository
