@@ -24,6 +24,8 @@ use crate::i18n::tr;
 
 const LIBRARY_CONFIG_DIALOG_WIDTH: i32 = 620;
 const LIBRARY_CONFIG_DIALOG_HEIGHT: i32 = 560;
+const LIBRARY_TABLE_HEADER_HEIGHT: i32 = 92;
+const LIBRARY_TABLE_ROW_HEIGHT: i32 = 58;
 
 impl Shell {
     pub(super) fn library_albums_view(self: &Rc<Self>) -> gtk::Widget {
@@ -414,11 +416,15 @@ impl Shell {
         key: LibraryListKey,
         context: &str,
     ) -> gtk::Widget {
-        let (_empty, search, view) = self.searchable_track_collection(tracks, key);
+        let scroller = gtk::ScrolledWindow::new();
+        let resize_scroller = scroller.clone();
+        let resize: Rc<dyn Fn(usize)> = Rc::new(move |row_count| {
+            set_library_table_content_height(&resize_scroller, row_count);
+        });
+        let (_empty, search, view) = self.searchable_track_collection(tracks, key, Some(resize));
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
         wrapper.append(&self.library_toolbar(key, search));
-        let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         scroller.set_min_content_width(0);
         scroller.set_child(Some(&view));
@@ -433,7 +439,7 @@ impl Shell {
         context: &str,
         empty_body: &str,
     ) -> gtk::Widget {
-        let (empty, search, view) = self.searchable_track_collection(tracks, key);
+        let (empty, search, view) = self.searchable_track_collection(tracks, key, None);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -463,17 +469,21 @@ impl Shell {
         self: &Rc<Self>,
         tracks: Vec<Track>,
         key: LibraryListKey,
+        on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
     ) -> (bool, gtk::SearchEntry, gtk::Widget) {
         let empty = tracks.is_empty();
         let source_tracks = Rc::new(tracks);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        populate_track_model_for_settings(
+        let visible_count = populate_track_model_for_settings(
             &model,
             source_tracks.as_ref(),
             &self.library_settings(key),
             "",
             false,
         );
+        if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
+            on_visible_count_changed(visible_count);
+        }
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
         search.set_hexpand(true);
@@ -481,14 +491,18 @@ impl Shell {
             let shell = Rc::clone(self);
             let model = model.clone();
             let source_tracks = Rc::clone(&source_tracks);
+            let on_visible_count_changed = on_visible_count_changed.clone();
             search.connect_search_changed(move |entry| {
-                populate_track_model_for_settings(
+                let visible_count = populate_track_model_for_settings(
                     &model,
                     source_tracks.as_ref(),
                     &shell.library_settings(key),
                     entry.text().as_str(),
                     false,
                 );
+                if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
+                    on_visible_count_changed(visible_count);
+                }
             });
         }
         let view = track_collection_widget(self, model, key);
@@ -891,17 +905,13 @@ fn library_route_inset_spec() -> LibraryRouteInsetSpec {
 
 fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
     let spec = library_route_inset_spec();
-    let inset = gtk::Box::new(gtk::Orientation::Vertical, 0);
     // this keeps the scrollbar at the pane edge while the actual
     // library content keeps the same visual inset.
-    inset.set_margin_start(spec.margin_start);
-    inset.set_margin_end(spec.margin_end);
-    inset.set_hexpand(spec.hexpand);
-    inset.set_halign(gtk::Align::Fill);
-    child.set_hexpand(true);
+    child.set_margin_start(spec.margin_start);
+    child.set_margin_end(spec.margin_end);
+    child.set_hexpand(spec.hexpand);
     child.set_halign(gtk::Align::Fill);
-    inset.append(&child);
-    inset.upcast()
+    child
 }
 
 fn album_collection_widget(
@@ -1195,9 +1205,13 @@ fn album_detail_list(
     list.set_hexpand(true);
     list.set_halign(gtk::Align::Fill);
     list.set_selection_mode(gtk::SelectionMode::None);
-    for position in 0..model.n_items() {
-        let Some(album) = item_at::<Album>(&model, position) else {
-            continue;
+    let shell = Rc::clone(shell);
+    list.bind_model(Some(&model), move |item| {
+        let Some(album) = item
+            .downcast_ref::<glib::BoxedAnyObject>()
+            .map(|boxed| boxed.borrow::<Album>().clone())
+        else {
+            return gtk::Box::new(gtk::Orientation::Vertical, 0).upcast();
         };
         let tracks = album_tracks
             .borrow()
@@ -1209,12 +1223,12 @@ fn album_detail_list(
         row.set_activatable(false);
         row.set_hexpand(true);
         row.set_halign(gtk::Align::Fill);
-        let content = album_detail_row(shell, &album, tracks, key);
+        let content = album_detail_row(&shell, &album, tracks, key);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         row.set_child(Some(&content));
-        list.append(&row);
-    }
+        row.upcast()
+    });
     list
 }
 
@@ -1287,11 +1301,24 @@ fn album_detail_row(
     table_scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
     table_scroller.set_min_content_width(0);
     table_scroller.set_propagate_natural_width(false);
+    set_library_table_content_height(&table_scroller, tracks.len());
     table_scroller.set_hexpand(true);
     table_scroller.set_halign(gtk::Align::Fill);
     table_scroller.set_child(Some(&table));
     row.append(&table_scroller);
     row.upcast()
+}
+
+fn set_library_table_content_height(scroller: &gtk::ScrolledWindow, row_count: usize) {
+    let height = library_table_content_height(row_count);
+    scroller.set_min_content_height(height);
+    scroller.set_max_content_height(height);
+}
+
+fn library_table_content_height(row_count: usize) -> i32 {
+    let max_rows = ((i32::MAX - LIBRARY_TABLE_HEADER_HEIGHT) / LIBRARY_TABLE_ROW_HEIGHT) as usize;
+    let visible_rows = row_count.max(1).min(max_rows);
+    LIBRARY_TABLE_HEADER_HEIGHT + visible_rows as i32 * LIBRARY_TABLE_ROW_HEIGHT
 }
 
 fn compact_detail_layout(shell: &Shell) -> bool {
@@ -1773,7 +1800,7 @@ fn populate_track_model_for_settings(
     settings: &LibraryListSettings,
     query: &str,
     favorite_first: bool,
-) {
+) -> usize {
     let query = query.trim().to_lowercase();
     let mut values = tracks
         .iter()
@@ -1781,7 +1808,9 @@ fn populate_track_model_for_settings(
         .cloned()
         .collect::<Vec<_>>();
     sort_tracks(&mut values, settings, favorite_first);
+    let visible_count = values.len();
     replace_tracks_in_model(model, values);
+    visible_count
 }
 
 fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
@@ -2641,5 +2670,11 @@ mod tests {
         assert_eq!(spec.overflow, gtk::Overflow::Hidden);
         assert!(!spec.propagate_natural_width);
         assert!(!spec.wrap);
+    }
+
+    #[test]
+    fn library_table_height_tracks_visible_rows() {
+        assert_eq!(super::library_table_content_height(0), 150);
+        assert_eq!(super::library_table_content_height(3), 266);
     }
 }
