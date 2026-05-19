@@ -3,10 +3,11 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] VERSION SUMMARY
+Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] VERSION SUMMARY
 
-Creates a signed annotated release tag whose message includes commits since the
-previous release tag. VERSION may be vX.Y.Z or X.Y.Z.
+Updates release metadata, commits it, and creates a signed annotated release
+tag whose message includes commits since the previous release tag. VERSION may
+be vX.Y.Z or X.Y.Z.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
@@ -17,6 +18,7 @@ USAGE
 base_tag=""
 dry_run=0
 push_tag=0
+replace_tag=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +36,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --push)
       push_tag=1
+      shift
+      ;;
+    --replace)
+      replace_tag=1
       shift
       ;;
     -h|--help)
@@ -71,8 +77,10 @@ if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
   echo "version must look like vX.Y.Z" >&2
   exit 1
 fi
+plain_version="${version#v}"
 
-if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+if [[ "$dry_run" != "1" && "$replace_tag" != "1" ]] &&
+  git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
   echo "tag already exists: $version" >&2
   exit 1
 fi
@@ -96,26 +104,31 @@ if [[ "$dry_run" != "1" ]] && { ! git diff --quiet || ! git diff --cached --quie
   exit 1
 fi
 
-commit_count="$(git rev-list --count "$base_tag"..HEAD)"
-if [[ "$commit_count" == "0" ]]; then
-  echo "no commits found in range $base_tag..HEAD" >&2
-  exit 1
-fi
-
 notes_file="$(mktemp)"
 cleanup() {
   rm -f "$notes_file"
 }
 trap cleanup EXIT
 
-{
-  echo "$summary"
-  echo
-  echo "Changelog"
-  echo
-  git log --reverse --pretty=format:'%s (%h)' "$base_tag"..HEAD
-  echo
-} > "$notes_file"
+write_notes() {
+  {
+    echo "$summary"
+    echo
+    echo "Changelog"
+    echo
+    git log --reverse --pretty=format:'%s (%h)' "$base_tag"..HEAD |
+      grep -v '^chore(release): bump version to ' || true
+    echo
+  } > "$notes_file"
+}
+
+commit_count="$(git rev-list --count "$base_tag"..HEAD)"
+if [[ "$commit_count" == "0" ]]; then
+  echo "no commits found in range $base_tag..HEAD" >&2
+  exit 1
+fi
+
+write_notes
 
 cat "$notes_file"
 
@@ -123,9 +136,27 @@ if [[ "$dry_run" == "1" ]]; then
   exit 0
 fi
 
+bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  git add Cargo.lock crates/rufin-app/Cargo.toml data/io.github.screwys.Rufin.metainfo.xml
+  git commit -m "chore(release): bump version to $plain_version"
+fi
+
+write_notes
+cat "$notes_file"
+
+if [[ "$replace_tag" == "1" ]] && git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+  git tag -d "$version"
+fi
+
 git tag -s "$version" -F "$notes_file"
 git show "$version" --no-patch
 
 if [[ "$push_tag" == "1" ]]; then
-  git push origin "$version"
+  git push origin HEAD:main
+  if [[ "$replace_tag" == "1" ]]; then
+    git push --force origin "$version"
+  else
+    git push origin "$version"
+  fi
 fi
