@@ -5,13 +5,19 @@ use adw::prelude::*;
 use rufin_core::{MusicFolder, MusicFolderId, Route, ServerIdentity, SidebarRouteItem};
 use rufin_store::ServerLocalAccess;
 
-use super::{Shell, icon_button, layout::COMPACT_RAIL_WIDTH};
+use super::{
+    Shell, icon_button,
+    layout::{COMPACT_RAIL_WIDTH, NORMAL_SIDEBAR_WIDTH},
+};
 use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
 
 const COMPACT_RAIL_ICON_SIZE: i32 = 22;
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
+const NORMAL_SELECTOR_NON_LABEL_WIDTH: i32 = 100;
+const NORMAL_SELECTOR_LABEL_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - NORMAL_SELECTOR_NON_LABEL_WIDTH;
+const NORMAL_SELECTOR_LABEL_WIDTH_CHARS: i32 = 12;
 
 pub(super) struct ServerSelector {
     pub normal_button: gtk::MenuButton,
@@ -39,28 +45,31 @@ pub(super) fn build_server_selector() -> ServerSelector {
     let normal_button = gtk::MenuButton::new();
     normal_button.add_css_class("server-selector");
     normal_button.add_css_class("flat");
-    normal_button.set_margin_start(12);
-    normal_button.set_margin_end(12);
-    normal_button.set_margin_bottom(12);
+    normal_button.set_always_show_arrow(false);
+    normal_button.set_can_shrink(true);
+    normal_button.set_margin_start(8);
+    normal_button.set_margin_end(8);
+    normal_button.set_margin_bottom(4);
+    normal_button.set_size_request(NORMAL_SIDEBAR_WIDTH - 16, -1);
 
     let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     normal_content.set_halign(gtk::Align::Fill);
     let normal_icon = gtk::Image::from_icon_name("network-server-symbolic");
+    normal_icon.set_pixel_size(20);
+    normal_icon.set_size_request(20, 20);
     normal_content.append(&normal_icon);
 
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
     labels.set_hexpand(true);
     let normal_name = gtk::Label::new(None);
-    normal_name.set_xalign(0.0);
-    normal_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    configure_normal_selector_label(&normal_name);
     let normal_subtitle = gtk::Label::new(None);
     normal_subtitle.add_css_class("muted");
-    normal_subtitle.set_xalign(0.0);
-    normal_subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    configure_normal_selector_label(&normal_subtitle);
     labels.append(&normal_name);
     labels.append(&normal_subtitle);
     normal_content.append(&labels);
-    normal_content.append(&gtk::Image::from_icon_name("pan-down-symbolic"));
+    normal_content.append(&gtk::Image::from_icon_name("view-more-symbolic"));
     normal_button.set_child(Some(&normal_content));
 
     let compact_button = gtk::MenuButton::new();
@@ -68,8 +77,12 @@ pub(super) fn build_server_selector() -> ServerSelector {
     compact_button.add_css_class("flat");
     compact_button.add_css_class("rail-button");
     compact_button.add_css_class("server-selector");
+    compact_button.set_always_show_arrow(false);
+    compact_button.set_can_shrink(true);
+    compact_button.set_size_request(COMPACT_RAIL_WIDTH - 2, -1);
     let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 4);
     compact_content.set_halign(gtk::Align::Center);
+    compact_content.set_size_request(COMPACT_RAIL_LABEL_WIDTH, -1);
     let compact_icon = gtk::Image::from_icon_name("network-server-symbolic");
     compact_icon.set_pixel_size(COMPACT_RAIL_ICON_SIZE);
     compact_content.append(&compact_icon);
@@ -100,9 +113,12 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         .map(server_icon_name)
         .unwrap_or("network-server-symbolic");
 
-    selector.normal_icon.set_icon_name(Some(icon_name));
+    selector.normal_icon.set_icon_name(Some(&icon_name));
     selector.normal_name.set_text(&content.name);
     selector.normal_subtitle.set_text(&content.subtitle);
+    selector
+        .normal_subtitle
+        .set_visible(!content.subtitle.is_empty());
     selector.normal_button.set_tooltip_text(Some(&tooltip));
     selector
         .normal_button
@@ -111,7 +127,7 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         .normal_button
         .set_popover(Some(&server_selection_popover(shell, &content)));
 
-    selector.compact_icon.set_icon_name(Some(icon_name));
+    selector.compact_icon.set_icon_name(Some(&icon_name));
     selector
         .compact_label
         .set_text(&compact_sidebar_label_text(&content.name));
@@ -201,7 +217,7 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
     let Some(server) = library.server.as_ref() else {
         return ServerSelectorContent {
             name: tr("No server"),
-            subtitle: tr("No server"),
+            subtitle: String::new(),
             detail: tr("No server"),
             active_server: None,
             servers: library.servers,
@@ -222,8 +238,8 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
                 .iter()
                 .find(|folder| folder.id == *selected)
         })
-        .map(|folder| format!("{} · {}", tr("Current server"), folder.name))
-        .unwrap_or_else(|| tr("Current server"));
+        .map(|folder| folder.name.clone())
+        .unwrap_or_default();
     let detail = if server.base_url.trim().is_empty() {
         provider_display_name(&server.provider)
     } else {
@@ -263,7 +279,14 @@ fn provider_display_name(provider: &str) -> String {
 }
 
 fn server_icon_name(server: &ServerIdentity) -> &'static str {
-    match server.provider.as_str() {
+    provider_icon_name(&server.provider)
+}
+
+fn provider_icon_name(provider: &str) -> &'static str {
+    match provider {
+        "jellyfin" => "io.github.screwys.Rufin.provider.jellyfin",
+        "navidrome" => "io.github.screwys.Rufin.provider.navidrome",
+        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.provider.opensubsonic",
         "local" | "fake" => "folder-music-symbolic",
         _ => "network-server-symbolic",
     }
@@ -468,7 +491,7 @@ fn server_option_row(
     let icon_name = server
         .map(server_icon_name)
         .unwrap_or("network-server-symbolic");
-    row_content.append(&gtk::Image::from_icon_name(icon_name));
+    row_content.append(&gtk::Image::from_icon_name(&icon_name));
 
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
     labels.set_hexpand(true);
@@ -697,6 +720,15 @@ fn compact_sidebar_label_text(label: &str) -> String {
         }
     };
     compact.unwrap_or(translated)
+}
+
+fn configure_normal_selector_label(label: &gtk::Label) {
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_request(NORMAL_SELECTOR_LABEL_WIDTH);
+    label.set_size_request(NORMAL_SELECTOR_LABEL_WIDTH, -1);
+    label.set_width_chars(1);
+    label.set_max_width_chars(NORMAL_SELECTOR_LABEL_WIDTH_CHARS);
 }
 
 fn configure_rail_label(label: &gtk::Label) {

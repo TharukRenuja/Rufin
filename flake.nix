@@ -97,6 +97,8 @@
                 "$out/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
               install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg \
                 "$out/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
+              install -Dm644 -t "$out/share/icons/hicolor/64x64/apps" \
+                data/icons/hicolor/64x64/apps/*.png
 
               for po_file in po/*.po; do
                 if [ -f "$po_file" ]; then

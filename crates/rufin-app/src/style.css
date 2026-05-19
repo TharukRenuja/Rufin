@@ -136,9 +136,23 @@ window {
   border-radius: 8px;
 }
 
-.server-selector:not(.rail-button) {
+menubutton.server-selector > button {
+  border-radius: 8px;
+}
+
+menubutton.server-selector:not(.rail-button) > button {
   padding: 8px 10px;
-  min-height: 48px;
+  min-height: 42px;
+}
+
+menubutton.server-selector.rail-button > button {
+  padding: 4px 1px;
+  min-width: 52px;
+  min-height: 50px;
+}
+
+menubutton.server-selector > button:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
 .server-selector-popover {

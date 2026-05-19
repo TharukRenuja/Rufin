@@ -68,6 +68,8 @@ package() {
     "$pkgdir/usr/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
   install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg \
     "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
+  install -Dm644 -t "$pkgdir/usr/share/icons/hicolor/64x64/apps" \
+    data/icons/hicolor/64x64/apps/*.png
 
   local lang po_file
   for po_file in po/*.po; do
