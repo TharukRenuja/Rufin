@@ -1880,10 +1880,14 @@ impl AppController {
     }
 
     pub fn add_local_server(&self, root_path: PathBuf) {
-        self.add_local_library_folder(root_path);
+        self.add_local_library_folder_with_selection(root_path, true);
     }
 
     pub fn add_local_library_folder(&self, root_path: PathBuf) {
+        self.add_local_library_folder_with_selection(root_path, false);
+    }
+
+    fn add_local_library_folder_with_selection(&self, root_path: PathBuf, select_local: bool) {
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
@@ -1906,7 +1910,9 @@ impl AppController {
                     path: identity.base_url,
                 });
             }
-            settings.sources.selected = Some(LibrarySourceSelection::Local);
+            if select_local {
+                settings.sources.selected = Some(LibrarySourceSelection::Local);
+            }
             settings.migrate_defaults();
             if let Err(error) = store.save_settings(&settings) {
                 let _sent = events.send(ControllerEvent::Error(error));
@@ -1919,13 +1925,17 @@ impl AppController {
                     return;
                 }
             };
-            if let Err(error) = store.with_store(|store| store.set_active_server(&saved.server.id))
+            if select_local
+                && let Err(error) =
+                    store.with_store(|store| store.set_active_server(&saved.server.id))
             {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
             emit_snapshot(&store, &events);
-            start_sync_thread(sync_context, saved);
+            if select_local {
+                start_sync_thread(sync_context, saved);
+            }
         });
     }
 
@@ -1943,7 +1953,13 @@ impl AppController {
             if settings.sources.local_folders.len() == before {
                 return;
             }
-            settings.sources.selected = Some(LibrarySourceSelection::Local);
+            let selected_local = matches!(
+                settings.sources.selected,
+                Some(LibrarySourceSelection::Local)
+            );
+            if selected_local && settings.sources.local_folders.is_empty() {
+                settings.sources.selected = None;
+            }
             settings.migrate_defaults();
             if let Err(error) = store.save_settings(&settings) {
                 let _sent = events.send(ControllerEvent::Error(error));
@@ -1957,7 +1973,9 @@ impl AppController {
                 }
             };
             let result = store.with_store(|store| {
-                store.set_active_server(&saved.server.id)?;
+                if selected_local && !settings.sources.local_folders.is_empty() {
+                    store.set_active_server(&saved.server.id)?;
+                }
                 store.clear_library_cache(&saved.server.id)
             });
             if let Err(error) = result {
@@ -1965,7 +1983,7 @@ impl AppController {
                 return;
             }
             emit_snapshot(&store, &events);
-            if !settings.sources.local_folders.is_empty() {
+            if selected_local && !settings.sources.local_folders.is_empty() {
                 start_sync_thread(sync_context, saved);
             }
         });
@@ -2087,6 +2105,60 @@ impl AppController {
                 Ok(snapshot) => {
                     let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
                 }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                }
+            }
+        });
+    }
+
+    pub fn update_server_settings(
+        &self,
+        server_id: ServerId,
+        name: String,
+        base_url: String,
+        trust_invalid_cert: bool,
+    ) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let result = store.with_store(|store| {
+                let Some(mut saved) = store
+                    .list_servers()?
+                    .into_iter()
+                    .find(|saved| saved.server.id == server_id)
+                else {
+                    return Ok(false);
+                };
+                if saved.server.provider != LOCAL_PROVIDER_ID && base_url.trim().is_empty() {
+                    return Ok(false);
+                }
+                let next_name = name.trim().to_string();
+                let next_base_url = if saved.server.provider == LOCAL_PROVIDER_ID {
+                    saved.server.base_url.clone()
+                } else {
+                    base_url.trim().to_string()
+                };
+                let changed = saved.server.name != next_name
+                    || saved.server.base_url != next_base_url
+                    || saved.trust_invalid_cert != trust_invalid_cert;
+                if !changed {
+                    return Ok(false);
+                }
+                saved.server.name = next_name;
+                saved.server.base_url = next_base_url;
+                saved.trust_invalid_cert = trust_invalid_cert;
+                store.save_server(&saved)?;
+                Ok(true)
+            });
+            match result {
+                Ok(true) => {
+                    let _sent = events.send(ControllerEvent::LoginStatus(
+                        "Server settings saved.".to_string(),
+                    ));
+                    emit_snapshot(&store, &events);
+                }
+                Ok(false) => {}
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
                 }
@@ -3648,7 +3720,7 @@ fn local_access_status_for_server(
             track
                 .local_path
                 .as_deref()
-                .and_then(|raw| resolved_local_path_text(raw, access))
+                .and_then(|raw| potential_local_path_text(raw, access))
         })
     });
 
@@ -3659,24 +3731,18 @@ fn local_access_status_for_server(
         let Some(raw) = track.local_path.as_deref() else {
             continue;
         };
-        let direct = PathBuf::from(raw);
-        if direct.is_file() {
-            direct_match_count += 1;
-            effective_matches.insert(track.id.clone());
-            continue;
-        }
-        if map_server_path_to_local(raw, access).is_some_and(|path| path.is_file()) {
+        if map_server_path_to_local(raw, access).is_some() {
             prefix_match_count += 1;
+            effective_matches.insert(track.id.clone());
+        } else if Path::new(raw).is_absolute() {
+            direct_match_count += 1;
             effective_matches.insert(track.id.clone());
         }
     }
 
-    let mut metadata_match_count = 0;
-    for (track_id, path) in metadata_by_track {
-        if Path::new(&path).is_file() {
-            metadata_match_count += 1;
-            effective_matches.insert(track_id);
-        }
+    let metadata_match_count = metadata_by_track.len();
+    for track_id in metadata_by_track.into_keys() {
+        effective_matches.insert(track_id);
     }
 
     let total_track_count = remote_tracks.len();
@@ -3692,12 +3758,18 @@ fn local_access_status_for_server(
     })
 }
 
-fn resolved_local_path_text(raw: &str, access: &ServerLocalAccess) -> Option<String> {
-    let direct = PathBuf::from(raw);
-    if direct.is_file() {
+fn potential_local_path_text(raw: &str, access: &ServerLocalAccess) -> Option<String> {
+    if raw.trim().is_empty() {
+        return None;
+    }
+    if let Some(mapped) = map_server_path_to_local(raw, access) {
+        return Some(mapped.to_string_lossy().into_owned());
+    }
+    let direct = Path::new(raw);
+    if direct.is_absolute() {
         return Some(direct.to_string_lossy().into_owned());
     }
-    map_server_path_to_local(raw, access).map(|path| path.to_string_lossy().into_owned())
+    None
 }
 
 #[derive(Hash, Eq, PartialEq)]
@@ -5696,6 +5768,125 @@ mod tests {
     }
 
     #[test]
+    fn local_folder_preferences_add_preserves_remote_source_selection() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = saved_server();
+        let root = unique_test_dir("add-local-folder-preserve-source");
+        fs::create_dir_all(&root).expect("create root");
+        let mut settings = AppSettings::default();
+        settings.sources.selected = Some(LibrarySourceSelection::Server(saved.server.id.clone()));
+        store.save_settings(&settings).expect("save settings");
+        store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)
+            })
+            .expect("save server");
+        let (controller, events) = controller_from_store_for_test(store);
+
+        controller.add_local_library_folder(root.clone());
+        let snapshot = wait_for_snapshot(&events);
+
+        assert_eq!(
+            snapshot.selected_source,
+            Some(LibrarySourceSelection::Server(saved.server.id.clone()))
+        );
+        assert_eq!(snapshot.local_folders.len(), 1);
+        let active = controller
+            .store
+            .with_store(|store| store.active_server())
+            .expect("active server")
+            .expect("active server");
+        assert_eq!(active.server.id, saved.server.id);
+        let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn local_folder_preferences_remove_preserves_remote_source_selection() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = saved_server();
+        let root = unique_test_dir("remove-local-folder-preserve-source");
+        fs::create_dir_all(&root).expect("create root");
+        let path = root.to_string_lossy().into_owned();
+        let mut settings = AppSettings::default();
+        settings.sources.selected = Some(LibrarySourceSelection::Server(saved.server.id.clone()));
+        settings.sources.local_folders = vec![LocalLibraryFolder { path: path.clone() }];
+        store.save_settings(&settings).expect("save settings");
+        store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)
+            })
+            .expect("save server");
+        let (controller, events) = controller_from_store_for_test(store);
+
+        controller.remove_local_library_folder(path);
+        let snapshot = wait_for_snapshot(&events);
+
+        assert_eq!(
+            snapshot.selected_source,
+            Some(LibrarySourceSelection::Server(saved.server.id.clone()))
+        );
+        assert!(snapshot.local_folders.is_empty());
+        let active = controller
+            .store
+            .with_store(|store| store.active_server())
+            .expect("active server")
+            .expect("active server");
+        assert_eq!(active.server.id, saved.server.id);
+        let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_server_settings_persists_editable_fields() {
+        let (controller, events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let server_id = ServerId::new("server:editable");
+        controller
+            .store
+            .with_store(|store| {
+                store.save_server(&SavedServer {
+                    server: ServerIdentity {
+                        id: server_id.clone(),
+                        provider: "jellyfin".to_string(),
+                        name: "Old name".to_string(),
+                        base_url: "http://old.example.test".to_string(),
+                    },
+                    user_id: "user-id".to_string(),
+                    username: "listener".to_string(),
+                    trust_invalid_cert: false,
+                })?;
+                store.set_active_server(&server_id)
+            })
+            .expect("save server");
+
+        controller.update_server_settings(
+            server_id.clone(),
+            "Edited server".to_string(),
+            "https://media.example.test".to_string(),
+            true,
+        );
+
+        assert_eq!(wait_for_status(&events), "Server settings saved.");
+        let snapshot = wait_for_snapshot(&events);
+        let edited = snapshot
+            .servers
+            .iter()
+            .find(|server| server.id == server_id)
+            .expect("edited server");
+        assert_eq!(edited.name, "Edited server");
+        assert_eq!(edited.base_url, "https://media.example.test");
+        let saved = controller
+            .store
+            .with_store(|store| store.list_servers())
+            .expect("load saved servers")
+            .into_iter()
+            .find(|saved| saved.server.id == server_id)
+            .expect("edited saved server");
+        assert!(saved.trust_invalid_cert);
+    }
+
+    #[test]
     fn legacy_local_server_roots_migrate_to_local_source_settings() {
         let store = StoreHandle::open_memory().expect("memory store");
         let root = unique_test_dir("legacy-local-source");
@@ -7379,7 +7570,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_local_access_status_counts_direct_prefix_metadata_and_unmatched() {
+    fn snapshot_local_access_status_counts_cached_mapping_candidates() {
         let store = StoreHandle::open_memory().expect("memory store");
         let saved = self::saved_server();
         let root = self::unique_test_dir("local-access-status");
@@ -7441,9 +7632,9 @@ mod tests {
 
         assert_eq!(snapshot.local_access_status.total_track_count, 4);
         assert_eq!(snapshot.local_access_status.direct_match_count, 1);
-        assert_eq!(snapshot.local_access_status.prefix_match_count, 1);
+        assert_eq!(snapshot.local_access_status.prefix_match_count, 2);
         assert_eq!(snapshot.local_access_status.metadata_match_count, 1);
-        assert_eq!(snapshot.local_access_status.unmatched_count, 1);
+        assert_eq!(snapshot.local_access_status.unmatched_count, 0);
         assert!(snapshot.local_access_status.sample_server_path.is_some());
         let _cleanup = fs::remove_dir_all(root);
     }

@@ -78,6 +78,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Select Source");
     let _ = tr("No source");
     let _ = tr("Sources");
+    let _ = tr("Servers");
+    let _ = tr("Configure saved music servers and local playback mappings.");
     let _ = tr("No servers configured");
     let _ = tr("Server Library");
     let _ = tr("All Music");
@@ -105,8 +107,11 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Choose Folder");
     let _ = tr("Add local folder access");
     let _ = tr("Remove Local Folder");
+    let _ = tr("This removes the folder from the Local source.");
     let _ = tr("Clear Mapping");
     let _ = tr("Save");
+    let _ = tr("Save Mapping");
+    let _ = tr("Save Server Settings");
     let _ = tr("Connect");
     let _ = tr("Connect to Music Server");
     let _ = tr("Choose a provider, pick a server, or enter the address manually");

@@ -41,8 +41,8 @@ use mpris_server::Player as MprisPlayer;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, FolderPathItem, Genre, HomeSection, HomeSectionKind,
     ImageRef, LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueSnapshot,
-    RightSidebarMode, Route, RouteStack, SearchKind, ServerIdentity, Track, TrackSortKey,
-    TrackTableColumn, TrackTableSettings, format_duration,
+    RightSidebarMode, Route, RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn,
+    TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource};
@@ -1272,10 +1272,6 @@ impl Shell {
 
     fn present_library_preferences_dialog(self: &Rc<Self>) {
         present_library_preferences_dialog(self);
-    }
-
-    fn present_manage_server_dialog(self: &Rc<Self>, server: ServerIdentity) {
-        local_access_mapping::present_manage_server_dialog(self, server);
     }
 
     fn rebuild_sidebar_navigation(self: &Rc<Self>) {

@@ -7,21 +7,30 @@ use gtk::gio;
 use rufin_core::{LibrarySourceSelection, ServerId, ServerIdentity};
 use rufin_store::ServerLocalAccess;
 
-use crate::controller::{LocalAccessStatus, ServerLocalAccessSnapshot};
+use crate::controller::LocalAccessStatus;
 use crate::i18n::tr;
 use crate::providers::StreamingProvider;
 
-use super::{
-    Shell, icon_button,
-    layout::{large_popup_content_height, large_popup_content_width},
-    login::connect_folder_button,
-    text_button,
-};
+use super::{Shell, login::connect_folder_button, text_button};
 
-const MANAGE_SERVER_DIALOG_WIDTH: i32 = 560;
+type ManageServerExitSlot = adw::NavigationView;
 
-pub(super) fn present_manage_server_dialog(shell: &Rc<Shell>, server: ServerIdentity) {
-    let (access, access_status, summary, selected) = {
+pub(in crate::ui) fn manage_server_navigation_page(
+    shell: &Rc<Shell>,
+    server: ServerIdentity,
+    navigation: &adw::NavigationView,
+) -> adw::NavigationPage {
+    let title = server_display_name(&server);
+    let toolbar = manage_server_toolbar(shell, server, navigation.clone());
+    adw::NavigationPage::new(&toolbar, &title)
+}
+
+fn manage_server_toolbar(
+    shell: &Rc<Shell>,
+    server: ServerIdentity,
+    exit: ManageServerExitSlot,
+) -> adw::ToolbarView {
+    let (access, access_status, selected) = {
         let library = shell.state.library.borrow();
         let summary = library
             .server_local_access
@@ -53,23 +62,29 @@ pub(super) fn present_manage_server_dialog(shell: &Rc<Shell>, server: ServerIden
             &library.selected_source,
             Some(LibrarySourceSelection::Server(server_id)) if *server_id == server.id
         );
-        (access, status, summary, selected)
+        (access, status, selected)
     };
     let remote = server.provider != "local";
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     let title = adw::WindowTitle::new(&tr("Manage Server"), &server_display_name(&server));
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
+    header.set_show_back_button(true);
     header.set_title_widget(Some(&title));
-    let close = icon_button("window-close-symbolic", "Close");
-    header.pack_end(&close);
     toolbar.add_top_bar(&header);
+
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_vexpand(true);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
     content.set_margin_top(18);
     content.set_margin_bottom(18);
     content.set_margin_start(18);
     content.set_margin_end(18);
-    content.append(&server_settings_group(&server, summary.as_ref(), selected));
+    scroller.set_child(Some(&content));
+    content.append(&server_settings_group(shell, &server, remote));
 
     let folder = Rc::new(RefCell::new(
         access
@@ -190,24 +205,15 @@ pub(super) fn present_manage_server_dialog(shell: &Rc<Shell>, server: ServerIden
     actions.set_halign(gtk::Align::End);
     let remove = text_button("edit-clear-symbolic", "Clear Mapping");
     remove.set_visible(server.provider != "local" && access.is_some());
-    let save = text_button("document-save-symbolic", "Save");
+    let save = text_button("document-save-symbolic", "Save Mapping");
     save.add_css_class("suggested-action");
     actions.append(&remove);
     actions.append(&save);
     content.append(&actions);
 
-    toolbar.set_content(Some(&content));
-    let dialog = adw::Dialog::builder()
-        .content_width(large_popup_content_width(MANAGE_SERVER_DIALOG_WIDTH))
-        .content_height(large_popup_content_height(shell.window.height(), 680))
-        .child(&toolbar)
-        .build();
-    content.append(&server_actions_group(shell, &server, selected, &dialog));
+    content.append(&server_actions_group(shell, &server, selected, &exit));
+    toolbar.set_content(Some(&scroller));
 
-    let dialog_for_close = dialog.clone();
-    close.connect_clicked(move |_| {
-        dialog_for_close.close();
-    });
     let update_state = Rc::new({
         let folder = Rc::clone(&folder);
         let server_prefix = server_prefix.clone();
@@ -268,17 +274,17 @@ pub(super) fn present_manage_server_dialog(shell: &Rc<Shell>, server: ServerIden
 
     let controller = shell.controller.clone();
     let server_id = server.id.clone();
-    let dialog_for_remove = dialog.clone();
+    let exit_for_remove = exit.clone();
     remove.connect_clicked(move |_| {
         controller.clear_server_local_access(server_id.clone());
-        dialog_for_remove.close();
+        close_manage_server(&exit_for_remove);
     });
 
     let controller = shell.controller.clone();
     let server_id = server.id.clone();
     let provider = server.provider.clone();
     let status_for_save = status.clone();
-    let dialog_for_save = dialog.clone();
+    let exit_for_save = exit.clone();
     save.connect_clicked(move |_| {
         let Some(root) = folder.borrow().clone() else {
             status_for_save.set_text(&tr("Choose a local music folder."));
@@ -299,59 +305,83 @@ pub(super) fn present_manage_server_dialog(shell: &Rc<Shell>, server: ServerIden
                 Some(local_prefix_text),
             );
         }
-        dialog_for_save.close();
+        close_manage_server(&exit_for_save);
     });
 
     update_state();
-    dialog.present(Some(&shell.window));
+    toolbar
+}
+
+fn close_manage_server(exit: &ManageServerExitSlot) {
+    exit.pop();
 }
 
 fn server_settings_group(
+    shell: &Rc<Shell>,
     server: &ServerIdentity,
-    summary: Option<&ServerLocalAccessSnapshot>,
-    selected: bool,
+    remote: bool,
 ) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title(tr("Server Settings"))
         .build();
+
     group.add(&info_row(
         "Provider",
         &provider_display_name(&server.provider),
     ));
-    group.add(&info_row("Name", &server_display_name(server)));
-    group.add(&info_row("Server Address", &server.base_url));
-    if let Some(username) = summary.and_then(|summary| summary.username.as_deref()) {
-        group.add(&info_row("User", username));
-    }
-    let trust_invalid_certificate = if summary.is_some_and(|summary| summary.trust_invalid_cert) {
-        tr("Yes")
-    } else {
-        tr("No")
-    };
-    group.add(&info_row(
-        "Trust invalid certificate",
-        &trust_invalid_certificate,
-    ));
-    let music_folder = summary
-        .and_then(|summary| summary.selected_music_folder_name.as_deref())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| tr("All Music"));
-    group.add(&info_row("Music Folder", &music_folder));
-    if let Some(summary) = summary {
-        group.add(&info_row("Sync Status", &summary.sync_status));
-        group.add(&info_row(
-            "Cached",
-            &format!(
-                "{} {}, {} {}",
-                summary.cached_album_count,
-                tr("albums"),
-                summary.cached_track_count,
-                tr("tracks")
-            ),
-        ));
-    }
-    let selected_source = if selected { tr("Yes") } else { tr("No") };
-    group.add(&info_row("Selected Source", &selected_source));
+
+    let name = adw::EntryRow::builder()
+        .title(tr("Name"))
+        .text(&server.name)
+        .build();
+    group.add(&name);
+
+    let address = adw::EntryRow::builder()
+        .title(tr("Server Address"))
+        .text(&server.base_url)
+        .build();
+    address.set_visible(remote);
+    group.add(&address);
+
+    let trust_invalid_certificate = adw::SwitchRow::builder()
+        .title(tr("Trust invalid certificate"))
+        .subtitle(tr("Only use this for a server you control"))
+        .active(
+            shell
+                .state
+                .library
+                .borrow()
+                .server_local_access
+                .iter()
+                .find(|summary| summary.server_id == server.id)
+                .is_some_and(|summary| summary.trust_invalid_cert),
+        )
+        .build();
+    trust_invalid_certificate.set_visible(remote);
+    group.add(&trust_invalid_certificate);
+
+    let save = button_row("Save Server Settings", "document-save-symbolic");
+    save.add_css_class("suggested-action");
+    group.add(&save);
+
+    let controller = shell.controller.clone();
+    let server_id = server.id.clone();
+    let provider = server.provider.clone();
+    let original_address = server.base_url.clone();
+    save.connect_activated(move |_| {
+        let base_url = if provider == "local" {
+            original_address.clone()
+        } else {
+            address.text().trim().to_string()
+        };
+        controller.update_server_settings(
+            server_id.clone(),
+            name.text().trim().to_string(),
+            base_url,
+            trust_invalid_certificate.is_active(),
+        );
+    });
+
     group
 }
 
@@ -359,7 +389,7 @@ fn server_actions_group(
     shell: &Rc<Shell>,
     server: &ServerIdentity,
     selected: bool,
-    source_dialog: &adw::Dialog,
+    exit: &ManageServerExitSlot,
 ) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title(tr("Server Actions"))
@@ -369,10 +399,10 @@ fn server_actions_group(
         let select = button_row("Use This Source", "object-select-symbolic");
         let controller = shell.controller.clone();
         let server_id = server.id.clone();
-        let dialog = source_dialog.clone();
+        let exit = exit.clone();
         select.connect_activated(move |_| {
             controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
-            dialog.close();
+            close_manage_server(&exit);
         });
         group.add(&select);
     }
@@ -397,14 +427,9 @@ fn server_actions_group(
     let forget_shell = Rc::clone(shell);
     let server_id = server.id.clone();
     let server_name = server_display_name(server);
-    let source_dialog = source_dialog.clone();
+    let exit = exit.clone();
     forget.connect_activated(move |_| {
-        confirm_forget_server(
-            &forget_shell,
-            server_id.clone(),
-            &server_name,
-            &source_dialog,
-        );
+        confirm_forget_server(&forget_shell, server_id.clone(), &server_name, exit.clone());
     });
     group.add(&forget);
 
@@ -461,7 +486,7 @@ fn confirm_forget_server(
     shell: &Rc<Shell>,
     server_id: ServerId,
     server_name: &str,
-    source_dialog: &adw::Dialog,
+    exit: ManageServerExitSlot,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Forget Server"))
@@ -478,14 +503,13 @@ fn confirm_forget_server(
     dialog.set_close_response("cancel");
     dialog.set_response_appearance("forget", adw::ResponseAppearance::Destructive);
     let controller = shell.controller.clone();
-    let source_dialog = source_dialog.clone();
     dialog.choose(
         Some(&shell.window),
         None::<&gio::Cancellable>,
         move |response| {
             if response.as_str() == "forget" {
                 controller.forget_server(server_id.clone());
-                source_dialog.close();
+                close_manage_server(&exit);
             }
         },
     );

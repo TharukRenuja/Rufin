@@ -2,6 +2,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use adw::prelude::*;
+use gtk::gio;
 use rufin_core::{LibrarySourceSelection, ServerIdentity};
 
 use crate::controller::{LibrarySnapshot, ServerLocalAccessSnapshot};
@@ -9,21 +10,30 @@ use crate::i18n::tr;
 
 use super::{Shell, button_row};
 
-pub(super) fn library_page(
+pub(super) fn library_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> gtk::Widget {
+    let navigation = adw::NavigationView::new();
+    let page = library_sources_page(shell, dialog, &navigation);
+    let root = adw::NavigationPage::new(&page, &tr("Library"));
+    navigation.push(&root);
+    navigation.upcast::<gtk::Widget>()
+}
+
+fn library_sources_page(
     shell: &Rc<Shell>,
-    dialog: &adw::PreferencesDialog,
+    dialog: &adw::Dialog,
+    navigation: &adw::NavigationView,
 ) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Library"))
-        .icon_name("folder-music-symbolic")
+        .icon_name("audio-x-generic-symbolic")
         .build();
 
     let library = shell.state.library.borrow().clone();
 
-    let sources_group = adw::PreferencesGroup::builder()
-        .title(tr("Sources"))
+    let servers_group = adw::PreferencesGroup::builder()
+        .title(tr("Servers"))
         .description(tr(
-            "Choose sources from the sidebar. Configure server mappings and local folders here.",
+            "Configure saved music servers and local playback mappings.",
         ))
         .build();
 
@@ -34,7 +44,7 @@ pub(super) fn library_page(
                 "Add a server to use Jellyfin, Subsonic, or OpenSubsonic.",
             ))
             .build();
-        sources_group.add(&row);
+        servers_group.add(&row);
     } else {
         for server in &library.servers {
             let selected = matches!(
@@ -56,31 +66,30 @@ pub(super) fn library_page(
             if selected {
                 row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
             }
-            let settings = gtk::Button::with_label(&tr("Settings"));
-            settings.set_valign(gtk::Align::Center);
-            row.add_suffix(&settings);
-            row.set_activatable_widget(Some(&settings));
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            row.set_activatable(true);
             let settings_shell = Rc::clone(shell);
+            let navigation = navigation.clone();
             let server = server.clone();
-            settings.connect_clicked(move |_| {
-                settings_shell.present_manage_server_dialog(server.clone());
+            row.connect_activated(move |_| {
+                let page = super::super::local_access_mapping::manage_server_navigation_page(
+                    &settings_shell,
+                    server.clone(),
+                    &navigation,
+                );
+                navigation.push(&page);
             });
-            sources_group.add(&row);
+            servers_group.add(&row);
         }
     }
 
-    let local_selected = matches!(library.selected_source, Some(LibrarySourceSelection::Local));
-    let local_row = adw::ActionRow::builder()
-        .title(tr("Local"))
-        .subtitle(local_source_subtitle(&library))
-        .subtitle_lines(2)
-        .build();
-    local_row.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
-    if local_selected {
-        local_row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
-    }
-    sources_group.add(&local_row);
-    page.add(&sources_group);
+    let add_server = button_row("Add Server", "list-add-symbolic");
+    let add_shell = Rc::clone(shell);
+    add_server.connect_activated(move |_| {
+        add_shell.present_add_server_dialog();
+    });
+    servers_group.add(&add_server);
+    page.add(&servers_group);
 
     let local_group = adw::PreferencesGroup::builder()
         .title(tr("Local Folders"))
@@ -107,13 +116,12 @@ pub(super) fn library_page(
             remove.add_css_class("destructive-action");
             remove.set_valign(gtk::Align::Center);
             row.add_suffix(&remove);
-            row.set_activatable_widget(Some(&remove));
-            let controller = shell.controller.clone();
-            let dialog = dialog.clone();
+            row.set_activatable(false);
+            let remove_shell = Rc::clone(shell);
             let path = folder.path.clone();
+            let row_for_remove = row.clone();
             remove.connect_clicked(move |_| {
-                controller.remove_local_library_folder(path.clone());
-                dialog.close();
+                confirm_remove_local_folder(&remove_shell, path.clone(), row_for_remove.clone());
             });
             local_group.add(&row);
         }
@@ -143,6 +151,34 @@ pub(super) fn library_page(
     page.add(&local_group);
 
     page
+}
+
+fn confirm_remove_local_folder(shell: &Rc<Shell>, path: String, row: adw::ActionRow) {
+    let dialog = adw::AlertDialog::builder()
+        .heading(tr("Remove Local Folder"))
+        .body(format!(
+            "{}\n{}",
+            tr("This removes the folder from the Local source."),
+            path
+        ))
+        .build();
+    let cancel = tr("Cancel");
+    let remove = tr("Remove");
+    dialog.add_responses(&[("cancel", cancel.as_str()), ("remove", remove.as_str())]);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+    let controller = shell.controller.clone();
+    dialog.choose(
+        Some(&shell.window),
+        None::<&gio::Cancellable>,
+        move |response| {
+            if response.as_str() == "remove" {
+                controller.remove_local_library_folder(path.clone());
+                row.set_visible(false);
+            }
+        },
+    );
 }
 
 fn server_source_subtitle(
@@ -202,19 +238,6 @@ fn server_source_subtitle(
     .filter(|line| !line.trim().is_empty())
     .collect::<Vec<_>>()
     .join("\n")
-}
-
-fn local_source_subtitle(library: &LibrarySnapshot) -> String {
-    let folder_count = match library.local_folders.len() {
-        0 => tr("No local folders configured"),
-        1 => tr("1 folder"),
-        count => format!("{} {}", count, tr("folders")),
-    };
-    if matches!(library.selected_source, Some(LibrarySourceSelection::Local)) {
-        format!("{}\n{}", folder_count, library.sync_status)
-    } else {
-        folder_count
-    }
 }
 
 fn local_mapping_status(summary: Option<&ServerLocalAccessSnapshot>) -> String {
