@@ -6493,7 +6493,7 @@ mod tests {
     }
 
     #[test]
-    fn lrclib_manual_search_uses_feishin_style_query_first() {
+    fn lrclib_manual_search_uses_combined_query_first() {
         let urls = super::lrclib_search_urls("joy", "feel my soul").expect("lrclib search urls");
         let query_pairs = urls[0]
             .query_pairs()
