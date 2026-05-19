@@ -31,7 +31,6 @@ pub(super) struct ServerSelector {
 
 struct ServerSelectorContent {
     name: String,
-    subtitle: String,
     selected_source: Option<LibrarySourceSelection>,
     active_server: Option<ServerIdentity>,
     servers: Vec<ServerIdentity>,
@@ -58,7 +57,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
     normal_icon.set_size_request(20, 20);
     normal_content.append(&normal_icon);
 
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 0);
     labels.set_hexpand(true);
     let normal_name = gtk::Label::new(None);
     configure_normal_selector_label(&normal_name);
@@ -66,7 +65,6 @@ pub(super) fn build_server_selector() -> ServerSelector {
     normal_subtitle.add_css_class("muted");
     configure_normal_selector_label(&normal_subtitle);
     labels.append(&normal_name);
-    labels.append(&normal_subtitle);
     normal_content.append(&labels);
     normal_content.append(&gtk::Image::from_icon_name("view-more-symbolic"));
     normal_button.set_child(Some(&normal_content));
@@ -105,19 +103,16 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
     let selector = &shell.server_selector;
     let library = shell.state.library.borrow().clone();
     let content = server_selector_content(library);
-    let tooltip = format!("{}: {}", tr("Source"), content.name);
+    let accessible_label = format!("{}: {}", tr("Source"), content.name);
     let icon_name = source_icon_name(&content);
 
     selector.normal_icon.set_icon_name(Some(&icon_name));
     selector.normal_name.set_text(&content.name);
-    selector.normal_subtitle.set_text(&content.subtitle);
-    selector
-        .normal_subtitle
-        .set_visible(!content.subtitle.is_empty());
-    selector.normal_button.set_tooltip_text(Some(&tooltip));
+    selector.normal_subtitle.set_text("");
+    selector.normal_subtitle.set_visible(false);
     selector
         .normal_button
-        .update_property(&[gtk::accessible::Property::Label(&tooltip)]);
+        .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     selector
         .normal_button
         .set_popover(Some(&server_selection_popover(shell, &content)));
@@ -126,10 +121,9 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
     selector
         .compact_label
         .set_text(&compact_sidebar_label_text(&content.name));
-    selector.compact_button.set_tooltip_text(Some(&tooltip));
     selector
         .compact_button
-        .update_property(&[gtk::accessible::Property::Label(&tooltip)]);
+        .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     selector
         .compact_button
         .set_popover(Some(&server_selection_popover(shell, &content)));
@@ -140,7 +134,6 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
     let Some(server) = library.server.as_ref() else {
         return ServerSelectorContent {
             name: tr("No source"),
-            subtitle: String::new(),
             selected_source,
             active_server: None,
             servers: library.servers,
@@ -151,25 +144,8 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
     };
 
     let name = server_display_name(server);
-    let subtitle = if matches!(selected_source, Some(LibrarySourceSelection::Local)) {
-        local_source_detail(&library.local_folders)
-    } else {
-        library
-            .selected_music_folder_id
-            .as_ref()
-            .and_then(|selected| {
-                library
-                    .music_folders
-                    .iter()
-                    .find(|folder| folder.id == *selected)
-            })
-            .map(|folder| folder.name.clone())
-            .unwrap_or_default()
-    };
-
     ServerSelectorContent {
         name,
-        subtitle,
         selected_source,
         active_server: Some(server.clone()),
         servers: library.servers,

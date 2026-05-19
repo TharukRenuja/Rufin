@@ -167,18 +167,26 @@ pub(super) fn clamp_home_album_page_start(
 }
 
 pub(super) fn home_album_content_width(shell: &Shell) -> i32 {
-    home_album_content_width_for(
+    home_album_content_width_for(route_content_width(shell))
+}
+
+pub(super) fn route_content_width(shell: &Shell) -> i32 {
+    route_content_width_for(
         shell.route_host.width(),
         shell.state.main_content_width.get(),
     )
 }
 
-fn home_album_content_width_for(route_width: i32, fallback_width: i32) -> i32 {
-    let width = if route_width > 1 {
-        route_width
-    } else {
-        fallback_width
-    };
+fn route_content_width_for(route_width: i32, resolved_width: i32) -> i32 {
+    match (route_width > 1, resolved_width > 1) {
+        (true, true) => route_width.min(resolved_width),
+        (true, false) => route_width,
+        (false, true) => resolved_width,
+        (false, false) => 1,
+    }
+}
+
+fn home_album_content_width_for(width: i32) -> i32 {
     (width.max(1) - HOME_ALBUM_HORIZONTAL_MARGINS).max(HOME_ALBUM_MIN_SIZE)
 }
 
@@ -327,13 +335,20 @@ mod tests {
     #[test]
     fn home_album_width_uses_allocated_route_width() {
         assert_eq!(
-            home_album_content_width_for(900, 1_000),
+            home_album_content_width_for(900),
             900 - HOME_ALBUM_HORIZONTAL_MARGINS
         );
         assert_eq!(
-            home_album_content_width_for(1, 650),
+            home_album_content_width_for(650),
             650 - HOME_ALBUM_HORIZONTAL_MARGINS
         );
+    }
+
+    #[test]
+    fn route_content_width_caps_stale_allocations_to_resolved_layout_width() {
+        assert_eq!(route_content_width_for(900, 500), 500);
+        assert_eq!(route_content_width_for(900, 1), 900);
+        assert_eq!(route_content_width_for(1, 500), 500);
     }
 
     #[test]

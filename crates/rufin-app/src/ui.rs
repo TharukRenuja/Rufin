@@ -67,7 +67,7 @@ use favorites::{
 };
 use layout::{
     COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, resolve_layout,
+    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, resolve_layout, route_content_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;
@@ -139,6 +139,8 @@ struct AppState {
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
     home_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
+    first_run_connection_pending: Cell<bool>,
+    first_run_connection_ready: Cell<bool>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
     server_discovery_status: RefCell<String>,
     server_discovery_running: Cell<bool>,
@@ -331,6 +333,9 @@ struct Shell {
     controller: AppController,
     application: adw::Application,
     window: adw::ApplicationWindow,
+    root_stack: gtk::Stack,
+    app_root: gtk::Box,
+    login_host: gtk::Box,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
     server_selector: ServerSelector,
@@ -401,8 +406,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         prefetched_explore: RefCell::new(prefetched_explore),
         home_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
+        first_run_connection_pending: Cell::new(false),
+        first_run_connection_ready: Cell::new(false),
         discovered_servers: RefCell::new(Vec::new()),
-        server_discovery_status: RefCell::new("Searching will start automatically.".to_string()),
+        server_discovery_status: RefCell::new("Searching will start automatically".to_string()),
         server_discovery_running: Cell::new(false),
         server_discovery_started: Cell::new(false),
         cover_bindings: RefCell::new(HashMap::new()),
@@ -432,9 +439,20 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         .title("Rufin")
         .build();
 
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root.add_css_class("app-root");
-    root.set_hexpand(true);
+    let root_stack = gtk::Stack::new();
+    root_stack.add_css_class("app-root");
+    root_stack.set_hexpand(true);
+    root_stack.set_vexpand(true);
+
+    let app_root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    app_root.add_css_class("app-root");
+    app_root.set_hexpand(true);
+    app_root.set_vexpand(true);
+
+    let login_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    login_host.add_css_class("login-root");
+    login_host.set_hexpand(true);
+    login_host.set_vexpand(true);
 
     let upper = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     upper.set_hexpand(true);
@@ -477,16 +495,21 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     upper.append(&compact_nav);
     upper.append(&content_chrome.root);
 
-    root.append(&upper);
-    root.append(&player_controls.root);
+    app_root.append(&upper);
+    app_root.append(&player_controls.root);
 
-    window.set_content(Some(&root));
+    root_stack.add_named(&login_host, Some("login"));
+    root_stack.add_named(&app_root, Some("app"));
+    window.set_content(Some(&root_stack));
 
     let shell = Rc::new(Shell {
         state,
         controller,
         application: app.clone(),
         window,
+        root_stack,
+        app_root,
+        login_host,
         normal_nav,
         compact_nav,
         server_selector,
@@ -1327,6 +1350,12 @@ impl Shell {
     }
 
     fn apply_resolved_layout(self: &Rc<Self>, resolved: ResolvedLayout) -> bool {
+        let login_active = self.login_screen_active();
+        if login_active {
+            self.root_stack.set_visible_child(&self.login_host);
+        } else {
+            self.root_stack.set_visible_child(&self.app_root);
+        }
         let previous_left = self
             .state
             .resolved_left_sidebar
@@ -1342,11 +1371,11 @@ impl Shell {
         let previous_main_width = self.state.main_content_width.replace(resolved.main_width);
 
         self.normal_nav
-            .set_visible(resolved.left_sidebar == LeftSidebarMode::Full);
+            .set_visible(!login_active && resolved.left_sidebar == LeftSidebarMode::Full);
         self.compact_nav
-            .set_visible(resolved.left_sidebar == LeftSidebarMode::Compact);
+            .set_visible(!login_active && resolved.left_sidebar == LeftSidebarMode::Compact);
         self.right_panel_slot
-            .set_visible(resolved.right_sidebar.is_visible());
+            .set_visible(!login_active && resolved.right_sidebar.is_visible());
         self.right_panel_slot.set_min_content_width(0);
         self.right_panel_slot
             .set_max_content_width(resolved.right_sidebar_width);
@@ -1354,7 +1383,8 @@ impl Shell {
         self.right_panel
             .set_width_request(resolved.right_sidebar_width);
         self.right_panel
-            .set_visible(resolved.right_sidebar.is_visible());
+            .set_visible(!login_active && resolved.right_sidebar.is_visible());
+        self.player_controls.root.set_visible(!login_active);
         self.update_right_panel_button();
         self.update_lyrics_panel_button();
 
@@ -1366,6 +1396,7 @@ impl Shell {
             debug!(?resolved, "resolved layout changed");
             self.queue_responsive_route_render();
         }
+        self.log_layout_snapshot("apply_resolved_layout");
         changed
     }
 
@@ -1379,6 +1410,72 @@ impl Shell {
                 (width > 1).then_some(width)
             })
             .unwrap_or(1)
+    }
+
+    fn login_screen_active(&self) -> bool {
+        self.state.library.borrow().first_run || self.state.first_run_connection_pending.get()
+    }
+
+    fn log_layout_snapshot(&self, stage: &'static str) {
+        if std::env::var_os("RUFIN_DEBUG_LAYOUT").is_none() {
+            return;
+        }
+
+        let route = self.state.routes.borrow().current().clone();
+        info!(
+            stage,
+            ?route,
+            login_active = self.login_screen_active(),
+            first_run = self.state.library.borrow().first_run,
+            first_run_connection_pending = self.state.first_run_connection_pending.get(),
+            first_run_connection_ready = self.state.first_run_connection_ready.get(),
+            window_width = self.layout_width(),
+            root_stack_width = self.root_stack.width(),
+            app_root_width = self.app_root.width(),
+            login_host_width = self.login_host.width(),
+            route_host_width = self.route_host.width(),
+            resolved_main_width = self.state.main_content_width.get(),
+            right_sidebar = ?self.state.resolved_right_sidebar.get(),
+            right_panel_slot_visible = self.right_panel_slot.is_visible(),
+            right_panel_slot_width = self.right_panel_slot.width(),
+            right_panel_width = self.right_panel.width(),
+            "layout snapshot"
+        );
+    }
+
+    fn schedule_first_run_app_reveal(self: &Rc<Self>) {
+        self.log_layout_snapshot("first_run_reveal_queued");
+
+        let shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            shell.state.first_run_connection_pending.set(false);
+            shell.state.first_run_connection_ready.set(false);
+            shell.log_layout_snapshot("first_run_reveal_before_stack_switch");
+            shell.update_layout();
+            shell.window.queue_resize();
+            shell.app_root.queue_resize();
+            shell.route_host.queue_resize();
+            shell.right_panel_slot.queue_resize();
+            shell.log_layout_snapshot("first_run_reveal_after_stack_switch");
+
+            let shell = Rc::clone(&shell);
+            glib::timeout_add_local_once(
+                Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
+                move || {
+                    shell.log_layout_snapshot("first_run_reveal_before_render");
+                    shell.update_layout();
+                    shell.render_current_route();
+                    if matches!(shell.state.routes.borrow().current(), Route::Home) {
+                        shell.refresh_home_for_current_visit();
+                    }
+                    shell.render_queue_panel();
+                    shell.render_lyrics_panel();
+                    shell.update_bottom_player();
+                    shell.log_layout_snapshot("first_run_reveal_after_render");
+                    shell.queue_responsive_route_render();
+                },
+            );
+        });
     }
 
     fn update_server_selector(self: &Rc<Self>) {
@@ -1585,21 +1682,25 @@ impl Shell {
 
     fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
+        self.update_layout();
         self.state.home_section_views.borrow_mut().clear();
-        clear_favorite_controls(&self.state.favorite_controls);
-        while let Some(child) = self.route_host.first_child() {
-            self.route_host.remove(&child);
-        }
-
-        let first_run = self.state.library.borrow().first_run;
-        if first_run {
+        if self.login_screen_active() {
+            clear_favorite_controls(&self.state.favorite_controls);
+            while let Some(child) = self.login_host.first_child() {
+                self.login_host.remove(&child);
+            }
             let route_name = "FirstRun".to_string();
             self.route_title.set_title(&tr("Connect to Music Server"));
             self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
-            self.route_host.append(&route_boundary(view));
+            self.login_host.append(&view);
             self.record_perf_route_render(route_name, render_started.elapsed());
             return;
+        }
+
+        clear_favorite_controls(&self.state.favorite_controls);
+        while let Some(child) = self.route_host.first_child() {
+            self.route_host.remove(&child);
         }
 
         let route = self.state.routes.borrow().current().clone();
@@ -1730,12 +1831,7 @@ impl Shell {
         content.set_margin_start(32);
         content.set_margin_end(32);
 
-        let width = self.route_host.width();
-        let content_width = if width > 1 {
-            width
-        } else {
-            self.state.main_content_width.get()
-        };
+        let content_width = route_content_width(self);
         let compact = content_width < 760;
         let cover_size = if compact { 164 } else { 204 };
         let header_orientation = if compact {
@@ -3490,6 +3586,10 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 ControllerEvent::Snapshot(snapshot) => {
                     let entering_first_run =
                         snapshot.first_run && !shell.state.library.borrow().first_run;
+                    let finishing_first_run_connection =
+                        shell.state.first_run_connection_pending.get()
+                            && shell.state.first_run_connection_ready.get()
+                            && !snapshot.first_run;
                     let source_changed =
                         shell.state.library.borrow().selected_source != snapshot.selected_source;
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
@@ -3500,11 +3600,16 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         shell.state.server_discovery_running.set(false);
                         *shell.state.discovered_servers.borrow_mut() = Vec::new();
                         *shell.state.server_discovery_status.borrow_mut() =
-                            "Searching will start automatically.".to_string();
+                            "Searching will start automatically".to_string();
                     }
                     shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
                     *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
                     shell.update_server_selector();
+                    if finishing_first_run_connection {
+                        shell.log_layout_snapshot("first_run_final_snapshot");
+                        shell.schedule_first_run_app_reveal();
+                        continue;
+                    }
                     if source_changed {
                         shell.navigate(Route::Home);
                     } else {
@@ -3626,13 +3731,16 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     }
                 }
                 ControllerEvent::LoginStatus(status) => {
+                    if status == "Library sync complete" {
+                        shell.state.first_run_connection_ready.set(true);
+                    }
                     let should_render = {
                         let mut library = shell.state.library.borrow_mut();
                         library.sync_status = status;
                         route_displays_sync_status(
                             shell.state.routes.borrow().current(),
                             library.first_run,
-                        )
+                        ) || shell.state.first_run_connection_pending.get()
                     };
                     if should_render {
                         shell.render_current_route();
@@ -3640,8 +3748,10 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 }
                 ControllerEvent::Error(error) => {
                     warn!(%error, "controller error");
+                    shell.state.first_run_connection_pending.set(false);
+                    shell.state.first_run_connection_ready.set(false);
                     let mut library = shell.state.library.borrow_mut();
-                    library.sync_status = "Action failed.".to_string();
+                    library.sync_status = "Action failed".to_string();
                     library.last_error = Some(error);
                     drop(library);
                     shell.render_current_route();
@@ -5013,21 +5123,21 @@ mod tests {
 
     #[test]
     fn queue_lyrics_position_clamps_to_available_height() {
-        assert_eq!(clamp_queue_lyrics_position(800, 1701), 680);
+        assert_eq!(clamp_queue_lyrics_position(800, 1701), 500);
         assert_eq!(clamp_queue_lyrics_position(800, 10), 120);
         assert_eq!(clamp_queue_lyrics_position(200, 1701), 120);
-        assert_eq!(queue_lyrics_default_position(700), 500);
+        assert_eq!(queue_lyrics_default_position(700), 400);
         assert_eq!(queue_lyrics_default_position(1400), 1000);
-        assert_eq!(queue_lyrics_initial_position(700, None), 500);
+        assert_eq!(queue_lyrics_initial_position(700, None), 400);
         assert_eq!(queue_lyrics_initial_position(700, Some(0.5)), 350);
-        assert_eq!(queue_lyrics_initial_position(700, Some(2.0)), 580);
-        assert_eq!(queue_lyrics_initial_position(700, Some(f64::NAN)), 500);
+        assert_eq!(queue_lyrics_initial_position(700, Some(2.0)), 400);
+        assert_eq!(queue_lyrics_initial_position(700, Some(f64::NAN)), 400);
         assert_eq!(queue_lyrics_position_from_ratio(700, 0.5), 350);
         assert_eq!(queue_lyrics_position_ratio(700, 350), 0.5);
-        let saved_default_ratio = queue_lyrics_position_ratio(700, 500);
+        let saved_default_ratio = queue_lyrics_position_ratio(700, 400);
         assert_eq!(
             queue_lyrics_initial_position(1400, Some(saved_default_ratio)),
-            1000
+            800
         );
     }
 

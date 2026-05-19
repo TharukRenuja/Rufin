@@ -63,7 +63,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("External lyric lookup");
     let _ = tr("External cover lookup");
     let _ = tr("Does MusicBrainz and Cover Art Archive lookups");
-    let _ = tr("Try to fetch artwork from internet when server artwork is missing.");
+    let _ = tr("Try to fetch artwork from internet when server artwork is missing");
     let _ = tr("Clear Cached Library");
     let _ = tr("Clear Cache");
     let _ = tr("This removes cached library metadata for");
@@ -79,7 +79,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("No source");
     let _ = tr("Sources");
     let _ = tr("Servers");
-    let _ = tr("Configure saved music servers and local playback mappings.");
+    let _ = tr("Configure saved music servers and local playback mappings");
     let _ = tr("No servers configured");
     let _ = tr("Server Library");
     let _ = tr("All Music");
@@ -100,14 +100,14 @@ fn catalog_strings_for_extraction() {
     let _ = tr("No");
     let _ = tr("Local mapping");
     let _ = tr("No local playback mapping");
-    let _ = tr("Local mapping saved. Sync to preview matches.");
+    let _ = tr("Local mapping saved. Sync to preview matches");
     let _ = tr("Saved per server");
     let _ = tr("None");
     let _ = tr("Use server streams only");
     let _ = tr("Choose Folder");
     let _ = tr("Add local folder access");
     let _ = tr("Remove Local Folder");
-    let _ = tr("This removes the folder from the Local source.");
+    let _ = tr("This removes the folder from the Local source");
     let _ = tr("Clear Mapping");
     let _ = tr("Save");
     let _ = tr("Save Mapping");
@@ -115,6 +115,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Connect");
     let _ = tr("Connect to Music Server");
     let _ = tr("Choose a provider, pick a server, or enter the address manually");
+    let _ = tr("Choose a provider, pick a discovered server, or enter the address manually");
     let _ = tr("Provider");
     let _ = tr("Jellyfin");
     let _ = tr("Navidrome");
@@ -128,8 +129,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("No folder selected");
     let _ = tr("Choose");
     let _ = tr("Local Playback Access");
-    let _ = tr("Optional. Map server tracks to local files on this computer.");
-    let _ = tr("Optionally map server tracks to files on this computer.");
+    let _ = tr("Optionally map server tracks to files on this computer");
     let _ = tr("Local Folder");
     let _ = tr("Server Prefix");
     let _ = tr("Local Prefix");
@@ -148,7 +148,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Unsaved changes.");
     let _ = tr("Saved mapping.");
     let _ = tr("Select Music Folder");
-    let _ = tr("Choose a local music folder.");
+    let _ = tr("Choose a local music folder");
+    let _ = tr("Enter a server address, username, and password");
     let _ = tr("Server Address");
     let _ = tr("Trust invalid certificates");
     let _ = tr("Trust invalid certificate");

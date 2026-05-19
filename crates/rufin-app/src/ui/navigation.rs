@@ -183,7 +183,8 @@ fn nav_button(
     if compact {
         button.add_css_class("rail-button");
     }
-    button.set_tooltip_text(Some(&tr(label)));
+    let accessible_label = tr(label);
+    button.update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
 
     let content = gtk::Box::new(
         if compact {

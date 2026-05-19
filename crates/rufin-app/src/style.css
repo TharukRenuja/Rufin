@@ -119,9 +119,20 @@ window {
   padding: 4px;
 }
 
-.nav-button:hover,
+.nav-button:not(.server-selector):hover,
 .album-button:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+button:disabled,
+menubutton:disabled > button {
+  opacity: 0.46;
+}
+
+button.suggested-action:disabled {
+  color: @dim_label_color;
+  background: color-mix(in srgb, @window_fg_color 8%, transparent);
+  box-shadow: none;
 }
 
 .settings-group {

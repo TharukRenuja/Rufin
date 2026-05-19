@@ -176,7 +176,7 @@ impl LibrarySnapshot {
             selected_music_folder_id: None,
             username: None,
             first_run: true,
-            sync_status: "Add a music server to start.".to_string(),
+            sync_status: String::new(),
             last_error: None,
             cached_album_count: 0,
             cached_track_count: 0,
@@ -403,6 +403,13 @@ impl StoreHandle {
                 *stored = settings.clone();
                 Ok(())
             }
+        }
+    }
+
+    fn database_exists(&self) -> bool {
+        match self {
+            Self::Path { database_path, .. } => database_path.exists(),
+            Self::Memory { .. } => true,
         }
     }
 }
@@ -3302,7 +3309,7 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
                     saved.clone(),
                 );
                 let _sent = context.events.send(ControllerEvent::LoginStatus(
-                    "Library sync complete.".to_string(),
+                    "Library sync complete".to_string(),
                 ));
                 match load_snapshot(&context.store) {
                     Ok(snapshot) => {
@@ -4094,7 +4101,7 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
             let sync_status = sync_state
                 .as_ref()
                 .map(sync_status_text)
-                .unwrap_or_else(|| "Cached library ready.".to_string());
+                .unwrap_or_else(|| "Cached library ready".to_string());
             let cached_album_count = store
                 .with_store(|store| {
                     store
@@ -4210,7 +4217,7 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     let status = sync_state
         .as_ref()
         .map(sync_status_text)
-        .unwrap_or_else(|| "Cached library ready.".to_string());
+        .unwrap_or_else(|| "Cached library ready".to_string());
     let last_error = sync_state.and_then(|state| state.last_error);
 
     Ok(LibrarySnapshot {
@@ -4245,8 +4252,8 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
 fn sync_status_text(state: &SyncState) -> String {
     match state.status.as_str() {
         "running" => "Syncing library...".to_string(),
-        "error" => "Sync needs attention.".to_string(),
-        _ => "Cached library ready.".to_string(),
+        "error" => "Sync needs attention".to_string(),
+        _ => "Cached library ready".to_string(),
     }
 }
 
@@ -4409,6 +4416,10 @@ fn migrate_legacy_local_servers_to_settings(
     store: &StoreHandle,
     settings: &mut AppSettings,
 ) -> bool {
+    if !store.database_exists() {
+        return false;
+    }
+
     let Ok(saved_servers) = store.with_store(|store| store.list_servers()) else {
         return false;
     };

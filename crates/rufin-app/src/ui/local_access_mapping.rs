@@ -180,9 +180,9 @@ fn manage_server_toolbar(
         tr("Local Library")
     };
     let group_description = if remote {
-        tr("Optionally map server tracks to files on this computer.")
+        tr("Optionally map server tracks to files on this computer")
     } else {
-        tr("Choose the folder to scan and play directly from this computer.")
+        tr("Choose the folder to scan and play directly from this computer")
     };
     let group = adw::PreferencesGroup::builder()
         .title(group_title)
@@ -287,7 +287,7 @@ fn manage_server_toolbar(
     let exit_for_save = exit.clone();
     save.connect_clicked(move |_| {
         let Some(root) = folder.borrow().clone() else {
-            status_for_save.set_text(&tr("Choose a local music folder."));
+            status_for_save.set_text(&tr("Choose a local music folder"));
             return;
         };
         if provider == "local" {
@@ -650,7 +650,7 @@ fn local_access_status_text(
     status: &LocalAccessStatus,
 ) -> String {
     if draft.folder.is_none() {
-        return tr("Choose a local music folder.");
+        return tr("Choose a local music folder");
     }
     if !remote {
         return if changed {

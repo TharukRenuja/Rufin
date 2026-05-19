@@ -60,8 +60,8 @@ impl AppController {
 
 fn discovery_finished_status(servers: &[DiscoveredServer]) -> String {
     match servers.len() {
-        0 => "No Jellyfin servers found. Enter the address manually or search again.".to_string(),
-        1 => "Found 1 Jellyfin server.".to_string(),
-        count => format!("Found {count} Jellyfin servers."),
+        0 => "No Jellyfin servers found. Enter the address manually or search again".to_string(),
+        1 => "Found 1 Jellyfin server".to_string(),
+        count => format!("Found {count} Jellyfin servers"),
     }
 }

@@ -638,17 +638,16 @@ impl LibraryListKey {
 
     fn default_layout(self) -> LibraryLayout {
         match self {
+            Self::Albums => LibraryLayout::Detail,
             Self::Tracks
             | Self::FavoriteTracks
             | Self::AlbumDetailTracks
             | Self::ArtistTracks
             | Self::GenreTracks
             | Self::PlaylistTracks => LibraryLayout::Row,
-            Self::Albums
-            | Self::Artists
-            | Self::AlbumArtists
-            | Self::Genres
-            | Self::ArtistAlbums => LibraryLayout::Grid,
+            Self::Artists | Self::AlbumArtists | Self::Genres | Self::ArtistAlbums => {
+                LibraryLayout::Grid
+            }
         }
     }
 }
@@ -996,7 +995,6 @@ fn default_detail_track_fields() -> Vec<LibraryField> {
         LibraryField::TrackNumber,
         LibraryField::Title,
         LibraryField::Duration,
-        LibraryField::Favorite,
     ]
 }
 
@@ -1315,7 +1313,7 @@ impl Default for AppSettings {
             theme_preference: ThemePreference::System,
             private_mode: false,
             notifications_enabled: false,
-            external_lyrics_enabled: false,
+            external_lyrics_enabled: true,
             external_metadata_enabled: true,
             prefer_server_lyrics: true,
             ask_lyrics_save_path: false,
@@ -1466,7 +1464,7 @@ mod tests {
         assert!(settings.sources.selected.is_none());
         assert!(settings.sources.local_folders.is_empty());
         assert!(!settings.notifications_enabled);
-        assert!(!settings.external_lyrics_enabled);
+        assert!(settings.external_lyrics_enabled);
         assert!(settings.external_metadata_enabled);
         assert!(settings.prefer_server_lyrics);
         assert!(!settings.discord_presence_enabled);
@@ -1550,7 +1548,7 @@ mod tests {
         assert_eq!(settings.home_blocks.len(), 7);
         assert_eq!(
             settings.library_list(LibraryListKey::Albums).layout,
-            LibraryLayout::Grid
+            LibraryLayout::Detail
         );
         assert_eq!(
             settings.library_list(LibraryListKey::Tracks).layout,
@@ -1712,6 +1710,7 @@ mod tests {
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
         assert!(!restored.auto_dj_enabled);
+        assert!(!restored.external_lyrics_enabled);
         assert!(restored.external_metadata_enabled);
         assert!(restored.prefer_server_lyrics);
         assert_eq!(

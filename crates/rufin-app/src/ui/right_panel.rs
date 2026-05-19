@@ -10,8 +10,10 @@ use crate::lyrics::LyricsPane;
 
 use super::{Shell, icon_button, layout::MIN_RESTORED_WINDOW_HEIGHT, player::BOTTOM_PLAYER_HEIGHT};
 
-const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
-const QUEUE_LYRICS_READY_MIN_HEIGHT: i32 = QUEUE_LYRICS_MIN_PANE_HEIGHT * 3;
+const QUEUE_LYRICS_MIN_QUEUE_HEIGHT: i32 = 120;
+const QUEUE_LYRICS_MIN_LYRICS_HEIGHT: i32 = 300;
+const QUEUE_LYRICS_READY_MIN_HEIGHT: i32 =
+    QUEUE_LYRICS_MIN_QUEUE_HEIGHT + QUEUE_LYRICS_MIN_LYRICS_HEIGHT;
 const QUEUE_LYRICS_DEFAULT_QUEUE_UNITS: i32 = 5;
 const QUEUE_LYRICS_DEFAULT_LYRICS_UNITS: i32 = 2;
 const QUEUE_LYRICS_FALLBACK_HEIGHT: i32 = 900 - BOTTOM_PLAYER_HEIGHT - 48;
@@ -292,20 +294,20 @@ pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
 
 fn queue_lyrics_available_height(shell: &Shell) -> i32 {
     let panel_height = shell.right_panel.height();
-    if panel_height > QUEUE_LYRICS_MIN_PANE_HEIGHT * 2 {
+    if panel_height >= QUEUE_LYRICS_READY_MIN_HEIGHT {
         return panel_height;
     }
     let window_height = shell.window.height();
     if window_height > MIN_RESTORED_WINDOW_HEIGHT {
-        return (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2);
+        return (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_READY_MIN_HEIGHT);
     }
-    QUEUE_LYRICS_FALLBACK_HEIGHT.max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2)
+    QUEUE_LYRICS_FALLBACK_HEIGHT.max(QUEUE_LYRICS_READY_MIN_HEIGHT)
 }
 
 pub(super) fn clamp_queue_lyrics_position(available_height: i32, position: i32) -> i32 {
     let max_position =
-        (available_height - QUEUE_LYRICS_MIN_PANE_HEIGHT).max(QUEUE_LYRICS_MIN_PANE_HEIGHT);
-    position.clamp(QUEUE_LYRICS_MIN_PANE_HEIGHT, max_position)
+        (available_height - QUEUE_LYRICS_MIN_LYRICS_HEIGHT).max(QUEUE_LYRICS_MIN_QUEUE_HEIGHT);
+    position.clamp(QUEUE_LYRICS_MIN_QUEUE_HEIGHT, max_position)
 }
 
 pub(super) fn queue_lyrics_default_position(available_height: i32) -> i32 {
@@ -352,4 +354,25 @@ fn set_queue_lyrics_split_position_without_saving(
     glib::idle_add_local_once(move || {
         suppress.set(suppress.get().saturating_sub(1));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_split_keeps_lyrics_at_least_three_hundred_pixels_when_possible() {
+        let available_height = 756;
+        let position = queue_lyrics_default_position(available_height);
+
+        assert_eq!(available_height - position, 300);
+    }
+
+    #[test]
+    fn split_clamp_preserves_queue_when_panel_is_shorter_than_ideal() {
+        let available_height = 360;
+        let position = clamp_queue_lyrics_position(available_height, 280);
+
+        assert_eq!(position, QUEUE_LYRICS_MIN_QUEUE_HEIGHT);
+    }
 }

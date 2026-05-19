@@ -44,6 +44,10 @@ impl Shell {
     }
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
+        if self.state.first_run_connection_pending.get() {
+            return self.connection_progress_view();
+        }
+
         self.start_server_discovery_once();
 
         let scroller = gtk::ScrolledWindow::new();
@@ -70,7 +74,7 @@ impl Shell {
         intro_title.set_xalign(0.0);
         intro_title.set_wrap(true);
         let intro_description = gtk::Label::new(Some(&tr(
-            "Choose a provider, pick a discovered server, or enter the address manually.",
+            "Choose a provider, pick a discovered server, or enter the address manually",
         )));
         intro_description.add_css_class("muted");
         intro_description.set_xalign(0.0);
@@ -101,7 +105,7 @@ impl Shell {
             .build();
         let trust = adw::SwitchRow::builder()
             .title(tr("Trust invalid certificate"))
-            .subtitle(tr("Only use this for a server you control."))
+            .subtitle(tr("Only use this for a server you control"))
             .active(false)
             .build();
 
@@ -117,7 +121,7 @@ impl Shell {
         let local_group = adw::PreferencesGroup::builder()
             .title(tr("Local Library"))
             .description(tr(
-                "Choose a folder to scan and play directly from this computer.",
+                "Choose a folder to scan and play directly from this computer",
             ))
             .build();
         let local_folder_row = adw::ActionRow::builder()
@@ -135,13 +139,16 @@ impl Shell {
         let discovered_group = self.discovered_servers_group(&provider, &url);
         content.append(&discovered_group);
 
-        let status = gtk::Label::new(Some(&self.state.library.borrow().sync_status));
+        let status_text = self.state.library.borrow().sync_status.clone();
+        let status = gtk::Label::new(Some(&status_text));
         status.add_css_class("muted");
         status.set_wrap(true);
         status.set_xalign(0.0);
+        status.set_visible(!status_text.trim().is_empty());
         if let Some(error) = &self.state.library.borrow().last_error {
             status.set_text(error);
             status.add_css_class("error-text");
+            status.set_visible(true);
         }
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -156,15 +163,24 @@ impl Shell {
         let provider_input = provider.clone();
         let local_folder_input = Rc::clone(&local_folder);
         let status_input = status.clone();
+        let shell = Rc::clone(self);
         login.connect_clicked(move |_| {
             let provider = StreamingProvider::from_index(provider_input.selected());
             if provider == StreamingProvider::Local {
                 let Some(root) = local_folder_input.borrow().clone() else {
-                    status_input.set_text(&tr("Choose a local music folder."));
+                    status_input.set_text(&tr("Choose a local music folder"));
+                    status_input.set_visible(true);
                     return;
                 };
+                shell.begin_first_run_connection(&tr("Caching local library..."));
                 controller.add_local_server(root);
             } else {
+                if !remote_login_ready(&url_input, &username_input, &password_input) {
+                    status_input.set_text(&tr("Enter a server address, username, and password"));
+                    status_input.set_visible(true);
+                    return;
+                }
+                shell.begin_first_run_connection(&tr("Connecting to music server..."));
                 controller.login(
                     provider,
                     url_input.text().to_string(),
@@ -196,16 +212,46 @@ impl Shell {
         update_connect_button(
             StreamingProvider::from_index(provider.selected()),
             &local_folder,
+            &url,
+            &username,
+            &password,
             &login,
         );
+        let refresh_connect_button: Rc<dyn Fn()> = Rc::new({
+            let provider = provider.clone();
+            let local_folder = Rc::clone(&local_folder);
+            let url = url.clone();
+            let username = username.clone();
+            let password = password.clone();
+            let login = login.clone();
+            move || {
+                update_connect_button(
+                    StreamingProvider::from_index(provider.selected()),
+                    &local_folder,
+                    &url,
+                    &username,
+                    &password,
+                    &login,
+                );
+            }
+        });
         let local_group_for_provider = local_group.clone();
-        let login_for_provider = login.clone();
-        let local_folder_for_provider = Rc::clone(&local_folder);
+        let refresh_for_provider = Rc::clone(&refresh_connect_button);
         provider.connect_selected_notify(move |row| {
             let provider = StreamingProvider::from_index(row.selected());
             update_provider_rows(provider, &remote_widgets, &local_group_for_provider);
-            update_connect_button(provider, &local_folder_for_provider, &login_for_provider);
+            refresh_for_provider();
         });
+        for entry in [
+            url.clone().upcast::<gtk::Editable>(),
+            username.clone().upcast::<gtk::Editable>(),
+            password.clone().upcast::<gtk::Editable>(),
+        ] {
+            let refresh = Rc::clone(&refresh_connect_button);
+            entry.connect_text_notify(move |_| {
+                refresh();
+            });
+        }
 
         connect_folder_button(
             &self.window,
@@ -216,15 +262,76 @@ impl Shell {
                 let login = login.clone();
                 let provider = provider.clone();
                 let local_folder = Rc::clone(&local_folder);
+                let url = url.clone();
+                let username = username.clone();
+                let password = password.clone();
                 move |_| {
                     update_connect_button(
                         StreamingProvider::from_index(provider.selected()),
                         &local_folder,
+                        &url,
+                        &username,
+                        &password,
                         &login,
                     );
                 }
             },
         );
+        clamp.set_child(Some(&content));
+        scroller.set_child(Some(&clamp));
+        scroller.upcast()
+    }
+
+    fn begin_first_run_connection(self: &Rc<Self>, status: &str) {
+        self.state.first_run_connection_pending.set(true);
+        self.state.first_run_connection_ready.set(false);
+        {
+            let mut library = self.state.library.borrow_mut();
+            library.sync_status = status.to_string();
+            library.last_error = None;
+        }
+        self.render_current_route();
+    }
+
+    fn connection_progress_view(self: &Rc<Self>) -> gtk::Widget {
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_vexpand(true);
+
+        let clamp = adw::Clamp::new();
+        clamp.set_maximum_size(440);
+        clamp.set_tightening_threshold(320);
+        clamp.set_margin_top(72);
+        clamp.set_margin_bottom(72);
+        clamp.set_margin_start(24);
+        clamp.set_margin_end(24);
+        clamp.set_valign(gtk::Align::Center);
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        content.add_css_class("first-run-progress");
+        content.set_halign(gtk::Align::Center);
+        content.set_valign(gtk::Align::Center);
+        content.set_hexpand(true);
+
+        let spinner = gtk::Spinner::new();
+        spinner.set_halign(gtk::Align::Center);
+        spinner.start();
+        content.append(&spinner);
+
+        let title = gtk::Label::new(Some(&tr("Caching Library")));
+        title.add_css_class("title-1");
+        title.set_justify(gtk::Justification::Center);
+        title.set_wrap(true);
+        content.append(&title);
+
+        let status_text = self.state.library.borrow().sync_status.clone();
+        let status = gtk::Label::new(Some(&status_text));
+        status.add_css_class("muted");
+        status.set_justify(gtk::Justification::Center);
+        status.set_wrap(true);
+        status.set_xalign(0.5);
+        content.append(&status);
+
         clamp.set_child(Some(&content));
         scroller.set_child(Some(&clamp));
         scroller.upcast()
@@ -334,9 +441,33 @@ fn update_provider_rows(
 fn update_connect_button(
     provider: StreamingProvider,
     local_folder: &Rc<RefCell<Option<PathBuf>>>,
+    url: &adw::EntryRow,
+    username: &adw::EntryRow,
+    password: &adw::PasswordEntryRow,
     login: &gtk::Button,
 ) {
-    login.set_sensitive(provider != StreamingProvider::Local || local_folder.borrow().is_some());
+    let ready = if provider == StreamingProvider::Local {
+        local_folder.borrow().is_some()
+    } else {
+        remote_login_ready(url, username, password)
+    };
+    login.set_sensitive(ready);
+}
+
+fn remote_login_ready(
+    url: &adw::EntryRow,
+    username: &adw::EntryRow,
+    password: &adw::PasswordEntryRow,
+) -> bool {
+    let address = url.text();
+    let address = address.trim().trim_end_matches('/');
+    let address_without_scheme = address
+        .strip_prefix("http://")
+        .or_else(|| address.strip_prefix("https://"))
+        .unwrap_or(address);
+    !address_without_scheme.trim().is_empty()
+        && !username.text().trim().is_empty()
+        && !password.text().trim().is_empty()
 }
 
 pub(super) fn connect_folder_button(

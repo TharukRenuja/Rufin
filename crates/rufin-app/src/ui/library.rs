@@ -16,7 +16,7 @@ use super::{
     THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, append_albums_to_model, append_artists_to_model,
     append_genres_to_model, append_tracks_to_model, connect_paged_grid_loader,
     favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
-    layout::{large_popup_content_height, large_popup_content_width},
+    layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     set_favorite_button_active, stable_seed,
 };
@@ -1322,13 +1322,7 @@ fn library_table_content_height(row_count: usize) -> i32 {
 }
 
 fn compact_detail_layout(shell: &Shell) -> bool {
-    let width = shell.route_host.width();
-    let content_width = if width > 1 {
-        width
-    } else {
-        shell.state.main_content_width.get()
-    };
-    content_width < 760
+    route_content_width(shell) < 760
 }
 
 fn album_card(shell: &Rc<Shell>, album: &Album, key: LibraryListKey, size: i32) -> gtk::Widget {
