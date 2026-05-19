@@ -525,6 +525,11 @@ fn sidebar_item_row(
         })
         .build();
 
+    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    drag.add_css_class("dim-label");
+    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+    row.add_prefix(&drag);
+
     let visible = gtk::Switch::new();
     visible.set_active(entry.visible);
     visible.set_valign(gtk::Align::Center);
@@ -588,6 +593,53 @@ fn sidebar_item_row(
         });
     }
 
+    let source = gtk::DragSource::builder()
+        .actions(gtk::gdk::DragAction::MOVE)
+        .build();
+    let item_id = sidebar_route_item_drag_id(entry.item).to_string();
+    source.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(&item_id.to_value()))
+    });
+    drag.add_controller(source);
+
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let shell = Rc::clone(shell);
+    let group = group.clone();
+    let rows = Rc::clone(rows);
+    let row_for_drop = row.clone();
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(source_id) = value.get::<String>() else {
+            return false;
+        };
+        let Some(source_item) = sidebar_route_item_from_drag_id(&source_id) else {
+            return false;
+        };
+        if source_item == entry.item {
+            return false;
+        }
+        let after = y > f64::from(row_for_drop.height()) / 2.0;
+        let changed = shell
+            .update_app_settings("sidebar setting", |settings| {
+                let changed = reorder_sidebar_item_settings(
+                    &mut settings.sidebar.route_items,
+                    source_item,
+                    entry.item,
+                    after,
+                );
+                if changed {
+                    settings.sidebar.sanitize();
+                }
+                changed
+            })
+            .is_some();
+        if changed {
+            shell.rebuild_sidebar_navigation();
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        }
+        changed
+    });
+    row.add_controller(drop_target);
+
     row
 }
 
@@ -614,6 +666,50 @@ fn move_sidebar_item(shell: &Rc<Shell>, item: SidebarRouteItem, delta: isize) {
         true
     });
     shell.rebuild_sidebar_navigation();
+}
+
+fn reorder_sidebar_item_settings(
+    items: &mut Vec<SidebarRouteItemSettings>,
+    source: SidebarRouteItem,
+    target: SidebarRouteItem,
+    after: bool,
+) -> bool {
+    if source == target {
+        return false;
+    }
+    let before = items.clone();
+    let Some(source_index) = items.iter().position(|entry| entry.item == source) else {
+        return false;
+    };
+    let entry = items.remove(source_index);
+    let Some(mut target_index) = items.iter().position(|entry| entry.item == target) else {
+        items.insert(source_index.min(items.len()), entry);
+        return false;
+    };
+    if after {
+        target_index += 1;
+    }
+    items.insert(target_index.min(items.len()), entry);
+    *items != before
+}
+
+fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
+    match item {
+        SidebarRouteItem::Home => "Home",
+        SidebarRouteItem::Favorites => "Favorites",
+        SidebarRouteItem::Albums => "Albums",
+        SidebarRouteItem::Tracks => "Tracks",
+        SidebarRouteItem::Artists => "Artists",
+        SidebarRouteItem::AlbumArtists => "AlbumArtists",
+        SidebarRouteItem::Genres => "Genres",
+        SidebarRouteItem::Playlists => "Playlists",
+    }
+}
+
+fn sidebar_route_item_from_drag_id(id: &str) -> Option<SidebarRouteItem> {
+    SidebarRouteItem::all()
+        .into_iter()
+        .find(|item| sidebar_route_item_drag_id(*item) == id)
 }
 
 fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
@@ -1421,6 +1517,11 @@ fn populate_home_block_rows(
             .subtitle(home_block_subtitle(block, active, visible_index))
             .build();
 
+        let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+        drag.add_css_class("dim-label");
+        drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+        row.add_prefix(&drag);
+
         let up = gtk::Button::from_icon_name("go-up-symbolic");
         up.add_css_class("flat");
         up.set_tooltip_text(Some(&tr("Move up")));
@@ -1488,6 +1589,41 @@ fn populate_home_block_rows(
         row.add_suffix(&toggle);
         row.set_activatable_widget(Some(&toggle));
 
+        let source = gtk::DragSource::builder()
+            .actions(gtk::gdk::DragAction::MOVE)
+            .build();
+        let block_id = home_block_drag_id(block).to_string();
+        source.connect_prepare(move |_, _, _| {
+            Some(gtk::gdk::ContentProvider::for_value(&block_id.to_value()))
+        });
+        drag.add_controller(source);
+
+        let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+        let shell_for_drop = Rc::clone(shell);
+        let group_for_drop = group.clone();
+        let rows_for_drop = Rc::clone(rows);
+        let row_for_drop = row.clone();
+        drop_target.connect_drop(move |_, value, _, y| {
+            let Ok(source_id) = value.get::<String>() else {
+                return false;
+            };
+            let Some(source_block) = home_block_from_drag_id(&source_id) else {
+                return false;
+            };
+            if source_block == block {
+                return false;
+            }
+            let after = y > f64::from(row_for_drop.height()) / 2.0;
+            let mut blocks = shell_for_drop.state.settings.borrow().home_blocks.clone();
+            if !reorder_home_blocks(&mut blocks, source_block, block, after) {
+                return false;
+            }
+            shell_for_drop.set_home_blocks(blocks);
+            populate_home_block_rows(&shell_for_drop, &group_for_drop, &rows_for_drop);
+            true
+        });
+        row.add_controller(drop_target);
+
         group.add(&row);
         rows.borrow_mut().push(row);
     }
@@ -1537,6 +1673,49 @@ fn home_block_subtitle(block: HomeBlockKind, active: bool, visible_index: Option
         None if active => tr("Visible"),
         None => tr("Hidden"),
     }
+}
+
+fn reorder_home_blocks(
+    blocks: &mut Vec<HomeBlockKind>,
+    source: HomeBlockKind,
+    target: HomeBlockKind,
+    after: bool,
+) -> bool {
+    if source == target {
+        return false;
+    }
+    let before = blocks.clone();
+    let Some(source_index) = blocks.iter().position(|block| *block == source) else {
+        return false;
+    };
+    let block = blocks.remove(source_index);
+    let Some(mut target_index) = blocks.iter().position(|block| *block == target) else {
+        blocks.insert(source_index.min(blocks.len()), block);
+        return false;
+    };
+    if after {
+        target_index += 1;
+    }
+    blocks.insert(target_index.min(blocks.len()), block);
+    *blocks != before
+}
+
+fn home_block_drag_id(block: HomeBlockKind) -> &'static str {
+    match block {
+        HomeBlockKind::Showcase => "Showcase",
+        HomeBlockKind::Explore => "Explore",
+        HomeBlockKind::MostPlayed => "MostPlayed",
+        HomeBlockKind::NewlyAdded => "NewlyAdded",
+        HomeBlockKind::RecentlyPlayed => "RecentlyPlayed",
+        HomeBlockKind::RecentlyReleased => "RecentlyReleased",
+        HomeBlockKind::Genres => "Genres",
+    }
+}
+
+fn home_block_from_drag_id(id: &str) -> Option<HomeBlockKind> {
+    HomeBlockKind::all()
+        .into_iter()
+        .find(|block| home_block_drag_id(*block) == id)
 }
 
 fn library_page(shell: &Rc<Shell>, dialog: &adw::PreferencesDialog) -> adw::PreferencesPage {
@@ -1724,5 +1903,115 @@ fn discord_link_from_index(index: u32) -> DiscordLinkType {
         2 => DiscordLinkType::MusicBrainz,
         3 => DiscordLinkType::MusicBrainzLastFm,
         _ => DiscordLinkType::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidebar_drag_reorder_inserts_before_and_after_target_rows() {
+        let mut items = sidebar_settings(&[
+            SidebarRouteItem::Home,
+            SidebarRouteItem::Favorites,
+            SidebarRouteItem::Albums,
+            SidebarRouteItem::Tracks,
+        ]);
+
+        assert!(reorder_sidebar_item_settings(
+            &mut items,
+            SidebarRouteItem::Tracks,
+            SidebarRouteItem::Favorites,
+            false,
+        ));
+        assert_eq!(
+            sidebar_item_order(&items),
+            vec![
+                SidebarRouteItem::Home,
+                SidebarRouteItem::Tracks,
+                SidebarRouteItem::Favorites,
+                SidebarRouteItem::Albums,
+            ]
+        );
+
+        assert!(reorder_sidebar_item_settings(
+            &mut items,
+            SidebarRouteItem::Home,
+            SidebarRouteItem::Albums,
+            true,
+        ));
+        assert_eq!(
+            sidebar_item_order(&items),
+            vec![
+                SidebarRouteItem::Tracks,
+                SidebarRouteItem::Favorites,
+                SidebarRouteItem::Albums,
+                SidebarRouteItem::Home,
+            ]
+        );
+
+        assert!(!reorder_sidebar_item_settings(
+            &mut items,
+            SidebarRouteItem::Favorites,
+            SidebarRouteItem::Tracks,
+            true,
+        ));
+    }
+
+    #[test]
+    fn home_block_drag_reorder_only_moves_visible_blocks() {
+        let mut blocks = vec![
+            HomeBlockKind::Showcase,
+            HomeBlockKind::Explore,
+            HomeBlockKind::Genres,
+        ];
+
+        assert!(reorder_home_blocks(
+            &mut blocks,
+            HomeBlockKind::Genres,
+            HomeBlockKind::Showcase,
+            false,
+        ));
+        assert_eq!(
+            blocks,
+            vec![
+                HomeBlockKind::Genres,
+                HomeBlockKind::Showcase,
+                HomeBlockKind::Explore,
+            ]
+        );
+
+        let before = blocks.clone();
+        assert!(!reorder_home_blocks(
+            &mut blocks,
+            HomeBlockKind::MostPlayed,
+            HomeBlockKind::Showcase,
+            false,
+        ));
+        assert_eq!(blocks, before);
+
+        assert!(!reorder_home_blocks(
+            &mut blocks,
+            HomeBlockKind::Explore,
+            HomeBlockKind::RecentlyPlayed,
+            true,
+        ));
+        assert_eq!(blocks, before);
+    }
+
+    fn sidebar_settings(items: &[SidebarRouteItem]) -> Vec<SidebarRouteItemSettings> {
+        items
+            .iter()
+            .copied()
+            .map(|item| SidebarRouteItemSettings {
+                item,
+                visible: true,
+            })
+            .collect()
+    }
+
+    fn sidebar_item_order(items: &[SidebarRouteItemSettings]) -> Vec<SidebarRouteItem> {
+        items.iter().map(|entry| entry.item).collect()
     }
 }
