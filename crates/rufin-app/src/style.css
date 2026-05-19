@@ -618,3 +618,53 @@ scale.volume-slider trough {
   color: @window_fg_color;
   border-top: 1px solid @borders;
 }
+
+.folders-route {
+  min-width: 360px;
+}
+
+.folder-breadcrumbs {
+  min-height: 34px;
+}
+
+.folder-breadcrumb {
+  padding: 4px 8px;
+}
+
+.folder-search {
+  min-height: 34px;
+}
+
+.folders-split > separator {
+  margin: 0 8px;
+  background: color-mix(in srgb, @borders 78%, transparent);
+}
+
+.folders-tree-pane {
+  border-right: 1px solid color-mix(in srgb, @borders 78%, transparent);
+}
+
+.folder-tree,
+.folders-table {
+  background: transparent;
+}
+
+.folder-tree-row,
+.folder-table-row {
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.folder-tree-row.active,
+.folder-table-row:selected {
+  background: color-mix(in srgb, @accent_bg_color 14%, transparent);
+}
+
+.folder-table-header {
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid color-mix(in srgb, @borders 78%, transparent);
+}
+
+.folder-table-empty-row {
+  padding: 18px;
+}

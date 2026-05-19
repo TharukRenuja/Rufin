@@ -28,7 +28,24 @@ const SURFACE_SCROLL_FACTOR: f64 = 2.5;
 const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 
+#[path = "preferences/library.rs"]
+mod library;
+
 pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
+    present_preferences_dialog_with_page(shell, PreferencesInitialPage::General);
+}
+
+pub(super) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
+    present_preferences_dialog_with_page(shell, PreferencesInitialPage::Library);
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreferencesInitialPage {
+    General,
+    Library,
+}
+
+fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: PreferencesInitialPage) {
     let dialog = adw::PreferencesDialog::builder()
         .title(tr("Preferences"))
         .search_enabled(true)
@@ -43,12 +60,15 @@ pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
     let scrobbling_page = scrobbling_page(shell);
     let playback_page = playback_page(shell);
     let home_page = home_page(shell);
-    let library_page = library_page(shell, &dialog);
+    let library_page = library::library_page(shell, &dialog);
     dialog.add(&general_page);
     dialog.add(&scrobbling_page);
     dialog.add(&playback_page);
     dialog.add(&home_page);
     dialog.add(&library_page);
+    if matches!(initial_page, PreferencesInitialPage::Library) {
+        dialog.set_visible_page(&library_page);
+    }
     dialog.present(Some(&shell.window));
 }
 
@@ -702,6 +722,7 @@ fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::Artists => "Artists",
         SidebarRouteItem::AlbumArtists => "AlbumArtists",
         SidebarRouteItem::Genres => "Genres",
+        SidebarRouteItem::Folders => "Folders",
         SidebarRouteItem::Playlists => "Playlists",
     }
 }
@@ -721,6 +742,7 @@ fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::Artists => "Artists",
         SidebarRouteItem::AlbumArtists => "Album Artists",
         SidebarRouteItem::Genres => "Genres",
+        SidebarRouteItem::Folders => "Folders",
         SidebarRouteItem::Playlists => "Playlists",
     }
 }
@@ -1716,92 +1738,6 @@ fn home_block_from_drag_id(id: &str) -> Option<HomeBlockKind> {
     HomeBlockKind::all()
         .into_iter()
         .find(|block| home_block_drag_id(*block) == id)
-}
-
-fn library_page(shell: &Rc<Shell>, dialog: &adw::PreferencesDialog) -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder()
-        .title(tr("Library"))
-        .icon_name("network-server-symbolic")
-        .build();
-
-    let library = shell.state.library.borrow();
-    let username = library
-        .username
-        .as_deref()
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| tr("no account"));
-    let server_name = library
-        .server
-        .as_ref()
-        .map(|server| server.name.as_str())
-        .filter(|name| !name.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| tr("No server"));
-    let server_url = library
-        .server
-        .as_ref()
-        .map(|server| server.base_url.clone())
-        .filter(|url| !url.trim().is_empty())
-        .unwrap_or_else(|| tr("No active server"));
-
-    let server_group = adw::PreferencesGroup::builder()
-        .title(tr("Music Server"))
-        .build();
-    let server_row = adw::ActionRow::builder()
-        .title(server_name)
-        .subtitle(format!(
-            "{}\n{}: {}\n{}: {} {} / {} {}",
-            server_url,
-            tr("User"),
-            username,
-            tr("Cached"),
-            library.cached_album_count,
-            tr("albums"),
-            library.cached_track_count,
-            tr("tracks")
-        ))
-        .subtitle_lines(3)
-        .build();
-    server_group.add(&server_row);
-
-    let status_row = adw::ActionRow::builder()
-        .title(tr("Sync Status"))
-        .subtitle(library.sync_status.clone())
-        .build();
-    server_group.add(&status_row);
-    page.add(&server_group);
-    drop(library);
-
-    let actions_group = adw::PreferencesGroup::builder()
-        .title(tr("Actions"))
-        .build();
-
-    let resync = button_row("Resync Library", "view-refresh-symbolic");
-    let controller = shell.controller.clone();
-    resync.connect_activated(move |_| controller.resync_active_server());
-    actions_group.add(&resync);
-
-    let clear_cache = button_row("Clear Cached Library", "edit-clear-symbolic");
-    let clear_dialog = dialog.clone();
-    let clear_shell = Rc::clone(shell);
-    clear_cache.connect_activated(move |_| {
-        clear_dialog.close();
-        clear_shell.confirm_clear_cache();
-    });
-    actions_group.add(&clear_cache);
-
-    let forget = button_row("Forget Server", "user-trash-symbolic");
-    forget.add_css_class("destructive-action");
-    let forget_dialog = dialog.clone();
-    let forget_shell = Rc::clone(shell);
-    forget.connect_activated(move |_| {
-        forget_dialog.close();
-        forget_shell.confirm_forget_server();
-    });
-    actions_group.add(&forget);
-
-    page.add(&actions_group);
-    page
 }
 
 fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {

@@ -12,9 +12,11 @@ mod cards;
 mod chrome;
 mod discord;
 mod favorites;
+mod folders;
 mod home;
 mod layout;
 mod library;
+mod local_access_mapping;
 mod login;
 #[cfg(unix)]
 mod mpris;
@@ -27,6 +29,7 @@ mod queue;
 mod random_play;
 mod right_panel;
 mod settings_persistence;
+mod source_selector;
 
 use adw::prelude::*;
 use gdk_pixbuf::Pixbuf;
@@ -36,13 +39,13 @@ use gtk::glib;
 #[cfg(unix)]
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, Genre, HomeSection, HomeSectionKind, ImageRef,
-    LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueSnapshot, RightSidebarMode, Route,
-    RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn, TrackTableSettings,
-    format_duration,
+    Album, AlbumId, AppSettings, Artist, FolderPathItem, Genre, HomeSection, HomeSectionKind,
+    ImageRef, LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueSnapshot,
+    RightSidebarMode, Route, RouteStack, SearchKind, ServerIdentity, Track, TrackSortKey,
+    TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
-use rufin_provider::{FavoriteItemId, Lyrics, LyricsSource};
+use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource};
 use rufin_store::{CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
@@ -69,14 +72,14 @@ use layout::{
 #[cfg(unix)]
 use mpris::install_mpris;
 use navigation::{
-    ServerSelector, build_compact_navigation, build_normal_navigation, build_server_selector,
-    rebuild_navigation, sidebar_history_button,
+    build_compact_navigation, build_normal_navigation, rebuild_navigation, sidebar_history_button,
 };
 use paging::{PagedGridConfig, PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
-use preferences::present_preferences_dialog;
+use preferences::{present_library_preferences_dialog, present_preferences_dialog};
 use queue::connect_queue_panel_controls;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
+use source_selector::{ServerSelector, build_server_selector};
 
 const GRID_ROUTE_PAGE_SIZE: usize = 16;
 const TRACK_ROUTE_PAGE_SIZE: usize = 64;
@@ -144,6 +147,8 @@ struct AppState {
     decoded_covers: RefCell<HashMap<String, Pixbuf>>,
     decoded_cover_order: RefCell<VecDeque<String>>,
     favorite_controls: FavoriteControls,
+    folder_request_generation: Cell<u64>,
+    folder_state: RefCell<FolderRouteState>,
     perf: Option<Rc<UiPerfMonitor>>,
 }
 
@@ -182,6 +187,15 @@ struct HomeSectionState {
 struct PrefetchedHomeSection {
     server_id: rufin_core::ServerId,
     section: HomeSection,
+}
+
+#[derive(Clone, Default)]
+struct FolderRouteState {
+    request_id: u64,
+    path: Vec<FolderPathItem>,
+    loading: bool,
+    detail: Option<FolderDetail>,
+    error: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -386,6 +400,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         decoded_covers: RefCell::new(HashMap::new()),
         decoded_cover_order: RefCell::new(VecDeque::new()),
         favorite_controls: RefCell::new(HashMap::new()),
+        folder_request_generation: Cell::new(0),
+        folder_state: RefCell::new(FolderRouteState::default()),
         perf: options.ui_perf_run.then(|| {
             Rc::new(UiPerfMonitor::new(UiPerfOptions {
                 max_gap_ms: options.ui_perf_max_gap_ms,
@@ -1007,6 +1023,68 @@ impl Shell {
         }
     }
 
+    fn start_folder_load(self: &Rc<Self>, path: Vec<FolderPathItem>) {
+        let request_id = self.state.folder_request_generation.get().saturating_add(1);
+        self.state.folder_request_generation.set(request_id);
+        *self.state.folder_state.borrow_mut() = FolderRouteState {
+            request_id,
+            path: path.clone(),
+            loading: true,
+            detail: None,
+            error: None,
+        };
+        self.controller.load_folder_for_active(request_id, path);
+    }
+
+    fn apply_folder_loaded(
+        self: &Rc<Self>,
+        request_id: u64,
+        path: Vec<FolderPathItem>,
+        detail: FolderDetail,
+    ) {
+        let should_render = {
+            let mut state = self.state.folder_state.borrow_mut();
+            if state.request_id != request_id || state.path != path {
+                return;
+            }
+            state.loading = false;
+            state.detail = Some(detail);
+            state.error = None;
+            matches!(
+                self.state.routes.borrow().current(),
+                Route::Folders { path: current_path } if current_path == &state.path
+            )
+        };
+        if should_render {
+            self.render_current_route();
+        }
+    }
+
+    fn apply_folder_load_failed(
+        self: &Rc<Self>,
+        request_id: u64,
+        path: Vec<FolderPathItem>,
+        error: String,
+    ) {
+        warn!(%error, "folder load failed");
+        let should_render = {
+            let mut state = self.state.folder_state.borrow_mut();
+            if state.request_id != request_id || state.path != path {
+                return;
+            }
+            state.loading = false;
+            state.detail = None;
+            state.error = Some(error);
+            matches!(
+                self.state.routes.borrow().current(),
+                Route::Folders { path: current_path } if current_path == &state.path
+            )
+        };
+        if should_render {
+            self.render_current_route();
+        }
+    }
+
     fn handle_home_route_transition(self: &Rc<Self>, previous: &Route, next: &Route) {
         let was_home = matches!(previous, Route::Home);
         let is_home = matches!(next, Route::Home);
@@ -1189,7 +1267,15 @@ impl Shell {
     }
 
     fn update_server_selector(self: &Rc<Self>) {
-        navigation::update_server_selector(self);
+        source_selector::update_server_selector(self);
+    }
+
+    fn present_library_preferences_dialog(self: &Rc<Self>) {
+        present_library_preferences_dialog(self);
+    }
+
+    fn present_manage_server_dialog(self: &Rc<Self>, server: ServerIdentity) {
+        local_access_mapping::present_manage_server_dialog(self, server);
     }
 
     fn rebuild_sidebar_navigation(self: &Rc<Self>) {
@@ -1425,6 +1511,7 @@ impl Shell {
             Route::AlbumArtists => self.library_artist_list_view(true),
             Route::Genres => self.library_genre_list_view(),
             Route::GenreDetail(genre_id) => self.genre_detail_view(genre_id),
+            Route::Folders { path } => self.folders_view(path),
             Route::Playlists => self.playlist_list_view(),
             Route::PlaylistDetail(playlist_id) => self.playlist_detail_view(playlist_id),
             Route::Search { query, .. } => {
@@ -2328,56 +2415,6 @@ impl Shell {
 
         scroller.set_child(Some(&wrapper));
         scroller.upcast()
-    }
-
-    fn confirm_clear_cache(self: &Rc<Self>) {
-        let dialog = adw::AlertDialog::builder()
-            .heading(tr("Clear Cached Library"))
-            .body(tr(
-                "This removes cached library metadata for the active server. Login stays saved.",
-            ))
-            .build();
-        let cancel = tr("Cancel");
-        let clear = tr("Clear Cache");
-        dialog.add_responses(&[("cancel", cancel.as_str()), ("clear", clear.as_str())]);
-        dialog.set_default_response(Some("cancel"));
-        dialog.set_close_response("cancel");
-        dialog.set_response_appearance("clear", adw::ResponseAppearance::Destructive);
-        let controller = self.controller.clone();
-        dialog.choose(
-            Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |response| {
-                if response.as_str() == "clear" {
-                    controller.clear_active_server_cache();
-                }
-            },
-        );
-    }
-
-    fn confirm_forget_server(self: &Rc<Self>) {
-        let dialog = adw::AlertDialog::builder()
-            .heading(tr("Forget Server"))
-            .body(tr(
-                "This removes the active server, cached library metadata, queue snapshot, and saved token.",
-            ))
-            .build();
-        let cancel = tr("Cancel");
-        let forget = tr("Forget Server");
-        dialog.add_responses(&[("cancel", cancel.as_str()), ("forget", forget.as_str())]);
-        dialog.set_default_response(Some("cancel"));
-        dialog.set_close_response("cancel");
-        dialog.set_response_appearance("forget", adw::ResponseAppearance::Destructive);
-        let controller = self.controller.clone();
-        dialog.choose(
-            Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |response| {
-                if response.as_str() == "forget" {
-                    controller.forget_active_server();
-                }
-            },
-        );
     }
 
     fn render_lyrics_panel(self: &Rc<Self>) {
@@ -3341,6 +3378,8 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 ControllerEvent::Snapshot(snapshot) => {
                     let entering_first_run =
                         snapshot.first_run && !shell.state.library.borrow().first_run;
+                    let source_changed =
+                        shell.state.library.borrow().selected_source != snapshot.selected_source;
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     *shell.state.library.borrow_mut() = *snapshot;
@@ -3352,8 +3391,13 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                             "Searching will start automatically.".to_string();
                     }
                     shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
+                    *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
                     shell.update_server_selector();
-                    shell.render_current_route_preserving_scroll();
+                    if source_changed {
+                        shell.navigate(Route::Home);
+                    } else {
+                        shell.render_current_route_preserving_scroll();
+                    }
                 }
                 ControllerEvent::HomeSectionsUpdated(snapshot) => {
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
@@ -3437,6 +3481,20 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 }
                 ControllerEvent::LyricsSaved { path, lyrics } => {
                     shell.apply_lyrics_saved(path, lyrics);
+                }
+                ControllerEvent::FolderLoaded {
+                    request_id,
+                    path,
+                    detail,
+                } => {
+                    shell.apply_folder_loaded(request_id, path, detail);
+                }
+                ControllerEvent::FolderLoadFailed {
+                    request_id,
+                    path,
+                    error,
+                } => {
+                    shell.apply_folder_load_failed(request_id, path, error);
                 }
                 ControllerEvent::CoverReady { key, path } => {
                     shell.apply_cover_ready(&key, &path);

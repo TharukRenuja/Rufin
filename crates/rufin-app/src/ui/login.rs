@@ -1,14 +1,10 @@
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
-use adw::prelude::*;
-use rufin_core::ServerIdentity;
-use rufin_store::ServerLocalAccess;
-
-use crate::controller::LocalAccessStatus;
 use crate::i18n::tr;
 use crate::providers::StreamingProvider;
+use adw::prelude::*;
 
 use super::{
     Shell, icon_button,
@@ -44,266 +40,6 @@ impl Shell {
         close.connect_clicked(move |_| {
             dialog_for_close.close();
         });
-        dialog.present(Some(&self.window));
-    }
-
-    pub(super) fn present_manage_server_dialog(self: &Rc<Self>, server: ServerIdentity) {
-        let (access, access_status) = {
-            let library = self.state.library.borrow();
-            let access = library
-                .server
-                .as_ref()
-                .filter(|active| active.id == server.id)
-                .and_then(|_| library.local_access.clone());
-            let status = library
-                .server
-                .as_ref()
-                .filter(|active| active.id == server.id)
-                .map(|_| library.local_access_status.clone())
-                .unwrap_or_default();
-            (access, status)
-        };
-        let remote = server.provider != "local";
-        let toolbar = adw::ToolbarView::new();
-        let header = adw::HeaderBar::new();
-        let title = adw::WindowTitle::new(&tr("Manage Server"), &server_display_name(&server));
-        header.set_title_widget(Some(&title));
-        let close = icon_button("window-close-symbolic", "Close");
-        header.pack_end(&close);
-        toolbar.add_top_bar(&header);
-
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        content.set_margin_top(18);
-        content.set_margin_bottom(18);
-        content.set_margin_start(18);
-        content.set_margin_end(18);
-
-        let folder = Rc::new(RefCell::new(
-            access
-                .as_ref()
-                .map(|access| PathBuf::from(&access.root_path)),
-        ));
-        let saved_local_prefix = access
-            .as_ref()
-            .map(local_access_display_path)
-            .unwrap_or_default();
-        let saved_server_prefix = access
-            .as_ref()
-            .and_then(|access| access.path_replace_from.as_deref())
-            .unwrap_or_default()
-            .to_string();
-        let mut display_local_prefix = saved_local_prefix.clone();
-        let mut display_server_prefix = saved_server_prefix.clone();
-        if display_server_prefix.trim().is_empty()
-            && let (Some(server_path), Some(local_path)) = (
-                access_status.sample_server_path.as_deref(),
-                access_status.sample_local_path.as_deref(),
-            )
-            && let Some((suggested_server_prefix, suggested_local_prefix)) =
-                infer_path_prefixes(server_path, local_path)
-        {
-            display_server_prefix = suggested_server_prefix;
-            display_local_prefix = suggested_local_prefix;
-        }
-        let initial_draft = LocalAccessDraft {
-            folder: folder.borrow().clone(),
-            server_prefix: if remote {
-                saved_server_prefix.trim().to_string()
-            } else {
-                String::new()
-            },
-            local_prefix: if remote {
-                saved_local_prefix.trim().to_string()
-            } else {
-                String::new()
-            },
-        };
-
-        let folder_row = adw::ActionRow::builder()
-            .title(tr("Local Folder"))
-            .subtitle(
-                access
-                    .as_ref()
-                    .map(|access| access.root_path.clone())
-                    .unwrap_or_else(|| tr("No folder selected")),
-            )
-            .build();
-        let folder_button = gtk::Button::with_label(&tr("Choose"));
-        folder_button.set_valign(gtk::Align::Center);
-        folder_row.add_suffix(&folder_button);
-        folder_row.set_activatable_widget(Some(&folder_button));
-
-        let server_prefix = adw::EntryRow::builder()
-            .title(tr("Server Prefix"))
-            .text(&display_server_prefix)
-            .build();
-        server_prefix.set_visible(remote);
-
-        let local_prefix = adw::EntryRow::builder()
-            .title(tr("Local Prefix"))
-            .text(&display_local_prefix)
-            .build();
-        local_prefix.set_visible(remote);
-
-        let sample_subtitle = access_status
-            .sample_server_path
-            .clone()
-            .unwrap_or_else(|| tr("No cached server path yet"));
-        let sample_row = adw::ActionRow::builder()
-            .title(tr("Server Sample"))
-            .subtitle(sample_subtitle)
-            .build();
-        sample_row.set_visible(remote);
-
-        let preview_row = adw::ActionRow::builder()
-            .title(tr("Mapped Local Path"))
-            .subtitle(preview_local_path_text(
-                access_status.sample_server_path.as_deref(),
-                server_prefix.text().as_str(),
-                local_prefix.text().as_str(),
-                folder.borrow().as_deref(),
-            ))
-            .build();
-        preview_row.set_visible(remote);
-
-        let group_title = if remote {
-            tr("Local Playback Access")
-        } else {
-            tr("Local Library")
-        };
-        let group_description = if remote {
-            tr("Optionally map server tracks to files on this computer.")
-        } else {
-            tr("Choose the folder to scan and play directly from this computer.")
-        };
-        let group = adw::PreferencesGroup::builder()
-            .title(group_title)
-            .description(group_description)
-            .build();
-        group.add(&folder_row);
-        group.add(&server_prefix);
-        group.add(&local_prefix);
-        group.add(&sample_row);
-        group.add(&preview_row);
-        content.append(&group);
-
-        let status = gtk::Label::new(None);
-        status.add_css_class("muted");
-        status.set_wrap(true);
-        status.set_xalign(0.0);
-        content.append(&status);
-
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        actions.set_halign(gtk::Align::End);
-        let remove = text_button("edit-clear-symbolic", "Remove Local Folder");
-        remove.set_visible(server.provider != "local" && access.is_some());
-        let save = text_button("document-save-symbolic", "Save");
-        save.add_css_class("suggested-action");
-        actions.append(&remove);
-        actions.append(&save);
-        content.append(&actions);
-
-        toolbar.set_content(Some(&content));
-        let dialog = adw::Dialog::builder()
-            .content_width(560)
-            .child(&toolbar)
-            .build();
-
-        let dialog_for_close = dialog.clone();
-        close.connect_clicked(move |_| {
-            dialog_for_close.close();
-        });
-        let update_state = Rc::new({
-            let folder = Rc::clone(&folder);
-            let server_prefix = server_prefix.clone();
-            let local_prefix = local_prefix.clone();
-            let preview_row = preview_row.clone();
-            let status = status.clone();
-            let save = save.clone();
-            let initial_draft = initial_draft.clone();
-            let access_status = access_status.clone();
-            move || {
-                let draft = local_access_draft(&folder, &server_prefix, &local_prefix, remote);
-                let has_location =
-                    draft.folder.is_some() && (!remote || !draft.local_prefix.trim().is_empty());
-                let changed = draft != initial_draft;
-                save.set_sensitive(has_location && changed);
-                preview_row.set_subtitle(&preview_local_path_text(
-                    access_status.sample_server_path.as_deref(),
-                    draft.server_prefix.as_str(),
-                    draft.local_prefix.as_str(),
-                    draft.folder.as_deref(),
-                ));
-                status.set_text(&local_access_status_text(
-                    &draft,
-                    remote,
-                    changed,
-                    &access_status,
-                ));
-            }
-        });
-        connect_folder_button(
-            &self.window,
-            &folder_button,
-            &folder_row,
-            Rc::clone(&folder),
-            {
-                let local_prefix = local_prefix.clone();
-                let update_state = Rc::clone(&update_state);
-                move |path| {
-                    if remote {
-                        local_prefix.set_text(&path.display().to_string());
-                    }
-                    update_state();
-                }
-            },
-        );
-        server_prefix.connect_text_notify({
-            let update_state = Rc::clone(&update_state);
-            move |_| update_state()
-        });
-        local_prefix.connect_text_notify({
-            let update_state = Rc::clone(&update_state);
-            move |_| update_state()
-        });
-
-        let controller = self.controller.clone();
-        let server_id = server.id.clone();
-        let dialog_for_remove = dialog.clone();
-        remove.connect_clicked(move |_| {
-            controller.clear_server_local_access(server_id.clone());
-            dialog_for_remove.close();
-        });
-
-        let controller = self.controller.clone();
-        let server_id = server.id.clone();
-        let provider = server.provider.clone();
-        let status_for_save = status.clone();
-        let dialog_for_save = dialog.clone();
-        save.connect_clicked(move |_| {
-            let Some(root) = folder.borrow().clone() else {
-                status_for_save.set_text(&tr("Choose a local music folder."));
-                return;
-            };
-            if provider == "local" {
-                controller.add_local_server(root);
-            } else {
-                let local_prefix_text = local_prefix.text().to_string();
-                if local_prefix_text.trim().is_empty() {
-                    status_for_save.set_text(&tr("Enter a local prefix."));
-                    return;
-                }
-                controller.save_server_local_access(
-                    server_id.clone(),
-                    root,
-                    Some(server_prefix.text().to_string()),
-                    Some(local_prefix_text),
-                );
-            }
-            dialog_for_save.close();
-        });
-
-        update_state();
         dialog.present(Some(&self.window));
     }
 
@@ -396,26 +132,6 @@ impl Shell {
         local_group.set_visible(false);
         content.append(&local_group);
 
-        let access_folder = Rc::new(RefCell::new(None::<PathBuf>));
-        let access_group = adw::PreferencesGroup::builder()
-            .title(tr("Local Playback Access"))
-            .description(tr(
-                "Optional. Map server tracks to local files on this computer.",
-            ))
-            .build();
-        let access_folder_row = adw::ActionRow::builder()
-            .title(tr("Local Folder"))
-            .subtitle(tr("No folder selected"))
-            .build();
-        let access_folder_button = gtk::Button::with_label(&tr("Choose"));
-        access_folder_button.set_valign(gtk::Align::Center);
-        access_folder_row.add_suffix(&access_folder_button);
-        access_folder_row.set_activatable_widget(Some(&access_folder_button));
-        let path_prefix = adw::EntryRow::builder().title(tr("Server Prefix")).build();
-        access_group.add(&access_folder_row);
-        access_group.add(&path_prefix);
-        content.append(&access_group);
-
         let discovered_group = self.discovered_servers_group(&provider, &url);
         content.append(&discovered_group);
 
@@ -439,8 +155,6 @@ impl Shell {
         let trust_input = trust.clone();
         let provider_input = provider.clone();
         let local_folder_input = Rc::clone(&local_folder);
-        let access_folder_input = Rc::clone(&access_folder);
-        let path_prefix_input = path_prefix.clone();
         let status_input = status.clone();
         login.connect_clicked(move |_| {
             let provider = StreamingProvider::from_index(provider_input.selected());
@@ -457,8 +171,8 @@ impl Shell {
                     username_input.text().to_string(),
                     password_input.text().to_string(),
                     trust_input.is_active(),
-                    access_folder_input.borrow().clone(),
-                    Some(path_prefix_input.text().to_string()),
+                    None,
+                    None,
                 );
             }
         });
@@ -472,7 +186,6 @@ impl Shell {
             username.clone().upcast::<gtk::Widget>(),
             password.clone().upcast::<gtk::Widget>(),
             trust.clone().upcast::<gtk::Widget>(),
-            access_group.clone().upcast::<gtk::Widget>(),
             discovered_group.clone().upcast::<gtk::Widget>(),
         ];
         update_provider_rows(
@@ -512,14 +225,6 @@ impl Shell {
                 }
             },
         );
-        connect_folder_button(
-            &self.window,
-            &access_folder_button,
-            &access_folder_row,
-            Rc::clone(&access_folder),
-            |_| {},
-        );
-
         clamp.set_child(Some(&content));
         scroller.set_child(Some(&clamp));
         scroller.upcast()
@@ -634,7 +339,7 @@ fn update_connect_button(
     login.set_sensitive(provider != StreamingProvider::Local || local_folder.borrow().is_some());
 }
 
-fn connect_folder_button(
+pub(super) fn connect_folder_button(
     window: &adw::ApplicationWindow,
     button: &gtk::Button,
     row: &adw::ActionRow,
@@ -666,210 +371,4 @@ fn connect_folder_button(
             }
         });
     });
-}
-
-fn server_display_name(server: &ServerIdentity) -> String {
-    if server.name.trim().is_empty() {
-        StreamingProvider::from_provider_id(&server.provider)
-            .map(|provider| tr(provider.title()))
-            .unwrap_or_else(|| server.provider.clone())
-    } else {
-        server.name.clone()
-    }
-}
-
-fn local_access_display_path(access: &ServerLocalAccess) -> String {
-    access
-        .path_replace_to
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(&access.root_path)
-        .to_string()
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LocalAccessDraft {
-    folder: Option<PathBuf>,
-    server_prefix: String,
-    local_prefix: String,
-}
-
-fn local_access_draft(
-    folder: &Rc<RefCell<Option<PathBuf>>>,
-    server_prefix: &adw::EntryRow,
-    local_prefix: &adw::EntryRow,
-    remote: bool,
-) -> LocalAccessDraft {
-    LocalAccessDraft {
-        folder: folder.borrow().clone(),
-        server_prefix: remote
-            .then(|| server_prefix.text().trim().to_string())
-            .unwrap_or_default(),
-        local_prefix: remote
-            .then(|| local_prefix.text().trim().to_string())
-            .unwrap_or_default(),
-    }
-}
-
-fn preview_local_path_text(
-    sample_server_path: Option<&str>,
-    server_prefix: &str,
-    local_prefix: &str,
-    folder: Option<&Path>,
-) -> String {
-    let Some(sample) = sample_server_path
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-    else {
-        return tr("No cached server path yet");
-    };
-    let server_prefix = server_prefix.trim();
-    let local_prefix = local_prefix.trim();
-    let base = if local_prefix.is_empty() {
-        let Some(folder) = folder else {
-            return tr("Choose a local prefix.");
-        };
-        folder.to_path_buf()
-    } else {
-        PathBuf::from(local_prefix)
-    };
-
-    if !server_prefix.is_empty() {
-        if !sample.starts_with(server_prefix) {
-            return tr("Server sample does not match the server prefix.");
-        }
-        let suffix = sample[server_prefix.len()..].trim_start_matches(['/', '\\']);
-        return base
-            .join(path_from_server_suffix(suffix))
-            .to_string_lossy()
-            .into_owned();
-    }
-
-    let sample_path = Path::new(sample);
-    if sample_path.is_relative() {
-        return base.join(sample_path).to_string_lossy().into_owned();
-    }
-    if sample_path.is_file() {
-        return sample.to_string();
-    }
-    tr("Enter a matching server prefix to map this path.")
-}
-
-fn local_access_status_text(
-    draft: &LocalAccessDraft,
-    remote: bool,
-    changed: bool,
-    status: &LocalAccessStatus,
-) -> String {
-    if draft.folder.is_none() {
-        return tr("Choose a local music folder.");
-    }
-    if !remote {
-        return if changed {
-            tr("Save to rescan this local library.")
-        } else {
-            tr("Local library folder is saved.")
-        };
-    }
-    if draft.local_prefix.trim().is_empty() {
-        return tr("Choose a local prefix.");
-    }
-    if status.total_track_count == 0 {
-        return if changed {
-            tr("Save to apply this mapping after the next sync.")
-        } else {
-            tr("No cached tracks yet. Sync the server to preview matches.")
-        };
-    }
-
-    let lead = if changed {
-        tr("Unsaved changes.")
-    } else {
-        tr("Saved mapping.")
-    };
-    format!(
-        "{} {} direct, {} prefix, {} metadata, {} unmatched of {} tracks.",
-        lead,
-        status.direct_match_count,
-        status.prefix_match_count,
-        status.metadata_match_count,
-        status.unmatched_count,
-        status.total_track_count
-    )
-}
-
-fn infer_path_prefixes(server_path: &str, local_path: &str) -> Option<(String, String)> {
-    let server_parts = path_component_spans(server_path);
-    let local_parts = path_component_spans(local_path);
-    let suffix_len = common_suffix_len(&server_parts, &local_parts);
-    if suffix_len == 0 || suffix_len > server_parts.len() || suffix_len > local_parts.len() {
-        return None;
-    }
-    let server_prefix = prefix_before_suffix(server_path, &server_parts, suffix_len)?;
-    let local_prefix = prefix_before_suffix(local_path, &local_parts, suffix_len)?;
-    Some((server_prefix, local_prefix))
-}
-
-fn common_suffix_len(server_parts: &[PathComponent], local_parts: &[PathComponent]) -> usize {
-    server_parts
-        .iter()
-        .rev()
-        .zip(local_parts.iter().rev())
-        .take_while(|(server, local)| server.value.eq_ignore_ascii_case(local.value))
-        .count()
-}
-
-fn prefix_before_suffix(value: &str, parts: &[PathComponent], suffix_len: usize) -> Option<String> {
-    let suffix_start_index = parts.len().checked_sub(suffix_len)?;
-    let prefix_end = parts.get(suffix_start_index)?.start;
-    let raw_prefix = &value[..prefix_end];
-    let trimmed = raw_prefix.trim_end_matches(['/', '\\']);
-    if !trimmed.is_empty() {
-        return Some(trimmed.to_string());
-    }
-    raw_prefix
-        .chars()
-        .find(|character| *character == '/' || *character == '\\')
-        .map(|character| character.to_string())
-}
-
-#[derive(Clone, Debug)]
-struct PathComponent<'a> {
-    value: &'a str,
-    start: usize,
-}
-
-fn path_component_spans(value: &str) -> Vec<PathComponent<'_>> {
-    let mut parts = Vec::new();
-    let mut start = None;
-    for (index, character) in value.char_indices() {
-        if character == '/' || character == '\\' {
-            if let Some(part_start) = start.take()
-                && part_start < index
-            {
-                parts.push(PathComponent {
-                    value: &value[part_start..index],
-                    start: part_start,
-                });
-            }
-        } else if start.is_none() {
-            start = Some(index);
-        }
-    }
-    if let Some(part_start) = start
-        && part_start < value.len()
-    {
-        parts.push(PathComponent {
-            value: &value[part_start..],
-            start: part_start,
-        });
-    }
-    parts
-}
-
-fn path_from_server_suffix(suffix: &str) -> PathBuf {
-    suffix
-        .split(['/', '\\'])
-        .filter(|part| !part.is_empty())
-        .collect::<PathBuf>()
 }

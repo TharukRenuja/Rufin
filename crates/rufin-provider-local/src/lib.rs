@@ -10,14 +10,15 @@ use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag};
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
-    HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId, ServerId, ServerIdentity, Track,
-    TrackId,
+    Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
+    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, Playlist, PlaylistId,
+    ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
-    AlbumDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest, MusicProvider,
-    PagedRequest, PagedResponse, PlayedFilter, PlaylistDetail, ProviderCapabilities, ProviderError,
-    ProviderIdentity, ProviderResult, RandomTrackRequest, SearchResults, StreamDescriptor,
+    AlbumDetail, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
+    MusicProvider, PagedRequest, PagedResponse, PlayedFilter, PlaylistDetail, ProviderCapabilities,
+    ProviderError, ProviderIdentity, ProviderResult, RandomTrackRequest, SearchResults,
+    StreamDescriptor,
 };
 use url::Url;
 use walkdir::WalkDir;
@@ -33,12 +34,21 @@ pub struct LocalProvider {
 
 #[derive(Clone, Debug, Default)]
 struct LocalLibrary {
+    roots: Vec<LocalFolderEntry>,
+    folders: HashMap<FolderId, LocalFolderEntry>,
     albums: Vec<Album>,
     tracks: Vec<Track>,
     artists: Vec<Artist>,
     album_artists: Vec<Artist>,
     genres: Vec<Genre>,
     covers: HashMap<String, LocalCover>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LocalFolderEntry {
+    folder: Folder,
+    path: PathBuf,
+    parent_id: Option<FolderId>,
 }
 
 #[derive(Clone, Debug)]
@@ -82,10 +92,31 @@ impl LocalProvider {
     pub fn from_root(root: PathBuf) -> ProviderResult<Self> {
         let root = normalize_root(root)?;
         let server = identity_for_root(&root);
+        Self::from_roots_with_identity(vec![root], server)
+    }
+
+    pub fn from_roots(roots: Vec<PathBuf>) -> ProviderResult<Self> {
+        let roots = normalize_roots(roots)?;
+        let server = identity_for_roots(&roots);
+        Self::from_normalized_roots_with_identity(roots, server)
+    }
+
+    pub fn from_roots_with_identity(
+        roots: Vec<PathBuf>,
+        server: ServerIdentity,
+    ) -> ProviderResult<Self> {
+        let roots = normalize_roots(roots)?;
+        Self::from_normalized_roots_with_identity(roots, server)
+    }
+
+    fn from_normalized_roots_with_identity(
+        roots: Vec<PathBuf>,
+        server: ServerIdentity,
+    ) -> ProviderResult<Self> {
         Ok(Self {
             identity: ProviderIdentity { server },
             capabilities: local_capabilities(),
-            library: scan_library(&root),
+            library: scan_library(&roots),
         })
     }
 
@@ -94,7 +125,7 @@ impl LocalProvider {
         Ok(Self {
             identity: ProviderIdentity { server },
             capabilities: local_capabilities(),
-            library: scan_library(&root),
+            library: scan_library(&[root]),
         })
     }
 
@@ -182,6 +213,70 @@ impl MusicProvider for LocalProvider {
 
     async fn tracks(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Track>> {
         Ok(page(&self.library.tracks, request))
+    }
+
+    async fn folder(
+        &self,
+        folder_id: Option<&FolderId>,
+        _music_folder_id: Option<&rufin_core::MusicFolderId>,
+    ) -> ProviderResult<FolderDetail> {
+        let Some(folder_id) = folder_id else {
+            return Ok(FolderDetail {
+                folder: Folder {
+                    id: FolderId::new("local:folder:root"),
+                    name: "Folders".to_string(),
+                },
+                parent_id: None,
+                folders: self
+                    .library
+                    .roots
+                    .iter()
+                    .map(|entry| entry.folder.clone())
+                    .collect(),
+                tracks: Vec::new(),
+            });
+        };
+
+        let entry = self
+            .library
+            .folders
+            .get(folder_id)
+            .ok_or(ProviderError::NotFound)?;
+        let mut folders = self
+            .library
+            .folders
+            .values()
+            .filter(|candidate| candidate.parent_id.as_ref() == Some(folder_id))
+            .map(|candidate| candidate.folder.clone())
+            .collect::<Vec<_>>();
+        folders.sort_by(folder_sort);
+        let mut tracks = self
+            .library
+            .tracks
+            .iter()
+            .filter(|track| {
+                track
+                    .local_path
+                    .as_deref()
+                    .map(Path::new)
+                    .and_then(Path::parent)
+                    .is_some_and(|parent| parent == entry.path)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        tracks.sort_by(|left, right| {
+            left.disc_number
+                .cmp(&right.disc_number)
+                .then_with(|| left.track_number.cmp(&right.track_number))
+                .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(FolderDetail {
+            folder: entry.folder.clone(),
+            parent_id: entry.parent_id.clone(),
+            folders,
+            tracks,
+        })
     }
 
     async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
@@ -409,6 +504,17 @@ fn normalize_root(root: PathBuf) -> ProviderResult<PathBuf> {
     Ok(expanded.canonicalize().unwrap_or(expanded))
 }
 
+fn normalize_roots(roots: Vec<PathBuf>) -> ProviderResult<Vec<PathBuf>> {
+    let mut normalized = Vec::new();
+    for root in roots {
+        let root = normalize_root(root)?;
+        if !normalized.iter().any(|candidate| candidate == &root) {
+            normalized.push(root);
+        }
+    }
+    Ok(normalized)
+}
+
 fn identity_for_root(root: &Path) -> ServerIdentity {
     let root_text = root.to_string_lossy().into_owned();
     let name = root
@@ -425,6 +531,23 @@ fn identity_for_root(root: &Path) -> ServerIdentity {
     }
 }
 
+fn identity_for_roots(roots: &[PathBuf]) -> ServerIdentity {
+    if roots.len() == 1 {
+        return identity_for_root(&roots[0]);
+    }
+    let joined = roots
+        .iter()
+        .map(|root| root.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("\n");
+    ServerIdentity {
+        id: ServerId::new(format!("local:server:{:016x}", stable_hash(&joined))),
+        provider: LOCAL_PROVIDER_ID.to_string(),
+        name: "Local".to_string(),
+        base_url: joined,
+    }
+}
+
 fn local_capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
         favorites: false,
@@ -435,14 +558,15 @@ fn local_capabilities() -> ProviderCapabilities {
         auto_dj: false,
         playlists: false,
         random_tracks: true,
+        folder_browsing: true,
         ..ProviderCapabilities::default()
     }
 }
 
-fn scan_library(root: &Path) -> LocalLibrary {
-    let mut scanned = WalkDir::new(root)
-        .follow_links(true)
-        .into_iter()
+fn scan_library(roots: &[PathBuf]) -> LocalLibrary {
+    let mut scanned = roots
+        .iter()
+        .flat_map(|root| WalkDir::new(root).follow_links(true).into_iter())
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
         .map(walkdir::DirEntry::into_path)
@@ -463,7 +587,62 @@ fn scan_library(root: &Path) -> LocalLibrary {
                     .cmp(&right.track.title.to_lowercase()),
             )
     });
-    build_library(scanned)
+    let (root_entries, folders) = scan_folders(roots);
+    build_library(scanned, root_entries, folders)
+}
+
+fn scan_folders(roots: &[PathBuf]) -> (Vec<LocalFolderEntry>, HashMap<FolderId, LocalFolderEntry>) {
+    let mut entries = HashMap::<FolderId, LocalFolderEntry>::new();
+    let mut root_entries = Vec::new();
+    for root in roots {
+        for entry in WalkDir::new(root)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_dir())
+        {
+            let path = entry.path().to_path_buf();
+            let folder = folder_for_path(&path);
+            let parent_id = if path == *root {
+                None
+            } else {
+                path.parent()
+                    .filter(|parent| parent.starts_with(root))
+                    .map(|parent| folder_for_path(parent).id)
+            };
+            let local_entry = LocalFolderEntry {
+                folder: folder.clone(),
+                path,
+                parent_id,
+            };
+            if entry.path() == root {
+                root_entries.push(local_entry.clone());
+            }
+            entries.insert(folder.id.clone(), local_entry);
+        }
+    }
+    root_entries.sort_by(|left, right| folder_sort(&left.folder, &right.folder));
+    (root_entries, entries)
+}
+
+fn folder_for_path(path: &Path) -> Folder {
+    let path_text = path.to_string_lossy();
+    Folder {
+        id: local_id("folder", &path_text),
+        name: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| path_text.as_ref())
+            .to_string(),
+    }
+}
+
+fn folder_sort(left: &Folder, right: &Folder) -> std::cmp::Ordering {
+    left.name
+        .to_lowercase()
+        .cmp(&right.name.to_lowercase())
+        .then_with(|| left.id.cmp(&right.id))
 }
 
 fn read_track(path: PathBuf) -> Option<ScannedTrack> {
@@ -568,7 +747,11 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
     })
 }
 
-fn build_library(scanned: Vec<ScannedTrack>) -> LocalLibrary {
+fn build_library(
+    scanned: Vec<ScannedTrack>,
+    root_entries: Vec<LocalFolderEntry>,
+    folders: HashMap<FolderId, LocalFolderEntry>,
+) -> LocalLibrary {
     let mut albums = BTreeMap::<AlbumId, AlbumAccumulator>::new();
     let mut artists = BTreeMap::<ArtistId, ArtistAccumulator>::new();
     let mut album_artists = BTreeMap::<ArtistId, ArtistAccumulator>::new();
@@ -710,6 +893,8 @@ fn build_library(scanned: Vec<ScannedTrack>) -> LocalLibrary {
     genres.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
 
     LocalLibrary {
+        roots: root_entries,
+        folders,
         albums,
         tracks,
         artists,
@@ -939,5 +1124,94 @@ mod tests {
         let stream = provider.stream(&track.id).await.expect("stream");
 
         assert!(stream.uri().starts_with("file://"));
+    }
+
+    #[tokio::test]
+    async fn local_provider_scans_multiple_roots() {
+        let first = tempfile::tempdir().expect("first root");
+        let second = tempfile::tempdir().expect("second root");
+        fs::write(first.path().join("first.mp3"), []).expect("first track");
+        fs::write(second.path().join("second.mp3"), []).expect("second track");
+
+        let provider = LocalProvider::from_roots(vec![
+            first.path().to_path_buf(),
+            second.path().to_path_buf(),
+        ])
+        .expect("provider");
+
+        let tracks = provider
+            .tracks(PagedRequest::new(0, 10))
+            .await
+            .expect("tracks");
+
+        assert_eq!(tracks.total, 2);
+        assert_eq!(tracks.items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn local_folder_root_lists_configured_roots() {
+        let first = tempfile::tempdir().expect("first root");
+        let second = tempfile::tempdir().expect("second root");
+
+        let provider = LocalProvider::from_roots(vec![
+            first.path().to_path_buf(),
+            second.path().to_path_buf(),
+        ])
+        .expect("provider");
+
+        let detail = provider.folder(None, None).await.expect("root folder");
+        let folder_names = detail
+            .folders
+            .iter()
+            .map(|folder| folder.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(detail.tracks.len(), 0);
+        assert!(folder_names.contains(&first.path().file_name().unwrap().to_str().unwrap()));
+        assert!(folder_names.contains(&second.path().file_name().unwrap().to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn local_folder_nested_view_lists_child_folders_and_direct_tracks() {
+        let root = tempfile::tempdir().expect("root");
+        let artist = root.path().join("Artist");
+        let album = artist.join("Album");
+        fs::create_dir_all(&album).expect("album dir");
+        fs::write(artist.join("single.mp3"), []).expect("single track");
+        fs::write(album.join("album-track.mp3"), []).expect("album track");
+        let provider = LocalProvider::from_root(root.path().to_path_buf()).expect("provider");
+
+        let root_path = root.path().canonicalize().expect("canonical root");
+        let artist_id = folder_for_path(&root_path.join("Artist")).id;
+        let artist_detail = provider
+            .folder(Some(&artist_id), None)
+            .await
+            .expect("artist folder");
+
+        assert_eq!(artist_detail.folders.len(), 1);
+        assert_eq!(artist_detail.folders[0].name, "Album");
+        assert_eq!(artist_detail.tracks.len(), 1);
+        assert_eq!(artist_detail.tracks[0].title, "single");
+
+        let album_id = folder_for_path(&root_path.join("Artist").join("Album")).id;
+        let album_detail = provider
+            .folder(Some(&album_id), None)
+            .await
+            .expect("album folder");
+
+        assert_eq!(album_detail.folders.len(), 0);
+        assert_eq!(album_detail.tracks.len(), 1);
+        assert_eq!(album_detail.tracks[0].title, "album-track");
+    }
+
+    #[tokio::test]
+    async fn local_folder_rejects_unknown_folder_ids() {
+        let root = tempfile::tempdir().expect("root");
+        let provider = LocalProvider::from_root(root.path().to_path_buf()).expect("provider");
+        let outside = FolderId::new("local:folder:%2Fetc%2Fmusic");
+
+        let result = provider.folder(Some(&outside), None).await;
+
+        assert!(matches!(result, Err(ProviderError::NotFound)));
     }
 }

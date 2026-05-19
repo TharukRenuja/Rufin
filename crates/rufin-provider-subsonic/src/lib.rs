@@ -6,16 +6,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
-    HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerId,
-    ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
+    HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId,
+    ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{
-    AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
-    LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse, PlaybackReport,
-    PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry, ProviderCapabilities,
-    ProviderError, ProviderIdentity, ProviderResult, ProviderSession, RandomTrackRequest,
-    SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
+    AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,
+    ImageRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse,
+    PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
+    ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult, ProviderSession,
+    RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
 };
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Visitor};
@@ -472,6 +472,70 @@ impl MusicProvider for SubsonicProvider {
                 .collect(),
             0,
         ))
+    }
+
+    async fn folder(
+        &self,
+        folder_id: Option<&FolderId>,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> ProviderResult<FolderDetail> {
+        let Some(folder_id) = folder_id else {
+            let mut extra = Vec::new();
+            if let Some(music_folder_id) = music_folder_id {
+                extra.push((
+                    "musicFolderId",
+                    raw_item_id(music_folder_id.as_str()).to_string(),
+                ));
+            }
+            let body: IndexesBody = self.get_json("getIndexes", &extra).await?;
+            let mut folders = body
+                .indexes
+                .map(|indexes| indexes.index)
+                .unwrap_or_default()
+                .into_iter()
+                .flat_map(|index| index.artist)
+                .map(|artist| folder_from_artist(self, artist))
+                .collect::<Vec<_>>();
+            sort_folders_by_name(&mut folders);
+            return Ok(FolderDetail {
+                folder: Folder {
+                    id: FolderId::new(self.id("folder", "root")),
+                    name: "Folders".to_string(),
+                },
+                parent_id: None,
+                folders,
+                tracks: Vec::new(),
+            });
+        };
+
+        let body: MusicDirectoryBody = self
+            .get_json(
+                "getMusicDirectory",
+                &[("id", raw_item_id(folder_id.as_str()).to_string())],
+            )
+            .await?;
+        let directory = body.directory;
+        let folder = folder_from_directory(self, &directory);
+        let parent_id = directory
+            .parent
+            .as_ref()
+            .map(|id| FolderId::new(self.id("folder", id.0.as_str())));
+        let mut folders = Vec::new();
+        let mut tracks = Vec::new();
+        for child in directory.child {
+            if child.is_dir.unwrap_or(false) {
+                folders.push(folder_from_child(self, child));
+            } else {
+                tracks.push(track_from_dto(self, child));
+            }
+        }
+        sort_folders_by_name(&mut folders);
+        Ok(FolderDetail {
+            folder,
+            parent_id,
+            folders,
+            tracks,
+        })
     }
 
     async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
@@ -1067,6 +1131,7 @@ fn subsonic_capabilities() -> ProviderCapabilities {
         favorite_mutations: true,
         random_tracks: true,
         music_folders: true,
+        folder_browsing: true,
         ..ProviderCapabilities::default()
     }
 }
@@ -1168,6 +1233,39 @@ fn favorite(value: &Option<serde_json::Value>) -> bool {
 
 fn image_ref(provider: &SubsonicProvider, cover_art: Option<SubsonicId>) -> Option<ImageRef> {
     cover_art.map(|id| ImageRef::new(provider.id("cover", &id.0), None))
+}
+
+fn folder_from_artist(provider: &SubsonicProvider, artist: SubsonicArtist) -> Folder {
+    Folder {
+        id: FolderId::new(provider.id("folder", artist.id.0.as_str())),
+        name: artist.name.unwrap_or_else(|| "Untitled Folder".to_string()),
+    }
+}
+
+fn folder_from_child(provider: &SubsonicProvider, child: SubsonicSong) -> Folder {
+    Folder {
+        id: FolderId::new(provider.id("folder", child.id.0.as_str())),
+        name: child.title.unwrap_or_else(|| "Untitled Folder".to_string()),
+    }
+}
+
+fn folder_from_directory(provider: &SubsonicProvider, directory: &SubsonicDirectory) -> Folder {
+    Folder {
+        id: FolderId::new(provider.id("folder", directory.id.0.as_str())),
+        name: directory
+            .name
+            .clone()
+            .unwrap_or_else(|| "Untitled Folder".to_string()),
+    }
+}
+
+fn sort_folders_by_name(folders: &mut [Folder]) {
+    folders.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
 }
 
 fn genres_from_item(genre: Option<String>, genres: Vec<GenreName>) -> Vec<String> {
@@ -1402,6 +1500,28 @@ struct SubsonicMusicFolder {
     name: String,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+struct IndexesBody {
+    #[serde(default)]
+    indexes: Option<ArtistsIndex>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct MusicDirectoryBody {
+    directory: SubsonicDirectory,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct SubsonicDirectory {
+    id: SubsonicId,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    parent: Option<SubsonicId>,
+    #[serde(default)]
+    child: Vec<SubsonicSong>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct ArtistsBody {
     artists: ArtistsIndex,
@@ -1526,6 +1646,8 @@ struct SubsonicSong {
     id: SubsonicId,
     #[serde(default)]
     parent: Option<SubsonicId>,
+    #[serde(default, rename = "isDir")]
+    is_dir: Option<bool>,
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -2016,6 +2138,98 @@ mod tests {
             .expect("tracks");
 
         assert_eq!(page.items[0].id.as_str(), "subsonic:track:track-one");
+    }
+
+    #[tokio::test]
+    async fn folder_root_uses_indexes_with_selected_music_folder() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/getIndexes.view"))
+            .and(query_param("musicFolderId", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subsonic-response": {
+                    "status": "ok",
+                    "version": "1.16.1",
+                    "indexes": {
+                        "index": [
+                            {
+                                "name": "A",
+                                "artist": [
+                                    { "id": "folder-one", "name": "Albums" }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server);
+
+        let detail = provider
+            .folder(None, Some(&MusicFolderId::new("subsonic:music-folder:1")))
+            .await
+            .expect("folder root");
+
+        assert_eq!(detail.parent_id, None);
+        assert_eq!(detail.folders[0].id.as_str(), "subsonic:folder:folder-one");
+        assert_eq!(detail.folders[0].name, "Albums");
+        assert!(detail.tracks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn folder_nested_music_directory_maps_child_folders_and_tracks() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/getMusicDirectory.view"))
+            .and(query_param("id", "folder-one"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "subsonic-response": {
+                    "status": "ok",
+                    "version": "1.16.1",
+                    "directory": {
+                        "id": "folder-one",
+                        "name": "Albums",
+                        "parent": "root",
+                        "child": [
+                            {
+                                "id": "child-folder",
+                                "title": "Live",
+                                "isDir": true
+                            },
+                            {
+                                "id": "track-two",
+                                "title": "Second Motion",
+                                "album": "Blue Rooms",
+                                "albumId": "album-one",
+                                "artist": "Astral Kin",
+                                "artistId": "artist-one",
+                                "duration": 180,
+                                "isDir": false
+                            }
+                        ]
+                    }
+                }
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server);
+
+        let detail = provider
+            .folder(Some(&FolderId::new("subsonic:folder:folder-one")), None)
+            .await
+            .expect("nested folder");
+
+        assert_eq!(detail.folder.name, "Albums");
+        assert_eq!(
+            detail.parent_id.as_ref().map(|id| id.as_str()),
+            Some("subsonic:folder:root")
+        );
+        assert_eq!(
+            detail.folders[0].id.as_str(),
+            "subsonic:folder:child-folder"
+        );
+        assert_eq!(detail.tracks[0].id.as_str(), "subsonic:track:track-two");
     }
 
     fn provider(server: &MockServer) -> SubsonicProvider {

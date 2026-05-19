@@ -1,4 +1,4 @@
-use crate::domain::{AlbumId, ArtistId, GenreId, PlaylistId};
+use crate::domain::{AlbumId, ArtistId, FolderId, GenreId, PlaylistId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -8,6 +8,12 @@ pub enum SearchKind {
     Albums,
     Artists,
     Playlists,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FolderPathItem {
+    pub id: FolderId,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -24,6 +30,7 @@ pub enum Route {
     AlbumArtists,
     Genres,
     GenreDetail(GenreId),
+    Folders { path: Vec<FolderPathItem> },
     Playlists,
     PlaylistDetail(PlaylistId),
     Search { query: String, kind: SearchKind },
@@ -44,6 +51,7 @@ impl Route {
             Self::AlbumArtists => "Album Artists",
             Self::Genres => "Genres",
             Self::GenreDetail(_) => "Genre",
+            Self::Folders { .. } => "Folders",
             Self::Playlists => "Playlists",
             Self::PlaylistDetail(_) => "Playlist",
             Self::Search { .. } => "Search",
@@ -144,5 +152,23 @@ mod tests {
         stack.navigate(album_route.clone());
 
         assert_eq!(stack.current(), &album_route);
+    }
+
+    #[test]
+    fn route_stack_keeps_folder_navigation_history() {
+        let root = Route::Folders { path: Vec::new() };
+        let nested = Route::Folders {
+            path: vec![super::FolderPathItem {
+                id: crate::domain::FolderId::new("jellyfin:folder:music"),
+                name: "Music".to_string(),
+            }],
+        };
+        let mut stack = RouteStack::new(Route::Home);
+
+        stack.navigate(root.clone());
+        stack.navigate(nested.clone());
+
+        assert_eq!(stack.current(), &nested);
+        assert_eq!(stack.back(), Some(&root));
     }
 }

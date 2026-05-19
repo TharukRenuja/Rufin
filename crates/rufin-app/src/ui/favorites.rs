@@ -214,6 +214,9 @@ mod tests {
         LibrarySnapshot {
             server: None,
             servers: Vec::new(),
+            selected_source: None,
+            local_folders: Vec::new(),
+            server_local_access: Vec::new(),
             local_access: None,
             local_access_status: LocalAccessStatus::default(),
             music_folders: Vec::new(),

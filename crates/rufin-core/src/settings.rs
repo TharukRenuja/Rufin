@@ -1,6 +1,6 @@
 use serde::{Deserialize, Deserializer, Serialize, de};
 
-use crate::domain::{HomeBlockKind, HomeSectionKind};
+use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
 
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 2;
@@ -162,11 +162,12 @@ pub enum SidebarRouteItem {
     Artists,
     AlbumArtists,
     Genres,
+    Folders,
     Playlists,
 }
 
 impl SidebarRouteItem {
-    pub fn all() -> [Self; 8] {
+    pub fn all() -> [Self; 9] {
         [
             Self::Home,
             Self::Favorites,
@@ -175,6 +176,7 @@ impl SidebarRouteItem {
             Self::Artists,
             Self::AlbumArtists,
             Self::Genres,
+            Self::Folders,
             Self::Playlists,
         ]
     }
@@ -237,6 +239,39 @@ impl SidebarSettings {
             }
         }
         self.route_items = sanitized;
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum LibrarySourceSelection {
+    Local,
+    Server(ServerId),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalLibraryFolder {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LibrarySourceSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<LibrarySourceSelection>,
+    #[serde(default)]
+    pub local_folders: Vec<LocalLibraryFolder>,
+}
+
+impl LibrarySourceSettings {
+    pub fn sanitize(&mut self) {
+        let mut seen = Vec::<String>::new();
+        self.local_folders.retain_mut(|folder| {
+            folder.path = folder.path.trim().to_string();
+            if folder.path.is_empty() || seen.iter().any(|path| path == &folder.path) {
+                return false;
+            }
+            seen.push(folder.path.clone());
+            true
+        });
     }
 }
 
@@ -1216,6 +1251,8 @@ pub struct AppSettings {
     pub layout: LayoutSettings,
     #[serde(default)]
     pub sidebar: SidebarSettings,
+    #[serde(default)]
+    pub sources: LibrarySourceSettings,
     pub theme_preference: ThemePreference,
     pub private_mode: bool,
     pub notifications_enabled: bool,
@@ -1274,6 +1311,7 @@ impl Default for AppSettings {
         Self {
             layout: LayoutSettings::default(),
             sidebar: SidebarSettings::default(),
+            sources: LibrarySourceSettings::default(),
             theme_preference: ThemePreference::System,
             private_mode: false,
             notifications_enabled: false,
@@ -1328,6 +1366,7 @@ impl AppSettings {
         }
         self.layout.sanitize();
         self.sidebar.sanitize();
+        self.sources.sanitize();
         self.migrate_home_blocks();
         self.migrate_library_lists();
     }
@@ -1415,15 +1454,17 @@ mod tests {
     use super::{
         AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType,
         DiscordLinkType, EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode,
-        LibraryField, LibraryLayout, LibraryListKey, PlaybackTransitionMode, ReplayGainMode,
-        RightSidebarMode, ScrobblingSettings, SidebarRouteItem, StreamQuality, TrackSortKey,
-        TrackTableColumn,
+        LibraryField, LibraryLayout, LibraryListKey, LocalLibraryFolder, PlaybackTransitionMode,
+        ReplayGainMode, RightSidebarMode, ScrobblingSettings, SidebarRouteItem, StreamQuality,
+        TrackSortKey, TrackTableColumn,
     };
 
     #[test]
     fn settings_default_to_privacy_preserving_remote_features() {
         let settings = AppSettings::default();
 
+        assert!(settings.sources.selected.is_none());
+        assert!(settings.sources.local_folders.is_empty());
         assert!(!settings.notifications_enabled);
         assert!(!settings.external_lyrics_enabled);
         assert!(settings.external_metadata_enabled);
@@ -1496,6 +1537,13 @@ mod tests {
                 .route_items
                 .iter()
                 .any(|entry| entry.item == SidebarRouteItem::AlbumArtists && !entry.visible)
+        );
+        assert!(
+            settings
+                .sidebar
+                .route_items
+                .iter()
+                .any(|entry| entry.item == SidebarRouteItem::Folders && entry.visible)
         );
         assert_eq!(settings.queue_lyrics_layout_version, 3);
         assert_eq!(settings.home_sections.len(), 5);
@@ -1583,6 +1631,44 @@ mod tests {
         );
         assert_eq!(settings.track_table.sort_key, TrackSortKey::Title);
         assert!(settings.suppressed_auto_lyrics_track_ids.is_empty());
+    }
+
+    #[test]
+    fn app_settings_sanitize_local_library_folders() {
+        let mut settings = AppSettings {
+            sources: super::LibrarySourceSettings {
+                selected: None,
+                local_folders: vec![
+                    LocalLibraryFolder {
+                        path: " /music ".to_string(),
+                    },
+                    LocalLibraryFolder {
+                        path: "/music".to_string(),
+                    },
+                    LocalLibraryFolder {
+                        path: " ".to_string(),
+                    },
+                    LocalLibraryFolder {
+                        path: "/archive".to_string(),
+                    },
+                ],
+            },
+            ..AppSettings::default()
+        };
+
+        settings.migrate_defaults();
+
+        assert_eq!(
+            settings.sources.local_folders,
+            vec![
+                LocalLibraryFolder {
+                    path: "/music".to_string()
+                },
+                LocalLibraryFolder {
+                    path: "/archive".to_string()
+                }
+            ]
+        );
     }
 
     #[test]

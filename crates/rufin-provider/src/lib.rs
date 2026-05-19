@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind, MusicFolder,
-    MusicFolderId, Playlist, PlaylistId, ServerIdentity, StreamQuality, Track, TrackId,
+    Album, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId, HomeSection,
+    HomeSectionKind, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerIdentity,
+    StreamQuality, Track, TrackId,
 };
 pub use rufin_playback::StreamDescriptor;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,7 @@ pub struct ProviderCapabilities {
     pub search: bool,
     pub image_metadata: bool,
     pub music_folders: bool,
+    pub folder_browsing: bool,
 }
 
 impl Default for ProviderCapabilities {
@@ -53,6 +55,7 @@ impl Default for ProviderCapabilities {
             search: true,
             image_metadata: true,
             music_folders: false,
+            folder_browsing: false,
         }
     }
 }
@@ -144,6 +147,15 @@ pub struct PlaylistDetail {
 pub struct GenreDetail {
     pub genre: Genre,
     pub albums: Vec<Album>,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FolderDetail {
+    pub folder: Folder,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<FolderId>,
+    pub folders: Vec<Folder>,
     pub tracks: Vec<Track>,
 }
 
@@ -316,6 +328,14 @@ pub trait MusicProvider {
         let _unused = folder_id;
         self.tracks(request).await
     }
+    async fn folder(
+        &self,
+        folder_id: Option<&FolderId>,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> ProviderResult<FolderDetail> {
+        let _unused = (folder_id, music_folder_id);
+        Err(ProviderError::Unsupported("folder browsing"))
+    }
     async fn artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>>;
     async fn album_artists(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Artist>>;
     async fn genres(&self, request: PagedRequest) -> ProviderResult<PagedResponse<Genre>>;
@@ -412,6 +432,7 @@ mod tests {
         assert!(!capabilities.random_played_filter);
         assert!(capabilities.search);
         assert!(capabilities.image_metadata);
+        assert!(!capabilities.folder_browsing);
     }
 
     #[test]

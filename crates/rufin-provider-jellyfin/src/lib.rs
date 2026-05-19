@@ -3,13 +3,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
-    Album, AlbumId, Artist, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind,
-    MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, Artist, Folder, FolderId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT, HomeSection,
+    HomeSectionKind, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity,
+    Track, TrackId,
 };
 use rufin_provider::{
-    AlbumDetail, FavoriteItemId, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
-    LoginRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PagedResponse,
-    PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
+    AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,
+    ImageRequest, LoginRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest,
+    PagedResponse, PlaybackReport, PlaybackReportKind, PlayedFilter, PlaylistDetail, PlaylistEntry,
     ProviderCapabilities, ProviderError, ProviderIdentity, ProviderResult, ProviderSession,
     RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
 };
@@ -21,8 +22,9 @@ mod item;
 
 pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
 use item::{
-    ITEM_FIELDS, ItemQueryResult, JellyfinItem, album_from_item, artist_from_item, genre_from_item,
-    playlist_from_item, track_from_item,
+    ITEM_FIELDS, ItemQueryResult, JellyfinItem, album_from_item, artist_from_item,
+    folder_from_item, genre_from_item, is_audio_item, parent_folder_id, playlist_from_item,
+    track_from_item,
 };
 
 #[cfg(test)]
@@ -294,6 +296,37 @@ impl JellyfinProvider {
         ))
     }
 
+    async fn folder_children(
+        &self,
+        raw_parent_id: &str,
+    ) -> ProviderResult<(Vec<Folder>, Vec<Track>)> {
+        let mut url = endpoint(&self.base_url, "Items")?;
+        url.query_pairs_mut()
+            .append_pair("UserId", &self.user_id)
+            .append_pair("ParentId", raw_parent_id)
+            .append_pair("Recursive", "false")
+            .append_pair("Fields", ITEM_FIELDS)
+            .append_pair("SortBy", "SortName")
+            .append_pair("SortOrder", "Ascending");
+        let response = self.get_json::<ItemQueryResult>(url).await?;
+        let mut folders = Vec::new();
+        let mut tracks = Vec::new();
+        for item in response.items {
+            if is_audio_item(&item) {
+                tracks.push(track_from_item(item));
+            } else {
+                folders.push(folder_from_item(item));
+            }
+        }
+        folders.sort_by(|left, right| {
+            left.name
+                .to_lowercase()
+                .cmp(&right.name.to_lowercase())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok((folders, tracks))
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, url: Url) -> ProviderResult<T> {
         let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
         send_json(self.client.get(url).header(
@@ -501,6 +534,79 @@ impl MusicProvider for JellyfinProvider {
             response.items.into_iter().map(track_from_item).collect(),
             response.total_record_count.unwrap_or(0),
         ))
+    }
+
+    async fn folder(
+        &self,
+        folder_id: Option<&FolderId>,
+        music_folder_id: Option<&MusicFolderId>,
+    ) -> ProviderResult<FolderDetail> {
+        if let Some(folder_id) = folder_id {
+            let raw_folder_id = raw_item_id(folder_id.as_str());
+            let mut folder_url = endpoint(&self.base_url, &format!("Items/{raw_folder_id}"))?;
+            folder_url
+                .query_pairs_mut()
+                .append_pair("UserId", &self.user_id)
+                .append_pair("Fields", ITEM_FIELDS);
+            let current_item = self.get_json::<JellyfinItem>(folder_url).await?;
+            let folder = folder_from_item(current_item.clone());
+            let parent_id =
+                parent_folder_id(&current_item).filter(|parent_id| match music_folder_id {
+                    Some(music_folder_id) => {
+                        raw_item_id(parent_id.as_str()) != raw_item_id(music_folder_id.as_str())
+                    }
+                    None => true,
+                });
+            let (folders, tracks) = self.folder_children(raw_folder_id).await?;
+            return Ok(FolderDetail {
+                folder,
+                parent_id,
+                folders,
+                tracks,
+            });
+        }
+
+        if let Some(music_folder_id) = music_folder_id {
+            let raw_folder_id = raw_item_id(music_folder_id.as_str());
+            let mut folder_url = endpoint(&self.base_url, &format!("Items/{raw_folder_id}"))?;
+            folder_url
+                .query_pairs_mut()
+                .append_pair("UserId", &self.user_id)
+                .append_pair("Fields", ITEM_FIELDS);
+            let folder = folder_from_item(self.get_json::<JellyfinItem>(folder_url).await?);
+            let (folders, tracks) = self.folder_children(raw_folder_id).await?;
+            return Ok(FolderDetail {
+                folder,
+                parent_id: None,
+                folders,
+                tracks,
+            });
+        }
+
+        let mut folders = self
+            .music_folders()
+            .await?
+            .into_iter()
+            .map(|folder| Folder {
+                id: FolderId::new(jellyfin_id("folder", raw_item_id(folder.id.as_str()))),
+                name: folder.name,
+            })
+            .collect::<Vec<_>>();
+        folders.sort_by(|left, right| {
+            left.name
+                .to_lowercase()
+                .cmp(&right.name.to_lowercase())
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(FolderDetail {
+            folder: Folder {
+                id: FolderId::new(jellyfin_id("folder", "root")),
+                name: "Folders".to_string(),
+            },
+            parent_id: None,
+            folders,
+            tracks: Vec::new(),
+        })
     }
 
     async fn random_tracks(&self, request: RandomTrackRequest) -> ProviderResult<Vec<Track>> {
@@ -1127,6 +1233,7 @@ fn jellyfin_capabilities() -> ProviderCapabilities {
         random_tracks: true,
         random_played_filter: true,
         music_folders: true,
+        folder_browsing: true,
         ..ProviderCapabilities::default()
     }
 }
@@ -1652,6 +1759,140 @@ mod tests {
 
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].id.as_str(), "jellyfin:track:track-one");
+    }
+
+    #[tokio::test]
+    async fn folder_root_lists_music_user_views() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Users/user-one/Views"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Items": [
+                    { "Id": "music-one", "Name": "Music", "CollectionType": "music" },
+                    { "Id": "movies-one", "Name": "Movies", "CollectionType": "movies" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let detail = provider.folder(None, None).await.expect("folder root");
+
+        assert_eq!(detail.parent_id, None);
+        assert_eq!(detail.folders.len(), 1);
+        assert_eq!(detail.folders[0].id.as_str(), "jellyfin:folder:music-one");
+        assert_eq!(detail.folders[0].name, "Music");
+        assert!(detail.tracks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn folder_selected_music_root_loads_immediate_children() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Items/music-one"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Id": "music-one",
+                "Name": "Music",
+                "Type": "CollectionFolder"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Items"))
+            .and(query_param("ParentId", "music-one"))
+            .and(query_param("Recursive", "false"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Items": [
+                    {
+                        "Id": "folder-one",
+                        "Name": "Albums",
+                        "Type": "Folder",
+                        "ParentId": "music-one"
+                    },
+                    {
+                        "Id": "track-one",
+                        "Name": "First Motion",
+                        "Type": "Audio",
+                        "AlbumId": "album-one",
+                        "Album": "Blue Rooms",
+                        "Artists": ["Astral Kin"],
+                        "RunTimeTicks": 2100000000i64
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let detail = provider
+            .folder(
+                None,
+                Some(&MusicFolderId::new("jellyfin:music-folder:music-one")),
+            )
+            .await
+            .expect("selected root");
+
+        assert_eq!(detail.folder.id.as_str(), "jellyfin:folder:music-one");
+        assert_eq!(detail.parent_id, None);
+        assert_eq!(detail.folders[0].id.as_str(), "jellyfin:folder:folder-one");
+        assert_eq!(detail.tracks[0].id.as_str(), "jellyfin:track:track-one");
+    }
+
+    #[tokio::test]
+    async fn folder_nested_directory_maps_child_folders_and_tracks() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Items/folder-one"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Id": "folder-one",
+                "Name": "Albums",
+                "Type": "Folder",
+                "ParentId": "music-one"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Items"))
+            .and(query_param("ParentId", "folder-one"))
+            .and(query_param("Recursive", "false"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Items": [
+                    {
+                        "Id": "child-folder",
+                        "Name": "Live",
+                        "Type": "Folder",
+                        "ParentId": "folder-one"
+                    },
+                    {
+                        "Id": "track-two",
+                        "Name": "Second Motion",
+                        "Type": "Audio",
+                        "AlbumId": "album-one",
+                        "Album": "Blue Rooms",
+                        "Artists": ["Astral Kin"],
+                        "RunTimeTicks": 1800000000i64
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let provider = provider(&server, "token-one");
+
+        let detail = provider
+            .folder(
+                Some(&FolderId::new("jellyfin:folder:folder-one")),
+                Some(&MusicFolderId::new("jellyfin:music-folder:music-one")),
+            )
+            .await
+            .expect("nested folder");
+
+        assert_eq!(detail.folder.name, "Albums");
+        assert_eq!(detail.parent_id, None);
+        assert_eq!(
+            detail.folders[0].id.as_str(),
+            "jellyfin:folder:child-folder"
+        );
+        assert_eq!(detail.tracks[0].id.as_str(), "jellyfin:track:track-two");
     }
 
     #[tokio::test]

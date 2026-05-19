@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, ImageRef, Playlist, PlaylistId,
-    Track, TrackId,
+    Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId, ImageRef,
+    Playlist, PlaylistId, Track, TrackId,
 };
 use serde::Deserialize;
 
@@ -168,6 +168,26 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         genres: item.genres.unwrap_or_default(),
         local_path: item.path,
     }
+}
+
+pub(super) fn folder_from_item(item: JellyfinItem) -> Folder {
+    Folder {
+        id: FolderId::new(jellyfin_id("folder", &item.id)),
+        name: item.name.unwrap_or_else(|| "Untitled Folder".to_string()),
+    }
+}
+
+pub(super) fn parent_folder_id(item: &JellyfinItem) -> Option<FolderId> {
+    item.parent_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .map(|id| FolderId::new(jellyfin_id("folder", id)))
+}
+
+pub(super) fn is_audio_item(item: &JellyfinItem) -> bool {
+    item.item_type
+        .as_deref()
+        .is_some_and(|item_type| item_type.eq_ignore_ascii_case("Audio"))
 }
 
 pub(super) fn artist_from_item(item: JellyfinItem) -> Artist {

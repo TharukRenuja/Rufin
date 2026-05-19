@@ -9,24 +9,26 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    MusicFolder, MusicFolderId, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry,
-    QueueEntryId, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+    Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
+    HomeSectionKind, LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId,
+    PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot,
+    RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
     PlaybackEvent, PlaybackState, PlaybackTrack, PreparedPlaybackItem, StreamDescriptor,
 };
 use rufin_provider::{
-    FavoriteItemId, Lyrics, MusicProvider, PagedRequest, PlaybackReport, PlaybackReportKind,
-    PlaylistEntry, SavedProviderSession, SearchResults, StreamRequest,
+    FavoriteItemId, FolderDetail, Lyrics, MusicProvider, PagedRequest, PlaybackReport,
+    PlaybackReportKind, PlaylistEntry, SavedProviderSession, SearchResults, StreamRequest,
 };
-use rufin_provider_local::LocalProvider;
+use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
 #[cfg(unix)]
 use rufin_secrets::SecretServiceStore;
 use rufin_secrets::{MemorySecretStore, SecretStore};
 use rufin_store::{
     CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store, StoreError,
+    SyncState,
 };
 use rufin_test_support::{FakeProvider, FakeScale};
 use serde::Deserialize;
@@ -59,11 +61,15 @@ const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(900);
 const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
 const DATABASE_FILE_NAME: &str = "rufin.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";
+const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
 
 #[derive(Clone, Debug)]
 pub struct LibrarySnapshot {
     pub server: Option<ServerIdentity>,
     pub servers: Vec<ServerIdentity>,
+    pub selected_source: Option<LibrarySourceSelection>,
+    pub local_folders: Vec<LocalLibraryFolder>,
+    pub server_local_access: Vec<ServerLocalAccessSnapshot>,
     pub local_access: Option<ServerLocalAccess>,
     pub local_access_status: LocalAccessStatus,
     pub music_folders: Vec<MusicFolder>,
@@ -84,6 +90,19 @@ pub struct LibrarySnapshot {
     pub playlists: Vec<Playlist>,
     pub favorites: Vec<Track>,
     pub search: SearchResults,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerLocalAccessSnapshot {
+    pub server_id: ServerId,
+    pub access: Option<ServerLocalAccess>,
+    pub status: LocalAccessStatus,
+    pub selected_music_folder_name: Option<String>,
+    pub username: Option<String>,
+    pub trust_invalid_cert: bool,
+    pub sync_status: String,
+    pub cached_album_count: usize,
+    pub cached_track_count: usize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -148,6 +167,9 @@ impl LibrarySnapshot {
         Self {
             server: None,
             servers: Vec::new(),
+            selected_source: None,
+            local_folders: Vec::new(),
+            server_local_access: Vec::new(),
             local_access: None,
             local_access_status: LocalAccessStatus::default(),
             music_folders: Vec::new(),
@@ -197,6 +219,16 @@ pub enum ControllerEvent {
     LyricsSaved {
         path: PathBuf,
         lyrics: Lyrics,
+    },
+    FolderLoaded {
+        request_id: u64,
+        path: Vec<FolderPathItem>,
+        detail: FolderDetail,
+    },
+    FolderLoadFailed {
+        request_id: u64,
+        path: Vec<FolderPathItem>,
+        error: String,
     },
     CoverReady {
         key: String,
@@ -858,6 +890,7 @@ impl AppController {
         }
     }
 
+    #[cfg(test)]
     pub fn resync_active_server(&self) {
         let active = self
             .store
@@ -868,6 +901,25 @@ impl AppController {
         } else {
             let _sent = self.events.send(ControllerEvent::Error(
                 "No active music server is saved.".to_string(),
+            ));
+        }
+    }
+
+    pub fn resync_server(&self, server_id: ServerId) {
+        let saved = self
+            .store
+            .with_store(|store| {
+                Ok(store
+                    .list_servers()?
+                    .into_iter()
+                    .find(|saved| saved.server.id == server_id))
+            })
+            .unwrap_or(None);
+        if let Some(saved) = saved {
+            self.start_sync(saved);
+        } else {
+            let _sent = self.events.send(ControllerEvent::Error(
+                "The selected server is no longer saved.".to_string(),
             ));
         }
     }
@@ -1456,6 +1508,7 @@ impl AppController {
         self.emit_playback_snapshot();
     }
 
+    #[cfg(test)]
     pub fn clear_active_server_cache(&self) {
         let store = self.store.clone();
         let events = self.events.clone();
@@ -1503,6 +1556,56 @@ impl AppController {
         });
     }
 
+    pub fn clear_server_cache(&self, server_id: ServerId) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        thread::spawn(move || {
+            let saved = match store.with_store(|store| {
+                Ok(store
+                    .list_servers()?
+                    .into_iter()
+                    .find(|saved| saved.server.id == server_id))
+            }) {
+                Ok(Some(saved)) => saved,
+                Ok(None) => {
+                    let _sent = events.send(ControllerEvent::Error(
+                        "The selected server is no longer saved.".to_string(),
+                    ));
+                    return;
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            if sync_is_running(&sync_in_flight, &saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(
+                    "Wait for the current library sync to finish before clearing cache."
+                        .to_string(),
+                ));
+                return;
+            }
+            let result = store.with_store(|store| {
+                store.clear_library_cache(&saved.server.id)?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            let _sent = events.send(ControllerEvent::LoginStatus(
+                "Cached library cleared.".to_string(),
+            ));
+            emit_snapshot(&store, &events);
+        });
+    }
+
+    #[cfg(test)]
     pub fn forget_active_server(&self) {
         let store = self.store.clone();
         let events = self.events.clone();
@@ -1574,6 +1677,99 @@ impl AppController {
         });
     }
 
+    pub fn forget_server(&self, server_id: ServerId) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        let secrets = Arc::clone(&self.secrets);
+        let queue = Arc::clone(&self.queue);
+        let playback = Arc::clone(&self.playback);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
+        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        thread::spawn(move || {
+            let saved = match store.with_store(|store| {
+                let active_id = store.active_server()?.map(|saved| saved.server.id);
+                let saved = store
+                    .list_servers()?
+                    .into_iter()
+                    .find(|saved| saved.server.id == server_id);
+                Ok((saved, active_id))
+            }) {
+                Ok((Some(saved), active_id)) => (saved, active_id),
+                Ok((None, _)) => {
+                    let _sent = events.send(ControllerEvent::Error(
+                        "The selected server is no longer saved.".to_string(),
+                    ));
+                    return;
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            let (saved, active_id) = saved;
+            if sync_is_running(&sync_in_flight, &saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(
+                    "Wait for the current library sync to finish before forgetting the server."
+                        .to_string(),
+                ));
+                return;
+            }
+            if let Err(error) = secrets.delete_token(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error.to_string()));
+                return;
+            }
+            let mut settings = load_settings_from_store(&store);
+            if settings.sources.selected
+                == Some(LibrarySourceSelection::Server(saved.server.id.clone()))
+            {
+                settings.sources.selected = None;
+                if let Err(error) = store.save_settings(&settings) {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            }
+            let result = store.with_store(|store| {
+                store.forget_server(&saved.server.id)?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if active_id.as_ref() == Some(&saved.server.id) {
+                if let Ok(mut queue) = queue.lock() {
+                    *queue = None;
+                }
+                if let Ok(mut playback) = playback.lock() {
+                    let _result = playback.send(PlaybackCommand::Stop);
+                }
+                if let Ok(mut snapshot) = playback_snapshot.lock() {
+                    *snapshot = PlaybackSnapshot {
+                        auto_dj_enabled: auto_dj_enabled
+                            .lock()
+                            .map(|enabled| *enabled)
+                            .unwrap_or_default(),
+                        ..PlaybackSnapshot::default()
+                    };
+                }
+                let _sent = events.send(ControllerEvent::Queue(Box::new(None)));
+                let _sent = events.send(ControllerEvent::Playback(Box::new(PlaybackSnapshot {
+                    auto_dj_enabled: auto_dj_enabled
+                        .lock()
+                        .map(|enabled| *enabled)
+                        .unwrap_or_default(),
+                    ..PlaybackSnapshot::default()
+                })));
+            }
+            emit_snapshot(&store, &events);
+        });
+    }
+
     #[instrument(skip(self, password), fields(provider = provider.provider_id(), server_url = %server_url, username = %username, trust_invalid_cert = trust_invalid_cert))]
     pub fn login(
         &self,
@@ -1636,6 +1832,14 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
+            let mut settings = load_settings_from_store(&store);
+            settings.sources.selected =
+                Some(LibrarySourceSelection::Server(saved.server.id.clone()));
+            settings.migrate_defaults();
+            if let Err(error) = store.save_settings(&settings) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
             if let Err(error) = secrets.save_token(&saved.server.id, &session.access_token) {
                 let _sent = events.send(ControllerEvent::Error(error.to_string()));
                 return;
@@ -1676,12 +1880,13 @@ impl AppController {
     }
 
     pub fn add_local_server(&self, root_path: PathBuf) {
+        self.add_local_library_folder(root_path);
+    }
+
+    pub fn add_local_library_folder(&self, root_path: PathBuf) {
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
-        let queue = Arc::clone(&self.queue);
-        let playback_snapshot = Arc::clone(&self.playback_snapshot);
-        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
             let identity = match LocalProvider::identity_for_root(&root_path) {
                 Ok(identity) => identity,
@@ -1690,78 +1895,141 @@ impl AppController {
                     return;
                 }
             };
-            let saved = SavedServer {
-                server: identity.clone(),
-                user_id: "local".to_string(),
-                username: "Local".to_string(),
-                trust_invalid_cert: false,
-            };
-            let result = store.with_store(|store| {
-                store.save_server(&saved)?;
-                store.save_server_local_access(&ServerLocalAccess {
-                    server_id: saved.server.id.clone(),
-                    root_path: saved.server.base_url.clone(),
-                    path_replace_from: None,
-                    path_replace_to: Some(saved.server.base_url.clone()),
-                })?;
-                store.set_active_server(&saved.server.id)?;
-                Ok(())
-            });
-            if let Err(error) = result {
+            let mut settings = load_settings_from_store(&store);
+            if !settings
+                .sources
+                .local_folders
+                .iter()
+                .any(|folder| folder.path == identity.base_url)
+            {
+                settings.sources.local_folders.push(LocalLibraryFolder {
+                    path: identity.base_url,
+                });
+            }
+            settings.sources.selected = Some(LibrarySourceSelection::Local);
+            settings.migrate_defaults();
+            if let Err(error) = store.save_settings(&settings) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            emit_active_server_state(
-                &store,
-                &events,
-                &queue,
-                &playback_snapshot,
-                &auto_dj_enabled,
-                &saved,
-            );
-            start_sync_thread(sync_context, saved);
-        });
-    }
-
-    pub fn activate_server(&self, server_id: ServerId) {
-        let sync_context = self.sync_context();
-        let store = sync_context.store.clone();
-        let events = sync_context.events.clone();
-        let queue = Arc::clone(&self.queue);
-        let playback_snapshot = Arc::clone(&self.playback_snapshot);
-        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        thread::spawn(move || {
-            let saved = match store.with_store(|store| {
-                let saved = store
-                    .list_servers()?
-                    .into_iter()
-                    .find(|saved| saved.server.id == server_id);
-                if saved.is_some() {
-                    store.set_active_server(&server_id)?;
-                }
-                Ok(saved)
-            }) {
-                Ok(Some(saved)) => saved,
-                Ok(None) => {
-                    let _sent = events.send(ControllerEvent::Error(
-                        "The selected server is no longer saved.".to_string(),
-                    ));
-                    return;
-                }
+            let saved = match ensure_local_source_server(&store) {
+                Ok(saved) => saved,
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
                     return;
                 }
             };
-            emit_active_server_state(
-                &store,
-                &events,
-                &queue,
-                &playback_snapshot,
-                &auto_dj_enabled,
-                &saved,
-            );
-            if active_server_needs_sync(&store, &saved.server.id) {
+            if let Err(error) = store.with_store(|store| store.set_active_server(&saved.server.id))
+            {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            emit_snapshot(&store, &events);
+            start_sync_thread(sync_context, saved);
+        });
+    }
+
+    pub fn remove_local_library_folder(&self, path: String) {
+        let sync_context = self.sync_context();
+        let store = sync_context.store.clone();
+        let events = sync_context.events.clone();
+        thread::spawn(move || {
+            let mut settings = load_settings_from_store(&store);
+            let before = settings.sources.local_folders.len();
+            settings
+                .sources
+                .local_folders
+                .retain(|folder| folder.path != path);
+            if settings.sources.local_folders.len() == before {
+                return;
+            }
+            settings.sources.selected = Some(LibrarySourceSelection::Local);
+            settings.migrate_defaults();
+            if let Err(error) = store.save_settings(&settings) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            let saved = match ensure_local_source_server(&store) {
+                Ok(saved) => saved,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            let result = store.with_store(|store| {
+                store.set_active_server(&saved.server.id)?;
+                store.clear_library_cache(&saved.server.id)
+            });
+            if let Err(error) = result {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            emit_snapshot(&store, &events);
+            if !settings.sources.local_folders.is_empty() {
+                start_sync_thread(sync_context, saved);
+            }
+        });
+    }
+
+    pub fn select_source(&self, source: LibrarySourceSelection) {
+        let sync_context = self.sync_context();
+        let store = sync_context.store.clone();
+        let events = sync_context.events.clone();
+        thread::spawn(move || {
+            let mut settings = load_settings_from_store(&store);
+            settings.sources.selected = Some(source.clone());
+            settings.migrate_defaults();
+            if let Err(error) = store.save_settings(&settings) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+
+            let sync_saved = match source {
+                LibrarySourceSelection::Local => {
+                    let saved = match ensure_local_source_server(&store) {
+                        Ok(saved) => saved,
+                        Err(error) => {
+                            let _sent = events.send(ControllerEvent::Error(error));
+                            return;
+                        }
+                    };
+                    if let Err(error) =
+                        store.with_store(|store| store.set_active_server(&saved.server.id))
+                    {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        return;
+                    }
+                    (!settings.sources.local_folders.is_empty()).then_some(saved)
+                }
+                LibrarySourceSelection::Server(server_id) => {
+                    let saved = match store.with_store(|store| {
+                        let saved = store
+                            .list_servers()?
+                            .into_iter()
+                            .find(|saved| saved.server.id == server_id);
+                        if saved.is_some() {
+                            store.set_active_server(&server_id)?;
+                        }
+                        Ok(saved)
+                    }) {
+                        Ok(Some(saved)) => saved,
+                        Ok(None) => {
+                            let _sent = events.send(ControllerEvent::Error(
+                                "The selected source is no longer saved.".to_string(),
+                            ));
+                            return;
+                        }
+                        Err(error) => {
+                            let _sent = events.send(ControllerEvent::Error(error));
+                            return;
+                        }
+                    };
+                    active_server_needs_sync(&store, &saved.server.id).then_some(saved)
+                }
+            };
+
+            emit_snapshot(&store, &events);
+            if let Some(saved) = sync_saved {
                 start_sync_thread(sync_context, saved);
             }
         });
@@ -1876,6 +2144,32 @@ impl AppController {
                 }
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
+                }
+            }
+        });
+    }
+
+    pub fn load_folder_for_active(&self, request_id: u64, path: Vec<FolderPathItem>) {
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let result = load_folder_detail(&store, &runtime, &secrets, &path);
+            match result {
+                Ok(detail) => {
+                    let _sent = events.send(ControllerEvent::FolderLoaded {
+                        request_id,
+                        path,
+                        detail,
+                    });
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::FolderLoadFailed {
+                        request_id,
+                        path,
+                        error,
+                    });
                 }
             }
         });
@@ -3703,26 +3997,96 @@ fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
 }
 
 fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
-    let servers = store.with_store(|store| {
-        store.list_servers().map(|servers| {
-            servers
-                .into_iter()
-                .map(|saved| saved.server)
-                .collect::<Vec<_>>()
+    let source_settings = load_settings_from_store(store);
+    let saved_servers = store.with_store(|store| store.list_servers())?;
+    let remote_saved_servers = saved_servers
+        .iter()
+        .filter(|saved| saved.server.provider != LOCAL_PROVIDER_ID)
+        .cloned()
+        .collect::<Vec<_>>();
+    let servers = remote_saved_servers
+        .iter()
+        .map(|saved| saved.server.clone())
+        .collect::<Vec<_>>();
+    let server_local_access = remote_saved_servers
+        .iter()
+        .map(|saved| {
+            let access = store.with_store(|store| store.server_local_access(&saved.server.id))?;
+            let status = local_access_status_for_server(store, &saved.server, access.as_ref())?;
+            let sync_state = store
+                .with_store(|store| store.sync_state(&saved.server.id))
+                .ok();
+            let sync_status = sync_state
+                .as_ref()
+                .map(sync_status_text)
+                .unwrap_or_else(|| "Cached library ready.".to_string());
+            let cached_album_count = store
+                .with_store(|store| {
+                    store
+                        .load_albums(&saved.server.id, 0, 1)
+                        .map(|page| page.total)
+                })
+                .unwrap_or_default();
+            let cached_track_count = store
+                .with_store(|store| {
+                    store
+                        .load_tracks(&saved.server.id, 0, 1)
+                        .map(|page| page.total)
+                })
+                .unwrap_or_default();
+            let selected_music_folder_name = store
+                .with_store(|store| {
+                    let selected = store.selected_music_folder_id(&saved.server.id)?;
+                    let folders = store.list_music_folders(&saved.server.id)?;
+                    Ok(selected.and_then(|selected| {
+                        folders
+                            .into_iter()
+                            .find(|folder| folder.id == selected)
+                            .map(|folder| folder.name)
+                    }))
+                })
+                .unwrap_or_default();
+            Ok(ServerLocalAccessSnapshot {
+                server_id: saved.server.id.clone(),
+                access,
+                status,
+                selected_music_folder_name,
+                username: Some(saved.username.clone()),
+                trust_invalid_cert: saved.trust_invalid_cert,
+                sync_status,
+                cached_album_count,
+                cached_track_count,
+            })
         })
-    })?;
-    let Some(saved) = store.with_store(|store| store.active_server())? else {
+        .collect::<Result<Vec<_>, String>>()?;
+    let selected_source = resolve_selected_source(
+        &source_settings,
+        &remote_saved_servers,
+        store.with_store(|store| store.active_server())?,
+    );
+    let Some(selected_source) = selected_source else {
         let mut snapshot = LibrarySnapshot::first_run();
         snapshot.servers = servers;
+        snapshot.local_folders = source_settings.sources.local_folders.clone();
+        snapshot.server_local_access = server_local_access;
         return Ok(snapshot);
     };
+    let saved = match &selected_source {
+        LibrarySourceSelection::Local => ensure_local_source_server(store)?,
+        LibrarySourceSelection::Server(server_id) => remote_saved_servers
+            .iter()
+            .find(|saved| &saved.server.id == server_id)
+            .cloned()
+            .ok_or_else(|| "The selected source is no longer saved.".to_string())?,
+    };
+    store.with_store(|store| store.set_active_server(&saved.server.id))?;
     let local_access = store.with_store(|store| store.server_local_access(&saved.server.id))?;
     let local_access_status =
         local_access_status_for_server(store, &saved.server, local_access.as_ref())?;
     let music_folders = store.with_store(|store| store.list_music_folders(&saved.server.id))?;
     let selected_music_folder_id =
         store.with_store(|store| store.selected_music_folder_id(&saved.server.id))?;
-    let settings = load_settings_for_saved(store, &saved);
+    let metadata_settings = load_settings_for_saved(store, &saved);
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.server.id))
         .ok();
@@ -3759,28 +4123,27 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
             .map(|page| page.items)
     })?;
     let mut favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
-    external_metadata::normalize_home_sections(&mut home_sections, &settings);
+    external_metadata::normalize_home_sections(&mut home_sections, &metadata_settings);
     if let Some(section) = &mut prefetched_explore {
-        external_metadata::normalize_home_section(section, &settings);
+        external_metadata::normalize_home_section(section, &metadata_settings);
     }
-    external_metadata::normalize_albums(&mut albums, &settings);
-    external_metadata::normalize_tracks(&mut tracks, &settings);
-    external_metadata::normalize_artists(&mut artists, &settings);
-    external_metadata::normalize_artists(&mut album_artists, &settings);
-    external_metadata::normalize_tracks(&mut favorites, &settings);
+    external_metadata::normalize_albums(&mut albums, &metadata_settings);
+    external_metadata::normalize_tracks(&mut tracks, &metadata_settings);
+    external_metadata::normalize_artists(&mut artists, &metadata_settings);
+    external_metadata::normalize_artists(&mut album_artists, &metadata_settings);
+    external_metadata::normalize_tracks(&mut favorites, &metadata_settings);
     let status = sync_state
         .as_ref()
-        .map(|state| match state.status.as_str() {
-            "running" => "Syncing library...".to_string(),
-            "error" => "Sync needs attention.".to_string(),
-            _ => "Cached library ready.".to_string(),
-        })
+        .map(sync_status_text)
         .unwrap_or_else(|| "Cached library ready.".to_string());
     let last_error = sync_state.and_then(|state| state.last_error);
 
     Ok(LibrarySnapshot {
         server: Some(saved.server),
         servers,
+        selected_source: Some(selected_source),
+        local_folders: source_settings.sources.local_folders,
+        server_local_access,
         local_access,
         local_access_status,
         music_folders,
@@ -3802,6 +4165,14 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         favorites,
         search: SearchResults::default(),
     })
+}
+
+fn sync_status_text(state: &SyncState) -> String {
+    match state.status.as_str() {
+        "running" => "Syncing library...".to_string(),
+        "error" => "Sync needs attention.".to_string(),
+        _ => "Cached library ready.".to_string(),
+    }
 }
 
 fn seed_fake_cache(store: &StoreHandle, scale: FakeScale) -> Result<(), String> {
@@ -3891,34 +4262,7 @@ fn restore_queue(store: &StoreHandle, server: Option<&ServerIdentity>) -> Option
     }
 }
 
-fn emit_active_server_state(
-    store: &StoreHandle,
-    events: &Sender<ControllerEvent>,
-    queue: &Arc<Mutex<Option<QueueEngine>>>,
-    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
-    auto_dj_enabled: &Arc<Mutex<bool>>,
-    saved: &SavedServer,
-) {
-    let queue_engine = restore_queue(store, Some(&saved.server));
-    let queue_snapshot = queue_engine.as_ref().map(QueueEngine::snapshot);
-    if let Ok(mut queue) = queue.lock() {
-        *queue = queue_engine;
-    }
-    let auto_dj_enabled = auto_dj_enabled
-        .lock()
-        .map(|enabled| *enabled)
-        .unwrap_or_default();
-    let playback_queue = queue_snapshot.clone().map(QueueEngine::restore);
-    let player = playback_snapshot_from_queue(
-        playback_queue.as_ref(),
-        auto_dj_enabled,
-        &load_settings_from_store(store).playback,
-    );
-    if let Ok(mut snapshot) = playback_snapshot.lock() {
-        *snapshot = player.clone();
-    }
-    let _sent = events.send(ControllerEvent::Queue(Box::new(queue_snapshot)));
-    let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
+fn emit_snapshot(store: &StoreHandle, events: &Sender<ControllerEvent>) {
     match load_snapshot(store) {
         Ok(snapshot) => {
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
@@ -3927,6 +4271,36 @@ fn emit_active_server_state(
             let _sent = events.send(ControllerEvent::Error(error));
         }
     }
+}
+
+fn resolve_selected_source(
+    settings: &AppSettings,
+    remote_saved_servers: &[SavedServer],
+    active_server: Option<SavedServer>,
+) -> Option<LibrarySourceSelection> {
+    match &settings.sources.selected {
+        Some(LibrarySourceSelection::Local) => return Some(LibrarySourceSelection::Local),
+        Some(LibrarySourceSelection::Server(server_id))
+            if remote_saved_servers
+                .iter()
+                .any(|saved| saved.server.id == *server_id) =>
+        {
+            return Some(LibrarySourceSelection::Server(server_id.clone()));
+        }
+        _ => {}
+    }
+
+    if let Some(saved) = active_server
+        && saved.server.provider != LOCAL_PROVIDER_ID
+    {
+        return Some(LibrarySourceSelection::Server(saved.server.id));
+    }
+    if !settings.sources.local_folders.is_empty() {
+        return Some(LibrarySourceSelection::Local);
+    }
+    remote_saved_servers
+        .first()
+        .map(|saved| LibrarySourceSelection::Server(saved.server.id.clone()))
 }
 
 fn active_server_needs_sync(store: &StoreHandle, server_id: &ServerId) -> bool {
@@ -3947,7 +4321,83 @@ fn trimmed_optional(value: Option<&str>) -> Option<String> {
 fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
     let mut settings = store.load_settings().unwrap_or_default();
     settings.migrate_defaults();
+    if migrate_legacy_local_servers_to_settings(store, &mut settings) {
+        settings.migrate_defaults();
+        if let Err(error) = store.save_settings(&settings) {
+            warn!(%error, "failed to persist migrated local source settings");
+        }
+    }
     settings
+}
+
+fn migrate_legacy_local_servers_to_settings(
+    store: &StoreHandle,
+    settings: &mut AppSettings,
+) -> bool {
+    let Ok(saved_servers) = store.with_store(|store| store.list_servers()) else {
+        return false;
+    };
+    let mut changed = false;
+    for saved in saved_servers {
+        if saved.server.provider != LOCAL_PROVIDER_ID
+            || saved.server.id.as_str() == LOCAL_SOURCE_SERVER_ID
+        {
+            continue;
+        }
+        let path = saved.server.base_url.trim();
+        if path.is_empty() {
+            continue;
+        }
+        if !settings
+            .sources
+            .local_folders
+            .iter()
+            .any(|folder| folder.path == path)
+        {
+            settings.sources.local_folders.push(LocalLibraryFolder {
+                path: path.to_string(),
+            });
+            changed = true;
+        }
+        if settings.sources.selected == Some(LibrarySourceSelection::Server(saved.server.id)) {
+            settings.sources.selected = Some(LibrarySourceSelection::Local);
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn local_folder_paths(settings: &AppSettings) -> Vec<PathBuf> {
+    settings
+        .sources
+        .local_folders
+        .iter()
+        .map(|folder| PathBuf::from(&folder.path))
+        .collect()
+}
+
+fn local_source_server() -> ServerIdentity {
+    ServerIdentity {
+        id: ServerId::new(LOCAL_SOURCE_SERVER_ID),
+        provider: LOCAL_PROVIDER_ID.to_string(),
+        name: "Local".to_string(),
+        base_url: String::new(),
+    }
+}
+
+fn local_source_saved() -> SavedServer {
+    SavedServer {
+        server: local_source_server(),
+        user_id: "local".to_string(),
+        username: "Local".to_string(),
+        trust_invalid_cert: false,
+    }
+}
+
+fn ensure_local_source_server(store: &StoreHandle) -> Result<SavedServer, String> {
+    let saved = local_source_saved();
+    store.with_store(|store| store.save_server(&saved))?;
+    Ok(saved)
 }
 
 fn load_settings_for_active_server(store: &StoreHandle) -> AppSettings {
@@ -4737,8 +5187,19 @@ fn provider_for_saved(
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
 ) -> Result<LoadedProvider, String> {
-    let _unused = (store, runtime);
-    if saved.server.provider == "local" {
+    let _unused = runtime;
+    if saved.server.provider == LOCAL_PROVIDER_ID
+        && saved.server.id.as_str() == LOCAL_SOURCE_SERVER_ID
+    {
+        let settings = load_settings_from_store(store);
+        return LocalProvider::from_roots_with_identity(
+            local_folder_paths(&settings),
+            saved.server.clone(),
+        )
+        .map(LoadedProvider::Local)
+        .map_err(|error| error.to_string());
+    }
+    if saved.server.provider == LOCAL_PROVIDER_ID {
         let session = SavedProviderSession {
             server: saved.server.clone(),
             user_id: saved.user_id.clone(),
@@ -4760,6 +5221,31 @@ fn provider_for_saved(
         access_token: token,
     };
     provider_from_saved(session).map_err(|error| error.to_string())
+}
+
+fn load_folder_detail(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    path: &[FolderPathItem],
+) -> Result<FolderDetail, String> {
+    let saved = store
+        .with_store(|store| store.active_server())?
+        .ok_or_else(|| "No active server.".to_string())?;
+    let selected_music_folder_id =
+        store.with_store(|store| store.selected_music_folder_id(&saved.server.id))?;
+    let settings = load_settings_for_saved(store, &saved);
+    let provider = provider_for_saved(store, runtime, secrets, &saved)?;
+    let music_provider = provider.as_music_provider();
+    if !music_provider.capabilities().folder_browsing {
+        return Err("folder browsing is not supported by the active provider.".to_string());
+    }
+    let folder_id = path.last().map(|entry| &entry.id);
+    let mut detail = runtime
+        .block_on(music_provider.folder(folder_id, selected_music_folder_id.as_ref()))
+        .map_err(|error| error.to_string())?;
+    external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+    Ok(detail)
 }
 
 fn sync_playlist_mutation(
@@ -5000,19 +5486,19 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AppController, ControllerEvent, DATABASE_FILE_NAME, LibrarySnapshot, PendingSeek,
-        RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME, SNAPSHOT_GRID_LIMIT,
-        SNAPSHOT_TRACK_LIMIT, StoreHandle, auto_dj_candidates, load_settings_from_store,
-        load_snapshot, playback_snapshot_from_queue, prefetch_home_section,
-        promote_prefetched_home_section, refresh_home_section, refresh_home_sections,
-        refresh_home_sections_without_explore, restore_queue, seek_position_is_stale,
-        sync_page_finished, sync_provider,
+        AppController, ControllerEvent, DATABASE_FILE_NAME, LOCAL_SOURCE_SERVER_ID,
+        LibrarySnapshot, PendingSeek, RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME,
+        SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle, auto_dj_candidates,
+        load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
+        prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
+        refresh_home_sections, refresh_home_sections_without_explore, restore_queue,
+        seek_position_is_stale, sync_page_finished, sync_provider,
     };
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
         AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
-        PlaybackSettings, PlaylistId, QueueEngine, RepeatMode, ServerId, ServerIdentity,
-        ThemePreference, Track, TrackId,
+        LibrarySourceSelection, LocalLibraryFolder, PlaybackSettings, PlaylistId, QueueEngine,
+        RepeatMode, ServerId, ServerIdentity, ThemePreference, Track, TrackId,
     };
     use rufin_playback::{
         PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
@@ -5021,6 +5507,7 @@ mod tests {
     use rufin_provider::{
         FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PlayedFilter,
     };
+    use rufin_provider_local::LOCAL_PROVIDER_ID;
     use rufin_secrets::{MemorySecretStore, SecretStore};
     use rufin_store::{CoverCacheEntry, SavedServer, ServerLocalAccess};
     use rufin_test_support::{FakeProvider, FakeScale};
@@ -5118,6 +5605,145 @@ mod tests {
         assert!(snapshot.server.is_none());
         assert!(queue.is_none());
         assert_eq!(player.state, PlaybackState::Stopped);
+    }
+
+    #[test]
+    fn source_selection_is_saved_separately_from_playback_queue() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let server_id = snapshot.server.as_ref().expect("server").id.clone();
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first.clone(), second]);
+        let queue = wait_for_queue(&events).expect("queue");
+        assert_eq!(queue.entries[0].track_id, first.id);
+        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+
+        controller.select_source(LibrarySourceSelection::Local);
+        let local_snapshot = wait_for_snapshot(&events);
+
+        assert_eq!(
+            local_snapshot.selected_source,
+            Some(LibrarySourceSelection::Local)
+        );
+        assert_eq!(
+            controller.load_settings().sources.selected,
+            Some(LibrarySourceSelection::Local)
+        );
+        assert_eq!(
+            controller
+                .queue
+                .lock()
+                .expect("queue")
+                .as_ref()
+                .expect("queue")
+                .snapshot()
+                .entries[0]
+                .track_id,
+            first.id
+        );
+        assert_eq!(
+            controller
+                .playback_snapshot
+                .lock()
+                .expect("playback")
+                .current
+                .as_ref()
+                .expect("current")
+                .track_id,
+            first.id
+        );
+
+        controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
+        let server_snapshot = wait_for_snapshot(&events);
+
+        assert_eq!(
+            server_snapshot.selected_source,
+            Some(LibrarySourceSelection::Server(server_id.clone()))
+        );
+        assert_eq!(
+            controller.load_settings().sources.selected,
+            Some(LibrarySourceSelection::Server(server_id))
+        );
+    }
+
+    #[test]
+    fn local_source_snapshot_loads_configured_folders() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let root = unique_test_dir("local-source-snapshot");
+        fs::create_dir_all(&root).expect("create root");
+        let mut settings = AppSettings::default();
+        settings.sources.selected = Some(LibrarySourceSelection::Local);
+        settings.sources.local_folders = vec![LocalLibraryFolder {
+            path: root.to_string_lossy().into_owned(),
+        }];
+        store.save_settings(&settings).expect("save settings");
+
+        let snapshot = load_snapshot(&store).expect("load snapshot");
+
+        assert!(!snapshot.first_run);
+        assert_eq!(
+            snapshot.selected_source,
+            Some(LibrarySourceSelection::Local)
+        );
+        assert_eq!(
+            snapshot.server.expect("server").id.as_str(),
+            LOCAL_SOURCE_SERVER_ID
+        );
+        assert_eq!(snapshot.local_folders, settings.sources.local_folders);
+        let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_local_server_roots_migrate_to_local_source_settings() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let root = unique_test_dir("legacy-local-source");
+        fs::create_dir_all(&root).expect("create root");
+        let legacy = SavedServer {
+            server: ServerIdentity {
+                id: ServerId::new("local:server:legacy"),
+                provider: LOCAL_PROVIDER_ID.to_string(),
+                name: "Old Local".to_string(),
+                base_url: root.to_string_lossy().into_owned(),
+            },
+            user_id: "local".to_string(),
+            username: "Local".to_string(),
+            trust_invalid_cert: false,
+        };
+        store
+            .with_store(|store| {
+                store.save_server(&legacy)?;
+                store.set_active_server(&legacy.server.id)
+            })
+            .expect("save legacy server");
+        let mut settings = AppSettings::default();
+        settings.sources.selected = Some(LibrarySourceSelection::Server(legacy.server.id.clone()));
+        store.save_settings(&settings).expect("save settings");
+
+        let snapshot = load_snapshot(&store).expect("load snapshot");
+        let migrated = load_settings_from_store(&store);
+
+        assert_eq!(
+            snapshot.selected_source,
+            Some(LibrarySourceSelection::Local)
+        );
+        assert_eq!(
+            snapshot.server.expect("server").id.as_str(),
+            LOCAL_SOURCE_SERVER_ID
+        );
+        assert_eq!(
+            migrated.sources.local_folders,
+            vec![LocalLibraryFolder {
+                path: root.to_string_lossy().into_owned()
+            }]
+        );
+        assert_eq!(
+            migrated.sources.selected,
+            Some(LibrarySourceSelection::Local)
+        );
+        assert!(snapshot.servers.is_empty());
+        let _cleanup = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -7139,6 +7765,8 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
@@ -7168,6 +7796,8 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
@@ -7192,6 +7822,8 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
@@ -7215,6 +7847,8 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
@@ -7261,6 +7895,8 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
@@ -7284,6 +7920,8 @@ mod tests {
                 | ControllerEvent::LoginStatus(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
@@ -7333,6 +7971,8 @@ mod tests {
                     | ControllerEvent::Lyrics(_)
                     | ControllerEvent::LyricsSearchResults { .. }
                     | ControllerEvent::LyricsSaved { .. }
+                    | ControllerEvent::FolderLoaded { .. }
+                    | ControllerEvent::FolderLoadFailed { .. }
                     | ControllerEvent::HomeSectionPrefetched { .. }
                     | ControllerEvent::ServerDiscovery { .. }
                     | ControllerEvent::CoverReady { .. } => {}
@@ -7369,6 +8009,8 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
@@ -7398,6 +8040,8 @@ mod tests {
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
@@ -7437,6 +8081,8 @@ mod tests {
                     | ControllerEvent::Lyrics(_)
                     | ControllerEvent::LyricsSearchResults { .. }
                     | ControllerEvent::LyricsSaved { .. }
+                    | ControllerEvent::FolderLoaded { .. }
+                    | ControllerEvent::FolderLoadFailed { .. }
                     | ControllerEvent::HomeSectionPrefetched { .. }
                     | ControllerEvent::ServerDiscovery { .. }
                     | ControllerEvent::CoverReady { .. } => {}
