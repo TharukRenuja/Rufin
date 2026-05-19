@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use reqwest::blocking::Client;
+use reqwest::{blocking::Client, header::AUTHORIZATION};
 use rufin_core::{
     AppSettings, AudioscrobblerScrobbleSettings, ListenBrainzScrobbleSettings, QueueEntry,
     ScrobblingSettings, TrackId,
@@ -16,6 +16,10 @@ use crate::controller::PlaybackSnapshot;
 const LASTFM_API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 const LIBREFM_API_URL: &str = "https://libre.fm/2.0/";
 const LISTENBRAINZ_API_URL: &str = "https://api.listenbrainz.org/1/submit-listens";
+const LASTFM_AUTH_URL: &str = "https://www.last.fm/api/auth/";
+const LIBREFM_AUTH_URL: &str = "https://libre.fm/api/auth/";
+const LIBREFM_API_KEY: &str = "rufin";
+const LIBREFM_API_SECRET: &str = "rufin";
 const USER_AGENT: &str = "Rufin/0.1";
 const MIN_SCROBBLE_DURATION_SECONDS: u32 = 30;
 const MAX_SCROBBLE_THRESHOLD_SECONDS: u32 = 4 * 60;
@@ -55,6 +59,12 @@ enum AudioscrobblerService {
     LibreFm,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AudioscrobblerSession {
+    pub(crate) username: String,
+    pub(crate) session_key: String,
+}
+
 impl AudioscrobblerService {
     fn name(self) -> &'static str {
         match self {
@@ -69,6 +79,123 @@ impl AudioscrobblerService {
             Self::LibreFm => LIBREFM_API_URL,
         }
     }
+}
+
+pub(crate) fn request_lastfm_auth_token(api_key: &str, api_secret: &str) -> Result<String, String> {
+    let api_key = api_key.trim();
+    let api_secret = api_secret.trim();
+    if api_key.is_empty() || api_secret.is_empty() {
+        return Err("Enter a Last.fm API key and shared secret first.".to_string());
+    }
+
+    request_audioscrobbler_auth_token(AudioscrobblerService::LastFm, api_key, api_secret)
+}
+
+pub(crate) fn request_librefm_auth_token() -> Result<String, String> {
+    request_audioscrobbler_auth_token(
+        AudioscrobblerService::LibreFm,
+        LIBREFM_API_KEY,
+        LIBREFM_API_SECRET,
+    )
+}
+
+fn request_audioscrobbler_auth_token(
+    service: AudioscrobblerService,
+    api_key: &str,
+    api_secret: &str,
+) -> Result<String, String> {
+    let params = vec![
+        ("api_key".to_string(), api_key.to_string()),
+        ("method".to_string(), "auth.getToken".to_string()),
+    ];
+    let mut form = params.clone();
+    form.push(("api_sig".to_string(), api_signature(&params, api_secret)));
+    form.push(("format".to_string(), "json".to_string()));
+
+    let value = post_audioscrobbler_form(service.api_url(), form)?;
+    audioscrobbler_error(&value, service.name())?;
+    value
+        .get("token")
+        .and_then(Value::as_str)
+        .filter(|token| !token.trim().is_empty())
+        .map(|token| token.trim().to_string())
+        .ok_or_else(|| format!("{} did not return an auth token.", service.name()))
+}
+
+pub(crate) fn lastfm_auth_url(api_key: &str, token: &str) -> String {
+    format!(
+        "{LASTFM_AUTH_URL}?api_key={}&token={}",
+        api_key.trim(),
+        token.trim()
+    )
+}
+
+pub(crate) fn librefm_auth_url(token: &str) -> String {
+    format!(
+        "{LIBREFM_AUTH_URL}?api_key={}&token={}",
+        LIBREFM_API_KEY,
+        token.trim()
+    )
+}
+
+pub(crate) fn request_lastfm_session(
+    api_key: &str,
+    api_secret: &str,
+    token: &str,
+) -> Result<Option<AudioscrobblerSession>, String> {
+    let api_key = api_key.trim();
+    let api_secret = api_secret.trim();
+    let token = token.trim();
+    if api_key.is_empty() || api_secret.is_empty() || token.is_empty() {
+        return Err("Last.fm authorization is missing required fields.".to_string());
+    }
+
+    request_audioscrobbler_session(AudioscrobblerService::LastFm, api_key, api_secret, token)
+}
+
+pub(crate) fn request_librefm_session(
+    token: &str,
+) -> Result<Option<AudioscrobblerSession>, String> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err("Libre.fm authorization is missing a token.".to_string());
+    }
+
+    request_audioscrobbler_session(
+        AudioscrobblerService::LibreFm,
+        LIBREFM_API_KEY,
+        LIBREFM_API_SECRET,
+        token,
+    )
+}
+
+fn request_audioscrobbler_session(
+    service: AudioscrobblerService,
+    api_key: &str,
+    api_secret: &str,
+    token: &str,
+) -> Result<Option<AudioscrobblerSession>, String> {
+    let params = vec![
+        ("api_key".to_string(), api_key.to_string()),
+        ("method".to_string(), "auth.getSession".to_string()),
+        ("token".to_string(), token.to_string()),
+    ];
+    let mut form = params.clone();
+    form.push(("api_sig".to_string(), api_signature(&params, api_secret)));
+    form.push(("format".to_string(), "json".to_string()));
+
+    let value = post_audioscrobbler_form(service.api_url(), form)?;
+    if let Some((code, message)) = audioscrobbler_error_value(&value) {
+        if code == Some(14) {
+            return Ok(None);
+        }
+        return Err(format!(
+            "{} API error {}: {message}",
+            service.name(),
+            code.unwrap_or(0)
+        ));
+    }
+    audioscrobbler_session_from_value(&value, service.name()).map(Some)
 }
 
 impl ExternalScrobbleState {
@@ -273,6 +400,75 @@ fn audioscrobbler_params(
     params
 }
 
+fn post_audioscrobbler_form(api_url: &str, form: Vec<(String, String)>) -> Result<Value, String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(8))
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .post(api_url)
+        .form(&form)
+        .send()
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    let value = response.json::<Value>().unwrap_or(Value::Null);
+    if !status.is_success() && audioscrobbler_error_value(&value).is_none() {
+        return Err(format!("Audioscrobbler auth returned HTTP {status}"));
+    }
+    Ok(value)
+}
+
+fn audioscrobbler_error(value: &Value, service: &str) -> Result<(), String> {
+    if let Some((code, message)) = audioscrobbler_error_value(value) {
+        return Err(format!(
+            "{service} API error {}: {message}",
+            code.unwrap_or(0)
+        ));
+    }
+    Ok(())
+}
+
+fn audioscrobbler_error_value(value: &Value) -> Option<(Option<i64>, String)> {
+    let code = value.get("error").and_then(Value::as_i64);
+    code.map(|code| {
+        let message = value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown error")
+            .to_string();
+        (Some(code), message)
+    })
+}
+
+fn audioscrobbler_session_from_value(
+    value: &Value,
+    service: &str,
+) -> Result<AudioscrobblerSession, String> {
+    let session = value
+        .get("session")
+        .ok_or_else(|| format!("{service} did not return a session."))?;
+    let username = session
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let session_key = session
+        .get("key")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if session_key.is_empty() {
+        return Err(format!("{service} did not return a session key."));
+    }
+    Ok(AudioscrobblerSession {
+        username,
+        session_key,
+    })
+}
+
 fn submit_listenbrainz(
     client: &Client,
     settings: &ListenBrainzScrobbleSettings,
@@ -311,7 +507,10 @@ fn submit_listenbrainz(
     });
     let response = client
         .post(LISTENBRAINZ_API_URL)
-        .bearer_auth(settings.user_token.trim())
+        .header(
+            AUTHORIZATION,
+            listenbrainz_authorization_header(settings.user_token.trim()),
+        )
         .json(&payload)
         .send()
         .map_err(|error| error.to_string())?;
@@ -321,6 +520,10 @@ fn submit_listenbrainz(
     }
     debug!("submitted ListenBrainz scrobbling event");
     Ok(())
+}
+
+fn listenbrainz_authorization_header(user_token: &str) -> String {
+    format!("Token {}", user_token.trim())
 }
 
 fn scrobble_track(entry: &QueueEntry) -> Option<ScrobbleTrack> {
@@ -374,13 +577,16 @@ fn unix_now_seconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExternalScrobbleState, ScrobbleAction, ScrobbleTrack, api_signature,
-        position_reaches_scrobble_threshold, scrobble_threshold_seconds,
+        AudioscrobblerSession, ExternalScrobbleState, ScrobbleAction, ScrobbleTrack, api_signature,
+        audioscrobbler_session_from_value, lastfm_auth_url, librefm_auth_url,
+        listenbrainz_authorization_header, position_reaches_scrobble_threshold,
+        scrobble_threshold_seconds,
     };
     use crate::controller::PlaybackSnapshot;
     use rufin_core::{QueueEntry, QueueEntryId, TrackId};
     use rufin_playback::PlaybackState;
     use rufin_provider::PlaybackReportKind;
+    use serde_json::json;
 
     #[test]
     fn scrobble_threshold_follows_common_service_rules() {
@@ -446,6 +652,61 @@ mod tests {
         assert_eq!(
             api_signature(&params, "secret"),
             "9ea42092c79325d9e328dcc8c3fa4eeb"
+        );
+    }
+
+    #[test]
+    fn lastfm_auth_url_uses_api_key_and_token() {
+        assert_eq!(
+            lastfm_auth_url("api-key", "auth-token"),
+            "https://www.last.fm/api/auth/?api_key=api-key&token=auth-token"
+        );
+    }
+
+    #[test]
+    fn librefm_auth_url_uses_default_api_key_and_token() {
+        assert_eq!(
+            librefm_auth_url("auth-token"),
+            "https://libre.fm/api/auth/?api_key=rufin&token=auth-token"
+        );
+    }
+
+    #[test]
+    fn audioscrobbler_session_parses_mobile_session_response() {
+        let value = json!({
+            "session": {
+                "name": "listener",
+                "key": "session-key",
+            },
+        });
+
+        assert_eq!(
+            audioscrobbler_session_from_value(&value, "Last.fm").unwrap(),
+            AudioscrobblerSession {
+                username: "listener".to_string(),
+                session_key: "session-key".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn audioscrobbler_error_value_parses_lastfm_error_response() {
+        let value = json!({
+            "error": 14,
+            "message": "Unauthorized Token",
+        });
+
+        assert_eq!(
+            super::audioscrobbler_error_value(&value),
+            Some((Some(14), "Unauthorized Token".to_string()))
+        );
+    }
+
+    #[test]
+    fn listenbrainz_authorization_header_uses_token_scheme() {
+        assert_eq!(
+            listenbrainz_authorization_header(" user-token "),
+            "Token user-token"
         );
     }
 

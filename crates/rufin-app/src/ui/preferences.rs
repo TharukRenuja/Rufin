@@ -2,12 +2,16 @@ use std::{cell::Cell, rc::Rc};
 
 use adw::prelude::*;
 use rufin_core::{
-    DensityMode, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT, EqualizerSettings,
-    HomeBlockKind, PlaybackTransitionMode, ReplayGainMode, StreamQuality,
+    AudioscrobblerScrobbleSettings, DensityMode, DiscordDisplayType, DiscordLinkType,
+    EQUALIZER_BAND_COUNT, EqualizerSettings, HomeBlockKind, PlaybackTransitionMode,
+    ReplayGainMode, StreamQuality,
 };
 use rufin_playback::available_audio_outputs;
 
-use crate::i18n::tr;
+use crate::{
+    external_scrobbling::{self, AudioscrobblerSession},
+    i18n::tr,
+};
 
 use super::{
     Shell,
@@ -17,6 +21,8 @@ use super::{
 const PREFERENCES_DIALOG_WIDTH: i32 = 560;
 const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
 const SURFACE_SCROLL_FACTOR: f64 = 2.5;
+const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
+const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 
 pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
     let dialog = adw::PreferencesDialog::builder()
@@ -332,13 +338,16 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .title(tr("Scrobbling"))
         .icon_name("emblem-shared-symbolic")
         .build();
-    let settings = shell.state.settings.borrow().scrobbling.clone();
+    let app_settings = shell.state.settings.borrow().clone();
+    let settings = app_settings.scrobbling.clone();
+    let lastfm_api_key_text = if app_settings.lastfm_api_key.trim().is_empty() {
+        settings.lastfm.api_key.clone()
+    } else {
+        app_settings.lastfm_api_key.clone()
+    };
 
     let lastfm_group = adw::PreferencesGroup::builder()
         .title(tr("Last.fm"))
-        .description(tr(
-            "Scrobble directly with your own Last.fm API credentials and session key.",
-        ))
         .build();
     let lastfm_enabled = adw::SwitchRow::builder()
         .title(tr("Last.fm scrobbling"))
@@ -356,19 +365,34 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     lastfm_group.add(&lastfm_enabled);
 
-    let lastfm_api_key = adw::EntryRow::builder()
+    let lastfm_api_help = adw::ActionRow::builder()
+        .title(tr("API keys"))
+        .subtitle(inline_link_markup(
+            &tr("If you do not have API keys, create them"),
+            LASTFM_API_CREATE_URL,
+            &tr("here"),
+            &tr(". You only need ot fill email and an application name parts"),
+        ))
+        .use_markup(true)
+        .build();
+    lastfm_group.add(&lastfm_api_help);
+
+    let lastfm_api_key = adw::PasswordEntryRow::builder()
         .title(tr("API key"))
-        .text(&settings.lastfm.api_key)
+        .text(&lastfm_api_key_text)
         .show_apply_button(true)
         .build();
     let lastfm_api_shell = Rc::clone(shell);
     lastfm_api_key.connect_apply(move |row| {
         let api_key = row.text().trim().to_string();
-        lastfm_api_shell.update_scrobbling_settings("Last.fm API key setting", |settings| {
-            if settings.lastfm.api_key == api_key {
+        lastfm_api_shell.update_app_settings("Last.fm API key setting", |settings| {
+            if settings.lastfm_api_key == api_key && settings.scrobbling.lastfm.api_key == api_key {
                 return false;
             }
-            settings.lastfm.api_key = api_key;
+            settings.lastfm_api_key = api_key.clone();
+            settings.scrobbling.lastfm.api_key = api_key;
+            settings.scrobbling.lastfm.session_key.clear();
+            settings.scrobbling.lastfm.username.clear();
             true
         });
     });
@@ -389,32 +413,57 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
                     return false;
                 }
                 settings.lastfm.api_secret = api_secret;
+                settings.lastfm.session_key.clear();
+                settings.lastfm.username.clear();
                 true
             },
         );
     });
     lastfm_group.add(&lastfm_api_secret);
 
-    let lastfm_session = adw::PasswordEntryRow::builder()
-        .title(tr("Session key"))
-        .text(&settings.lastfm.session_key)
-        .show_apply_button(true)
+    let lastfm_connection = adw::ActionRow::builder()
+        .title(tr("Connection"))
+        .subtitle(audioscrobbler_connection_subtitle(&settings.lastfm))
         .build();
-    let lastfm_session_shell = Rc::clone(shell);
-    lastfm_session.connect_apply(move |row| {
-        let session_key = row.text().trim().to_string();
-        lastfm_session_shell.update_scrobbling_settings(
-            "Last.fm session key setting",
-            |settings| {
-                if settings.lastfm.session_key == session_key {
-                    return false;
+    let lastfm_connect_label = if settings.lastfm.session_key.is_empty() {
+        tr("Connect")
+    } else {
+        tr("Reconnect")
+    };
+    let lastfm_connect = gtk::Button::with_label(&lastfm_connect_label);
+    lastfm_connect.set_valign(gtk::Align::Center);
+    lastfm_connection.add_suffix(&lastfm_connect);
+    lastfm_connection.set_activatable_widget(Some(&lastfm_connect));
+    let lastfm_connect_shell = Rc::clone(shell);
+    let lastfm_api_key_row = lastfm_api_key.clone();
+    let lastfm_secret_row = lastfm_api_secret.clone();
+    let lastfm_connection_row = lastfm_connection.clone();
+    lastfm_connect.connect_clicked(move |button| {
+        let api_key = lastfm_api_key_row.text().trim().to_string();
+        let api_secret = lastfm_secret_row.text().trim().to_string();
+        if api_key.is_empty() || api_secret.is_empty() {
+            lastfm_connection_row.set_subtitle(&tr("Enter API credentials first"));
+            return;
+        }
+        button.set_sensitive(false);
+        lastfm_connection_row.set_subtitle(&tr("Opening Last.fm authorization..."));
+        let shell = Rc::clone(&lastfm_connect_shell);
+        let row = lastfm_connection_row.clone();
+        let button = button.clone();
+        gtk::glib::spawn_future_local(async move {
+            match connect_lastfm_session(&shell, api_key, api_secret).await {
+                Ok(session) => {
+                    row.set_subtitle(&audioscrobbler_connected_subtitle(&session.username));
+                    button.set_label(&tr("Reconnect"));
                 }
-                settings.lastfm.session_key = session_key;
-                true
-            },
-        );
+                Err(error) => {
+                    row.set_subtitle(&error);
+                }
+            }
+            button.set_sensitive(true);
+        });
     });
-    lastfm_group.add(&lastfm_session);
+    lastfm_group.add(&lastfm_connection);
 
     let lastfm_now_playing = adw::SwitchRow::builder()
         .title(tr("Now playing updates"))
@@ -438,7 +487,9 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let librefm_group = adw::PreferencesGroup::builder()
         .title(tr("Libre.fm"))
-        .description(tr("Use the Libre.fm Last.fm-compatible scrobbling API."))
+        .description(tr(
+            "If the page doesn't load, then Libre.fm blocks your IP range/VPN",
+        ))
         .build();
     let librefm_enabled = adw::SwitchRow::builder()
         .title(tr("Libre.fm scrobbling"))
@@ -459,65 +510,41 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     librefm_group.add(&librefm_enabled);
 
-    let librefm_api_key = adw::EntryRow::builder()
-        .title(tr("API key"))
-        .text(&settings.librefm.api_key)
-        .show_apply_button(true)
+    let librefm_connection = adw::ActionRow::builder()
+        .title(tr("Connection"))
+        .subtitle(audioscrobbler_connection_subtitle(&settings.librefm))
         .build();
-    let librefm_api_shell = Rc::clone(shell);
-    librefm_api_key.connect_apply(move |row| {
-        let api_key = row.text().trim().to_string();
-        librefm_api_shell.update_scrobbling_settings("Libre.fm API key setting", |settings| {
-            if settings.librefm.api_key == api_key {
-                return false;
+    let librefm_connect_label = if settings.librefm.session_key.is_empty() {
+        tr("Connect")
+    } else {
+        tr("Reconnect")
+    };
+    let librefm_connect = gtk::Button::with_label(&librefm_connect_label);
+    librefm_connect.set_valign(gtk::Align::Center);
+    librefm_connection.add_suffix(&librefm_connect);
+    librefm_connection.set_activatable_widget(Some(&librefm_connect));
+    let librefm_connect_shell = Rc::clone(shell);
+    let librefm_connection_row = librefm_connection.clone();
+    librefm_connect.connect_clicked(move |button| {
+        button.set_sensitive(false);
+        librefm_connection_row.set_subtitle(&tr("Opening Libre.fm authorization..."));
+        let shell = Rc::clone(&librefm_connect_shell);
+        let row = librefm_connection_row.clone();
+        let button = button.clone();
+        gtk::glib::spawn_future_local(async move {
+            match connect_librefm_session(&shell).await {
+                Ok(session) => {
+                    row.set_subtitle(&audioscrobbler_connected_subtitle(&session.username));
+                    button.set_label(&tr("Reconnect"));
+                }
+                Err(error) => {
+                    row.set_subtitle(&error);
+                }
             }
-            settings.librefm.api_key = api_key;
-            true
+            button.set_sensitive(true);
         });
     });
-    librefm_group.add(&librefm_api_key);
-
-    let librefm_api_secret = adw::PasswordEntryRow::builder()
-        .title(tr("Shared secret"))
-        .text(&settings.librefm.api_secret)
-        .show_apply_button(true)
-        .build();
-    let librefm_secret_shell = Rc::clone(shell);
-    librefm_api_secret.connect_apply(move |row| {
-        let api_secret = row.text().trim().to_string();
-        librefm_secret_shell.update_scrobbling_settings(
-            "Libre.fm shared secret setting",
-            |settings| {
-                if settings.librefm.api_secret == api_secret {
-                    return false;
-                }
-                settings.librefm.api_secret = api_secret;
-                true
-            },
-        );
-    });
-    librefm_group.add(&librefm_api_secret);
-
-    let librefm_session = adw::PasswordEntryRow::builder()
-        .title(tr("Session key"))
-        .text(&settings.librefm.session_key)
-        .show_apply_button(true)
-        .build();
-    let librefm_session_shell = Rc::clone(shell);
-    librefm_session.connect_apply(move |row| {
-        let session_key = row.text().trim().to_string();
-        librefm_session_shell.update_scrobbling_settings(
-            "Libre.fm session key setting",
-            |settings| {
-                if settings.librefm.session_key == session_key {
-                    return false;
-                }
-                settings.librefm.session_key = session_key;
-                true
-            },
-        );
-    });
-    librefm_group.add(&librefm_session);
+    librefm_group.add(&librefm_connection);
 
     let librefm_now_playing = adw::SwitchRow::builder()
         .title(tr("Now playing updates"))
@@ -541,7 +568,6 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let listenbrainz_group = adw::PreferencesGroup::builder()
         .title(tr("ListenBrainz"))
-        .description(tr("Scrobble with a ListenBrainz user token."))
         .build();
     let listenbrainz_enabled = adw::SwitchRow::builder()
         .title(tr("ListenBrainz scrobbling"))
@@ -561,6 +587,18 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         );
     });
     listenbrainz_group.add(&listenbrainz_enabled);
+
+    let listenbrainz_token_help = adw::ActionRow::builder()
+        .title(tr("Get token"))
+        .subtitle(inline_link_markup(
+            &tr("Find your ListenBrainz user token"),
+            LISTENBRAINZ_TOKEN_URL,
+            &tr("here"),
+            ".",
+        ))
+        .use_markup(true)
+        .build();
+    listenbrainz_group.add(&listenbrainz_token_help);
 
     let listenbrainz_token = adw::PasswordEntryRow::builder()
         .title(tr("User token"))
@@ -604,6 +642,115 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&listenbrainz_group);
 
     page
+}
+
+fn audioscrobbler_connection_subtitle(settings: &AudioscrobblerScrobbleSettings) -> String {
+    if settings.session_key.trim().is_empty() {
+        tr("Not connected")
+    } else {
+        audioscrobbler_connected_subtitle(&settings.username)
+    }
+}
+
+fn audioscrobbler_connected_subtitle(username: &str) -> String {
+    let username = username.trim();
+    if username.is_empty() {
+        tr("Connected")
+    } else {
+        format!("{} {username}", tr("Connected as"))
+    }
+}
+
+fn inline_link_markup(before: &str, url: &str, label: &str, after: &str) -> String {
+    let before = gtk::glib::markup_escape_text(before);
+    let url = gtk::glib::markup_escape_text(url);
+    let label = gtk::glib::markup_escape_text(label);
+    let after = gtk::glib::markup_escape_text(after);
+    format!("{before} <a href=\"{url}\">{label}</a>{after}")
+}
+
+async fn connect_lastfm_session(
+    shell: &Rc<Shell>,
+    api_key: String,
+    api_secret: String,
+) -> Result<AudioscrobblerSession, String> {
+    let token_api_key = api_key.clone();
+    let token_api_secret = api_secret.clone();
+    let token = gtk::gio::spawn_blocking(move || {
+        external_scrobbling::request_lastfm_auth_token(&token_api_key, &token_api_secret)
+    })
+    .await
+    .map_err(|_| "Last.fm authorization task failed.".to_string())??;
+    let url = external_scrobbling::lastfm_auth_url(&api_key, &token);
+    let launcher = gtk::UriLauncher::new(&url);
+    launcher
+        .launch_future(Some(&shell.window))
+        .await
+        .map_err(|error| format!("Failed to open Last.fm authorization: {error}"))?;
+
+    for _ in 0..30 {
+        gtk::glib::timeout_future_seconds(2).await;
+        let session_api_key = api_key.clone();
+        let session_api_secret = api_secret.clone();
+        let session_token = token.clone();
+        let maybe_session = gtk::gio::spawn_blocking(move || {
+            external_scrobbling::request_lastfm_session(
+                &session_api_key,
+                &session_api_secret,
+                &session_token,
+            )
+        })
+        .await
+        .map_err(|_| "Last.fm session task failed.".to_string())??;
+        if let Some(session) = maybe_session {
+            shell.update_app_settings("Last.fm connection setting", |settings| {
+                settings.lastfm_api_key = api_key.clone();
+                settings.scrobbling.lastfm.api_key = api_key.clone();
+                settings.scrobbling.lastfm.api_secret = api_secret.clone();
+                settings.scrobbling.lastfm.username = session.username.clone();
+                settings.scrobbling.lastfm.session_key = session.session_key.clone();
+                true
+            });
+            shell.update_discord_presence(&shell.state.player.borrow());
+            return Ok(session);
+        }
+    }
+
+    Err(tr("Timed out waiting for Last.fm authorization."))
+}
+
+async fn connect_librefm_session(shell: &Rc<Shell>) -> Result<AudioscrobblerSession, String> {
+    let token = gtk::gio::spawn_blocking(external_scrobbling::request_librefm_auth_token)
+        .await
+        .map_err(|_| "Libre.fm authorization task failed.".to_string())??;
+    let url = external_scrobbling::librefm_auth_url(&token);
+    let launcher = gtk::UriLauncher::new(&url);
+    launcher
+        .launch_future(Some(&shell.window))
+        .await
+        .map_err(|error| format!("Failed to open Libre.fm authorization: {error}"))?;
+
+    for _ in 0..30 {
+        gtk::glib::timeout_future_seconds(2).await;
+        let session_token = token.clone();
+        let maybe_session = gtk::gio::spawn_blocking(move || {
+            external_scrobbling::request_librefm_session(&session_token)
+        })
+        .await
+        .map_err(|_| "Libre.fm session task failed.".to_string())??;
+        if let Some(session) = maybe_session {
+            shell.update_scrobbling_settings("Libre.fm connection setting", |settings| {
+                settings.librefm.username = session.username.clone();
+                settings.librefm.api_key = "rufin".to_string();
+                settings.librefm.api_secret = "rufin".to_string();
+                settings.librefm.session_key = session.session_key.clone();
+                true
+            });
+            return Ok(session);
+        }
+    }
+
+    Err(tr("Timed out waiting for Libre.fm authorization"))
 }
 
 fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {

@@ -252,10 +252,13 @@ impl Shell {
         let api_key = api_key.trim().to_string();
         if self
             .update_app_settings("Last.fm API key setting", |settings| {
-                if settings.lastfm_api_key == api_key {
+                if settings.lastfm_api_key == api_key
+                    && settings.scrobbling.lastfm.api_key == api_key
+                {
                     return false;
                 }
                 settings.lastfm_api_key = api_key;
+                settings.scrobbling.lastfm.api_key = settings.lastfm_api_key.clone();
                 true
             })
             .is_some()

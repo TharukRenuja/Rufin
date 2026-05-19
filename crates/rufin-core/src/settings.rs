@@ -131,6 +131,8 @@ pub struct AudioscrobblerScrobbleSettings {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
+    pub username: String,
+    #[serde(default)]
     pub api_key: String,
     #[serde(default)]
     pub api_secret: String,
@@ -144,6 +146,7 @@ impl Default for AudioscrobblerScrobbleSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            username: String::new(),
             api_key: String::new(),
             api_secret: String::new(),
             session_key: String::new(),
@@ -154,6 +157,7 @@ impl Default for AudioscrobblerScrobbleSettings {
 
 impl AudioscrobblerScrobbleSettings {
     fn sanitize(&mut self) {
+        self.username = self.username.trim().to_string();
         self.api_key = self.api_key.trim().to_string();
         self.api_secret = self.api_secret.trim().to_string();
         self.session_key = self.session_key.trim().to_string();
@@ -1154,6 +1158,12 @@ impl AppSettings {
         self.track_table.migrate_defaults();
         self.playback.sanitize();
         self.scrobbling.sanitize();
+        self.lastfm_api_key = self.lastfm_api_key.trim().to_string();
+        if self.lastfm_api_key.is_empty() && !self.scrobbling.lastfm.api_key.is_empty() {
+            self.lastfm_api_key = self.scrobbling.lastfm.api_key.clone();
+        } else if self.scrobbling.lastfm.api_key.is_empty() && !self.lastfm_api_key.is_empty() {
+            self.scrobbling.lastfm.api_key = self.lastfm_api_key.clone();
+        }
         self.migrate_home_blocks();
         self.migrate_library_lists();
     }
@@ -1269,10 +1279,10 @@ fn sanitize_home_blocks(blocks: &mut Vec<HomeBlockKind>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType, DiscordLinkType,
-        EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField, LibraryLayout,
-        LibraryListKey, PlaybackTransitionMode, ReplayGainMode, StreamQuality, TrackSortKey,
-        TrackTableColumn,
+        AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType,
+        DiscordLinkType, EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField,
+        LibraryLayout, LibraryListKey, PlaybackTransitionMode, ReplayGainMode, ScrobblingSettings,
+        StreamQuality, TrackSortKey, TrackTableColumn,
     };
 
     #[test]
@@ -1295,11 +1305,13 @@ mod tests {
         assert!(settings.discord_show_state_icon);
         assert_eq!(settings.lastfm_api_key, "");
         assert!(!settings.scrobbling.lastfm.enabled);
+        assert_eq!(settings.scrobbling.lastfm.username, "");
         assert_eq!(settings.scrobbling.lastfm.api_key, "");
         assert_eq!(settings.scrobbling.lastfm.api_secret, "");
         assert_eq!(settings.scrobbling.lastfm.session_key, "");
         assert!(settings.scrobbling.lastfm.now_playing_enabled);
         assert!(!settings.scrobbling.librefm.enabled);
+        assert_eq!(settings.scrobbling.librefm.username, "");
         assert_eq!(settings.scrobbling.librefm.api_key, "rufin");
         assert_eq!(settings.scrobbling.librefm.api_secret, "rufin");
         assert_eq!(settings.scrobbling.librefm.session_key, "");
@@ -1421,6 +1433,29 @@ mod tests {
         assert_eq!(restored.scrobbling.librefm.api_secret, "rufin");
         assert!(!restored.scrobbling.listenbrainz.enabled);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::TrackNumber);
+    }
+
+    #[test]
+    fn settings_share_lastfm_api_key_when_only_one_value_exists() {
+        let mut from_global_key = AppSettings {
+            lastfm_api_key: "global-key".to_string(),
+            ..AppSettings::default()
+        };
+        from_global_key.migrate_defaults();
+        assert_eq!(from_global_key.scrobbling.lastfm.api_key, "global-key");
+
+        let mut from_scrobbling_key = AppSettings {
+            scrobbling: ScrobblingSettings {
+                lastfm: AudioscrobblerScrobbleSettings {
+                    api_key: "scrobble-key".to_string(),
+                    ..AudioscrobblerScrobbleSettings::default()
+                },
+                ..ScrobblingSettings::default()
+            },
+            ..AppSettings::default()
+        };
+        from_scrobbling_key.migrate_defaults();
+        assert_eq!(from_scrobbling_key.lastfm_api_key, "scrobble-key");
     }
 
     #[test]
