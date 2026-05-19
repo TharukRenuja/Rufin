@@ -876,6 +876,23 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    pub fn track_local_match_paths(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<Vec<(TrackId, String)>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT track_id, local_path
+            FROM track_local_matches
+            WHERE server_id = ?1
+            ORDER BY track_id
+            ",
+        )?;
+        collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+            Ok((TrackId::new(row.get::<_, String>(0)?), row.get(1)?))
+        })?)
+    }
+
     pub fn sync_state(&self, server_id: &ServerId) -> StoreResult<SyncState> {
         self.connection
             .query_row(
@@ -5741,6 +5758,12 @@ mod tests {
                 .as_deref(),
             Some("/home/me/Music/Track 1.flac")
         );
+        assert_eq!(
+            store
+                .track_local_match_paths(&saved.server.id)
+                .expect("match paths"),
+            vec![(track_id.clone(), "/home/me/Music/Track 1.flac".to_string())]
+        );
 
         store
             .replace_track_local_matches(&saved.server.id, &[])
@@ -5750,6 +5773,12 @@ mod tests {
                 .track_local_match_path(&saved.server.id, &track_id)
                 .expect("match path"),
             None
+        );
+        assert!(
+            store
+                .track_local_match_paths(&saved.server.id)
+                .expect("match paths")
+                .is_empty()
         );
     }
 

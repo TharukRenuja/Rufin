@@ -393,6 +393,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::LocalAccessStatus;
     use rufin_core::AlbumId;
     use rufin_provider::SearchResults;
 
@@ -426,6 +427,7 @@ mod tests {
             server: None,
             servers: Vec::new(),
             local_access: None,
+            local_access_status: LocalAccessStatus::default(),
             music_folders: Vec::new(),
             selected_music_folder_id: None,
             username: None,

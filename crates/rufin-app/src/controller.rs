@@ -62,6 +62,7 @@ pub struct LibrarySnapshot {
     pub server: Option<ServerIdentity>,
     pub servers: Vec<ServerIdentity>,
     pub local_access: Option<ServerLocalAccess>,
+    pub local_access_status: LocalAccessStatus,
     pub music_folders: Vec<MusicFolder>,
     pub selected_music_folder_id: Option<MusicFolderId>,
     pub username: Option<String>,
@@ -80,6 +81,17 @@ pub struct LibrarySnapshot {
     pub playlists: Vec<Playlist>,
     pub favorites: Vec<Track>,
     pub search: SearchResults,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LocalAccessStatus {
+    pub sample_server_path: Option<String>,
+    pub sample_local_path: Option<String>,
+    pub direct_match_count: usize,
+    pub prefix_match_count: usize,
+    pub metadata_match_count: usize,
+    pub unmatched_count: usize,
+    pub total_track_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +146,7 @@ impl LibrarySnapshot {
             server: None,
             servers: Vec::new(),
             local_access: None,
+            local_access_status: LocalAccessStatus::default(),
             music_folders: Vec::new(),
             selected_music_folder_id: None,
             username: None,
@@ -1699,9 +1712,13 @@ impl AppController {
         server_id: ServerId,
         root_path: PathBuf,
         path_replace_from: Option<String>,
+        path_replace_to: Option<String>,
     ) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let queue = Arc::clone(&self.queue);
+        let playback = Arc::clone(&self.playback);
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(root_path) = root_path.to_str().map(ToString::to_string) else {
@@ -1710,13 +1727,15 @@ impl AppController {
                 ));
                 return;
             };
+            let path_replace_to =
+                trimmed_optional(path_replace_to.as_deref()).unwrap_or_else(|| root_path.clone());
             let matched_server_id = server_id.clone();
             let result = store.with_store(|store| {
                 store.save_server_local_access(&ServerLocalAccess {
                     server_id,
                     root_path: root_path.clone(),
                     path_replace_from: trimmed_optional(path_replace_from.as_deref()),
-                    path_replace_to: Some(root_path),
+                    path_replace_to: Some(path_replace_to),
                 })
             });
             if let Err(error) = result {
@@ -1728,6 +1747,14 @@ impl AppController {
             {
                 warn!(%error, "failed to refresh local track matches");
             }
+            prepare_next_stream_from_handles(
+                store.clone(),
+                Arc::clone(&runtime),
+                Arc::clone(&secrets),
+                Arc::clone(&playback),
+                Arc::clone(&queue),
+                events.clone(),
+            );
             match load_snapshot(&store) {
                 Ok(snapshot) => {
                     let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
@@ -1741,6 +1768,10 @@ impl AppController {
 
     pub fn clear_server_local_access(&self, server_id: ServerId) {
         let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let queue = Arc::clone(&self.queue);
+        let playback = Arc::clone(&self.playback);
         let events = self.events.clone();
         thread::spawn(move || {
             if let Err(error) = store.with_store(|store| {
@@ -1750,6 +1781,14 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
+            prepare_next_stream_from_handles(
+                store.clone(),
+                Arc::clone(&runtime),
+                Arc::clone(&secrets),
+                Arc::clone(&playback),
+                Arc::clone(&queue),
+                events.clone(),
+            );
             match load_snapshot(&store) {
                 Ok(snapshot) => {
                     let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
@@ -2633,62 +2672,14 @@ impl AppController {
     }
 
     fn prepare_next_stream(&self) {
-        let Some((server_id, current_entry_id, next_entry, playback_settings)) =
-            self.next_preload_request()
-        else {
-            let _result = self.send_playback_command(PlaybackCommand::PrepareNext(None));
-            return;
-        };
-
-        let store = self.store.clone();
-        let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
-        let playback = Arc::clone(&self.playback);
-        let queue = Arc::clone(&self.queue);
-        let events = self.events.clone();
-        thread::spawn(move || {
-            let prepared = match resolve_prepared_item(
-                &store,
-                &runtime,
-                &secrets,
-                &server_id,
-                &next_entry,
-                &playback_settings,
-            ) {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
-                    return;
-                }
-            };
-            if !queue_current_matches(&queue, &current_entry_id) {
-                return;
-            }
-            if let Err(error) = playback
-                .lock()
-                .map_err(|_| "playback lock was poisoned".to_string())
-                .and_then(|mut playback| {
-                    playback
-                        .send(PlaybackCommand::PrepareNext(Some(prepared)))
-                        .map_err(|error| error.to_string())
-                })
-            {
-                let _sent = events.send(ControllerEvent::Error(error));
-            }
-        });
-    }
-
-    fn next_preload_request(
-        &self,
-    ) -> Option<(ServerId, QueueEntryId, QueueEntry, PlaybackSettings)> {
-        let playback_settings = self.load_settings().playback;
-        self.queue.lock().ok().and_then(|queue| {
-            let queue = queue.as_ref()?;
-            let server_id = queue.snapshot().server_id;
-            let current_entry_id = queue.current()?.id.clone();
-            let next = next_queue_entry_after_current(queue)?;
-            Some((server_id, current_entry_id, next, playback_settings))
-        })
+        prepare_next_stream_from_handles(
+            self.store.clone(),
+            Arc::clone(&self.runtime),
+            Arc::clone(&self.secrets),
+            Arc::clone(&self.playback),
+            Arc::clone(&self.queue),
+            self.events.clone(),
+        );
     }
 
     fn persist_progress_if_needed(&self, seconds: u32) {
@@ -3264,6 +3255,100 @@ async fn load_all_local_tracks_for_matching(
     }
 }
 
+fn local_access_status_for_server(
+    store: &StoreHandle,
+    server: &ServerIdentity,
+    access: Option<&ServerLocalAccess>,
+) -> Result<LocalAccessStatus, String> {
+    let Some(access) = access else {
+        return Ok(LocalAccessStatus::default());
+    };
+    if server.provider == "local" {
+        return Ok(LocalAccessStatus::default());
+    }
+
+    let remote_tracks =
+        store.with_store(|store| store.load_tracks_for_local_matching(&server.id))?;
+    let metadata_matches = store.with_store(|store| store.track_local_match_paths(&server.id))?;
+    let metadata_by_track = metadata_matches
+        .into_iter()
+        .collect::<HashMap<TrackId, String>>();
+
+    let sample_track = remote_tracks
+        .iter()
+        .find(|track| {
+            track
+                .local_path
+                .as_deref()
+                .is_some_and(|path| !path.trim().is_empty())
+                && metadata_by_track.contains_key(&track.id)
+        })
+        .or_else(|| {
+            remote_tracks.iter().find(|track| {
+                track
+                    .local_path
+                    .as_deref()
+                    .is_some_and(|path| !path.trim().is_empty())
+            })
+        });
+    let sample_server_path = sample_track.and_then(|track| track.local_path.clone());
+    let sample_local_path = sample_track.and_then(|track| {
+        metadata_by_track.get(&track.id).cloned().or_else(|| {
+            track
+                .local_path
+                .as_deref()
+                .and_then(|raw| resolved_local_path_text(raw, access))
+        })
+    });
+
+    let mut effective_matches = HashSet::<TrackId>::new();
+    let mut direct_match_count = 0;
+    let mut prefix_match_count = 0;
+    for track in &remote_tracks {
+        let Some(raw) = track.local_path.as_deref() else {
+            continue;
+        };
+        let direct = PathBuf::from(raw);
+        if direct.is_file() {
+            direct_match_count += 1;
+            effective_matches.insert(track.id.clone());
+            continue;
+        }
+        if map_server_path_to_local(raw, access).is_some_and(|path| path.is_file()) {
+            prefix_match_count += 1;
+            effective_matches.insert(track.id.clone());
+        }
+    }
+
+    let mut metadata_match_count = 0;
+    for (track_id, path) in metadata_by_track {
+        if Path::new(&path).is_file() {
+            metadata_match_count += 1;
+            effective_matches.insert(track_id);
+        }
+    }
+
+    let total_track_count = remote_tracks.len();
+    let unmatched_count = total_track_count.saturating_sub(effective_matches.len());
+    Ok(LocalAccessStatus {
+        sample_server_path,
+        sample_local_path,
+        direct_match_count,
+        prefix_match_count,
+        metadata_match_count,
+        unmatched_count,
+        total_track_count,
+    })
+}
+
+fn resolved_local_path_text(raw: &str, access: &ServerLocalAccess) -> Option<String> {
+    let direct = PathBuf::from(raw);
+    if direct.is_file() {
+        return Some(direct.to_string_lossy().into_owned());
+    }
+    map_server_path_to_local(raw, access).map(|path| path.to_string_lossy().into_owned())
+}
+
 #[derive(Hash, Eq, PartialEq)]
 struct LocalMatchKey {
     title: String,
@@ -3575,6 +3660,8 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         return Ok(snapshot);
     };
     let local_access = store.with_store(|store| store.server_local_access(&saved.server.id))?;
+    let local_access_status =
+        local_access_status_for_server(store, &saved.server, local_access.as_ref())?;
     let music_folders = store.with_store(|store| store.list_music_folders(&saved.server.id))?;
     let selected_music_folder_id =
         store.with_store(|store| store.selected_music_folder_id(&saved.server.id))?;
@@ -3638,6 +3725,7 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         server: Some(saved.server),
         servers,
         local_access,
+        local_access_status,
         music_folders,
         selected_music_folder_id,
         username: Some(saved.username),
@@ -4017,6 +4105,77 @@ fn resolve_prepared_item(
     Ok(prepared_item_from_entry(entry, stream))
 }
 
+fn prepare_next_stream_from_handles(
+    store: StoreHandle,
+    runtime: Arc<Runtime>,
+    secrets: Arc<dyn SecretStore>,
+    playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    queue: Arc<Mutex<Option<QueueEngine>>>,
+    events: Sender<ControllerEvent>,
+) {
+    let playback_settings = load_settings_from_store(&store).playback;
+    let Some((server_id, current_entry_id, next_entry, playback_settings)) =
+        next_preload_request_from_queue(&queue, playback_settings)
+    else {
+        if let Err(error) = playback
+            .lock()
+            .map_err(|_| "playback lock was poisoned".to_string())
+            .and_then(|mut playback| {
+                playback
+                    .send(PlaybackCommand::PrepareNext(None))
+                    .map_err(|error| error.to_string())
+            })
+        {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+        return;
+    };
+
+    thread::spawn(move || {
+        let prepared = match resolve_prepared_item(
+            &store,
+            &runtime,
+            &secrets,
+            &server_id,
+            &next_entry,
+            &playback_settings,
+        ) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+        };
+        if !queue_current_matches(&queue, &current_entry_id) {
+            return;
+        }
+        if let Err(error) = playback
+            .lock()
+            .map_err(|_| "playback lock was poisoned".to_string())
+            .and_then(|mut playback| {
+                playback
+                    .send(PlaybackCommand::PrepareNext(Some(prepared)))
+                    .map_err(|error| error.to_string())
+            })
+        {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+    });
+}
+
+fn next_preload_request_from_queue(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback_settings: PlaybackSettings,
+) -> Option<(ServerId, QueueEntryId, QueueEntry, PlaybackSettings)> {
+    queue.lock().ok().and_then(|queue| {
+        let queue = queue.as_ref()?;
+        let server_id = queue.snapshot().server_id;
+        let current_entry_id = queue.current()?.id.clone();
+        let next = next_queue_entry_after_current(queue)?;
+        Some((server_id, current_entry_id, next, playback_settings))
+    })
+}
+
 fn resolve_stream(
     store: &StoreHandle,
     runtime: &Runtime,
@@ -4385,7 +4544,7 @@ fn map_server_path_to_local(raw: &str, access: &ServerLocalAccess) -> Option<Pat
     }
     let raw_path = Path::new(raw);
     if raw_path.is_relative() {
-        return Some(PathBuf::from(&access.root_path).join(raw_path));
+        return Some(PathBuf::from(replace_to).join(raw_path));
     }
     None
 }
@@ -5492,6 +5651,53 @@ mod tests {
     }
 
     #[test]
+    fn local_access_changes_reprepare_next_stream_for_backend() {
+        let (controller, _events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        *controller.playback.lock().expect("playback") =
+            Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+        let server_id = snapshot.server.as_ref().expect("server").id.clone();
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+
+        controller.play_tracks_now(vec![first, second.clone()]);
+        let _play = wait_for_recorded_command(&commands, |command| {
+            matches!(command, PlaybackCommand::PlayPrepared { .. })
+        });
+        commands.lock().expect("commands").clear();
+
+        let root = unique_test_dir("reprepare-local-access");
+        fs::create_dir_all(&root).expect("create root");
+        controller.save_server_local_access(
+            server_id.clone(),
+            root.clone(),
+            Some("/server/music".to_string()),
+            Some(root.to_string_lossy().into_owned()),
+        );
+
+        let command = wait_for_recorded_command(&commands, |command| {
+            matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+        });
+        let PlaybackCommand::PrepareNext(Some(item)) = command else {
+            panic!("expected prepared next command");
+        };
+        assert_eq!(item.track.id, second.id);
+        commands.lock().expect("commands").clear();
+
+        controller.clear_server_local_access(server_id);
+
+        let command = wait_for_recorded_command(&commands, |command| {
+            matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+        });
+        let PlaybackCommand::PrepareNext(Some(item)) = command else {
+            panic!("expected prepared next command");
+        };
+        assert_eq!(item.track.id, second.id);
+        let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn activate_queue_entry_starts_selected_track() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
@@ -6401,6 +6607,112 @@ mod tests {
 
         assert!(stream.uri().starts_with("file://"));
         assert!(stream.uri().contains("Track.flac"));
+        let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relative_local_audio_path_uses_configured_local_prefix() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = self::saved_server();
+        let scan_root = self::unique_test_dir("relative-scan-root");
+        let local_root = self::unique_test_dir("relative-local-prefix");
+        let audio = local_root.join("Album/Track.flac");
+        fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
+        fs::write(&audio, []).expect("audio");
+        let generation = store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.save_server_local_access(&ServerLocalAccess {
+                    server_id: saved.server.id.clone(),
+                    root_path: scan_root.to_string_lossy().into_owned(),
+                    path_replace_from: None,
+                    path_replace_to: Some(local_root.to_string_lossy().into_owned()),
+                })?;
+                store.begin_sync(&saved.server.id)
+            })
+            .expect("begin sync");
+        let mut track = restored_track();
+        track.local_path = Some("Album/Track.flac".to_string());
+        store
+            .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+            .expect("upsert track");
+
+        let mapped = super::local_audio_path_for_track(&store, &saved.server.id, &track.id)
+            .expect("mapped path");
+
+        assert_eq!(mapped, audio);
+        let _cleanup = fs::remove_dir_all(scan_root);
+        let _cleanup = fs::remove_dir_all(local_root);
+    }
+
+    #[test]
+    fn snapshot_local_access_status_counts_direct_prefix_metadata_and_unmatched() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let saved = self::saved_server();
+        let root = self::unique_test_dir("local-access-status");
+        let local_prefix = root.join("mapped");
+        let direct_audio = root.join("Direct.flac");
+        let prefix_audio = local_prefix.join("Album/Mapped.flac");
+        let metadata_audio = root.join("Metadata.flac");
+        fs::create_dir_all(prefix_audio.parent().expect("parent")).expect("create mapped dir");
+        fs::write(&direct_audio, []).expect("direct audio");
+        fs::write(&prefix_audio, []).expect("prefix audio");
+        fs::write(&metadata_audio, []).expect("metadata audio");
+        let generation = store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.save_server_local_access(&ServerLocalAccess {
+                    server_id: saved.server.id.clone(),
+                    root_path: root.to_string_lossy().into_owned(),
+                    path_replace_from: Some("/server/music".to_string()),
+                    path_replace_to: Some(local_prefix.to_string_lossy().into_owned()),
+                })?;
+                store.begin_sync(&saved.server.id)
+            })
+            .expect("begin sync");
+        let mut direct = restored_track();
+        direct.id = TrackId::new("jellyfin:track:direct");
+        direct.title = "Direct".to_string();
+        direct.local_path = Some(direct_audio.to_string_lossy().into_owned());
+        let mut prefix = restored_track();
+        prefix.id = TrackId::new("jellyfin:track:prefix");
+        prefix.title = "Prefix".to_string();
+        prefix.local_path = Some("/server/music/Album/Mapped.flac".to_string());
+        let mut metadata = restored_track();
+        metadata.id = TrackId::new("jellyfin:track:metadata");
+        metadata.title = "Metadata".to_string();
+        let mut unmatched = restored_track();
+        unmatched.id = TrackId::new("jellyfin:track:unmatched");
+        unmatched.title = "Unmatched".to_string();
+        unmatched.local_path = Some("/server/music/Album/Missing.flac".to_string());
+        store
+            .with_store(|store| {
+                store.upsert_tracks(
+                    &saved.server.id,
+                    &[direct, prefix, metadata.clone(), unmatched],
+                    generation,
+                )?;
+                store.replace_track_local_matches(
+                    &saved.server.id,
+                    &[(
+                        metadata.id.clone(),
+                        metadata_audio.to_string_lossy().into_owned(),
+                        "metadata".to_string(),
+                    )],
+                )
+            })
+            .expect("seed tracks");
+
+        let snapshot = super::load_snapshot(&store).expect("load snapshot");
+
+        assert_eq!(snapshot.local_access_status.total_track_count, 4);
+        assert_eq!(snapshot.local_access_status.direct_match_count, 1);
+        assert_eq!(snapshot.local_access_status.prefix_match_count, 1);
+        assert_eq!(snapshot.local_access_status.metadata_match_count, 1);
+        assert_eq!(snapshot.local_access_status.unmatched_count, 1);
+        assert!(snapshot.local_access_status.sample_server_path.is_some());
         let _cleanup = fs::remove_dir_all(root);
     }
 

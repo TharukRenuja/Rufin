@@ -91,14 +91,27 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Music Folder");
     let _ = tr("No folder selected");
     let _ = tr("Choose");
-    let _ = tr("Local Folder Access");
-    let _ = tr(
-        "Optional, match server paths to local files to export found lyrics and play from your folders directly",
-    );
+    let _ = tr("Local Playback Access");
+    let _ = tr("Optional. Map server tracks to local files on this computer.");
+    let _ = tr("Optionally map server tracks to files on this computer.");
     let _ = tr("Local Folder");
-    let _ = tr("Server Path Prefix");
+    let _ = tr("Server Prefix");
+    let _ = tr("Local Prefix");
+    let _ = tr("Server Sample");
+    let _ = tr("No cached server path yet");
+    let _ = tr("Mapped Local Path");
+    let _ = tr("Server sample does not match the server prefix.");
+    let _ = tr("Enter a matching server prefix to map this path.");
+    let _ = tr("Save to rescan this local library.");
+    let _ = tr("Local library folder is saved.");
+    let _ = tr("Choose a local prefix.");
+    let _ = tr("Enter a local prefix.");
+    let _ = tr("Save to apply this mapping after the next sync.");
+    let _ = tr("No cached tracks yet. Sync the server to preview matches.");
+    let _ = tr("Unsaved changes.");
+    let _ = tr("Saved mapping.");
     let _ = tr("Select Music Folder");
-    let _ = tr("Choose a local music folder");
+    let _ = tr("Choose a local music folder.");
     let _ = tr("Server Address");
     let _ = tr("Trust invalid certificates");
     let _ = tr("Only use this for a server you control");
