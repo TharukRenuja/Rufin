@@ -3375,19 +3375,22 @@ fn start_home_refresh_thread(
         }
         match result {
             Ok(snapshot) => {
-                let event = match target {
-                    HomeRefreshTarget::WithoutExplore => {
-                        ControllerEvent::HomeSectionsUpdated(snapshot)
-                    }
-                    HomeRefreshTarget::Section(_) => ControllerEvent::Snapshot(snapshot),
-                };
-                let _sent = context.events.send(event);
+                let _sent = context
+                    .events
+                    .send(home_refresh_completed_event(target, snapshot));
             }
             Err(error) => {
                 warn!(%error, "failed to refresh home sections");
             }
         }
     });
+}
+
+fn home_refresh_completed_event(
+    _target: HomeRefreshTarget,
+    snapshot: Box<LibrarySnapshot>,
+) -> ControllerEvent {
+    ControllerEvent::HomeSectionsUpdated(snapshot)
 }
 
 fn start_explore_prefetch_thread(context: ExplorePrefetchContext, saved: SavedServer) {
@@ -5561,10 +5564,10 @@ mod tests {
         AppController, ControllerEvent, DATABASE_FILE_NAME, LOCAL_SOURCE_SERVER_ID,
         LibrarySnapshot, PendingSeek, RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME,
         SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle, auto_dj_candidates,
-        load_settings_from_store, load_snapshot, playback_snapshot_from_queue,
-        prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
-        refresh_home_sections, refresh_home_sections_without_explore, restore_queue,
-        seek_position_is_stale, sync_page_finished, sync_provider,
+        home_refresh_completed_event, load_settings_from_store, load_snapshot,
+        playback_snapshot_from_queue, prefetch_home_section, promote_prefetched_home_section,
+        refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
+        restore_queue, seek_position_is_stale, sync_page_finished, sync_provider,
     };
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
@@ -6164,6 +6167,16 @@ mod tests {
         };
         expected_track.artist_credits = vec![expected_credit];
         assert_eq!(after[1].tracks, vec![expected_track]);
+    }
+
+    #[test]
+    fn home_section_refresh_uses_home_update_event() {
+        let event = home_refresh_completed_event(
+            super::HomeRefreshTarget::Section(HomeSectionKind::MostPlayed),
+            Box::new(LibrarySnapshot::first_run()),
+        );
+
+        assert!(matches!(event, ControllerEvent::HomeSectionsUpdated(_)));
     }
 
     #[test]

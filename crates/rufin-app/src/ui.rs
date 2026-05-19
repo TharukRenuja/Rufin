@@ -135,6 +135,7 @@ struct AppState {
     responsive_render_queued: Cell<bool>,
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
+    home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
     home_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
@@ -181,6 +182,14 @@ struct ArtworkTile {
 struct HomeSectionState {
     page_start: usize,
     page_size: usize,
+}
+
+#[derive(Clone)]
+struct HomeSectionView {
+    root: gtk::Widget,
+    row: gtk::Box,
+    previous: gtk::Button,
+    next: gtk::Button,
 }
 
 #[derive(Clone)]
@@ -388,6 +397,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         responsive_render_queued: Cell::new(false),
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
+        home_section_views: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
         home_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
@@ -977,6 +987,110 @@ fn reset_home_section_pages(states: &mut HashMap<HomeSectionKind, HomeSectionSta
 }
 
 impl Shell {
+    fn register_home_section_view(
+        &self,
+        section_kind: HomeSectionKind,
+        root: &gtk::Box,
+        row: &gtk::Box,
+        previous: &gtk::Button,
+        next: &gtk::Button,
+    ) {
+        if !matches!(self.state.routes.borrow().current(), Route::Home) {
+            return;
+        }
+
+        self.state.home_section_views.borrow_mut().insert(
+            section_kind,
+            HomeSectionView {
+                root: root.clone().upcast::<gtk::Widget>(),
+                row: row.clone(),
+                previous: previous.clone(),
+                next: next.clone(),
+            },
+        );
+    }
+
+    fn refresh_visible_home_section(
+        self: &Rc<Self>,
+        section_kind: HomeSectionKind,
+        sections: &[HomeSection],
+    ) {
+        if !matches!(self.state.routes.borrow().current(), Route::Home) {
+            return;
+        }
+
+        if let Some(section) = sections.iter().find(|section| section.kind == section_kind) {
+            self.render_visible_home_section(section);
+        } else {
+            self.hide_visible_home_section(section_kind);
+        }
+    }
+
+    fn refresh_visible_home_sections(self: &Rc<Self>, sections: &[HomeSection]) {
+        if !matches!(self.state.routes.borrow().current(), Route::Home) {
+            return;
+        }
+
+        let section_kinds = self
+            .state
+            .home_section_views
+            .borrow()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for section_kind in section_kinds {
+            self.refresh_visible_home_section(section_kind, sections);
+        }
+    }
+
+    fn render_visible_home_section(self: &Rc<Self>, section: &HomeSection) -> bool {
+        let view = self
+            .state
+            .home_section_views
+            .borrow()
+            .get(&section.kind)
+            .cloned();
+        let Some(view) = view else {
+            return false;
+        };
+
+        view.root.set_visible(true);
+        if !section.tracks.is_empty() {
+            cards::render_home_track_page(
+                self,
+                &view.row,
+                &view.previous,
+                &view.next,
+                section.kind,
+                &section.tracks,
+            );
+        } else {
+            cards::render_home_album_page(
+                self,
+                &view.row,
+                &view.previous,
+                &view.next,
+                section.kind,
+                &section.albums,
+            );
+        }
+        true
+    }
+
+    fn hide_visible_home_section(&self, section_kind: HomeSectionKind) -> bool {
+        let view = self
+            .state
+            .home_section_views
+            .borrow()
+            .get(&section_kind)
+            .cloned();
+        let Some(view) = view else {
+            return false;
+        };
+        view.root.set_visible(false);
+        true
+    }
+
     fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
         let previous = self.state.routes.borrow().current().clone();
@@ -1168,15 +1282,16 @@ impl Shell {
             return false;
         }
 
+        let section = prefetched.section.clone();
         {
             let mut library = self.state.library.borrow_mut();
-            upsert_snapshot_home_section(&mut library.home_sections, prefetched.section.clone());
+            upsert_snapshot_home_section(&mut library.home_sections, section.clone());
         }
         reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
         self.controller
-            .promote_prefetched_explore_for_active(prefetched.section);
+            .promote_prefetched_explore_for_active(section.clone());
         if render_current_route {
-            self.render_current_route_preserving_scroll();
+            self.refresh_visible_home_section(section.kind, std::slice::from_ref(&section));
         }
         true
     }
@@ -1470,6 +1585,7 @@ impl Shell {
 
     fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
+        self.state.home_section_views.borrow_mut().clear();
         clear_favorite_controls(&self.state.favorite_controls);
         while let Some(child) = self.route_host.first_child() {
             self.route_host.remove(&child);
@@ -3398,10 +3514,12 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                 ControllerEvent::HomeSectionsUpdated(snapshot) => {
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
-                    reset_home_section_pages(&mut shell.state.home_section_state.borrow_mut());
-                    *shell.state.library.borrow_mut() = *snapshot;
+                    let snapshot = *snapshot;
+                    let sections = snapshot.home_sections.clone();
+                    *shell.state.library.borrow_mut() = snapshot;
                     shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
                     shell.update_server_selector();
+                    shell.refresh_visible_home_sections(&sections);
                 }
                 ControllerEvent::HomeSectionPrefetched { server_id, section } => {
                     let active_server_id = shell

@@ -302,7 +302,6 @@ impl Shell {
         });
 
         let shell = Rc::clone(self);
-        let albums_for_next = albums.clone();
         next.connect_clicked(move |_| {
             let mut states = shell.state.home_section_state.borrow_mut();
             let state = states.entry(section_kind).or_insert(HomeSectionState {
@@ -310,7 +309,16 @@ impl Shell {
                 page_size: 2,
             });
             let next_page = state.page_start.saturating_add(state.page_size);
-            if next_page < albums_for_next.len() {
+            let album_count = shell
+                .state
+                .library
+                .borrow()
+                .home_sections
+                .iter()
+                .find(|section| section.kind == section_kind)
+                .map(|section| section.albums.len())
+                .unwrap_or(0);
+            if next_page < album_count {
                 state.page_start = next_page;
             }
             drop(states);
@@ -322,6 +330,7 @@ impl Shell {
             shell.refresh_home_section(section_kind);
         });
 
+        self.register_home_section_view(section_kind, &section, &row, &previous, &next);
         render_home_album_page(self, &row, &previous, &next, section_kind, &albums);
         section.upcast()
     }
@@ -365,7 +374,6 @@ impl Shell {
         });
 
         let shell = Rc::clone(self);
-        let tracks_for_next = tracks.clone();
         next.connect_clicked(move |_| {
             let mut states = shell.state.home_section_state.borrow_mut();
             let state = states.entry(section_kind).or_insert(HomeSectionState {
@@ -373,7 +381,16 @@ impl Shell {
                 page_size: 2,
             });
             let next_page = state.page_start.saturating_add(state.page_size);
-            if next_page < tracks_for_next.len() {
+            let track_count = shell
+                .state
+                .library
+                .borrow()
+                .home_sections
+                .iter()
+                .find(|section| section.kind == section_kind)
+                .map(|section| section.tracks.len())
+                .unwrap_or(0);
+            if next_page < track_count {
                 state.page_start = next_page;
             }
             drop(states);
@@ -385,6 +402,7 @@ impl Shell {
             shell.refresh_home_section(section_kind);
         });
 
+        self.register_home_section_view(section_kind, &section, &row, &previous, &next);
         render_home_track_page(self, &row, &previous, &next, section_kind, &tracks);
         section.upcast()
     }
