@@ -2,7 +2,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{MusicFolder, MusicFolderId, Route, ServerIdentity};
+use rufin_core::{MusicFolder, MusicFolderId, Route, ServerIdentity, SidebarRouteItem};
 use rufin_store::ServerLocalAccess;
 
 use super::{Shell, icon_button, layout::COMPACT_RAIL_WIDTH};
@@ -141,7 +141,7 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
     heading.set_margin_top(8);
     shell.normal_nav.append(&heading);
 
-    for item in nav_items() {
+    for item in nav_items(shell) {
         shell.normal_nav.append(&nav_button(
             shell,
             item.icon_name,
@@ -155,15 +155,17 @@ pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
     spacer.set_vexpand(true);
     shell.normal_nav.append(&spacer);
 
-    shell
-        .normal_nav
-        .append(&shell.server_selector.normal_button);
+    if shell.state.settings.borrow().sidebar.server_visible {
+        shell
+            .normal_nav
+            .append(&shell.server_selector.normal_button);
+    }
 }
 
 pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
     shell.compact_nav.append(&compact_history_controls(shell));
 
-    for item in nav_items() {
+    for item in nav_items(shell) {
         shell.compact_nav.append(&rail_button(
             shell,
             item.icon_name,
@@ -174,9 +176,25 @@ pub(super) fn build_compact_navigation(shell: &Rc<Shell>) {
     let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     spacer.set_vexpand(true);
     shell.compact_nav.append(&spacer);
-    shell
-        .compact_nav
-        .append(&shell.server_selector.compact_button);
+    if shell.state.settings.borrow().sidebar.server_visible {
+        shell
+            .compact_nav
+            .append(&shell.server_selector.compact_button);
+    }
+}
+
+pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
+    clear_box(&shell.normal_nav);
+    clear_box(&shell.compact_nav);
+    build_normal_navigation(shell);
+    build_compact_navigation(shell);
+    shell.update_server_selector();
+}
+
+fn clear_box(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
 }
 
 fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
@@ -562,49 +580,62 @@ struct NavItem {
     route: Route,
 }
 
-fn nav_items() -> Vec<NavItem> {
-    vec![
-        NavItem {
+fn nav_items(shell: &Shell) -> Vec<NavItem> {
+    shell
+        .state
+        .settings
+        .borrow()
+        .sidebar
+        .route_items
+        .iter()
+        .filter(|entry| entry.visible)
+        .map(|entry| nav_item(entry.item))
+        .collect()
+}
+
+fn nav_item(item: SidebarRouteItem) -> NavItem {
+    match item {
+        SidebarRouteItem::Home => NavItem {
             icon_name: "go-home-symbolic",
             label: "Home",
             route: Route::Home,
         },
-        NavItem {
+        SidebarRouteItem::Favorites => NavItem {
             icon_name: "starred-symbolic",
             label: "Favorites",
             route: Route::Favorites,
         },
-        NavItem {
+        SidebarRouteItem::Albums => NavItem {
             icon_name: "media-optical-symbolic",
             label: "Albums",
             route: Route::Albums,
         },
-        NavItem {
+        SidebarRouteItem::Tracks => NavItem {
             icon_name: "audio-x-generic-symbolic",
             label: "Tracks",
             route: Route::Tracks,
         },
-        NavItem {
-            icon_name: "avatar-default-symbolic",
-            label: "Album Artists",
-            route: Route::AlbumArtists,
-        },
-        NavItem {
+        SidebarRouteItem::Artists => NavItem {
             icon_name: "system-users-symbolic",
             label: "Artists",
             route: Route::Artists,
         },
-        NavItem {
+        SidebarRouteItem::AlbumArtists => NavItem {
+            icon_name: "avatar-default-symbolic",
+            label: "Album Artists",
+            route: Route::AlbumArtists,
+        },
+        SidebarRouteItem::Genres => NavItem {
             icon_name: "flag-symbolic",
             label: "Genres",
             route: Route::Genres,
         },
-        NavItem {
+        SidebarRouteItem::Playlists => NavItem {
             icon_name: "media-playlist-consecutive-symbolic",
             label: "Playlists",
             route: Route::Playlists,
         },
-    ]
+    }
 }
 
 fn nav_button(

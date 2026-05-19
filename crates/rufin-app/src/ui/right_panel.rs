@@ -3,25 +3,18 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
-use rufin_core::EffectiveDensity;
+use rufin_core::RightSidebarMode;
 
 use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
 
-use super::{
-    Shell, icon_button,
-    layout::{
-        MIN_RESTORED_WINDOW_HEIGHT, clamp_content_split_position_for_density,
-        content_split_initial_position_for_density, update_right_panel_split_settings,
-    },
-    player::BOTTOM_PLAYER_HEIGHT,
-};
+use super::{Shell, icon_button, layout::MIN_RESTORED_WINDOW_HEIGHT, player::BOTTOM_PLAYER_HEIGHT};
 
 const QUEUE_LYRICS_MIN_PANE_HEIGHT: i32 = 120;
 const QUEUE_LYRICS_READY_MIN_HEIGHT: i32 = QUEUE_LYRICS_MIN_PANE_HEIGHT * 3;
 const QUEUE_LYRICS_DEFAULT_QUEUE_UNITS: i32 = 5;
 const QUEUE_LYRICS_DEFAULT_LYRICS_UNITS: i32 = 2;
-const QUEUE_LYRICS_FALLBACK_WINDOW_HEIGHT: i32 = 900;
+const QUEUE_LYRICS_FALLBACK_HEIGHT: i32 = 900 - BOTTOM_PLAYER_HEIGHT - 48;
 
 pub(super) struct RightPanelParts {
     pub(super) root: gtk::Box,
@@ -35,6 +28,7 @@ pub(super) struct RightPanelParts {
 pub(super) fn build_right_panel() -> RightPanelParts {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("right-panel");
+    root.set_hexpand(true);
     root.set_vexpand(true);
 
     let queue_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -90,28 +84,6 @@ pub(super) fn build_right_panel() -> RightPanelParts {
 }
 
 impl Shell {
-    pub(super) fn right_panel_density(&self) -> EffectiveDensity {
-        self.state.effective_density.get()
-    }
-
-    pub(super) fn right_panel_split_position_for(&self, density: EffectiveDensity) -> i32 {
-        match density {
-            EffectiveDensity::Normal => self.state.normal_split_position.get(),
-            EffectiveDensity::Compact => self.state.compact_split_position.get(),
-        }
-    }
-
-    pub(super) fn set_right_panel_split_position_for(
-        &self,
-        density: EffectiveDensity,
-        position: i32,
-    ) {
-        match density {
-            EffectiveDensity::Normal => self.state.normal_split_position.set(position),
-            EffectiveDensity::Compact => self.state.compact_split_position.set(position),
-        }
-    }
-
     fn save_queue_lyrics_split_position(&self, available_height: i32, position: i32) {
         if !self.state.lyrics_panel_visible.get()
             || self.state.queue_lyrics_position_save_suppressed.get() > 0
@@ -145,26 +117,6 @@ impl Shell {
         );
     }
 
-    pub(super) fn save_right_panel_split_position(&self, split_width: i32, position: i32) {
-        if !self.state.right_panel_visible.get() {
-            return;
-        }
-        let density = self.right_panel_density();
-        self.update_app_settings("right panel split position", |settings| {
-            update_right_panel_split_settings(settings, split_width, position, density)
-        });
-    }
-
-    pub(super) fn save_right_panel_visibility(&self, visible: bool) {
-        self.update_app_settings("right panel visibility", |settings| {
-            if settings.right_panel_visible == visible {
-                return false;
-            }
-            settings.right_panel_visible = visible;
-            true
-        });
-    }
-
     fn save_lyrics_panel_visibility(&self, visible: bool) {
         self.update_app_settings("lyrics panel visibility", |settings| {
             if settings.lyrics_panel_visible == visible {
@@ -175,56 +127,43 @@ impl Shell {
         });
     }
 
-    pub(super) fn remember_right_panel_open_position(&self) {
-        let split_width = self.content_split.width();
-        if split_width <= 1 {
-            return;
-        }
-        let current_position = self.content_split.position();
-        if current_position <= 1 || current_position >= split_width {
-            return;
-        }
-        let density = self.right_panel_density();
-        let position =
-            clamp_content_split_position_for_density(split_width, current_position, density);
-        self.set_right_panel_split_position_for(density, position);
-        self.save_right_panel_split_position(split_width, position);
-    }
-
-    pub(super) fn right_panel_open_position(&self, split_width: i32) -> i32 {
-        let density = self.right_panel_density();
-        let stored = self.right_panel_split_position_for(density);
-        let target = if stored > 1 && stored < split_width {
-            stored
-        } else {
-            let saved_ratio =
-                super::layout::right_panel_saved_ratio(&self.state.settings.borrow(), density);
-            content_split_initial_position_for_density(split_width, saved_ratio, density)
-        };
-        clamp_content_split_position_for_density(split_width, target, density)
-    }
-
     pub(super) fn toggle_right_panel(self: &Rc<Self>) {
-        self.set_right_panel_visible(!self.state.right_panel_visible.get());
+        let visible = self.state.resolved_right_sidebar.get().is_visible();
+        self.set_right_sidebar_visible(!visible);
     }
 
-    pub(super) fn set_right_panel_visible(self: &Rc<Self>, visible: bool) {
-        if !visible {
-            self.remember_right_panel_open_position();
-        }
-
-        if self.state.right_panel_visible.replace(visible) == visible {
-            self.update_right_panel_button();
-            return;
-        }
-
-        self.save_right_panel_visibility(visible);
-        self.update_right_panel_button();
-        apply_right_panel_visibility(Rc::clone(self), visible);
+    pub(super) fn set_right_sidebar_visible(self: &Rc<Self>, visible: bool) {
+        let active_profile = super::layout::resolve_layout(
+            &self.state.settings.borrow().layout,
+            self.layout_width(),
+        )
+        .profile;
+        self.update_app_settings("right sidebar setting", |settings| {
+            let profile = match active_profile {
+                super::layout::ActiveLayoutProfile::Default => &mut settings.layout.default_profile,
+                super::layout::ActiveLayoutProfile::Narrow => &mut settings.layout.narrow_profile,
+            };
+            if visible {
+                if profile.right_sidebar.is_visible() {
+                    return false;
+                }
+                profile.right_sidebar = profile.last_visible_right_sidebar;
+            } else {
+                if !profile.right_sidebar.is_visible() {
+                    return false;
+                }
+                profile.last_visible_right_sidebar = profile.right_sidebar;
+                profile.right_sidebar = RightSidebarMode::Hidden;
+            }
+            settings.layout.sanitize();
+            true
+        });
+        self.update_layout();
+        self.render_responsive_route_now();
     }
 
     pub(super) fn update_right_panel_button(&self) {
-        let visible = self.state.right_panel_visible.get();
+        let visible = self.state.resolved_right_sidebar.get().is_visible();
         let label = tr(if visible {
             "Hide sidebar"
         } else {
@@ -242,14 +181,14 @@ impl Shell {
     }
 
     pub(super) fn toggle_lyrics_panel(self: &Rc<Self>) {
-        let visible =
-            !self.state.right_panel_visible.get() || !self.state.lyrics_panel_visible.get();
+        let visible = !self.state.resolved_right_sidebar.get().is_visible()
+            || !self.state.lyrics_panel_visible.get();
         self.set_lyrics_panel_visible(visible);
     }
 
     pub(super) fn set_lyrics_panel_visible(self: &Rc<Self>, visible: bool) {
-        if visible && !self.state.right_panel_visible.get() {
-            self.set_right_panel_visible(true);
+        if visible && !self.state.resolved_right_sidebar.get().is_visible() {
+            self.set_right_sidebar_visible(true);
         }
         if !visible {
             self.remember_queue_lyrics_open_position();
@@ -279,7 +218,7 @@ impl Shell {
             .remove_css_class("active-toggle");
         self.player_controls
             .lyrics_button
-            .set_visible(self.state.right_panel_visible.get());
+            .set_visible(self.state.resolved_right_sidebar.get().is_visible());
         self.player_controls
             .lyrics_button
             .set_tooltip_text(Some(&label));
@@ -330,29 +269,6 @@ pub(super) fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
         });
 }
 
-pub(super) fn apply_right_panel_visibility(shell: Rc<Shell>, visible: bool) {
-    let panel = shell.right_panel.clone();
-    if panel.parent().is_none() {
-        shell.content_split.set_end_child(Some(&panel));
-    }
-
-    let split_width = shell.content_split.width();
-    panel.set_visible(visible);
-    panel.set_opacity(if visible { 1.0 } else { 0.0 });
-
-    if split_width > 1 {
-        let position = if visible {
-            shell.right_panel_open_position(split_width)
-        } else {
-            split_width
-        };
-        shell.content_split.set_position(position);
-    }
-
-    shell.update_content_split();
-    shell.render_responsive_route_now();
-}
-
 pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
     let suppress_save = Rc::clone(&shell.state.queue_lyrics_position_save_suppressed);
     suppress_save.set(suppress_save.get().saturating_add(1));
@@ -383,14 +299,7 @@ fn queue_lyrics_available_height(shell: &Shell) -> i32 {
     if window_height > MIN_RESTORED_WINDOW_HEIGHT {
         return (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2);
     }
-    let restored_height = shell
-        .state
-        .settings
-        .borrow()
-        .window_height
-        .filter(|height| *height >= MIN_RESTORED_WINDOW_HEIGHT)
-        .unwrap_or(QUEUE_LYRICS_FALLBACK_WINDOW_HEIGHT);
-    (restored_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2)
+    QUEUE_LYRICS_FALLBACK_HEIGHT.max(QUEUE_LYRICS_MIN_PANE_HEIGHT * 2)
 }
 
 pub(super) fn clamp_queue_lyrics_position(available_height: i32, position: i32) -> i32 {

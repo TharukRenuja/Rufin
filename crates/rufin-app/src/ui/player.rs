@@ -20,8 +20,8 @@ use super::{
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
 const BOTTOM_PLAYER_COVER_SIZE: i32 = 72;
-const BOTTOM_PLAYER_IDENTITY_WIDTH: i32 = 150;
-const BOTTOM_PLAYER_IDENTITY_MAX_CHARS: i32 = 18;
+const BOTTOM_PLAYER_HORIZONTAL_PADDING: i32 = 8;
+const BOTTOM_PLAYER_NOW_PLAYING_SPACING: i32 = 12;
 const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 420;
 const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 320;
 const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 58;
@@ -40,7 +40,7 @@ const BOTTOM_PLAYER_RIGHT_EDGE_GAP: i32 = 8;
 const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 18;
 
 pub(super) struct PlayerControls {
-    pub(super) root: gtk::Overlay,
+    pub(super) root: gtk::CenterBox,
     pub(super) cover: ArtworkTile,
     pub(super) cover_key: RefCell<Option<String>>,
     pub(super) title: gtk::Label,
@@ -250,16 +250,14 @@ impl Shell {
 }
 
 pub(super) fn build_bottom_player() -> PlayerControls {
-    let root = gtk::Overlay::new();
+    let root = gtk::CenterBox::new();
     root.add_css_class("bottom-player");
+    root.set_orientation(gtk::Orientation::Horizontal);
+    root.set_shrink_center_last(true);
     root.set_hexpand(true);
     root.set_vexpand(false);
     root.set_height_request(BOTTOM_PLAYER_HEIGHT);
     root.set_valign(gtk::Align::Center);
-
-    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    bar.set_hexpand(true);
-    bar.set_valign(gtk::Align::Center);
 
     let NowPlayingControls {
         root: now_playing,
@@ -268,7 +266,6 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         artist,
         album,
     } = build_now_playing_controls();
-    bar.append(&now_playing);
 
     let TransportControls {
         root: transport,
@@ -286,9 +283,13 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         duration,
     } = build_transport_controls();
 
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    bar.append(&spacer);
+    let now_playing_wall = gtk::ScrolledWindow::new();
+    now_playing_wall.add_css_class("player-now-playing-wall");
+    now_playing_wall.set_hexpand(true);
+    now_playing_wall.set_vexpand(false);
+    now_playing_wall.set_valign(gtk::Align::Center);
+    configure_player_wall(&now_playing_wall);
+    now_playing_wall.set_child(Some(&now_playing));
 
     let PlayerActionControls {
         root: actions,
@@ -303,7 +304,6 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         mute_icon,
         volume,
     } = build_player_action_controls();
-    bar.append(&actions);
 
     let transport_slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     transport_slot.set_width_request(BOTTOM_PLAYER_TRANSPORT_WIDTH);
@@ -311,8 +311,9 @@ pub(super) fn build_bottom_player() -> PlayerControls {
     transport_slot.set_valign(gtk::Align::Center);
     transport_slot.append(&transport);
 
-    root.set_child(Some(&bar));
-    root.add_overlay(&transport_slot);
+    root.set_start_widget(Some(&now_playing_wall));
+    root.set_center_widget(Some(&transport_slot));
+    root.set_end_widget(Some(&actions));
 
     PlayerControls {
         root,
@@ -347,9 +348,14 @@ pub(super) fn build_bottom_player() -> PlayerControls {
 }
 
 fn build_now_playing_controls() -> NowPlayingControls {
-    let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let root = gtk::Box::new(
+        gtk::Orientation::Horizontal,
+        BOTTOM_PLAYER_NOW_PLAYING_SPACING,
+    );
     root.add_css_class("player-now-playing");
+    root.set_halign(gtk::Align::Start);
     root.set_valign(gtk::Align::Center);
+    root.set_margin_start(BOTTOM_PLAYER_HORIZONTAL_PADDING);
 
     let cover = ArtworkTile::new(BOTTOM_PLAYER_COVER_SIZE, 42);
     cover.area.set_valign(gtk::Align::Center);
@@ -357,8 +363,7 @@ fn build_now_playing_controls() -> NowPlayingControls {
 
     let identity = gtk::Box::new(gtk::Orientation::Vertical, 1);
     identity.add_css_class("player-identity");
-    identity.set_size_request(BOTTOM_PLAYER_IDENTITY_WIDTH, -1);
-    identity.set_hexpand(false);
+    identity.set_hexpand(true);
     identity.set_valign(gtk::Align::Center);
     let title = player_link("player-title");
     let artist = player_link("muted");
@@ -477,6 +482,7 @@ fn build_transport_controls() -> TransportControls {
 
 fn build_player_action_controls() -> PlayerActionControls {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, BOTTOM_PLAYER_ACTION_SPACING);
+    root.set_halign(gtk::Align::End);
     root.set_valign(gtk::Align::Center);
     let (queue_button, queue_icon, queue_icon_open) = queue_sidebar_button("Hide sidebar");
     let (lyrics_button, lyrics_icon, lyrics_icon_open) = lyrics_icon_button("Hide lyrics");
@@ -556,6 +562,37 @@ fn bottom_player_volume_width(player_width: i32) -> i32 {
     )
 }
 
+struct PlayerWallSpec {
+    horizontal_policy: gtk::PolicyType,
+    vertical_policy: gtk::PolicyType,
+    overflow: gtk::Overflow,
+    min_content_width: i32,
+    propagate_natural_width: bool,
+    propagate_natural_height: bool,
+}
+
+fn player_wall_spec() -> PlayerWallSpec {
+    PlayerWallSpec {
+        horizontal_policy: gtk::PolicyType::Never,
+        vertical_policy: gtk::PolicyType::Never,
+        overflow: gtk::Overflow::Hidden,
+        min_content_width: 0,
+        propagate_natural_width: false,
+        propagate_natural_height: true,
+    }
+}
+
+fn configure_player_wall(wall: &gtk::ScrolledWindow) {
+    let spec = player_wall_spec();
+    // this wall is intentionally boring: now playing can use all space
+    // allocated to the left side, but it cannot draw into the center controls.
+    wall.set_policy(spec.horizontal_policy, spec.vertical_policy);
+    wall.set_overflow(spec.overflow);
+    wall.set_min_content_width(spec.min_content_width);
+    wall.set_propagate_natural_width(spec.propagate_natural_width);
+    wall.set_propagate_natural_height(spec.propagate_natural_height);
+}
+
 fn put_transport_button(buttons: &gtk::Fixed, button: &gtk::Button, slot: f64, size: i32) {
     let center_x =
         f64::from(BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2.0 + BOTTOM_PLAYER_BUTTON_STEP * slot;
@@ -571,7 +608,6 @@ fn player_link(css_class: &str) -> gtk::Label {
     label.set_xalign(0.0);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_width_chars(1);
-    label.set_max_width_chars(BOTTOM_PLAYER_IDENTITY_MAX_CHARS);
     label.set_halign(gtk::Align::Fill);
     label.set_hexpand(false);
     label.set_cursor_from_name(Some("pointer"));
@@ -803,5 +839,17 @@ mod tests {
         assert_eq!(super::bottom_player_volume_width(1920), 120);
         assert_eq!(super::bottom_player_volume_width(960), 60);
         assert_eq!(super::bottom_player_volume_width(820), 48);
+    }
+
+    #[test]
+    fn now_playing_wall_does_not_propagate_text_width() {
+        let spec = super::player_wall_spec();
+
+        assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
+        assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
+        assert_eq!(spec.overflow, gtk::Overflow::Hidden);
+        assert_eq!(spec.min_content_width, 0);
+        assert!(!spec.propagate_natural_width);
+        assert!(spec.propagate_natural_height);
     }
 }

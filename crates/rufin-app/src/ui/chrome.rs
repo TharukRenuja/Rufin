@@ -14,8 +14,8 @@ pub(super) struct MainAreaParts {
 
 pub(super) struct ContentChromeParts {
     pub(super) root: gtk::Overlay,
-    pub(super) content_split: gtk::Paned,
     pub(super) main_menu: gtk::MenuButton,
+    pub(super) right_panel_slot: gtk::ScrolledWindow,
 }
 
 pub(super) fn build_main_area() -> MainAreaParts {
@@ -51,21 +51,37 @@ pub(super) fn build_content_chrome(
     main_area: &adw::ToolbarView,
     right_panel: &gtk::Box,
 ) -> ContentChromeParts {
-    let content_split = gtk::Paned::new(gtk::Orientation::Horizontal);
-    content_split.set_hexpand(true);
-    content_split.set_vexpand(true);
-    content_split.set_wide_handle(false);
-    content_split.set_resize_start_child(true);
-    content_split.set_resize_end_child(true);
-    content_split.set_shrink_start_child(true);
-    content_split.set_shrink_end_child(true);
-    content_split.set_start_child(Some(main_area));
-    content_split.set_end_child(Some(right_panel));
+    let main_well = gtk::ScrolledWindow::new();
+    // automatic horizontal policy gives the main pane a clip/scroll boundary
+    // without letting wide route children become a large toplevel minimum.
+    main_well.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    main_well.set_overflow(gtk::Overflow::Hidden);
+    main_well.set_min_content_width(0);
+    main_well.set_propagate_natural_width(false);
+    main_well.set_propagate_natural_height(true);
+    main_well.set_hexpand(true);
+    main_well.set_vexpand(true);
+    main_well.set_child(Some(main_area));
+
+    let right_panel_slot = gtk::ScrolledWindow::new();
+    right_panel_slot.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+    right_panel_slot.set_overflow(gtk::Overflow::Hidden);
+    right_panel_slot.set_propagate_natural_width(true);
+    right_panel_slot.set_propagate_natural_height(true);
+    right_panel_slot.set_hexpand(false);
+    right_panel_slot.set_vexpand(true);
+    right_panel_slot.set_child(Some(right_panel));
+
+    let content_body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    content_body.set_hexpand(true);
+    content_body.set_vexpand(true);
+    content_body.append(&main_well);
+    content_body.append(&right_panel_slot);
 
     let root = gtk::Overlay::new();
     root.set_hexpand(true);
     root.set_vexpand(true);
-    root.set_child(Some(&content_split));
+    root.set_child(Some(&content_body));
 
     let main_menu = primary_menu_button();
     main_menu.set_halign(gtk::Align::End);
@@ -77,8 +93,8 @@ pub(super) fn build_content_chrome(
 
     ContentChromeParts {
         root,
-        content_split,
         main_menu,
+        right_panel_slot,
     }
 }
 

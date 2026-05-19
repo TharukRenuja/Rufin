@@ -1,31 +1,6 @@
 use crate::domain::{AlbumId, ArtistId, GenreId, PlaylistId};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum DensityMode {
-    Auto,
-    Normal,
-    Compact,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum EffectiveDensity {
-    Normal,
-    Compact,
-}
-
-impl DensityMode {
-    pub const AUTO_COMPACT_THRESHOLD: i32 = 1_500;
-
-    pub fn resolve(self, window_width: i32) -> EffectiveDensity {
-        match self {
-            Self::Auto if window_width < Self::AUTO_COMPACT_THRESHOLD => EffectiveDensity::Compact,
-            Self::Auto | Self::Normal => EffectiveDensity::Normal,
-            Self::Compact => EffectiveDensity::Compact,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum SearchKind {
     All,
@@ -131,7 +106,7 @@ impl RouteStack {
 
 #[cfg(test)]
 mod tests {
-    use super::{DensityMode, EffectiveDensity, Route, RouteStack};
+    use super::{Route, RouteStack};
 
     #[test]
     fn route_stack_tracks_back_and_forward_history() {
@@ -169,17 +144,5 @@ mod tests {
         stack.navigate(album_route.clone());
 
         assert_eq!(stack.current(), &album_route);
-    }
-
-    #[test]
-    fn density_auto_uses_compact_threshold() {
-        assert_eq!(DensityMode::Auto.resolve(900), EffectiveDensity::Compact);
-        assert_eq!(DensityMode::Auto.resolve(1_499), EffectiveDensity::Compact);
-        assert_eq!(DensityMode::Auto.resolve(1_500), EffectiveDensity::Normal);
-        assert_eq!(DensityMode::Normal.resolve(900), EffectiveDensity::Normal);
-        assert_eq!(
-            DensityMode::Compact.resolve(1_500),
-            EffectiveDensity::Compact
-        );
     }
 }

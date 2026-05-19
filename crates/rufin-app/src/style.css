@@ -285,6 +285,7 @@ window {
   background: transparent;
 }
 
+.player-now-playing-wall,
 .player-identity {
   min-width: 0;
 }

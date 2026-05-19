@@ -1,10 +1,14 @@
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use adw::prelude::*;
 use rufin_core::{
-    AudioscrobblerScrobbleSettings, DensityMode, DiscordDisplayType, DiscordLinkType,
-    EQUALIZER_BAND_COUNT, EqualizerSettings, HomeBlockKind, PlaybackTransitionMode,
-    ReplayGainMode, StreamQuality,
+    AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
+    EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_NARROW_LAYOUT_THRESHOLD,
+    MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
+    SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
 };
 use rufin_playback::available_audio_outputs;
 
@@ -54,39 +58,153 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .icon_name("preferences-system-symbolic")
         .build();
 
+    let settings = shell.state.settings.borrow().clone();
+
+    let layout_group = adw::PreferencesGroup::builder().title(tr("Layout")).build();
+
+    let default_left_row = left_sidebar_row(
+        &tr("Default left sidebar"),
+        settings.layout.default_profile.left_sidebar,
+    );
+    let default_left_shell = Rc::clone(shell);
+    default_left_row.connect_selected_notify(move |row| {
+        let mode = left_sidebar_mode_from_index(row.selected());
+        default_left_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.default_profile.left_sidebar == mode {
+                return false;
+            }
+            settings.layout.default_profile.left_sidebar = mode;
+            true
+        });
+        default_left_shell.update_layout();
+    });
+    layout_group.add(&default_left_row);
+
+    let default_right_row = right_sidebar_row(
+        &tr("Default right sidebar"),
+        settings.layout.default_profile.right_sidebar,
+    );
+    let default_right_shell = Rc::clone(shell);
+    default_right_row.connect_selected_notify(move |row| {
+        let mode = right_sidebar_mode_from_index(row.selected());
+        default_right_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.default_profile.right_sidebar == mode {
+                return false;
+            }
+            settings.layout.default_profile.right_sidebar = mode;
+            if mode.is_visible() {
+                settings.layout.default_profile.last_visible_right_sidebar = mode;
+            }
+            settings.layout.sanitize();
+            true
+        });
+        default_right_shell.update_layout();
+    });
+    layout_group.add(&default_right_row);
+
+    let narrow_row = adw::SwitchRow::builder()
+        .title(tr("Use different layout below threshold"))
+        .active(settings.layout.narrow_enabled)
+        .build();
+    layout_group.add(&narrow_row);
+
+    let threshold_adjustment = gtk::Adjustment::new(
+        f64::from(settings.layout.narrow_threshold),
+        f64::from(MIN_NARROW_LAYOUT_THRESHOLD),
+        f64::from(MAX_NARROW_LAYOUT_THRESHOLD),
+        10.0,
+        100.0,
+        0.0,
+    );
+    let threshold_row = adw::SpinRow::builder()
+        .title(tr("Narrow layout threshold"))
+        .adjustment(&threshold_adjustment)
+        .digits(0)
+        .numeric(true)
+        .sensitive(settings.layout.narrow_enabled)
+        .build();
+    let threshold_shell = Rc::clone(shell);
+    threshold_row.connect_value_notify(move |row| {
+        let threshold = row.value().round() as i32;
+        threshold_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.narrow_threshold == threshold {
+                return false;
+            }
+            settings.layout.narrow_threshold = threshold;
+            settings.layout.sanitize();
+            true
+        });
+        threshold_shell.update_layout();
+    });
+    layout_group.add(&threshold_row);
+
+    let narrow_left_row = left_sidebar_row(
+        &tr("Narrow left sidebar"),
+        settings.layout.narrow_profile.left_sidebar,
+    );
+    narrow_left_row.set_sensitive(settings.layout.narrow_enabled);
+    let narrow_left_shell = Rc::clone(shell);
+    narrow_left_row.connect_selected_notify(move |row| {
+        let mode = left_sidebar_mode_from_index(row.selected());
+        narrow_left_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.narrow_profile.left_sidebar == mode {
+                return false;
+            }
+            settings.layout.narrow_profile.left_sidebar = mode;
+            true
+        });
+        narrow_left_shell.update_layout();
+    });
+    layout_group.add(&narrow_left_row);
+
+    let narrow_right_row = right_sidebar_row(
+        &tr("Narrow right sidebar"),
+        settings.layout.narrow_profile.right_sidebar,
+    );
+    narrow_right_row.set_sensitive(settings.layout.narrow_enabled);
+    let narrow_right_shell = Rc::clone(shell);
+    narrow_right_row.connect_selected_notify(move |row| {
+        let mode = right_sidebar_mode_from_index(row.selected());
+        narrow_right_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.narrow_profile.right_sidebar == mode {
+                return false;
+            }
+            settings.layout.narrow_profile.right_sidebar = mode;
+            if mode.is_visible() {
+                settings.layout.narrow_profile.last_visible_right_sidebar = mode;
+            }
+            settings.layout.sanitize();
+            true
+        });
+        narrow_right_shell.update_layout();
+    });
+    layout_group.add(&narrow_right_row);
+
+    let threshold_row_for_toggle = threshold_row.clone();
+    let narrow_left_row_for_toggle = narrow_left_row.clone();
+    let narrow_right_row_for_toggle = narrow_right_row.clone();
+    let narrow_shell = Rc::clone(shell);
+    narrow_row.connect_active_notify(move |row| {
+        let enabled = row.is_active();
+        threshold_row_for_toggle.set_sensitive(enabled);
+        narrow_left_row_for_toggle.set_sensitive(enabled);
+        narrow_right_row_for_toggle.set_sensitive(enabled);
+        narrow_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.narrow_enabled == enabled {
+                return false;
+            }
+            settings.layout.narrow_enabled = enabled;
+            true
+        });
+        narrow_shell.update_layout();
+    });
+
+    page.add(&layout_group);
+    page.add(&sidebar_items_group(shell));
+
     let interface_group = adw::PreferencesGroup::builder()
         .title(tr("Interface"))
         .build();
-
-    let density_titles = [tr("Auto"), tr("Normal"), tr("Compact")];
-    let density_refs = density_titles
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let density_options = gtk::StringList::new(&density_refs);
-    let density_row = adw::ComboRow::builder()
-        .title(tr("Left sidebar density"))
-        .subtitle(tr("Choose when the left sidebar uses compact navigation."))
-        .model(&density_options)
-        .selected(density_index(shell.state.density_mode.get()))
-        .build();
-    let density_shell = Rc::clone(shell);
-    density_row.connect_selected_notify(move |row| {
-        density_shell.set_density_mode(density_from_index(row.selected()));
-    });
-    interface_group.add(&density_row);
-
-    let settings = shell.state.settings.borrow().clone();
-    let sidebar_row = adw::SwitchRow::builder()
-        .title(tr("Show sidebar"))
-        .subtitle(tr("Keep the queue sidebar visible in the main window."))
-        .active(settings.right_panel_visible)
-        .build();
-    let sidebar_shell = Rc::clone(shell);
-    sidebar_row.connect_active_notify(move |row| {
-        sidebar_shell.set_right_panel_visible(row.is_active());
-    });
-    interface_group.add(&sidebar_row);
 
     let lyrics_panel_row = adw::SwitchRow::builder()
         .title(tr("Show Lyrics Panel"))
@@ -331,6 +449,184 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&discord_group);
 
     page
+}
+
+fn sidebar_items_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title(tr("Sidebar Items"))
+        .build();
+    let rows = Rc::new(RefCell::new(Vec::<adw::ActionRow>::new()));
+    populate_sidebar_item_rows(shell, &group, &rows);
+    group
+}
+
+fn populate_sidebar_item_rows(
+    shell: &Rc<Shell>,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+) {
+    for row in rows.borrow_mut().drain(..) {
+        group.remove(&row);
+    }
+
+    let items = shell.state.settings.borrow().sidebar.route_items.clone();
+    for entry in items {
+        let row = sidebar_item_row(shell, group, rows, entry);
+        group.add(&row);
+        rows.borrow_mut().push(row);
+    }
+
+    let server_row = adw::ActionRow::builder()
+        .title(tr("Server selector"))
+        .subtitle(if shell.state.settings.borrow().sidebar.server_visible {
+            tr("Visible")
+        } else {
+            tr("Hidden")
+        })
+        .build();
+    let server_switch = gtk::Switch::new();
+    server_switch.set_active(shell.state.settings.borrow().sidebar.server_visible);
+    server_switch.set_valign(gtk::Align::Center);
+    server_row.add_suffix(&server_switch);
+    server_row.set_activatable_widget(Some(&server_switch));
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        server_switch.connect_active_notify(move |switch| {
+            let visible = switch.is_active();
+            shell.update_app_settings("sidebar setting", |settings| {
+                if settings.sidebar.server_visible == visible {
+                    return false;
+                }
+                settings.sidebar.server_visible = visible;
+                true
+            });
+            shell.rebuild_sidebar_navigation();
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        });
+    }
+    group.add(&server_row);
+    rows.borrow_mut().push(server_row);
+}
+
+fn sidebar_item_row(
+    shell: &Rc<Shell>,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+    entry: SidebarRouteItemSettings,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(tr(sidebar_route_item_title(entry.item)))
+        .subtitle(if entry.visible {
+            tr("Visible")
+        } else {
+            tr("Hidden")
+        })
+        .build();
+
+    let visible = gtk::Switch::new();
+    visible.set_active(entry.visible);
+    visible.set_valign(gtk::Align::Center);
+    row.add_suffix(&visible);
+    row.set_activatable_widget(Some(&visible));
+
+    let up = gtk::Button::from_icon_name("go-up-symbolic");
+    up.add_css_class("flat");
+    up.set_tooltip_text(Some(&tr("Move up")));
+    up.set_valign(gtk::Align::Center);
+    row.add_suffix(&up);
+
+    let down = gtk::Button::from_icon_name("go-down-symbolic");
+    down.add_css_class("flat");
+    down.set_tooltip_text(Some(&tr("Move down")));
+    down.set_valign(gtk::Align::Center);
+    row.add_suffix(&down);
+
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        visible.connect_active_notify(move |switch| {
+            let item = entry.item;
+            let is_visible = switch.is_active();
+            shell.update_app_settings("sidebar setting", |settings| {
+                if let Some(stored) = settings
+                    .sidebar
+                    .route_items
+                    .iter_mut()
+                    .find(|stored| stored.item == item)
+                {
+                    if stored.visible == is_visible {
+                        return false;
+                    }
+                    stored.visible = is_visible;
+                }
+                settings.sidebar.sanitize();
+                true
+            });
+            shell.rebuild_sidebar_navigation();
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        });
+    }
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        up.connect_clicked(move |_| {
+            move_sidebar_item(&shell, entry.item, -1);
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        });
+    }
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        down.connect_clicked(move |_| {
+            move_sidebar_item(&shell, entry.item, 1);
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        });
+    }
+
+    row
+}
+
+fn move_sidebar_item(shell: &Rc<Shell>, item: SidebarRouteItem, delta: isize) {
+    shell.update_app_settings("sidebar setting", |settings| {
+        let Some(index) = settings
+            .sidebar
+            .route_items
+            .iter()
+            .position(|entry| entry.item == item)
+        else {
+            return false;
+        };
+        let new_index = if delta < 0 {
+            index.saturating_sub(1)
+        } else {
+            (index + 1).min(settings.sidebar.route_items.len().saturating_sub(1))
+        };
+        if index == new_index {
+            return false;
+        }
+        settings.sidebar.route_items.swap(index, new_index);
+        settings.sidebar.sanitize();
+        true
+    });
+    shell.rebuild_sidebar_navigation();
+}
+
+fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
+    match item {
+        SidebarRouteItem::Home => "Home",
+        SidebarRouteItem::Favorites => "Favorites",
+        SidebarRouteItem::Albums => "Albums",
+        SidebarRouteItem::Tracks => "Tracks",
+        SidebarRouteItem::Artists => "Artists",
+        SidebarRouteItem::AlbumArtists => "Album Artists",
+        SidebarRouteItem::Genres => "Genres",
+        SidebarRouteItem::Playlists => "Playlists",
+    }
 }
 
 fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
@@ -1337,19 +1633,63 @@ fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
         .build()
 }
 
-fn density_index(density: DensityMode) -> u32 {
-    match density {
-        DensityMode::Auto => 0,
-        DensityMode::Normal => 1,
-        DensityMode::Compact => 2,
+fn left_sidebar_row(title: &str, mode: LeftSidebarMode) -> adw::ComboRow {
+    let titles = [tr("Full"), tr("Compact")];
+    let refs = titles.iter().map(String::as_str).collect::<Vec<_>>();
+    adw::ComboRow::builder()
+        .title(title)
+        .model(&gtk::StringList::new(&refs))
+        .selected(left_sidebar_mode_index(mode))
+        .build()
+}
+
+fn left_sidebar_mode_index(mode: LeftSidebarMode) -> u32 {
+    match mode {
+        LeftSidebarMode::Full => 0,
+        LeftSidebarMode::Compact => 1,
     }
 }
 
-fn density_from_index(index: u32) -> DensityMode {
+fn left_sidebar_mode_from_index(index: u32) -> LeftSidebarMode {
     match index {
-        1 => DensityMode::Normal,
-        2 => DensityMode::Compact,
-        _ => DensityMode::Auto,
+        1 => LeftSidebarMode::Compact,
+        _ => LeftSidebarMode::Full,
+    }
+}
+
+fn right_sidebar_row(title: &str, mode: RightSidebarMode) -> adw::ComboRow {
+    let titles = [
+        tr("Hidden"),
+        tr("Compact"),
+        tr("Default"),
+        tr("Comfortable"),
+        tr("Spacious"),
+    ];
+    let refs = titles.iter().map(String::as_str).collect::<Vec<_>>();
+    adw::ComboRow::builder()
+        .title(title)
+        .model(&gtk::StringList::new(&refs))
+        .selected(right_sidebar_mode_index(mode))
+        .build()
+}
+
+fn right_sidebar_mode_index(mode: RightSidebarMode) -> u32 {
+    match mode {
+        RightSidebarMode::Hidden => 0,
+        RightSidebarMode::Compact => 1,
+        RightSidebarMode::Default => 2,
+        RightSidebarMode::Comfortable => 3,
+        RightSidebarMode::Spacious => 4,
+    }
+}
+
+fn right_sidebar_mode_from_index(index: u32) -> RightSidebarMode {
+    match index {
+        1 => RightSidebarMode::Compact,
+        2 => RightSidebarMode::Default,
+        3 => RightSidebarMode::Comfortable,
+        4 => RightSidebarMode::Spacious,
+        _ => RightSidebarMode::Hidden,
     }
 }
 

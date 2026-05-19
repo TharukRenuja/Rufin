@@ -34,8 +34,8 @@ use gtk::gio;
 use gtk::glib;
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, DensityMode, EffectiveDensity, Genre, HomeSection,
-    HomeSectionKind, ImageRef, LibraryListKey, Playlist, PlaylistId, QueueSnapshot, Route,
+    Album, AlbumId, AppSettings, Artist, Genre, HomeSection, HomeSectionKind, ImageRef,
+    LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueSnapshot, RightSidebarMode, Route,
     RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn, TrackTableSettings,
     format_duration,
 };
@@ -62,22 +62,18 @@ use favorites::{
 };
 use layout::{
     COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, content_split_initial_position_for_density,
-    content_split_target_position_for_density, restored_window_size, right_panel_saved_ratio,
+    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, resolve_layout,
 };
 use mpris::install_mpris;
 use navigation::{
     ServerSelector, build_compact_navigation, build_normal_navigation, build_server_selector,
-    sidebar_history_button,
+    rebuild_navigation, sidebar_history_button,
 };
 use paging::{PagedGridConfig, PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use preferences::present_preferences_dialog;
 use queue::connect_queue_panel_controls;
-use right_panel::{
-    apply_lyrics_panel_visibility, apply_right_panel_visibility, build_right_panel,
-    connect_queue_lyrics_split,
-};
+use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 
 const GRID_ROUTE_PAGE_SIZE: usize = 16;
 const TRACK_ROUTE_PAGE_SIZE: usize = 64;
@@ -108,8 +104,10 @@ pub struct AppOptions {
 struct AppState {
     routes: RefCell<RouteStack>,
     settings: RefCell<AppSettings>,
-    density_mode: Cell<DensityMode>,
-    effective_density: Cell<EffectiveDensity>,
+    resolved_left_sidebar: Cell<LeftSidebarMode>,
+    resolved_right_sidebar: Cell<RightSidebarMode>,
+    resolved_right_sidebar_width: Cell<i32>,
+    main_content_width: Cell<i32>,
     library: RefCell<LibrarySnapshot>,
     queue: RefCell<Option<QueueSnapshot>>,
     player: RefCell<PlaybackSnapshot>,
@@ -125,12 +123,7 @@ struct AppState {
     seeking_player_controls: Cell<bool>,
     seek_generation: Cell<u64>,
     queue_filter: RefCell<String>,
-    right_panel_visible: Cell<bool>,
     lyrics_panel_visible: Cell<bool>,
-    split_width: Cell<i32>,
-    normal_split_position: Cell<i32>,
-    compact_split_position: Cell<i32>,
-    split_density: Cell<EffectiveDensity>,
     queue_lyrics_position_save_suppressed: Rc<Cell<u32>>,
     responsive_render_queued: Cell<bool>,
     card_grid_columns: Cell<usize>,
@@ -314,13 +307,13 @@ struct Shell {
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
     server_selector: ServerSelector,
-    content_split: gtk::Paned,
     route_title: adw::WindowTitle,
     route_host: gtk::Box,
     normal_back_button: gtk::Button,
     normal_forward_button: gtk::Button,
     compact_back_button: gtk::Button,
     compact_forward_button: gtk::Button,
+    right_panel_slot: gtk::ScrolledWindow,
     right_panel: gtk::Box,
     queue_panel: gtk::Box,
     queue_search: gtk::SearchEntry,
@@ -352,8 +345,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
         settings: RefCell::new(settings.clone()),
-        density_mode: Cell::new(settings.density_mode),
-        effective_density: Cell::new(EffectiveDensity::Compact),
+        resolved_left_sidebar: Cell::new(LeftSidebarMode::Full),
+        resolved_right_sidebar: Cell::new(RightSidebarMode::Hidden),
+        resolved_right_sidebar_width: Cell::new(0),
+        main_content_width: Cell::new(1),
         library: RefCell::new(library),
         queue: RefCell::new(queue),
         player: RefCell::new(player),
@@ -369,12 +364,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         seeking_player_controls: Cell::new(false),
         seek_generation: Cell::new(0),
         queue_filter: RefCell::new(String::new()),
-        right_panel_visible: Cell::new(settings.right_panel_visible),
         lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
-        split_width: Cell::new(0),
-        normal_split_position: Cell::new(0),
-        compact_split_position: Cell::new(0),
-        split_density: Cell::new(EffectiveDensity::Compact),
         queue_lyrics_position_save_suppressed: Rc::new(Cell::new(0)),
         responsive_render_queued: Cell::new(false),
         card_grid_columns: Cell::new(0),
@@ -410,24 +400,23 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         .application(app)
         .title("Rufin")
         .build();
-    if let Some((width, height)) =
-        restored_window_size(settings.window_width, settings.window_height)
-    {
-        window.set_default_size(width, height);
-    }
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("app-root");
+    root.set_hexpand(true);
 
     let upper = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    upper.set_hexpand(true);
     upper.set_vexpand(true);
 
     let normal_nav = gtk::Box::new(gtk::Orientation::Vertical, 10);
     normal_nav.add_css_class("wide-sidebar");
+    normal_nav.set_hexpand(false);
     normal_nav.set_width_request(NORMAL_SIDEBAR_WIDTH);
 
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 3);
     compact_nav.add_css_class("compact-rail");
+    compact_nav.set_hexpand(false);
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
     let server_selector = build_server_selector();
 
@@ -449,8 +438,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let lyrics_pane = right_panel_parts.lyrics_pane;
 
     let content_chrome = build_content_chrome(&main_area, &right_panel);
-    let content_split = content_chrome.content_split;
     let main_menu = content_chrome.main_menu;
+    let right_panel_slot = content_chrome.right_panel_slot;
     let player_controls = build_bottom_player();
 
     upper.append(&normal_nav);
@@ -470,13 +459,13 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         normal_nav,
         compact_nav,
         server_selector,
-        content_split,
         route_title,
         route_host,
         normal_back_button,
         normal_forward_button,
         compact_back_button,
         compact_forward_button,
+        right_panel_slot,
         right_panel,
         queue_panel,
         queue_search,
@@ -495,7 +484,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     connect_lyrics_search_controls(&shell);
     connect_player_controls(&shell);
     install_mpris(&shell);
-    shell.update_density();
+    shell.update_layout();
     prime_first_cached_cover(&shell);
     shell.render_current_route();
     shell.refresh_home_for_current_visit();
@@ -505,9 +494,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     shell.update_discord_presence(&shell.state.player.borrow());
     shell.update_right_panel_button();
     shell.update_lyrics_panel_button();
-    if !shell.state.right_panel_visible.get() {
-        apply_right_panel_visibility(Rc::clone(&shell), false);
-    }
     if !shell.state.lyrics_panel_visible.get() {
         apply_lyrics_panel_visibility(Rc::clone(&shell), false);
     }
@@ -527,11 +513,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
 
     shell.window.present();
-    let density_shell = Rc::clone(&shell);
+    let layout_shell = Rc::clone(&shell);
     glib::idle_add_local_once(move || {
-        if density_shell.state.density_mode.get() == DensityMode::Auto {
-            density_shell.update_density();
-        }
+        layout_shell.update_layout();
     });
     shell.queue_responsive_route_render();
 
@@ -1136,39 +1120,75 @@ impl Shell {
         }
     }
 
-    fn update_density(self: &Rc<Self>) {
-        let width = self.density_width().max(1);
-        self.update_density_for_width(width);
+    fn update_layout(self: &Rc<Self>) -> bool {
+        let width = self.layout_width().max(1);
+        let settings = self.state.settings.borrow().layout.clone();
+        let resolved = resolve_layout(&settings, width);
+        self.apply_resolved_layout(resolved)
     }
 
-    fn update_density_for_width(self: &Rc<Self>, width: i32) {
-        let width = width.max(1);
-        let next = self.state.density_mode.get().resolve(width);
-        let previous = self.state.effective_density.replace(next);
-        self.normal_nav
-            .set_visible(next == EffectiveDensity::Normal);
-        self.compact_nav
-            .set_visible(next == EffectiveDensity::Compact);
-        self.update_content_split();
+    fn apply_resolved_layout(self: &Rc<Self>, resolved: ResolvedLayout) -> bool {
+        let previous_left = self
+            .state
+            .resolved_left_sidebar
+            .replace(resolved.left_sidebar);
+        let previous_right = self
+            .state
+            .resolved_right_sidebar
+            .replace(resolved.right_sidebar);
+        let previous_right_width = self
+            .state
+            .resolved_right_sidebar_width
+            .replace(resolved.right_sidebar_width);
+        let previous_main_width = self.state.main_content_width.replace(resolved.main_width);
 
-        if next != previous {
-            debug!(?next, width, "effective density changed");
-            self.queue_responsive_route_render();
-        } else if route_uses_responsive_cards(self.state.routes.borrow().current()) {
+        self.normal_nav
+            .set_visible(resolved.left_sidebar == LeftSidebarMode::Full);
+        self.compact_nav
+            .set_visible(resolved.left_sidebar == LeftSidebarMode::Compact);
+        self.right_panel_slot
+            .set_visible(resolved.right_sidebar.is_visible());
+        self.right_panel_slot.set_min_content_width(0);
+        self.right_panel_slot
+            .set_max_content_width(resolved.right_sidebar_width);
+        self.right_panel_slot.set_size_request(-1, -1);
+        self.right_panel
+            .set_width_request(resolved.right_sidebar_width);
+        self.right_panel
+            .set_visible(resolved.right_sidebar.is_visible());
+        self.update_right_panel_button();
+        self.update_lyrics_panel_button();
+
+        let changed = previous_left != resolved.left_sidebar
+            || previous_right != resolved.right_sidebar
+            || previous_right_width != resolved.right_sidebar_width
+            || previous_main_width != resolved.main_width;
+        if changed {
+            debug!(?resolved, "resolved layout changed");
             self.queue_responsive_route_render();
         }
+        changed
     }
 
-    fn density_width(&self) -> i32 {
+    fn layout_width(&self) -> i32 {
         self.window
             .surface()
             .map(|surface| surface.width())
             .filter(|width| *width > 1)
-            .unwrap_or_else(|| self.window.width())
+            .or_else(|| {
+                let width = self.window.width();
+                (width > 1).then_some(width)
+            })
+            .unwrap_or(1)
     }
 
     fn update_server_selector(self: &Rc<Self>) {
         navigation::update_server_selector(self);
+    }
+
+    fn rebuild_sidebar_navigation(self: &Rc<Self>) {
+        rebuild_navigation(self);
+        self.update_layout();
     }
 
     fn set_history_buttons_sensitive(&self, can_back: bool, can_forward: bool) {
@@ -1176,82 +1196,6 @@ impl Shell {
         self.compact_back_button.set_sensitive(can_back);
         self.normal_forward_button.set_sensitive(can_forward);
         self.compact_forward_button.set_sensitive(can_forward);
-    }
-
-    fn update_content_split(&self) -> bool {
-        let split_width = self.content_split.width();
-        if split_width <= 1 {
-            return false;
-        }
-
-        let previous_width = self.state.split_width.replace(split_width);
-        let density = self.right_panel_density();
-        let previous_density = self.state.split_density.replace(density);
-        let density_changed = previous_density != density;
-        let current_position = self.content_split.position().clamp(0, split_width);
-        if density_changed
-            && self.state.right_panel_visible.get()
-            && current_position > 1
-            && current_position < split_width
-        {
-            self.set_right_panel_split_position_for(
-                previous_density,
-                layout::clamp_content_split_position_for_density(
-                    split_width,
-                    current_position,
-                    previous_density,
-                ),
-            );
-        }
-        let stored_position = self.right_panel_split_position_for(density);
-        let saved_ratio = right_panel_saved_ratio(&self.state.settings.borrow(), density);
-        let width_changed = previous_width != split_width;
-
-        if !self.state.right_panel_visible.get() {
-            let position_changed = current_position != split_width;
-            if position_changed {
-                debug!(
-                    split_width,
-                    position = split_width,
-                    "collapse content split"
-                );
-                self.content_split.set_position(split_width);
-            }
-            return width_changed || position_changed;
-        }
-
-        let position = if density_changed {
-            if stored_position > 1 {
-                layout::clamp_content_split_position_for_density(
-                    split_width,
-                    stored_position,
-                    density,
-                )
-            } else {
-                content_split_initial_position_for_density(split_width, saved_ratio, density)
-            }
-        } else {
-            content_split_target_position_for_density(
-                split_width,
-                previous_width,
-                stored_position,
-                current_position,
-                saved_ratio,
-                density,
-            )
-        };
-        let position_changed = self.right_panel_split_position_for(density) != position;
-        self.set_right_panel_split_position_for(density, position);
-        if position_changed && !width_changed && !density_changed && current_position == position {
-            self.save_right_panel_split_position(split_width, position);
-        }
-
-        if current_position != position {
-            debug!(split_width, position, "update content split");
-            self.content_split.set_position(position);
-        }
-
-        width_changed || position_changed
     }
 
     fn queue_responsive_route_render(self: &Rc<Self>) {
@@ -1269,7 +1213,7 @@ impl Shell {
                 if !shell.state.responsive_render_queued.replace(false) {
                     return;
                 }
-                shell.update_content_split();
+                shell.update_layout();
                 if route_uses_responsive_cards(shell.state.routes.borrow().current()) {
                     shell.render_current_route();
                 }
@@ -1279,7 +1223,7 @@ impl Shell {
 
     fn render_responsive_route_now(self: &Rc<Self>) {
         self.state.responsive_render_queued.set(false);
-        self.update_content_split();
+        self.update_layout();
         if route_uses_responsive_cards(self.state.routes.borrow().current()) {
             self.render_current_route();
         }
@@ -1449,7 +1393,7 @@ impl Shell {
             self.route_title.set_title(&tr("Connect to Music Server"));
             self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
-            self.route_host.append(&view);
+            self.route_host.append(&route_boundary(view));
             self.record_perf_route_render(route_name, render_started.elapsed());
             return;
         }
@@ -1483,7 +1427,7 @@ impl Shell {
             }
         };
 
-        self.route_host.append(&view);
+        self.route_host.append(&route_boundary(view));
         self.record_perf_route_render(route_name, render_started.elapsed());
     }
 
@@ -1581,8 +1525,13 @@ impl Shell {
         content.set_margin_start(32);
         content.set_margin_end(32);
 
-        let compact = self.state.effective_density.get() == EffectiveDensity::Compact
-            || self.route_host.width() < 760;
+        let width = self.route_host.width();
+        let content_width = if width > 1 {
+            width
+        } else {
+            self.state.main_content_width.get()
+        };
+        let compact = content_width < 760;
         let cover_size = if compact { 164 } else { 204 };
         let header_orientation = if compact {
             gtk::Orientation::Vertical
@@ -1965,7 +1914,7 @@ impl Shell {
             ));
         } else {
             let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
             scroller.set_min_content_width(0);
             scroller.set_vexpand(true);
             scroller.set_child(Some(&self.playlist_cards_grid_for_model(model)));
@@ -3084,49 +3033,7 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
 
     install_window_actions(shell);
     install_main_menu_shortcut(shell, main_menu);
-    connect_auto_density_resize(shell);
-
-    let close_shell = Rc::clone(shell);
-    shell.window.connect_close_request(move |_| {
-        close_shell.save_window_state();
-        glib::Propagation::Proceed
-    });
-
-    let resize_shell = Rc::clone(shell);
-    shell
-        .window
-        .connect_notify_local(Some("width"), move |_, _| {
-            if resize_shell.state.density_mode.get() == DensityMode::Auto {
-                resize_shell.update_density();
-            } else {
-                resize_shell.update_content_split();
-                resize_shell.queue_responsive_route_render();
-            }
-        });
-
-    let split_shell = Rc::clone(shell);
-    shell
-        .content_split
-        .connect_notify_local(Some("width"), move |_, _| {
-            split_shell.update_content_split();
-            split_shell.queue_responsive_route_render();
-        });
-
-    let split_shell = Rc::clone(shell);
-    shell
-        .content_split
-        .connect_notify_local(Some("position"), move |_, _| {
-            split_shell.update_content_split();
-            split_shell.queue_responsive_route_render();
-        });
-
-    let split_shell = Rc::clone(shell);
-    shell.content_split.add_tick_callback(move |_, _| {
-        if split_shell.update_content_split() {
-            split_shell.queue_responsive_route_render();
-        }
-        glib::ControlFlow::Continue
-    });
+    connect_layout_resize(shell);
 }
 
 fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
@@ -3267,23 +3174,35 @@ fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
     subtitle
 }
 
-fn connect_auto_density_resize(shell: &Rc<Shell>) {
-    let window = shell.window.clone();
-    let shell = Rc::clone(shell);
-    window.connect_realize(move |window| {
-        let Some(surface) = window.surface() else {
-            return;
-        };
-        let resize_shell = Rc::clone(&shell);
-        surface.connect_width_notify(move |surface| {
-            if resize_shell.state.density_mode.get() == DensityMode::Auto {
-                resize_shell.update_density_for_width(surface.width());
-            }
+fn connect_layout_resize(shell: &Rc<Shell>) {
+    let resize_shell = Rc::clone(shell);
+    shell
+        .window
+        .connect_notify_local(Some("width"), move |_, _| {
+            resize_shell.update_layout();
+            resize_shell.queue_responsive_route_render();
         });
-        if shell.state.density_mode.get() == DensityMode::Auto {
-            shell.update_density_for_width(surface.width());
+
+    let window = shell.window.clone();
+    let resize_shell = Rc::clone(shell);
+    window.connect_realize(move |window| {
+        if let Some(surface) = window.surface() {
+            let surface_resize_shell = Rc::clone(&resize_shell);
+            surface.connect_width_notify(move |_| {
+                surface_resize_shell.update_layout();
+                surface_resize_shell.queue_responsive_route_render();
+            });
         }
+        resize_shell.update_layout();
+        resize_shell.queue_responsive_route_render();
     });
+
+    let route_shell = Rc::clone(shell);
+    shell
+        .route_host
+        .connect_notify_local(Some("width"), move |_, _| {
+            route_shell.queue_responsive_route_render();
+        });
 }
 
 fn install_window_actions(shell: &Rc<Shell>) {
@@ -4136,6 +4055,45 @@ fn route_uses_responsive_cards(route: &Route) -> bool {
             | Route::PlaylistDetail(_)
             | Route::Search { .. }
     )
+}
+
+fn route_boundary(view: gtk::Widget) -> gtk::Widget {
+    let spec = route_boundary_spec();
+    let scroller = gtk::ScrolledWindow::new();
+    // this is necessary because route pages can contain tables, grids, and
+    // toolbars wider than the visible pane. they may scroll inside the pane,
+    // but they must never draw under the right sidebar.
+    scroller.set_policy(spec.horizontal_policy, spec.vertical_policy);
+    scroller.set_overflow(spec.overflow);
+    scroller.set_min_content_width(spec.min_content_width);
+    scroller.set_propagate_natural_width(spec.propagate_natural_width);
+    scroller.set_hexpand(spec.hexpand);
+    scroller.set_vexpand(spec.vexpand);
+    scroller.set_child(Some(&view));
+    scroller.upcast()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RouteBoundarySpec {
+    horizontal_policy: gtk::PolicyType,
+    vertical_policy: gtk::PolicyType,
+    overflow: gtk::Overflow,
+    min_content_width: i32,
+    propagate_natural_width: bool,
+    hexpand: bool,
+    vexpand: bool,
+}
+
+fn route_boundary_spec() -> RouteBoundarySpec {
+    RouteBoundarySpec {
+        horizontal_policy: gtk::PolicyType::Automatic,
+        vertical_policy: gtk::PolicyType::Never,
+        overflow: gtk::Overflow::Hidden,
+        min_content_width: 0,
+        propagate_natural_width: false,
+        hexpand: true,
+        vexpand: true,
+    }
 }
 
 fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
@@ -5032,6 +4990,19 @@ mod tests {
         assert!(super::route_uses_responsive_cards(
             &Route::ArtistDiscography(ArtistId::fake(1))
         ));
+    }
+
+    #[test]
+    fn route_boundary_keeps_route_items_inside_main_pane() {
+        let spec = super::route_boundary_spec();
+
+        assert_eq!(spec.horizontal_policy, gtk::PolicyType::Automatic);
+        assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
+        assert_eq!(spec.overflow, gtk::Overflow::Hidden);
+        assert_eq!(spec.min_content_width, 0);
+        assert!(!spec.propagate_natural_width);
+        assert!(spec.hexpand);
+        assert!(spec.vexpand);
     }
 
     #[test]

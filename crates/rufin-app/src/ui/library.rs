@@ -6,16 +6,16 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use rufin_core::{
-    Album, AlbumId, Artist, EffectiveDensity, Genre, LibraryField, LibraryLayout, LibraryListKey,
+    Album, AlbumId, Artist, Genre, LibraryField, LibraryLayout, LibraryListKey,
     LibraryListSettings, Track, available_sort_fields, format_duration,
 };
 use tracing::warn;
 
 use super::{
-    GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START,
-    Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, append_albums_to_model,
-    append_artists_to_model, append_genres_to_model, append_tracks_to_model,
-    connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button, finish_grid_page,
+    GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE, PRIMARY_ROUTE_MARGIN_START, Route, Shell,
+    THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, append_albums_to_model, append_artists_to_model,
+    append_genres_to_model, append_tracks_to_model, connect_paged_grid_loader,
+    favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
     layout::{large_popup_content_height, large_popup_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     set_favorite_button_active, stable_seed,
@@ -418,7 +418,11 @@ impl Shell {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
         wrapper.append(&self.library_toolbar(key, search));
-        wrapper.append(&view);
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        scroller.set_min_content_width(0);
+        scroller.set_child(Some(&view));
+        wrapper.append(&scroller);
         wrapper.upcast()
     }
 
@@ -434,20 +438,21 @@ impl Shell {
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
         wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         wrapper.set_widget_name(context);
-        wrapper.append(&self.library_toolbar(key, search));
+        wrapper.append(&library_route_inset(self.library_toolbar(key, search)));
 
         if empty {
-            wrapper.append(&self.route_empty_view(empty_body));
+            wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
             scroller.set_min_content_width(0);
+            scroller.set_propagate_natural_width(false);
+            scroller.set_hexpand(true);
             scroller.set_vexpand(true);
-            scroller.set_child(Some(&view));
+            scroller.set_child(Some(&library_route_inset(view)));
             wrapper.append(&scroller);
         }
 
@@ -644,19 +649,20 @@ impl Shell {
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
         wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
-        wrapper.append(&self.library_toolbar(key, search));
+        wrapper.append(&library_route_inset(self.library_toolbar(key, search)));
 
         if empty {
-            wrapper.append(&self.route_empty_view(empty_body));
+            wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
             scroller.set_min_content_width(0);
+            scroller.set_propagate_natural_width(false);
+            scroller.set_hexpand(true);
             scroller.set_vexpand(true);
-            scroller.set_child(Some(&content));
+            scroller.set_child(Some(&library_route_inset(content)));
             if let Some(load_next) = load_next {
                 connect_paged_grid_loader(&scroller, load_next);
             }
@@ -755,6 +761,8 @@ impl Shell {
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new(&tr("Customize display"), &tr(key.title()));
         header.set_title_widget(Some(&title));
+        let reset = icon_button("view-refresh-symbolic", "Reset display");
+        header.pack_end(&reset);
         toolbar.add_top_bar(&header);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
@@ -814,6 +822,22 @@ impl Shell {
             });
         }
 
+        {
+            let shell = Rc::clone(self);
+            let fields_group = fields_group.clone();
+            let rows = Rc::clone(&rows);
+            let layout_buttons = Rc::clone(&layout_buttons);
+            reset.connect_clicked(move |_| {
+                let default_settings = LibraryListSettings::for_key(key);
+                shell.update_library_list_settings(key, |settings| {
+                    *settings = default_settings.clone();
+                });
+                sync_layout_buttons(&layout_buttons, default_settings.layout);
+                populate_library_field_rows(&shell, key, &fields_group, &rows);
+                shell.render_current_route_preserving_scroll();
+            });
+        }
+
         populate_library_field_rows(self, key, &fields_group, &rows);
 
         let scroller = gtk::ScrolledWindow::new();
@@ -848,6 +872,36 @@ impl Shell {
                 HashMap::new()
             })
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LibraryRouteInsetSpec {
+    margin_start: i32,
+    margin_end: i32,
+    hexpand: bool,
+}
+
+fn library_route_inset_spec() -> LibraryRouteInsetSpec {
+    LibraryRouteInsetSpec {
+        margin_start: PRIMARY_ROUTE_MARGIN_START,
+        margin_end: 0,
+        hexpand: true,
+    }
+}
+
+fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
+    let spec = library_route_inset_spec();
+    let inset = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    // this keeps the scrollbar at the pane edge while the actual
+    // library content keeps the same visual inset.
+    inset.set_margin_start(spec.margin_start);
+    inset.set_margin_end(spec.margin_end);
+    inset.set_hexpand(spec.hexpand);
+    inset.set_halign(gtk::Align::Fill);
+    child.set_hexpand(true);
+    child.set_halign(gtk::Align::Fill);
+    inset.append(&child);
+    inset.upcast()
 }
 
 fn album_collection_widget(
@@ -1138,6 +1192,8 @@ fn album_detail_list(
 ) -> gtk::ListBox {
     let list = gtk::ListBox::new();
     list.add_css_class("track-table");
+    list.set_hexpand(true);
+    list.set_halign(gtk::Align::Fill);
     list.set_selection_mode(gtk::SelectionMode::None);
     for position in 0..model.n_items() {
         let Some(album) = item_at::<Album>(&model, position) else {
@@ -1148,7 +1204,16 @@ fn album_detail_list(
             .get(&album.id)
             .cloned()
             .unwrap_or_default();
-        list.append(&album_detail_row(shell, &album, tracks, key));
+        let row = gtk::ListBoxRow::new();
+        row.set_selectable(false);
+        row.set_activatable(false);
+        row.set_hexpand(true);
+        row.set_halign(gtk::Align::Fill);
+        let content = album_detail_row(shell, &album, tracks, key);
+        content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        row.set_child(Some(&content));
+        list.append(&row);
     }
     list
 }
@@ -1183,11 +1248,23 @@ fn album_detail_row(
         cover_size,
         super::DETAIL_COVER_SIZE,
     ));
-    meta.append(&center_label(&album.title, "track-title"));
-    meta.append(&center_label(&album.artist, "muted"));
-    meta.append(&center_label(&album_fact_text(album), "muted"));
+    meta.append(&album_detail_meta_label(
+        &album.title,
+        "track-title",
+        meta_width,
+    ));
+    meta.append(&album_detail_meta_label(&album.artist, "muted", meta_width));
+    meta.append(&album_detail_meta_label(
+        &album_fact_text(album),
+        "muted",
+        meta_width,
+    ));
     if !album.genres.is_empty() {
-        meta.append(&center_label(&album.genres.join(", "), "muted"));
+        meta.append(&album_detail_meta_label(
+            &album.genres.join(", "),
+            "muted",
+            meta_width,
+        ));
     }
     row.append(&meta);
 
@@ -1206,13 +1283,25 @@ fn album_detail_row(
     table.set_vexpand(false);
     table.set_hexpand(true);
     table.set_halign(gtk::Align::Fill);
-    row.append(&table);
+    let table_scroller = gtk::ScrolledWindow::new();
+    table_scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    table_scroller.set_min_content_width(0);
+    table_scroller.set_propagate_natural_width(false);
+    table_scroller.set_hexpand(true);
+    table_scroller.set_halign(gtk::Align::Fill);
+    table_scroller.set_child(Some(&table));
+    row.append(&table_scroller);
     row.upcast()
 }
 
 fn compact_detail_layout(shell: &Shell) -> bool {
-    shell.state.effective_density.get() == EffectiveDensity::Compact
-        || shell.route_host.width() < 760
+    let width = shell.route_host.width();
+    let content_width = if width > 1 {
+        width
+    } else {
+        shell.state.main_content_width.get()
+    };
+    content_width < 760
 }
 
 fn album_card(shell: &Rc<Shell>, album: &Album, key: LibraryListKey, size: i32) -> gtk::Widget {
@@ -1413,7 +1502,9 @@ where
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             let label = gtk::Label::new(None);
             label.set_xalign(0.0);
+            label.set_wrap(false);
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            label.set_single_line_mode(true);
             item.set_child(Some(&label));
         }
     });
@@ -1450,6 +1541,9 @@ fn row_index_column() -> gtk::ColumnViewColumn {
             let label = gtk::Label::new(None);
             label.add_css_class("muted");
             label.set_xalign(0.0);
+            label.set_wrap(false);
+            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            label.set_single_line_mode(true);
             item.set_child(Some(&label));
         }
     });
@@ -1554,14 +1648,18 @@ where
         let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let title = gtk::Label::new(Some(&title_value(&data)));
         title.set_xalign(0.0);
+        title.set_wrap(false);
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        title.set_single_line_mode(true);
         labels.append(&title);
         let subtitle = subtitle_value(&data);
         if !subtitle.trim().is_empty() {
             let subtitle = gtk::Label::new(Some(&subtitle));
             subtitle.add_css_class("muted");
             subtitle.set_xalign(0.0);
+            subtitle.set_wrap(false);
             subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            subtitle.set_single_line_mode(true);
             labels.append(&subtitle);
         }
         row.append(&labels);
@@ -1959,6 +2057,56 @@ fn center_label(text: &str, css_class: &str) -> gtk::Widget {
     label.upcast()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AlbumDetailMetaLabelSpec {
+    width: i32,
+    horizontal_policy: gtk::PolicyType,
+    vertical_policy: gtk::PolicyType,
+    overflow: gtk::Overflow,
+    propagate_natural_width: bool,
+    wrap: bool,
+}
+
+fn album_detail_meta_label_spec(width: i32) -> AlbumDetailMetaLabelSpec {
+    AlbumDetailMetaLabelSpec {
+        width,
+        horizontal_policy: gtk::PolicyType::Never,
+        vertical_policy: gtk::PolicyType::Never,
+        overflow: gtk::Overflow::Hidden,
+        propagate_natural_width: false,
+        wrap: false,
+    }
+}
+
+fn album_detail_meta_label(text: &str, css_class: &str, width: i32) -> gtk::Widget {
+    let spec = album_detail_meta_label_spec(width);
+    let label = gtk::Label::new(Some(text));
+    if !css_class.is_empty() {
+        label.add_css_class(css_class);
+    }
+    label.set_xalign(0.5);
+    label.set_wrap(spec.wrap);
+    label.set_single_line_mode(true);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_chars(1);
+    label.set_halign(gtk::Align::Fill);
+    label.set_hexpand(false);
+
+    let clip = gtk::ScrolledWindow::new();
+    clip.add_css_class("card-label-clip");
+    clip.set_policy(spec.horizontal_policy, spec.vertical_policy);
+    clip.set_overflow(spec.overflow);
+    clip.set_width_request(spec.width);
+    clip.set_size_request(spec.width, -1);
+    clip.set_min_content_width(spec.width);
+    clip.set_max_content_width(spec.width);
+    clip.set_propagate_natural_width(spec.propagate_natural_width);
+    clip.set_propagate_natural_height(true);
+    clip.set_hexpand(false);
+    clip.set_child(Some(&label));
+    clip.upcast()
+}
+
 fn album_fact_text(album: &Album) -> String {
     format!(
         "{} • {} {} • {}",
@@ -1991,7 +2139,12 @@ fn populate_library_field_rows(
     group.set_title(&tr(field_group_title(field_set)));
 
     let active = active_fields_for_set(&settings, field_set).to_vec();
-    let order = field_order_for_set(&settings, field_set).to_vec();
+    let mut order = active.clone();
+    for field in available_fields_for_set(key, field_set) {
+        if !order.contains(field) {
+            order.push(*field);
+        }
+    }
     for field in order {
         let row = library_field_config_row(shell, key, field_set, field, &active, group, rows);
         group.add(&row);
@@ -2030,12 +2183,14 @@ fn library_field_config_row(
     up.add_css_class("flat");
     up.set_tooltip_text(Some(&tr("Move up")));
     up.set_valign(gtk::Align::Center);
+    up.set_sensitive(enabled);
     row.add_suffix(&up);
 
     let down = gtk::Button::from_icon_name("go-down-symbolic");
     down.add_css_class("flat");
     down.set_tooltip_text(Some(&tr("Move down")));
     down.set_valign(gtk::Align::Center);
+    down.set_sensitive(enabled);
     row.add_suffix(&down);
 
     {
@@ -2044,7 +2199,7 @@ fn library_field_config_row(
         let rows = Rc::clone(rows);
         check.connect_toggled(move |check| {
             shell.update_library_list_settings(key, |settings| {
-                set_field_enabled(settings, field_set, field, check.is_active());
+                set_field_enabled(settings, key, field_set, field, check.is_active());
             });
             populate_library_field_rows(&shell, key, &group, &rows);
             shell.render_current_route_preserving_scroll();
@@ -2056,7 +2211,7 @@ fn library_field_config_row(
         let rows = Rc::clone(rows);
         up.connect_clicked(move |_| {
             shell.update_library_list_settings(key, |settings| {
-                move_ordered_field(settings, field_set, field, -1);
+                move_visible_field(settings, field_set, field, -1);
             });
             populate_library_field_rows(&shell, key, &group, &rows);
             shell.render_current_route_preserving_scroll();
@@ -2068,7 +2223,7 @@ fn library_field_config_row(
         let rows = Rc::clone(rows);
         down.connect_clicked(move |_| {
             shell.update_library_list_settings(key, |settings| {
-                move_ordered_field(settings, field_set, field, 1);
+                move_visible_field(settings, field_set, field, 1);
             });
             populate_library_field_rows(&shell, key, &group, &rows);
             shell.render_current_route_preserving_scroll();
@@ -2101,7 +2256,7 @@ fn library_field_config_row(
         }
         let after = y > f64::from(row_for_drop.height()) / 2.0;
         shell.update_library_list_settings(key, |settings| {
-            reorder_ordered_field(settings, field_set, source_field, field, after);
+            reorder_visible_field(settings, field_set, source_field, field, after);
         });
         populate_library_field_rows(&shell, key, &group, &rows);
         shell.render_current_route_preserving_scroll();
@@ -2178,35 +2333,25 @@ fn active_fields_for_set_mut(
     }
 }
 
-fn field_order_for_set(
-    settings: &LibraryListSettings,
+fn available_fields_for_set(
+    key: LibraryListKey,
     field_set: LibraryFieldSet,
-) -> &[LibraryField] {
+) -> &'static [LibraryField] {
     match field_set {
-        LibraryFieldSet::Grid => &settings.grid_field_order,
-        LibraryFieldSet::Detail => &settings.detail_track_field_order,
-        LibraryFieldSet::Row => &settings.row_field_order,
-    }
-}
-
-fn field_order_for_set_mut(
-    settings: &mut LibraryListSettings,
-    field_set: LibraryFieldSet,
-) -> &mut Vec<LibraryField> {
-    match field_set {
-        LibraryFieldSet::Grid => &mut settings.grid_field_order,
-        LibraryFieldSet::Detail => &mut settings.detail_track_field_order,
-        LibraryFieldSet::Row => &mut settings.row_field_order,
+        LibraryFieldSet::Grid => rufin_core::available_grid_fields(key),
+        LibraryFieldSet::Detail => rufin_core::available_row_fields(LibraryListKey::Tracks),
+        LibraryFieldSet::Row => rufin_core::available_row_fields(key),
     }
 }
 
 fn set_field_enabled(
     settings: &mut LibraryListSettings,
+    key: LibraryListKey,
     field_set: LibraryFieldSet,
     field: LibraryField,
     enabled: bool,
 ) {
-    let order = field_order_for_set(settings, field_set).to_vec();
+    let order = available_fields_for_set(key, field_set).to_vec();
     let fields = active_fields_for_set_mut(settings, field_set);
     if enabled {
         insert_field_in_order(fields, field, &order);
@@ -2240,56 +2385,44 @@ fn insert_field_in_order(
     fields.insert(insert_at, field);
 }
 
-fn move_ordered_field(
+fn move_visible_field(
     settings: &mut LibraryListSettings,
     field_set: LibraryFieldSet,
     field: LibraryField,
     delta: isize,
 ) {
-    let order = field_order_for_set_mut(settings, field_set);
-    let Some(index) = order.iter().position(|candidate| *candidate == field) else {
+    let fields = active_fields_for_set_mut(settings, field_set);
+    let Some(index) = fields.iter().position(|candidate| *candidate == field) else {
         return;
     };
     let new_index = if delta < 0 {
         index.saturating_sub(1)
     } else {
-        (index + 1).min(order.len().saturating_sub(1))
+        (index + 1).min(fields.len().saturating_sub(1))
     };
-    order.swap(index, new_index);
-    reorder_active_fields_by_order(settings, field_set);
+    fields.swap(index, new_index);
 }
 
-fn reorder_ordered_field(
+fn reorder_visible_field(
     settings: &mut LibraryListSettings,
     field_set: LibraryFieldSet,
     source: LibraryField,
     target: LibraryField,
     after: bool,
 ) {
-    let order = field_order_for_set_mut(settings, field_set);
-    let Some(source_index) = order.iter().position(|field| *field == source) else {
+    let fields = active_fields_for_set_mut(settings, field_set);
+    let Some(source_index) = fields.iter().position(|field| *field == source) else {
         return;
     };
-    let field = order.remove(source_index);
-    let Some(mut target_index) = order.iter().position(|field| *field == target) else {
-        order.insert(source_index.min(order.len()), field);
+    let field = fields.remove(source_index);
+    let Some(mut target_index) = fields.iter().position(|field| *field == target) else {
+        fields.insert(source_index.min(fields.len()), field);
         return;
     };
     if after {
         target_index += 1;
     }
-    order.insert(target_index.min(order.len()), field);
-    reorder_active_fields_by_order(settings, field_set);
-}
-
-fn reorder_active_fields_by_order(settings: &mut LibraryListSettings, field_set: LibraryFieldSet) {
-    let order = field_order_for_set(settings, field_set).to_vec();
-    active_fields_for_set_mut(settings, field_set).sort_by_key(|field| {
-        order
-            .iter()
-            .position(|candidate| candidate == field)
-            .unwrap_or(usize::MAX)
-    });
+    fields.insert(target_index.min(fields.len()), field);
 }
 
 fn can_toggle_field(
@@ -2301,7 +2434,7 @@ fn can_toggle_field(
         return true;
     }
     if field_set == LibraryFieldSet::Grid {
-        return active.len() > 1;
+        return true;
     }
     !row_field_is_usable(field)
         || active
@@ -2485,4 +2618,28 @@ fn joined_credits(credits: &[rufin_core::ArtistCredit]) -> String {
         .filter(|name| !name.is_empty())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn library_route_inset_keeps_margins_inside_scrollers() {
+        let spec = super::library_route_inset_spec();
+
+        assert_eq!(spec.margin_start, super::PRIMARY_ROUTE_MARGIN_START);
+        assert_eq!(spec.margin_end, 0);
+        assert!(spec.hexpand);
+    }
+
+    #[test]
+    fn album_detail_meta_label_has_fixed_pixel_boundary() {
+        let spec = super::album_detail_meta_label_spec(168);
+
+        assert_eq!(spec.width, 168);
+        assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
+        assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
+        assert_eq!(spec.overflow, gtk::Overflow::Hidden);
+        assert!(!spec.propagate_natural_width);
+        assert!(!spec.wrap);
+    }
 }

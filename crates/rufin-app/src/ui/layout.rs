@@ -1,10 +1,15 @@
 use adw::prelude::*;
-use rufin_core::{AppSettings, EffectiveDensity};
+use rufin_core::{LayoutProfile, LayoutSettings, LeftSidebarMode, RightSidebarMode};
 
 use super::Shell;
 
 pub(super) const COMPACT_RAIL_WIDTH: i32 = 64;
 pub(super) const NORMAL_SIDEBAR_WIDTH: i32 = 176;
+pub(super) const RIGHT_SIDEBAR_COMPACT_WIDTH: i32 = 250;
+pub(super) const RIGHT_SIDEBAR_DEFAULT_WIDTH: i32 = 300;
+pub(super) const RIGHT_SIDEBAR_COMFORTABLE_WIDTH: i32 = 400;
+pub(super) const RIGHT_SIDEBAR_SPACIOUS_WIDTH: i32 = 500;
+pub(super) const MIN_USEFUL_MAIN_WIDTH: i32 = 550;
 pub(super) const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 180;
@@ -20,13 +25,6 @@ pub(super) const HOME_ALBUM_TITLE_LINES: i32 = 1;
 pub(super) const HOME_ALBUM_ARTIST_LINES: i32 = 1;
 pub(super) const HOME_ALBUM_YEAR_LINES: i32 = 1;
 
-const MAIN_PANEL_UNITS: i32 = 7;
-const TOTAL_PANEL_UNITS: i32 = 10;
-const RIGHT_PANEL_MIN_PERCENT: i32 = 10;
-const RIGHT_PANEL_MAX_PERCENT: i32 = 50;
-const COMPACT_RIGHT_PANEL_MAX_PERCENT: i32 = 38;
-const COMPACT_PRIMARY_MIN_WIDTH: i32 = 560;
-const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
 pub(super) const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
 const LARGE_POPUP_HEIGHT_PERCENT: i32 = 85;
 const LARGE_POPUP_WIDTH_NUMERATOR: i32 = 11;
@@ -57,134 +55,102 @@ pub(super) fn home_album_page_size(width: i32, current_page_size: Option<usize>)
     page_size
 }
 
-pub(super) fn clamp_content_split_position_for_density(
-    split_width: i32,
-    position: i32,
-    density: EffectiveDensity,
-) -> i32 {
-    if split_width <= 1 {
-        return position;
-    }
-    let max_right_percent = match density {
-        EffectiveDensity::Normal => RIGHT_PANEL_MAX_PERCENT,
-        EffectiveDensity::Compact => COMPACT_RIGHT_PANEL_MAX_PERCENT,
-    };
-    let primary_min_width = match density {
-        EffectiveDensity::Normal => 0,
-        EffectiveDensity::Compact => COMPACT_PRIMARY_MIN_WIDTH,
-    };
-    let min_right_width = split_width * RIGHT_PANEL_MIN_PERCENT / 100;
-    let max_position = split_width - min_right_width;
-    let max_right_width = split_width * max_right_percent / 100;
-    let min_position = (split_width - max_right_width)
-        .max(primary_min_width.min(max_position))
-        .min(max_position);
-    position.clamp(min_position, max_position)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ActiveLayoutProfile {
+    Default,
+    Narrow,
 }
 
-fn right_panel_position_ratio(split_width: i32, position: i32) -> f64 {
-    if split_width <= 0 {
-        return 0.0;
-    }
-    let right_width = split_width - position.clamp(0, split_width);
-    f64::from(right_width) / f64::from(split_width)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ResolvedLayout {
+    pub(super) profile: ActiveLayoutProfile,
+    pub(super) left_sidebar: LeftSidebarMode,
+    pub(super) right_sidebar: RightSidebarMode,
+    pub(super) right_sidebar_width: i32,
+    pub(super) main_width: i32,
 }
 
-fn content_split_position_from_right_panel_ratio_for_density(
-    split_width: i32,
-    ratio: f64,
-    density: EffectiveDensity,
-) -> i32 {
-    let right_width = (f64::from(split_width) * ratio.clamp(0.0, 1.0)).round() as i32;
-    clamp_content_split_position_for_density(split_width, split_width - right_width, density)
-}
-
-pub(super) fn content_split_initial_position_for_density(
-    split_width: i32,
-    saved_ratio: Option<f64>,
-    density: EffectiveDensity,
-) -> i32 {
-    saved_ratio
-        .filter(|ratio| ratio.is_finite())
-        .map(|ratio| {
-            content_split_position_from_right_panel_ratio_for_density(split_width, ratio, density)
-        })
-        .unwrap_or_else(|| {
-            clamp_content_split_position_for_density(
-                split_width,
-                default_content_split_position(split_width),
-                density,
-            )
-        })
-}
-
-pub(super) fn content_split_target_position_for_density(
-    split_width: i32,
-    previous_width: i32,
-    stored_position: i32,
-    current_position: i32,
-    saved_ratio: Option<f64>,
-    density: EffectiveDensity,
-) -> i32 {
-    let target_position = if previous_width <= 1 {
-        content_split_initial_position_for_density(split_width, saved_ratio, density)
-    } else if previous_width != split_width && stored_position > 1 {
-        stored_position * split_width / previous_width
-    } else if current_position > 1 {
-        current_position
-    } else {
-        content_split_initial_position_for_density(split_width, saved_ratio, density)
-    };
-    clamp_content_split_position_for_density(split_width, target_position, density)
-}
-
-fn default_content_split_position(split_width: i32) -> i32 {
-    split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS
-}
-
-pub(super) fn right_panel_saved_ratio(
-    settings: &AppSettings,
-    density: EffectiveDensity,
-) -> Option<f64> {
-    match density {
-        EffectiveDensity::Normal => settings.right_panel_ratio,
-        EffectiveDensity::Compact => settings.compact_right_panel_ratio,
+pub(super) fn left_sidebar_width(mode: LeftSidebarMode) -> i32 {
+    match mode {
+        LeftSidebarMode::Full => NORMAL_SIDEBAR_WIDTH,
+        LeftSidebarMode::Compact => COMPACT_RAIL_WIDTH,
     }
 }
 
-pub(super) fn update_right_panel_split_settings(
-    settings: &mut AppSettings,
-    split_width: i32,
-    position: i32,
-    density: EffectiveDensity,
-) -> bool {
-    if split_width <= 1 || position <= 0 || position >= split_width {
-        return false;
+pub(super) fn right_sidebar_width(mode: RightSidebarMode) -> i32 {
+    match mode {
+        RightSidebarMode::Hidden => 0,
+        RightSidebarMode::Compact => RIGHT_SIDEBAR_COMPACT_WIDTH,
+        RightSidebarMode::Default => RIGHT_SIDEBAR_DEFAULT_WIDTH,
+        RightSidebarMode::Comfortable => RIGHT_SIDEBAR_COMFORTABLE_WIDTH,
+        RightSidebarMode::Spacious => RIGHT_SIDEBAR_SPACIOUS_WIDTH,
+    }
+}
+
+pub(super) fn resolve_layout(settings: &LayoutSettings, window_width: i32) -> ResolvedLayout {
+    let window_width = window_width.max(1);
+    let (profile, configured) =
+        if settings.narrow_enabled && window_width < settings.narrow_threshold {
+            (ActiveLayoutProfile::Narrow, &settings.narrow_profile)
+        } else {
+            (ActiveLayoutProfile::Default, &settings.default_profile)
+        };
+    resolve_layout_for_profile(profile, configured, window_width)
+}
+
+fn resolve_layout_for_profile(
+    profile: ActiveLayoutProfile,
+    configured: &LayoutProfile,
+    window_width: i32,
+) -> ResolvedLayout {
+    let mut left_sidebar = configured.left_sidebar;
+    let mut right_sidebar = resolved_right_sidebar_for_width(
+        configured.right_sidebar,
+        window_width - left_sidebar_width(left_sidebar),
+    );
+    let mut resolved_right_sidebar_width = right_sidebar_width(right_sidebar);
+    let mut main_width =
+        window_width - left_sidebar_width(left_sidebar) - resolved_right_sidebar_width;
+
+    if main_width < MIN_USEFUL_MAIN_WIDTH && left_sidebar == LeftSidebarMode::Full {
+        left_sidebar = LeftSidebarMode::Compact;
+        right_sidebar = resolved_right_sidebar_for_width(
+            right_sidebar,
+            window_width - left_sidebar_width(left_sidebar),
+        );
+        resolved_right_sidebar_width = right_sidebar_width(right_sidebar);
+        main_width = window_width - left_sidebar_width(left_sidebar) - resolved_right_sidebar_width;
     }
 
-    let position = clamp_content_split_position_for_density(split_width, position, density);
-    let ratio = right_panel_position_ratio(split_width, position);
-    match density {
-        EffectiveDensity::Normal => {
-            if settings.right_panel_position == Some(position)
-                && settings.right_panel_ratio == Some(ratio)
-            {
-                return false;
-            }
-            settings.right_panel_position = Some(position);
-            settings.right_panel_ratio = Some(ratio);
-        }
-        EffectiveDensity::Compact => {
-            if settings.compact_right_panel_position == Some(position)
-                && settings.compact_right_panel_ratio == Some(ratio)
-            {
-                return false;
-            }
-            settings.compact_right_panel_position = Some(position);
-            settings.compact_right_panel_ratio = Some(ratio);
-        }
+    ResolvedLayout {
+        profile,
+        left_sidebar,
+        right_sidebar,
+        right_sidebar_width: resolved_right_sidebar_width,
+        main_width: main_width.max(1),
     }
-    true
+}
+
+fn resolved_right_sidebar_for_width(
+    configured: RightSidebarMode,
+    available_after_left_sidebar: i32,
+) -> RightSidebarMode {
+    let mut mode = configured;
+    while mode.is_visible()
+        && available_after_left_sidebar - right_sidebar_width(mode) < MIN_USEFUL_MAIN_WIDTH
+    {
+        mode = smaller_right_sidebar_mode(mode);
+    }
+    mode
+}
+
+fn smaller_right_sidebar_mode(mode: RightSidebarMode) -> RightSidebarMode {
+    match mode {
+        RightSidebarMode::Spacious => RightSidebarMode::Comfortable,
+        RightSidebarMode::Comfortable => RightSidebarMode::Default,
+        RightSidebarMode::Default => RightSidebarMode::Compact,
+        RightSidebarMode::Compact | RightSidebarMode::Hidden => RightSidebarMode::Hidden,
+    }
 }
 
 pub(super) fn clamp_home_album_page_start(
@@ -203,34 +169,17 @@ pub(super) fn clamp_home_album_page_start(
 pub(super) fn home_album_content_width(shell: &Shell) -> i32 {
     home_album_content_width_for(
         shell.route_host.width(),
-        shell.content_split.width(),
-        shell.content_split.position(),
-        shell.state.right_panel_visible.get(),
+        shell.state.main_content_width.get(),
     )
 }
 
-fn home_album_content_width_for(
-    route_width: i32,
-    split_width: i32,
-    split_position: i32,
-    right_panel_visible: bool,
-) -> i32 {
-    let mut route_width = if !right_panel_visible && split_width > 1 {
-        split_width
-    } else {
+fn home_album_content_width_for(route_width: i32, fallback_width: i32) -> i32 {
+    let width = if route_width > 1 {
         route_width
+    } else {
+        fallback_width
     };
-    if right_panel_visible && split_position > 1 {
-        route_width = if route_width > 1 {
-            route_width.min(split_position)
-        } else {
-            split_position
-        };
-    }
-    if route_width <= 1 && split_width > 1 {
-        route_width = split_width * MAIN_PANEL_UNITS / TOTAL_PANEL_UNITS;
-    }
-    (route_width - HOME_ALBUM_HORIZONTAL_MARGINS).max(HOME_ALBUM_MIN_SIZE)
+    (width.max(1) - HOME_ALBUM_HORIZONTAL_MARGINS).max(HOME_ALBUM_MIN_SIZE)
 }
 
 pub(super) fn home_album_card_size(width: i32, page_size: usize) -> i32 {
@@ -241,14 +190,6 @@ fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
     let page_size = page_size.max(1) as i32;
     let gaps = HOME_ALBUM_GAP * (page_size - 1);
     ((width - gaps).max(page_size)) / page_size
-}
-
-pub(super) fn restored_window_size(width: Option<i32>, height: Option<i32>) -> Option<(i32, i32)> {
-    let (width, height) = (width?, height?);
-    if width < MIN_RESTORED_WINDOW_WIDTH || height < MIN_RESTORED_WINDOW_HEIGHT {
-        return None;
-    }
-    Some((width, height))
 }
 
 pub(super) fn large_popup_content_height(app_height: i32, fallback_height: i32) -> i32 {
@@ -330,7 +271,7 @@ pub(super) fn constrain_single_line_card_label(label: &gtk::Label, size: i32) {
 
 #[cfg(test)]
 mod tests {
-    use rufin_core::AppSettings;
+    use rufin_core::{LayoutSettings, RightSidebarMode};
 
     use super::*;
 
@@ -384,15 +325,13 @@ mod tests {
     }
 
     #[test]
-    fn home_album_width_uses_full_split_width_when_right_panel_is_hidden() {
-        let stale_route_width = 640;
-        let split_width = 1_000;
+    fn home_album_width_uses_allocated_route_width() {
         assert_eq!(
-            home_album_content_width_for(stale_route_width, split_width, 650, false),
-            split_width - HOME_ALBUM_HORIZONTAL_MARGINS
+            home_album_content_width_for(900, 1_000),
+            900 - HOME_ALBUM_HORIZONTAL_MARGINS
         );
         assert_eq!(
-            home_album_content_width_for(900, split_width, 650, true),
+            home_album_content_width_for(1, 650),
             650 - HOME_ALBUM_HORIZONTAL_MARGINS
         );
     }
@@ -406,119 +345,52 @@ mod tests {
     }
 
     #[test]
-    fn content_split_position_limits_right_panel() {
-        let density = rufin_core::EffectiveDensity::Normal;
+    fn layout_uses_default_profile_above_threshold() {
+        let settings = LayoutSettings::default();
+        let resolved = resolve_layout(&settings, 1_500);
+
+        assert_eq!(resolved.profile, ActiveLayoutProfile::Default);
+        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Full);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Comfortable);
         assert_eq!(
-            clamp_content_split_position_for_density(1_000, 100, density),
-            500
-        );
-        assert_eq!(
-            clamp_content_split_position_for_density(1_000, 950, density),
-            900
-        );
-        assert_eq!(
-            clamp_content_split_position_for_density(1_000, 625, density),
-            625
-        );
-        assert_eq!(default_content_split_position(1_000), 700);
-        assert_eq!(
-            content_split_initial_position_for_density(1_000, None, density),
-            700
-        );
-        assert_eq!(
-            content_split_initial_position_for_density(1_000, Some(0.25), density),
-            750
-        );
-        assert_eq!(
-            content_split_position_from_right_panel_ratio_for_density(1_000, 0.25, density),
-            750
-        );
-        assert_eq!(right_panel_position_ratio(1_000, 750), 0.25);
-        assert_eq!(
-            content_split_target_position_for_density(1_000, 0, 0, 600, None, density),
-            700
-        );
-        assert_eq!(
-            content_split_target_position_for_density(1_400, 1_000, 500, 700, None, density),
-            700
-        );
-        let mut settings = AppSettings::default();
-        assert!(update_right_panel_split_settings(
-            &mut settings,
-            1_000,
-            650,
-            rufin_core::EffectiveDensity::Normal,
-        ));
-        assert_eq!(settings.right_panel_position, Some(650));
-        assert_eq!(settings.right_panel_ratio, Some(0.35));
-        assert!(update_right_panel_split_settings(
-            &mut settings,
-            1_000,
-            760,
-            rufin_core::EffectiveDensity::Compact,
-        ));
-        assert_eq!(settings.compact_right_panel_position, Some(760));
-        assert_eq!(settings.compact_right_panel_ratio, Some(0.24));
-        assert_eq!(
-            right_panel_saved_ratio(&settings, rufin_core::EffectiveDensity::Normal),
-            Some(0.35)
-        );
-        assert_eq!(
-            right_panel_saved_ratio(&settings, rufin_core::EffectiveDensity::Compact),
-            Some(0.24)
+            resolved.right_sidebar_width,
+            RIGHT_SIDEBAR_COMFORTABLE_WIDTH
         );
     }
 
     #[test]
-    fn compact_content_split_preserves_primary_width() {
-        assert_eq!(
-            clamp_content_split_position_for_density(
-                1_000,
-                100,
-                rufin_core::EffectiveDensity::Compact
-            ),
-            620
-        );
-        assert_eq!(
-            clamp_content_split_position_for_density(
-                1_000,
-                950,
-                rufin_core::EffectiveDensity::Compact
-            ),
-            900
-        );
-        assert_eq!(
-            content_split_initial_position_for_density(
-                1_000,
-                Some(0.5),
-                rufin_core::EffectiveDensity::Compact
-            ),
-            620
-        );
+    fn layout_uses_narrow_profile_below_threshold() {
+        let settings = LayoutSettings::default();
+        let resolved = resolve_layout(&settings, 950);
 
-        let mut settings = AppSettings::default();
-        assert!(update_right_panel_split_settings(
-            &mut settings,
-            1_000,
-            500,
-            rufin_core::EffectiveDensity::Compact,
-        ));
-        assert_eq!(settings.compact_right_panel_position, Some(620));
-        assert_eq!(settings.compact_right_panel_ratio, Some(0.38));
+        assert_eq!(resolved.profile, ActiveLayoutProfile::Narrow);
+        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Compact);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Default);
+        assert_eq!(resolved.right_sidebar_width, RIGHT_SIDEBAR_DEFAULT_WIDTH);
     }
 
     #[test]
-    fn restored_window_size_ignores_tiny_geometry() {
-        assert_eq!(restored_window_size(None, Some(700)), None);
-        assert_eq!(restored_window_size(Some(400), Some(700)), None);
-        assert_eq!(
-            restored_window_size(Some(1061), Some(2251)),
-            Some((1061, 2251))
-        );
-        assert_eq!(
-            restored_window_size(Some(1800), Some(1200)),
-            Some((1800, 1200))
-        );
+    fn layout_degrades_right_sidebar_before_left_sidebar() {
+        let mut settings = LayoutSettings::default();
+        settings.narrow_enabled = false;
+        settings.default_profile.right_sidebar = RightSidebarMode::Spacious;
+
+        let resolved = resolve_layout(&settings, NORMAL_SIDEBAR_WIDTH + 800);
+
+        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Full);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Compact);
+        assert!(resolved.main_width >= MIN_USEFUL_MAIN_WIDTH);
+    }
+
+    #[test]
+    fn layout_compacts_left_sidebar_as_final_fallback() {
+        let mut settings = LayoutSettings::default();
+        settings.default_profile.right_sidebar = RightSidebarMode::Hidden;
+
+        let resolved = resolve_layout(&settings, NORMAL_SIDEBAR_WIDTH + MIN_USEFUL_MAIN_WIDTH - 10);
+
+        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Compact);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
     }
 
     #[test]

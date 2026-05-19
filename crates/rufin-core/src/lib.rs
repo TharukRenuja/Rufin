@@ -9,12 +9,14 @@ pub use domain::{
     PlaylistId, ServerId, ServerIdentity, Track, TrackId, format_duration,
 };
 pub use queue::{QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ShuffleState};
-pub use route::{DensityMode, EffectiveDensity, Route, RouteStack, SearchKind};
+pub use route::{Route, RouteStack, SearchKind};
 pub use settings::{
     AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType,
-    DiscordLinkType, EQUALIZER_BAND_COUNT, EqualizerSettings, LibraryField, LibraryLayout,
-    LibraryListKey, LibraryListSettings, LibraryListSettingsEntry, ListenBrainzScrobbleSettings,
-    PlaybackSettings, PlaybackTransitionMode, ReplayGainMode, ScrobblingSettings, StreamQuality,
-    ThemePreference, TrackSortKey, TrackTableColumn, TrackTableSettings, available_grid_fields,
-    available_row_fields, available_sort_fields,
+    DiscordLinkType, EQUALIZER_BAND_COUNT, EqualizerSettings, LayoutProfile, LayoutSettings,
+    LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
+    LibraryListSettingsEntry, ListenBrainzScrobbleSettings, MAX_NARROW_LAYOUT_THRESHOLD,
+    MIN_NARROW_LAYOUT_THRESHOLD, PlaybackSettings, PlaybackTransitionMode, ReplayGainMode,
+    RightSidebarMode, ScrobblingSettings, SidebarRouteItem, SidebarRouteItemSettings,
+    SidebarSettings, StreamQuality, ThemePreference, TrackSortKey, TrackTableColumn,
+    TrackTableSettings, available_grid_fields, available_row_fields, available_sort_fields,
 };

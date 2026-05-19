@@ -1,16 +1,12 @@
 use std::rc::Rc;
 
-use adw::prelude::*;
 use rufin_core::{
-    AppSettings, DensityMode, DiscordDisplayType, DiscordLinkType, HomeBlockKind, LibraryListKey,
+    AppSettings, DiscordDisplayType, DiscordLinkType, HomeBlockKind, LibraryListKey,
     LibraryListSettings, PlaybackSettings, Route, ScrobblingSettings, TrackTableSettings,
 };
 use tracing::warn;
 
-use super::{
-    Shell, current_playback_track_id,
-    layout::{restored_window_size, update_right_panel_split_settings},
-};
+use super::{Shell, current_playback_track_id};
 
 impl Shell {
     pub(super) fn sync_auto_dj_setting_from_playback(&self, enabled: bool) {
@@ -35,18 +31,6 @@ impl Shell {
             warn!(%error, action = warning_action, "failed to save settings");
         }
         Some(settings)
-    }
-
-    pub(super) fn set_density_mode(self: &Rc<Self>, density_mode: DensityMode) {
-        self.state.density_mode.set(density_mode);
-        self.update_app_settings("density setting", |settings| {
-            if settings.density_mode == density_mode {
-                return false;
-            }
-            settings.density_mode = density_mode;
-            true
-        });
-        self.update_density();
     }
 
     pub(super) fn set_external_lyrics_enabled(self: &Rc<Self>, enabled: bool) {
@@ -281,48 +265,10 @@ impl Shell {
         });
     }
 
-    pub(super) fn save_window_state(&self) {
-        self.update_app_settings("window state", |settings| {
-            let mut changed = false;
-
-            if !self.window.is_maximized()
-                && !self.window.is_fullscreen()
-                && let Some((width, height)) =
-                    restored_window_size(Some(self.window.width()), Some(self.window.height()))
-                && (settings.window_width != Some(width) || settings.window_height != Some(height))
-            {
-                settings.window_width = Some(width);
-                settings.window_height = Some(height);
-                changed = true;
-            }
-
-            let density = self.right_panel_density();
-            let split_position = if self.state.right_panel_visible.get() {
-                self.content_split.position()
-            } else {
-                self.right_panel_split_position_for(density)
-            };
-            if update_right_panel_split_settings(
-                settings,
-                self.content_split.width(),
-                split_position,
-                density,
-            ) {
-                changed = true;
-            }
-            let right_panel_visible = self.state.right_panel_visible.get();
-            if settings.right_panel_visible != right_panel_visible {
-                settings.right_panel_visible = right_panel_visible;
-                changed = true;
-            }
-
-            changed
-        });
-    }
-
     pub(super) fn update_track_table_settings(&self, update: impl FnOnce(&mut TrackTableSettings)) {
         self.update_app_settings("track table settings", |settings| {
             update(&mut settings.track_table);
+            settings.track_table.sanitize();
             true
         });
     }

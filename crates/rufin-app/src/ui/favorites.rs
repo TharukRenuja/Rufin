@@ -77,7 +77,7 @@ impl Shell {
         let favorites = self.state.library.borrow().favorites.clone();
         self.library_tracks_route_panel(
             favorites,
-            LibraryListKey::Tracks,
+            LibraryListKey::FavoriteTracks,
             "favorites",
             "Favorite tracks will appear here after you add them.",
         )

@@ -60,11 +60,11 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Metadata");
     let _ = tr("External lyric lookup");
     let _ = tr("External cover lookup");
-    let _ = tr("External metadata uses public MusicBrainz and Cover Art Archive lookups.");
-    let _ = tr("Use remote album art when server artwork is missing.");
+    let _ = tr("Does MusicBrainz and Cover Art Archive lookups");
+    let _ = tr("Try to fetch artwork from internet when server artwork is missing.");
     let _ = tr("Clear Cached Library");
     let _ = tr("Clear Cache");
-    let _ = tr("This removes cached library metadata for the active server. Login stays saved.");
+    let _ = tr("Clears cached data for the server, login stays saved");
     let _ = tr("No active server");
     let _ = tr("Add Server");
     let _ = tr("Manage Server");
@@ -78,26 +78,26 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Save");
     let _ = tr("Connect");
     let _ = tr("Connect to Music Server");
-    let _ = tr("Choose a provider, pick a discovered server, or enter the address manually.");
+    let _ = tr("Choose a provider, pick a server, or enter the address manually");
     let _ = tr("Provider");
     let _ = tr("Jellyfin");
     let _ = tr("Navidrome");
     let _ = tr("Subsonic / OpenSubsonic");
     let _ = tr("Local");
     let _ = tr("Local Library");
-    let _ = tr("Choose a folder to scan and play directly from this computer.");
+    let _ = tr("Choose a folder to scan and play locally from the computer (For flatpak users, if the folder is not in ~/Music, you need to give folder permissions from Flatseal)");
     let _ = tr("Music Folder");
     let _ = tr("No folder selected");
     let _ = tr("Choose");
     let _ = tr("Local Folder Access");
-    let _ = tr("Optional. Match server paths to local files for sidecar lyrics and exports.");
+    let _ = tr("Optional, match server paths to local files to export found lyrics and play from your folders directly");
     let _ = tr("Local Folder");
     let _ = tr("Server Path Prefix");
     let _ = tr("Select Music Folder");
-    let _ = tr("Choose a local music folder.");
+    let _ = tr("Choose a local music folder");
     let _ = tr("Server Address");
-    let _ = tr("Trust invalid certificate");
-    let _ = tr("Only use this for a server you control.");
+    let _ = tr("Trust invalid certificates");
+    let _ = tr("Only use this for a server you control");
     let _ = tr("Found Servers");
     let _ = tr("Searching Local Network");
     let _ = tr("No Servers Found");
@@ -135,7 +135,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Search Lyrics");
     let _ = tr("Save Lyrics");
     let _ = tr("Ask where to save to lyrics");
-    let _ = tr("If not set, lyrics are exported to the folder you set, or your ~/Music folder.");
+    let _ = tr("If not set, lyrics are exported to the folder you set, or your ~/Music folder");
     let _ = tr("Lyrics export folder");
     let _ = tr("Use ~/Music");
     let _ = tr("Select Lyrics Export Folder");
@@ -155,11 +155,11 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Save");
     let _ = tr("Saved to");
     let _ = tr("Show Lyrics Panel");
-    let _ = tr("Keep the lyrics section visible below the queue.");
-    let _ = tr("Keep the queue sidebar visible in the main window.");
+    let _ = tr("Keep the lyrics section visible below the queue");
+    let _ = tr("Keep the queue sidebar visible in the main window");
     let _ = tr("Prefer server lyrics");
-    let _ = tr("Search server lyrics before external providers.");
-    let _ = tr("Use remote lyric providers when server lyrics are unavailable.");
+    let _ = tr("Search server lyrics before external providers");
+    let _ = tr("Use remote lyric providers when server lyrics are unavailable");
     let _ = tr("Scrobbling");
     let _ = tr("Last.fm");
     let _ = tr("Last.fm scrobbling");
@@ -190,12 +190,12 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Find your ListenBrainz user token");
     let _ = tr("User token");
     let _ = tr(
-        "Stop playback reporting, external lyrics, external metadata, notifications, and presence.",
+        "Stop playback reporting, external lyrics, external metadata, notifications, and Discord IPC",
     );
     let _ = tr("Music Server");
     let _ = tr("Private mode is on");
     let _ = tr("Left sidebar density");
-    let _ = tr("Choose when the left sidebar uses compact navigation.");
+    let _ = tr("Choose when the left sidebar uses compact navigation");
     let _ = tr("Remove from queue");
     let _ = tr("Remove from Queue");
     let _ = tr("Mute");
@@ -216,17 +216,17 @@ fn catalog_strings_for_extraction() {
     let _ = tr("no account");
     let _ = tr("Nothing playing");
     let _ = tr("Queue a track to begin");
-    let _ = tr("No queue items match the search.");
-    let _ = tr("Artist detail will use cached album and track groups.");
-    let _ = tr("Genre detail keeps albums above tracks.");
-    let _ = tr("Playlist detail will use the track table.");
-    let _ = tr("Cached library data will appear here as sync pages finish.");
-    let _ = tr("The selected cached album was not found.");
-    let _ = tr("No cached results found.");
-    let _ = tr("Cached rows will appear here after the background sync finishes.");
-    let _ = tr("Type a query in the sidebar search field to search the local cache.");
+    let _ = tr("No queue items match the search");
+    let _ = tr("Artist detail will use cached album and track groups");
+    let _ = tr("Genre detail keeps albums above tracks");
+    let _ = tr("Playlist detail will use the track table");
+    let _ = tr("Cached library data will appear here as sync pages finish");
+    let _ = tr("The selected cached album was not found");
+    let _ = tr("No cached results found");
+    let _ = tr("Cached rows will appear here after the background sync finishes");
+    let _ = tr("Type a query in the sidebar search field to search the local cache");
     let _ = tr(
-        "Thank you for trying out Rufin! If you have problems or suggestions, please open an issue in Github.",
+        "Thank you for trying out Rufin! This a new app that is still in heavy development. If you have problems or suggestions, please open an issue in Github.",
     );
     let _ = tr("Website");
     let _ = tr("Issues");
