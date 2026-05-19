@@ -71,6 +71,7 @@ jobs:
         run: |
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Verify signed release tag
         if: github.event_name == 'release' || github.event_name == 'push'
