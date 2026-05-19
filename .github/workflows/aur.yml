@@ -205,7 +205,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     container: archlinux:latest
-    environment: aur-publish
 
     steps:
       - name: Install publish dependencies

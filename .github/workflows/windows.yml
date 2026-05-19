@@ -164,7 +164,6 @@ jobs:
     if: github.event_name == 'release' || inputs.upload_release_tag != ''
     needs: setup
     runs-on: ubuntu-latest
-    environment: github-release
     permissions:
       contents: write
       id-token: write
