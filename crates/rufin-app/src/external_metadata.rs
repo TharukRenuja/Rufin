@@ -50,6 +50,11 @@ pub fn normalize_album(album: &mut Album, settings: &AppSettings) {
 
 pub fn normalize_track(track: &mut Track, settings: &AppSettings) {
     normalize_image_ref(&mut track.image_ref, settings);
+    if enabled(settings)
+        && has_untagged_jellyfin_album_ref(&track.image_ref, track.album_id.as_str())
+    {
+        track.image_ref = None;
+    }
     if enabled(settings) && track.image_ref.is_none() {
         track.image_ref = external_album_image_ref(&track.artist, &track.album);
     }
@@ -110,6 +115,13 @@ pub fn normalize_queue_snapshot(snapshot: &mut QueueSnapshot, settings: &AppSett
 
 pub fn normalize_queue_entry(entry: &mut QueueEntry, settings: &AppSettings) {
     normalize_image_ref(&mut entry.image_ref, settings);
+    if enabled(settings)
+        && entry.album_id.as_ref().is_some_and(|album_id| {
+            has_untagged_jellyfin_album_ref(&entry.image_ref, album_id.as_str())
+        })
+    {
+        entry.image_ref = None;
+    }
     if enabled(settings) && entry.image_ref.is_none() {
         entry.image_ref = external_album_image_ref(&entry.artist, &entry.album);
     }
@@ -142,6 +154,14 @@ fn normalize_image_ref(image_ref: &mut Option<ImageRef>, settings: &AppSettings)
     {
         *image_ref = None;
     }
+}
+
+fn has_untagged_jellyfin_album_ref(image_ref: &Option<ImageRef>, album_id: &str) -> bool {
+    image_ref.as_ref().is_some_and(|image_ref| {
+        image_ref.item_id == album_id
+            && image_ref.item_id.starts_with("jellyfin:album:")
+            && image_ref.tag.as_deref().is_none_or(str::is_empty)
+    })
 }
 
 fn external_album_image_ref(artist: &str, album: &str) -> Option<ImageRef> {
@@ -234,9 +254,12 @@ mod tests {
     use super::album_lookup::{cover_art_size_path, json_ids, lastfm_album_image_url};
     use super::{
         album_art_from_image_ref, enabled, is_expected_lookup_miss, is_external_image_ref,
-        normalize_album, normalize_artist, normalize_track,
+        normalize_album, normalize_artist, normalize_queue_entry, normalize_track,
     };
-    use rufin_core::{Album, AlbumId, AppSettings, Artist, ArtistId, ImageRef, Track, TrackId};
+    use rufin_core::{
+        Album, AlbumId, AppSettings, Artist, ArtistId, ImageRef, QueueEntry, QueueEntryId, Track,
+        TrackId,
+    };
     use serde_json::json;
 
     #[test]
@@ -293,6 +316,81 @@ mod tests {
         );
 
         assert_eq!(track.image_ref, None);
+    }
+
+    #[test]
+    fn tracks_with_untagged_jellyfin_album_refs_use_external_album_fallback() {
+        let mut track = track_without_cover("Example Track", "Example Artist", "Example Album");
+        track.album_id = AlbumId::new("jellyfin:album:one");
+        track.image_ref = Some(ImageRef::new("jellyfin:album:one", None));
+
+        normalize_track(
+            &mut track,
+            &AppSettings {
+                external_metadata_enabled: true,
+                ..AppSettings::default()
+            },
+        );
+
+        let image_ref = track.image_ref.expect("external album image ref");
+        assert!(is_external_image_ref(&image_ref));
+        assert_eq!(
+            album_art_from_image_ref(&image_ref),
+            Some(super::ExternalAlbumArt {
+                artist: "Example Artist".to_string(),
+                album: "Example Album".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn tagged_or_non_jellyfin_track_refs_are_kept() {
+        let settings = AppSettings {
+            external_metadata_enabled: true,
+            ..AppSettings::default()
+        };
+        let tagged_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+        let local_ref = ImageRef::new("local:cover:one", None);
+        let mut tagged_track =
+            track_without_cover("Midnight City", "M83", "Hurry Up, We're Dreaming");
+        tagged_track.album_id = AlbumId::new("jellyfin:album:one");
+        tagged_track.image_ref = Some(tagged_ref.clone());
+        let mut local_track =
+            track_without_cover("Midnight City", "M83", "Hurry Up, We're Dreaming");
+        local_track.album_id = AlbumId::new("jellyfin:album:one");
+        local_track.image_ref = Some(local_ref.clone());
+
+        normalize_track(&mut tagged_track, &settings);
+        normalize_track(&mut local_track, &settings);
+
+        assert_eq!(tagged_track.image_ref, Some(tagged_ref));
+        assert_eq!(local_track.image_ref, Some(local_ref));
+    }
+
+    #[test]
+    fn queue_entries_with_untagged_jellyfin_album_refs_use_external_album_fallback() {
+        let mut entry =
+            queue_entry_without_cover("Example Track", "Example Artist", "Example Album");
+        entry.album_id = Some(AlbumId::new("jellyfin:album:one"));
+        entry.image_ref = Some(ImageRef::new("jellyfin:album:one", None));
+
+        normalize_queue_entry(
+            &mut entry,
+            &AppSettings {
+                external_metadata_enabled: true,
+                ..AppSettings::default()
+            },
+        );
+
+        let image_ref = entry.image_ref.expect("external album image ref");
+        assert!(is_external_image_ref(&image_ref));
+        assert_eq!(
+            album_art_from_image_ref(&image_ref),
+            Some(super::ExternalAlbumArt {
+                artist: "Example Artist".to_string(),
+                album: "Example Album".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -483,6 +581,22 @@ mod tests {
             image_ref: None,
             genres: Vec::new(),
             local_path: None,
+        }
+    }
+
+    fn queue_entry_without_cover(title: &str, artist: &str, album: &str) -> QueueEntry {
+        QueueEntry {
+            id: QueueEntryId::new("entry-one"),
+            track_id: TrackId::new("track-one"),
+            album_id: Some(AlbumId::new("album-one")),
+            title: title.to_string(),
+            artist: artist.to_string(),
+            artist_id: None,
+            album: album.to_string(),
+            year: 2011,
+            duration_seconds: 60,
+            favorite: false,
+            image_ref: None,
         }
     }
 
