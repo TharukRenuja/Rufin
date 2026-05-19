@@ -1,6 +1,9 @@
 name: Windows
 
 on:
+  push:
+    tags:
+      - 'v*'
   release:
     types:
       - published
@@ -33,11 +36,11 @@ jobs:
 
     steps:
       - name: Validate release target
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
         shell: bash
         env:
           BUILD_REF: ${{ inputs.ref }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
         run: |
           set -euo pipefail
           release_tag="$RELEASE_TAG"
@@ -57,22 +60,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Verify signed release tag
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
         run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
 
       - name: Validate release metadata
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
@@ -161,7 +164,7 @@ jobs:
 
   release:
     name: Upload Windows release asset
-    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
     needs: setup
     runs-on: ubuntu-latest
     permissions:
@@ -192,7 +195,7 @@ jobs:
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
         run: |
           set -euo pipefail
           installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"

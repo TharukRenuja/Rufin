@@ -1,6 +1,9 @@
 name: AUR
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       package:
@@ -60,6 +63,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -69,15 +73,15 @@ jobs:
           chown -R builder:builder "$GITHUB_WORKSPACE"
 
       - name: Verify signed release tag
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'push'
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
 
       - name: Validate release tag
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'push'
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
           tag_name="$RELEASE_TAG"
@@ -87,9 +91,9 @@ jobs:
           fi
 
       - name: Validate release metadata
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'push'
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
@@ -103,9 +107,9 @@ jobs:
           test "$version" = "$metainfo_version"
 
       - name: Prepare release package from release tag
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'push'
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
           tag_name="$RELEASE_TAG"
@@ -126,7 +130,7 @@ jobs:
           set -euo pipefail
 
           package="$REQUESTED_PACKAGE"
-          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_EVENT_NAME" == "push" ]]; then
             package="rufin"
           fi
 
@@ -155,7 +159,7 @@ jobs:
           set -euo pipefail
 
           package="$REQUESTED_PACKAGE"
-          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_EVENT_NAME" == "push" ]]; then
             package="rufin"
           fi
 
@@ -186,7 +190,7 @@ jobs:
           done
 
       - name: Upload package metadata
-        if: github.event_name == 'release' || inputs.publish
+        if: github.event_name == 'release' || github.event_name == 'push' || inputs.publish
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: aur-package-metadata
@@ -201,7 +205,7 @@ jobs:
 
   publish:
     name: Publish AUR packages
-    if: github.event_name == 'release' || inputs.publish
+    if: github.event_name == 'release' || github.event_name == 'push' || inputs.publish
     needs: build
     runs-on: ubuntu-latest
     container: archlinux:latest
@@ -275,7 +279,7 @@ jobs:
           set -euo pipefail
 
           package="$REQUESTED_PACKAGE"
-          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_EVENT_NAME" == "push" ]]; then
             package="rufin"
           fi
 

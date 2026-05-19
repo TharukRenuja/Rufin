@@ -1,6 +1,9 @@
 name: Nix
 
 on:
+  push:
+    tags:
+      - 'v*'
   release:
     types:
       - published
@@ -30,10 +33,12 @@ jobs:
       - name: Validate cached build ref
         env:
           BUILD_REF: ${{ inputs.ref }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || '' }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            ref="$RELEASE_TAG"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             ref="$RELEASE_TAG"
           else
             ref="$BUILD_REF"
@@ -54,20 +59,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Verify signed release tag
-        if: github.event_name == 'release' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
+        if: github.event_name == 'release' || github.event_name == 'push' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
         env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.ref }}
         run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
 
       - name: Validate release metadata
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'push'
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"

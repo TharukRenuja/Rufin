@@ -91,7 +91,7 @@ if ! git rev-parse -q --verify "refs/tags/$base_tag" >/dev/null; then
   exit 1
 fi
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
+if [[ "$dry_run" != "1" ]] && { ! git diff --quiet || ! git diff --cached --quiet; }; then
   echo "working tree must be clean before creating a release tag" >&2
   exit 1
 fi
@@ -109,10 +109,9 @@ cleanup() {
 trap cleanup EXIT
 
 {
-  echo "Release $version"
   echo "$summary"
   echo
-  echo "changes:"
+  echo "Changelog"
   echo
   git log --reverse --pretty=format:'%s (%h)' "$base_tag"..HEAD
   echo
