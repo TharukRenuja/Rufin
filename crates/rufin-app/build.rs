@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let manifest_dir = PathBuf::from(
@@ -12,6 +12,11 @@ fn main() {
         return;
     }
 
+    compile_windows_resource(&icon_path);
+}
+
+#[cfg(windows)]
+fn compile_windows_resource(icon_path: &Path) {
     let mut resource = winresource::WindowsResource::new();
     resource
         .set_icon(icon_path.to_string_lossy().as_ref())
@@ -20,3 +25,6 @@ fn main() {
         .set("OriginalFilename", "rufin.exe");
     resource.compile().expect("compile Windows resources");
 }
+
+#[cfg(not(windows))]
+fn compile_windows_resource(_icon_path: &Path) {}

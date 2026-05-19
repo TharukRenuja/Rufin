@@ -4890,19 +4890,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/winresource/winresource-0.1.31.crate",
-        "sha256": "0986a8b1d586b7d3e4fe3d9ea39fb451ae22869dcea4aa109d287a374d866087",
-        "dest": "cargo/vendor/winresource-0.1.31"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"0986a8b1d586b7d3e4fe3d9ea39fb451ae22869dcea4aa109d287a374d866087\", \"files\": {}}",
-        "dest": "cargo/vendor/winresource-0.1.31",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/winnow/winnow-1.0.3.crate",
         "sha256": "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1",
         "dest": "cargo/vendor/winnow-1.0.3"
