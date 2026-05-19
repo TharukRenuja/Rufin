@@ -20,31 +20,78 @@ concurrency:
 
 env:
   CACHIX_CACHE_NAME: screwys-rufin
-  CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
 jobs:
   build:
     name: Build flake
     runs-on: ubuntu-latest
+    environment: nix-cache
 
     steps:
+      - name: Validate cached build ref
+        env:
+          BUILD_REF: ${{ inputs.ref }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            ref="$RELEASE_TAG"
+          else
+            ref="$BUILD_REF"
+          fi
+
+          if [[ "$ref" == "main" || "$ref" == "refs/heads/main" ]]; then
+            exit 0
+          fi
+
+          tag="${ref#refs/tags/}"
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            exit 0
+          fi
+
+          echo "Nix cache builds are limited to main or version tags" >&2
+          exit 1
+
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify signed release tag
+        if: github.event_name == 'release' || startsWith(inputs.ref, 'v') || startsWith(inputs.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+        run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
+
+      - name: Validate release metadata
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rufin-app/Cargo.toml | head -n 1)"
+          metainfo_version="$(
+            sed -n 's/.*<release version="\([^"]*\)".*/\1/p' data/io.github.screwys.Rufin.metainfo.xml |
+              head -n 1
+          )"
+
+          test "$version" = "$cargo_version"
+          test "$version" = "$metainfo_version"
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
         with:
           extra_nix_config: |
             accept-flake-config = true
 
       - name: Configure Cachix
-        if: env.CACHIX_AUTH_TOKEN != ''
-        uses: cachix/cachix-action@v17
+        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
         with:
           name: ${{ env.CACHIX_CACHE_NAME }}
-          authToken: ${{ env.CACHIX_AUTH_TOKEN }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Check flake
         run: nix flake check --print-build-logs

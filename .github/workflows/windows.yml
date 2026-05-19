@@ -16,7 +16,7 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: windows-${{ github.ref }}
@@ -32,13 +32,61 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      - name: Validate release target
+        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        shell: bash
+        env:
+          BUILD_REF: ${{ inputs.ref }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: |
+          set -euo pipefail
+          release_tag="$RELEASE_TAG"
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            build_ref="$BUILD_REF"
+            if [[ "$build_ref" != "$release_tag" && "$build_ref" != "refs/tags/$release_tag" ]]; then
+              echo "Manual release uploads must build the same tag they upload" >&2
+              exit 1
+            fi
+          fi
+
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify signed release tag
+        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
+
+      - name: Validate release metadata
+        if: github.event_name == 'release' || inputs.upload_release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rufin-app/Cargo.toml | head -n 1)"
+          metainfo_version="$(
+            sed -n 's/.*<release version="\([^"]*\)".*/\1/p' data/io.github.screwys.Rufin.metainfo.xml |
+              head -n 1
+          )"
+
+          test "$version" = "$cargo_version"
+          test "$version" = "$metainfo_version"
 
       - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2
         with:
           msystem: UCRT64
           update: true
@@ -104,18 +152,50 @@ jobs:
           & (Join-Path $installDir "rufin.exe") --help | Out-Null
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Rufin-setup.exe
           path: dist/Rufin-*-setup.exe
           if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Upload Windows release asset
+    if: github.event_name == 'release' || inputs.upload_release_tag != ''
+    needs: setup
+    runs-on: ubuntu-latest
+    environment: github-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download workflow artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: Rufin-setup.exe
+          path: dist
+
+      - name: Generate checksum
+        run: |
+          set -euo pipefail
+          installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"
+          test -n "$installer"
+          sha256sum "$installer" > "$installer.sha256"
+
+      - name: Attest Windows installer
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4
+        with:
+          subject-path: dist/Rufin-*-setup.exe
 
       - name: Upload release asset
-        if: github.event_name == 'release' || inputs.upload_release_tag != ''
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.upload_release_tag }}
         run: |
-          $installer = Get-ChildItem dist -Filter "Rufin-*-setup.exe" | Select-Object -First 1
-          gh release upload $env:RELEASE_TAG $installer.FullName --clobber --repo $env:GITHUB_REPOSITORY
+          set -euo pipefail
+          installer="$(find dist -maxdepth 1 -name 'Rufin-*-setup.exe' -print -quit)"
+          test -n "$installer"
+          gh release upload "$RELEASE_TAG" "$installer" "$installer.sha256" --clobber --repo "$GITHUB_REPOSITORY"
