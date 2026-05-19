@@ -26,6 +26,7 @@ pub struct LyricsPane {
 
 #[derive(Clone)]
 struct LyricsRow {
+    line_index: usize,
     row: gtk::Widget,
     label: gtk::Label,
 }
@@ -140,7 +141,10 @@ impl LyricsPane {
         self.cancel_scroll_animation();
 
         if let Some(current_lyrics) = lyrics {
-            for line in &current_lyrics.lines {
+            for (line_index, line) in current_lyrics.lines.iter().enumerate() {
+                if !lyric_line_has_text(line) {
+                    continue;
+                }
                 let label = gtk::Label::new(Some(&line.text));
                 label.set_wrap(true);
                 label.set_xalign(0.5);
@@ -166,7 +170,11 @@ impl LyricsPane {
                 row.add_css_class("lyrics-row");
 
                 self.body.append(&row);
-                self.rows.borrow_mut().push(LyricsRow { row, label });
+                self.rows.borrow_mut().push(LyricsRow {
+                    line_index,
+                    row,
+                    label,
+                });
             }
         } else {
             let status = gtk::Label::new(Some(&empty_status));
@@ -188,8 +196,8 @@ impl LyricsPane {
         let follow_pause = self.follow_scroll_pause();
         let scroll_target = {
             let rows = self.rows.borrow();
-            for (index, row) in rows.iter().enumerate() {
-                let active = highlight_all_lines || Some(index) == active_index;
+            for row in rows.iter() {
+                let active = highlight_all_lines || Some(row.line_index) == active_index;
                 if active {
                     row.row.add_css_class("lyrics-row-active");
                     row.label.add_css_class("lyrics-line-active");
@@ -201,7 +209,7 @@ impl LyricsPane {
 
             lyrics_follow_scroll_target(active_index, previous_index, follow_pause).and_then(
                 |index| {
-                    let row = rows.get(index)?.row.clone();
+                    let row = rows.iter().find(|row| row.line_index == index)?.row.clone();
                     let duration = lyrics
                         .map(|lyrics| {
                             lyrics_scroll_animation_millis(
@@ -312,16 +320,19 @@ impl LyricsPane {
 }
 
 pub fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option<usize> {
-    let first_timed_index = lines.iter().position(|line| line.start_millis.is_some());
+    let first_timed_index = lines
+        .iter()
+        .position(|line| line.start_millis.is_some() && lyric_line_has_text(line));
     lines
         .iter()
         .enumerate()
         .filter_map(|(index, line)| {
             let start = line.start_millis?;
-            (start <= position_millis).then_some((index, start))
+            let target_index = lyric_highlight_target_index(lines, index)?;
+            (start <= position_millis).then_some((target_index, start, index))
         })
-        .max_by_key(|(_, start)| *start)
-        .map(|(index, _)| index)
+        .max_by_key(|(_, start, index)| (*start, *index))
+        .map(|(index, _, _)| index)
         .or(first_timed_index)
 }
 
@@ -332,6 +343,9 @@ pub fn should_highlight_all_lyrics_lines(lines: &[LyricLine]) -> bool {
 pub fn next_lyrics_line_start_after(lines: &[LyricLine], position_millis: u64) -> Option<u64> {
     lines
         .iter()
+        .enumerate()
+        .filter(|(index, _)| lyric_highlight_target_index(lines, *index).is_some())
+        .map(|(_, line)| line)
         .filter_map(|line| line.start_millis)
         .filter(|start| *start > position_millis)
         .min()
@@ -369,6 +383,7 @@ pub fn lyrics_scroll_animation_millis(
     let budget = lines
         .iter()
         .skip(active_index + 1)
+        .filter(|line| lyric_line_has_text(line))
         .filter_map(|line| line.start_millis)
         .find(|start| *start > position_millis)
         .and_then(|next_start| {
@@ -386,12 +401,28 @@ pub fn lyrics_scroll_animation_millis(
         .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS)
 }
 
+fn lyric_line_has_text(line: &LyricLine) -> bool {
+    !line.text.trim().is_empty()
+}
+
+fn lyric_highlight_target_index(lines: &[LyricLine], index: usize) -> Option<usize> {
+    let line = lines.get(index)?;
+    if lyric_line_has_text(line) {
+        return Some(index);
+    }
+    lines
+        .iter()
+        .enumerate()
+        .skip(index + 1)
+        .find_map(|(next_index, line)| lyric_line_has_text(line).then_some(next_index))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        LyricsFollowScrollPause, active_lyrics_line_index, lyrics_follow_scroll_pause_state,
-        lyrics_follow_scroll_target, lyrics_scroll_animation_millis, next_lyrics_line_start_after,
-        should_highlight_all_lyrics_lines,
+        active_lyrics_line_index, lyrics_follow_scroll_pause_state, lyrics_follow_scroll_target,
+        lyrics_scroll_animation_millis, next_lyrics_line_start_after,
+        should_highlight_all_lyrics_lines, LyricsFollowScrollPause,
     };
     use rufin_provider::LyricLine;
     use std::time::{Duration, Instant};
@@ -423,6 +454,46 @@ mod tests {
         assert_eq!(active_lyrics_line_index(&lines, 5_500), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(1));
         assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(3));
+    }
+
+    #[test]
+    fn synced_empty_line_advances_highlight_to_next_text_line() {
+        let lines = vec![
+            LyricLine {
+                text: "current".to_string(),
+                start_millis: Some(1_000),
+            },
+            LyricLine {
+                text: "".to_string(),
+                start_millis: Some(5_000),
+            },
+            LyricLine {
+                text: "next".to_string(),
+                start_millis: Some(9_000),
+            },
+        ];
+
+        assert_eq!(active_lyrics_line_index(&lines, 4_999), Some(0));
+        assert_eq!(active_lyrics_line_index(&lines, 5_000), Some(2));
+        assert_eq!(active_lyrics_line_index(&lines, 8_999), Some(2));
+        assert_eq!(active_lyrics_line_index(&lines, 9_000), Some(2));
+    }
+
+    #[test]
+    fn trailing_empty_line_keeps_last_text_line_active() {
+        let lines = vec![
+            LyricLine {
+                text: "last".to_string(),
+                start_millis: Some(1_000),
+            },
+            LyricLine {
+                text: " ".to_string(),
+                start_millis: Some(5_000),
+            },
+        ];
+
+        assert_eq!(active_lyrics_line_index(&lines, 5_000), Some(0));
+        assert_eq!(active_lyrics_line_index(&lines, 50_000), Some(0));
     }
 
     #[test]
@@ -494,6 +565,27 @@ mod tests {
         assert_eq!(next_lyrics_line_start_after(&lines, 5_499), Some(5_500));
         assert_eq!(next_lyrics_line_start_after(&lines, 5_500), Some(9_000));
         assert_eq!(next_lyrics_line_start_after(&lines, 9_000), None);
+    }
+
+    #[test]
+    fn synced_lyrics_schedule_empty_line_boundary() {
+        let lines = vec![
+            LyricLine {
+                text: "current".to_string(),
+                start_millis: Some(1_000),
+            },
+            LyricLine {
+                text: "".to_string(),
+                start_millis: Some(5_000),
+            },
+            LyricLine {
+                text: "next".to_string(),
+                start_millis: Some(9_000),
+            },
+        ];
+
+        assert_eq!(next_lyrics_line_start_after(&lines, 4_999), Some(5_000));
+        assert_eq!(next_lyrics_line_start_after(&lines, 5_000), Some(9_000));
     }
 
     #[test]
