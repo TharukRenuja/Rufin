@@ -64,30 +64,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify signed release tag
-        if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
-        run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
-
-      - name: Validate release metadata
-        if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rufin-app/Cargo.toml | head -n 1)"
-          metainfo_version="$(
-            sed -n 's/.*<release version="\([^"]*\)".*/\1/p' data/io.github.screwys.Rufin.metainfo.xml |
-              head -n 1
-          )"
-
-          test "$version" = "$cargo_version"
-          test "$version" = "$metainfo_version"
-
       - name: Set up MSYS2
         uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2
         with:
@@ -96,6 +72,7 @@ jobs:
           install: >-
             base-devel
             git
+            gnupg
             mingw-w64-ucrt-x86_64-adwaita-icon-theme
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-gdk-pixbuf2
@@ -116,6 +93,30 @@ jobs:
             mingw-w64-ucrt-x86_64-rust
             mingw-w64-ucrt-x86_64-shared-mime-info
             mingw-w64-ucrt-x86_64-toolchain
+
+      - name: Verify signed release tag
+        if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
+        shell: msys2 {0}
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
+        run: bash .github/scripts/verify-signed-release-tag.sh "$RELEASE_TAG"
+
+      - name: Validate release metadata
+        if: github.event_name == 'release' || github.event_name == 'push' || inputs.upload_release_tag != ''
+        shell: msys2 {0}
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'push' && github.ref_name || inputs.upload_release_tag }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rufin-app/Cargo.toml | head -n 1)"
+          metainfo_version="$(
+            sed -n 's/.*<release version="\([^"]*\)".*/\1/p' data/io.github.screwys.Rufin.metainfo.xml |
+              head -n 1
+          )"
+
+          test "$version" = "$cargo_version"
+          test "$version" = "$metainfo_version"
 
       - name: Build Rufin
         shell: msys2 {0}
