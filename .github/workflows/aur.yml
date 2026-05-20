@@ -236,6 +236,7 @@ jobs:
       - name: Configure AUR SSH
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        shell: bash
         run: |
           set -euo pipefail
           if [[ -z "${AUR_SSH_PRIVATE_KEY}" ]]; then
@@ -246,8 +247,9 @@ jobs:
           install -d -m 700 ~/.ssh
           key_file="$HOME/.ssh/aur"
           key_material="${AUR_SSH_PRIVATE_KEY//$'\r'/}"
-          if [[ "$key_material" == *'\\n'* ]]; then
-            printf '%b\n' "$key_material" > "$key_file"
+          if [[ "$key_material" == *"\\n"* ]]; then
+            printf '%b' "$key_material" > "$key_file"
+            printf '\n' >> "$key_file"
           elif [[ "$key_material" == *"-----BEGIN "* ]]; then
             printf '%s\n' "$key_material" > "$key_file"
           elif printf '%s' "$key_material" | base64 -d > "$key_file.tmp" 2>/dev/null; then
@@ -257,6 +259,11 @@ jobs:
           fi
           rm -f "$key_file.tmp"
           chmod 600 ~/.ssh/aur
+          if ! head -n 1 "$key_file" | grep -q '^-----BEGIN .*PRIVATE KEY-----$'; then
+            echo "AUR_SSH_PRIVATE_KEY is not an OpenSSH private key after decoding" >&2
+            exit 1
+          fi
+          echo "AUR SSH key lines: $(wc -l < "$key_file")"
           secret_fingerprint="$(
             ssh-keygen -y -f ~/.ssh/aur |
               ssh-keygen -lf - |
