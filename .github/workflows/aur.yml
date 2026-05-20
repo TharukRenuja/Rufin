@@ -270,7 +270,7 @@ jobs:
               awk '{print $2}'
           )"
           echo "AUR SSH key fingerprint: ${secret_fingerprint}"
-          test "$secret_fingerprint" = "SHA256:B9M3ivEcGuf7RqkzyXLTAytU4AlBW5NcACn7PayJZmg"
+          test "$secret_fingerprint" = "SHA256:N1BBpqTVHS0EDGTCEVNjw02KpaR4onZs8LisHRnsPww"
 
           ssh-keyscan aur.archlinux.org > ~/.ssh/known_hosts
           ssh-keygen -lf ~/.ssh/known_hosts |
