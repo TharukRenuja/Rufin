@@ -1472,7 +1472,7 @@ impl Shell {
                     shell.render_lyrics_panel();
                     shell.update_bottom_player();
                     shell.log_layout_snapshot("first_run_reveal_after_render");
-                    shell.queue_responsive_route_render();
+                    shell.queue_post_layout_route_render();
                 },
             );
         });
@@ -1521,12 +1521,30 @@ impl Shell {
         );
     }
 
-    fn render_responsive_route_now(self: &Rc<Self>) {
-        self.state.responsive_render_queued.set(false);
-        self.update_layout();
-        if route_uses_responsive_cards(self.state.routes.borrow().current()) {
-            self.render_current_route();
+    fn queue_post_layout_route_render(self: &Rc<Self>) {
+        if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
+            return;
         }
+
+        self.window.queue_resize();
+        self.app_root.queue_resize();
+        self.route_host.queue_resize();
+        self.right_panel_slot.queue_resize();
+        self.queue_responsive_route_render();
+
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS * 4),
+            move || {
+                shell.state.responsive_render_queued.set(false);
+                shell.update_layout();
+                if route_uses_responsive_cards(shell.state.routes.borrow().current())
+                    && !shell.login_screen_active()
+                {
+                    shell.render_current_route();
+                }
+            },
+        );
     }
 
     fn notify_now_playing(&self, snapshot: &PlaybackSnapshot) {

@@ -161,7 +161,7 @@ impl Shell {
             true
         });
         self.update_layout();
-        self.render_responsive_route_now();
+        self.queue_post_layout_route_render();
     }
 
     pub(super) fn update_right_panel_button(&self) {
