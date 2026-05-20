@@ -318,8 +318,8 @@ jobs:
               git -C "$repo" remote add origin "ssh://aur@aur.archlinux.org/${aur_package}.git"
             fi
 
-            cp "packaging/aur/$aur_package/PKGBUILD" "$repo/PKGBUILD"
-            cp "packaging/aur/$aur_package/.SRCINFO" "$repo/.SRCINFO"
+            cp "$aur_package/PKGBUILD" "$repo/PKGBUILD"
+            cp "$aur_package/.SRCINFO" "$repo/.SRCINFO"
 
             git -C "$repo" add PKGBUILD .SRCINFO
             if [[ -z "$(git -C "$repo" status --porcelain)" ]]; then
