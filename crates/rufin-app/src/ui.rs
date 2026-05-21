@@ -4847,6 +4847,10 @@ impl ArtworkTile {
         self.generation.get() == generation
     }
 
+    fn advance_generation(&self) {
+        self.generation.set(self.generation.get().saturating_add(1));
+    }
+
     fn set_seed(&self, seed: u32) {
         self.seed.set(seed);
         self.area.queue_draw();
@@ -4862,7 +4866,7 @@ impl ArtworkTile {
     }
 
     fn clear_image(&self) {
-        self.generation.set(self.generation.get().saturating_add(1));
+        self.advance_generation();
         *self.pixbuf.borrow_mut() = None;
         self.area.queue_draw();
     }

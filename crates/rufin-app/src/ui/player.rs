@@ -13,7 +13,7 @@ use super::player_icons::{
     skip_icon_button,
 };
 use super::{
-    ArtworkTile, CoverBinding, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
+    ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
     favorite_icon_button, icon_button_with_image, seekbar_target_seconds, set_active_class,
     set_favorite_button_active,
 };
@@ -126,21 +126,24 @@ impl Shell {
             .and_then(|entry| entry.image_ref.as_ref())
         {
             if let Some(key) = self.cover_cache_key(image_ref, THUMB_COVER_SIZE) {
-                if controls.cover_key.borrow().as_deref() != Some(key.as_str()) {
-                    controls.cover.clear_image();
-                    let generation = controls.cover.generation();
-                    self.state
-                        .cover_bindings
-                        .borrow_mut()
-                        .entry(key.clone())
-                        .or_default()
-                        .push(CoverBinding {
-                            tile: controls.cover.clone(),
-                            generation,
-                        });
-                    self.controller.request_cover_for_key(
+                let cover_key_changed =
+                    controls.cover_key.borrow().as_deref() != Some(key.as_str());
+                if cover_key_changed {
+                    let has_decoded_cover = self.state.decoded_covers.borrow().contains_key(&key);
+                    let has_cached_cover_file = self
+                        .controller
+                        .cached_cover_path(image_ref, THUMB_COVER_SIZE)
+                        .is_some();
+                    if player_cover_replacement_is_ready(has_decoded_cover, has_cached_cover_file) {
+                        controls.cover.advance_generation();
+                    } else {
+                        controls.cover.clear_image();
+                    }
+                    self.request_cover_for_tile(
+                        &controls.cover,
                         key.clone(),
                         image_ref.clone(),
+                        BOTTOM_PLAYER_COVER_SIZE,
                         THUMB_COVER_SIZE,
                     );
                     *controls.cover_key.borrow_mut() = Some(key);
@@ -247,6 +250,10 @@ impl Shell {
         controls.volume.set_value(player.volume);
         self.state.updating_player_controls.set(false);
     }
+}
+
+fn player_cover_replacement_is_ready(has_decoded_cover: bool, has_cached_cover_file: bool) -> bool {
+    has_decoded_cover || has_cached_cover_file
 }
 
 pub(super) fn build_bottom_player() -> PlayerControls {
@@ -833,6 +840,14 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cached_player_cover_replacements_keep_current_art_visible() {
+        assert!(super::player_cover_replacement_is_ready(true, false));
+        assert!(super::player_cover_replacement_is_ready(false, true));
+        assert!(super::player_cover_replacement_is_ready(true, true));
+        assert!(!super::player_cover_replacement_is_ready(false, false));
+    }
+
     #[test]
     fn volume_width_scales_down_when_bottom_player_narrows() {
         assert_eq!(super::bottom_player_volume_width(2560), 160);

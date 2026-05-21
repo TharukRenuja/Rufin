@@ -22,6 +22,8 @@ use super::{
 
 const EXTERNAL_PREFETCH_PAGE_SIZE: usize = 500;
 const EXTERNAL_PREFETCH_COVER_SIZE: u32 = 256;
+const EXTERNAL_THUMB_COVER_SIZE: u32 = 96;
+const EXTERNAL_DETAIL_COVER_SIZE: u32 = 512;
 const EXTERNAL_PREFETCH_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
@@ -73,7 +75,6 @@ impl AppController {
         ))
     }
 
-    #[cfg(test)]
     pub fn cached_cover_path(&self, image_ref: &ImageRef, size: u32) -> Option<PathBuf> {
         let saved = self
             .store
@@ -662,21 +663,71 @@ fn cached_cover_path_for_saved(
     image_ref: &ImageRef,
     size: u32,
 ) -> Result<Option<PathBuf>, String> {
+    if let Some(path) = cached_cover_path_for_saved_size(store, saved, image_ref, size)? {
+        return Ok(Some(path));
+    }
+    if external_metadata::is_external_image_ref(image_ref) {
+        for candidate_size in external_cover_cache_size_candidates(size) {
+            if candidate_size == size {
+                continue;
+            }
+            if let Some(path) =
+                cached_cover_path_for_saved_size(store, saved, image_ref, candidate_size)?
+            {
+                return Ok(Some(path));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn cached_cover_path_for_saved_size(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    image_ref: &ImageRef,
+    size: u32,
+) -> Result<Option<PathBuf>, String> {
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+    let key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
     let Some(entry) = store.with_store(|store| {
         store.load_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
     })?
     else {
-        return Ok(None);
+        return Ok(cached_cover_path_for_key(&key));
     };
     let path = PathBuf::from(entry.path);
     if path.exists() {
+        return Ok(Some(path));
+    }
+    if let Some(path) = cached_cover_path_for_key(&key) {
         return Ok(Some(path));
     }
     store.with_store(|store| {
         store.delete_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
     })?;
     Ok(None)
+}
+
+fn external_cover_cache_size_candidates(size: u32) -> [u32; 3] {
+    if size <= EXTERNAL_THUMB_COVER_SIZE {
+        [
+            EXTERNAL_THUMB_COVER_SIZE,
+            EXTERNAL_PREFETCH_COVER_SIZE,
+            EXTERNAL_DETAIL_COVER_SIZE,
+        ]
+    } else if size <= EXTERNAL_PREFETCH_COVER_SIZE {
+        [
+            EXTERNAL_PREFETCH_COVER_SIZE,
+            EXTERNAL_DETAIL_COVER_SIZE,
+            EXTERNAL_THUMB_COVER_SIZE,
+        ]
+    } else {
+        [
+            EXTERNAL_DETAIL_COVER_SIZE,
+            EXTERNAL_PREFETCH_COVER_SIZE,
+            EXTERNAL_THUMB_COVER_SIZE,
+        ]
+    }
 }
 
 fn external_lookup_miss_cached(

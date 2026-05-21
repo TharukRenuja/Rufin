@@ -85,6 +85,10 @@ window {
   border-radius: 9px;
 }
 
+.nav-button.selected {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
 .rail-button {
   margin: 0 1px;
   padding: 4px 1px;
@@ -122,6 +126,10 @@ window {
 .nav-button:not(.server-selector):hover,
 .album-button:hover {
   background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.nav-button.selected:not(.server-selector):hover {
+  background: color-mix(in srgb, currentColor 13%, transparent);
 }
 
 button:disabled,

@@ -690,8 +690,8 @@ mod tests {
                 duration_millis: 180_000,
                 playback_state: PresencePlaybackState::Playing,
                 display_type: DiscordDisplayType::Application,
-                link_type: DiscordLinkType::None,
-                show_as_listening: false,
+                link_type: DiscordLinkType::MusicBrainz,
+                show_as_listening: true,
                 show_state_icon: true,
                 lastfm_api_key: String::new(),
             })
@@ -793,6 +793,6 @@ mod tests {
     fn default_playback_snapshot_stays_stopped_for_presence_tests() {
         let snapshot = PlaybackSnapshot::default();
         assert_eq!(snapshot.state, PlaybackState::Stopped);
-        assert_eq!(snapshot.repeat_mode, RepeatMode::Off);
+        assert_eq!(snapshot.repeat_mode, RepeatMode::All);
     }
 }

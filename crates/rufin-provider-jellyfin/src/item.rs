@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use super::{jellyfin_id, stable_hash};
 
-pub(super) const ITEM_FIELDS: &str = "Path,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
+pub(super) const ITEM_FIELDS: &str = "Path,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -33,6 +33,7 @@ pub(super) struct JellyfinItem {
     artist_items: Option<Vec<NameIdPair>>,
     album: Option<String>,
     pub(super) album_id: Option<String>,
+    album_primary_image_tag: Option<String>,
     path: Option<String>,
     parent_id: Option<String>,
     production_year: Option<i32>,
@@ -116,12 +117,8 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
 }
 
 pub(super) fn track_from_item(item: JellyfinItem) -> Track {
-    let image_ref = primary_image_ref("track", &item.id, &item.image_tags).or_else(|| {
-        item.album_id.as_ref().map(|album_id| ImageRef {
-            item_id: jellyfin_id("album", album_id),
-            tag: None,
-        })
-    });
+    let image_ref =
+        primary_image_ref("track", &item.id, &item.image_tags).or_else(|| album_image_ref(&item));
     let artist_credits = artist_credits_from_pairs(item.artist_items.as_deref());
     let album_artist_credits = artist_credits_from_pairs(item.album_artists.as_deref());
     let artist_id = artist_credits
@@ -354,4 +351,16 @@ fn primary_image_ref(
             item_id: jellyfin_id(kind, item_id),
             tag: Some(tag.clone()),
         })
+}
+
+fn album_image_ref(item: &JellyfinItem) -> Option<ImageRef> {
+    let album_id = item.album_id.as_deref()?.trim();
+    let tag = item.album_primary_image_tag.as_deref()?.trim();
+    if album_id.is_empty() || tag.is_empty() {
+        return None;
+    }
+    Some(ImageRef {
+        item_id: jellyfin_id("album", album_id),
+        tag: Some(tag.to_string()),
+    })
 }

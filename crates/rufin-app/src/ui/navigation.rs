@@ -9,6 +9,16 @@ use crate::i18n::tr;
 const COMPACT_RAIL_ICON_SIZE: i32 = 22;
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
+const NAV_SELECTED_CLASS: &str = "selected";
+const NAV_ROUTE_HOME_CLASS: &str = "nav-route-home";
+const NAV_ROUTE_FAVORITES_CLASS: &str = "nav-route-favorites";
+const NAV_ROUTE_ALBUMS_CLASS: &str = "nav-route-albums";
+const NAV_ROUTE_TRACKS_CLASS: &str = "nav-route-tracks";
+const NAV_ROUTE_ARTISTS_CLASS: &str = "nav-route-artists";
+const NAV_ROUTE_ALBUM_ARTISTS_CLASS: &str = "nav-route-album-artists";
+const NAV_ROUTE_GENRES_CLASS: &str = "nav-route-genres";
+const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
+const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
 
 pub(super) fn sidebar_history_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = icon_button(icon_name, label);
@@ -75,11 +85,38 @@ pub(super) fn rebuild_navigation(shell: &Rc<Shell>) {
     build_normal_navigation(shell);
     build_compact_navigation(shell);
     shell.update_server_selector();
+    update_navigation_selection(shell.as_ref());
+}
+
+pub(super) fn update_navigation_selection(shell: &Shell) {
+    let active_route_class = nav_route_class(shell.state.routes.borrow().current());
+    update_navigation_selection_in(&shell.normal_nav, active_route_class);
+    update_navigation_selection_in(&shell.compact_nav, active_route_class);
 }
 
 fn clear_box(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
+    }
+}
+
+fn update_navigation_selection_in(container: &gtk::Box, active_route_class: Option<&str>) {
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+
+        if !widget.has_css_class("nav-button") || widget.has_css_class("server-selector") {
+            continue;
+        }
+
+        let selected = active_route_class
+            .map(|route_class| widget.has_css_class(route_class))
+            .unwrap_or(false);
+        if selected {
+            widget.add_css_class(NAV_SELECTED_CLASS);
+        } else {
+            widget.remove_css_class(NAV_SELECTED_CLASS);
+        }
     }
 }
 
@@ -180,6 +217,9 @@ fn nav_button(
     let button = gtk::Button::new();
     button.add_css_class("nav-button");
     button.add_css_class("flat");
+    if let Some(route_class) = nav_route_class(&route) {
+        button.add_css_class(route_class);
+    }
     if compact {
         button.add_css_class("rail-button");
     }
@@ -248,4 +288,22 @@ fn configure_rail_label(label: &gtk::Label) {
 
 fn rail_button(shell: &Rc<Shell>, icon_name: &str, label: &str, route: Route) -> gtk::Button {
     nav_button(shell, icon_name, label, route, true)
+}
+
+fn nav_route_class(route: &Route) -> Option<&'static str> {
+    match route {
+        Route::Home => Some(NAV_ROUTE_HOME_CLASS),
+        Route::Favorites => Some(NAV_ROUTE_FAVORITES_CLASS),
+        Route::Albums | Route::AlbumDetail(_) => Some(NAV_ROUTE_ALBUMS_CLASS),
+        Route::Tracks => Some(NAV_ROUTE_TRACKS_CLASS),
+        Route::Artists
+        | Route::ArtistDetail(_)
+        | Route::ArtistDiscography(_)
+        | Route::ArtistTracks(_) => Some(NAV_ROUTE_ARTISTS_CLASS),
+        Route::AlbumArtists => Some(NAV_ROUTE_ALBUM_ARTISTS_CLASS),
+        Route::Genres | Route::GenreDetail(_) => Some(NAV_ROUTE_GENRES_CLASS),
+        Route::Folders { .. } => Some(NAV_ROUTE_FOLDERS_CLASS),
+        Route::Playlists | Route::PlaylistDetail(_) => Some(NAV_ROUTE_PLAYLISTS_CLASS),
+        Route::Search { .. } => None,
+    }
 }

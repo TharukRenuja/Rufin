@@ -49,10 +49,31 @@ pub fn normalize_album(album: &mut Album, settings: &AppSettings) {
 }
 
 pub fn normalize_track(track: &mut Track, settings: &AppSettings) {
+    normalize_track_with_album_image_ref(track, None, settings);
+}
+
+pub fn normalize_album_detail(album: &mut Album, tracks: &mut [Track], settings: &AppSettings) {
+    normalize_album(album, settings);
+    let album_image_ref = album.image_ref.as_ref();
+    for track in tracks {
+        normalize_track_with_album_image_ref(track, album_image_ref, settings);
+    }
+}
+
+fn normalize_track_with_album_image_ref(
+    track: &mut Track,
+    album_image_ref: Option<&ImageRef>,
+    settings: &AppSettings,
+) {
     normalize_image_ref(&mut track.image_ref, settings);
-    if enabled(settings)
-        && has_untagged_jellyfin_album_ref(&track.image_ref, track.album_id.as_str())
+    let weak_album_ref = has_untagged_jellyfin_album_ref(&track.image_ref, track.album_id.as_str());
+    if (track.image_ref.is_none() || weak_album_ref)
+        && let Some(image_ref) = album_image_ref
     {
+        track.image_ref = Some(image_ref.clone());
+        return;
+    }
+    if enabled(settings) && weak_album_ref {
         track.image_ref = None;
     }
     if enabled(settings) && track.image_ref.is_none() {
@@ -254,7 +275,8 @@ mod tests {
     use super::album_lookup::{cover_art_size_path, json_ids, lastfm_album_image_url};
     use super::{
         album_art_from_image_ref, enabled, is_expected_lookup_miss, is_external_image_ref,
-        normalize_album, normalize_artist, normalize_queue_entry, normalize_track,
+        normalize_album, normalize_album_detail, normalize_artist, normalize_queue_entry,
+        normalize_track,
     };
     use rufin_core::{
         Album, AlbumId, AppSettings, Artist, ArtistId, ImageRef, QueueEntry, QueueEntryId, Track,
@@ -341,6 +363,54 @@ mod tests {
                 album: "Example Album".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn album_detail_tracks_without_images_use_album_image_ref() {
+        let mut album = album_without_cover("Example Album", "Example Artist");
+        let album_image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+        album.id = AlbumId::new("jellyfin:album:one");
+        album.image_ref = Some(album_image_ref.clone());
+        let mut missing = track_without_cover("Example Track", "Example Artist", "Example Album");
+        missing.album_id = album.id.clone();
+        let mut weak = track_without_cover("Example Track Two", "Example Artist", "Example Album");
+        weak.album_id = album.id.clone();
+        weak.image_ref = Some(ImageRef::new(album.id.as_str(), None));
+        let dedicated_image_ref =
+            ImageRef::new("jellyfin:track:three", Some("tag-three".to_string()));
+        let mut dedicated =
+            track_without_cover("Example Track Three", "Example Artist", "Example Album");
+        dedicated.album_id = album.id.clone();
+        dedicated.image_ref = Some(dedicated_image_ref.clone());
+        let mut tracks = vec![missing, weak, dedicated];
+
+        normalize_album_detail(&mut album, &mut tracks, &AppSettings::default());
+
+        assert_eq!(tracks[0].image_ref, Some(album_image_ref.clone()));
+        assert_eq!(tracks[1].image_ref, Some(album_image_ref));
+        assert_eq!(tracks[2].image_ref, Some(dedicated_image_ref));
+    }
+
+    #[test]
+    fn album_detail_tracks_share_external_album_image_ref() {
+        let mut album = album_without_cover("Example Album", "Example Artist");
+        let mut tracks = vec![track_without_cover(
+            "Example Track",
+            "Different Performer",
+            "Example Album",
+        )];
+
+        normalize_album_detail(
+            &mut album,
+            &mut tracks,
+            &AppSettings {
+                external_metadata_enabled: true,
+                ..AppSettings::default()
+            },
+        );
+
+        assert!(album.image_ref.as_ref().is_some_and(is_external_image_ref));
+        assert_eq!(tracks[0].image_ref, album.image_ref);
     }
 
     #[test]
