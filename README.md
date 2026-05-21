@@ -14,8 +14,8 @@
 - Discord Rich Presence support
 - Automatic metadata caching for missing lyrics/cover arts 
 - Music player basics like Gapless/Crossfade/ReplayGain/Equalizer 
-- Best-effort path matching (also configurable manually) with your music server and local folders if enabled, you can play from your local files while keeping server reporting
-- Rich customization while preserving GTK4 menus
+- Best-effort path matching with your music server and local folders if enabled, you can play from your local files while keeping server reporting
+- Rich customization while preserving GTK menus
 
 # Screenshots
 
@@ -76,6 +76,8 @@ This downloads the binary through project cache. You can also add it to your pro
 ```bash
 nix profile install github:screwys/Rufin
 ```
+
+## Building locally
 
 To build it from source:
 
