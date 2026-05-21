@@ -1,6 +1,6 @@
 # Rufin
 
-<img align="left" alt="Rufin" src="data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" width="120"> Rufin is a native GTK4/libadwaita music client written in Rust, with some minimal CSS for essentials. Greatly influenced by [feishin](https://github.com/jeffvli/feishin), it is not as feature-rich, but it aims to offer a similar experience without any web stack.
+<img align="left" alt="Rufin" src="data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" width="120"> Rufin is a native GTK4/libadwaita music client written in Rust. Greatly influenced by [feishin](https://github.com/jeffvli/feishin), it is not as feature-rich, but it aims to offer a similar experience without any web stack. It supports playback from your music server(s) or your local folder(s) with playback reporting.
 <br clear="left">
 
 
@@ -8,25 +8,39 @@
 
 # Features
 
+- Lightweight, fast, native and modern client
 - Supports playing Jellyfin, Subsonic, Navidrome servers and local folders
 - Built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz
 - Discord Rich Presence support
-- Automatic metadata caching for missing lyrics/cover art 
+- Automatic metadata caching for missing lyrics/cover arts 
 - Music player basics like Gapless/Crossfade/ReplayGain/Equalizer 
 - Best-effort path matching (also configurable manually) with your music server and local folders if enabled, you can play from your local files while keeping server reporting
 - Rich customization while preserving GTK4 menus
 
+# Screenshots
+
+
 <p align="center">
-  <img src="data/customization.png">
+  <img src="data/artists.png" width="400">
   &nbsp;&nbsp;
-  <img src="data/customization 2.png">
+  <img src="data/albums.png" width="400">
+</p>
+<p align="center">
+  <img src="data/tracks.png" width="400">
+  &nbsp;&nbsp;
+  <img src="data/general.png" width="400">
+</p>
+<p align="center">
+  <img src="data/customize_display.png" width="400">
+  &nbsp;&nbsp;
+  <img src="data/library.png" width="400">
 </p>
 
 # To do
 
 - Try to break things and fix them
-- Better performance (I think it is sufficiently fast currently, but we can probably do things smarter)
-- Actually make packaging other than Flatpak/AUR/nix work
+- More packaging alternatives
+- ? (open to feedbacks)
 
 # Installation
 
@@ -37,7 +51,6 @@ You can install the flatpak directly, without building it yourself:
 ```bash
 curl -L -o io.github.screwys.Rufin.flatpak https://github.com/screwys/Rufin/releases/latest/download/io.github.screwys.Rufin.flatpak
 flatpak install --user --or-update --bundle io.github.screwys.Rufin.flatpak
-flatpak run io.github.screwys.Rufin
 ```
 
 For convenience, you can update the flatpak with `flatpak.sh` script. It also asks to create a systemd service to check for updates daily.
