@@ -88,9 +88,23 @@ const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
-const DECODED_COVER_CACHE_LIMIT: usize = 800;
+const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
+const COVER_WARM_BATCH_SIZE: usize = 3;
+const COVER_WARM_MAX_IN_FLIGHT: usize = 6;
+const COVER_WARM_INITIAL_DELAY_MS: u64 = 250;
+const COVER_WARM_INTERVAL_MS: u64 = 32;
+const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
+const STARTUP_COVER_WARM_DELAY_MS: u64 = 450;
+const STARTUP_COVER_WARM_BATCH_SIZE: usize = 2;
+const STARTUP_COVER_WARM_INTERVAL_MS: u64 = 40;
+const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
+const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 900;
+const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
+const STARTUP_TRACK_THUMB_PRIME_DELAY_MS: u64 = 80;
 const INITIAL_COVER_PRIME_LIMIT: usize = 24;
 const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
+const INITIAL_TRACK_THUMB_PRIME_LIMIT: usize = 18;
+const INITIAL_TRACK_THUMB_PRIME_BUDGET: Duration = Duration::from_millis(120);
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
@@ -101,6 +115,7 @@ pub struct AppOptions {
     pub fake_scale: Option<FakeScale>,
     pub smoke_exit_ms: Option<u64>,
     pub ui_perf_run: bool,
+    pub ui_perf_observe: bool,
     pub ui_perf_max_gap_ms: u64,
     pub ui_perf_route_ms: u64,
     pub ui_perf_duration_ms: u64,
@@ -140,6 +155,7 @@ struct AppState {
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
     home_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
+    startup_route_revealed: Cell<bool>,
     first_run_connection_pending: Cell<bool>,
     first_run_connection_ready: Cell<bool>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
@@ -148,6 +164,9 @@ struct AppState {
     server_discovery_started: Cell<bool>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
     cover_decodes: RefCell<HashSet<String>>,
+    cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
+    cover_warm_generation: Cell<u64>,
+    startup_cover_warm_generation: Cell<u64>,
     decoded_covers: RefCell<HashMap<String, Pixbuf>>,
     decoded_cover_order: RefCell<VecDeque<String>>,
     favorite_controls: FavoriteControls,
@@ -171,6 +190,35 @@ struct LyricsSearchDialog {
 struct CoverBinding {
     tile: ArtworkTile,
     generation: u64,
+}
+
+struct CoverDecodeJob {
+    key: String,
+    path: PathBuf,
+    size: i32,
+    priority: CoverDecodePriority,
+}
+
+struct StartupCoverWarmJob {
+    key: String,
+    image_ref: ImageRef,
+    fetch_size: u32,
+    size: i32,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CoverDecodePriority {
+    Visible,
+    Warm,
+}
+
+impl CoverDecodePriority {
+    fn glib_priority(self) -> glib::Priority {
+        match self {
+            Self::Visible => glib::Priority::DEFAULT,
+            Self::Warm => glib::Priority::LOW,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -224,6 +272,8 @@ struct UiPerfOptions {
     duration_ms: u64,
     asset_ms: u64,
     require_assets: bool,
+    terminal_events: bool,
+    observe_scroll: bool,
     output: Option<PathBuf>,
 }
 
@@ -371,8 +421,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         elapsed_ms = loaded_at.elapsed().as_millis(),
         "loaded cached music library snapshot"
     );
+    let first_run = library.first_run;
+    let perf_observe = options.ui_perf_observe && !options.ui_perf_run;
+    let perf_enabled = options.ui_perf_run || perf_observe;
+    let defer_initial_route = !options.ui_perf_run && !first_run;
     let perf_requires_assets =
-        options.ui_perf_run && options.fake_scale.is_none() && library_has_image_refs(&library);
+        perf_enabled && options.fake_scale.is_none() && library_has_image_refs(&library);
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
 
     let state = AppState {
@@ -407,6 +461,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         prefetched_explore: RefCell::new(prefetched_explore),
         home_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
+        startup_route_revealed: Cell::new(!defer_initial_route),
         first_run_connection_pending: Cell::new(false),
         first_run_connection_ready: Cell::new(false),
         discovered_servers: RefCell::new(Vec::new()),
@@ -415,22 +470,30 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         server_discovery_started: Cell::new(false),
         cover_bindings: RefCell::new(HashMap::new()),
         cover_decodes: RefCell::new(HashSet::new()),
+        cover_decode_queue: RefCell::new(VecDeque::new()),
+        cover_warm_generation: Cell::new(0),
+        startup_cover_warm_generation: Cell::new(0),
         decoded_covers: RefCell::new(HashMap::new()),
         decoded_cover_order: RefCell::new(VecDeque::new()),
         favorite_controls: RefCell::new(HashMap::new()),
         folder_request_generation: Cell::new(0),
         folder_state: RefCell::new(FolderRouteState::default()),
-        perf: options.ui_perf_run.then(|| {
+        perf: perf_enabled.then(|| {
             Rc::new(UiPerfMonitor::new(UiPerfOptions {
                 max_gap_ms: options.ui_perf_max_gap_ms,
                 route_ms: options.ui_perf_route_ms,
                 duration_ms: options.ui_perf_duration_ms.max(15_000),
                 asset_ms: options.ui_perf_asset_ms,
                 require_assets: perf_requires_assets,
-                output: options
-                    .ui_perf_output
-                    .clone()
-                    .or_else(default_ui_perf_output_path),
+                terminal_events: options.ui_perf_run,
+                observe_scroll: perf_observe,
+                output: options.ui_perf_output.clone().or_else(|| {
+                    if perf_observe {
+                        default_ui_perf_output_path("rufin-ui-observe")
+                    } else {
+                        default_ui_perf_output_path("rufin-ui-perf")
+                    }
+                }),
             }))
         }),
     };
@@ -542,8 +605,13 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     install_mpris(&shell);
     shell.update_layout();
     prime_first_cached_cover(&shell);
-    shell.render_current_route();
-    shell.refresh_home_for_current_visit();
+    if defer_initial_route {
+        shell.render_startup_loading_view();
+    } else {
+        shell.render_current_route();
+        shell.refresh_home_for_current_visit();
+    }
+    shell.schedule_startup_cover_warm();
     shell.render_queue_panel();
     shell.render_lyrics_panel();
     shell.update_bottom_player();
@@ -569,6 +637,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
 
     shell.window.present();
+    if defer_initial_route {
+        shell.schedule_startup_route_reveal();
+    }
     let layout_shell = Rc::clone(&shell);
     glib::idle_add_local_once(move || {
         layout_shell.update_layout();
@@ -577,6 +648,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     if options.ui_perf_run {
         start_ui_perf_run(&shell, app);
+    } else if perf_observe {
+        start_ui_perf_observe(&shell, app);
     }
 }
 
@@ -602,15 +675,17 @@ impl UiPerfMonitor {
                 active.max_gap_ms = active.max_gap_ms.max(gap_ms);
                 if gap_ms > self.options.max_gap_ms {
                     active.over_budget_ticks = active.over_budget_ticks.saturating_add(1);
-                    println!(
-                        "RUFIN_PERF_TICK_GAP gap_ms={} phase=scroll route={} scenario={}",
-                        gap_ms, active.route, active.scenario
-                    );
+                    if self.options.terminal_events {
+                        println!(
+                            "RUFIN_PERF_TICK_GAP gap_ms={} phase=scroll route={} scenario={}",
+                            gap_ms, active.route, active.scenario
+                        );
+                    }
                 }
             }
         } else {
             inner.max_idle_gap_ms = inner.max_idle_gap_ms.max(gap_ms);
-            if gap_ms > self.options.max_gap_ms {
+            if self.options.terminal_events && gap_ms > self.options.max_gap_ms {
                 println!(
                     "RUFIN_PERF_IDLE_GAP gap_ms={} elapsed_ms={}",
                     gap_ms,
@@ -626,7 +701,9 @@ impl UiPerfMonitor {
 
     fn record_route_render(&self, route: String, elapsed: Duration) {
         let elapsed_ms = duration_ms(elapsed);
-        println!("RUFIN_PERF route_render route={route} elapsed_ms={elapsed_ms}");
+        if self.options.terminal_events {
+            println!("RUFIN_PERF route_render route={route} elapsed_ms={elapsed_ms}");
+        }
         self.inner
             .borrow_mut()
             .route_renders
@@ -667,7 +744,9 @@ impl UiPerfMonitor {
     }
 
     fn record_scroll_note(&self, route: &str, note: &str) {
-        println!("RUFIN_PERF scroll_note route={route} note={note}");
+        if self.options.terminal_events {
+            println!("RUFIN_PERF scroll_note route={route} note={note}");
+        }
     }
 
     fn finish_scroll(&self) {
@@ -675,6 +754,10 @@ impl UiPerfMonitor {
         let Some(active) = inner.active_scroll.take() else {
             return;
         };
+        self.finish_scroll_sample(&mut inner, active);
+    }
+
+    fn finish_scroll_sample(&self, inner: &mut UiPerfInner, active: UiPerfActiveScroll) {
         let elapsed_ms = duration_ms(active.started_at.elapsed());
         let covers_ready = inner
             .cover_ready_events
@@ -687,20 +770,22 @@ impl UiPerfMonitor {
         } else {
             0.0
         };
-        println!(
-            "RUFIN_PERF route_scroll route={} scenario={} elapsed_ms={} steps={} max_gap_ms={} over_budget_ticks={} max_adjustment={:.0} min_value={:.0} max_value={:.0} covers_ready={} decoded_covers={}",
-            active.route,
-            active.scenario,
-            elapsed_ms,
-            active.steps,
-            active.max_gap_ms,
-            active.over_budget_ticks,
-            active.max_adjustment,
-            min_value,
-            active.max_value,
-            covers_ready,
-            decoded_covers
-        );
+        if self.options.terminal_events {
+            println!(
+                "RUFIN_PERF route_scroll route={} scenario={} elapsed_ms={} steps={} max_gap_ms={} over_budget_ticks={} max_adjustment={:.0} min_value={:.0} max_value={:.0} covers_ready={} decoded_covers={}",
+                active.route,
+                active.scenario,
+                elapsed_ms,
+                active.steps,
+                active.max_gap_ms,
+                active.over_budget_ticks,
+                active.max_adjustment,
+                min_value,
+                active.max_value,
+                covers_ready,
+                decoded_covers
+            );
+        }
         inner.route_scrolls.push(UiPerfRouteScroll {
             route: active.route,
             scenario: active.scenario,
@@ -714,6 +799,45 @@ impl UiPerfMonitor {
             covers_ready,
             decoded_covers,
         });
+    }
+
+    fn record_manual_scroll_step(&self, route: &str, value: f64, max_adjustment: f64) {
+        if !self.options.observe_scroll {
+            return;
+        }
+
+        let mut inner = self.inner.borrow_mut();
+        let route_changed = inner
+            .active_scroll
+            .as_ref()
+            .is_some_and(|active| active.route != route || active.scenario != "manual");
+        if route_changed && let Some(active) = inner.active_scroll.take() {
+            self.finish_scroll_sample(&mut inner, active);
+        }
+
+        if inner.active_scroll.is_none() {
+            inner.active_scroll = Some(UiPerfActiveScroll {
+                route: route.to_string(),
+                scenario: "manual",
+                started_at: Instant::now(),
+                steps: 0,
+                max_gap_ms: 0,
+                over_budget_ticks: 0,
+                max_adjustment: 0.0,
+                min_value: f64::MAX,
+                max_value: 0.0,
+                covers_ready_at_start: inner.cover_ready_events,
+                decodes_at_start: inner.cover_decode_ok,
+            });
+        }
+
+        let Some(active) = &mut inner.active_scroll else {
+            return;
+        };
+        active.steps = active.steps.saturating_add(1);
+        active.max_adjustment = active.max_adjustment.max(max_adjustment);
+        active.min_value = active.min_value.min(value);
+        active.max_value = active.max_value.max(value);
     }
 
     fn record_cover_bind_request(&self, key: &str) {
@@ -874,7 +998,7 @@ fn duration_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
-fn default_ui_perf_output_path() -> Option<PathBuf> {
+fn default_ui_perf_output_path(prefix: &str) -> Option<PathBuf> {
     let directory = PathBuf::from(".local").join("perf");
     if let Err(error) = std::fs::create_dir_all(&directory) {
         eprintln!(
@@ -883,7 +1007,7 @@ fn default_ui_perf_output_path() -> Option<PathBuf> {
         );
         return None;
     }
-    Some(directory.join(format!("rufin-ui-perf-{}.log", std::process::id())))
+    Some(directory.join(format!("{prefix}-{}.log", std::process::id())))
 }
 
 fn library_has_image_refs(library: &LibrarySnapshot) -> bool {
@@ -904,6 +1028,68 @@ fn library_has_image_refs(library: &LibrarySnapshot) -> bool {
         || library.tracks.iter().any(|track| track.image_ref.is_some())
 }
 
+fn startup_library_cover_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
+    library
+        .home_sections
+        .iter()
+        .flat_map(|section| {
+            section
+                .albums
+                .iter()
+                .filter_map(|album| album.image_ref.clone())
+                .chain(
+                    section
+                        .tracks
+                        .iter()
+                        .filter_map(|track| track.image_ref.clone()),
+                )
+        })
+        .chain(
+            library
+                .albums
+                .iter()
+                .filter_map(|album| album.image_ref.clone()),
+        )
+        .chain(
+            library
+                .artists
+                .iter()
+                .chain(library.album_artists.iter())
+                .filter_map(|artist| artist.image_ref.clone()),
+        )
+        .chain(
+            library
+                .genres
+                .iter()
+                .filter_map(|genre| genre.image_ref.clone()),
+        )
+        .chain(
+            library
+                .playlists
+                .iter()
+                .filter_map(|playlist| playlist.image_ref.clone()),
+        )
+        .chain(
+            library
+                .tracks
+                .iter()
+                .filter_map(|track| track.image_ref.clone()),
+        )
+        .collect()
+}
+
+fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
+    let mut sizes = Vec::from([
+        preferred_size,
+        GRID_COVER_SIZE,
+        THUMB_COVER_SIZE,
+        DETAIL_COVER_SIZE,
+    ]);
+    let mut seen = HashSet::new();
+    sizes.retain(|size| seen.insert(*size));
+    sizes
+}
+
 fn prime_first_cached_cover(shell: &Rc<Shell>) {
     let started_at = Instant::now();
     for (key, path) in initial_cached_grid_covers(shell) {
@@ -922,6 +1108,24 @@ fn prime_first_cached_cover(shell: &Rc<Shell>) {
             }
         }
         if started_at.elapsed() >= INITIAL_COVER_PRIME_BUDGET {
+            break;
+        }
+    }
+}
+
+fn prime_first_track_thumbnail_covers(shell: &Rc<Shell>) {
+    let started_at = Instant::now();
+    for (key, path) in initial_cached_track_thumbnail_covers(shell) {
+        if shell.state.decoded_covers.borrow().contains_key(&key) {
+            continue;
+        }
+        match Pixbuf::from_file_at_scale(&path, 48, 48, true) {
+            Ok(pixbuf) => shell.remember_decoded_cover(key, pixbuf),
+            Err(error) => {
+                debug!(%error, path = %path.display(), "failed to prime cached track thumbnail")
+            }
+        }
+        if started_at.elapsed() >= INITIAL_TRACK_THUMB_PRIME_BUDGET {
             break;
         }
     }
@@ -983,6 +1187,31 @@ fn initial_cached_grid_covers(shell: &Rc<Shell>) -> Vec<(String, PathBuf)> {
             Some((key, path))
         })
         .take(INITIAL_COVER_PRIME_LIMIT)
+        .collect()
+}
+
+fn initial_cached_track_thumbnail_covers(shell: &Rc<Shell>) -> Vec<(String, PathBuf)> {
+    let image_refs = shell
+        .state
+        .library
+        .borrow()
+        .tracks
+        .iter()
+        .filter_map(|track| track.image_ref.clone())
+        .take(INITIAL_TRACK_THUMB_PRIME_LIMIT)
+        .collect::<Vec<_>>();
+
+    let mut seen = HashSet::new();
+    image_refs
+        .into_iter()
+        .filter_map(|image_ref| {
+            let key = shell.cover_cache_key(&image_ref, THUMB_COVER_SIZE)?;
+            if !seen.insert(key.clone()) {
+                return None;
+            }
+            let path = shell.controller.cached_cover_path_for_key(&key)?;
+            Some((key, path))
+        })
         .collect()
 }
 
@@ -1444,6 +1673,81 @@ impl Shell {
         );
     }
 
+    fn render_startup_loading_view(&self) {
+        self.route_title.set_title("Rufin");
+        self.set_history_buttons_sensitive(false, false);
+        while let Some(child) = self.route_host.first_child() {
+            self.route_host.remove(&child);
+        }
+        self.route_host
+            .append(&route_boundary(self.startup_loading_view()));
+    }
+
+    fn startup_loading_view(&self) -> gtk::Widget {
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        wrapper.add_css_class("startup-loading-page");
+        wrapper.set_hexpand(true);
+        wrapper.set_vexpand(true);
+        wrapper.set_halign(gtk::Align::Center);
+        wrapper.set_valign(gtk::Align::Center);
+
+        let spinner = gtk::Spinner::new();
+        spinner.start();
+        wrapper.append(&spinner);
+        wrapper.upcast()
+    }
+
+    fn schedule_startup_route_reveal(self: &Rc<Self>) {
+        if self.state.startup_route_revealed.get() || self.login_screen_active() {
+            return;
+        }
+
+        let prime_shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(STARTUP_TRACK_THUMB_PRIME_DELAY_MS),
+            move || {
+                if !prime_shell.state.startup_route_revealed.get()
+                    && !prime_shell.login_screen_active()
+                {
+                    prime_first_track_thumbnail_covers(&prime_shell);
+                }
+            },
+        );
+
+        let started_at = Instant::now();
+        let shell = Rc::clone(self);
+        glib::timeout_add_local(
+            Duration::from_millis(STARTUP_ROUTE_REVEAL_POLL_MS),
+            move || {
+                if shell.state.startup_route_revealed.get() || shell.login_screen_active() {
+                    return glib::ControlFlow::Break;
+                }
+
+                shell.update_layout();
+                let elapsed = started_at.elapsed();
+                let width_ready = shell.layout_width() > 1 && shell.route_host.width() > 1;
+                let reveal_ready =
+                    width_ready && elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MIN_MS);
+                let reveal_expired = elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MAX_MS);
+                if reveal_ready || reveal_expired {
+                    shell.reveal_startup_route();
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
+            },
+        );
+    }
+
+    fn reveal_startup_route(self: &Rc<Self>) {
+        if self.state.startup_route_revealed.replace(true) || self.login_screen_active() {
+            return;
+        }
+
+        self.update_layout();
+        self.render_current_route();
+    }
+
     fn schedule_first_run_app_reveal(self: &Rc<Self>) {
         self.log_layout_snapshot("first_run_reveal_queued");
 
@@ -1464,6 +1768,7 @@ impl Shell {
                 Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
                 move || {
                     shell.log_layout_snapshot("first_run_reveal_before_render");
+                    shell.state.startup_route_revealed.set(true);
                     shell.update_layout();
                     shell.render_current_route();
                     if matches!(shell.state.routes.borrow().current(), Route::Home) {
@@ -1500,6 +1805,9 @@ impl Shell {
     }
 
     fn queue_responsive_route_render(self: &Rc<Self>) {
+        if !self.state.startup_route_revealed.get() && !self.login_screen_active() {
+            return;
+        }
         if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
             return;
         }
@@ -1701,8 +2009,13 @@ impl Shell {
 
     fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
+        self.cancel_cover_warm();
         self.update_layout();
         self.state.home_section_views.borrow_mut().clear();
+        if !self.state.startup_route_revealed.get() && !self.login_screen_active() {
+            self.render_startup_loading_view();
+            return;
+        }
         if self.login_screen_active() {
             clear_favorite_controls(&self.state.favorite_controls);
             while let Some(child) = self.login_host.first_child() {
@@ -1713,6 +2026,7 @@ impl Shell {
             self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
             self.login_host.append(&view);
+            self.observe_route_scroll(&route_name);
             self.record_perf_route_render(route_name, render_started.elapsed());
             return;
         }
@@ -1754,6 +2068,7 @@ impl Shell {
         };
 
         self.route_host.append(&route_boundary(view));
+        self.observe_route_scroll(&route_name);
         self.record_perf_route_render(route_name, render_started.elapsed());
     }
 
@@ -1776,6 +2091,35 @@ impl Shell {
             restore_scrolled_window_value(&route_host.clone().upcast(), value);
             glib::timeout_add_local_once(Duration::from_millis(16), move || {
                 restore_scrolled_window_value(&route_host.clone().upcast(), value);
+            });
+        });
+    }
+
+    fn observe_route_scroll(&self, route: &str) {
+        let Some(perf) = self
+            .state
+            .perf
+            .as_ref()
+            .filter(|perf| perf.options.observe_scroll)
+            .cloned()
+        else {
+            return;
+        };
+        let host = if self.login_screen_active() {
+            self.login_host.clone().upcast::<gtk::Widget>()
+        } else {
+            self.route_host.clone().upcast::<gtk::Widget>()
+        };
+        let route = route.to_string();
+        glib::idle_add_local_once(move || {
+            let Some(scroller) = find_largest_scrolled_window(&host) else {
+                perf.record_scroll_note(&route, "no_scrolled_window");
+                return;
+            };
+            let adjustment = scroller.vadjustment();
+            adjustment.connect_value_changed(move |adjustment| {
+                let max_adjustment = (adjustment.upper() - adjustment.page_size()).max(0.0);
+                perf.record_manual_scroll_step(&route, adjustment.value(), max_adjustment);
             });
         });
     }
@@ -2177,42 +2521,65 @@ impl Shell {
     }
 
     fn playlist_list_view(self: &Rc<Self>) -> gtk::Widget {
-        let page = self
-            .controller
-            .cached_playlists_page(0, GRID_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, "failed to load cached playlists page");
-                let playlists = self
-                    .state
-                    .library
-                    .borrow()
-                    .playlists
-                    .iter()
-                    .take(GRID_ROUTE_PAGE_SIZE)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(
-                    playlists,
-                    self.state.library.borrow().playlists.len(),
-                )
-            });
+        let page = self.complete_playlist_snapshot_page().unwrap_or_else(|| {
+            self.controller
+                .cached_playlists_page(0, GRID_ROUTE_PAGE_SIZE)
+                .unwrap_or_else(|error| {
+                    warn!(%error, "failed to load cached playlists page");
+                    let playlists = self
+                        .state
+                        .library
+                        .borrow()
+                        .playlists
+                        .iter()
+                        .take(GRID_ROUTE_PAGE_SIZE)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    rufin_provider::PagedResponse::new(
+                        playlists,
+                        self.state.library.borrow().playlists.len(),
+                    )
+                })
+        });
+        let complete_page = page.items.len() >= page.total;
+        let source_playlists = Rc::new(page.items.clone());
         let playlists = Rc::new(RefCell::new(page.items));
         let model = playlist_model(&playlists.borrow());
-        let (search, load_next) = self.searchable_grid_controls(
-            model.clone(),
-            Rc::clone(&playlists),
-            PagedGridConfig {
-                route: Route::Playlists,
-                offset: playlists.borrow().len(),
-                total: page.total,
-                page_name: "playlists",
-            },
-            |controller, query, offset, limit| {
-                controller.cached_playlists_page_matching(query, offset, limit)
-            },
-            replace_playlists_in_model,
-            append_playlists_to_model,
-        );
+        let (search, load_next) = if complete_page {
+            let search = gtk::SearchEntry::new();
+            search.set_placeholder_text(Some(&tr("Search")));
+            search.set_hexpand(true);
+            let model = model.clone();
+            let playlists = Rc::clone(&playlists);
+            search.connect_search_changed(move |entry| {
+                let query = entry.text().trim().to_lowercase();
+                let values = source_playlists
+                    .iter()
+                    .filter(|playlist| query.is_empty() || playlist_matches_query(playlist, &query))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                *playlists.borrow_mut() = values.clone();
+                replace_playlists_in_model(&model, values);
+            });
+            (search, None)
+        } else {
+            let (search, load_next) = self.searchable_grid_controls(
+                model.clone(),
+                Rc::clone(&playlists),
+                PagedGridConfig {
+                    route: Route::Playlists,
+                    offset: playlists.borrow().len(),
+                    total: page.total,
+                    page_name: "playlists",
+                },
+                |controller, query, offset, limit| {
+                    controller.cached_playlists_page_matching(query, offset, limit)
+                },
+                replace_playlists_in_model,
+                append_playlists_to_model,
+            );
+            (search, Some(load_next))
+        };
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -2239,10 +2606,23 @@ impl Shell {
             scroller.set_min_content_width(0);
             scroller.set_vexpand(true);
             scroller.set_child(Some(&self.playlist_cards_grid_for_model(model)));
-            connect_paged_grid_loader(&scroller, load_next);
+            if let Some(load_next) = load_next {
+                connect_paged_grid_loader(&scroller, load_next);
+            }
             wrapper.append(&scroller);
         }
         wrapper.upcast()
+    }
+
+    fn complete_playlist_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Playlist>> {
+        let library = self.state.library.borrow();
+        if library.cached_playlist_count > library.playlists.len() {
+            return None;
+        }
+        Some(rufin_provider::PagedResponse::new(
+            library.playlists.clone(),
+            library.cached_playlist_count,
+        ))
     }
 
     fn new_playlist_dialog(self: &Rc<Self>) {
@@ -2911,8 +3291,8 @@ impl Shell {
         if let Some(image_ref) = image_ref
             && let Some(key) = self.cover_cache_key(image_ref, fetch_size)
         {
-            if let Some(pixbuf) = self.state.decoded_covers.borrow().get(&key).cloned() {
-                self.record_perf_cover_cache_hit(&key);
+            if let Some((cache_key, pixbuf)) = self.decoded_cover_for_ref(image_ref, fetch_size) {
+                self.record_perf_cover_cache_hit(&cache_key);
                 tile.set_pixbuf_if_current(tile.generation(), pixbuf);
             } else {
                 let shell = Rc::clone(self);
@@ -2935,7 +3315,6 @@ impl Shell {
         } else if image_ref.is_none() {
             self.record_perf_coverless_tile();
         }
-
         widget
     }
 
@@ -2947,8 +3326,8 @@ impl Shell {
         size: i32,
         fetch_size: u32,
     ) {
-        if let Some(pixbuf) = self.state.decoded_covers.borrow().get(&key).cloned() {
-            self.record_perf_cover_cache_hit(&key);
+        if let Some((cache_key, pixbuf)) = self.decoded_cover_for_ref(&image_ref, fetch_size) {
+            self.record_perf_cover_cache_hit(&cache_key);
             tile.set_pixbuf_if_current(tile.generation(), pixbuf);
             return;
         }
@@ -2966,16 +3345,225 @@ impl Shell {
                     generation,
                 });
         }
-        if let Some(path) = self.controller.cached_cover_path_for_key(&key) {
+        if let Some(path) = self.controller.cached_cover_path(&image_ref, fetch_size) {
             let shell = Rc::clone(self);
             glib::idle_add_local_once(move || {
                 shell.record_perf_cover_ready(&key);
-                shell.start_cover_decode_from_path(key, path, size);
+                shell.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
             });
         } else {
             self.controller
                 .request_cover_for_key(key, image_ref, fetch_size);
         }
+    }
+
+    fn warm_cover_refs(self: &Rc<Self>, image_refs: Vec<ImageRef>, fetch_size: u32, size: i32) {
+        let generation = self.next_cover_warm_generation();
+        let mut seen = HashSet::new();
+        let mut jobs = VecDeque::new();
+
+        for image_ref in image_refs {
+            let Some(key) = self.cover_cache_key(&image_ref, fetch_size) else {
+                continue;
+            };
+            if !seen.insert(key.clone())
+                || self.decoded_cover_for_ref(&image_ref, fetch_size).is_some()
+            {
+                continue;
+            }
+            jobs.push_back((key, image_ref));
+        }
+
+        if jobs.is_empty() {
+            return;
+        }
+
+        self.schedule_cover_warm_jobs(Rc::new(RefCell::new(jobs)), fetch_size, size, generation);
+    }
+
+    fn schedule_startup_cover_warm(self: &Rc<Self>) {
+        let generation = self
+            .state
+            .startup_cover_warm_generation
+            .get()
+            .saturating_add(1);
+        self.state.startup_cover_warm_generation.set(generation);
+
+        let jobs = self.startup_cover_warm_jobs();
+        if jobs.is_empty() {
+            return;
+        }
+
+        info!(covers = jobs.len(), "scheduled startup cover warm");
+        let jobs = Rc::new(RefCell::new(jobs));
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(STARTUP_COVER_WARM_DELAY_MS),
+            move || {
+                if shell.state.startup_cover_warm_generation.get() == generation {
+                    shell.start_startup_cover_warm_jobs(jobs, generation);
+                }
+            },
+        );
+    }
+
+    fn startup_cover_warm_jobs(&self) -> VecDeque<StartupCoverWarmJob> {
+        let image_refs = startup_library_cover_refs(&self.state.library.borrow());
+        let mut seen = HashSet::new();
+        let mut jobs = VecDeque::new();
+
+        for image_ref in image_refs {
+            let fetch_size = GRID_COVER_SIZE;
+            let Some(key) = self.cover_cache_key(&image_ref, fetch_size) else {
+                continue;
+            };
+            if !seen.insert(key.clone())
+                || self.decoded_cover_for_ref(&image_ref, fetch_size).is_some()
+            {
+                continue;
+            }
+            jobs.push_back(StartupCoverWarmJob {
+                key,
+                image_ref,
+                fetch_size,
+                size: GRID_COVER_SIZE as i32,
+            });
+        }
+
+        jobs
+    }
+
+    fn start_startup_cover_warm_jobs(
+        self: &Rc<Self>,
+        jobs: Rc<RefCell<VecDeque<StartupCoverWarmJob>>>,
+        generation: u64,
+    ) {
+        let shell = Rc::clone(self);
+        glib::timeout_add_local(
+            Duration::from_millis(STARTUP_COVER_WARM_INTERVAL_MS),
+            move || {
+                if shell.state.startup_cover_warm_generation.get() != generation {
+                    return glib::ControlFlow::Break;
+                }
+                if jobs.borrow().is_empty() {
+                    return glib::ControlFlow::Break;
+                }
+
+                let in_flight = shell.state.cover_decodes.borrow().len();
+                if in_flight >= COVER_WARM_MAX_IN_FLIGHT {
+                    return glib::ControlFlow::Continue;
+                }
+
+                let capacity = COVER_WARM_MAX_IN_FLIGHT.saturating_sub(in_flight);
+                let mut processed = 0;
+                while processed < STARTUP_COVER_WARM_BATCH_SIZE.min(capacity) {
+                    let Some(job) = jobs.borrow_mut().pop_front() else {
+                        break;
+                    };
+                    processed += 1;
+                    if shell
+                        .decoded_cover_for_ref(&job.image_ref, job.fetch_size)
+                        .is_some()
+                        || shell.state.cover_decodes.borrow().contains(&job.key)
+                    {
+                        continue;
+                    }
+                    if let Some(path) = shell
+                        .controller
+                        .cached_cover_path(&job.image_ref, job.fetch_size)
+                    {
+                        shell.start_cover_decode_from_path(
+                            job.key,
+                            path,
+                            job.size,
+                            CoverDecodePriority::Warm,
+                        );
+                    }
+                }
+
+                if jobs.borrow().is_empty() {
+                    glib::ControlFlow::Break
+                } else {
+                    glib::ControlFlow::Continue
+                }
+            },
+        );
+    }
+
+    fn next_cover_warm_generation(&self) -> u64 {
+        let generation = self.state.cover_warm_generation.get().saturating_add(1);
+        self.state.cover_warm_generation.set(generation);
+        generation
+    }
+
+    fn cancel_cover_warm(&self) {
+        self.state
+            .cover_warm_generation
+            .set(self.state.cover_warm_generation.get().saturating_add(1));
+    }
+
+    fn schedule_cover_warm_jobs(
+        self: &Rc<Self>,
+        jobs: Rc<RefCell<VecDeque<(String, ImageRef)>>>,
+        fetch_size: u32,
+        size: i32,
+        generation: u64,
+    ) {
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(COVER_WARM_INITIAL_DELAY_MS),
+            move || {
+                if shell.state.cover_warm_generation.get() == generation {
+                    shell.start_cover_warm_jobs(jobs, fetch_size, size, generation);
+                }
+            },
+        );
+    }
+
+    fn start_cover_warm_jobs(
+        self: &Rc<Self>,
+        jobs: Rc<RefCell<VecDeque<(String, ImageRef)>>>,
+        fetch_size: u32,
+        size: i32,
+        generation: u64,
+    ) {
+        let shell = Rc::clone(self);
+        glib::timeout_add_local(Duration::from_millis(COVER_WARM_INTERVAL_MS), move || {
+            if shell.state.cover_warm_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+            if jobs.borrow().is_empty() {
+                return glib::ControlFlow::Break;
+            }
+
+            let in_flight = shell.state.cover_decodes.borrow().len();
+            if in_flight >= COVER_WARM_MAX_IN_FLIGHT {
+                return glib::ControlFlow::Continue;
+            }
+
+            let capacity = COVER_WARM_MAX_IN_FLIGHT.saturating_sub(in_flight);
+            let mut processed = 0;
+            while processed < COVER_WARM_BATCH_SIZE.min(capacity) {
+                let Some((key, image_ref)) = jobs.borrow_mut().pop_front() else {
+                    break;
+                };
+                processed += 1;
+                if shell.state.decoded_covers.borrow().contains_key(&key)
+                    || shell.state.cover_decodes.borrow().contains(&key)
+                {
+                    continue;
+                }
+                if let Some(path) = shell.controller.cached_cover_path(&image_ref, fetch_size) {
+                    shell.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Warm);
+                }
+            }
+
+            if jobs.borrow().is_empty() {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     fn cover_cache_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
@@ -2996,6 +3584,22 @@ impl Shell {
         ))
     }
 
+    fn decoded_cover_for_ref(
+        &self,
+        image_ref: &ImageRef,
+        preferred_size: u32,
+    ) -> Option<(String, Pixbuf)> {
+        for size in decoded_cover_candidate_sizes(preferred_size) {
+            let Some(key) = self.cover_cache_key(image_ref, size) else {
+                continue;
+            };
+            if let Some(pixbuf) = self.state.decoded_covers.borrow().get(&key).cloned() {
+                return Some((key, pixbuf));
+            }
+        }
+        None
+    }
+
     fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
         self.record_perf_cover_ready(key);
         let size = self
@@ -3006,23 +3610,111 @@ impl Shell {
             apply_pixbuf_to_bindings(bindings, pixbuf);
             return;
         }
-        self.start_cover_decode_from_path(key.to_string(), path.to_path_buf(), size);
+        self.start_cover_decode_from_path(
+            key.to_string(),
+            path.to_path_buf(),
+            size,
+            CoverDecodePriority::Visible,
+        );
     }
 
-    fn start_cover_decode_from_path(self: &Rc<Self>, key: String, path: PathBuf, size: i32) {
-        if self.state.decoded_covers.borrow().contains_key(&key) {
-            if let Some(pixbuf) = self.state.decoded_covers.borrow().get(&key).cloned() {
-                let bindings = self.take_live_cover_bindings(&key);
-                apply_pixbuf_to_bindings(bindings, pixbuf);
+    fn start_cover_decode_from_path(
+        self: &Rc<Self>,
+        key: String,
+        path: PathBuf,
+        size: i32,
+        priority: CoverDecodePriority,
+    ) {
+        if self.apply_decoded_cover_if_available(&key) {
+            return;
+        }
+
+        if self.state.cover_decodes.borrow().contains(&key) {
+            return;
+        }
+
+        {
+            let mut queue = self.state.cover_decode_queue.borrow_mut();
+            if let Some(position) = queue.iter().position(|job| job.key == key) {
+                let Some(mut job) = queue.remove(position) else {
+                    return;
+                };
+                job.size = job.size.max(size);
+                job.priority = if job.priority == CoverDecodePriority::Visible
+                    || priority == CoverDecodePriority::Visible
+                {
+                    CoverDecodePriority::Visible
+                } else {
+                    CoverDecodePriority::Warm
+                };
+                if job.priority == CoverDecodePriority::Visible {
+                    queue.push_front(job);
+                } else {
+                    queue.push_back(job);
+                }
+                drop(queue);
+                self.drain_cover_decode_queue();
+                return;
             }
-            return;
+
+            let job = CoverDecodeJob {
+                key,
+                path,
+                size,
+                priority,
+            };
+            if priority == CoverDecodePriority::Visible {
+                queue.push_front(job);
+            } else {
+                queue.push_back(job);
+            }
         }
-        if !self.state.cover_decodes.borrow_mut().insert(key.clone()) {
-            return;
+
+        self.drain_cover_decode_queue();
+    }
+
+    fn apply_decoded_cover_if_available(&self, key: &str) -> bool {
+        let Some(pixbuf) = self.state.decoded_covers.borrow().get(key).cloned() else {
+            return false;
+        };
+        let bindings = self.take_live_cover_bindings(key);
+        apply_pixbuf_to_bindings(bindings, pixbuf);
+        true
+    }
+
+    fn drain_cover_decode_queue(self: &Rc<Self>) {
+        loop {
+            if self.state.cover_decodes.borrow().len() >= COVER_DECODE_MAX_IN_FLIGHT {
+                break;
+            }
+            let Some(job) = self.state.cover_decode_queue.borrow_mut().pop_front() else {
+                break;
+            };
+            if self.apply_decoded_cover_if_available(&job.key) {
+                continue;
+            }
+            if !self
+                .state
+                .cover_decodes
+                .borrow_mut()
+                .insert(job.key.clone())
+            {
+                continue;
+            }
+            self.spawn_cover_decode_job(job);
         }
+    }
+
+    fn spawn_cover_decode_job(self: &Rc<Self>, job: CoverDecodeJob) {
         let shell = Rc::clone(self);
         glib::spawn_future_local(async move {
-            match load_cover_pixbuf(path.clone(), size).await {
+            let CoverDecodeJob {
+                key,
+                path,
+                size,
+                priority,
+            } = job;
+            match load_cover_pixbuf(path.clone(), size, priority.glib_priority()).await {
                 Ok(pixbuf) => {
                     shell.finish_cover_decode(&key);
                     shell.record_perf_cover_decode_ok(&key);
@@ -3041,6 +3733,7 @@ impl Shell {
                     }
                 }
             }
+            shell.drain_cover_decode_queue();
         });
     }
 
@@ -3635,6 +4328,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     } else {
                         shell.render_current_route_preserving_scroll();
                     }
+                    shell.schedule_startup_cover_warm();
                 }
                 ControllerEvent::HomeSectionsUpdated(snapshot) => {
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
@@ -3645,6 +4339,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
                     shell.update_server_selector();
                     shell.refresh_visible_home_sections(&sections);
+                    shell.schedule_startup_cover_warm();
                 }
                 ControllerEvent::HomeSectionPrefetched { server_id, section } => {
                     let active_server_id = shell
@@ -3814,6 +4509,44 @@ fn start_ui_perf_run(shell: &Rc<Shell>, app: &adw::Application) {
     });
 }
 
+fn start_ui_perf_observe(shell: &Rc<Shell>, app: &adw::Application) {
+    let Some(perf) = shell.state.perf.clone() else {
+        return;
+    };
+    info!(
+        max_gap_ms = perf.options.max_gap_ms,
+        asset_ms = perf.options.asset_ms,
+        output = perf
+            .options
+            .output
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "stdout_only".to_string()),
+        "manual UI perf observer started"
+    );
+    let heartbeat = Rc::new(RefCell::new(Some(start_ui_perf_heartbeat(Rc::clone(
+        &perf,
+    )))));
+    let heartbeat_for_shutdown = Rc::clone(&heartbeat);
+    app.connect_shutdown(move |_| {
+        if let Some(source) = heartbeat_for_shutdown.borrow_mut().take() {
+            source.remove();
+        }
+        perf.finish_scroll();
+        let failed = write_ui_perf_report(&perf, false);
+        info!(
+            failed,
+            output = perf
+                .options
+                .output
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "stdout_only".to_string()),
+            "manual UI perf observer stopped"
+        );
+    });
+}
+
 fn start_ui_perf_heartbeat(perf: Rc<UiPerfMonitor>) -> glib::SourceId {
     let last_tick = Rc::new(RefCell::new(Instant::now()));
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -3915,21 +4648,30 @@ fn run_next_ui_perf_route(
 }
 
 fn finish_ui_perf_run(perf: Rc<UiPerfMonitor>, app: adw::Application) {
-    let report = perf.report();
-    print!("{report}");
-    if let Some(path) = &perf.options.output
-        && let Err(error) = std::fs::write(path, &report)
-    {
-        eprintln!(
-            "RUFIN_PERF failed_to_write_report path={} error={error}",
-            path.display()
-        );
-    }
-    let failed = perf.failed();
+    let failed = write_ui_perf_report(&perf, true);
     app.quit();
     if failed {
         std::process::exit(1);
     }
+}
+
+fn write_ui_perf_report(perf: &UiPerfMonitor, print_stdout: bool) -> bool {
+    let report = perf.report();
+    if print_stdout {
+        print!("{report}");
+    }
+    if let Some(path) = &perf.options.output {
+        match std::fs::write(path, &report) {
+            Ok(()) => info!(path = %path.display(), "wrote UI perf report"),
+            Err(error) => eprintln!(
+                "RUFIN_PERF failed_to_write_report path={} error={error}",
+                path.display()
+            ),
+        }
+    } else if !print_stdout {
+        print!("{report}");
+    }
+    perf.failed()
 }
 
 fn ui_perf_routes(shell: &Shell) -> Vec<Route> {
@@ -4171,6 +4913,10 @@ fn append_playlists_to_model(
     playlists: impl IntoIterator<Item = Playlist>,
 ) {
     append_boxed_items_to_model(model, playlists);
+}
+
+fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
+    playlist.name.to_lowercase().contains(query)
 }
 
 fn set_track_sort_button_content(button: &gtk::Button, settings: &TrackTableSettings) {
@@ -4884,9 +5630,13 @@ impl ArtworkTile {
     }
 }
 
-async fn load_cover_pixbuf(path: PathBuf, size: i32) -> Result<Pixbuf, glib::Error> {
+async fn load_cover_pixbuf(
+    path: PathBuf,
+    size: i32,
+    priority: glib::Priority,
+) -> Result<Pixbuf, glib::Error> {
     let file = gio::File::for_path(path);
-    let stream = file.read_future(glib::Priority::LOW).await?;
+    let stream = file.read_future(priority).await?;
     Pixbuf::from_stream_at_scale_future(&stream, size, size, true).await
 }
 
@@ -5143,6 +5893,31 @@ mod tests {
         super::reset_home_section_pages(&mut states);
 
         assert!(states.is_empty());
+    }
+
+    #[test]
+    fn manual_ui_perf_observer_records_scrolls_by_route() {
+        let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
+            max_gap_ms: 120,
+            route_ms: 650,
+            duration_ms: 15_000,
+            asset_ms: 300,
+            require_assets: false,
+            terminal_events: false,
+            observe_scroll: true,
+            output: None,
+        });
+
+        monitor.record_manual_scroll_step("Tracks", 10.0, 100.0);
+        monitor.record_manual_scroll_step("Tracks", 40.0, 100.0);
+        monitor.record_manual_scroll_step("Albums", 5.0, 50.0);
+        monitor.finish_scroll();
+
+        let report = monitor.report();
+        assert!(report.contains("RUFIN_PERF_SCROLL route=Tracks scenario=manual"));
+        assert!(report.contains("steps=2"));
+        assert!(report.contains("max_adjustment=100"));
+        assert!(report.contains("RUFIN_PERF_SCROLL route=Albums scenario=manual"));
     }
 
     #[test]

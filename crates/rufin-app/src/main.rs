@@ -31,6 +31,9 @@ struct Cli {
     #[arg(long)]
     ui_perf_run: bool,
 
+    #[arg(long)]
+    ui_perf_observe: bool,
+
     #[arg(long, default_value_t = 120)]
     ui_perf_max_gap_ms: u64,
 
@@ -77,6 +80,10 @@ fn main() {
         eprintln!("Use only one maintenance flag at a time.");
         std::process::exit(2);
     }
+    if cli.ui_perf_run && cli.ui_perf_observe {
+        eprintln!("Use only one UI perf mode at a time.");
+        std::process::exit(2);
+    }
 
     if cli.clear_cache {
         match controller::AppController::clear_active_server_cache_for_app() {
@@ -104,6 +111,7 @@ fn main() {
         fake_scale: cli.fake_scale.map(Into::into),
         smoke_exit_ms: cli.smoke_exit_ms,
         ui_perf_run: cli.ui_perf_run,
+        ui_perf_observe: cli.ui_perf_observe,
         ui_perf_max_gap_ms: cli.ui_perf_max_gap_ms,
         ui_perf_route_ms: cli.ui_perf_route_ms,
         ui_perf_duration_ms: cli.ui_perf_duration_ms,

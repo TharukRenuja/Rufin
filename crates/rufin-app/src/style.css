@@ -27,6 +27,33 @@ window {
   background: transparent;
 }
 
+listview.album-detail-list row,
+listview.album-detail-list row:hover,
+listview.album-detail-list row:selected {
+  background: transparent;
+}
+
+.album-detail-track-cells {
+  border-radius: 8px;
+}
+
+.album-detail-track-cells:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+scrolledwindow.library-route-scroller scrollbar.vertical slider {
+  min-height: 24px;
+}
+
+.startup-loading-page {
+  min-height: 240px;
+}
+
+.startup-loading-page spinner {
+  min-width: 32px;
+  min-height: 32px;
+}
+
 .first-run-content statuspage {
   margin-bottom: 4px;
 }

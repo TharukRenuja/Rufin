@@ -80,6 +80,10 @@ pub struct LibrarySnapshot {
     pub last_error: Option<String>,
     pub cached_album_count: usize,
     pub cached_track_count: usize,
+    pub cached_artist_count: usize,
+    pub cached_album_artist_count: usize,
+    pub cached_genre_count: usize,
+    pub cached_playlist_count: usize,
     pub home_sections: Vec<HomeSection>,
     pub prefetched_explore: Option<HomeSection>,
     pub albums: Vec<Album>,
@@ -180,6 +184,10 @@ impl LibrarySnapshot {
             last_error: None,
             cached_album_count: 0,
             cached_track_count: 0,
+            cached_artist_count: 0,
+            cached_album_artist_count: 0,
+            cached_genre_count: 0,
+            cached_playlist_count: 0,
             home_sections: Vec::new(),
             prefetched_explore: None,
             albums: Vec::new(),
@@ -4183,26 +4191,22 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     let cached_track_count = track_page.total;
     let mut albums = album_page.items;
     let mut tracks = track_page.items;
-    let mut artists = store.with_store(|store| {
-        store
-            .load_artists(&saved.server.id, false, 0, SNAPSHOT_GRID_LIMIT)
-            .map(|page| page.items)
-    })?;
-    let mut album_artists = store.with_store(|store| {
-        store
-            .load_artists(&saved.server.id, true, 0, SNAPSHOT_GRID_LIMIT)
-            .map(|page| page.items)
-    })?;
-    let genres = store.with_store(|store| {
-        store
-            .load_genres(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT)
-            .map(|page| page.items)
-    })?;
-    let playlists = store.with_store(|store| {
-        store
-            .load_playlists(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT)
-            .map(|page| page.items)
-    })?;
+    let artist_page = store
+        .with_store(|store| store.load_artists(&saved.server.id, false, 0, SNAPSHOT_GRID_LIMIT))?;
+    let album_artist_page = store
+        .with_store(|store| store.load_artists(&saved.server.id, true, 0, SNAPSHOT_GRID_LIMIT))?;
+    let genre_page =
+        store.with_store(|store| store.load_genres(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
+    let playlist_page =
+        store.with_store(|store| store.load_playlists(&saved.server.id, 0, SNAPSHOT_GRID_LIMIT))?;
+    let cached_artist_count = artist_page.total;
+    let cached_album_artist_count = album_artist_page.total;
+    let cached_genre_count = genre_page.total;
+    let cached_playlist_count = playlist_page.total;
+    let mut artists = artist_page.items;
+    let mut album_artists = album_artist_page.items;
+    let genres = genre_page.items;
+    let playlists = playlist_page.items;
     let mut favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
     external_metadata::normalize_home_sections(&mut home_sections, &metadata_settings);
     if let Some(section) = &mut prefetched_explore {
@@ -4235,6 +4239,10 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
         last_error,
         cached_album_count,
         cached_track_count,
+        cached_artist_count,
+        cached_album_artist_count,
+        cached_genre_count,
+        cached_playlist_count,
         home_sections,
         prefetched_explore,
         albums,
@@ -6471,7 +6479,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_cached_cover_does_not_reuse_other_sizes() {
+    fn provider_cached_cover_reuses_available_size() {
         let (controller, _events, _snapshot, _queue, _player) =
             AppController::bootstrap_memory_for_test();
         let server_id = ServerId::new("jellyfin:server:test");
@@ -6509,8 +6517,14 @@ mod tests {
             })
             .expect("seed cover cache");
 
-        assert_eq!(controller.cached_cover_path(&image_ref, 512), None);
-        assert_eq!(controller.cached_cover_path(&image_ref, 96), None);
+        assert_eq!(
+            controller.cached_cover_path(&image_ref, 512),
+            Some(path.clone())
+        );
+        assert_eq!(
+            controller.cached_cover_path(&image_ref, 96),
+            Some(path.clone())
+        );
         let _cleanup = fs::remove_file(path);
     }
 

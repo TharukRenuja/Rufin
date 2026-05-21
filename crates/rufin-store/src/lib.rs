@@ -9,7 +9,7 @@ use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, Searc
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -445,6 +445,7 @@ impl Store {
             self.ensure_column(table, "image_tag", "TEXT")?;
         }
         self.ensure_playlist_entries_table()?;
+        self.normalize_jellyfin_track_image_refs()?;
         self.connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (version) VALUES (1)",
             [],
@@ -452,6 +453,35 @@ impl Store {
         self.connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?1)",
             params![SCHEMA_VERSION],
+        )?;
+        Ok(())
+    }
+
+    fn normalize_jellyfin_track_image_refs(&self) -> StoreResult<()> {
+        self.connection.execute_batch(
+            "
+            UPDATE tracks
+            SET image_item_id = (
+                    SELECT albums.image_item_id
+                    FROM albums
+                    WHERE albums.server_id = tracks.server_id
+                      AND albums.album_id = tracks.album_id
+                ),
+                image_tag = (
+                    SELECT albums.image_tag
+                    FROM albums
+                    WHERE albums.server_id = tracks.server_id
+                      AND albums.album_id = tracks.album_id
+                )
+            WHERE image_item_id LIKE 'jellyfin:track:%'
+              AND EXISTS (
+                    SELECT 1
+                    FROM albums
+                    WHERE albums.server_id = tracks.server_id
+                      AND albums.album_id = tracks.album_id
+                      AND albums.image_item_id IS NOT NULL
+                );
+            ",
         )?;
         Ok(())
     }
@@ -5073,7 +5103,7 @@ mod tests {
     fn migrations_run_from_empty_database() {
         let store = Store::open_memory().expect("open store");
 
-        assert_eq!(store.schema_version().expect("schema version"), 9);
+        assert_eq!(store.schema_version().expect("schema version"), 10);
         assert!(store.foreign_keys_enabled().expect("foreign keys"));
         assert!(store.fts5_available().expect("fts5 table"));
         assert!(
@@ -5224,7 +5254,7 @@ mod tests {
         store.migrate().expect("migrate");
 
         let server_id = ServerId::new("jellyfin:server:test");
-        assert_eq!(store.schema_version().expect("schema version"), 9);
+        assert_eq!(store.schema_version().expect("schema version"), 10);
         for table in [
             "albums",
             "tracks",
@@ -5377,7 +5407,7 @@ mod tests {
         store.configure_pragmas(true).expect("configure pragmas");
         store.migrate().expect("migrate");
 
-        assert_eq!(store.schema_version().expect("schema version"), 9);
+        assert_eq!(store.schema_version().expect("schema version"), 10);
         assert!(table_has_column(&store, "playlist_tracks", "entry_id"));
         assert!(table_has_column(&store, "lyrics_cache", "value"));
         assert!(table_has_column(
@@ -5948,6 +5978,41 @@ mod tests {
                 .image_ref,
             playlist.image_ref
         );
+    }
+
+    #[test]
+    fn jellyfin_track_image_refs_are_normalized_to_album_images() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut album = album(1);
+        album.image_ref = Some(image_ref("jellyfin:album:album-one", "album-tag-one"));
+        let mut jellyfin_track = track(1, &album);
+        jellyfin_track.image_ref = Some(image_ref("jellyfin:track:track-one", "track-tag-one"));
+        let mut local_track = track(2, &album);
+        local_track.image_ref = Some(image_ref("local:track:track-two", "track-tag-two"));
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(
+                &saved.server.id,
+                &[jellyfin_track.clone(), local_track.clone()],
+                generation,
+            )
+            .expect("upsert tracks");
+
+        store
+            .normalize_jellyfin_track_image_refs()
+            .expect("normalize track images");
+        let tracks = store
+            .load_tracks(&saved.server.id, 0, 10)
+            .expect("load tracks")
+            .items;
+
+        assert_eq!(tracks[0].image_ref, album.image_ref);
+        assert_eq!(tracks[1].image_ref, local_track.image_ref);
     }
 
     #[test]

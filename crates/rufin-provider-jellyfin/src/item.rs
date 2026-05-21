@@ -118,7 +118,7 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
 
 pub(super) fn track_from_item(item: JellyfinItem) -> Track {
     let image_ref =
-        primary_image_ref("track", &item.id, &item.image_tags).or_else(|| album_image_ref(&item));
+        album_image_ref(&item).or_else(|| primary_image_ref("track", &item.id, &item.image_tags));
     let artist_credits = artist_credits_from_pairs(item.artist_items.as_deref());
     let album_artist_credits = artist_credits_from_pairs(item.album_artists.as_deref());
     let artist_id = artist_credits

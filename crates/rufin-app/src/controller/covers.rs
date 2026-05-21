@@ -666,16 +666,14 @@ fn cached_cover_path_for_saved(
     if let Some(path) = cached_cover_path_for_saved_size(store, saved, image_ref, size)? {
         return Ok(Some(path));
     }
-    if external_metadata::is_external_image_ref(image_ref) {
-        for candidate_size in external_cover_cache_size_candidates(size) {
-            if candidate_size == size {
-                continue;
-            }
-            if let Some(path) =
-                cached_cover_path_for_saved_size(store, saved, image_ref, candidate_size)?
-            {
-                return Ok(Some(path));
-            }
+    for candidate_size in cover_cache_size_candidates(size) {
+        if candidate_size == size {
+            continue;
+        }
+        if let Some(path) =
+            cached_cover_path_for_saved_size(store, saved, image_ref, candidate_size)?
+        {
+            return Ok(Some(path));
         }
     }
     Ok(None)
@@ -708,7 +706,7 @@ fn cached_cover_path_for_saved_size(
     Ok(None)
 }
 
-fn external_cover_cache_size_candidates(size: u32) -> [u32; 3] {
+fn cover_cache_size_candidates(size: u32) -> [u32; 3] {
     if size <= EXTERNAL_THUMB_COVER_SIZE {
         [
             EXTERNAL_THUMB_COVER_SIZE,

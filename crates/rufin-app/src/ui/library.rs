@@ -1,21 +1,23 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::Instant;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
 use rufin_core::{
-    Album, AlbumId, Artist, Genre, LibraryField, LibraryLayout, LibraryListKey,
+    Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
     LibraryListSettings, Track, available_sort_fields, format_duration,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::{
     GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE, PRIMARY_ROUTE_MARGIN_START, Route, Shell,
-    THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, append_albums_to_model, append_artists_to_model,
-    append_genres_to_model, append_tracks_to_model, connect_paged_grid_loader,
-    favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
+    THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, album_favorite_key, append_albums_to_model,
+    append_artists_to_model, append_genres_to_model, append_tracks_to_model, artist_favorite_key,
+    cards, connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button,
+    finish_grid_page, icon_button,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     set_favorite_button_active, stable_seed,
@@ -26,33 +28,129 @@ const LIBRARY_CONFIG_DIALOG_WIDTH: i32 = 620;
 const LIBRARY_CONFIG_DIALOG_HEIGHT: i32 = 560;
 const LIBRARY_TABLE_HEADER_HEIGHT: i32 = 92;
 const LIBRARY_TABLE_ROW_HEIGHT: i32 = 58;
+const LIBRARY_ROUTE_BOTTOM_MARGIN: i32 = 8;
+const ALBUM_DETAIL_FIXED_TRAILING_INSET: i32 = 64;
+const ALBUM_DETAIL_INLINE_TRACK_ROWS: usize = 4;
+const TRACK_INITIAL_COMPLETE_ROWS: usize = TRACK_ROUTE_PAGE_SIZE;
+const TRACK_COMPLETE_APPEND_ROWS: usize = 256;
+
+fn library_layout_loads_complete_page(key: LibraryListKey, settings: &LibraryListSettings) -> bool {
+    match key {
+        LibraryListKey::Tracks => settings.layout == LibraryLayout::Row,
+        LibraryListKey::Albums => matches!(
+            settings.layout,
+            LibraryLayout::Row | LibraryLayout::Grid | LibraryLayout::Detail
+        ),
+        LibraryListKey::Artists | LibraryListKey::AlbumArtists | LibraryListKey::Genres => {
+            matches!(settings.layout, LibraryLayout::Row | LibraryLayout::Grid)
+        }
+        _ => false,
+    }
+}
+
+fn complete_cached_page<T>(
+    page: rufin_provider::PagedResponse<T>,
+    load_complete: bool,
+    mut load_all: impl FnMut(usize) -> Result<rufin_provider::PagedResponse<T>, String>,
+    page_name: &str,
+) -> rufin_provider::PagedResponse<T> {
+    if !load_complete || page.items.len() >= page.total {
+        return page;
+    }
+
+    let loaded = page.items.len();
+    let total = page.total;
+    match load_all(total) {
+        Ok(page) => page,
+        Err(error) => {
+            warn!(
+                %error,
+                page = page_name,
+                loaded,
+                total,
+                "failed to load complete cached page"
+            );
+            page
+        }
+    }
+}
+
+fn warm_track_covers_for_settings(
+    shell: &Rc<Shell>,
+    tracks: &[Track],
+    settings: &LibraryListSettings,
+) {
+    let Some((fetch_size, size)) = track_cover_warm_sizes(shell, settings) else {
+        return;
+    };
+    let image_refs = tracks
+        .iter()
+        .filter_map(|track| track.image_ref.clone())
+        .collect::<Vec<ImageRef>>();
+    shell.warm_cover_refs(image_refs, fetch_size, size);
+}
+
+fn track_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(u32, i32)> {
+    match settings.layout {
+        LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1)),
+        LibraryLayout::Row => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Detail => None,
+    }
+}
 
 impl Shell {
     pub(super) fn library_albums_view(self: &Rc<Self>) -> gtk::Widget {
-        let page = self
-            .controller
-            .cached_albums_page(0, GRID_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, "failed to load cached albums page");
-                let albums = self
-                    .state
-                    .library
-                    .borrow()
-                    .albums
-                    .iter()
-                    .take(GRID_ROUTE_PAGE_SIZE)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(albums, self.state.library.borrow().albums.len())
-            });
+        let view_started = Instant::now();
+        let settings = self.library_settings(LibraryListKey::Albums);
+        let load_started = Instant::now();
+        let page = self.complete_album_snapshot_page().unwrap_or_else(|| {
+            self.controller
+                .cached_albums_page(0, GRID_ROUTE_PAGE_SIZE)
+                .unwrap_or_else(|error| {
+                    warn!(%error, "failed to load cached albums page");
+                    let albums = self
+                        .state
+                        .library
+                        .borrow()
+                        .albums
+                        .iter()
+                        .take(GRID_ROUTE_PAGE_SIZE)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    rufin_provider::PagedResponse::new(
+                        albums,
+                        self.state.library.borrow().albums.len(),
+                    )
+                })
+        });
+        let initial_load_ms = load_started.elapsed().as_millis() as u64;
+        let complete_started = Instant::now();
+        let page = complete_cached_page(
+            page,
+            library_layout_loads_complete_page(LibraryListKey::Albums, &settings),
+            |limit| self.controller.cached_albums_page(0, limit),
+            "albums",
+        );
+        let complete_load_ms = complete_started.elapsed().as_millis() as u64;
+        let page_total = page.total;
+        let complete_page = page.items.len() >= page.total;
+        let source_albums = Rc::new(page.items.clone());
         let albums = Rc::new(RefCell::new(page.items));
-        let album_tracks = Rc::new(RefCell::new(self.album_tracks_for(&albums.borrow())));
+        let album_count = albums.borrow().len();
+        let tracks_started = Instant::now();
+        let album_tracks = Rc::new(RefCell::new(
+            self.album_tracks_for_layout(&albums.borrow(), &settings),
+        ));
+        let album_tracks_ms = tracks_started.elapsed().as_millis() as u64;
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        populate_album_model(
+        let model_started = Instant::now();
+        populate_album_collection_model(
             &model,
             &albums.borrow(),
-            &self.library_settings(LibraryListKey::Albums),
+            &settings,
+            &album_tracks.borrow(),
         );
+        let model_ms = model_started.elapsed().as_millis() as u64;
 
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
@@ -67,6 +165,7 @@ impl Shell {
         {
             let shell = Rc::clone(self);
             let model = model.clone();
+            let source_albums = Rc::clone(&source_albums);
             let albums = Rc::clone(&albums);
             let album_tracks = Rc::clone(&album_tracks);
             let cursor = Rc::clone(&cursor);
@@ -74,6 +173,31 @@ impl Shell {
             search.connect_search_changed(move |entry| {
                 let text = entry.text().trim().to_string();
                 *query.borrow_mut() = text.clone();
+                if complete_page {
+                    let query = text.to_lowercase();
+                    let values = source_albums
+                        .iter()
+                        .filter(|album| query.is_empty() || album_matches_query(album, &query))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let count = values.len();
+                    *albums.borrow_mut() = values;
+                    *album_tracks.borrow_mut() = shell.album_tracks_for_layout(
+                        &albums.borrow(),
+                        &shell.library_settings(LibraryListKey::Albums),
+                    );
+                    populate_album_collection_model(
+                        &model,
+                        &albums.borrow(),
+                        &shell.library_settings(LibraryListKey::Albums),
+                        &album_tracks.borrow(),
+                    );
+                    cursor.offset.set(count);
+                    cursor.total.set(count);
+                    cursor.loading.set(false);
+                    return;
+                }
+
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
@@ -82,13 +206,26 @@ impl Shell {
                     .cached_albums_page_matching(&text, 0, GRID_ROUTE_PAGE_SIZE)
                 {
                     Ok(page) => {
+                        let settings = shell.library_settings(LibraryListKey::Albums);
+                        let page = complete_cached_page(
+                            page,
+                            library_layout_loads_complete_page(LibraryListKey::Albums, &settings),
+                            |limit| {
+                                shell
+                                    .controller
+                                    .cached_albums_page_matching(&text, 0, limit)
+                            },
+                            "albums search",
+                        );
                         let count = page.items.len();
                         *albums.borrow_mut() = page.items;
-                        *album_tracks.borrow_mut() = shell.album_tracks_for(&albums.borrow());
-                        populate_album_model(
+                        *album_tracks.borrow_mut() =
+                            shell.album_tracks_for_layout(&albums.borrow(), &settings);
+                        populate_album_collection_model(
                             &model,
                             &albums.borrow(),
-                            &shell.library_settings(LibraryListKey::Albums),
+                            &settings,
+                            &album_tracks.borrow(),
                         );
                         finish_grid_page(&cursor, 0, count, page.total);
                     }
@@ -121,10 +258,17 @@ impl Shell {
                     Ok(page) => {
                         let count = page.items.len();
                         let mut items = page.items;
-                        sort_albums(&mut items, &shell.library_settings(LibraryListKey::Albums));
+                        let settings = shell.library_settings(LibraryListKey::Albums);
+                        sort_albums(&mut items, &settings);
                         albums.borrow_mut().extend(items.iter().cloned());
-                        *album_tracks.borrow_mut() = shell.album_tracks_for(&albums.borrow());
-                        append_albums_to_model(&model, items);
+                        *album_tracks.borrow_mut() =
+                            shell.album_tracks_for_layout(&albums.borrow(), &settings);
+                        append_album_collection_model(
+                            &model,
+                            items,
+                            &settings,
+                            &album_tracks.borrow(),
+                        );
                         finish_grid_page(&cursor, offset, count, page.total);
                     }
                     Err(error) => {
@@ -135,22 +279,44 @@ impl Shell {
             }) as Rc<dyn Fn()>
         };
 
-        self.library_page_shell(
+        let content_started = Instant::now();
+        let content = album_collection_widget(self, model, LibraryListKey::Albums);
+        let content_ms = content_started.elapsed().as_millis() as u64;
+        let shell_started = Instant::now();
+        let view = self.library_page_shell(
             LibraryListKey::Albums,
             albums.borrow().is_empty(),
             "Cached albums will appear here after the background sync finishes.",
             search,
-            album_collection_widget(
-                self,
-                model,
-                LibraryListKey::Albums,
-                Rc::clone(&album_tracks),
-            ),
+            content,
             Some(load_next),
-        )
+        );
+        let shell_ms = shell_started.elapsed().as_millis() as u64;
+        if settings.layout == LibraryLayout::Detail {
+            info!(
+                albums = album_count,
+                total = page_total,
+                initial_load_ms,
+                complete_load_ms,
+                album_tracks_ms,
+                model_ms,
+                content_ms,
+                shell_ms,
+                total_ms = view_started.elapsed().as_millis() as u64,
+                "albums detail view timing"
+            );
+        }
+        view
     }
 
     pub(super) fn library_tracks_route_view(self: &Rc<Self>) -> gtk::Widget {
+        let settings = self.library_settings(LibraryListKey::Tracks);
+        if library_layout_loads_complete_page(LibraryListKey::Tracks, &settings)
+            && let Some(page) = self.complete_track_snapshot_page()
+        {
+            return self.library_tracks_page(page.items, page.total);
+        }
+
         let page = self
             .controller
             .cached_tracks_page(0, TRACK_ROUTE_PAGE_SIZE)
@@ -170,6 +336,12 @@ impl Shell {
                     self.state.library.borrow().cached_track_count,
                 )
             });
+        let page = complete_cached_page(
+            page,
+            library_layout_loads_complete_page(LibraryListKey::Tracks, &settings),
+            |limit| self.controller.cached_tracks_page(0, limit),
+            "tracks",
+        );
         self.library_tracks_page(page.items, page.total)
     }
 
@@ -184,29 +356,41 @@ impl Shell {
         } else {
             Route::Artists
         };
+        let settings = self.library_settings(key);
         let page = self
-            .controller
-            .cached_artists_page(album_artist, 0, GRID_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, album_artist, "failed to load cached artists page");
-                let library = self.state.library.borrow();
-                let fallback = if album_artist {
-                    &library.album_artists
-                } else {
-                    &library.artists
-                };
-                rufin_provider::PagedResponse::new(
-                    fallback
-                        .iter()
-                        .take(GRID_ROUTE_PAGE_SIZE)
-                        .cloned()
-                        .collect(),
-                    fallback.len(),
-                )
+            .complete_artist_snapshot_page(album_artist)
+            .unwrap_or_else(|| {
+                self.controller
+                    .cached_artists_page(album_artist, 0, GRID_ROUTE_PAGE_SIZE)
+                    .unwrap_or_else(|error| {
+                        warn!(%error, album_artist, "failed to load cached artists page");
+                        let library = self.state.library.borrow();
+                        let fallback = if album_artist {
+                            &library.album_artists
+                        } else {
+                            &library.artists
+                        };
+                        rufin_provider::PagedResponse::new(
+                            fallback
+                                .iter()
+                                .take(GRID_ROUTE_PAGE_SIZE)
+                                .cloned()
+                                .collect(),
+                            fallback.len(),
+                        )
+                    })
             });
+        let page = complete_cached_page(
+            page,
+            library_layout_loads_complete_page(key, &settings),
+            |limit| self.controller.cached_artists_page(album_artist, 0, limit),
+            "artists",
+        );
+        let complete_page = page.items.len() >= page.total;
+        let source_artists = Rc::new(page.items.clone());
         let artists = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        populate_artist_model(&model, &artists.borrow(), &self.library_settings(key));
+        populate_artist_model(&model, &artists.borrow(), &settings);
 
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
@@ -221,12 +405,29 @@ impl Shell {
         {
             let shell = Rc::clone(self);
             let model = model.clone();
+            let source_artists = Rc::clone(&source_artists);
             let artists = Rc::clone(&artists);
             let cursor = Rc::clone(&cursor);
             let query = Rc::clone(&query);
             search.connect_search_changed(move |entry| {
                 let text = entry.text().trim().to_string();
                 *query.borrow_mut() = text.clone();
+                if complete_page {
+                    let query = text.to_lowercase();
+                    let values = source_artists
+                        .iter()
+                        .filter(|artist| query.is_empty() || artist_matches_query(artist, &query))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let count = values.len();
+                    *artists.borrow_mut() = values;
+                    populate_artist_model(&model, &artists.borrow(), &shell.library_settings(key));
+                    cursor.offset.set(count);
+                    cursor.total.set(count);
+                    cursor.loading.set(false);
+                    return;
+                }
+
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
@@ -237,13 +438,23 @@ impl Shell {
                     GRID_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let settings = shell.library_settings(key);
+                        let page = complete_cached_page(
+                            page,
+                            library_layout_loads_complete_page(key, &settings),
+                            |limit| {
+                                shell.controller.cached_artists_page_matching(
+                                    album_artist,
+                                    &text,
+                                    0,
+                                    limit,
+                                )
+                            },
+                            "artists search",
+                        );
                         let count = page.items.len();
                         *artists.borrow_mut() = page.items;
-                        populate_artist_model(
-                            &model,
-                            &artists.borrow(),
-                            &shell.library_settings(key),
-                        );
+                        populate_artist_model(&model, &artists.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, page.total);
                     }
                     Err(error) => {
@@ -299,29 +510,38 @@ impl Shell {
     }
 
     pub(super) fn library_genre_list_view(self: &Rc<Self>) -> gtk::Widget {
-        let page = self
-            .controller
-            .cached_genres_page(0, GRID_ROUTE_PAGE_SIZE)
-            .unwrap_or_else(|error| {
-                warn!(%error, "failed to load cached genres page");
-                let genres = self
-                    .state
-                    .library
-                    .borrow()
-                    .genres
-                    .iter()
-                    .take(GRID_ROUTE_PAGE_SIZE)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                rufin_provider::PagedResponse::new(genres, self.state.library.borrow().genres.len())
-            });
+        let settings = self.library_settings(LibraryListKey::Genres);
+        let page = self.complete_genre_snapshot_page().unwrap_or_else(|| {
+            self.controller
+                .cached_genres_page(0, GRID_ROUTE_PAGE_SIZE)
+                .unwrap_or_else(|error| {
+                    warn!(%error, "failed to load cached genres page");
+                    let genres = self
+                        .state
+                        .library
+                        .borrow()
+                        .genres
+                        .iter()
+                        .take(GRID_ROUTE_PAGE_SIZE)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    rufin_provider::PagedResponse::new(
+                        genres,
+                        self.state.library.borrow().genres.len(),
+                    )
+                })
+        });
+        let page = complete_cached_page(
+            page,
+            library_layout_loads_complete_page(LibraryListKey::Genres, &settings),
+            |limit| self.controller.cached_genres_page(0, limit),
+            "genres",
+        );
+        let complete_page = page.items.len() >= page.total;
+        let source_genres = Rc::new(page.items.clone());
         let genres = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        populate_genre_model(
-            &model,
-            &genres.borrow(),
-            &self.library_settings(LibraryListKey::Genres),
-        );
+        populate_genre_model(&model, &genres.borrow(), &settings);
 
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
@@ -336,12 +556,33 @@ impl Shell {
         {
             let shell = Rc::clone(self);
             let model = model.clone();
+            let source_genres = Rc::clone(&source_genres);
             let genres = Rc::clone(&genres);
             let cursor = Rc::clone(&cursor);
             let query = Rc::clone(&query);
             search.connect_search_changed(move |entry| {
                 let text = entry.text().trim().to_string();
                 *query.borrow_mut() = text.clone();
+                if complete_page {
+                    let query = text.to_lowercase();
+                    let values = source_genres
+                        .iter()
+                        .filter(|genre| query.is_empty() || genre_matches_query(genre, &query))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let count = values.len();
+                    *genres.borrow_mut() = values;
+                    populate_genre_model(
+                        &model,
+                        &genres.borrow(),
+                        &shell.library_settings(LibraryListKey::Genres),
+                    );
+                    cursor.offset.set(count);
+                    cursor.total.set(count);
+                    cursor.loading.set(false);
+                    return;
+                }
+
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
@@ -350,13 +591,20 @@ impl Shell {
                     .cached_genres_page_matching(&text, 0, GRID_ROUTE_PAGE_SIZE)
                 {
                     Ok(page) => {
+                        let settings = shell.library_settings(LibraryListKey::Genres);
+                        let page = complete_cached_page(
+                            page,
+                            library_layout_loads_complete_page(LibraryListKey::Genres, &settings),
+                            |limit| {
+                                shell
+                                    .controller
+                                    .cached_genres_page_matching(&text, 0, limit)
+                            },
+                            "genres search",
+                        );
                         let count = page.items.len();
                         *genres.borrow_mut() = page.items;
-                        populate_genre_model(
-                            &model,
-                            &genres.borrow(),
-                            &shell.library_settings(LibraryListKey::Genres),
-                        );
+                        populate_genre_model(&model, &genres.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, page.total);
                     }
                     Err(error) => {
@@ -443,7 +691,7 @@ impl Shell {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_bottom(LIBRARY_ROUTE_BOTTOM_MARGIN);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         wrapper.set_widget_name(context);
@@ -453,6 +701,7 @@ impl Shell {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
+            scroller.add_css_class("library-route-scroller");
             scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
             scroller.set_min_content_width(0);
             scroller.set_propagate_natural_width(false);
@@ -516,9 +765,10 @@ impl Shell {
         context: &str,
     ) -> gtk::Widget {
         let source_albums = Rc::new(albums.to_vec());
-        let album_tracks = Rc::new(RefCell::new(self.album_tracks_for(&source_albums)));
+        let settings = self.library_settings(key);
+        let album_tracks = self.album_tracks_for_layout(&source_albums, &settings);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        populate_album_model(&model, &source_albums, &self.library_settings(key));
+        populate_album_collection_model(&model, &source_albums, &settings, &album_tracks);
 
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
@@ -534,32 +784,41 @@ impl Shell {
                     .filter(|album| query.is_empty() || album_matches_query(album, &query))
                     .cloned()
                     .collect::<Vec<_>>();
-                populate_album_model(&model, &albums, &shell.library_settings(key));
+                let settings = shell.library_settings(key);
+                let album_tracks = shell.album_tracks_for_layout(&albums, &settings);
+                populate_album_collection_model(&model, &albums, &settings, &album_tracks);
             });
         }
 
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
         wrapper.append(&self.library_toolbar(key, search));
-        wrapper.append(&album_collection_widget(
-            self,
-            model,
-            key,
-            Rc::clone(&album_tracks),
-        ));
+        wrapper.append(&album_collection_widget(self, model, key));
         wrapper.upcast()
     }
 
     fn library_tracks_page(self: &Rc<Self>, tracks: Vec<Track>, total: usize) -> gtk::Widget {
         let tracks = Rc::new(RefCell::new(tracks));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        populate_track_model_for_settings(
-            &model,
-            &tracks.borrow(),
-            &self.library_settings(LibraryListKey::Tracks),
-            "",
-            false,
-        );
+        let settings = self.library_settings(LibraryListKey::Tracks);
+        let complete_page = library_layout_loads_complete_page(LibraryListKey::Tracks, &settings);
+        let model_generation = Rc::new(Cell::new(0_u64));
+        if complete_page {
+            populate_track_model_for_settings_incremental(
+                self,
+                &model,
+                &tracks.borrow(),
+                &settings,
+                "",
+                false,
+                Rc::clone(&model_generation),
+            );
+        } else {
+            populate_track_model_for_settings(&model, &tracks.borrow(), &settings, "", false);
+        }
+        warm_track_covers_for_settings(self, &tracks.borrow(), &settings);
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
         search.set_hexpand(true);
@@ -575,9 +834,27 @@ impl Shell {
             let tracks = Rc::clone(&tracks);
             let cursor = Rc::clone(&cursor);
             let query = Rc::clone(&query);
+            let model_generation = Rc::clone(&model_generation);
             search.connect_search_changed(move |entry| {
                 let text = entry.text().trim().to_string();
+                model_generation.set(model_generation.get().saturating_add(1));
                 *query.borrow_mut() = text.clone();
+                if complete_page {
+                    let visible_count = populate_track_model_for_settings_incremental(
+                        &shell,
+                        &model,
+                        &tracks.borrow(),
+                        &shell.library_settings(LibraryListKey::Tracks),
+                        &text,
+                        false,
+                        Rc::clone(&model_generation),
+                    );
+                    cursor.offset.set(visible_count);
+                    cursor.total.set(visible_count);
+                    cursor.loading.set(false);
+                    return;
+                }
+
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
@@ -586,15 +863,27 @@ impl Shell {
                     .cached_tracks_page_matching(&text, 0, TRACK_ROUTE_PAGE_SIZE)
                 {
                     Ok(page) => {
+                        let settings = shell.library_settings(LibraryListKey::Tracks);
+                        let page = complete_cached_page(
+                            page,
+                            library_layout_loads_complete_page(LibraryListKey::Tracks, &settings),
+                            |limit| {
+                                shell
+                                    .controller
+                                    .cached_tracks_page_matching(&text, 0, limit)
+                            },
+                            "tracks search",
+                        );
                         let count = page.items.len();
                         *tracks.borrow_mut() = page.items;
                         populate_track_model_for_settings(
                             &model,
                             &tracks.borrow(),
-                            &shell.library_settings(LibraryListKey::Tracks),
+                            &settings,
                             "",
                             false,
                         );
+                        warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, page.total);
                     }
                     Err(error) => {
@@ -624,11 +913,9 @@ impl Shell {
                     Ok(page) => {
                         let count = page.items.len();
                         let mut items = page.items;
-                        sort_tracks(
-                            &mut items,
-                            &shell.library_settings(LibraryListKey::Tracks),
-                            false,
-                        );
+                        let settings = shell.library_settings(LibraryListKey::Tracks);
+                        sort_tracks(&mut items, &settings, false);
+                        warm_track_covers_for_settings(&shell, &items, &settings);
                         tracks.borrow_mut().extend(items.iter().cloned());
                         append_tracks_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
@@ -662,7 +949,7 @@ impl Shell {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_bottom(LIBRARY_ROUTE_BOTTOM_MARGIN);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         wrapper.append(&library_route_inset(self.library_toolbar(key, search)));
@@ -671,6 +958,7 @@ impl Shell {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
+            scroller.add_css_class("library-route-scroller");
             scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
             scroller.set_min_content_width(0);
             scroller.set_propagate_natural_width(false);
@@ -682,6 +970,7 @@ impl Shell {
             }
             wrapper.append(&scroller);
         }
+
         wrapper.upcast()
     }
 
@@ -875,6 +1164,10 @@ impl Shell {
     }
 
     fn album_tracks_for(&self, albums: &[Album]) -> HashMap<AlbumId, Vec<Track>> {
+        if let Some(tracks_by_album) = self.complete_snapshot_tracks_for_albums(albums) {
+            return tracks_by_album;
+        }
+
         let ids = albums
             .iter()
             .map(|album| album.id.clone())
@@ -885,6 +1178,91 @@ impl Shell {
                 warn!(%error, "failed to load cached album tracks");
                 HashMap::new()
             })
+    }
+
+    fn album_tracks_for_layout(
+        &self,
+        albums: &[Album],
+        settings: &LibraryListSettings,
+    ) -> HashMap<AlbumId, Vec<Track>> {
+        if settings.layout == LibraryLayout::Detail {
+            self.album_tracks_for(albums)
+        } else {
+            HashMap::new()
+        }
+    }
+
+    fn complete_track_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Track>> {
+        let library = self.state.library.borrow();
+        if library.cached_track_count > library.tracks.len() {
+            return None;
+        }
+        Some(rufin_provider::PagedResponse::new(
+            library.tracks.clone(),
+            library.cached_track_count,
+        ))
+    }
+
+    fn complete_album_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Album>> {
+        let library = self.state.library.borrow();
+        if library.cached_album_count > library.albums.len() {
+            return None;
+        }
+        Some(rufin_provider::PagedResponse::new(
+            library.albums.clone(),
+            library.cached_album_count,
+        ))
+    }
+
+    fn complete_artist_snapshot_page(
+        &self,
+        album_artist: bool,
+    ) -> Option<rufin_provider::PagedResponse<Artist>> {
+        let library = self.state.library.borrow();
+        let (items, total) = if album_artist {
+            (&library.album_artists, library.cached_album_artist_count)
+        } else {
+            (&library.artists, library.cached_artist_count)
+        };
+        if total > items.len() {
+            return None;
+        }
+        Some(rufin_provider::PagedResponse::new(items.clone(), total))
+    }
+
+    fn complete_genre_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Genre>> {
+        let library = self.state.library.borrow();
+        if library.cached_genre_count > library.genres.len() {
+            return None;
+        }
+        Some(rufin_provider::PagedResponse::new(
+            library.genres.clone(),
+            library.cached_genre_count,
+        ))
+    }
+
+    fn complete_snapshot_tracks_for_albums(
+        &self,
+        albums: &[Album],
+    ) -> Option<HashMap<AlbumId, Vec<Track>>> {
+        let album_ids = albums
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<HashSet<_>>();
+        let library = self.state.library.borrow();
+        if library.cached_track_count > library.tracks.len() {
+            return None;
+        }
+        let mut tracks_by_album = HashMap::<AlbumId, Vec<Track>>::new();
+        for track in &library.tracks {
+            if album_ids.contains(&track.album_id) {
+                tracks_by_album
+                    .entry(track.album_id.clone())
+                    .or_default()
+                    .push(track.clone());
+            }
+        }
+        Some(tracks_by_album)
     }
 }
 
@@ -918,12 +1296,11 @@ fn album_collection_widget(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
-    album_tracks: Rc<RefCell<HashMap<AlbumId, Vec<Track>>>>,
 ) -> gtk::Widget {
     match shell.library_settings(key).layout {
         LibraryLayout::Row => album_table(shell, model, key).upcast(),
         LibraryLayout::Detail if key.supports_layout(LibraryLayout::Detail) => {
-            album_detail_list(shell, model, key, album_tracks).upcast()
+            album_detail_list(shell, model, key).upcast()
         }
         LibraryLayout::Grid | LibraryLayout::Detail => album_grid(shell, model, key).upcast(),
     }
@@ -1198,44 +1575,80 @@ fn album_detail_list(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
-    album_tracks: Rc<RefCell<HashMap<AlbumId, Vec<Track>>>>,
-) -> gtk::ListBox {
-    let list = gtk::ListBox::new();
-    list.add_css_class("track-table");
-    list.set_hexpand(true);
-    list.set_halign(gtk::Align::Fill);
-    list.set_selection_mode(gtk::SelectionMode::None);
-    let shell = Rc::clone(shell);
-    list.bind_model(Some(&model), move |item| {
-        let Some(album) = item
-            .downcast_ref::<glib::BoxedAnyObject>()
-            .map(|boxed| boxed.borrow::<Album>().clone())
-        else {
-            return gtk::Box::new(gtk::Orientation::Vertical, 0).upcast();
+) -> gtk::ListView {
+    let selection = gtk::NoSelection::new(Some(model.clone()));
+    let factory = gtk::SignalListItemFactory::new();
+    let shell_for_factory = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
         };
-        let tracks = album_tracks
-            .borrow()
-            .get(&album.id)
-            .cloned()
-            .unwrap_or_default();
-        let row = gtk::ListBoxRow::new();
-        row.set_selectable(false);
-        row.set_activatable(false);
-        row.set_hexpand(true);
-        row.set_halign(gtk::Align::Fill);
-        let content = album_detail_row(&shell, &album, tracks, key);
+        let Some(row) = item_at_from_item::<AlbumDetailItem>(item) else {
+            return;
+        };
+        let content = album_detail_item_row(&shell_for_factory, row, key);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
-        row.set_child(Some(&content));
-        row.upcast()
+        item.set_child(Some(&content));
+    });
+    factory.connect_unbind(clear_list_item_child);
+
+    let list = gtk::ListView::new(Some(selection), Some(factory));
+    list.add_css_class("track-table");
+    list.add_css_class("album-detail-list");
+    list.set_hexpand(true);
+    list.set_halign(gtk::Align::Fill);
+    list.set_vexpand(true);
+    let controller = shell.controller.clone();
+    list.connect_activate(move |_, position| {
+        let Some(AlbumDetailItem::Track { track, .. }) =
+            item_at::<AlbumDetailItem>(&model, position)
+        else {
+            return;
+        };
+        controller.play_now(track);
     });
     list
 }
 
-fn album_detail_row(
+#[derive(Clone, Debug, PartialEq)]
+enum AlbumDetailItem {
+    Lead {
+        album: Album,
+        inline_tracks: Vec<Track>,
+        last_in_album: bool,
+    },
+    Track {
+        track: Track,
+        index: usize,
+        last_in_album: bool,
+    },
+}
+
+fn album_detail_item_row(
+    shell: &Rc<Shell>,
+    row: AlbumDetailItem,
+    key: LibraryListKey,
+) -> gtk::Widget {
+    match row {
+        AlbumDetailItem::Lead {
+            album,
+            inline_tracks,
+            last_in_album,
+        } => album_detail_lead_row(shell, &album, &inline_tracks, last_in_album, key),
+        AlbumDetailItem::Track {
+            track,
+            index,
+            last_in_album,
+        } => album_detail_track_row(shell, &track, index, last_in_album, key),
+    }
+}
+
+fn album_detail_lead_row(
     shell: &Rc<Shell>,
     album: &Album,
-    tracks: Vec<Track>,
+    inline_tracks: &[Track],
+    last_in_album: bool,
     key: LibraryListKey,
 ) -> gtk::Widget {
     let compact = compact_detail_layout(shell);
@@ -1249,19 +1662,67 @@ fn album_detail_row(
     row.set_hexpand(true);
     row.set_halign(gtk::Align::Fill);
     row.set_margin_top(12);
-    row.set_margin_bottom(16);
+    row.set_margin_bottom(if last_in_album { 16 } else { 0 });
     row.set_margin_start(4);
     row.set_margin_end(4);
 
+    row.append(&album_detail_meta(shell, album, cover_size, meta_width));
+
+    let track_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    track_area.set_hexpand(true);
+    track_area.set_halign(gtk::Align::Fill);
+    if !inline_tracks.is_empty() {
+        let fields = shell.library_settings(key).detail_track_fields;
+        track_area.append(&album_detail_track_header(&fields));
+        for (index, track) in inline_tracks.iter().enumerate() {
+            track_area.append(&album_detail_track_cells(shell, track, index, &fields));
+        }
+    }
+    row.append(&track_area);
+    row.upcast()
+}
+
+fn album_detail_track_row(
+    shell: &Rc<Shell>,
+    track: &Track,
+    index: usize,
+    last_in_album: bool,
+    key: LibraryListKey,
+) -> gtk::Widget {
+    let compact = compact_detail_layout(shell);
+    let (_cover_size, meta_width, spacing) = if compact {
+        (148, 168, 14)
+    } else {
+        (220, 240, 24)
+    };
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, spacing);
+    row.add_css_class("album-detail-row");
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_margin_bottom(if last_in_album { 16 } else { 0 });
+    row.set_margin_start(4);
+    row.set_margin_end(4);
+
+    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    spacer.set_width_request(meta_width);
+    spacer.set_hexpand(false);
+    row.append(&spacer);
+
+    let fields = shell.library_settings(key).detail_track_fields;
+    row.append(&album_detail_track_cells(shell, track, index, &fields));
+    row.upcast()
+}
+
+fn album_detail_meta(
+    shell: &Rc<Shell>,
+    album: &Album,
+    cover_size: i32,
+    meta_width: i32,
+) -> gtk::Widget {
     let meta = gtk::Box::new(gtk::Orientation::Vertical, 6);
     meta.set_width_request(meta_width);
     meta.set_hexpand(false);
-    meta.append(&shell.cover_tile_for(
-        album.image_ref.as_ref(),
-        album.color_seed,
-        cover_size,
-        super::DETAIL_COVER_SIZE,
-    ));
+    meta.append(&album_detail_cover_tile(shell, album, cover_size));
     meta.append(&album_detail_meta_label(
         &album.title,
         "track-title",
@@ -1280,33 +1741,162 @@ fn album_detail_row(
             meta_width,
         ));
     }
-    row.append(&meta);
+    meta.upcast()
+}
 
-    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    populate_track_model_for_settings(
-        &model,
-        &tracks,
-        &LibraryListSettings {
-            row_fields: shell.library_settings(key).detail_track_fields.clone(),
-            ..shell.library_settings(key)
-        },
-        "",
-        false,
-    );
-    let table = track_table(shell, model, key, true);
-    table.set_vexpand(false);
-    table.set_hexpand(true);
-    table.set_halign(gtk::Align::Fill);
-    let table_scroller = gtk::ScrolledWindow::new();
-    table_scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
-    table_scroller.set_min_content_width(0);
-    table_scroller.set_propagate_natural_width(false);
-    set_library_table_content_height(&table_scroller, tracks.len());
-    table_scroller.set_hexpand(true);
-    table_scroller.set_halign(gtk::Align::Fill);
-    table_scroller.set_child(Some(&table));
-    row.append(&table_scroller);
+fn album_detail_cover_tile(shell: &Rc<Shell>, album: &Album, cover_size: i32) -> gtk::Widget {
+    let overlay = cards::cover_overlay(cover_size);
+    overlay.set_child(Some(&shell.cover_tile_for(
+        album.image_ref.as_ref(),
+        album.color_seed,
+        cover_size,
+        GRID_COVER_SIZE,
+    )));
+
+    let (shade, play, favorite) =
+        cards::cover_hover_controls(cover_size, "Play album", album.favorite);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
+
+    shell.register_favorite_button(album_favorite_key(&album.id), &favorite);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    favorite.connect_clicked(move |button| {
+        controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
+    });
+
+    overlay.add_overlay(&shade);
+    overlay.add_overlay(&play);
+    overlay.add_overlay(&favorite);
+    cards::connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
+    overlay.upcast()
+}
+
+fn album_detail_track_header(fields: &[LibraryField]) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.add_css_class("album-detail-track-cells");
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_height_request(34);
+    row.set_margin_end(album_detail_track_trailing_inset(fields));
+    for field in fields {
+        let label = album_detail_track_label(&tr(field.title()), *field, false);
+        label.add_css_class("muted");
+        row.append(&label);
+    }
     row.upcast()
+}
+
+fn album_detail_track_cells(
+    shell: &Rc<Shell>,
+    track: &Track,
+    index: usize,
+    fields: &[LibraryField],
+) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_height_request(LIBRARY_TABLE_ROW_HEIGHT);
+    row.set_valign(gtk::Align::Center);
+    row.set_margin_end(album_detail_track_trailing_inset(fields));
+    for field in fields {
+        row.append(&album_detail_track_cell(shell, track, index, *field));
+    }
+
+    let controller = shell.controller.clone();
+    let track = track.clone();
+    let gesture = gtk::GestureClick::new();
+    gesture.connect_released(move |_, n_press, _, _| {
+        if n_press == 2 {
+            controller.play_now(track.clone());
+        }
+    });
+    row.add_controller(gesture);
+    row.upcast()
+}
+
+fn album_detail_track_cell(
+    shell: &Rc<Shell>,
+    track: &Track,
+    index: usize,
+    field: LibraryField,
+) -> gtk::Widget {
+    match field {
+        LibraryField::Favorite => {
+            let button = favorite_icon_button("Favorite track");
+            set_favorite_button_active(&button, track.favorite);
+            let controller = shell.controller.clone();
+            let track_id = track.id.clone();
+            button.connect_clicked(move |button| {
+                controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
+            });
+            button.set_width_request(column_width(field));
+            button.upcast()
+        }
+        LibraryField::Image => shell.cover_tile_for(
+            track.image_ref.as_ref(),
+            stable_seed(track.id.as_str()),
+            48,
+            THUMB_COVER_SIZE,
+        ),
+        _ => album_detail_track_label(&album_detail_track_text(track, index, field), field, true)
+            .upcast(),
+    }
+}
+
+fn album_detail_track_label(text: &str, field: LibraryField, ellipsize: bool) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.set_xalign(if field == LibraryField::Duration {
+        1.0
+    } else {
+        0.0
+    });
+    label.set_wrap(false);
+    label.set_single_line_mode(true);
+    label.set_hexpand(album_detail_track_field_expands(field));
+    if !album_detail_track_field_expands(field) {
+        label.set_width_request(column_width(field));
+    }
+    if ellipsize {
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    }
+    label
+}
+
+fn album_detail_track_field_expands(field: LibraryField) -> bool {
+    matches!(
+        field,
+        LibraryField::Title
+            | LibraryField::TitleMerged
+            | LibraryField::Album
+            | LibraryField::Artist
+            | LibraryField::AlbumArtist
+            | LibraryField::Genre
+    )
+}
+
+fn album_detail_track_trailing_inset(fields: &[LibraryField]) -> i32 {
+    if fields
+        .last()
+        .is_some_and(|field| !album_detail_track_field_expands(*field))
+    {
+        ALBUM_DETAIL_FIXED_TRAILING_INSET
+    } else {
+        0
+    }
+}
+
+fn album_detail_track_text(track: &Track, index: usize, field: LibraryField) -> String {
+    if field == LibraryField::RowIndex {
+        (index + 1).to_string()
+    } else {
+        track_field(track, field)
+    }
+}
+
+fn sort_album_detail_tracks(tracks: &mut [Track]) {
+    tracks.sort_by(|left, right| compare_track(left, right, LibraryField::TrackNumber));
 }
 
 fn set_library_table_content_height(scroller: &gtk::ScrolledWindow, row_count: usize) {
@@ -1328,11 +1918,11 @@ fn compact_detail_layout(shell: &Shell) -> bool {
 fn album_card(shell: &Rc<Shell>, album: &Album, key: LibraryListKey, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
-    card.append(&shell.cover_tile_for(
-        album.image_ref.as_ref(),
-        album.color_seed,
+    card.append(&cards::album_cover_tile(
+        shell,
+        album,
         size,
-        GRID_COVER_SIZE,
+        Some(&shell.controller),
     ));
     card.append(&center_label(&album.title, "track-title"));
     for field in shell.library_settings(key).grid_fields {
@@ -1347,12 +1937,7 @@ fn album_card(shell: &Rc<Shell>, album: &Album, key: LibraryListKey, size: i32) 
 fn artist_card(shell: &Rc<Shell>, artist: &Artist, key: LibraryListKey, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
-    card.append(&shell.cover_tile_for(
-        artist.image_ref.as_ref(),
-        stable_seed(artist.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
+    card.append(&artist_cover_tile(shell, artist, size));
     card.append(&center_label(&artist.name, "track-title"));
     for field in shell.library_settings(key).grid_fields {
         let value = artist_field(artist, field);
@@ -1366,12 +1951,7 @@ fn artist_card(shell: &Rc<Shell>, artist: &Artist, key: LibraryListKey, size: i3
 fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
-    card.append(&shell.cover_tile_for(
-        genre.image_ref.as_ref(),
-        stable_seed(genre.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
+    card.append(&genre_cover_tile(shell, genre, size));
     card.append(&center_label(&genre.name, "track-title"));
     for field in shell.library_settings(LibraryListKey::Genres).grid_fields {
         let value = genre_field(genre, field);
@@ -1385,12 +1965,7 @@ fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
 fn track_card(shell: &Rc<Shell>, track: &Track, key: LibraryListKey, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
-    card.append(&shell.cover_tile_for(
-        track.image_ref.as_ref(),
-        stable_seed(track.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
+    card.append(&cards::track_cover_tile(shell, track, size));
     card.append(&center_label(&track.title, "track-title"));
     for field in shell.library_settings(key).grid_fields {
         let value = track_field(track, field);
@@ -1399,6 +1974,81 @@ fn track_card(shell: &Rc<Shell>, track: &Track, key: LibraryListKey, size: i32) 
         }
     }
     card.upcast()
+}
+
+fn artist_cover_tile(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widget {
+    let overlay = cards::cover_overlay(size);
+
+    let artist_button = gtk::Button::new();
+    artist_button.add_css_class("album-cover-button");
+    artist_button.add_css_class("flat");
+    cards::constrain_cover_widget(&artist_button, size);
+    artist_button.set_child(Some(&shell.cover_tile_for(
+        artist.image_ref.as_ref(),
+        stable_seed(artist.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    )));
+    let open_shell = Rc::clone(shell);
+    let open_artist_id = artist.id.clone();
+    artist_button
+        .connect_clicked(move |_| open_shell.navigate(Route::ArtistDetail(open_artist_id.clone())));
+    overlay.set_child(Some(&artist_button));
+
+    let (shade, play, favorite) = cards::cover_hover_controls(size, "Play artist", artist.favorite);
+    let controller = shell.controller.clone();
+    let artist_id = artist.id.clone();
+    play.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
+            controller.play_tracks_now(detail.tracks);
+        }
+    });
+    shell.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
+    let controller = shell.controller.clone();
+    let artist_id = artist.id.clone();
+    favorite.connect_clicked(move |button| {
+        controller.set_artist_favorite(artist_id.clone(), !favorite_button_is_active(button));
+    });
+    overlay.add_overlay(&shade);
+    overlay.add_overlay(&play);
+    overlay.add_overlay(&favorite);
+    cards::connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
+
+    overlay.upcast()
+}
+
+fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
+    let overlay = cards::cover_overlay(size);
+
+    let genre_button = gtk::Button::new();
+    genre_button.add_css_class("album-cover-button");
+    genre_button.add_css_class("flat");
+    cards::constrain_cover_widget(&genre_button, size);
+    genre_button.set_child(Some(&shell.cover_tile_for(
+        genre.image_ref.as_ref(),
+        stable_seed(genre.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    )));
+    let open_shell = Rc::clone(shell);
+    let open_genre_id = genre.id.clone();
+    genre_button
+        .connect_clicked(move |_| open_shell.navigate(Route::GenreDetail(open_genre_id.clone())));
+    overlay.set_child(Some(&genre_button));
+
+    let (shade, play) = cards::cover_play_hover_controls(size, "Play genre");
+    let controller = shell.controller.clone();
+    let genre_id = genre.id.clone();
+    play.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+            controller.play_tracks_now(detail.tracks);
+        }
+    });
+    overlay.add_overlay(&shade);
+    overlay.add_overlay(&play);
+    cards::connect_cover_hover(&overlay, &shade, &play, None);
+
+    overlay.upcast()
 }
 
 fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
@@ -1766,6 +2416,70 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     column
 }
 
+fn populate_album_collection_model(
+    model: &gio::ListStore,
+    albums: &[Album],
+    settings: &LibraryListSettings,
+    album_tracks: &HashMap<AlbumId, Vec<Track>>,
+) {
+    if settings.layout == LibraryLayout::Detail {
+        replace_album_detail_items_in_model(
+            model,
+            album_detail_items_for(albums, settings, album_tracks),
+        );
+    } else {
+        populate_album_model(model, albums, settings);
+    }
+}
+
+fn append_album_collection_model(
+    model: &gio::ListStore,
+    albums: Vec<Album>,
+    settings: &LibraryListSettings,
+    album_tracks: &HashMap<AlbumId, Vec<Track>>,
+) {
+    if settings.layout == LibraryLayout::Detail {
+        append_album_detail_items_to_model(
+            model,
+            album_detail_items_for(&albums, settings, album_tracks),
+        );
+    } else {
+        append_albums_to_model(model, albums);
+    }
+}
+
+fn album_detail_items_for(
+    albums: &[Album],
+    settings: &LibraryListSettings,
+    album_tracks: &HashMap<AlbumId, Vec<Track>>,
+) -> Vec<AlbumDetailItem> {
+    let mut albums = albums.to_vec();
+    sort_albums(&mut albums, settings);
+    let mut rows = Vec::new();
+
+    for album in albums {
+        let mut tracks = album_tracks.get(&album.id).cloned().unwrap_or_default();
+        sort_album_detail_tracks(&mut tracks);
+        let inline_count = tracks.len().min(ALBUM_DETAIL_INLINE_TRACK_ROWS);
+        let remaining_tracks = tracks.split_off(inline_count);
+        rows.push(AlbumDetailItem::Lead {
+            album,
+            inline_tracks: tracks,
+            last_in_album: remaining_tracks.is_empty(),
+        });
+        let remaining_count = remaining_tracks.len();
+        for (offset, track) in remaining_tracks.into_iter().enumerate() {
+            rows.push(AlbumDetailItem::Track {
+                track,
+                index: inline_count + offset,
+                last_in_album: offset + 1 == remaining_count,
+            });
+        }
+    }
+
+    rows
+}
+
 fn populate_album_model(model: &gio::ListStore, albums: &[Album], settings: &LibraryListSettings) {
     let mut values = albums.to_vec();
     sort_albums(&mut values, settings);
@@ -1795,6 +2509,40 @@ fn populate_track_model_for_settings(
     query: &str,
     favorite_first: bool,
 ) -> usize {
+    let values = tracks_for_settings(tracks, settings, query, favorite_first);
+    let visible_count = values.len();
+    replace_tracks_in_model(model, values);
+    visible_count
+}
+
+fn populate_track_model_for_settings_incremental(
+    shell: &Rc<Shell>,
+    model: &gio::ListStore,
+    tracks: &[Track],
+    settings: &LibraryListSettings,
+    query: &str,
+    favorite_first: bool,
+    generation: Rc<Cell<u64>>,
+) -> usize {
+    let mut values = tracks_for_settings(tracks, settings, query, favorite_first);
+    let visible_count = values.len();
+    if values.len() <= TRACK_INITIAL_COMPLETE_ROWS {
+        replace_tracks_in_model(model, values);
+        return visible_count;
+    }
+
+    let remaining = values.split_off(TRACK_INITIAL_COMPLETE_ROWS);
+    replace_tracks_in_model(model, values);
+    append_tracks_incrementally(Rc::clone(shell), model.clone(), remaining, generation);
+    visible_count
+}
+
+fn tracks_for_settings(
+    tracks: &[Track],
+    settings: &LibraryListSettings,
+    query: &str,
+    favorite_first: bool,
+) -> Vec<Track> {
     let query = query.trim().to_lowercase();
     let mut values = tracks
         .iter()
@@ -1802,9 +2550,47 @@ fn populate_track_model_for_settings(
         .cloned()
         .collect::<Vec<_>>();
     sort_tracks(&mut values, settings, favorite_first);
-    let visible_count = values.len();
-    replace_tracks_in_model(model, values);
-    visible_count
+    values
+}
+
+fn append_tracks_incrementally(
+    shell: Rc<Shell>,
+    model: gio::ListStore,
+    mut tracks: Vec<Track>,
+    generation: Rc<Cell<u64>>,
+) {
+    if tracks.is_empty() {
+        return;
+    }
+
+    let generation_id = generation.get();
+    tracks.reverse();
+    let tracks = Rc::new(RefCell::new(tracks));
+    glib::idle_add_local(move || {
+        if generation.get() != generation_id
+            || !matches!(shell.state.routes.borrow().current(), &Route::Tracks)
+        {
+            return glib::ControlFlow::Break;
+        }
+
+        let mut chunk = Vec::with_capacity(TRACK_COMPLETE_APPEND_ROWS);
+        {
+            let mut tracks = tracks.borrow_mut();
+            for _ in 0..TRACK_COMPLETE_APPEND_ROWS {
+                let Some(track) = tracks.pop() else {
+                    break;
+                };
+                chunk.push(track);
+            }
+        }
+        append_tracks_to_model(&model, chunk);
+
+        if tracks.borrow().is_empty() {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
 }
 
 fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
@@ -2042,6 +2828,14 @@ fn album_matches_query(album: &Album, query: &str) -> bool {
         || album.year.to_string().contains(query)
 }
 
+fn artist_matches_query(artist: &Artist, query: &str) -> bool {
+    artist.name.to_lowercase().contains(query)
+}
+
+fn genre_matches_query(genre: &Genre, query: &str) -> bool {
+    genre.name.to_lowercase().contains(query)
+}
+
 fn item_at<T: Clone + 'static>(model: &gio::ListStore, position: u32) -> Option<T> {
     model
         .item(position)
@@ -2067,6 +2861,22 @@ fn replace_tracks_in_model(model: &gio::ListStore, tracks: Vec<Track>) {
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
+}
+
+fn replace_album_detail_items_in_model(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
+    let additions = rows
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
+}
+
+fn append_album_detail_items_to_model(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
+    let additions = rows
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(model.n_items(), 0, &additions);
 }
 
 fn center_label(text: &str, css_class: &str) -> gtk::Widget {
@@ -2645,6 +3455,12 @@ fn joined_credits(credits: &[rufin_core::ArtistCredit]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use rufin_core::{
+        Album, AlbumId, LibraryLayout, LibraryListKey, LibraryListSettings, Track, TrackId,
+    };
+
     #[test]
     fn library_route_inset_keeps_margins_inside_scrollers() {
         let spec = super::library_route_inset_spec();
@@ -2670,5 +3486,194 @@ mod tests {
     fn library_table_height_tracks_visible_rows() {
         assert_eq!(super::library_table_content_height(0), 150);
         assert_eq!(super::library_table_content_height(3), 266);
+    }
+
+    #[test]
+    fn complete_page_policy_loads_small_library_layouts_fully() {
+        let tracks_row = LibraryListSettings {
+            layout: LibraryLayout::Row,
+            ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+        };
+        let tracks_grid = LibraryListSettings {
+            layout: LibraryLayout::Grid,
+            ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+        };
+        let albums_grid = LibraryListSettings {
+            layout: LibraryLayout::Grid,
+            ..LibraryListSettings::for_key(LibraryListKey::Albums)
+        };
+        let albums_detail = LibraryListSettings {
+            layout: LibraryLayout::Detail,
+            ..LibraryListSettings::for_key(LibraryListKey::Albums)
+        };
+
+        assert!(super::library_layout_loads_complete_page(
+            LibraryListKey::Tracks,
+            &tracks_row
+        ));
+        assert!(!super::library_layout_loads_complete_page(
+            LibraryListKey::Tracks,
+            &tracks_grid
+        ));
+        assert!(super::library_layout_loads_complete_page(
+            LibraryListKey::Albums,
+            &albums_grid
+        ));
+        assert!(super::library_layout_loads_complete_page(
+            LibraryListKey::Albums,
+            &albums_detail
+        ));
+    }
+
+    #[test]
+    fn album_detail_tracks_keep_disc_track_order() {
+        let mut tracks = vec![
+            test_track(1, "Second", 1, 2),
+            test_track(2, "Third", 2, 1),
+            test_track(3, "First", 1, 1),
+        ];
+
+        super::sort_album_detail_tracks(&mut tracks);
+
+        let titles = tracks
+            .iter()
+            .map(|track| track.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(titles, vec!["First", "Second", "Third"]);
+    }
+
+    #[test]
+    fn album_detail_items_keep_album_header_and_track_rows_in_display_order() {
+        let settings = LibraryListSettings {
+            layout: LibraryLayout::Detail,
+            ..LibraryListSettings::for_key(LibraryListKey::Albums)
+        };
+        let album = test_album(1, "A Album");
+        let other = test_album(2, "B Album");
+        let mut tracks = HashMap::new();
+        tracks.insert(
+            album.id.clone(),
+            vec![
+                test_track(1, "Second", 1, 2),
+                test_track(2, "First", 1, 1),
+                test_track(3, "Fourth", 1, 4),
+                test_track(4, "Third", 1, 3),
+                test_track(5, "Fifth", 1, 5),
+            ],
+        );
+
+        let rows = super::album_detail_items_for(&[other, album], &settings, &tracks);
+
+        assert!(matches!(
+            &rows[0],
+            super::AlbumDetailItem::Lead {
+                album,
+                inline_tracks,
+                last_in_album: false,
+            } if album.title == "A Album"
+                && inline_tracks
+                    .iter()
+                    .map(|track| track.title.as_str())
+                    .collect::<Vec<_>>()
+                    == vec!["First", "Second", "Third", "Fourth"]
+        ));
+        assert!(matches!(
+            &rows[1],
+            super::AlbumDetailItem::Track {
+                track,
+                index: 4,
+                last_in_album: true,
+            } if track.title == "Fifth"
+        ));
+        assert!(matches!(
+            &rows[2],
+            super::AlbumDetailItem::Lead {
+                album,
+                inline_tracks,
+                last_in_album: true,
+            } if album.title == "B Album" && inline_tracks.is_empty()
+        ));
+    }
+
+    #[test]
+    fn complete_cached_page_expands_partial_page_to_total() {
+        let page = rufin_provider::PagedResponse::new(vec![1, 2], 5);
+        let page = super::complete_cached_page(
+            page,
+            true,
+            |limit| {
+                Ok(rufin_provider::PagedResponse::new(
+                    (0..limit).collect(),
+                    limit,
+                ))
+            },
+            "numbers",
+        );
+
+        assert_eq!(page.items, vec![0, 1, 2, 3, 4]);
+        assert_eq!(page.total, 5);
+    }
+
+    #[test]
+    fn complete_cached_page_leaves_partial_page_when_not_requested() {
+        let page = rufin_provider::PagedResponse::new(vec![1, 2], 5);
+        let page = super::complete_cached_page(
+            page,
+            false,
+            |_| panic!("incremental layouts should not request the complete page"),
+            "numbers",
+        );
+
+        assert_eq!(page.items, vec![1, 2]);
+        assert_eq!(page.total, 5);
+    }
+
+    fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Track {
+        Track {
+            id: TrackId::fake(id),
+            album_id: AlbumId::fake(1),
+            title: title.to_string(),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
+            album: "Album".to_string(),
+            year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number,
+            track_number,
+            image_ref: None,
+            genres: Vec::new(),
+            local_path: None,
+        }
+    }
+
+    fn test_album(id: u32, title: &str) -> Album {
+        Album {
+            id: AlbumId::fake(id),
+            title: title.to_string(),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            album_artist_credits: Vec::new(),
+            artist_credits: Vec::new(),
+            year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            track_count: 2,
+            duration_seconds: 360,
+            favorite: false,
+            color_seed: id,
+            image_ref: None,
+            genres: Vec::new(),
+        }
     }
 }

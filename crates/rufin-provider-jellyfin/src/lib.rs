@@ -1660,6 +1660,7 @@ mod tests {
                         "Rating": 4
                     },
                     "IndexNumber": 1,
+                    "ImageTags": { "Primary": "track-tag-one" },
                     "RunTimeTicks": 2100000000i64
                 }]
             })))

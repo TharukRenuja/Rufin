@@ -20,16 +20,19 @@ impl Shell {
         let has_favorite_tracks = !favorite_tracks.is_empty();
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
+        scroller.set_propagate_natural_width(false);
+        scroller.set_hexpand(true);
         scroller.set_vexpand(true);
 
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(28);
         wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(32);
-        wrapper.set_margin_end(32);
+        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_hexpand(true);
 
         let title = gtk::Label::new(Some(&artist.name));
         title.add_css_class("detail-title");
@@ -107,16 +110,19 @@ impl Shell {
         };
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
+        scroller.set_propagate_natural_width(false);
+        scroller.set_hexpand(true);
         scroller.set_vexpand(true);
 
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(28);
         wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(32);
-        wrapper.set_margin_end(32);
+        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_hexpand(true);
 
         let title = gtk::Label::new(Some(&detail.artist.name));
         title.add_css_class("detail-title");
@@ -242,6 +248,8 @@ impl Shell {
 
     fn artist_album_section(self: &Rc<Self>, title: &str, albums: &[Album]) -> gtk::Widget {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        section.set_hexpand(true);
+        section.set_halign(gtk::Align::Fill);
         section.append(&section_heading(title));
         section.append(&self.library_album_collection_panel(
             albums,

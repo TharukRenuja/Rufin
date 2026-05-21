@@ -221,7 +221,7 @@ fn album_card_widget_with_size(
     card.upcast()
 }
 
-fn album_cover_tile(
+pub(super) fn album_cover_tile(
     shell: &Rc<Shell>,
     album: &Album,
     size: i32,
@@ -262,7 +262,7 @@ fn album_cover_tile(
     overlay.add_overlay(&shade);
     overlay.add_overlay(&play);
     overlay.add_overlay(&favorite);
-    connect_cover_hover(&overlay, &shade, &play, &favorite);
+    connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
 
     overlay.upcast()
 }
@@ -294,7 +294,7 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     card.upcast()
 }
 
-fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
+pub(super) fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
     let overlay = cover_overlay(size);
 
     let cover_button = gtk::Button::new();
@@ -326,7 +326,7 @@ fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget 
     overlay.add_overlay(&shade);
     overlay.add_overlay(&play);
     overlay.add_overlay(&favorite);
-    connect_cover_hover(&overlay, &shade, &play, &favorite);
+    connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
 
     overlay.upcast()
 }
@@ -337,12 +337,7 @@ fn playlist_card_widget_with_size(
     size: i32,
 ) -> gtk::Widget {
     let card = natural_media_card(size);
-    card.append(&shell.cover_tile_for(
-        playlist.image_ref.as_ref(),
-        stable_seed(playlist.id.as_str()),
-        size,
-        GRID_COVER_SIZE,
-    ));
+    card.append(&playlist_cover_tile(shell, playlist, size));
 
     let name = single_line_card_label(&playlist.name, size, &["album-title"]);
     let counts = single_line_card_label(
@@ -359,6 +354,41 @@ fn playlist_card_widget_with_size(
     card.append(&clipped_card_label(&name, size));
     card.append(&clipped_card_label(&counts, size));
     card.upcast()
+}
+
+fn playlist_cover_tile(shell: &Rc<Shell>, playlist: &Playlist, size: i32) -> gtk::Widget {
+    let overlay = cover_overlay(size);
+
+    let playlist_button = gtk::Button::new();
+    playlist_button.add_css_class("album-cover-button");
+    playlist_button.add_css_class("flat");
+    constrain_cover_widget(&playlist_button, size);
+    playlist_button.set_child(Some(&shell.cover_tile_for(
+        playlist.image_ref.as_ref(),
+        stable_seed(playlist.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    )));
+    let open_shell = Rc::clone(shell);
+    let open_playlist_id = playlist.id.clone();
+    playlist_button.connect_clicked(move |_| {
+        open_shell.navigate(Route::PlaylistDetail(open_playlist_id.clone()))
+    });
+    overlay.set_child(Some(&playlist_button));
+
+    let (shade, play) = cover_play_hover_controls(size, "Play playlist");
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    play.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
+            controller.play_tracks_now(detail.tracks);
+        }
+    });
+    overlay.add_overlay(&shade);
+    overlay.add_overlay(&play);
+    connect_cover_hover(&overlay, &shade, &play, None);
+
+    overlay.upcast()
 }
 
 fn media_card(size: i32, label_layout: AlbumCardLabelLayout) -> gtk::Box {
@@ -403,13 +433,13 @@ fn label_clip(label: &gtk::Label, size: i32, label_layout: AlbumCardLabelLayout)
     }
 }
 
-fn cover_overlay(size: i32) -> gtk::Overlay {
+pub(super) fn cover_overlay(size: i32) -> gtk::Overlay {
     let overlay = gtk::Overlay::new();
     constrain_cover_widget(&overlay, size);
     overlay
 }
 
-fn cover_hover_controls(
+pub(super) fn cover_hover_controls(
     size: i32,
     play_label: &str,
     favorite_active: bool,
@@ -440,33 +470,54 @@ fn cover_hover_controls(
     (shade, play, favorite)
 }
 
-fn connect_cover_hover(
+pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> (gtk::Box, gtk::Button) {
+    let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    shade.add_css_class("cover-hover-layer");
+    constrain_cover_widget(&shade, size);
+    shade.set_can_target(false);
+    shade.set_visible(false);
+
+    let play = icon_button("media-playback-start-symbolic", play_label);
+    play.add_css_class("cover-hover-button");
+    play.add_css_class("cover-play-button");
+    play.set_halign(gtk::Align::Center);
+    play.set_valign(gtk::Align::Center);
+    play.set_visible(false);
+
+    (shade, play)
+}
+
+pub(super) fn connect_cover_hover(
     overlay: &gtk::Overlay,
     shade: &gtk::Box,
     play: &gtk::Button,
-    favorite: &gtk::Button,
+    favorite: Option<&gtk::Button>,
 ) {
     let motion = gtk::EventControllerMotion::new();
     let shade_for_enter = shade.clone();
     let play_for_enter = play.clone();
-    let favorite_for_enter = favorite.clone();
+    let favorite_for_enter = favorite.cloned();
     motion.connect_enter(move |_, _, _| {
         shade_for_enter.set_visible(true);
         play_for_enter.set_visible(true);
-        favorite_for_enter.set_visible(true);
+        if let Some(favorite) = favorite_for_enter.as_ref() {
+            favorite.set_visible(true);
+        }
     });
     let shade_for_leave = shade.clone();
     let play_for_leave = play.clone();
-    let favorite_for_leave = favorite.clone();
+    let favorite_for_leave = favorite.cloned();
     motion.connect_leave(move |_| {
         shade_for_leave.set_visible(false);
         play_for_leave.set_visible(false);
-        favorite_for_leave.set_visible(false);
+        if let Some(favorite) = favorite_for_leave.as_ref() {
+            favorite.set_visible(false);
+        }
     });
     overlay.add_controller(motion);
 }
 
-fn constrain_cover_widget(widget: &impl IsA<gtk::Widget>, size: i32) {
+pub(super) fn constrain_cover_widget(widget: &impl IsA<gtk::Widget>, size: i32) {
     widget.set_width_request(size);
     widget.set_height_request(size);
     widget.set_size_request(size, size);
