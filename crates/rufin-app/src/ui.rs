@@ -73,6 +73,7 @@ use layout::{
 use mpris::install_mpris;
 use navigation::{
     build_compact_navigation, build_normal_navigation, rebuild_navigation, sidebar_history_button,
+    update_navigation_selection,
 };
 use paging::{PagedGridConfig, PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
@@ -1728,6 +1729,7 @@ impl Shell {
             self.state.routes.borrow().can_back(),
             self.state.routes.borrow().can_forward(),
         );
+        update_navigation_selection(self.as_ref());
 
         let view = match route {
             Route::Home => self.home_view(),
