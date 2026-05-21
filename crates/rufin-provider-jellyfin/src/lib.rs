@@ -31,7 +31,7 @@ use item::{
 use rufin_core::{ArtistCredit, ArtistId, ImageRef};
 
 const CLIENT_NAME: &str = "Rufin";
-const DEVICE_NAME: &str = "Linux Desktop";
+const DEVICE_NAME: &str = "Rufin";
 const DEVICE_ID: &str = "rufin-native";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -1407,7 +1407,7 @@ mod tests {
             .and(path("/Users/AuthenticateByName"))
             .and(header_regex(
                 "authorization",
-                "MediaBrowser Client=\"Rufin\"",
+                "MediaBrowser Client=\"Rufin\", Device=\"Rufin\"",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "AccessToken": "secret-token",
