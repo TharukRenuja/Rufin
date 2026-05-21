@@ -448,8 +448,7 @@ impl AppController {
             .with_store(|store| store.load_album_detail(&saved.server.id, album_id))
             .map(|detail| {
                 detail.map(|(mut album, mut tracks)| {
-                    external_metadata::normalize_album(&mut album, &settings);
-                    external_metadata::normalize_tracks(&mut tracks, &settings);
+                    external_metadata::normalize_album_detail(&mut album, &mut tracks, &settings);
                     (album, tracks)
                 })
             })
@@ -6415,6 +6414,103 @@ mod tests {
         controller.request_cover(image_ref, 256);
 
         assert_eq!(wait_for_cover_ready(&events, &key), path);
+        let _cleanup = fs::remove_file(path);
+    }
+
+    #[test]
+    fn external_cached_cover_reuses_available_size() {
+        let (controller, _events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let server_id = ServerId::new("jellyfin:server:test");
+        let saved = SavedServer {
+            server: ServerIdentity {
+                id: server_id.clone(),
+                provider: "jellyfin".to_string(),
+                name: "Test".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        };
+        let path = std::env::temp_dir().join(format!(
+            "rufin-external-cover-{}-{}.jpg",
+            std::process::id(),
+            "cached"
+        ));
+        fs::write(&path, [1_u8, 2, 3]).expect("write cover");
+        let image_ref = ImageRef::new(
+            "external:album:Example%20Artist:Example%20Album",
+            Some("external-v1-test".to_string()),
+        );
+
+        controller
+            .store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&server_id)?;
+                store.save_cover_cache_entry(&CoverCacheEntry {
+                    server_id: server_id.clone(),
+                    item_id: image_ref.item_id.clone(),
+                    image_tag: "external-v1-test".to_string(),
+                    size: 256,
+                    path: path.to_string_lossy().to_string(),
+                })
+            })
+            .expect("seed cover cache");
+
+        assert_eq!(
+            controller.cached_cover_path(&image_ref, 512),
+            Some(path.clone())
+        );
+        assert_eq!(
+            controller.cached_cover_path(&image_ref, 96),
+            Some(path.clone())
+        );
+        let _cleanup = fs::remove_file(path);
+    }
+
+    #[test]
+    fn provider_cached_cover_does_not_reuse_other_sizes() {
+        let (controller, _events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let server_id = ServerId::new("jellyfin:server:test");
+        let saved = SavedServer {
+            server: ServerIdentity {
+                id: server_id.clone(),
+                provider: "jellyfin".to_string(),
+                name: "Test".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        };
+        let path = std::env::temp_dir().join(format!(
+            "rufin-provider-cover-{}-{}.jpg",
+            std::process::id(),
+            "cached"
+        ));
+        fs::write(&path, [1_u8, 2, 3]).expect("write cover");
+        let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+
+        controller
+            .store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&server_id)?;
+                store.save_cover_cache_entry(&CoverCacheEntry {
+                    server_id: server_id.clone(),
+                    item_id: image_ref.item_id.clone(),
+                    image_tag: "tag-one".to_string(),
+                    size: 256,
+                    path: path.to_string_lossy().to_string(),
+                })
+            })
+            .expect("seed cover cache");
+
+        assert_eq!(controller.cached_cover_path(&image_ref, 512), None);
+        assert_eq!(controller.cached_cover_path(&image_ref, 96), None);
         let _cleanup = fs::remove_file(path);
     }
 

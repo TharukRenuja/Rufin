@@ -1646,6 +1646,7 @@ mod tests {
                     "Name": "First Motion",
                     "Type": "Audio",
                     "AlbumId": "album-one",
+                    "AlbumPrimaryImageTag": "album-tag-one",
                     "Album": "Blue Rooms",
                     "Artists": ["Astral Kin"],
                     "AlbumArtists": [{ "Id": "album-artist-one", "Name": "Astral Kin" }],
@@ -1690,6 +1691,13 @@ mod tests {
         assert_eq!(detail.tracks[0].play_count, Some(7));
         assert_eq!(detail.tracks[0].user_rating, Some(4));
         assert_eq!(detail.tracks[0].duration_seconds, 210);
+        assert_eq!(
+            detail.tracks[0].image_ref,
+            Some(ImageRef {
+                item_id: "jellyfin:album:album-one".to_string(),
+                tag: Some("album-tag-one".to_string()),
+            })
+        );
     }
 
     #[tokio::test]
