@@ -114,7 +114,7 @@ impl QueueEngine {
             server_id,
             entries: Vec::new(),
             current_index: None,
-            repeat_mode: RepeatMode::Off,
+            repeat_mode: RepeatMode::All,
             shuffle: ShuffleState::default(),
             shuffle_order: Vec::new(),
             shuffle_position: None,
@@ -569,7 +569,10 @@ mod tests {
             queue.next_track().map(|entry| &entry.track_id),
             Some(&TrackId::fake(2))
         );
-        assert_eq!(queue.next_track(), None);
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(1))
+        );
     }
 
     #[test]

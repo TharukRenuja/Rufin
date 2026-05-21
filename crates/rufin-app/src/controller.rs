@@ -153,9 +153,9 @@ impl Default for PlaybackSnapshot {
             duration_seconds: 0,
             volume: 1.0,
             muted: false,
-            repeat_mode: RepeatMode::Off,
+            repeat_mode: RepeatMode::All,
             shuffle_enabled: false,
-            auto_dj_enabled: false,
+            auto_dj_enabled: true,
             buffering_percent: None,
             last_error: None,
         }
@@ -6615,7 +6615,7 @@ mod tests {
 
         controller.play_now(track.clone());
         let queue = wait_for_queue(&events).expect("queue");
-        assert_eq!(queue.entries.len(), 1);
+        assert_eq!(queue.entries.len(), 1 + super::AUTO_DJ_ITEM_COUNT);
         assert_eq!(queue.entries[0].track_id, track.id);
 
         let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
@@ -6631,7 +6631,7 @@ mod tests {
                 .expect("snapshot")
                 .entries
                 .len(),
-            1
+            1 + super::AUTO_DJ_ITEM_COUNT
         );
     }
 
@@ -6823,13 +6823,15 @@ mod tests {
     }
 
     #[test]
-    fn manual_next_at_queue_end_restarts_current_track() {
+    fn manual_next_at_queue_end_wraps_to_first_track() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
         let first = snapshot.tracks[0].clone();
         let second = snapshot.tracks[1].clone();
 
-        controller.play_tracks_now(vec![first, second.clone()]);
+        controller.toggle_auto_dj();
+        let _playback = wait_for_playback_auto_dj(&events, false);
+        controller.play_tracks_now(vec![first.clone(), second.clone()]);
         let _queue = wait_for_queue(&events).expect("queue");
         controller.next_track();
         let _queue = wait_for_queue(&events).expect("next queue");
@@ -6839,7 +6841,7 @@ mod tests {
         controller.next_track();
 
         let playback = wait_for_playback_position(&events, 0);
-        assert_eq!(playback.current.expect("current").track_id, second.id);
+        assert_eq!(playback.current.expect("current").track_id, first.id);
         assert_ne!(playback.state, PlaybackState::Stopped);
     }
 
@@ -6864,16 +6866,12 @@ mod tests {
     }
 
     #[test]
-    fn cycle_repeat_uses_off_all_one_order() {
+    fn cycle_repeat_uses_all_one_off_order() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
 
         controller.play_now(snapshot.tracks[0].clone());
         let _queue = wait_for_queue(&events).expect("queue");
-
-        controller.cycle_repeat();
-        let queue = wait_for_queue(&events).expect("repeat all");
-        assert_eq!(queue.repeat_mode, RepeatMode::All);
 
         controller.cycle_repeat();
         let queue = wait_for_queue(&events).expect("repeat one");
@@ -6882,6 +6880,10 @@ mod tests {
         controller.cycle_repeat();
         let queue = wait_for_queue(&events).expect("repeat off");
         assert_eq!(queue.repeat_mode, RepeatMode::Off);
+
+        controller.cycle_repeat();
+        let queue = wait_for_queue(&events).expect("repeat all");
+        assert_eq!(queue.repeat_mode, RepeatMode::All);
     }
 
     #[test]
@@ -6925,13 +6927,13 @@ mod tests {
         let (controller, events, _snapshot, _queue, player) =
             AppController::bootstrap(Some(FakeScale::Small));
 
-        assert!(!player.auto_dj_enabled);
+        assert!(player.auto_dj_enabled);
 
         controller.toggle_auto_dj();
 
-        let playback = wait_for_playback_auto_dj(&events, true);
-        assert!(playback.auto_dj_enabled);
-        assert!(controller.load_settings().auto_dj_enabled);
+        let playback = wait_for_playback_auto_dj(&events, false);
+        assert!(!playback.auto_dj_enabled);
+        assert!(!controller.load_settings().auto_dj_enabled);
     }
 
     #[test]
@@ -7008,8 +7010,6 @@ mod tests {
             AppController::bootstrap(Some(FakeScale::Small));
         let first = snapshot.tracks[0].clone();
 
-        controller.toggle_auto_dj();
-        let _playback = wait_for_playback_auto_dj(&events, true);
         controller.play_now(first.clone());
 
         let queue = wait_for_queue(&events).expect("queue");
@@ -7035,9 +7035,6 @@ mod tests {
 
         controller.play_tracks_now(vec![first, second.clone()]);
         let _queue = wait_for_queue(&events).expect("queue");
-        controller.toggle_auto_dj();
-        let _playback = wait_for_playback_auto_dj(&events, true);
-
         controller.next_track();
         let queue = wait_for_queue(&events).expect("second queue");
         assert_eq!(
@@ -7115,8 +7112,6 @@ mod tests {
 
         controller.play_tracks_now(vec![first.clone(), second]);
         let _queue = wait_for_queue(&events).expect("queue");
-        controller.cycle_repeat();
-        let _queue = wait_for_queue(&events).expect("repeat all");
         controller.cycle_repeat();
         let _queue = wait_for_queue(&events).expect("repeat one");
 

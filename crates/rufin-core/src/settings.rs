@@ -16,6 +16,10 @@ fn default_discord_client_id() -> String {
     DEFAULT_DISCORD_CLIENT_ID.to_string()
 }
 
+fn default_discord_link_type() -> DiscordLinkType {
+    DiscordLinkType::MusicBrainz
+}
+
 fn default_true() -> bool {
     true
 }
@@ -1268,11 +1272,11 @@ pub struct AppSettings {
     pub discord_client_id: String,
     #[serde(default)]
     pub discord_display_type: DiscordDisplayType,
-    #[serde(default)]
+    #[serde(default = "default_discord_link_type")]
     pub discord_link_type: DiscordLinkType,
-    #[serde(default = "default_true")]
-    pub discord_show_paused: bool,
     #[serde(default)]
+    pub discord_show_paused: bool,
+    #[serde(default = "default_true")]
     pub discord_show_as_listening: bool,
     #[serde(default = "default_true")]
     pub discord_show_state_icon: bool,
@@ -1280,7 +1284,7 @@ pub struct AppSettings {
     pub lastfm_api_key: String,
     #[serde(default)]
     pub scrobbling: ScrobblingSettings,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub auto_dj_enabled: bool,
     #[serde(default)]
     pub playback: PlaybackSettings,
@@ -1321,13 +1325,13 @@ impl Default for AppSettings {
             discord_presence_enabled: false,
             discord_client_id: default_discord_client_id(),
             discord_display_type: DiscordDisplayType::Application,
-            discord_link_type: DiscordLinkType::None,
-            discord_show_paused: true,
-            discord_show_as_listening: false,
+            discord_link_type: default_discord_link_type(),
+            discord_show_paused: false,
+            discord_show_as_listening: true,
             discord_show_state_icon: true,
             lastfm_api_key: String::new(),
             scrobbling: ScrobblingSettings::default(),
-            auto_dj_enabled: false,
+            auto_dj_enabled: true,
             playback: PlaybackSettings::default(),
             home_sections: default_home_sections(),
             home_blocks: default_home_blocks(),
@@ -1473,9 +1477,9 @@ mod tests {
             settings.discord_display_type,
             DiscordDisplayType::Application
         );
-        assert_eq!(settings.discord_link_type, DiscordLinkType::None);
-        assert!(settings.discord_show_paused);
-        assert!(!settings.discord_show_as_listening);
+        assert_eq!(settings.discord_link_type, DiscordLinkType::MusicBrainz);
+        assert!(!settings.discord_show_paused);
+        assert!(settings.discord_show_as_listening);
         assert!(settings.discord_show_state_icon);
         assert_eq!(settings.lastfm_api_key, "");
         assert!(!settings.scrobbling.lastfm.enabled);
@@ -1493,7 +1497,7 @@ mod tests {
         assert!(!settings.scrobbling.listenbrainz.enabled);
         assert_eq!(settings.scrobbling.listenbrainz.user_token, "");
         assert!(settings.scrobbling.listenbrainz.now_playing_enabled);
-        assert!(!settings.auto_dj_enabled);
+        assert!(settings.auto_dj_enabled);
         assert_eq!(
             settings.playback.transition_mode,
             PlaybackTransitionMode::Gapless
@@ -1709,7 +1713,7 @@ mod tests {
         assert!(restored.sidebar.server_visible);
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
-        assert!(!restored.auto_dj_enabled);
+        assert!(restored.auto_dj_enabled);
         assert!(!restored.external_lyrics_enabled);
         assert!(restored.external_metadata_enabled);
         assert!(restored.prefer_server_lyrics);
@@ -1724,9 +1728,9 @@ mod tests {
             restored.discord_display_type,
             DiscordDisplayType::Application
         );
-        assert_eq!(restored.discord_link_type, DiscordLinkType::None);
-        assert!(restored.discord_show_paused);
-        assert!(!restored.discord_show_as_listening);
+        assert_eq!(restored.discord_link_type, DiscordLinkType::MusicBrainz);
+        assert!(!restored.discord_show_paused);
+        assert!(restored.discord_show_as_listening);
         assert!(restored.discord_show_state_icon);
         assert_eq!(restored.lastfm_api_key, "");
         assert!(!restored.scrobbling.lastfm.enabled);

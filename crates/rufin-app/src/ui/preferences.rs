@@ -132,9 +132,6 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .build();
     let private_row = adw::SwitchRow::builder()
         .title(tr("Private mode"))
-        .subtitle(tr(
-            "Stop playback reporting, external lyrics, external metadata, notifications, and presence.",
-        ))
         .active(settings.private_mode)
         .build();
     let private_shell = Rc::clone(shell);
@@ -145,7 +142,6 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let notifications_row = adw::SwitchRow::builder()
         .title(tr("Now playing notifications"))
-        .subtitle(tr("Show a desktop notification when the track changes."))
         .active(settings.notifications_enabled)
         .build();
     let notifications_shell = Rc::clone(shell);
@@ -157,13 +153,9 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let metadata_group = adw::PreferencesGroup::builder()
         .title(tr("Metadata"))
-        .description(tr(
-            "External metadata uses public MusicBrainz and Cover Art Archive lookups.",
-        ))
         .build();
     let external_metadata_row = adw::SwitchRow::builder()
         .title(tr("External cover lookup"))
-        .subtitle(tr("Use remote album art when server artwork is missing."))
         .active(settings.external_metadata_enabled)
         .build();
     let metadata_shell = Rc::clone(shell);
@@ -176,15 +168,11 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let lyrics_group = adw::PreferencesGroup::builder().title(tr("Lyrics")).build();
     let external_row = adw::SwitchRow::builder()
         .title(tr("External lyric lookup"))
-        .subtitle(tr(
-            "Use remote lyric providers when server lyrics are unavailable.",
-        ))
         .active(settings.external_lyrics_enabled)
         .build();
 
     let prefer_server_row = adw::SwitchRow::builder()
         .title(tr("Prefer server lyrics"))
-        .subtitle(tr("Search server lyrics before external providers."))
         .active(settings.prefer_server_lyrics)
         .sensitive(settings.external_lyrics_enabled)
         .build();
@@ -206,7 +194,7 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let ask_save_row = adw::SwitchRow::builder()
         .title(tr("Ask where to save to lyrics"))
         .subtitle(tr(
-            "If not set, lyrics are exported to the folder you set, or your ~/Music folder.",
+            "If not set, lyrics are exported to the folder you set, or your ~/Music folder",
         ))
         .active(settings.ask_lyrics_save_path)
         .build();
@@ -253,13 +241,9 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let discord_group = adw::PreferencesGroup::builder()
         .title(tr("Discord"))
-        .description(tr(
-            "Rich presence uses Discord IPC. Last.fm and MusicBrainz covers are public metadata lookups.",
-        ))
         .build();
     let presence_row = adw::SwitchRow::builder()
         .title(tr("Rich presence"))
-        .subtitle(tr("Show the current track in Discord."))
         .active(settings.discord_presence_enabled)
         .build();
     let presence_shell = Rc::clone(shell);
@@ -276,7 +260,6 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let display_options = gtk::StringList::new(&display_refs);
     let display_row = adw::ComboRow::builder()
         .title(tr("Status display"))
-        .subtitle(tr("Choose which line Discord emphasizes."))
         .model(&display_options)
         .selected(discord_display_index(settings.discord_display_type))
         .build();
@@ -290,15 +273,12 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         tr("None"),
         tr("Last.fm"),
         tr("MusicBrainz"),
-        tr("MusicBrainz and Last.fm"),
+        tr("MusicBrainz with Last.fm fallback"),
     ];
     let link_refs = link_titles.iter().map(String::as_str).collect::<Vec<_>>();
     let link_options = gtk::StringList::new(&link_refs);
     let link_row = adw::ComboRow::builder()
         .title(tr("Activity links and MusicBrainz covers"))
-        .subtitle(tr(
-            "Add external links and enable MusicBrainz cover fallback.",
-        ))
         .model(&link_options)
         .selected(discord_link_index(settings.discord_link_type))
         .build();
@@ -310,7 +290,6 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let paused_row = adw::SwitchRow::builder()
         .title(tr("Show paused status"))
-        .subtitle(tr("Keep rich presence visible while playback is paused."))
         .active(settings.discord_show_paused)
         .build();
     let paused_shell = Rc::clone(shell);
@@ -321,7 +300,7 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let listening_row = adw::SwitchRow::builder()
         .title(tr("Use listening activity"))
-        .subtitle(tr("Set the Discord activity type to Listening."))
+        .subtitle(tr("Set the Discord activity type to Listening"))
         .active(settings.discord_show_as_listening)
         .build();
     let listening_shell = Rc::clone(shell);
@@ -332,9 +311,6 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let state_icon_row = adw::SwitchRow::builder()
         .title(tr("Show playback icon"))
-        .subtitle(tr(
-            "Show playing or paused icons when the Discord app assets exist.",
-        ))
         .active(settings.discord_show_state_icon)
         .build();
     let state_icon_shell = Rc::clone(shell);
@@ -407,7 +383,6 @@ fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
 
     let lyrics_panel_row = adw::SwitchRow::builder()
         .title(tr("Show Lyrics Panel"))
-        .subtitle(tr("Keep the lyrics section visible below the queue."))
         .active(settings.lyrics_panel_visible)
         .build();
     let lyrics_panel_shell = Rc::clone(shell);
@@ -1480,7 +1455,6 @@ fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     let block_group = adw::PreferencesGroup::builder()
         .title(tr("Home Blocks"))
-        .description(tr("Choose which Home blocks are visible and their order."))
         .build();
     let rows = Rc::new(std::cell::RefCell::new(Vec::new()));
     populate_home_block_rows(shell, &block_group, &rows);
