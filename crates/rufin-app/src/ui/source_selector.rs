@@ -52,13 +52,16 @@ pub(super) fn build_server_selector() -> ServerSelector {
 
     let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     normal_content.set_halign(gtk::Align::Fill);
+    normal_content.set_valign(gtk::Align::Center);
     let normal_icon = gtk::Image::from_icon_name("network-server-symbolic");
     normal_icon.set_pixel_size(20);
     normal_icon.set_size_request(20, 20);
+    normal_icon.set_valign(gtk::Align::Center);
     normal_content.append(&normal_icon);
 
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 0);
     labels.set_hexpand(true);
+    labels.set_valign(gtk::Align::Center);
     let normal_name = gtk::Label::new(None);
     configure_normal_selector_label(&normal_name);
     let normal_subtitle = gtk::Label::new(None);
@@ -66,7 +69,10 @@ pub(super) fn build_server_selector() -> ServerSelector {
     configure_normal_selector_label(&normal_subtitle);
     labels.append(&normal_name);
     normal_content.append(&labels);
-    normal_content.append(&gtk::Image::from_icon_name("view-more-symbolic"));
+
+    let normal_menu = gtk::Image::from_icon_name("view-more-symbolic");
+    normal_menu.set_valign(gtk::Align::Center);
+    normal_content.append(&normal_menu);
     normal_button.set_child(Some(&normal_content));
 
     let compact_button = gtk::MenuButton::new();
@@ -446,6 +452,7 @@ fn compact_sidebar_label_text(label: &str) -> String {
 
 fn configure_normal_selector_label(label: &gtk::Label) {
     label.set_xalign(0.0);
+    label.set_yalign(0.5);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_width_request(NORMAL_SELECTOR_LABEL_WIDTH);
     label.set_size_request(NORMAL_SELECTOR_LABEL_WIDTH, -1);

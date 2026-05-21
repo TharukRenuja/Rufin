@@ -200,7 +200,7 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             route: Route::Folders { path: Vec::new() },
         },
         SidebarRouteItem::Playlists => NavItem {
-            icon_name: "media-playlist-consecutive-symbolic",
+            icon_name: "view-list-symbolic",
             label: "Playlists",
             route: Route::Playlists,
         },
