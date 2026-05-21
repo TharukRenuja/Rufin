@@ -2520,6 +2520,32 @@ impl Store {
         Ok(PagedResponse::new(items, total))
     }
 
+    pub fn load_track(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<Track>> {
+        let mut track = self
+            .connection
+            .query_row(
+                "
+                SELECT track_id, album_id, title, artist, artist_id, album, year,
+                       release_date, date_added, last_played, play_count, user_rating,
+                       duration_seconds, favorite, disc_number, track_number,
+                       image_item_id, image_tag, local_path
+                FROM tracks
+                WHERE server_id = ?1 AND track_id = ?2
+                ",
+                params![server_id.as_str(), track_id.as_str()],
+                track_from_row,
+            )
+            .optional()?;
+        if let Some(track) = track.as_mut() {
+            self.attach_track_metadata(server_id, std::slice::from_mut(track))?;
+        }
+        Ok(track)
+    }
+
     pub fn track_local_path(
         &self,
         server_id: &ServerId,
@@ -5879,6 +5905,48 @@ mod tests {
         assert_eq!(search.total, 1);
         assert_eq!(search.items[0].id, tracks[1].id);
         assert!(favorites.is_empty());
+    }
+
+    #[test]
+    fn load_track_by_id_ignores_selected_music_folder_filter() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let tracks = vec![track(1, &album), track(2, &album)];
+        let folder = MusicFolder {
+            id: MusicFolderId::fake(1),
+            name: "Music".to_string(),
+        };
+
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(&saved.server.id, &tracks, generation)
+            .expect("upsert tracks");
+        store
+            .upsert_music_folders(&saved.server.id, std::slice::from_ref(&folder), generation)
+            .expect("upsert folder");
+        store
+            .upsert_track_music_folder_memberships(
+                &saved.server.id,
+                &folder.id,
+                std::slice::from_ref(&tracks[1]),
+                generation,
+            )
+            .expect("upsert membership");
+        store
+            .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+            .expect("select folder");
+
+        let loaded = store
+            .load_track(&saved.server.id, &tracks[0].id)
+            .expect("load track")
+            .expect("track");
+
+        assert_eq!(loaded.id, tracks[0].id);
     }
 
     #[test]

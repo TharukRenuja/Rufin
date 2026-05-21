@@ -139,6 +139,9 @@ fn apply_favorite_change(library: &mut LibrarySnapshot, item_id: &FavoriteItemId
         FavoriteItemId::Track(track_id) => {
             update_tracks(&mut library.tracks, track_id, favorite);
             update_tracks(&mut library.favorites, track_id, favorite);
+            for section in &mut library.home_sections {
+                update_tracks(&mut section.tracks, track_id, favorite);
+            }
             update_tracks(&mut library.search.tracks, track_id, favorite);
             sync_favorite_tracks(library, track_id, favorite);
         }
@@ -194,6 +197,12 @@ fn favorite_track_source(library: &LibrarySnapshot, track_id: &TrackId) -> Optio
     library
         .tracks
         .iter()
+        .chain(
+            library
+                .home_sections
+                .iter()
+                .flat_map(|section| section.tracks.iter()),
+        )
         .chain(library.search.tracks.iter())
         .find(|track| track.id == *track_id)
         .cloned()
@@ -207,7 +216,7 @@ fn favorite_track_source(library: &LibrarySnapshot, track_id: &TrackId) -> Optio
 mod tests {
     use super::*;
     use crate::controller::LocalAccessStatus;
-    use rufin_core::AlbumId;
+    use rufin_core::{AlbumId, HomeSection, HomeSectionKind};
     use rufin_provider::SearchResults;
 
     fn library_with_track(track_id: TrackId) -> LibrarySnapshot {
@@ -281,6 +290,24 @@ mod tests {
 
         assert!(!library.tracks[0].favorite);
         assert!(library.favorites.is_empty());
+    }
+
+    #[test]
+    fn favorite_track_patch_updates_home_section_tracks() {
+        let track_id = TrackId::fake(4);
+        let mut library = library_with_track(track_id.clone());
+        library.home_sections = vec![HomeSection {
+            kind: HomeSectionKind::RecentlyPlayed,
+            albums: Vec::new(),
+            tracks: library.tracks.clone(),
+        }];
+        library.tracks.clear();
+
+        apply_favorite_change(&mut library, &FavoriteItemId::Track(track_id.clone()), true);
+
+        assert!(library.home_sections[0].tracks[0].favorite);
+        assert_eq!(library.favorites.len(), 1);
+        assert_eq!(library.favorites[0].id, track_id);
     }
 
     #[test]

@@ -18,6 +18,7 @@ use super::{
     append_artists_to_model, append_genres_to_model, append_playlists_to_model,
     append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader,
     favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
+    install_album_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     replace_playlists_in_model, set_favorite_button_active, stable_seed, text_button,
@@ -2014,6 +2015,7 @@ fn album_detail_cover_tile(shell: &Rc<Shell>, album: &Album, cover_size: i32) ->
     overlay.add_overlay(&play);
     overlay.add_overlay(&favorite);
     cards::connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
+    install_album_context_menu(&overlay, shell, album.clone());
     overlay.upcast()
 }
 
@@ -2047,6 +2049,7 @@ fn album_detail_track_cells(
     for field in fields {
         row.append(&album_detail_track_cell(shell, track, index, *field));
     }
+    install_track_context_menu(&row, shell, track.clone());
 
     let controller = shell.controller.clone();
     let track = track.clone();
@@ -2175,6 +2178,7 @@ fn album_card(shell: &Rc<Shell>, album: &Album, key: LibraryListKey, size: i32) 
             card.append(&center_label(&value, "muted"));
         }
     }
+    install_album_context_menu(&card, shell, album.clone());
     card.upcast()
 }
 
@@ -2234,6 +2238,7 @@ fn track_card(shell: &Rc<Shell>, track: &Track, key: LibraryListKey, size: i32) 
             card.append(&center_label(&value, "muted"));
         }
     }
+    install_track_context_menu(&card, shell, track.clone());
     card.upcast()
 }
 
@@ -2395,14 +2400,10 @@ fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewCol
 fn track_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => image_column::<Track, _, _>(
-            shell,
-            "Image",
-            column_width(LibraryField::Image),
-            |track| track.image_ref.clone(),
-            |track| stable_seed(track.id.as_str()),
-        ),
-        LibraryField::TitleMerged => merged_column::<Track, _, _, _, _>(
+        LibraryField::Image => {
+            track_image_column(shell, "Image", column_width(LibraryField::Image))
+        }
+        LibraryField::TitleMerged => track_merged_column(
             shell,
             "Title",
             column_width(LibraryField::TitleMerged),
@@ -2412,12 +2413,16 @@ fn track_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn
             |track| stable_seed(track.id.as_str()),
         ),
         LibraryField::Title => {
-            expanding_text_column::<Track, _>("Title", 180, |track| track.title.clone())
+            track_text_column(shell, "Title", 180, true, |track| track.title.clone())
         }
         LibraryField::Favorite => track_favorite_column(shell),
-        _ => text_column::<Track, _>(field.title(), column_width(field), move |track| {
-            track_field(track, field)
-        }),
+        _ => track_text_column(
+            shell,
+            field.title(),
+            column_width(field),
+            false,
+            move |track| track_field(track, field),
+        ),
     }
 }
 
@@ -2555,6 +2560,67 @@ where
     column
 }
 
+fn track_image_column(shell: &Rc<Shell>, title: &str, width: i32) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(track) = item_at_from_item::<Track>(item) else {
+            return;
+        };
+        let cover = shell.cover_tile_for(
+            track.image_ref.as_ref(),
+            stable_seed(track.id.as_str()),
+            48,
+            THUMB_COVER_SIZE,
+        );
+        install_track_context_menu(&cover, &shell, track);
+        item.set_child(Some(&cover));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
+    column.set_fixed_width(width);
+    column
+}
+
+fn track_text_column<F>(
+    shell: &Rc<Shell>,
+    title: &str,
+    width: i32,
+    expand: bool,
+    value: F,
+) -> gtk::ColumnViewColumn
+where
+    F: Fn(&Track) -> String + 'static,
+{
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    let value = Rc::new(value);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(track) = item_at_from_item::<Track>(item) else {
+            return;
+        };
+        let label = gtk::Label::new(Some(&(value)(&track)));
+        label.set_xalign(0.0);
+        label.set_wrap(false);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_single_line_mode(true);
+        install_track_context_menu(&label, &shell, track);
+        item.set_child(Some(&label));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
+    column.set_fixed_width(width);
+    column.set_resizable(true);
+    column.set_expand(expand);
+    column
+}
+
 fn merged_column<T, Title, Subtitle, Image, Seed>(
     shell: &Rc<Shell>,
     title: &str,
@@ -2624,6 +2690,71 @@ where
     column
 }
 
+fn track_merged_column<Title, Subtitle, Image, Seed>(
+    shell: &Rc<Shell>,
+    title: &str,
+    width: i32,
+    title_value: Title,
+    subtitle_value: Subtitle,
+    image_ref: Image,
+    seed: Seed,
+) -> gtk::ColumnViewColumn
+where
+    Title: Fn(&Track) -> String + 'static,
+    Subtitle: Fn(&Track) -> String + 'static,
+    Image: Fn(&Track) -> Option<rufin_core::ImageRef> + 'static,
+    Seed: Fn(&Track) -> u32 + 'static,
+{
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    let title_value = Rc::new(title_value);
+    let subtitle_value = Rc::new(subtitle_value);
+    let image_ref = Rc::new(image_ref);
+    let seed = Rc::new(seed);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(track) = item_at_from_item::<Track>(item) else {
+            return;
+        };
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.set_valign(gtk::Align::Center);
+        row.append(&shell.cover_tile_for(
+            image_ref(&track).as_ref(),
+            seed(&track),
+            48,
+            THUMB_COVER_SIZE,
+        ));
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let title = gtk::Label::new(Some(&title_value(&track)));
+        title.set_xalign(0.0);
+        title.set_wrap(false);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        title.set_single_line_mode(true);
+        labels.append(&title);
+        let subtitle = subtitle_value(&track);
+        if !subtitle.trim().is_empty() {
+            let subtitle = gtk::Label::new(Some(&subtitle));
+            subtitle.add_css_class("muted");
+            subtitle.set_xalign(0.0);
+            subtitle.set_wrap(false);
+            subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            subtitle.set_single_line_mode(true);
+            labels.append(&subtitle);
+        }
+        row.append(&labels);
+        install_track_context_menu(&row, &shell, track);
+        item.set_child(Some(&row));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
+    column.set_fixed_width(width);
+    column.set_resizable(true);
+    column.set_expand(true);
+    column
+}
+
 fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -2636,6 +2767,7 @@ fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         };
         let button = favorite_icon_button("Favorite album");
         set_favorite_button_active(&button, album.favorite);
+        install_album_context_menu(&button, &shell, album.clone());
         let controller = shell.controller.clone();
         button.connect_clicked(move |button| {
             controller.set_album_favorite(album.id.clone(), !favorite_button_is_active(button));
@@ -2684,6 +2816,7 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         };
         let button = favorite_icon_button("Favorite track");
         set_favorite_button_active(&button, track.favorite);
+        install_track_context_menu(&button, &shell, track.clone());
         let controller = shell.controller.clone();
         button.connect_clicked(move |button| {
             controller.set_track_favorite(track.id.clone(), !favorite_button_is_active(button));

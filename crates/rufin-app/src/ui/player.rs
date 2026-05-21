@@ -14,8 +14,8 @@ use super::player_icons::{
 };
 use super::{
     ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
-    favorite_icon_button, icon_button_with_image, seekbar_target_seconds, set_active_class,
-    set_favorite_button_active,
+    favorite_icon_button, icon_button_with_image, install_current_track_context_menu,
+    seekbar_target_seconds, set_active_class, set_favorite_button_active,
 };
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
@@ -641,6 +641,7 @@ fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
 
 pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
     connect_bottom_player_volume_resize(shell);
+    install_current_track_context_menu(&shell.player_controls.cover.area, shell);
 
     let controller = shell.controller.clone();
     shell

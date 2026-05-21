@@ -40,9 +40,9 @@ use gtk::glib;
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, FolderPathItem, Genre, HomeSection, HomeSectionKind,
-    ImageRef, LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueSnapshot,
-    RightSidebarMode, Route, RouteStack, SearchKind, Track, TrackSortKey, TrackTableColumn,
-    TrackTableSettings, format_duration,
+    ImageRef, LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueEntry, QueueSnapshot,
+    RightSidebarMode, Route, RouteStack, SearchKind, Track, TrackId, TrackSortKey,
+    TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -84,6 +84,7 @@ use source_selector::{ServerSelector, build_server_selector};
 
 const GRID_ROUTE_PAGE_SIZE: usize = 16;
 const TRACK_ROUTE_PAGE_SIZE: usize = 64;
+const CONTEXT_MENU_PLAYLIST_LIMIT: usize = 100;
 const GRID_COVER_SIZE: u32 = 256;
 const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
@@ -4250,7 +4251,7 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
         return;
     };
 
-    let shell = Rc::clone(shell);
+    let shell = Rc::clone(&shell);
     glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
         debug!(delay_ms, "starting deferred background sync");
         shell.controller.start_background_sync_for_active();
@@ -4258,7 +4259,7 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
 }
 
 fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
-    let shell = Rc::clone(shell);
+    let shell = Rc::clone(&shell);
     glib::timeout_add_local(Duration::from_millis(33), move || {
         shell.controller.poll_playback_events();
         while let Ok(event) = receiver.try_recv() {
@@ -4334,6 +4335,19 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     if active_server_id.as_ref() == Some(&server_id) {
                         *shell.state.prefetched_explore.borrow_mut() =
                             Some(PrefetchedHomeSection { server_id, section });
+                    }
+                }
+                ControllerEvent::PlaylistChanged {
+                    playlist_id,
+                    snapshot,
+                } => {
+                    *shell.state.library.borrow_mut() = *snapshot;
+                    shell.update_server_selector();
+                    let route = shell.state.routes.borrow().current().clone();
+                    let playlist_route_changed = matches!(route, Route::Playlists)
+                        || matches!(route, Route::PlaylistDetail(id) if id == playlist_id);
+                    if playlist_route_changed {
+                        shell.render_current_route_preserving_scroll();
                     }
                 }
                 ControllerEvent::FavoriteChanged {
@@ -5273,7 +5287,7 @@ fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
             return;
         };
-        let track = boxed.borrow::<Track>();
+        let track = boxed.borrow::<Track>().clone();
         let artist_text = track.artist.clone();
         let artist_route = track_artist_route(&track);
         let cover = shell.cover_tile_for(
@@ -5332,6 +5346,7 @@ fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         }
 
         row.append(&labels);
+        install_track_context_menu(&row, &shell, track);
         list_item.set_child(Some(&row));
     });
 
@@ -5370,7 +5385,8 @@ where
         let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
             return;
         };
-        let (text, route) = value(&boxed.borrow::<Track>());
+        let track = boxed.borrow::<Track>().clone();
+        let (text, route) = value(&track);
         let label = gtk::Label::new(Some(&text));
         label.add_css_class("table-link-label");
         label.set_xalign(0.0);
@@ -5381,6 +5397,7 @@ where
         label.set_max_width_chars((width / 8).clamp(8, 32));
 
         let Some(route) = route else {
+            install_track_context_menu(&label, &shell, track);
             list_item.set_child(Some(&label));
             return;
         };
@@ -5395,6 +5412,7 @@ where
         add_link_hover(button.upcast_ref(), &label, &text);
 
         button.set_child(Some(&label));
+        install_track_context_menu(&button, &shell, track);
 
         let shell = Rc::clone(&shell);
         button.connect_clicked(move |_| shell.navigate(route.clone()));
@@ -5439,6 +5457,461 @@ fn album_artist_route(album: &Album) -> Option<Route> {
     }
 }
 
+fn install_track_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>, track: Track) {
+    let target = target.as_ref();
+    let target_weak = target.downgrade();
+    let click_shell = Rc::clone(shell);
+    let click_track = track.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.connect_pressed(move |_, _, x, y| {
+        let Some(target) = target_weak.upgrade() else {
+            return;
+        };
+        present_track_context_menu(
+            &target,
+            &click_shell,
+            context_track(&click_shell, &click_track),
+            Some((x, y)),
+        );
+    });
+    target.add_controller(click);
+
+    let target_weak = target.downgrade();
+    let key_shell = Rc::clone(shell);
+    let key_track = track;
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !opens_menu {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(target) = target_weak.upgrade() {
+            present_track_context_menu(
+                &target,
+                &key_shell,
+                context_track(&key_shell, &key_track),
+                None,
+            );
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(key);
+}
+
+fn install_album_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>, album: Album) {
+    let target = target.as_ref();
+    let target_weak = target.downgrade();
+    let click_shell = Rc::clone(shell);
+    let click_album = album.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.connect_pressed(move |_, _, x, y| {
+        let Some(target) = target_weak.upgrade() else {
+            return;
+        };
+        present_album_context_menu(
+            &target,
+            &click_shell,
+            context_album(&click_shell, &click_album),
+            Some((x, y)),
+        );
+    });
+    target.add_controller(click);
+
+    let target_weak = target.downgrade();
+    let key_shell = Rc::clone(shell);
+    let key_album = album;
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !opens_menu {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(target) = target_weak.upgrade() {
+            present_album_context_menu(
+                &target,
+                &key_shell,
+                context_album(&key_shell, &key_album),
+                None,
+            );
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(key);
+}
+
+fn install_current_track_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>) {
+    let target = target.as_ref();
+    let target_weak = target.downgrade();
+    let click_shell = Rc::clone(shell);
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.connect_pressed(move |_, _, x, y| {
+        let Some(target) = target_weak.upgrade() else {
+            return;
+        };
+        if let Some(track) = current_player_track(&click_shell) {
+            present_track_context_menu(&target, &click_shell, track, Some((x, y)));
+        }
+    });
+    target.add_controller(click);
+
+    let target_weak = target.downgrade();
+    let key_shell = Rc::clone(shell);
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !opens_menu {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(target) = target_weak.upgrade()
+            && let Some(track) = current_player_track(&key_shell)
+        {
+            present_track_context_menu(&target, &key_shell, track, None);
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(key);
+}
+
+fn present_track_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    track: Track,
+    position: Option<(f64, f64)>,
+) {
+    let menu = gio::Menu::new();
+    menu.append(Some(&tr("Play")), Some("track.play"));
+    menu.append(Some(&tr("Play Next")), Some("track.play-next"));
+
+    let playlists = context_menu_playlists(shell);
+    if !playlists.is_empty() {
+        let playlist_menu = gio::Menu::new();
+        for (index, playlist) in playlists.iter().enumerate() {
+            playlist_menu.append(
+                Some(&playlist.name),
+                Some(&format!("track.add-to-playlist-{index}")),
+            );
+        }
+        menu.append_submenu(Some(&tr("Add to Playlist")), &playlist_menu);
+    }
+
+    menu.append(
+        Some(&tr(if track.favorite {
+            "Remove from Favorites"
+        } else {
+            "Add to Favorites"
+        })),
+        Some("track.favorite"),
+    );
+    menu.append(Some(&tr("Go to Album")), Some("track.go-album"));
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.add_css_class("track-context-menu");
+    popover.set_parent(target);
+    if let Some((x, y)) = position {
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    }
+
+    let actions = gio::SimpleActionGroup::new();
+
+    let play = gio::SimpleAction::new("play", None);
+    let controller = shell.controller.clone();
+    let action_track = track.clone();
+    let action_popover = popover.downgrade();
+    play.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        controller.play_now(action_track.clone());
+    });
+    actions.add_action(&play);
+
+    let play_next = gio::SimpleAction::new("play-next", None);
+    let controller = shell.controller.clone();
+    let action_track = track.clone();
+    let action_popover = popover.downgrade();
+    play_next.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        controller.play_next(action_track.clone());
+    });
+    actions.add_action(&play_next);
+
+    for (index, playlist) in playlists.into_iter().enumerate() {
+        let action_name = format!("add-to-playlist-{index}");
+        let add = gio::SimpleAction::new(&action_name, None);
+        let controller = shell.controller.clone();
+        let playlist_id = playlist.id;
+        let action_track = track.clone();
+        let action_popover = popover.downgrade();
+        add.connect_activate(move |_, _| {
+            if let Some(popover) = action_popover.upgrade() {
+                popover.popdown();
+            }
+            controller.add_tracks_to_playlist(playlist_id.clone(), vec![action_track.clone()]);
+        });
+        actions.add_action(&add);
+    }
+
+    let favorite_action = gio::SimpleAction::new("favorite", None);
+    let controller = shell.controller.clone();
+    let track_id = track.id.clone();
+    let favorite = !track.favorite;
+    let action_popover = popover.downgrade();
+    favorite_action.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        controller.set_track_favorite(track_id.clone(), favorite);
+    });
+    actions.add_action(&favorite_action);
+
+    let go_album = gio::SimpleAction::new("go-album", None);
+    let shell = Rc::clone(shell);
+    let album_id = track.album_id.clone();
+    let action_popover = popover.downgrade();
+    go_album.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        shell.navigate(Route::AlbumDetail(album_id.clone()));
+    });
+    actions.add_action(&go_album);
+
+    target.insert_action_group("track", Some(&actions));
+    popover.connect_closed(move |popover| {
+        let popover = popover.clone();
+        glib::idle_add_local_once(move || {
+            popover.unparent();
+        });
+    });
+    popover.popup();
+}
+
+fn present_album_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    album: Album,
+    position: Option<(f64, f64)>,
+) {
+    let menu = gio::Menu::new();
+    menu.append(Some(&tr("Play")), Some("album.play"));
+    menu.append(Some(&tr("Play Next")), Some("album.play-next"));
+
+    let playlists = context_menu_playlists(shell);
+    if !playlists.is_empty() {
+        let playlist_menu = gio::Menu::new();
+        for (index, playlist) in playlists.iter().enumerate() {
+            playlist_menu.append(
+                Some(&playlist.name),
+                Some(&format!("album.add-to-playlist-{index}")),
+            );
+        }
+        menu.append_submenu(Some(&tr("Add to Playlist")), &playlist_menu);
+    }
+
+    menu.append(
+        Some(&tr(if album.favorite {
+            "Remove from Favorites"
+        } else {
+            "Add to Favorites"
+        })),
+        Some("album.favorite"),
+    );
+    menu.append(Some(&tr("Go to Album")), Some("album.go-album"));
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.add_css_class("album-context-menu");
+    popover.set_parent(target);
+    if let Some((x, y)) = position {
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    }
+
+    let actions = gio::SimpleActionGroup::new();
+
+    let play = gio::SimpleAction::new("play", None);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    let action_popover = popover.downgrade();
+    play.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        controller.play_album_now(album_id.clone());
+    });
+    actions.add_action(&play);
+
+    let play_next = gio::SimpleAction::new("play-next", None);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    let action_popover = popover.downgrade();
+    play_next.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+            for track in tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        }
+    });
+    actions.add_action(&play_next);
+
+    for (index, playlist) in playlists.into_iter().enumerate() {
+        let action_name = format!("add-to-playlist-{index}");
+        let add = gio::SimpleAction::new(&action_name, None);
+        let controller = shell.controller.clone();
+        let playlist_id = playlist.id;
+        let album_id = album.id.clone();
+        let action_popover = popover.downgrade();
+        add.connect_activate(move |_, _| {
+            if let Some(popover) = action_popover.upgrade() {
+                popover.popdown();
+            }
+            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+                controller.add_tracks_to_playlist(playlist_id.clone(), tracks);
+            }
+        });
+        actions.add_action(&add);
+    }
+
+    let favorite_action = gio::SimpleAction::new("favorite", None);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    let favorite = !album.favorite;
+    let action_popover = popover.downgrade();
+    favorite_action.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        controller.set_album_favorite(album_id.clone(), favorite);
+    });
+    actions.add_action(&favorite_action);
+
+    let go_album = gio::SimpleAction::new("go-album", None);
+    let shell = Rc::clone(shell);
+    let album_id = album.id.clone();
+    let action_popover = popover.downgrade();
+    go_album.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        shell.navigate(Route::AlbumDetail(album_id.clone()));
+    });
+    actions.add_action(&go_album);
+
+    target.insert_action_group("album", Some(&actions));
+    popover.connect_closed(move |popover| {
+        let popover = popover.clone();
+        glib::idle_add_local_once(move || {
+            popover.unparent();
+        });
+    });
+    popover.popup();
+}
+
+fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
+    shell
+        .controller
+        .cached_playlists_page(0, CONTEXT_MENU_PLAYLIST_LIMIT)
+        .map(|page| page.items)
+        .unwrap_or_else(|_| shell.state.library.borrow().playlists.clone())
+}
+
+fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
+    shell
+        .controller
+        .cached_track(&fallback.id)
+        .ok()
+        .flatten()
+        .or_else(|| {
+            let library = shell.state.library.borrow();
+            library_track(&library, &fallback.id)
+        })
+        .unwrap_or_else(|| fallback.clone())
+}
+
+fn library_track(library: &LibrarySnapshot, track_id: &TrackId) -> Option<Track> {
+    library
+        .tracks
+        .iter()
+        .chain(library.favorites.iter())
+        .chain(library.search.tracks.iter())
+        .chain(
+            library
+                .home_sections
+                .iter()
+                .flat_map(|section| section.tracks.iter()),
+        )
+        .find(|track| track.id == *track_id)
+        .cloned()
+}
+
+fn context_album(shell: &Rc<Shell>, fallback: &Album) -> Album {
+    {
+        let library = shell.state.library.borrow();
+        library_album(&library, &fallback.id)
+    }
+    .unwrap_or_else(|| fallback.clone())
+}
+
+fn library_album(library: &LibrarySnapshot, album_id: &AlbumId) -> Option<Album> {
+    library
+        .albums
+        .iter()
+        .chain(library.search.albums.iter())
+        .chain(
+            library
+                .home_sections
+                .iter()
+                .flat_map(|section| section.albums.iter()),
+        )
+        .find(|album| album.id == *album_id)
+        .cloned()
+}
+
+fn current_player_track(shell: &Rc<Shell>) -> Option<Track> {
+    let entry = shell.state.player.borrow().current.clone()?;
+    shell
+        .controller
+        .cached_track(&entry.track_id)
+        .ok()
+        .flatten()
+        .or_else(|| track_from_queue_entry(&entry))
+}
+
+fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track> {
+    Some(Track {
+        id: entry.track_id.clone(),
+        album_id: entry.album_id.clone()?,
+        title: entry.title.clone(),
+        artist: entry.artist.clone(),
+        artist_id: entry.artist_id.clone(),
+        artist_credits: Vec::new(),
+        album_artist_credits: Vec::new(),
+        album: entry.album.clone(),
+        year: entry.year,
+        release_date: None,
+        date_added: None,
+        last_played: None,
+        play_count: None,
+        user_rating: None,
+        duration_seconds: entry.duration_seconds,
+        favorite: entry.favorite,
+        disc_number: 0,
+        track_number: 0,
+        image_ref: entry.image_ref.clone(),
+        genres: Vec::new(),
+        local_path: None,
+    })
+}
+
 fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -5457,6 +5930,7 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         let button = favorite_icon_button("Favorite");
         set_favorite_button_active(&button, track.favorite);
         shell.register_favorite_button(track_favorite_key(&track.id), &button);
+        install_track_context_menu(&button, &shell, track.clone());
         let controller = shell.controller.clone();
         let track_id = track.id.clone();
         button.connect_clicked(move |button| {
@@ -6078,6 +6552,7 @@ fn playlist_entry_row(
         }
     });
     row.add_controller(click);
+    install_track_context_menu(&row, shell, entry.track.clone());
 
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
     let controller = shell.controller.clone();

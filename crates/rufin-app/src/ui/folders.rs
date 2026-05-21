@@ -6,7 +6,7 @@ use rufin_provider::FolderDetail;
 
 use super::{
     PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, THUMB_COVER_SIZE,
-    sort_tracks_with_options, stable_seed, track_matches_query,
+    install_track_context_menu, sort_tracks_with_options, stable_seed, track_matches_query,
 };
 use crate::i18n::tr;
 
@@ -407,6 +407,7 @@ fn folder_table_track_row(
         }
     });
     row.add_controller(gesture);
+    install_track_context_menu(&row, shell, track.clone());
 
     row
 }

@@ -213,6 +213,10 @@ pub enum ControllerEvent {
         server_id: ServerId,
         section: HomeSection,
     },
+    PlaylistChanged {
+        playlist_id: PlaylistId,
+        snapshot: Box<LibrarySnapshot>,
+    },
     FavoriteChanged {
         item_id: FavoriteItemId,
         favorite: bool,
@@ -603,6 +607,21 @@ impl AppController {
             .map(|mut page| {
                 external_metadata::normalize_tracks(&mut page.items, &settings);
                 page
+            })
+    }
+
+    pub fn cached_track(&self, track_id: &TrackId) -> Result<Option<Track>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(None);
+        };
+        let settings = load_settings_for_saved(&self.store, &saved);
+        self.store
+            .with_store(|store| store.load_track(&saved.server.id, track_id))
+            .map(|track| {
+                track.map(|mut track| {
+                    external_metadata::normalize_track(&mut track, &settings);
+                    track
+                })
             })
     }
 
@@ -2656,7 +2675,7 @@ impl AppController {
                 )?;
                 Ok(())
             });
-            emit_snapshot_result(&store, &events, result);
+            emit_playlist_changed_result(&store, &events, after.playlist.id.clone(), result);
         });
     }
 
@@ -5634,6 +5653,29 @@ fn emit_snapshot_result(
     }
 }
 
+fn emit_playlist_changed_result(
+    store: &StoreHandle,
+    events: &Sender<ControllerEvent>,
+    playlist_id: PlaylistId,
+    result: Result<(), String>,
+) {
+    if let Err(error) = result {
+        let _sent = events.send(ControllerEvent::Error(error));
+        return;
+    }
+    match load_snapshot(store) {
+        Ok(snapshot) => {
+            let _sent = events.send(ControllerEvent::PlaylistChanged {
+                playlist_id,
+                snapshot: Box::new(snapshot),
+            });
+        }
+        Err(error) => {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+    }
+}
+
 fn data_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.data_dir().to_path_buf())
 }
@@ -7532,6 +7574,7 @@ mod tests {
             AppController::bootstrap(Some(FakeScale::Small));
         let first = snapshot.tracks[0].clone();
         let second = snapshot.tracks[1].clone();
+        let third = snapshot.tracks[2].clone();
 
         controller.create_playlist(
             "Controller Playlist".to_string(),
@@ -7555,11 +7598,21 @@ mod tests {
             .expect("playlist detail")
             .expect("playlist detail");
         controller.move_playlist_entry(playlist.id.clone(), detail.entries[1].entry_id.clone(), 0);
-        let _snapshot = wait_for_snapshot(&events);
+        let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+        assert_eq!(changed_id, playlist.id);
         assert_playlist_order(
             &controller,
             &playlist.id,
             &[second.id.as_str(), first.id.as_str()],
+        );
+
+        controller.add_tracks_to_playlist(playlist.id.clone(), vec![third.clone()]);
+        let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+        assert_eq!(changed_id, playlist.id);
+        assert_playlist_order(
+            &controller,
+            &playlist.id,
+            &[second.id.as_str(), first.id.as_str(), third.id.as_str()],
         );
 
         let detail = controller
@@ -7567,8 +7620,13 @@ mod tests {
             .expect("playlist detail")
             .expect("playlist detail");
         controller.remove_playlist_entry(playlist.id.clone(), detail.entries[0].entry_id.clone());
-        let _snapshot = wait_for_snapshot(&events);
-        assert_playlist_order(&controller, &playlist.id, &[first.id.as_str()]);
+        let (changed_id, _snapshot) = wait_for_playlist_changed(&events);
+        assert_eq!(changed_id, playlist.id);
+        assert_playlist_order(
+            &controller,
+            &playlist.id,
+            &[first.id.as_str(), third.id.as_str()],
+        );
     }
 
     #[test]
@@ -8333,7 +8391,8 @@ mod tests {
                 .expect("controller event")
             {
                 ControllerEvent::Snapshot(snapshot)
-                | ControllerEvent::HomeSectionsUpdated { snapshot, .. } => return *snapshot,
+                | ControllerEvent::HomeSectionsUpdated { snapshot, .. }
+                | ControllerEvent::PlaylistChanged { snapshot, .. } => return *snapshot,
                 ControllerEvent::Queue(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Playback(_)
@@ -8366,6 +8425,38 @@ mod tests {
                 } => return (item_id, favorite, *snapshot),
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::PlaylistChanged { .. }
+                | ControllerEvent::Queue(_)
+                | ControllerEvent::Playback(_)
+                | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
+                | ControllerEvent::CoverReady { .. } => {}
+                ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
+    }
+
+    fn wait_for_playlist_changed(
+        events: &Receiver<ControllerEvent>,
+    ) -> (PlaylistId, LibrarySnapshot) {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::PlaylistChanged {
+                    playlist_id,
+                    snapshot,
+                } => return (playlist_id, *snapshot),
+                ControllerEvent::Snapshot(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Lyrics(_)
@@ -8391,6 +8482,7 @@ mod tests {
                 ControllerEvent::LoginStatus(status) => return status,
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -8416,6 +8508,7 @@ mod tests {
                 ControllerEvent::Queue(queue) => return *queue,
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
@@ -8463,6 +8556,7 @@ mod tests {
                 ControllerEvent::CoverReady { key, path } if key == expected_key => return path,
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -8489,6 +8583,7 @@ mod tests {
                 ControllerEvent::Lyrics(lyrics) => return *lyrics,
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -8553,6 +8648,7 @@ mod tests {
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
                     | ControllerEvent::HomeSectionsUpdated { .. }
+                    | ControllerEvent::PlaylistChanged { .. }
                     | ControllerEvent::FavoriteChanged { .. }
                     | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -8591,6 +8687,7 @@ mod tests {
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -8622,6 +8719,7 @@ mod tests {
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -8663,6 +8761,7 @@ mod tests {
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
                     | ControllerEvent::HomeSectionsUpdated { .. }
+                    | ControllerEvent::PlaylistChanged { .. }
                     | ControllerEvent::FavoriteChanged { .. }
                     | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),

@@ -12,7 +12,8 @@ use super::layout::{
 use super::{
     GRID_COVER_SIZE, HomeSectionState, Shell, add_card_label_link, add_link_hover,
     album_artist_route, favorite_button_is_active, favorite_icon_button, icon_button,
-    set_favorite_button_active, stable_seed, track_artist_route,
+    install_album_context_menu, install_track_context_menu, set_favorite_button_active,
+    stable_seed, track_artist_route,
 };
 use crate::controller::AppController;
 
@@ -152,6 +153,7 @@ fn album_card_widget_with_size(
     card.append(&title_clip);
     card.append(&artist_clip);
     card.append(&year_clip);
+    install_album_context_menu(&card, shell, album.clone());
     card.upcast()
 }
 
@@ -225,6 +227,7 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     card.append(&title_clip);
     card.append(&artist_clip);
     card.append(&album_clip);
+    install_track_context_menu(&card, shell, track.clone());
     card.upcast()
 }
 
