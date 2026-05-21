@@ -593,6 +593,7 @@ pub enum LibraryListKey {
     Tracks,
     FavoriteTracks,
     Genres,
+    Playlists,
     AlbumDetailTracks,
     ArtistAlbums,
     ArtistTracks,
@@ -601,7 +602,7 @@ pub enum LibraryListKey {
 }
 
 impl LibraryListKey {
-    pub fn all() -> [Self; 11] {
+    pub fn all() -> [Self; 12] {
         [
             Self::Albums,
             Self::Artists,
@@ -609,6 +610,7 @@ impl LibraryListKey {
             Self::Tracks,
             Self::FavoriteTracks,
             Self::Genres,
+            Self::Playlists,
             Self::AlbumDetailTracks,
             Self::ArtistAlbums,
             Self::ArtistTracks,
@@ -625,6 +627,7 @@ impl LibraryListKey {
             Self::Tracks => "Tracks",
             Self::FavoriteTracks => "Favorites",
             Self::Genres => "Genres",
+            Self::Playlists => "Playlists",
             Self::AlbumDetailTracks => "Album tracks",
             Self::ArtistAlbums => "Artist albums",
             Self::ArtistTracks => "Artist tracks",
@@ -649,9 +652,11 @@ impl LibraryListKey {
             | Self::ArtistTracks
             | Self::GenreTracks
             | Self::PlaylistTracks => LibraryLayout::Row,
-            Self::Artists | Self::AlbumArtists | Self::Genres | Self::ArtistAlbums => {
-                LibraryLayout::Grid
-            }
+            Self::Artists
+            | Self::AlbumArtists
+            | Self::Genres
+            | Self::Playlists
+            | Self::ArtistAlbums => LibraryLayout::Grid,
         }
     }
 }
@@ -808,6 +813,13 @@ pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
+        LibraryListKey::Playlists => &[
+            LibraryField::RowIndex,
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::SongCount,
+            LibraryField::Duration,
+        ],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
         | LibraryListKey::AlbumDetailTracks
@@ -858,6 +870,7 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::UserRating,
         ],
         LibraryListKey::Genres => &[LibraryField::AlbumCount, LibraryField::SongCount],
+        LibraryListKey::Playlists => &[LibraryField::SongCount, LibraryField::Duration],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
         | LibraryListKey::AlbumDetailTracks
@@ -908,6 +921,11 @@ pub fn available_sort_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
+        LibraryListKey::Playlists => &[
+            LibraryField::Title,
+            LibraryField::SongCount,
+            LibraryField::Duration,
+        ],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
         | LibraryListKey::AlbumDetailTracks
@@ -951,6 +969,12 @@ fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
+        LibraryListKey::Playlists => vec![
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::SongCount,
+            LibraryField::Duration,
+        ],
         LibraryListKey::Tracks | LibraryListKey::FavoriteTracks => vec![
             LibraryField::TitleMerged,
             LibraryField::Album,
@@ -979,6 +1003,7 @@ fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
         }
         LibraryListKey::Artists | LibraryListKey::AlbumArtists => Vec::new(),
         LibraryListKey::Genres => Vec::new(),
+        LibraryListKey::Playlists => vec![LibraryField::SongCount, LibraryField::Duration],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
         | LibraryListKey::AlbumDetailTracks
@@ -1009,6 +1034,7 @@ fn default_sort_key(key: LibraryListKey) -> LibraryField {
         | LibraryListKey::AlbumArtists
         | LibraryListKey::Genres
         | LibraryListKey::ArtistAlbums
+        | LibraryListKey::Playlists
         | LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks => LibraryField::Title,
         LibraryListKey::AlbumDetailTracks
@@ -1801,6 +1827,27 @@ mod tests {
             serde_json::from_str::<LibraryLayout>("\"weird\"").expect("deserialize layout");
 
         assert_eq!(layout, LibraryLayout::Grid);
+    }
+
+    #[test]
+    fn default_library_list_settings_include_playlists() {
+        let playlists = AppSettings::default().library_list(LibraryListKey::Playlists);
+
+        assert_eq!(playlists.layout, LibraryLayout::Grid);
+        assert_eq!(
+            playlists.row_fields,
+            vec![
+                LibraryField::Image,
+                LibraryField::Title,
+                LibraryField::SongCount,
+                LibraryField::Duration
+            ]
+        );
+        assert_eq!(
+            playlists.grid_fields,
+            vec![LibraryField::SongCount, LibraryField::Duration]
+        );
+        assert_eq!(playlists.sort_key, LibraryField::Title);
     }
 
     #[test]

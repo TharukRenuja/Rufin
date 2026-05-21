@@ -225,21 +225,6 @@ fn constrain_card_label(label: &gtk::Label, size: i32) {
     label.set_hexpand(false);
 }
 
-pub(super) fn clipped_card_label(label: &gtk::Label, size: i32) -> gtk::Widget {
-    let clip = gtk::ScrolledWindow::new();
-    clip.add_css_class("card-label-clip");
-    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
-    clip.set_width_request(size);
-    clip.set_size_request(size, -1);
-    clip.set_min_content_width(size);
-    clip.set_max_content_width(size);
-    clip.set_propagate_natural_width(false);
-    clip.set_propagate_natural_height(true);
-    clip.set_hexpand(false);
-    clip.set_child(Some(label));
-    clip.upcast()
-}
-
 pub(super) fn clipped_card_label_with_lines(
     label: &gtk::Label,
     size: i32,

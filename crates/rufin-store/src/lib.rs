@@ -1635,6 +1635,63 @@ impl Store {
         })
     }
 
+    pub fn prune_playlists_except(
+        &self,
+        server_id: &ServerId,
+        playlist_ids: &[PlaylistId],
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            let keep = playlist_ids
+                .iter()
+                .map(|playlist_id| playlist_id.as_str().to_string())
+                .collect::<Vec<_>>();
+            let existing = {
+                let mut statement = connection.prepare(
+                    "
+                    SELECT playlist_id
+                    FROM playlists
+                    WHERE server_id = ?1
+                    ",
+                )?;
+                collect_rows(
+                    statement
+                        .query_map(params![server_id.as_str()], |row| row.get::<_, String>(0))?,
+                )?
+            };
+
+            for playlist_id in existing {
+                if keep.iter().any(|keep_id| keep_id == &playlist_id) {
+                    continue;
+                }
+                connection.execute(
+                    "
+                    DELETE FROM playlist_tracks
+                    WHERE server_id = ?1 AND playlist_id = ?2
+                    ",
+                    params![server_id.as_str(), playlist_id.as_str()],
+                )?;
+                connection.execute(
+                    "
+                    DELETE FROM playlists
+                    WHERE server_id = ?1 AND playlist_id = ?2
+                    ",
+                    params![server_id.as_str(), playlist_id.as_str()],
+                )?;
+                connection.execute(
+                    "
+                    DELETE FROM library_fts
+                    WHERE server_id = ?1
+                      AND item_type = 'playlist'
+                      AND item_id = ?2
+                    ",
+                    params![server_id.as_str(), playlist_id.as_str()],
+                )?;
+            }
+
+            Ok(())
+        })
+    }
+
     pub fn upsert_home_sections(
         &self,
         server_id: &ServerId,

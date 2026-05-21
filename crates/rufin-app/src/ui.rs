@@ -45,7 +45,7 @@ use rufin_core::{
     TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
-use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource};
+use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
 use rufin_store::{CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
 use tracing::{debug, info, warn};
@@ -75,7 +75,7 @@ use navigation::{
     build_compact_navigation, build_normal_navigation, rebuild_navigation, sidebar_history_button,
     update_navigation_selection,
 };
-use paging::{PagedGridConfig, PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
+use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use preferences::{present_library_preferences_dialog, present_preferences_dialog};
 use queue::connect_queue_panel_controls;
@@ -107,6 +107,17 @@ const INITIAL_TRACK_THUMB_PRIME_LIMIT: usize = 18;
 const INITIAL_TRACK_THUMB_PRIME_BUDGET: Duration = Duration::from_millis(120);
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
+const PLAYLIST_ENTRY_DRAG_WIDTH: i32 = 18;
+const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
+const PLAYLIST_ENTRY_COVER_WIDTH: i32 = 36;
+const PLAYLIST_ENTRY_DURATION_WIDTH: i32 = 64;
+const PLAYLIST_ENTRY_REMOVE_WIDTH: i32 = 34;
+const PLAYLIST_ENTRY_COLUMN_GAP: i32 = 8;
+const PLAYLIST_ENTRY_TEXT_COLUMN_GAP: i32 = 16;
+const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 120;
+const PLAYLIST_ENTRY_NUMBER_XALIGN: f32 = 0.35;
+const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;
+const PLAYLIST_ENTRY_ALBUM_MAX_CHARS: i32 = 18;
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -154,6 +165,7 @@ struct AppState {
     home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
     home_refresh_started_for_visit: Cell<bool>,
+    playlist_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
     startup_route_revealed: Cell<bool>,
     first_run_connection_pending: Cell<bool>,
@@ -460,6 +472,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         home_section_views: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
         home_refresh_started_for_visit: Cell::new(false),
+        playlist_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
         startup_route_revealed: Cell::new(!defer_initial_route),
         first_run_connection_pending: Cell::new(false),
@@ -1279,7 +1292,11 @@ impl Shell {
         }
     }
 
-    fn refresh_visible_home_sections(self: &Rc<Self>, sections: &[HomeSection]) {
+    fn refresh_visible_home_sections(
+        self: &Rc<Self>,
+        sections: &[HomeSection],
+        include_explore: bool,
+    ) {
         if !matches!(self.state.routes.borrow().current(), Route::Home) {
             return;
         }
@@ -1292,6 +1309,9 @@ impl Shell {
             .copied()
             .collect::<Vec<_>>();
         for section_kind in section_kinds {
+            if !include_explore && section_kind == HomeSectionKind::Explore {
+                continue;
+            }
             self.refresh_visible_home_section(section_kind, sections);
         }
     }
@@ -1354,6 +1374,9 @@ impl Shell {
         if matches!(route, Route::Home) {
             self.refresh_home_for_current_visit();
         }
+        if matches!(route, Route::Playlists) {
+            self.refresh_playlists_for_current_visit();
+        }
     }
 
     fn go_back(self: &Rc<Self>) {
@@ -1366,6 +1389,9 @@ impl Shell {
             self.render_current_route();
             if matches!(route, Route::Home) {
                 self.refresh_home_for_current_visit();
+            }
+            if matches!(route, Route::Playlists) {
+                self.refresh_playlists_for_current_visit();
             }
         }
     }
@@ -1380,6 +1406,9 @@ impl Shell {
             self.render_current_route();
             if matches!(route, Route::Home) {
                 self.refresh_home_for_current_visit();
+            }
+            if matches!(route, Route::Playlists) {
+                self.refresh_playlists_for_current_visit();
             }
         }
     }
@@ -1455,11 +1484,17 @@ impl Shell {
     fn handle_home_route_transition(self: &Rc<Self>, previous: &Route, next: &Route) {
         let was_home = matches!(previous, Route::Home);
         let is_home = matches!(next, Route::Home);
+        let was_playlists = matches!(previous, Route::Playlists);
+        let is_playlists = matches!(next, Route::Playlists);
 
         if is_home && !was_home {
             self.state.home_refresh_started_for_visit.set(false);
             self.state.home_showcase_seed.set(next_home_showcase_seed());
             reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
+            self.promote_cached_prefetched_explore();
+        }
+        if is_playlists && !was_playlists {
+            self.state.playlist_refresh_started_for_visit.set(false);
         }
     }
 
@@ -1470,10 +1505,19 @@ impl Shell {
         if self.state.home_refresh_started_for_visit.replace(true) {
             return;
         }
-        self.promote_cached_prefetched_explore();
         self.controller
             .refresh_home_sections_without_explore_for_active();
         self.controller.prefetch_explore_for_active();
+    }
+
+    fn refresh_playlists_for_current_visit(self: &Rc<Self>) {
+        if !matches!(self.state.routes.borrow().current(), Route::Playlists) {
+            return;
+        }
+        if self.state.playlist_refresh_started_for_visit.replace(true) {
+            return;
+        }
+        self.controller.refresh_playlists_for_active();
     }
 
     fn refresh_home_section(self: &Rc<Self>, section_kind: HomeSectionKind) {
@@ -1498,7 +1542,7 @@ impl Shell {
     }
 
     fn apply_prefetched_explore(self: &Rc<Self>) -> bool {
-        let prefetched = self.state.prefetched_explore.borrow_mut().take();
+        let prefetched = self.state.prefetched_explore.borrow().clone();
         let promoted = prefetched
             .map(|prefetched| self.promote_prefetched_explore(prefetched, true))
             .unwrap_or(false);
@@ -1509,7 +1553,7 @@ impl Shell {
     }
 
     fn promote_cached_prefetched_explore(self: &Rc<Self>) -> bool {
-        let prefetched = self.state.prefetched_explore.borrow_mut().take();
+        let prefetched = self.state.prefetched_explore.borrow().clone();
         prefetched
             .map(|prefetched| self.promote_prefetched_explore(prefetched, false))
             .unwrap_or(false)
@@ -1536,13 +1580,23 @@ impl Shell {
         }
 
         let section = prefetched.section.clone();
+        let mut changed = false;
         {
             let mut library = self.state.library.borrow_mut();
-            upsert_snapshot_home_section(&mut library.home_sections, section.clone());
+            let current = library
+                .home_sections
+                .iter()
+                .find(|existing| existing.kind == section.kind);
+            if current != Some(&section) {
+                upsert_snapshot_home_section(&mut library.home_sections, section.clone());
+                changed = true;
+            }
         }
-        reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
-        self.controller
-            .promote_prefetched_explore_for_active(section.clone());
+        if changed {
+            reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
+            self.controller
+                .promote_prefetched_explore_for_active(section.clone());
+        }
         if render_current_route {
             self.refresh_visible_home_section(section.kind, std::slice::from_ref(&section));
         }
@@ -1553,6 +1607,7 @@ impl Shell {
         &self,
         server_id: Option<rufin_core::ServerId>,
         prefetched: Option<PrefetchedHomeSection>,
+        sections: &[HomeSection],
     ) {
         if prefetched.is_some() {
             *self.state.prefetched_explore.borrow_mut() = prefetched;
@@ -1565,6 +1620,9 @@ impl Shell {
                 server_id
                     .as_ref()
                     .is_some_and(|server_id| &current.server_id == server_id)
+                    && !sections.iter().any(|section| {
+                        section.kind == HomeSectionKind::Explore && section == &current.section
+                    })
             })
         };
         if !keep_current {
@@ -2059,7 +2117,7 @@ impl Shell {
             Route::Genres => self.library_genre_list_view(),
             Route::GenreDetail(genre_id) => self.genre_detail_view(genre_id),
             Route::Folders { path } => self.folders_view(path),
-            Route::Playlists => self.playlist_list_view(),
+            Route::Playlists => self.library_playlists_view(),
             Route::PlaylistDetail(playlist_id) => self.playlist_detail_view(playlist_id),
             Route::Search { query, .. } => {
                 let library = self.state.library.borrow().clone();
@@ -2520,111 +2578,6 @@ impl Shell {
         wrapper.upcast()
     }
 
-    fn playlist_list_view(self: &Rc<Self>) -> gtk::Widget {
-        let page = self.complete_playlist_snapshot_page().unwrap_or_else(|| {
-            self.controller
-                .cached_playlists_page(0, GRID_ROUTE_PAGE_SIZE)
-                .unwrap_or_else(|error| {
-                    warn!(%error, "failed to load cached playlists page");
-                    let playlists = self
-                        .state
-                        .library
-                        .borrow()
-                        .playlists
-                        .iter()
-                        .take(GRID_ROUTE_PAGE_SIZE)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    rufin_provider::PagedResponse::new(
-                        playlists,
-                        self.state.library.borrow().playlists.len(),
-                    )
-                })
-        });
-        let complete_page = page.items.len() >= page.total;
-        let source_playlists = Rc::new(page.items.clone());
-        let playlists = Rc::new(RefCell::new(page.items));
-        let model = playlist_model(&playlists.borrow());
-        let (search, load_next) = if complete_page {
-            let search = gtk::SearchEntry::new();
-            search.set_placeholder_text(Some(&tr("Search")));
-            search.set_hexpand(true);
-            let model = model.clone();
-            let playlists = Rc::clone(&playlists);
-            search.connect_search_changed(move |entry| {
-                let query = entry.text().trim().to_lowercase();
-                let values = source_playlists
-                    .iter()
-                    .filter(|playlist| query.is_empty() || playlist_matches_query(playlist, &query))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                *playlists.borrow_mut() = values.clone();
-                replace_playlists_in_model(&model, values);
-            });
-            (search, None)
-        } else {
-            let (search, load_next) = self.searchable_grid_controls(
-                model.clone(),
-                Rc::clone(&playlists),
-                PagedGridConfig {
-                    route: Route::Playlists,
-                    offset: playlists.borrow().len(),
-                    total: page.total,
-                    page_name: "playlists",
-                },
-                |controller, query, offset, limit| {
-                    controller.cached_playlists_page_matching(query, offset, limit)
-                },
-                replace_playlists_in_model,
-                append_playlists_to_model,
-            );
-            (search, Some(load_next))
-        };
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
-        wrapper.set_vexpand(true);
-
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        header.append(&search);
-        let create = text_button("list-add-symbolic", "New Playlist");
-        let shell = Rc::clone(self);
-        create.connect_clicked(move |_| shell.new_playlist_dialog());
-        header.append(&create);
-        wrapper.append(&header);
-
-        if playlists.borrow().is_empty() {
-            wrapper.append(&self.route_empty_view(
-                "Cached rows will appear here after the background sync finishes.",
-            ));
-        } else {
-            let scroller = gtk::ScrolledWindow::new();
-            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
-            scroller.set_min_content_width(0);
-            scroller.set_vexpand(true);
-            scroller.set_child(Some(&self.playlist_cards_grid_for_model(model)));
-            if let Some(load_next) = load_next {
-                connect_paged_grid_loader(&scroller, load_next);
-            }
-            wrapper.append(&scroller);
-        }
-        wrapper.upcast()
-    }
-
-    fn complete_playlist_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Playlist>> {
-        let library = self.state.library.borrow();
-        if library.cached_playlist_count > library.playlists.len() {
-            return None;
-        }
-        Some(rufin_provider::PagedResponse::new(
-            library.playlists.clone(),
-            library.cached_playlist_count,
-        ))
-    }
-
     fn new_playlist_dialog(self: &Rc<Self>) {
         let dialog = adw::AlertDialog::builder()
             .heading(tr("New Playlist"))
@@ -2730,12 +2683,14 @@ impl Shell {
             format_duration(detail.playlist.duration_seconds)
         );
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 20);
         wrapper.add_css_class("route-content");
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_margin_top(28);
         wrapper.set_margin_bottom(36);
         wrapper.set_margin_start(32);
@@ -2816,99 +2771,111 @@ impl Shell {
         self: &Rc<Self>,
         detail: &rufin_provider::PlaylistDetail,
     ) -> gtk::Widget {
+        let entries = Rc::new(detail.entries.clone());
+        let state = Rc::new(RefCell::new(PlaylistEntryListState::default()));
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
+
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        toolbar.add_css_class("track-toolbar");
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        toolbar.append(&search);
+
+        let sort_titles = PLAYLIST_ENTRY_SORTS
+            .iter()
+            .map(|sort| tr(sort.title()))
+            .collect::<Vec<_>>();
+        let sort_refs = sort_titles.iter().map(String::as_str).collect::<Vec<_>>();
+        let sort_options = gtk::StringList::new(&sort_refs);
+        let sort_dropdown = gtk::DropDown::new(Some(sort_options), None::<gtk::Expression>);
+        toolbar.append(&sort_dropdown);
+
+        let direction = gtk::Button::from_icon_name("view-sort-ascending-symbolic");
+        direction.add_css_class("flat");
+        direction.set_tooltip_text(Some(&tr("Change sort order")));
+        toolbar.append(&direction);
+        wrapper.append(&toolbar);
+
+        wrapper.append(&playlist_entries_header_row());
+
         let list = gtk::ListBox::new();
         list.add_css_class("track-table");
+        list.add_css_class("playlist-entry-list");
+        list.set_hexpand(true);
+        list.set_halign(gtk::Align::Fill);
         list.set_selection_mode(gtk::SelectionMode::None);
-        for (index, entry) in detail.entries.iter().enumerate() {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            row.add_css_class("queue-row");
-            row.set_valign(gtk::Align::Center);
-            let number = gtk::Label::new(Some(&(index + 1).to_string()));
-            number.add_css_class("muted");
-            number.set_width_chars(3);
-            row.append(&number);
-            row.append(&self.cover_tile_for(
-                entry.track.image_ref.as_ref(),
-                stable_seed(entry.track.id.as_str()),
-                36,
-                THUMB_COVER_SIZE,
-            ));
-            let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            labels.set_hexpand(true);
-            let title = gtk::Label::new(Some(&entry.track.title));
-            title.set_xalign(0.0);
-            title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            let artist = gtk::Label::new(Some(&entry.track.artist));
-            artist.add_css_class("muted");
-            artist.set_xalign(0.0);
-            artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            labels.append(&title);
-            labels.append(&artist);
-            row.append(&labels);
 
-            let play = icon_button("media-playback-start-symbolic", "Play track");
-            let controller = self.controller.clone();
-            let track = entry.track.clone();
-            play.connect_clicked(move |_| controller.play_now(track.clone()));
-            row.append(&play);
+        rebuild_playlist_entries_list(self, &list, &entries, &state.borrow(), &detail.playlist.id);
 
-            let up = icon_button("go-up-symbolic", "Move up");
-            up.set_sensitive(index > 0);
-            let controller = self.controller.clone();
+        {
+            let shell = Rc::clone(self);
+            let list = list.clone();
+            let entries = Rc::clone(&entries);
+            let state = Rc::clone(&state);
             let playlist_id = detail.playlist.id.clone();
-            let entry_id = entry.entry_id.clone();
-            up.connect_clicked(move |_| {
-                controller.move_playlist_entry(playlist_id.clone(), entry_id.clone(), index - 1)
+            search.connect_search_changed(move |entry| {
+                state.borrow_mut().query = entry.text().trim().to_string();
+                rebuild_playlist_entries_list(
+                    &shell,
+                    &list,
+                    &entries,
+                    &state.borrow(),
+                    &playlist_id,
+                );
             });
-            row.append(&up);
-
-            let down = icon_button("go-down-symbolic", "Move down");
-            down.set_sensitive(index + 1 < detail.entries.len());
-            let controller = self.controller.clone();
-            let playlist_id = detail.playlist.id.clone();
-            let entry_id = entry.entry_id.clone();
-            down.connect_clicked(move |_| {
-                controller.move_playlist_entry(playlist_id.clone(), entry_id.clone(), index + 1)
-            });
-            row.append(&down);
-
-            let remove = icon_button("user-trash-symbolic", "Remove from playlist");
-            let controller = self.controller.clone();
-            let playlist_id = detail.playlist.id.clone();
-            let entry_id = entry.entry_id.clone();
-            remove.connect_clicked(move |_| {
-                controller.remove_playlist_entry(playlist_id.clone(), entry_id.clone())
-            });
-            row.append(&remove);
-
-            let drag_source = gtk::DragSource::builder()
-                .actions(gtk::gdk::DragAction::MOVE)
-                .build();
-            let entry_id = entry.entry_id.clone();
-            drag_source.connect_prepare(move |_, _, _| {
-                Some(gtk::gdk::ContentProvider::for_value(&entry_id.to_value()))
-            });
-            row.add_controller(drag_source);
-
-            let drop_target =
-                gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
-            let controller = self.controller.clone();
-            let playlist_id = detail.playlist.id.clone();
-            let target_entry_id = entry.entry_id.clone();
-            drop_target.connect_drop(move |_, value, _, _| {
-                let Ok(entry_id) = value.get::<String>() else {
-                    return false;
-                };
-                if entry_id == target_entry_id {
-                    return false;
-                }
-                controller.move_playlist_entry(playlist_id.clone(), entry_id, index);
-                true
-            });
-            row.add_controller(drop_target);
-            list.append(&row);
         }
-        list.upcast()
+        {
+            let shell = Rc::clone(self);
+            let list = list.clone();
+            let entries = Rc::clone(&entries);
+            let state = Rc::clone(&state);
+            let playlist_id = detail.playlist.id.clone();
+            sort_dropdown.connect_selected_notify(move |dropdown| {
+                let selected = PLAYLIST_ENTRY_SORTS
+                    .get(dropdown.selected() as usize)
+                    .copied()
+                    .unwrap_or(PlaylistEntrySort::Order);
+                state.borrow_mut().sort = selected;
+                rebuild_playlist_entries_list(
+                    &shell,
+                    &list,
+                    &entries,
+                    &state.borrow(),
+                    &playlist_id,
+                );
+            });
+        }
+        {
+            let shell = Rc::clone(self);
+            let list = list.clone();
+            let entries = Rc::clone(&entries);
+            let state = Rc::clone(&state);
+            let playlist_id = detail.playlist.id.clone();
+            direction.connect_clicked(move |button| {
+                let descending = {
+                    let mut state = state.borrow_mut();
+                    state.descending = !state.descending;
+                    state.descending
+                };
+                button.set_icon_name(if descending {
+                    "view-sort-descending-symbolic"
+                } else {
+                    "view-sort-ascending-symbolic"
+                });
+                rebuild_playlist_entries_list(
+                    &shell,
+                    &list,
+                    &entries,
+                    &state.borrow(),
+                    &playlist_id,
+                );
+            });
+        }
+        wrapper.append(&list);
+        wrapper.upcast()
     }
 
     fn rename_playlist_dialog(self: &Rc<Self>, playlist_id: PlaylistId, current_name: String) {
@@ -4307,6 +4274,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         shell.state.library.borrow().selected_source != snapshot.selected_source;
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
+                    let sections = snapshot.home_sections.clone();
                     *shell.state.library.borrow_mut() = *snapshot;
                     if entering_first_run {
                         shell.state.server_discovery_started.set(false);
@@ -4315,7 +4283,11 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         *shell.state.server_discovery_status.borrow_mut() =
                             "Searching will start automatically".to_string();
                     }
-                    shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
+                    shell.update_prefetched_explore_from_snapshot(
+                        server_id,
+                        prefetched_explore,
+                        &sections,
+                    );
                     *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
                     shell.update_server_selector();
                     if finishing_first_run_connection {
@@ -4330,15 +4302,25 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     }
                     shell.schedule_startup_cover_warm();
                 }
-                ControllerEvent::HomeSectionsUpdated(snapshot) => {
+                ControllerEvent::HomeSectionsUpdated {
+                    snapshot,
+                    include_explore,
+                } => {
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     let snapshot = *snapshot;
                     let sections = snapshot.home_sections.clone();
                     *shell.state.library.borrow_mut() = snapshot;
-                    shell.update_prefetched_explore_from_snapshot(server_id, prefetched_explore);
+                    shell.update_prefetched_explore_from_snapshot(
+                        server_id,
+                        prefetched_explore,
+                        &sections,
+                    );
+                    if !include_explore {
+                        shell.promote_cached_prefetched_explore();
+                    }
                     shell.update_server_selector();
-                    shell.refresh_visible_home_sections(&sections);
+                    shell.refresh_visible_home_sections(&sections, include_explore);
                     shell.schedule_startup_cover_warm();
                 }
                 ControllerEvent::HomeSectionPrefetched { server_id, section } => {
@@ -4350,8 +4332,8 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         .as_ref()
                         .map(|server| server.id.clone());
                     if active_server_id.as_ref() == Some(&server_id) {
-                        let prefetched = PrefetchedHomeSection { server_id, section };
-                        shell.promote_prefetched_explore(prefetched, false);
+                        *shell.state.prefetched_explore.borrow_mut() =
+                            Some(PrefetchedHomeSection { server_id, section });
                     }
                 }
                 ControllerEvent::FavoriteChanged {
@@ -4891,12 +4873,6 @@ fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item
     append_boxed_items_to_model(model, genres);
 }
 
-fn playlist_model(playlists: &[Playlist]) -> gio::ListStore {
-    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    append_playlists_to_model(&model, playlists.iter().cloned());
-    model
-}
-
 fn replace_playlists_in_model(
     model: &gio::ListStore,
     playlists: impl IntoIterator<Item = Playlist>,
@@ -4913,10 +4889,6 @@ fn append_playlists_to_model(
     playlists: impl IntoIterator<Item = Playlist>,
 ) {
     append_boxed_items_to_model(model, playlists);
-}
-
-fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
-    playlist.name.to_lowercase().contains(query)
 }
 
 fn set_track_sort_button_content(button: &gtk::Button, settings: &TrackTableSettings) {
@@ -5780,6 +5752,418 @@ fn current_playback_track_id(snapshot: &PlaybackSnapshot) -> Option<rufin_core::
         .map(|entry| entry.track_id.clone())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlaylistEntrySort {
+    Order,
+    Title,
+    Artist,
+    Album,
+    Duration,
+}
+
+impl PlaylistEntrySort {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Order => "Playlist order",
+            Self::Title => "Title",
+            Self::Artist => "Artist",
+            Self::Album => "Album",
+            Self::Duration => "Duration",
+        }
+    }
+}
+
+const PLAYLIST_ENTRY_SORTS: [PlaylistEntrySort; 5] = [
+    PlaylistEntrySort::Order,
+    PlaylistEntrySort::Title,
+    PlaylistEntrySort::Artist,
+    PlaylistEntrySort::Album,
+    PlaylistEntrySort::Duration,
+];
+
+#[derive(Clone, Debug)]
+struct PlaylistEntryListState {
+    query: String,
+    sort: PlaylistEntrySort,
+    descending: bool,
+}
+
+impl Default for PlaylistEntryListState {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            sort: PlaylistEntrySort::Order,
+            descending: false,
+        }
+    }
+}
+
+fn rebuild_playlist_entries_list(
+    shell: &Rc<Shell>,
+    list: &gtk::ListBox,
+    entries: &Rc<Vec<PlaylistEntry>>,
+    state: &PlaylistEntryListState,
+    playlist_id: &PlaylistId,
+) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+
+    let rows = playlist_entries_for_state(entries, state);
+    if rows.is_empty() {
+        let empty = gtk::Label::new(Some(&tr("No tracks match the search.")));
+        empty.add_css_class("muted");
+        empty.set_margin_top(16);
+        empty.set_margin_bottom(16);
+        list.append(&empty);
+        return;
+    }
+
+    for (display_index, (original_index, entry)) in rows.into_iter().enumerate() {
+        list.append(&playlist_entry_row(
+            shell,
+            Rc::clone(entries),
+            playlist_id,
+            original_index,
+            display_index,
+            &entry,
+        ));
+    }
+}
+
+fn playlist_entries_for_state(
+    entries: &[PlaylistEntry],
+    state: &PlaylistEntryListState,
+) -> Vec<(usize, PlaylistEntry)> {
+    let query = state.query.trim().to_lowercase();
+    let mut rows = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| query.is_empty() || playlist_entry_matches_query(entry, &query))
+        .map(|(index, entry)| (index, entry.clone()))
+        .collect::<Vec<_>>();
+
+    rows.sort_by(|left, right| {
+        let ordering = compare_playlist_entry(left, right, state.sort);
+        if state.descending {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    });
+    rows
+}
+
+fn playlist_entry_matches_query(entry: &PlaylistEntry, query: &str) -> bool {
+    entry.track.title.to_lowercase().contains(query)
+        || entry.track.artist.to_lowercase().contains(query)
+        || entry.track.album.to_lowercase().contains(query)
+}
+
+fn compare_playlist_entry(
+    left: &(usize, PlaylistEntry),
+    right: &(usize, PlaylistEntry),
+    sort: PlaylistEntrySort,
+) -> std::cmp::Ordering {
+    match sort {
+        PlaylistEntrySort::Order => left.0.cmp(&right.0),
+        PlaylistEntrySort::Title => cmp_text(&left.1.track.title, &right.1.track.title),
+        PlaylistEntrySort::Artist => cmp_text(&left.1.track.artist, &right.1.track.artist),
+        PlaylistEntrySort::Album => cmp_text(&left.1.track.album, &right.1.track.album),
+        PlaylistEntrySort::Duration => left
+            .1
+            .track
+            .duration_seconds
+            .cmp(&right.1.track.duration_seconds),
+    }
+    .then_with(|| left.0.cmp(&right.0))
+}
+
+fn cmp_text(left: &str, right: &str) -> std::cmp::Ordering {
+    left.to_lowercase().cmp(&right.to_lowercase())
+}
+
+fn playlist_entries_header_row() -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
+    row.add_css_class("playlist-entry-header");
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_valign(gtk::Align::Center);
+    row.append(&fixed_spacer(PLAYLIST_ENTRY_DRAG_WIDTH));
+    row.append(&playlist_header_label(
+        "#",
+        PLAYLIST_ENTRY_NUMBER_WIDTH,
+        false,
+        PLAYLIST_ENTRY_NUMBER_XALIGN,
+    ));
+    row.append(&playlist_text_columns(
+        playlist_header_text_label("Title", PLAYLIST_ENTRY_TITLE_MAX_CHARS).upcast(),
+        playlist_header_album_label("Album", PLAYLIST_ENTRY_ALBUM_MAX_CHARS).upcast(),
+    ));
+    row.append(&playlist_header_label(
+        "Duration",
+        PLAYLIST_ENTRY_DURATION_WIDTH,
+        false,
+        0.5,
+    ));
+    row.append(&fixed_spacer(PLAYLIST_ENTRY_REMOVE_WIDTH));
+    row.upcast()
+}
+
+fn playlist_header_label(text: &str, width: i32, expand: bool, xalign: f32) -> gtk::Label {
+    let label = gtk::Label::new(Some(&tr(text)));
+    label.add_css_class("muted");
+    label.set_xalign(xalign);
+    label.set_width_request(width);
+    label.set_hexpand(expand);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    if expand {
+        label.set_width_chars(1);
+        label.set_max_width_chars(PLAYLIST_ENTRY_TITLE_MAX_CHARS);
+    }
+    label
+}
+
+fn playlist_header_text_label(text: &str, max_width_chars: i32) -> gtk::Label {
+    let label = gtk::Label::new(Some(&tr(text)));
+    label.add_css_class("muted");
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.set_halign(gtk::Align::Fill);
+    label.set_width_chars(1);
+    label.set_max_width_chars(max_width_chars);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label
+}
+
+fn playlist_header_album_label(text: &str, max_width_chars: i32) -> gtk::Label {
+    let label = playlist_header_text_label(text, max_width_chars);
+    label.set_xalign(0.5);
+    label
+}
+
+fn playlist_text_columns(title: gtk::Widget, album: gtk::Widget) -> gtk::Widget {
+    let columns = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_TEXT_COLUMN_GAP);
+    columns.set_homogeneous(false);
+    columns.set_hexpand(true);
+    columns.set_halign(gtk::Align::Fill);
+    columns.set_width_request(1);
+
+    title.set_hexpand(true);
+    title.set_halign(gtk::Align::Fill);
+    title.set_width_request(1);
+    columns.append(&title);
+
+    album.set_hexpand(false);
+    album.set_halign(gtk::Align::Fill);
+    album.set_width_request(PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH);
+    columns.append(&album);
+
+    columns.upcast()
+}
+
+fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget) -> gtk::Widget {
+    let title = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
+    title.set_hexpand(true);
+    title.set_halign(gtk::Align::Fill);
+    title.set_width_request(1);
+    title.append(&cover);
+    title.append(&labels);
+    title.upcast()
+}
+
+fn playlist_entry_row(
+    shell: &Rc<Shell>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: &PlaylistId,
+    original_index: usize,
+    display_index: usize,
+    entry: &PlaylistEntry,
+) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
+    row.add_css_class("playlist-entry-row");
+    row.set_focusable(true);
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_valign(gtk::Align::Center);
+
+    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    drag.add_css_class("dim-label");
+    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+    drag.set_width_request(PLAYLIST_ENTRY_DRAG_WIDTH);
+    drag.set_halign(gtk::Align::Center);
+    let drag_source = gtk::DragSource::builder()
+        .actions(gtk::gdk::DragAction::MOVE)
+        .build();
+    let drag_entry_id = entry.entry_id.clone();
+    drag_source.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(
+            &drag_entry_id.to_value(),
+        ))
+    });
+    drag.add_controller(drag_source);
+    row.append(&drag);
+
+    let number = gtk::Label::new(Some(&(display_index + 1).to_string()));
+    number.add_css_class("muted");
+    number.set_xalign(PLAYLIST_ENTRY_NUMBER_XALIGN);
+    number.set_width_request(PLAYLIST_ENTRY_NUMBER_WIDTH);
+    row.append(&number);
+
+    let cover = shell.cover_tile_for(
+        entry.track.image_ref.as_ref(),
+        stable_seed(entry.track.id.as_str()),
+        PLAYLIST_ENTRY_COVER_WIDTH,
+        THUMB_COVER_SIZE,
+    );
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+    labels.set_halign(gtk::Align::Fill);
+    labels.set_width_request(1);
+    labels.append(&playlist_entry_text_label(
+        &entry.track.title,
+        "",
+        PLAYLIST_ENTRY_TITLE_MAX_CHARS,
+    ));
+    labels.append(&playlist_entry_text_label(
+        &entry.track.artist,
+        "muted",
+        PLAYLIST_ENTRY_TITLE_MAX_CHARS,
+    ));
+
+    let album =
+        playlist_entry_text_label(&entry.track.album, "muted", PLAYLIST_ENTRY_ALBUM_MAX_CHARS);
+    album.set_xalign(0.5);
+    album.set_valign(gtk::Align::Center);
+    row.append(&playlist_text_columns(
+        playlist_title_cell(cover, labels.upcast()),
+        album.upcast(),
+    ));
+
+    let duration = gtk::Label::new(Some(&format_duration(entry.track.duration_seconds)));
+    duration.add_css_class("muted");
+    duration.set_xalign(0.5);
+    duration.set_width_request(PLAYLIST_ENTRY_DURATION_WIDTH);
+    row.append(&duration);
+
+    let remove = gtk::Button::with_label("x");
+    remove.add_css_class("icon-button");
+    remove.add_css_class("flat");
+    remove.add_css_class("circular");
+    remove.set_tooltip_text(Some(&tr("Remove from playlist")));
+    remove.set_width_request(PLAYLIST_ENTRY_REMOVE_WIDTH);
+    let remove_shell = Rc::clone(shell);
+    let remove_playlist_id = playlist_id.clone();
+    let remove_entry_id = entry.entry_id.clone();
+    let remove_title = entry.track.title.clone();
+    remove.connect_clicked(move |_| {
+        confirm_remove_playlist_entry(
+            &remove_shell,
+            remove_playlist_id.clone(),
+            remove_entry_id.clone(),
+            remove_title.clone(),
+        );
+    });
+    row.append(&remove);
+
+    let controller = shell.controller.clone();
+    let track = entry.track.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(1);
+    click.connect_released(move |gesture, n_press, _, _| {
+        if n_press == 2 {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            controller.play_now(track.clone());
+        }
+    });
+    row.add_controller(click);
+
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let controller = shell.controller.clone();
+    let playlist_id = playlist_id.clone();
+    let entries_for_drop = Rc::clone(&entries);
+    let row_for_drop = row.clone();
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(entry_id) = value.get::<String>() else {
+            return false;
+        };
+        let after = y > f64::from(row_for_drop.height()) / 2.0;
+        let Some(new_index) =
+            playlist_drop_index(&entries_for_drop, &entry_id, original_index, after)
+        else {
+            return false;
+        };
+        controller.move_playlist_entry(playlist_id.clone(), entry_id, new_index);
+        true
+    });
+    row.add_controller(drop_target);
+
+    row.upcast()
+}
+
+fn playlist_drop_index(
+    entries: &[PlaylistEntry],
+    dragged_entry_id: &str,
+    target_index: usize,
+    after: bool,
+) -> Option<usize> {
+    let source_index = entries
+        .iter()
+        .position(|entry| entry.entry_id == dragged_entry_id)?;
+    let mut new_index = if after {
+        target_index.saturating_add(1)
+    } else {
+        target_index
+    };
+    if source_index < new_index {
+        new_index = new_index.saturating_sub(1);
+    }
+    (source_index != new_index).then_some(new_index)
+}
+
+fn playlist_entry_text_label(text: &str, css_class: &str, max_width_chars: i32) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    if !css_class.is_empty() {
+        label.add_css_class(css_class);
+    }
+    label.set_xalign(0.0);
+    label.set_width_chars(1);
+    label.set_max_width_chars(max_width_chars);
+    label.set_wrap(false);
+    label.set_single_line_mode(true);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label
+}
+
+fn fixed_spacer(width: i32) -> gtk::Widget {
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_width_request(width);
+    spacer.upcast()
+}
+
+fn confirm_remove_playlist_entry(
+    shell: &Rc<Shell>,
+    playlist_id: PlaylistId,
+    entry_id: String,
+    title: String,
+) {
+    let dialog = adw::AlertDialog::builder()
+        .heading(tr("Remove from Playlist"))
+        .body(format!("Remove \"{title}\" from this playlist?"))
+        .build();
+    dialog.add_response("cancel", &tr("Cancel"));
+    dialog.add_response("remove", &tr("Remove"));
+    dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+    let controller = shell.controller.clone();
+    dialog.connect_response(None, move |_, response| {
+        if response == "remove" {
+            controller.remove_playlist_entry(playlist_id.clone(), entry_id.clone());
+        }
+    });
+    dialog.present(Some(&shell.window));
+}
+
 fn seekbar_target_seconds(value: f64, duration_seconds: u32) -> u32 {
     if !value.is_finite() {
         return 0;
@@ -5870,14 +6254,16 @@ mod tests {
         queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
     };
     use super::{
-        AutoLyricsRequest, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
-        current_playback_track_id, seekbar_target_seconds,
+        AutoLyricsRequest, PlaylistEntryListState, PlaylistEntrySort,
+        auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
+        current_playback_track_id, playlist_drop_index, playlist_entries_for_state,
+        seekbar_target_seconds,
     };
     use rufin_core::{
         Album, AlbumId, AppSettings, ArtistId, HomeSectionKind, QueueEntry, QueueEntryId, Route,
         SearchKind, Track, TrackId, TrackSortKey, TrackTableSettings,
     };
-    use rufin_provider::{LyricLine, Lyrics, LyricsSource};
+    use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
     use std::collections::HashMap;
 
     #[test]
@@ -5965,6 +6351,72 @@ mod tests {
             current_playback_track_id(&super::PlaybackSnapshot::default()),
             None
         );
+    }
+
+    #[test]
+    fn playlist_entry_search_and_sort_use_track_fields() {
+        let mut first = test_track("Artist B", None);
+        first.title = "Alpha".to_string();
+        first.album = "Plain Album".to_string();
+        first.duration_seconds = 240;
+        let mut second = test_track("Artist A", None);
+        second.id = TrackId::fake(2);
+        second.title = "Beta".to_string();
+        second.album = "Needle Album".to_string();
+        second.duration_seconds = 120;
+        let entries = vec![
+            PlaylistEntry {
+                entry_id: "entry-alpha".to_string(),
+                track: first,
+            },
+            PlaylistEntry {
+                entry_id: "entry-beta".to_string(),
+                track: second,
+            },
+        ];
+
+        let filtered = playlist_entries_for_state(
+            &entries,
+            &PlaylistEntryListState {
+                query: "needle".to_string(),
+                sort: PlaylistEntrySort::Order,
+                descending: false,
+            },
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].1.entry_id, "entry-beta");
+
+        let sorted = playlist_entries_for_state(
+            &entries,
+            &PlaylistEntryListState {
+                query: String::new(),
+                sort: PlaylistEntrySort::Duration,
+                descending: true,
+            },
+        );
+        assert_eq!(sorted[0].1.entry_id, "entry-alpha");
+        assert_eq!(sorted[1].1.entry_id, "entry-beta");
+    }
+
+    #[test]
+    fn playlist_drop_index_accounts_for_removed_source_row() {
+        let entries = ["a", "b", "c"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, entry_id)| {
+                let mut track = test_track("Artist", None);
+                track.id = TrackId::fake(index + 1);
+                PlaylistEntry {
+                    entry_id: entry_id.to_string(),
+                    track,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(playlist_drop_index(&entries, "a", 2, false), Some(1));
+        assert_eq!(playlist_drop_index(&entries, "a", 2, true), Some(2));
+        assert_eq!(playlist_drop_index(&entries, "c", 0, false), Some(0));
+        assert_eq!(playlist_drop_index(&entries, "b", 1, false), None);
     }
 
     #[test]

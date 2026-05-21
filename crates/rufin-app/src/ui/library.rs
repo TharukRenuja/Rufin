@@ -8,19 +8,19 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use rufin_core::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, Track, available_sort_fields, format_duration,
+    LibraryListSettings, Playlist, Track, available_sort_fields, format_duration,
 };
 use tracing::{info, warn};
 
 use super::{
     GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE, PRIMARY_ROUTE_MARGIN_START, Route, Shell,
     THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, album_favorite_key, append_albums_to_model,
-    append_artists_to_model, append_genres_to_model, append_tracks_to_model, artist_favorite_key,
-    cards, connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button,
-    finish_grid_page, icon_button,
+    append_artists_to_model, append_genres_to_model, append_playlists_to_model,
+    append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader,
+    favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
-    set_favorite_button_active, stable_seed,
+    replace_playlists_in_model, set_favorite_button_active, stable_seed, text_button,
 };
 use crate::i18n::tr;
 
@@ -41,7 +41,10 @@ fn library_layout_loads_complete_page(key: LibraryListKey, settings: &LibraryLis
             settings.layout,
             LibraryLayout::Row | LibraryLayout::Grid | LibraryLayout::Detail
         ),
-        LibraryListKey::Artists | LibraryListKey::AlbumArtists | LibraryListKey::Genres => {
+        LibraryListKey::Artists
+        | LibraryListKey::AlbumArtists
+        | LibraryListKey::Genres
+        | LibraryListKey::Playlists => {
             matches!(settings.layout, LibraryLayout::Row | LibraryLayout::Grid)
         }
         _ => false,
@@ -658,6 +661,164 @@ impl Shell {
         )
     }
 
+    pub(super) fn library_playlists_view(self: &Rc<Self>) -> gtk::Widget {
+        let settings = self.library_settings(LibraryListKey::Playlists);
+        let page = self.complete_playlist_snapshot_page().unwrap_or_else(|| {
+            self.controller
+                .cached_playlists_page(0, GRID_ROUTE_PAGE_SIZE)
+                .unwrap_or_else(|error| {
+                    warn!(%error, "failed to load cached playlists page");
+                    let playlists = self
+                        .state
+                        .library
+                        .borrow()
+                        .playlists
+                        .iter()
+                        .take(GRID_ROUTE_PAGE_SIZE)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    rufin_provider::PagedResponse::new(
+                        playlists,
+                        self.state.library.borrow().playlists.len(),
+                    )
+                })
+        });
+        let page = complete_cached_page(
+            page,
+            library_layout_loads_complete_page(LibraryListKey::Playlists, &settings),
+            |limit| self.controller.cached_playlists_page(0, limit),
+            "playlists",
+        );
+        let complete_page = page.items.len() >= page.total;
+        let source_playlists = Rc::new(page.items.clone());
+        let playlists = Rc::new(RefCell::new(page.items));
+        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        populate_playlist_model(&model, &playlists.borrow(), &settings);
+
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        let cursor = Rc::new(super::PagedGridCursor {
+            offset: std::cell::Cell::new(playlists.borrow().len()),
+            total: std::cell::Cell::new(page.total),
+            loading: std::cell::Cell::new(false),
+        });
+        let query = Rc::new(RefCell::new(String::new()));
+
+        {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let source_playlists = Rc::clone(&source_playlists);
+            let playlists = Rc::clone(&playlists);
+            let cursor = Rc::clone(&cursor);
+            let query = Rc::clone(&query);
+            search.connect_search_changed(move |entry| {
+                let text = entry.text().trim().to_string();
+                *query.borrow_mut() = text.clone();
+                if complete_page {
+                    let query = text.to_lowercase();
+                    let values = source_playlists
+                        .iter()
+                        .filter(|playlist| {
+                            query.is_empty() || playlist_matches_query(playlist, &query)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let count = values.len();
+                    *playlists.borrow_mut() = values;
+                    populate_playlist_model(
+                        &model,
+                        &playlists.borrow(),
+                        &shell.library_settings(LibraryListKey::Playlists),
+                    );
+                    cursor.offset.set(count);
+                    cursor.total.set(count);
+                    cursor.loading.set(false);
+                    return;
+                }
+
+                cursor.offset.set(0);
+                cursor.total.set(usize::MAX);
+                cursor.loading.set(true);
+                match shell.controller.cached_playlists_page_matching(
+                    &text,
+                    0,
+                    GRID_ROUTE_PAGE_SIZE,
+                ) {
+                    Ok(page) => {
+                        let settings = shell.library_settings(LibraryListKey::Playlists);
+                        let page = complete_cached_page(
+                            page,
+                            library_layout_loads_complete_page(
+                                LibraryListKey::Playlists,
+                                &settings,
+                            ),
+                            |limit| {
+                                shell
+                                    .controller
+                                    .cached_playlists_page_matching(&text, 0, limit)
+                            },
+                            "playlists search",
+                        );
+                        let count = page.items.len();
+                        *playlists.borrow_mut() = page.items;
+                        populate_playlist_model(&model, &playlists.borrow(), &settings);
+                        finish_grid_page(&cursor, 0, count, page.total);
+                    }
+                    Err(error) => {
+                        warn!(%error, "failed to search cached playlists page");
+                        cursor.loading.set(false);
+                    }
+                }
+            });
+        }
+
+        let load_next = {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let playlists = Rc::clone(&playlists);
+            let cursor = Rc::clone(&cursor);
+            let query = Rc::clone(&query);
+            Rc::new(move || {
+                if !shell.can_load_grid_page(&cursor, &Route::Playlists) {
+                    return;
+                }
+                let offset = cursor.offset.get();
+                let text = query.borrow().clone();
+                match shell.controller.cached_playlists_page_matching(
+                    &text,
+                    offset,
+                    GRID_ROUTE_PAGE_SIZE,
+                ) {
+                    Ok(page) => {
+                        let count = page.items.len();
+                        let mut items = page.items;
+                        sort_playlists(
+                            &mut items,
+                            &shell.library_settings(LibraryListKey::Playlists),
+                        );
+                        playlists.borrow_mut().extend(items.iter().cloned());
+                        append_playlists_to_model(&model, items);
+                        finish_grid_page(&cursor, offset, count, page.total);
+                    }
+                    Err(error) => {
+                        warn!(%error, "failed to append cached playlists page");
+                        cursor.loading.set(false);
+                    }
+                }
+            }) as Rc<dyn Fn()>
+        };
+
+        self.library_page_shell(
+            LibraryListKey::Playlists,
+            playlists.borrow().is_empty(),
+            "Cached playlists will appear here after the background sync finishes.",
+            search,
+            playlist_collection_widget(self, model),
+            Some(load_next),
+        )
+    }
+
     pub(super) fn library_tracks_panel(
         self: &Rc<Self>,
         tracks: Vec<Track>,
@@ -983,6 +1144,13 @@ impl Shell {
         toolbar.add_css_class("track-toolbar");
         toolbar.append(&search);
 
+        if key == LibraryListKey::Playlists {
+            let create = text_button("list-add-symbolic", "New Playlist");
+            let shell = Rc::clone(self);
+            create.connect_clicked(move |_| shell.new_playlist_dialog());
+            toolbar.append(&create);
+        }
+
         let settings = self.library_settings(key);
         let sort_titles = available_sort_fields(key)
             .iter()
@@ -1241,6 +1409,17 @@ impl Shell {
         ))
     }
 
+    fn complete_playlist_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Playlist>> {
+        let library = self.state.library.borrow();
+        if library.cached_playlist_count > library.playlists.len() {
+            return None;
+        }
+        Some(rufin_provider::PagedResponse::new(
+            library.playlists.clone(),
+            library.cached_playlist_count,
+        ))
+    }
+
     fn complete_snapshot_tracks_for_albums(
         &self,
         albums: &[Album],
@@ -1321,6 +1500,13 @@ fn genre_collection_widget(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::Wid
     match shell.library_settings(LibraryListKey::Genres).layout {
         LibraryLayout::Row => genre_table(shell, model).upcast(),
         LibraryLayout::Grid | LibraryLayout::Detail => genre_grid(shell, model).upcast(),
+    }
+}
+
+fn playlist_collection_widget(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::Widget {
+    match shell.library_settings(LibraryListKey::Playlists).layout {
+        LibraryLayout::Row => playlist_table(shell, model).upcast(),
+        LibraryLayout::Grid | LibraryLayout::Detail => playlist_grid(shell, model).upcast(),
     }
 }
 
@@ -1452,6 +1638,45 @@ fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     grid
 }
 
+fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
+    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let factory = gtk::SignalListItemFactory::new();
+    let shell_for_factory = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(boxed) = item
+            .item()
+            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
+        else {
+            return;
+        };
+        let playlist = boxed.borrow::<Playlist>();
+        item.set_child(Some(&playlist_card(
+            &shell_for_factory,
+            &playlist,
+            card_size,
+        )));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let grid = gtk::GridView::new(Some(selection), Some(factory));
+    grid.add_css_class("album-grid");
+    grid.set_min_columns(columns as u32);
+    grid.set_max_columns(columns as u32);
+    grid.set_single_click_activate(true);
+    grid.set_hexpand(true);
+    grid.set_vexpand(true);
+    let shell = Rc::clone(shell);
+    grid.connect_activate(move |_, position| {
+        if let Some(playlist) = item_at::<Playlist>(&model, position) {
+            shell.navigate(Route::PlaylistDetail(playlist.id));
+        }
+    });
+    grid
+}
+
 fn track_grid(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -> gtk::GridView {
     let (columns, card_size) = shell.responsive_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
@@ -1537,6 +1762,25 @@ fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     for field in shell.library_settings(LibraryListKey::Genres).row_fields {
         table.append_column(&genre_column(field));
     }
+    table
+}
+
+fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let table = gtk::ColumnView::new(Some(selection));
+    table.add_css_class("track-table");
+    table.set_single_click_activate(true);
+    table.set_hexpand(true);
+    table.set_vexpand(true);
+    for field in shell.library_settings(LibraryListKey::Playlists).row_fields {
+        table.append_column(&playlist_column(shell, field));
+    }
+    let shell = Rc::clone(shell);
+    table.connect_activate(move |_, position| {
+        if let Some(playlist) = item_at::<Playlist>(&model, position) {
+            shell.navigate(Route::PlaylistDetail(playlist.id));
+        }
+    });
     table
 }
 
@@ -1962,6 +2206,23 @@ fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
     card.upcast()
 }
 
+fn playlist_card(shell: &Rc<Shell>, playlist: &Playlist, size: i32) -> gtk::Widget {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    card.set_width_request(size);
+    card.append(&cards::playlist_cover_tile(shell, playlist, size));
+    card.append(&center_label(&playlist.name, "track-title"));
+    for field in shell
+        .library_settings(LibraryListKey::Playlists)
+        .grid_fields
+    {
+        let value = playlist_field(playlist, field);
+        if !value.is_empty() {
+            card.append(&center_label(&value, "muted"));
+        }
+    }
+    card.upcast()
+}
+
 fn track_card(shell: &Rc<Shell>, track: &Track, key: LibraryListKey, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
@@ -2108,6 +2369,25 @@ fn genre_column(field: LibraryField) -> gtk::ColumnViewColumn {
         }
         _ => text_column::<Genre, _>(field.title(), column_width(field), move |genre| {
             genre_field(genre, field)
+        }),
+    }
+}
+
+fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
+    match field {
+        LibraryField::RowIndex => row_index_column(),
+        LibraryField::Image => image_column::<Playlist, _, _>(
+            shell,
+            "Image",
+            column_width(LibraryField::Image),
+            |playlist| playlist.image_ref.clone(),
+            |playlist| stable_seed(playlist.id.as_str()),
+        ),
+        LibraryField::Title | LibraryField::TitleMerged => {
+            expanding_text_column::<Playlist, _>("Title", 220, |playlist| playlist.name.clone())
+        }
+        _ => text_column::<Playlist, _>(field.title(), column_width(field), move |playlist| {
+            playlist_field(playlist, field)
         }),
     }
 }
@@ -2502,6 +2782,16 @@ fn populate_genre_model(model: &gio::ListStore, genres: &[Genre], settings: &Lib
     replace_genres_in_model(model, values);
 }
 
+fn populate_playlist_model(
+    model: &gio::ListStore,
+    playlists: &[Playlist],
+    settings: &LibraryListSettings,
+) {
+    let mut values = playlists.to_vec();
+    sort_playlists(&mut values, settings);
+    replace_playlists_in_model(model, values);
+}
+
 fn populate_track_model_for_settings(
     model: &gio::ListStore,
     tracks: &[Track],
@@ -2630,6 +2920,15 @@ fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
     });
 }
 
+fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
+    playlists.sort_by(|left, right| {
+        apply_desc(
+            compare_playlist(left, right, settings.sort_key),
+            settings.descending,
+        )
+    });
+}
+
 fn sort_tracks(tracks: &mut [Track], settings: &LibraryListSettings, favorite_first: bool) {
     tracks.sort_by(|left, right| {
         if favorite_first {
@@ -2684,6 +2983,15 @@ fn compare_genre(left: &Genre, right: &Genre, field: LibraryField) -> Ordering {
     match field {
         LibraryField::AlbumCount => left.album_count.cmp(&right.album_count),
         LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        _ => cmp_string(&left.name, &right.name),
+    }
+    .then_with(|| cmp_string(&left.name, &right.name))
+}
+
+fn compare_playlist(left: &Playlist, right: &Playlist, field: LibraryField) -> Ordering {
+    match field {
+        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
         _ => cmp_string(&left.name, &right.name),
     }
     .then_with(|| cmp_string(&left.name, &right.name))
@@ -2789,6 +3097,15 @@ fn genre_field(genre: &Genre, field: LibraryField) -> String {
     }
 }
 
+fn playlist_field(playlist: &Playlist, field: LibraryField) -> String {
+    match field {
+        LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
+        LibraryField::SongCount => format!("{} {}", playlist.track_count, tr("tracks")),
+        LibraryField::Duration => format_duration(playlist.duration_seconds),
+        _ => String::new(),
+    }
+}
+
 fn track_field(track: &Track, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => track.title.clone(),
@@ -2834,6 +3151,10 @@ fn artist_matches_query(artist: &Artist, query: &str) -> bool {
 
 fn genre_matches_query(genre: &Genre, query: &str) -> bool {
     genre.name.to_lowercase().contains(query)
+}
+
+fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
+    playlist.name.to_lowercase().contains(query)
 }
 
 fn item_at<T: Clone + 'static>(model: &gio::ListStore, position: u32) -> Option<T> {
@@ -3506,6 +3827,10 @@ mod tests {
             layout: LibraryLayout::Detail,
             ..LibraryListSettings::for_key(LibraryListKey::Albums)
         };
+        let playlists_grid = LibraryListSettings {
+            layout: LibraryLayout::Grid,
+            ..LibraryListSettings::for_key(LibraryListKey::Playlists)
+        };
 
         assert!(super::library_layout_loads_complete_page(
             LibraryListKey::Tracks,
@@ -3522,6 +3847,10 @@ mod tests {
         assert!(super::library_layout_loads_complete_page(
             LibraryListKey::Albums,
             &albums_detail
+        ));
+        assert!(super::library_layout_loads_complete_page(
+            LibraryListKey::Playlists,
+            &playlists_grid
         ));
     }
 

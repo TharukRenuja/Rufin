@@ -205,7 +205,10 @@ impl LibrarySnapshot {
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
-    HomeSectionsUpdated(Box<LibrarySnapshot>),
+    HomeSectionsUpdated {
+        snapshot: Box<LibrarySnapshot>,
+        include_explore: bool,
+    },
     HomeSectionPrefetched {
         server_id: ServerId,
         section: HomeSection,
@@ -267,6 +270,7 @@ pub struct AppController {
     events: Sender<ControllerEvent>,
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    playlist_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     explore_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_in_flight: Arc<Mutex<HashSet<String>>>,
     external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
@@ -280,6 +284,15 @@ struct HomeRefreshContext {
     events: Sender<ControllerEvent>,
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+}
+
+struct PlaylistRefreshContext {
+    store: StoreHandle,
+    runtime: Arc<Runtime>,
+    secrets: Arc<dyn SecretStore>,
+    events: Sender<ControllerEvent>,
+    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    playlist_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
 }
 
 #[derive(Clone)]
@@ -747,6 +760,7 @@ impl AppController {
                 events,
                 sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
+                playlist_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -794,6 +808,7 @@ impl AppController {
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            playlist_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
             explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
             external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -846,6 +861,7 @@ impl AppController {
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            playlist_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
             explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
             external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -958,6 +974,16 @@ impl AppController {
         }
     }
 
+    pub fn refresh_playlists_for_active(&self) {
+        let active = self
+            .store
+            .with_store(|store| store.active_server())
+            .unwrap_or(None);
+        if let Some(saved) = active {
+            self.start_playlist_refresh_for_saved(saved);
+        }
+    }
+
     pub fn prefetch_explore_for_active(&self) {
         let active = self
             .store
@@ -1013,6 +1039,20 @@ impl AppController {
             },
             saved,
             target,
+        );
+    }
+
+    fn start_playlist_refresh_for_saved(&self, saved: SavedServer) {
+        start_playlist_refresh_thread(
+            PlaylistRefreshContext {
+                store: self.store.clone(),
+                runtime: Arc::clone(&self.runtime),
+                secrets: Arc::clone(&self.secrets),
+                events: self.events.clone(),
+                sync_in_flight: Arc::clone(&self.sync_in_flight),
+                playlist_refresh_in_flight: Arc::clone(&self.playlist_refresh_in_flight),
+            },
+            saved,
         );
     }
 
@@ -3400,11 +3440,55 @@ fn start_home_refresh_thread(
     });
 }
 
+fn start_playlist_refresh_thread(context: PlaylistRefreshContext, saved: SavedServer) {
+    if saved.server.provider == "fake" || saved.server.provider == LOCAL_PROVIDER_ID {
+        return;
+    }
+
+    let server_id = saved.server.id.clone();
+    if sync_is_running(&context.sync_in_flight, &server_id) {
+        return;
+    }
+    match context.playlist_refresh_in_flight.lock() {
+        Ok(mut running) => {
+            if !running.insert(server_id.clone()) {
+                return;
+            }
+        }
+        Err(_) => {
+            let _sent = context.events.send(ControllerEvent::Error(
+                "Playlist refresh guard lock was poisoned.".to_string(),
+            ));
+            return;
+        }
+    }
+
+    thread::spawn(move || {
+        let result =
+            refresh_playlists_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
+                .and_then(|()| load_snapshot(&context.store).map(Box::new));
+        if let Ok(mut running) = context.playlist_refresh_in_flight.lock() {
+            running.remove(&server_id);
+        }
+        match result {
+            Ok(snapshot) => {
+                let _sent = context.events.send(ControllerEvent::Snapshot(snapshot));
+            }
+            Err(error) => {
+                warn!(%error, "failed to refresh playlists");
+            }
+        }
+    });
+}
+
 fn home_refresh_completed_event(
-    _target: HomeRefreshTarget,
+    target: HomeRefreshTarget,
     snapshot: Box<LibrarySnapshot>,
 ) -> ControllerEvent {
-    ControllerEvent::HomeSectionsUpdated(snapshot)
+    ControllerEvent::HomeSectionsUpdated {
+        snapshot,
+        include_explore: matches!(target, HomeRefreshTarget::Section(HomeSectionKind::Explore)),
+    }
 }
 
 fn start_explore_prefetch_thread(context: ExplorePrefetchContext, saved: SavedServer) {
@@ -3465,7 +3549,10 @@ fn start_prefetched_home_section_promotion_thread(
             .and_then(|()| load_snapshot(&store).map(Box::new));
         match result {
             Ok(snapshot) => {
-                let _sent = events.send(ControllerEvent::HomeSectionsUpdated(snapshot));
+                let _sent = events.send(ControllerEvent::HomeSectionsUpdated {
+                    snapshot,
+                    include_explore: false,
+                });
             }
             Err(error) => {
                 warn!(%error, "failed to promote prefetched home section");
@@ -3496,6 +3583,20 @@ fn refresh_home_sections_without_explore_for_saved(
 ) -> Result<(), String> {
     let provider = provider_for_saved(store, runtime, secrets, saved)?;
     runtime.block_on(refresh_home_sections_without_explore(
+        store,
+        &saved.server.id,
+        provider.as_music_provider(),
+    ))
+}
+
+fn refresh_playlists_for_saved(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedServer,
+) -> Result<(), String> {
+    let provider = provider_for_saved(store, runtime, secrets, saved)?;
+    runtime.block_on(refresh_playlist_pages(
         store,
         &saved.server.id,
         provider.as_music_provider(),
@@ -3940,6 +4041,49 @@ async fn sync_playlist_pages(
         let item_count = page.items.len();
         offset += item_count;
         if sync_page_finished(item_count, page.total, offset) {
+            return Ok(());
+        }
+    }
+}
+
+async fn refresh_playlist_pages(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &(impl MusicProvider + ?Sized),
+) -> Result<(), String> {
+    let generation =
+        store.with_store(|store| store.sync_state(server_id).map(|state| state.generation))?;
+    let mut playlist_ids = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = provider
+            .playlists(PagedRequest::new(offset, PAGE_SIZE))
+            .await
+            .map_err(|error| error.to_string())?;
+        for playlist in &page.items {
+            playlist_ids.push(playlist.id.clone());
+        }
+        store.with_store(|store| store.upsert_playlists(server_id, &page.items, generation))?;
+        for playlist in &page.items {
+            let detail = provider
+                .playlist_detail(&playlist.id)
+                .await
+                .map_err(|error| error.to_string())?;
+            store.with_store(|store| {
+                store.upsert_tracks(server_id, &detail.tracks, generation)?;
+                store.upsert_playlist_entries(
+                    server_id,
+                    &detail.playlist.id,
+                    &detail.entries,
+                    generation,
+                )?;
+                Ok(())
+            })?;
+        }
+        let item_count = page.items.len();
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            store.with_store(|store| store.prune_playlists_except(server_id, &playlist_ids))?;
             return Ok(());
         }
     }
@@ -5585,13 +5729,14 @@ mod tests {
         home_refresh_completed_event, load_settings_from_store, load_snapshot,
         playback_snapshot_from_queue, prefetch_home_section, promote_prefetched_home_section,
         refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
-        restore_queue, seek_position_is_stale, sync_page_finished, sync_provider,
+        refresh_playlist_pages, restore_queue, seek_position_is_stale, sync_page_finished,
+        sync_provider,
     };
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
         AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
-        LibrarySourceSelection, LocalLibraryFolder, PlaybackSettings, PlaylistId, QueueEngine,
-        RepeatMode, ServerId, ServerIdentity, ThemePreference, Track, TrackId,
+        LibrarySourceSelection, LocalLibraryFolder, PlaybackSettings, Playlist, PlaylistId,
+        QueueEngine, RepeatMode, ServerId, ServerIdentity, ThemePreference, Track, TrackId,
     };
     use rufin_playback::{
         PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
@@ -5599,6 +5744,7 @@ mod tests {
     };
     use rufin_provider::{
         FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PlayedFilter,
+        PlaylistEntry,
     };
     use rufin_provider_local::LOCAL_PROVIDER_ID;
     use rufin_secrets::{MemorySecretStore, SecretStore};
@@ -6111,6 +6257,95 @@ mod tests {
     }
 
     #[test]
+    fn playlist_refresh_replaces_cached_list_without_full_sync() {
+        let runtime = Runtime::new().expect("runtime");
+        let store = StoreHandle::open_memory().expect("memory store");
+        let provider = FakeProvider::new(FakeScale::Small);
+        let saved = SavedServer {
+            server: provider.identity().server.clone(),
+            user_id: "fake-user".to_string(),
+            username: "fake".to_string(),
+            trust_invalid_cert: false,
+        };
+        let stale_track = runtime
+            .block_on(provider.tracks(PagedRequest::new(0, 1)))
+            .expect("stale track page")
+            .items
+            .into_iter()
+            .next()
+            .expect("stale track");
+        let stale_playlist = Playlist {
+            id: PlaylistId::new("fake:playlist:stale"),
+            name: "Old Playlist".to_string(),
+            track_count: 1,
+            duration_seconds: stale_track.duration_seconds,
+            image_ref: stale_track.image_ref.clone(),
+        };
+        let stale_entry = PlaylistEntry {
+            entry_id: "old-playlist-entry".to_string(),
+            track: stale_track.clone(),
+        };
+
+        store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                store.upsert_tracks(&saved.server.id, std::slice::from_ref(&stale_track), 0)?;
+                store.upsert_playlists(
+                    &saved.server.id,
+                    std::slice::from_ref(&stale_playlist),
+                    0,
+                )?;
+                store.upsert_playlist_entries(
+                    &saved.server.id,
+                    &stale_playlist.id,
+                    std::slice::from_ref(&stale_entry),
+                    0,
+                )?;
+                Ok(())
+            })
+            .expect("seed stale playlists");
+
+        let before = store
+            .with_store(|store| store.load_playlists(&saved.server.id, 0, 10))
+            .expect("load stale playlists");
+        assert_eq!(before.total, 1);
+        assert_eq!(before.items[0].id, stale_playlist.id);
+
+        runtime
+            .block_on(refresh_playlist_pages(&store, &saved.server.id, &provider))
+            .expect("refresh playlists");
+
+        let after = store
+            .with_store(|store| store.load_playlists(&saved.server.id, 0, 10))
+            .expect("load refreshed playlists");
+        let detail = store
+            .with_store(|store| store.load_playlist_detail(&saved.server.id, &PlaylistId::fake(1)))
+            .expect("load playlist detail")
+            .expect("playlist detail");
+        let sync_state = store
+            .with_store(|store| store.sync_state(&saved.server.id))
+            .expect("sync state");
+
+        assert!(after.total > 1);
+        assert!(
+            !after
+                .items
+                .iter()
+                .any(|playlist| playlist.id == stale_playlist.id)
+        );
+        assert!(
+            after
+                .items
+                .iter()
+                .any(|playlist| playlist.id == PlaylistId::fake(1))
+        );
+        assert!(!detail.entries.is_empty());
+        assert_eq!(sync_state.generation, 0);
+        assert_eq!(sync_state.status, "idle");
+    }
+
+    #[test]
     fn home_section_refresh_replaces_only_selected_section() {
         let runtime = Runtime::new().expect("runtime");
         let store = StoreHandle::open_memory().expect("memory store");
@@ -6194,7 +6429,26 @@ mod tests {
             Box::new(LibrarySnapshot::first_run()),
         );
 
-        assert!(matches!(event, ControllerEvent::HomeSectionsUpdated(_)));
+        assert!(matches!(
+            event,
+            ControllerEvent::HomeSectionsUpdated {
+                include_explore: false,
+                ..
+            }
+        ));
+
+        let event = home_refresh_completed_event(
+            super::HomeRefreshTarget::Section(HomeSectionKind::Explore),
+            Box::new(LibrarySnapshot::first_run()),
+        );
+
+        assert!(matches!(
+            event,
+            ControllerEvent::HomeSectionsUpdated {
+                include_explore: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -7983,6 +8237,7 @@ mod tests {
             events,
             sync_in_flight: Arc::new(Mutex::new(HashSet::new())),
             home_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            playlist_refresh_in_flight: Arc::new(Mutex::new(HashSet::new())),
             explore_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
             external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -8078,7 +8333,7 @@ mod tests {
                 .expect("controller event")
             {
                 ControllerEvent::Snapshot(snapshot)
-                | ControllerEvent::HomeSectionsUpdated(snapshot) => return *snapshot,
+                | ControllerEvent::HomeSectionsUpdated { snapshot, .. } => return *snapshot,
                 ControllerEvent::Queue(_)
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Playback(_)
@@ -8110,7 +8365,7 @@ mod tests {
                     snapshot,
                 } => return (item_id, favorite, *snapshot),
                 ControllerEvent::Snapshot(_)
-                | ControllerEvent::HomeSectionsUpdated(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Lyrics(_)
@@ -8135,7 +8390,7 @@ mod tests {
             {
                 ControllerEvent::LoginStatus(status) => return status,
                 ControllerEvent::Snapshot(_)
-                | ControllerEvent::HomeSectionsUpdated(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -8160,7 +8415,7 @@ mod tests {
             {
                 ControllerEvent::Queue(queue) => return *queue,
                 ControllerEvent::Snapshot(_)
-                | ControllerEvent::HomeSectionsUpdated(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::LoginStatus(_)
@@ -8207,7 +8462,7 @@ mod tests {
             {
                 ControllerEvent::CoverReady { key, path } if key == expected_key => return path,
                 ControllerEvent::Snapshot(_)
-                | ControllerEvent::HomeSectionsUpdated(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -8233,7 +8488,7 @@ mod tests {
             {
                 ControllerEvent::Lyrics(lyrics) => return *lyrics,
                 ControllerEvent::Snapshot(_)
-                | ControllerEvent::HomeSectionsUpdated(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
@@ -8297,7 +8552,7 @@ mod tests {
                     | ControllerEvent::ServerDiscovery { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
-                    | ControllerEvent::HomeSectionsUpdated(_)
+                    | ControllerEvent::HomeSectionsUpdated { .. }
                     | ControllerEvent::FavoriteChanged { .. }
                     | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -8335,7 +8590,7 @@ mod tests {
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
-                | ControllerEvent::HomeSectionsUpdated(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -8366,7 +8621,7 @@ mod tests {
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. } => {}
                 ControllerEvent::Snapshot(_)
-                | ControllerEvent::HomeSectionsUpdated(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -8407,7 +8662,7 @@ mod tests {
                     | ControllerEvent::ServerDiscovery { .. }
                     | ControllerEvent::CoverReady { .. } => {}
                     ControllerEvent::Snapshot(_)
-                    | ControllerEvent::HomeSectionsUpdated(_)
+                    | ControllerEvent::HomeSectionsUpdated { .. }
                     | ControllerEvent::FavoriteChanged { .. }
                     | ControllerEvent::LoginStatus(_) => {}
                     ControllerEvent::Error(error) => panic!("controller error: {error}"),
