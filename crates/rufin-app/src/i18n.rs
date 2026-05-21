@@ -262,6 +262,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Play Now");
     let _ = tr("Play next");
     let _ = tr("Play Next");
+    let _ = tr("Play Later");
+    let _ = tr("Go to Artist");
     let _ = tr("Add to queue");
     let _ = tr("Title");
     let _ = tr("Title (merged)");

@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
-    HomeSectionKind, LibrarySourceSelection, LocalLibraryFolder, MusicFolder, MusicFolderId,
-    PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot,
-    RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+    HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, MusicFolder,
+    MusicFolderId, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
+    QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -53,12 +53,11 @@ const PAGE_SIZE: usize = 500;
 const SNAPSHOT_GRID_LIMIT: usize = 500;
 const SNAPSHOT_TRACK_LIMIT: usize = 25_000;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
+const GROUPED_COVER_REF_LIMIT: usize = 4;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
-const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(900);
-const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
 const DATABASE_FILE_NAME: &str = "rufin.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
@@ -266,7 +265,6 @@ pub struct AppController {
     queue: Arc<Mutex<Option<QueueEngine>>>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
-    pending_seek: Arc<Mutex<Option<PendingSeek>>>,
     auto_dj_enabled: Arc<Mutex<bool>>,
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
@@ -324,12 +322,6 @@ struct ExplorePrefetchContext {
 enum HomeRefreshTarget {
     WithoutExplore,
     Section(HomeSectionKind),
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PendingSeek {
-    target_millis: u64,
-    expires_at: Instant,
 }
 
 #[derive(Clone)]
@@ -509,13 +501,21 @@ impl AppController {
             .with_store(|store| store.load_artist_detail(&saved.server.id, artist_id))
             .map(|detail| {
                 detail.map(|mut detail| {
-                    external_metadata::normalize_artist(&mut detail.artist, &settings);
-                    external_metadata::normalize_albums(&mut detail.albums, &settings);
-                    external_metadata::normalize_albums(&mut detail.appears_on, &settings);
-                    external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+                    normalize_artist_detail_image_refs(&mut detail, &settings);
                     detail
                 })
             })
+    }
+
+    pub fn cached_playlist_cover_refs(
+        &self,
+        playlist_id: &PlaylistId,
+    ) -> Result<Vec<ImageRef>, String> {
+        self.cached_playlist_detail(playlist_id).map(|detail| {
+            detail
+                .map(|detail| track_cover_refs_for_items(&detail.tracks))
+                .unwrap_or_default()
+        })
     }
 
     pub fn cached_playlist_detail(
@@ -771,7 +771,6 @@ impl AppController {
                 queue: Arc::new(Mutex::new(queue)),
                 playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
                 playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
-                pending_seek: Arc::new(Mutex::new(None)),
                 auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
                 last_progress_snapshot: Arc::new(Mutex::new(None)),
                 last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -819,7 +818,6 @@ impl AppController {
             queue: Arc::new(Mutex::new(queue)),
             playback: Arc::new(Mutex::new(playback_backend(false))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
-            pending_seek: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -872,7 +870,6 @@ impl AppController {
                 muted: settings.playback.muted,
                 ..PlaybackSnapshot::default()
             })),
-            pending_seek: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -1192,6 +1189,27 @@ impl AppController {
         self.persist_and_emit_queue();
     }
 
+    pub fn play_last(&self, tracks: Vec<Track>) {
+        if tracks.is_empty() {
+            let _sent = self.events.send(ControllerEvent::Error(
+                "No tracks are available to add to the queue.".to_string(),
+            ));
+            return;
+        }
+
+        let result = self.with_queue_mut(|queue| {
+            for track in &tracks {
+                queue.append(track);
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.persist_and_emit_queue();
+    }
+
     pub fn remove_from_queue(&self, entry_id: QueueEntryId) {
         let mut removed_current = false;
         let mut has_current_after_remove = false;
@@ -1444,7 +1462,6 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        self.remember_pending_seek(millis);
         let queue_snapshot = self.queue_snapshot();
         if let Some(snapshot) = &queue_snapshot {
             self.persist_queue_snapshot(snapshot);
@@ -1533,9 +1550,6 @@ impl AppController {
                     });
                 }
                 PlaybackEvent::PositionChanged { seconds, millis } => {
-                    if self.should_ignore_position_after_seek(millis) {
-                        continue;
-                    }
                     let _result = self.with_queue_mut(|queue| {
                         queue.set_progress_seconds(seconds);
                         Ok(())
@@ -2971,32 +2985,6 @@ impl AppController {
         }
     }
 
-    fn remember_pending_seek(&self, target_millis: u64) {
-        if let Ok(mut pending_seek) = self.pending_seek.lock() {
-            *pending_seek = Some(PendingSeek {
-                target_millis,
-                expires_at: Instant::now() + SEEK_SETTLE_WINDOW,
-            });
-        }
-    }
-
-    fn should_ignore_position_after_seek(&self, millis: u64) -> bool {
-        let now = Instant::now();
-        let Ok(mut pending_seek) = self.pending_seek.lock() else {
-            return false;
-        };
-        let Some(pending) = *pending_seek else {
-            return false;
-        };
-
-        if now >= pending.expires_at {
-            *pending_seek = None;
-            return false;
-        }
-
-        seek_position_is_stale(pending, millis, now)
-    }
-
     fn sync_playback_snapshot_from_queue(&self) {
         let queue = self.queue.lock().ok();
         let queue = queue.as_ref().and_then(|queue| queue.as_ref());
@@ -4419,6 +4407,62 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     })
 }
 
+pub(crate) fn grouped_cover_refs_for_items(albums: &[Album], tracks: &[Track]) -> Vec<ImageRef> {
+    let mut image_refs = Vec::new();
+    for album in albums {
+        push_unique_cover_ref(&mut image_refs, album.image_ref.as_ref());
+    }
+    for track in tracks {
+        push_unique_cover_ref(&mut image_refs, track.image_ref.as_ref());
+    }
+    image_refs
+}
+
+pub(crate) fn track_cover_refs_for_items(tracks: &[Track]) -> Vec<ImageRef> {
+    let mut image_refs = Vec::new();
+    for track in tracks {
+        push_unique_cover_ref(&mut image_refs, track.image_ref.as_ref());
+    }
+    image_refs
+}
+
+fn normalize_artist_detail_image_refs(detail: &mut CachedArtistDetail, settings: &AppSettings) {
+    external_metadata::normalize_artist(&mut detail.artist, settings);
+    external_metadata::normalize_albums(&mut detail.albums, settings);
+    external_metadata::normalize_albums(&mut detail.appears_on, settings);
+    external_metadata::normalize_tracks(&mut detail.tracks, settings);
+    if detail.artist.image_ref.is_none() {
+        detail.artist.image_ref =
+            artist_fallback_image_ref(&detail.albums, &detail.appears_on, &detail.tracks);
+    }
+    external_metadata::normalize_artist(&mut detail.artist, settings);
+}
+
+fn artist_fallback_image_ref(
+    albums: &[Album],
+    appears_on: &[Album],
+    tracks: &[Track],
+) -> Option<ImageRef> {
+    albums
+        .iter()
+        .chain(appears_on.iter())
+        .filter_map(|album| album.image_ref.clone())
+        .next()
+        .or_else(|| tracks.iter().find_map(|track| track.image_ref.clone()))
+}
+
+fn push_unique_cover_ref(image_refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
+    if image_refs.len() >= GROUPED_COVER_REF_LIMIT {
+        return;
+    }
+    let Some(image_ref) = image_ref else {
+        return;
+    };
+    if !image_refs.iter().any(|existing| existing == image_ref) {
+        image_refs.push(image_ref.clone());
+    }
+}
+
 fn sync_status_text(state: &SyncState) -> String {
     match state.status.as_str() {
         "running" => "Syncing library...".to_string(),
@@ -4724,16 +4768,6 @@ fn queue_current_matches(
         .ok()
         .and_then(|queue| queue.as_ref().and_then(|queue| queue.current().cloned()))
         .is_some_and(|entry| entry.id == *current_entry_id)
-}
-
-fn seek_position_is_stale(pending: PendingSeek, millis: u64, now: Instant) -> bool {
-    now < pending.expires_at && !seek_position_matches_target(pending.target_millis, millis)
-}
-
-fn seek_position_matches_target(target_millis: u64, millis: u64) -> bool {
-    let lower = target_millis.saturating_sub(SEEK_POSITION_TOLERANCE_MILLIS);
-    let upper = target_millis.saturating_add(SEEK_POSITION_TOLERANCE_MILLIS);
-    (lower..=upper).contains(&millis)
 }
 
 fn shuffle_seed() -> u64 {
@@ -5766,19 +5800,19 @@ mod tests {
 
     use super::{
         AppController, ControllerEvent, DATABASE_FILE_NAME, LOCAL_SOURCE_SERVER_ID,
-        LibrarySnapshot, PendingSeek, RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME,
+        LibrarySnapshot, RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME,
         SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle, auto_dj_candidates,
         home_refresh_completed_event, load_settings_from_store, load_snapshot,
         playback_snapshot_from_queue, prefetch_home_section, promote_prefetched_home_section,
         refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
-        refresh_playlist_pages, restore_queue, seek_position_is_stale, sync_page_finished,
-        sync_provider,
+        refresh_playlist_pages, restore_queue, sync_page_finished, sync_provider,
     };
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
-        AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind, ImageRef,
-        LibrarySourceSelection, LocalLibraryFolder, PlaybackSettings, Playlist, PlaylistId,
-        QueueEngine, RepeatMode, ServerId, ServerIdentity, ThemePreference, Track, TrackId,
+        Album, AlbumId, AppSettings, ArtistCredit, ArtistId, HomeSection, HomeSectionKind,
+        ImageRef, LibrarySourceSelection, LocalLibraryFolder, PlaybackSettings, Playlist,
+        PlaylistId, QueueEngine, RepeatMode, ServerId, ServerIdentity, ThemePreference, Track,
+        TrackId,
     };
     use rufin_playback::{
         PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
@@ -5790,16 +5824,11 @@ mod tests {
     };
     use rufin_provider_local::LOCAL_PROVIDER_ID;
     use rufin_secrets::{MemorySecretStore, SecretStore};
-    use rufin_store::{CoverCacheEntry, SavedServer, ServerLocalAccess};
+    use rufin_store::{CachedArtistDetail, CoverCacheEntry, SavedServer, ServerLocalAccess};
     use rufin_test_support::{FakeProvider, FakeScale};
     use tokio::runtime::Runtime;
 
     use crate::providers::JellyfinLyricsSearch;
-
-    struct StalePositionAfterSeekBackend {
-        stale_millis: u64,
-        events: Vec<PlaybackEvent>,
-    }
 
     struct RecordingPlaybackBackend {
         commands: Arc<Mutex<Vec<PlaybackCommand>>>,
@@ -5844,36 +5873,6 @@ mod tests {
 
         fn drain_events(&mut self) -> Vec<PlaybackEvent> {
             std::mem::take(&mut self.events)
-        }
-    }
-
-    impl StalePositionAfterSeekBackend {
-        fn new(stale_millis: u64) -> Self {
-            Self {
-                stale_millis,
-                events: Vec::new(),
-            }
-        }
-    }
-
-    impl PlaybackBackend for StalePositionAfterSeekBackend {
-        fn send(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
-            if let PlaybackCommand::SeekMillis(millis) = command {
-                self.events.push(position_event_for_test(millis));
-                self.events.push(position_event_for_test(self.stale_millis));
-            }
-            Ok(())
-        }
-
-        fn drain_events(&mut self) -> Vec<PlaybackEvent> {
-            std::mem::take(&mut self.events)
-        }
-    }
-
-    fn position_event_for_test(millis: u64) -> PlaybackEvent {
-        PlaybackEvent::PositionChanged {
-            seconds: (millis / 1_000).min(u64::from(u32::MAX)) as u32,
-            millis,
         }
     }
 
@@ -7055,56 +7054,6 @@ mod tests {
     }
 
     #[test]
-    fn poll_playback_events_ignores_stale_positions_after_seek() {
-        let (controller, events, snapshot, _queue, _player) =
-            AppController::bootstrap(Some(FakeScale::Small));
-        controller.play_now(snapshot.tracks[0].clone());
-        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-        {
-            let mut playback = controller.playback.lock().expect("playback");
-            *playback = Box::new(StalePositionAfterSeekBackend::new(125_000));
-        }
-
-        controller.seek_millis(42_000);
-        assert_eq!(
-            controller
-                .playback_snapshot
-                .lock()
-                .expect("playback snapshot")
-                .position_millis,
-            42_000
-        );
-
-        controller.poll_playback_events();
-
-        assert_eq!(
-            controller
-                .playback_snapshot
-                .lock()
-                .expect("playback snapshot")
-                .position_millis,
-            42_000
-        );
-    }
-
-    #[test]
-    fn pending_seek_rejects_far_positions_only_during_settle_window() {
-        let now = std::time::Instant::now();
-        let pending = PendingSeek {
-            target_millis: 42_000,
-            expires_at: now + super::SEEK_SETTLE_WINDOW,
-        };
-
-        assert!(seek_position_is_stale(pending, 125_000, now));
-        assert!(!seek_position_is_stale(pending, 43_000, now));
-        assert!(!seek_position_is_stale(
-            pending,
-            125_000,
-            pending.expires_at
-        ));
-    }
-
-    #[test]
     fn next_previous_and_clear_keep_queue_and_player_synchronized() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
@@ -7312,6 +7261,29 @@ mod tests {
         assert_eq!(ids[0], first.id);
         assert_eq!(ids[1], second.id);
         assert_eq!(&ids[2..4], expected_random.as_slice());
+    }
+
+    #[test]
+    fn play_last_appends_tracks_without_replacing_current() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let first = snapshot.tracks[0].clone();
+        let second = snapshot.tracks[1].clone();
+        let third = snapshot.tracks[2].clone();
+        let fourth = snapshot.tracks[3].clone();
+
+        controller.play_tracks_now(vec![first.clone(), second.clone()]);
+        let _queue = wait_for_queue(&events).expect("initial queue");
+        controller.play_last(vec![third.clone(), fourth.clone()]);
+
+        let queue = wait_for_queue(&events).expect("append queue");
+        let ids = queue
+            .entries
+            .iter()
+            .map(|entry| entry.track_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(queue.current_index, Some(0));
+        assert_eq!(ids, vec![first.id, second.id, third.id, fourth.id]);
     }
 
     #[test]
@@ -8287,7 +8259,6 @@ mod tests {
                 rufin_playback::FakePlaybackBackend::new(),
             ))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot)),
-            pending_seek: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -8344,12 +8315,117 @@ mod tests {
         }
     }
 
+    #[test]
+    fn grouped_cover_refs_keep_one_unique_cover_full_size() {
+        let cover = test_image_ref(1);
+        let albums = vec![library_album(
+            1,
+            "Example Artist",
+            "Example Album",
+            Some(cover.clone()),
+        )];
+
+        let refs = super::grouped_cover_refs_for_items(&albums, &[]);
+
+        assert_eq!(refs, vec![cover]);
+    }
+
+    #[test]
+    fn grouped_cover_refs_deduplicate_and_limit_to_four() {
+        let first = test_image_ref(1);
+        let second = test_image_ref(2);
+        let third = test_image_ref(3);
+        let fourth = test_image_ref(4);
+        let fifth = test_image_ref(5);
+        let albums = vec![
+            library_album(1, "Example Artist", "First", Some(first.clone())),
+            library_album(2, "Example Artist", "Duplicate", Some(first.clone())),
+            library_album(3, "Example Artist", "Second", Some(second.clone())),
+        ];
+        let mut tracks = vec![
+            library_track(1, None, AlbumId::fake(1), "Example Artist", &[]),
+            library_track(2, None, AlbumId::fake(2), "Example Artist", &[]),
+            library_track(3, None, AlbumId::fake(3), "Example Artist", &[]),
+        ];
+        tracks[0].image_ref = Some(third.clone());
+        tracks[1].image_ref = Some(fourth.clone());
+        tracks[2].image_ref = Some(fifth);
+
+        let refs = super::grouped_cover_refs_for_items(&albums, &tracks);
+
+        assert_eq!(refs, vec![first, second, third, fourth]);
+    }
+
+    #[test]
+    fn artist_detail_fallback_uses_external_album_image_after_normalization() {
+        let mut detail = CachedArtistDetail {
+            artist: rufin_core::Artist {
+                id: ArtistId::fake(1),
+                name: "Example Artist".to_string(),
+                album_count: 1,
+                track_count: 0,
+                favorite: false,
+                last_played: None,
+                play_count: None,
+                user_rating: None,
+                image_ref: None,
+            },
+            albums: vec![library_album(1, "Example Artist", "Example Album", None)],
+            appears_on: Vec::new(),
+            tracks: Vec::new(),
+        };
+        let settings = AppSettings {
+            external_metadata_enabled: true,
+            ..AppSettings::default()
+        };
+
+        super::normalize_artist_detail_image_refs(&mut detail, &settings);
+
+        let image_ref = detail.artist.image_ref.expect("artist fallback image ref");
+        assert!(image_ref.item_id.starts_with("external:album:"));
+        assert!(
+            image_ref
+                .item_id
+                .contains("Example%20Artist:Example%20Album")
+        );
+    }
+
     fn unique_test_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "rufin-{label}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ))
+    }
+
+    fn test_image_ref(number: u32) -> ImageRef {
+        ImageRef::new(
+            format!("jellyfin:album:{number}"),
+            Some(format!("tag-{number}")),
+        )
+    }
+
+    fn library_album(number: u32, artist: &str, title: &str, image_ref: Option<ImageRef>) -> Album {
+        Album {
+            id: AlbumId::fake(number),
+            title: title.to_string(),
+            artist: artist.to_string(),
+            artist_id: Some(ArtistId::fake(number)),
+            album_artist_credits: Vec::new(),
+            artist_credits: Vec::new(),
+            year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            track_count: 1,
+            duration_seconds: 180,
+            favorite: false,
+            color_seed: number,
+            image_ref,
+            genres: Vec::new(),
+        }
     }
 
     fn library_track(

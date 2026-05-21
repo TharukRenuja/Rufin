@@ -18,7 +18,7 @@ use super::{
     append_artists_to_model, append_genres_to_model, append_playlists_to_model,
     append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader,
     favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
-    install_album_context_menu, install_track_context_menu,
+    install_album_context_menu, install_artist_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     replace_playlists_in_model, set_favorite_button_active, stable_seed, text_button,
@@ -1998,23 +1998,41 @@ fn album_detail_cover_tile(shell: &Rc<Shell>, album: &Album, cover_size: i32) ->
         GRID_COVER_SIZE,
     )));
 
-    let (shade, play, favorite) =
-        cards::cover_hover_controls(cover_size, "Play album", album.favorite);
+    let controls = cards::cover_hover_controls(cover_size, "Play album", album.favorite);
     let controller = shell.controller.clone();
     let album_id = album.id.clone();
-    play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
+    controls
+        .play
+        .connect_clicked(move |_| controller.play_album_now(album_id.clone()));
 
-    shell.register_favorite_button(album_favorite_key(&album.id), &favorite);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    controls.play_next.connect_clicked(move |_| {
+        if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+            for track in tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        }
+    });
+
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    controls.play_last.connect_clicked(move |_| {
+        if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+            controller.play_last(tracks);
+        }
+    });
+
+    let favorite = controls.favorite.as_ref().expect("favorite button");
+    shell.register_favorite_button(album_favorite_key(&album.id), favorite);
     let controller = shell.controller.clone();
     let album_id = album.id.clone();
     favorite.connect_clicked(move |button| {
         controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
     });
 
-    overlay.add_overlay(&shade);
-    overlay.add_overlay(&play);
-    overlay.add_overlay(&favorite);
-    cards::connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
     install_album_context_menu(&overlay, shell, album.clone());
     overlay.upcast()
 }
@@ -2193,6 +2211,7 @@ fn artist_card(shell: &Rc<Shell>, artist: &Artist, key: LibraryListKey, size: i3
             card.append(&center_label(&value, "muted"));
         }
     }
+    install_artist_context_menu(&card, shell, artist.clone());
     card.upcast()
 }
 
@@ -2249,8 +2268,9 @@ fn artist_cover_tile(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widg
     artist_button.add_css_class("album-cover-button");
     artist_button.add_css_class("flat");
     cards::constrain_cover_widget(&artist_button, size);
+    let image_ref = artist_cover_image_ref(shell, artist);
     artist_button.set_child(Some(&shell.cover_tile_for(
-        artist.image_ref.as_ref(),
+        image_ref.as_ref(),
         stable_seed(artist.id.as_str()),
         size,
         GRID_COVER_SIZE,
@@ -2261,26 +2281,86 @@ fn artist_cover_tile(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widg
         .connect_clicked(move |_| open_shell.navigate(Route::ArtistDetail(open_artist_id.clone())));
     overlay.set_child(Some(&artist_button));
 
-    let (shade, play, favorite) = cards::cover_hover_controls(size, "Play artist", artist.favorite);
+    let controls = cards::cover_hover_controls(size, "Play artist", artist.favorite);
     let controller = shell.controller.clone();
     let artist_id = artist.id.clone();
-    play.connect_clicked(move |_| {
+    controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
             controller.play_tracks_now(detail.tracks);
         }
     });
-    shell.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
+    let controller = shell.controller.clone();
+    let artist_id = artist.id.clone();
+    controls.play_next.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
+            for track in detail.tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        }
+    });
+    let controller = shell.controller.clone();
+    let artist_id = artist.id.clone();
+    controls.play_last.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
+            controller.play_last(detail.tracks);
+        }
+    });
+    let favorite = controls.favorite.as_ref().expect("favorite button");
+    shell.register_favorite_button(artist_favorite_key(&artist.id), favorite);
     let controller = shell.controller.clone();
     let artist_id = artist.id.clone();
     favorite.connect_clicked(move |button| {
         controller.set_artist_favorite(artist_id.clone(), !favorite_button_is_active(button));
     });
-    overlay.add_overlay(&shade);
-    overlay.add_overlay(&play);
-    overlay.add_overlay(&favorite);
-    cards::connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
 
     overlay.upcast()
+}
+
+fn artist_cover_image_ref(shell: &Rc<Shell>, artist: &Artist) -> Option<ImageRef> {
+    artist.image_ref.clone().or_else(|| {
+        shell
+            .controller
+            .cached_artist_detail(&artist.id)
+            .ok()
+            .flatten()
+            .and_then(|detail| detail.artist.image_ref)
+    })
+}
+
+fn genre_cover_refs(shell: &Rc<Shell>, genre: &Genre) -> Vec<ImageRef> {
+    let library = shell.state.library.borrow();
+    let mut refs = Vec::new();
+    for album in &library.albums {
+        if album.genres.iter().any(|name| name == &genre.name) {
+            push_unique_image_ref(&mut refs, album.image_ref.as_ref());
+            if refs.len() >= 4 {
+                return refs;
+            }
+        }
+    }
+    for track in &library.tracks {
+        if track.genres.iter().any(|name| name == &genre.name) {
+            push_unique_image_ref(&mut refs, track.image_ref.as_ref());
+            if refs.len() >= 4 {
+                return refs;
+            }
+        }
+    }
+    refs
+}
+
+fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
+    if refs.len() >= 4 {
+        return;
+    }
+    let Some(image_ref) = image_ref else {
+        return;
+    };
+    if !refs.iter().any(|existing| existing == image_ref) {
+        refs.push(image_ref.clone());
+    }
 }
 
 fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
@@ -2290,7 +2370,9 @@ fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget 
     genre_button.add_css_class("album-cover-button");
     genre_button.add_css_class("flat");
     cards::constrain_cover_widget(&genre_button, size);
-    genre_button.set_child(Some(&shell.cover_tile_for(
+    let cover_refs = genre_cover_refs(shell, genre);
+    genre_button.set_child(Some(&shell.cover_group_tile_for(
+        cover_refs,
         genre.image_ref.as_ref(),
         stable_seed(genre.id.as_str()),
         size,
@@ -2302,17 +2384,32 @@ fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget 
         .connect_clicked(move |_| open_shell.navigate(Route::GenreDetail(open_genre_id.clone())));
     overlay.set_child(Some(&genre_button));
 
-    let (shade, play) = cards::cover_play_hover_controls(size, "Play genre");
+    let controls = cards::cover_play_hover_controls(size, "Play genre");
     let controller = shell.controller.clone();
     let genre_id = genre.id.clone();
-    play.connect_clicked(move |_| {
+    controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
             controller.play_tracks_now(detail.tracks);
         }
     });
-    overlay.add_overlay(&shade);
-    overlay.add_overlay(&play);
-    cards::connect_cover_hover(&overlay, &shade, &play, None);
+    let controller = shell.controller.clone();
+    let genre_id = genre.id.clone();
+    controls.play_next.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+            for track in detail.tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        }
+    });
+    let controller = shell.controller.clone();
+    let genre_id = genre.id.clone();
+    controls.play_last.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
+            controller.play_last(detail.tracks);
+        }
+    });
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
 
     overlay.upcast()
 }
@@ -2349,20 +2446,18 @@ fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn
 fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => image_column::<Artist, _, _>(
-            shell,
-            "Image",
-            column_width(LibraryField::Image),
-            |artist| artist.image_ref.clone(),
-            |artist| stable_seed(artist.id.as_str()),
-        ),
+        LibraryField::Image => artist_image_column(shell),
         LibraryField::TitleMerged | LibraryField::Title => {
-            expanding_text_column::<Artist, _>("Title", 220, |artist| artist.name.clone())
+            artist_text_column(shell, "Title", 220, true, |artist| artist.name.clone())
         }
         LibraryField::Favorite => artist_favorite_column(shell),
-        _ => text_column::<Artist, _>(field.title(), column_width(field), move |artist| {
-            artist_field(artist, field)
-        }),
+        _ => artist_text_column(
+            shell,
+            field.title(),
+            column_width(field),
+            false,
+            move |artist| artist_field(artist, field),
+        ),
     }
 }
 
@@ -2557,6 +2652,68 @@ where
     factory.connect_unbind(clear_list_item_child);
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
+    column
+}
+
+fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(artist) = item_at_from_item::<Artist>(item) else {
+            return;
+        };
+        let image_ref = artist_cover_image_ref(&shell, &artist);
+        let cover = shell.cover_tile_for(
+            image_ref.as_ref(),
+            stable_seed(artist.id.as_str()),
+            48,
+            THUMB_COVER_SIZE,
+        );
+        install_artist_context_menu(&cover, &shell, artist);
+        item.set_child(Some(&cover));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let column = gtk::ColumnViewColumn::new(Some(&tr("Image")), Some(factory));
+    column.set_fixed_width(column_width(LibraryField::Image));
+    column
+}
+
+fn artist_text_column<F>(
+    shell: &Rc<Shell>,
+    title: &str,
+    width: i32,
+    expand: bool,
+    value: F,
+) -> gtk::ColumnViewColumn
+where
+    F: Fn(&Artist) -> String + 'static,
+{
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    let value = Rc::new(value);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(artist) = item_at_from_item::<Artist>(item) else {
+            return;
+        };
+        let label = gtk::Label::new(Some(&(value)(&artist)));
+        label.set_xalign(0.0);
+        label.set_wrap(false);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_single_line_mode(true);
+        install_artist_context_menu(&label, &shell, artist);
+        item.set_child(Some(&label));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
+    column.set_fixed_width(width);
+    column.set_resizable(true);
+    column.set_expand(expand);
     column
 }
 
@@ -2792,6 +2949,7 @@ fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         };
         let button = favorite_icon_button("Favorite artist");
         set_favorite_button_active(&button, artist.favorite);
+        install_artist_context_menu(&button, &shell, artist.clone());
         let controller = shell.controller.clone();
         button.connect_clicked(move |button| {
             controller.set_artist_favorite(artist.id.clone(), !favorite_button_is_active(button));

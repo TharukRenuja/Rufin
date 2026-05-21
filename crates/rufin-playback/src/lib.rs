@@ -15,6 +15,11 @@ use rufin_core::{
 use thiserror::Error;
 use tracing::{debug, error, instrument, warn};
 
+const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
+const TRACK_START_SETTLE_WINDOW: Duration = Duration::from_millis(10_000);
+const STARTUP_SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(10_000);
+const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlaybackTrack {
     pub id: TrackId,
@@ -395,6 +400,93 @@ struct CrossfadeState {
     item: PreparedPlaybackItem,
 }
 
+#[derive(Clone, Debug)]
+struct PendingSeek {
+    target_millis: u64,
+    expires_at: Instant,
+    logical_state: PlaybackState,
+    kind: PendingSeekKind,
+    retry_on_async_done: bool,
+    resume_after_seek: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingSeekKind {
+    Interactive,
+    Startup,
+    TrackStart,
+}
+
+impl PendingSeek {
+    fn interactive(target_millis: u64, logical_state: PlaybackState, now: Instant) -> Self {
+        Self {
+            target_millis,
+            expires_at: now + SEEK_SETTLE_WINDOW,
+            logical_state,
+            kind: PendingSeekKind::Interactive,
+            retry_on_async_done: false,
+            resume_after_seek: false,
+        }
+    }
+
+    fn startup(target_millis: u64, logical_state: PlaybackState, now: Instant) -> Self {
+        Self {
+            target_millis,
+            expires_at: now + STARTUP_SEEK_SETTLE_WINDOW,
+            logical_state,
+            kind: PendingSeekKind::Startup,
+            retry_on_async_done: true,
+            resume_after_seek: true,
+        }
+    }
+
+    fn track_start(now: Instant) -> Self {
+        Self {
+            target_millis: 0,
+            expires_at: now + TRACK_START_SETTLE_WINDOW,
+            logical_state: PlaybackState::Buffering,
+            kind: PendingSeekKind::TrackStart,
+            retry_on_async_done: false,
+            resume_after_seek: false,
+        }
+    }
+
+    fn accepts_position(&self, millis: u64, now: Instant) -> bool {
+        now >= self.expires_at || seek_position_matches_target(self.target_millis, millis)
+    }
+
+    fn suppresses_state(&self, state: PlaybackState, now: Instant) -> bool {
+        if now >= self.expires_at || state == self.logical_state {
+            return false;
+        }
+
+        match self.kind {
+            PendingSeekKind::Interactive => matches!(
+                state,
+                PlaybackState::Stopped
+                    | PlaybackState::Buffering
+                    | PlaybackState::Paused
+                    | PlaybackState::Playing
+            ),
+            PendingSeekKind::Startup => matches!(
+                state,
+                PlaybackState::Stopped | PlaybackState::Paused | PlaybackState::Playing
+            ),
+            PendingSeekKind::TrackStart => {
+                matches!(state, PlaybackState::Stopped | PlaybackState::Paused)
+            }
+        }
+    }
+
+    fn suppresses_buffering(&self, now: Instant) -> bool {
+        now < self.expires_at
+            && matches!(
+                self.kind,
+                PendingSeekKind::Interactive | PendingSeekKind::Startup
+            )
+    }
+}
+
 #[derive(Debug)]
 struct SharedPlaybackState {
     settings: PlaybackSettings,
@@ -482,12 +574,14 @@ impl PlayerPipeline {
         self.configure_audio(settings)?;
         self.pipeline.set_property("uri", item.stream.uri());
         self.set_output_volume(volume, muted);
+        let startup_state = if start_position_seconds > 0 {
+            gst::State::Paused
+        } else {
+            gst::State::Playing
+        };
         self.pipeline
-            .set_state(gst::State::Playing)
+            .set_state(startup_state)
             .map_err(|error| error.to_string())?;
-        if start_position_seconds > 0 {
-            self.seek_millis(u64::from(start_position_seconds) * 1_000);
-        }
         Ok(())
     }
 
@@ -507,11 +601,13 @@ impl PlayerPipeline {
         let _ = self.pipeline.set_state(gst::State::Null);
     }
 
-    fn seek_millis(&self, millis: u64) {
-        let _ = self.pipeline.seek_simple(
-            gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
-            gst::ClockTime::from_mseconds(millis),
-        );
+    fn seek_millis(&self, millis: u64) -> Result<(), String> {
+        self.pipeline
+            .seek_simple(
+                gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
+                gst::ClockTime::from_mseconds(millis),
+            )
+            .map_err(|error| error.to_string())
     }
 
     fn position(&self) -> Option<gst::ClockTime> {
@@ -529,6 +625,8 @@ struct GstEngine {
     shared: Arc<Mutex<SharedPlaybackState>>,
     events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
     last_position_tick: Instant,
+    state: PlaybackState,
+    pending_seek: Option<PendingSeek>,
 }
 
 impl GstEngine {
@@ -552,6 +650,8 @@ impl GstEngine {
             shared,
             events,
             last_position_tick: Instant::now(),
+            state: PlaybackState::Stopped,
+            pending_seek: None,
         })
     }
 
@@ -596,26 +696,23 @@ impl GstEngine {
                 Ok(())
             }
             PlaybackCommand::Resume => {
+                self.pending_seek = None;
                 self.active_pipeline()
                     .set_state(gst::State::Playing)
                     .map(|_| {
-                        push_event(
-                            &self.events,
-                            PlaybackEvent::StateChanged(PlaybackState::Playing),
-                        )
+                        self.push_state(PlaybackState::Playing);
                     })
             }
             PlaybackCommand::Pause => {
+                self.pending_seek = None;
                 self.active_pipeline()
                     .set_state(gst::State::Paused)
                     .map(|_| {
-                        push_event(
-                            &self.events,
-                            PlaybackEvent::StateChanged(PlaybackState::Paused),
-                        )
+                        self.push_state(PlaybackState::Paused);
                     })
             }
             PlaybackCommand::Stop => {
+                self.pending_seek = None;
                 self.primary.stop();
                 self.secondary.stop();
                 if let Ok(mut shared) = self.shared.lock() {
@@ -626,23 +723,11 @@ impl GstEngine {
                     shared.active = Slot::Primary;
                 }
                 push_event(&self.events, position_event(0));
-                push_event(
-                    &self.events,
-                    PlaybackEvent::StateChanged(PlaybackState::Stopped),
-                );
+                self.push_state(PlaybackState::Stopped);
                 Ok(())
             }
-            PlaybackCommand::Seek(seconds) => {
-                self.active_pipeline()
-                    .seek_millis(u64::from(seconds) * 1_000);
-                push_event(&self.events, position_event(u64::from(seconds) * 1_000));
-                Ok(())
-            }
-            PlaybackCommand::SeekMillis(millis) => {
-                self.active_pipeline().seek_millis(millis);
-                push_event(&self.events, position_event(millis));
-                Ok(())
-            }
+            PlaybackCommand::Seek(seconds) => self.start_seek(u64::from(seconds) * 1_000),
+            PlaybackCommand::SeekMillis(millis) => self.start_seek(millis),
             PlaybackCommand::SetVolume(volume) => {
                 let volume = volume.clamp(0.0, 1.0);
                 let muted = self.set_volume(volume);
@@ -668,6 +753,7 @@ impl GstEngine {
         start_position_seconds: u32,
         mut settings: PlaybackSettings,
     ) -> Result<(), String> {
+        self.pending_seek = None;
         settings.sanitize();
         self.secondary.stop();
         let volume = settings.volume;
@@ -682,12 +768,27 @@ impl GstEngine {
             shared.volume = volume;
             shared.muted = muted;
         }
-        push_event(
-            &self.events,
-            PlaybackEvent::StateChanged(PlaybackState::Buffering),
-        );
+        self.push_state(PlaybackState::Buffering);
         self.primary
-            .play_item(&item, &settings, volume, muted, start_position_seconds)
+            .play_item(&item, &settings, volume, muted, start_position_seconds)?;
+        if start_position_seconds > 0 {
+            self.start_playback_seek(u64::from(start_position_seconds) * 1_000);
+        } else {
+            self.pending_seek = Some(PendingSeek::track_start(Instant::now()));
+        }
+        Ok(())
+    }
+
+    fn start_seek(&mut self, millis: u64) -> Result<(), String> {
+        self.active_pipeline().seek_millis(millis)?;
+        self.pending_seek = Some(PendingSeek::interactive(millis, self.state, Instant::now()));
+        Ok(())
+    }
+
+    fn start_playback_seek(&mut self, millis: u64) {
+        let pending = PendingSeek::startup(millis, self.state, Instant::now());
+        let _ = self.active_pipeline().seek_millis(millis);
+        self.pending_seek = Some(pending);
     }
 
     fn poll_bus(&mut self) {
@@ -711,29 +812,14 @@ impl GstEngine {
                         gst::State::Playing => PlaybackState::Playing,
                         _ => PlaybackState::Buffering,
                     };
-                    push_event(&self.events, PlaybackEvent::StateChanged(playback_state));
+                    self.handle_state_changed(playback_state);
                 }
             }
+            MessageView::AsyncDone(_) if self.is_active_slot(slot) => {
+                self.handle_async_done();
+            }
             MessageView::StreamStart(_) if self.is_active_slot(slot) => {
-                let started = self
-                    .shared
-                    .lock()
-                    .ok()
-                    .and_then(|mut shared| shared.gapless_pending.take())
-                    .map(|item| {
-                        if let Ok(mut shared) = self.shared.lock() {
-                            shared.current = Some(item.clone());
-                        }
-                        item.track
-                    });
-                if let Some(track) = started {
-                    push_event(&self.events, position_event(0));
-                    push_event(
-                        &self.events,
-                        PlaybackEvent::DurationChanged(track.duration_seconds),
-                    );
-                    push_event(&self.events, PlaybackEvent::PreparedTrackStarted(track));
-                }
+                self.handle_stream_start();
             }
             MessageView::DurationChanged(_) if self.is_active_slot(slot) => {
                 if let Some(duration) = self.active_pipeline().duration() {
@@ -744,10 +830,7 @@ impl GstEngine {
                 }
             }
             MessageView::Buffering(buffering) if self.is_active_slot(slot) => {
-                push_event(
-                    &self.events,
-                    PlaybackEvent::Buffering(buffering.percent().min(100) as u8),
-                );
+                self.handle_buffering(buffering.percent().min(100) as u8);
             }
             MessageView::Eos(_) => self.handle_eos(slot),
             MessageView::Error(error_message) => {
@@ -757,6 +840,125 @@ impl GstEngine {
             }
             _ => {}
         }
+    }
+
+    fn handle_stream_start(&mut self) {
+        let started = self.shared.lock().ok().and_then(|mut shared| {
+            let item = shared.gapless_pending.take()?;
+            shared.current = Some(item.clone());
+            Some(item.track)
+        });
+        self.handle_stream_started_track(started);
+    }
+
+    fn handle_stream_started_track(&mut self, started: Option<PlaybackTrack>) {
+        let Some(track) = started else {
+            return;
+        };
+        self.pending_seek = None;
+        push_event(&self.events, position_event(0));
+        push_event(
+            &self.events,
+            PlaybackEvent::DurationChanged(track.duration_seconds),
+        );
+        push_event(&self.events, PlaybackEvent::PreparedTrackStarted(track));
+    }
+
+    fn handle_state_changed(&mut self, state: PlaybackState) {
+        let now = Instant::now();
+        if self
+            .pending_seek
+            .as_ref()
+            .is_some_and(|pending| pending.suppresses_state(state, now))
+        {
+            return;
+        }
+        if self
+            .pending_seek
+            .as_ref()
+            .is_some_and(|pending| now >= pending.expires_at)
+        {
+            self.pending_seek = None;
+        }
+        self.push_state(state);
+    }
+
+    fn handle_buffering(&mut self, percent: u8) {
+        let now = Instant::now();
+        if self
+            .pending_seek
+            .as_ref()
+            .is_some_and(|pending| pending.suppresses_buffering(now))
+        {
+            return;
+        }
+        if self
+            .pending_seek
+            .as_ref()
+            .is_some_and(|pending| now >= pending.expires_at)
+        {
+            self.pending_seek = None;
+        }
+        self.state = PlaybackState::Buffering;
+        push_event(&self.events, PlaybackEvent::Buffering(percent));
+    }
+
+    fn handle_async_done(&mut self) {
+        if self.retry_pending_seek_after_async_done() {
+            return;
+        }
+        if let Some(position) = self.active_pipeline().position() {
+            self.push_position(clock_millis(position));
+        }
+    }
+
+    fn retry_pending_seek_after_async_done(&mut self) -> bool {
+        let Some(pending) = self.pending_seek.as_mut() else {
+            return false;
+        };
+        if !pending.retry_on_async_done {
+            return false;
+        }
+        let now = Instant::now();
+        if now >= pending.expires_at {
+            let resume_after_seek = pending.resume_after_seek;
+            self.pending_seek = None;
+            if resume_after_seek {
+                self.resume_after_startup_seek();
+            }
+            return false;
+        }
+        let target_millis = pending.target_millis;
+        let resume_after_seek = pending.resume_after_seek;
+        pending.retry_on_async_done = false;
+        pending.expires_at = now + STARTUP_SEEK_SETTLE_WINDOW;
+        let seek_result = self.active_pipeline().seek_millis(target_millis);
+        if let Some(pending) = self.pending_seek.as_mut() {
+            if seek_result.is_err() {
+                pending.retry_on_async_done = true;
+            } else {
+                pending.resume_after_seek = false;
+            }
+        }
+        if resume_after_seek {
+            self.resume_after_startup_seek();
+        }
+        true
+    }
+
+    fn resume_after_startup_seek(&mut self) {
+        if self
+            .active_pipeline()
+            .set_state(gst::State::Playing)
+            .is_ok()
+        {
+            self.push_state(PlaybackState::Playing);
+        }
+    }
+
+    fn push_state(&mut self, state: PlaybackState) {
+        self.state = state;
+        push_event(&self.events, PlaybackEvent::StateChanged(state));
     }
 
     fn handle_eos(&mut self, slot: Slot) {
@@ -775,7 +977,7 @@ impl GstEngine {
         if self.last_position_tick.elapsed() >= Duration::from_millis(500) {
             self.last_position_tick = Instant::now();
             if let Some(position) = self.active_pipeline().position() {
-                push_event(&self.events, position_event(clock_millis(position)));
+                self.push_position(clock_millis(position));
             }
             if let Some(duration) = self.active_pipeline().duration() {
                 push_event(
@@ -786,7 +988,25 @@ impl GstEngine {
         }
     }
 
+    fn push_position(&mut self, millis: u64) {
+        let now = Instant::now();
+        if let Some(pending) = self.pending_seek.as_ref() {
+            if !pending.accepts_position(millis, now) {
+                return;
+            }
+            let resume_after_seek = pending.resume_after_seek;
+            self.pending_seek = None;
+            if resume_after_seek {
+                self.resume_after_startup_seek();
+            }
+        }
+        push_event(&self.events, position_event(millis));
+    }
+
     fn maybe_start_crossfade(&mut self) {
+        if self.pending_seek.is_some() {
+            return;
+        }
         let Some(position) = self.active_pipeline().position() else {
             return;
         };
@@ -893,6 +1113,7 @@ impl GstEngine {
     }
 
     fn finish_crossfade(&mut self, crossfade: CrossfadeState) {
+        self.pending_seek = None;
         self.pipeline_for_slot(crossfade.from).stop();
         let (volume, muted) = self.output_state();
         self.pipeline_for_slot(crossfade.to)
@@ -1169,6 +1390,12 @@ fn clock_millis(clock_time: gst::ClockTime) -> u64 {
     clock_time.mseconds()
 }
 
+fn seek_position_matches_target(target_millis: u64, millis: u64) -> bool {
+    let lower = target_millis.saturating_sub(SEEK_POSITION_TOLERANCE_MILLIS);
+    let upper = target_millis.saturating_add(SEEK_POSITION_TOLERANCE_MILLIS);
+    (lower..=upper).contains(&millis)
+}
+
 fn redact_sensitive_uri(uri: &str) -> String {
     let Some((base, query)) = uri.split_once('?') else {
         return uri.to_string();
@@ -1194,10 +1421,15 @@ fn redact_sensitive_uri(uri: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        FakePlaybackBackend, PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState,
-        PlaybackTrack, PreparedPlaybackItem, StreamDescriptor,
+        FakePlaybackBackend, GstEngine, PendingSeek, PlaybackBackend, PlaybackCommand,
+        PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline, PreparedPlaybackItem,
+        SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState, Slot,
+        StreamDescriptor,
     };
     use rufin_core::{PlaybackSettings, PlaybackTransitionMode, TrackId};
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
     #[test]
     fn fake_backend_reports_basic_state_transitions() {
@@ -1287,6 +1519,91 @@ mod tests {
         assert!(!format!("{stream:?}").contains("secret-token"));
     }
 
+    #[test]
+    fn pending_seek_rejects_stale_positions_until_target_or_timeout() {
+        let now = Instant::now();
+        let pending = PendingSeek::interactive(42_000, PlaybackState::Playing, now);
+
+        assert!(!pending.accepts_position(12_000, now));
+        assert!(pending.accepts_position(43_000, now));
+        assert!(pending.accepts_position(12_000, now + SEEK_SETTLE_WINDOW));
+    }
+
+    #[test]
+    fn pending_seek_suppresses_transient_state_changes() {
+        let now = Instant::now();
+        let pending = PendingSeek::interactive(42_000, PlaybackState::Playing, now);
+
+        assert!(pending.suppresses_state(PlaybackState::Paused, now));
+        assert!(pending.suppresses_state(PlaybackState::Buffering, now));
+        assert!(!pending.suppresses_state(PlaybackState::Playing, now));
+        assert!(pending.suppresses_state(PlaybackState::Stopped, now));
+        assert!(!pending.suppresses_state(PlaybackState::Paused, now + SEEK_SETTLE_WINDOW));
+    }
+
+    #[test]
+    fn startup_seek_waits_for_async_done_before_resuming() {
+        let now = Instant::now();
+        let pending = PendingSeek::startup(42_000, PlaybackState::Buffering, now);
+
+        assert!(pending.retry_on_async_done);
+        assert!(pending.resume_after_seek);
+        assert!(pending.suppresses_state(PlaybackState::Paused, now));
+        assert!(pending.suppresses_state(PlaybackState::Stopped, now));
+        assert!(!pending.suppresses_state(PlaybackState::Buffering, now));
+        assert!(pending.suppresses_buffering(now));
+        assert!(!pending.suppresses_state(PlaybackState::Paused, now + STARTUP_SEEK_SETTLE_WINDOW));
+    }
+
+    #[test]
+    fn track_start_rejects_previous_position_and_stopped_state() {
+        let mut engine = test_engine_with_pending_seek(42_000);
+        engine.pending_seek = Some(PendingSeek::track_start(Instant::now()));
+        let events = Arc::clone(&engine.events);
+
+        engine.handle_state_changed(PlaybackState::Stopped);
+        engine.push_position(78_000);
+        assert!(events.lock().expect("events").is_empty());
+
+        engine.handle_state_changed(PlaybackState::Playing);
+        assert!(engine.pending_seek.is_some());
+        engine.push_position(0);
+
+        let events = events.lock().expect("events");
+        assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Playing)));
+        assert!(events.contains(&PlaybackEvent::PositionChanged {
+            seconds: 0,
+            millis: 0
+        }));
+        assert!(!events.contains(&PlaybackEvent::PositionChanged {
+            seconds: 78,
+            millis: 78_000
+        }));
+    }
+
+    #[test]
+    fn ordinary_stream_start_preserves_startup_seek() {
+        let mut engine = test_engine_with_pending_seek(42_000);
+        let events = Arc::clone(&engine.events);
+
+        engine.handle_stream_started_track(None);
+        assert!(engine.pending_seek.is_some());
+        assert!(events.lock().expect("events").is_empty());
+
+        engine
+            .pending_seek
+            .as_mut()
+            .expect("pending seek")
+            .retry_on_async_done = false;
+        engine.handle_stream_started_track(Some(track(2)));
+        assert!(engine.pending_seek.is_none());
+        let events = events.lock().expect("events");
+        assert!(events.contains(&PlaybackEvent::PositionChanged {
+            seconds: 0,
+            millis: 0
+        }));
+    }
+
     fn track(number: u32) -> PlaybackTrack {
         PlaybackTrack {
             id: TrackId::fake(number),
@@ -1295,5 +1612,43 @@ mod tests {
             album: "Album".to_string(),
             duration_seconds: 180,
         }
+    }
+
+    fn test_engine_with_pending_seek(target_millis: u64) -> GstEngine {
+        let shared = Arc::new(Mutex::new(SharedPlaybackState::new()));
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        GstEngine {
+            primary: test_pipeline(
+                Slot::Primary,
+                "rufin-test-player-primary",
+                Arc::clone(&shared),
+                Arc::clone(&events),
+            ),
+            secondary: test_pipeline(
+                Slot::Secondary,
+                "rufin-test-player-secondary",
+                Arc::clone(&shared),
+                Arc::clone(&events),
+            ),
+            shared,
+            events,
+            last_position_tick: Instant::now(),
+            state: PlaybackState::Buffering,
+            pending_seek: Some(PendingSeek::startup(
+                target_millis,
+                PlaybackState::Buffering,
+                Instant::now(),
+            )),
+        }
+    }
+
+    fn test_pipeline(
+        slot: Slot,
+        name: &str,
+        shared: Arc<Mutex<SharedPlaybackState>>,
+        events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
+    ) -> PlayerPipeline {
+        gstreamer::init().expect("gst init");
+        PlayerPipeline::new(slot, name, shared, events).expect("test pipeline")
     }
 }

@@ -11,8 +11,9 @@ use crate::i18n::tr;
 
 use super::cards::{render_home_album_page, render_home_track_page};
 use super::{
-    GRID_COVER_SIZE, HOME_ALBUM_GAP, HomeSectionState, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class, icon_button,
+    GRID_COVER_SIZE, HOME_ALBUM_GAP, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON,
+    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class,
+    icon_button,
 };
 
 fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -169,7 +170,7 @@ impl Shell {
         play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
         actions.append(&play);
 
-        let play_next = icon_button("media-skip-forward-symbolic", "Play next");
+        let play_next = icon_button(PLAY_NEXT_ICON, "Play next");
         play_next.add_css_class("home-showcase-action-button");
         let controller = self.controller.clone();
         let album_id = album.id.clone();
@@ -181,6 +182,17 @@ impl Shell {
             }
         });
         actions.append(&play_next);
+
+        let play_last = icon_button(PLAY_LATER_ICON, "Play Later");
+        play_last.add_css_class("home-showcase-action-button");
+        let controller = self.controller.clone();
+        let album_id = album.id.clone();
+        play_last.connect_clicked(move |_| {
+            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+                controller.play_last(tracks);
+            }
+        });
+        actions.append(&play_last);
         metadata.append(&actions);
 
         body.append(&metadata);

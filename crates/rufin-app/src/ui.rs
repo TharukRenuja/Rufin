@@ -39,9 +39,9 @@ use gtk::glib;
 #[cfg(unix)]
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, FolderPathItem, Genre, HomeSection, HomeSectionKind,
-    ImageRef, LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueEntry, QueueSnapshot,
-    RightSidebarMode, Route, RouteStack, SearchKind, Track, TrackId, TrackSortKey,
+    Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, HomeSection,
+    HomeSectionKind, ImageRef, LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueEntry,
+    QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, Track, TrackId, TrackSortKey,
     TrackTableColumn, TrackTableSettings, format_duration,
 };
 use rufin_playback::PlaybackState;
@@ -52,7 +52,7 @@ use tracing::{debug, info, warn};
 
 use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,
-    PlaybackSnapshot,
+    PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
 };
 use crate::external_metadata;
 use crate::i18n::tr;
@@ -119,6 +119,8 @@ const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 120;
 const PLAYLIST_ENTRY_NUMBER_XALIGN: f32 = 0.35;
 const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;
 const PLAYLIST_ENTRY_ALBUM_MAX_CHARS: i32 = 18;
+pub(super) const PLAY_NEXT_ICON: &str = "view-sort-ascending-symbolic";
+pub(super) const PLAY_LATER_ICON: &str = "view-sort-descending-symbolic";
 const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -155,7 +157,7 @@ struct AppState {
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     discord_presence: RefCell<DiscordPresence>,
     updating_player_controls: Cell<bool>,
-    seeking_player_controls: Cell<bool>,
+    seek_preview_seconds: Cell<Option<u32>>,
     seek_generation: Cell<u64>,
     queue_filter: RefCell<String>,
     lyrics_panel_visible: Cell<bool>,
@@ -386,6 +388,7 @@ impl UiPerfScenario {
 struct GroupedDetailData {
     title: String,
     image_ref: Option<ImageRef>,
+    cover_refs: Vec<ImageRef>,
     seed: u32,
     summary: String,
     tracks: Vec<Track>,
@@ -462,7 +465,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         mpris_player: RefCell::new(None),
         discord_presence: RefCell::new(DiscordPresence::new()),
         updating_player_controls: Cell::new(false),
-        seeking_player_controls: Cell::new(false),
+        seek_preview_seconds: Cell::new(None),
         seek_generation: Cell::new(0),
         queue_filter: RefCell::new(String::new()),
         lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
@@ -1090,6 +1093,19 @@ fn startup_library_cover_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
                 .filter_map(|track| track.image_ref.clone()),
         )
         .collect()
+}
+
+fn unique_cover_refs(image_refs: Vec<ImageRef>) -> Vec<ImageRef> {
+    let mut unique = Vec::new();
+    for image_ref in image_refs {
+        if unique.len() >= 4 {
+            break;
+        }
+        if !unique.iter().any(|existing| existing == &image_ref) {
+            unique.push(image_ref);
+        }
+    }
+    unique
 }
 
 fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
@@ -2326,7 +2342,7 @@ impl Shell {
         play_album.connect_clicked(move |_| controller.play_tracks_now(album_tracks.clone()));
         actions.append(&play_album);
 
-        let play_next = icon_button("media-skip-forward-symbolic", "Play next");
+        let play_next = icon_button(PLAY_NEXT_ICON, "Play next");
         play_next.add_css_class("album-detail-action-button");
         let controller = self.controller.clone();
         let next_tracks = tracks.clone();
@@ -2643,9 +2659,11 @@ impl Shell {
         };
         let seed = stable_seed(detail.genre.id.as_str());
         let summary = format!("{} {}", detail.genre.track_count, tr("tracks"));
+        let cover_refs = grouped_cover_refs_for_items(&detail.albums, &detail.tracks);
         self.grouped_detail_view(GroupedDetailData {
             title: detail.genre.name,
             image_ref: detail.genre.image_ref,
+            cover_refs,
             seed,
             summary,
             tracks: detail.tracks,
@@ -2677,6 +2695,7 @@ impl Shell {
                 .placeholder_view("Playlist", "The selected cached playlist was not found.");
         };
         let seed = stable_seed(detail.playlist.id.as_str());
+        let cover_refs = track_cover_refs_for_items(&detail.tracks);
         let summary = format!(
             "{} {} • {}",
             detail.playlist.track_count,
@@ -2698,7 +2717,8 @@ impl Shell {
         wrapper.set_margin_end(32);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
-        header.append(&self.cover_tile_for(
+        header.append(&self.cover_group_tile_for(
+            cover_refs,
             detail.playlist.image_ref.as_ref(),
             seed,
             160,
@@ -2903,6 +2923,15 @@ impl Shell {
     }
 
     fn grouped_detail_view(self: &Rc<Self>, data: GroupedDetailData) -> gtk::Widget {
+        let GroupedDetailData {
+            title,
+            image_ref,
+            cover_refs,
+            seed,
+            summary,
+            tracks,
+            table_context,
+        } = data;
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
@@ -2916,36 +2945,37 @@ impl Shell {
         wrapper.set_margin_end(32);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
-        header.append(&self.cover_tile_for(
-            data.image_ref.as_ref(),
-            data.seed,
+        header.append(&self.cover_group_tile_for(
+            cover_refs,
+            image_ref.as_ref(),
+            seed,
             160,
             DETAIL_COVER_SIZE,
         ));
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_valign(gtk::Align::Center);
-        let title = gtk::Label::new(Some(&data.title));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        let summary = gtk::Label::new(Some(&data.summary));
-        summary.add_css_class("muted");
-        summary.set_xalign(0.0);
-        metadata.append(&title);
-        metadata.append(&summary);
+        let title_label = gtk::Label::new(Some(&title));
+        title_label.add_css_class("detail-title");
+        title_label.set_xalign(0.0);
+        title_label.set_wrap(true);
+        let summary_label = gtk::Label::new(Some(&summary));
+        summary_label.add_css_class("muted");
+        summary_label.set_xalign(0.0);
+        metadata.append(&title_label);
+        metadata.append(&summary_label);
         header.append(&metadata);
         wrapper.append(&header);
 
-        if data.tracks.is_empty() {
+        if tracks.is_empty() {
             wrapper
                 .append(&self.placeholder_view("Tracks", "No cached tracks are linked here yet."));
         } else {
-            let key = if data.table_context == "genre-detail" {
+            let key = if table_context == "genre-detail" {
                 LibraryListKey::GenreTracks
             } else {
                 LibraryListKey::Tracks
             };
-            wrapper.append(&self.library_tracks_panel(data.tracks, key, data.table_context));
+            wrapper.append(&self.library_tracks_panel(tracks, key, table_context));
         }
         scroller.set_child(Some(&wrapper));
         scroller.upcast()
@@ -3253,8 +3283,20 @@ impl Shell {
         size: i32,
         fetch_size: u32,
     ) -> gtk::Widget {
-        let tile = ArtworkTile::new(size, seed);
+        self.cover_tile_for_dimensions(image_ref, seed, size, size, fetch_size)
+    }
+
+    fn cover_tile_for_dimensions(
+        self: &Rc<Self>,
+        image_ref: Option<&ImageRef>,
+        seed: u32,
+        width: i32,
+        height: i32,
+        fetch_size: u32,
+    ) -> gtk::Widget {
+        let tile = ArtworkTile::new_sized(width, height, seed);
         let widget = tile.widget();
+        let decode_size = width.max(height);
 
         if let Some(image_ref) = image_ref
             && let Some(key) = self.cover_cache_key(image_ref, fetch_size)
@@ -3275,7 +3317,7 @@ impl Shell {
                         &tile_for_map,
                         key.clone(),
                         image_ref.clone(),
-                        size,
+                        decode_size,
                         fetch_size,
                     );
                 });
@@ -3284,6 +3326,73 @@ impl Shell {
             self.record_perf_coverless_tile();
         }
         widget
+    }
+
+    fn cover_group_tile_for(
+        self: &Rc<Self>,
+        image_refs: Vec<ImageRef>,
+        fallback_image_ref: Option<&ImageRef>,
+        seed: u32,
+        size: i32,
+        fetch_size: u32,
+    ) -> gtk::Widget {
+        let image_refs = unique_cover_refs(image_refs);
+        match image_refs.len() {
+            0 => self.cover_tile_for(fallback_image_ref, seed, size, fetch_size),
+            1 => self.cover_tile_for(image_refs.first(), seed, size, fetch_size),
+            _ => {
+                let grid = gtk::Grid::new();
+                grid.add_css_class("cover-tile");
+                grid.add_css_class("card");
+                grid.set_size_request(size, size);
+                grid.set_width_request(size);
+                grid.set_height_request(size);
+                grid.set_row_homogeneous(true);
+                grid.set_column_homogeneous(true);
+                grid.set_hexpand(false);
+                grid.set_vexpand(false);
+                grid.set_halign(gtk::Align::Start);
+                grid.set_valign(gtk::Align::Start);
+
+                let cell_size = (size / 2).max(1);
+                if image_refs.len() == 3 {
+                    let tall = self.cover_tile_for_dimensions(
+                        image_refs.first(),
+                        seed,
+                        cell_size,
+                        size,
+                        fetch_size,
+                    );
+                    let top = self.cover_tile_for(
+                        image_refs.get(1),
+                        seed.wrapping_add(0x9e37_79b9),
+                        cell_size,
+                        fetch_size,
+                    );
+                    let bottom = self.cover_tile_for(
+                        image_refs.get(2),
+                        seed.wrapping_add(0x3c6e_f372),
+                        cell_size,
+                        fetch_size,
+                    );
+                    grid.attach(&tall, 0, 0, 1, 2);
+                    grid.attach(&top, 1, 0, 1, 1);
+                    grid.attach(&bottom, 1, 1, 1, 1);
+                } else {
+                    for index in 0..4 {
+                        let image_ref = image_refs.get(index % image_refs.len());
+                        let child = self.cover_tile_for(
+                            image_ref,
+                            seed.wrapping_add((index as u32).wrapping_mul(0x9e37_79b9)),
+                            cell_size,
+                            fetch_size,
+                        );
+                        grid.attach(&child, (index % 2) as i32, (index / 2) as i32, 1, 1);
+                    }
+                }
+                grid.upcast()
+            }
+        }
     }
 
     fn request_cover_for_tile(
@@ -4378,6 +4487,10 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         || previous_player.position_millis != next_snapshot.position_millis;
                     let auto_dj_enabled = next_snapshot.auto_dj_enabled;
                     *shell.state.player.borrow_mut() = next_snapshot.clone();
+                    shell.maybe_clear_player_seek_preview(
+                        &next_snapshot,
+                        previous_track != next_track,
+                    );
                     shell.sync_auto_dj_setting_from_playback(auto_dj_enabled);
                     if previous_track != next_track {
                         *shell.state.lyrics.borrow_mut() = None;
@@ -5543,6 +5656,49 @@ fn install_album_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>,
     target.add_controller(key);
 }
 
+fn install_artist_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>, artist: Artist) {
+    let target = target.as_ref();
+    let target_weak = target.downgrade();
+    let click_shell = Rc::clone(shell);
+    let click_artist = artist.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.connect_pressed(move |_, _, x, y| {
+        let Some(target) = target_weak.upgrade() else {
+            return;
+        };
+        present_artist_context_menu(
+            &target,
+            &click_shell,
+            context_artist(&click_shell, &click_artist),
+            Some((x, y)),
+        );
+    });
+    target.add_controller(click);
+
+    let target_weak = target.downgrade();
+    let key_shell = Rc::clone(shell);
+    let key_artist = artist;
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !opens_menu {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(target) = target_weak.upgrade() {
+            present_artist_context_menu(
+                &target,
+                &key_shell,
+                context_artist(&key_shell, &key_artist),
+                None,
+            );
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(key);
+}
+
 fn install_current_track_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>) {
     let target = target.as_ref();
     let target_weak = target.downgrade();
@@ -5585,8 +5741,13 @@ fn present_track_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let menu = gio::Menu::new();
-    menu.append(Some(&tr("Play")), Some("track.play"));
-    menu.append(Some(&tr("Play Next")), Some("track.play-next"));
+    menu.append_item(&menu_item(
+        "Play",
+        "track.play",
+        "media-playback-start-symbolic",
+    ));
+    menu.append_item(&menu_item("Play Next", "track.play-next", PLAY_NEXT_ICON));
+    menu.append_item(&menu_item("Play Later", "track.play-last", PLAY_LATER_ICON));
 
     let playlists = context_menu_playlists(shell);
     if !playlists.is_empty() {
@@ -5642,6 +5803,18 @@ fn present_track_context_menu(
         controller.play_next(action_track.clone());
     });
     actions.add_action(&play_next);
+
+    let play_last = gio::SimpleAction::new("play-last", None);
+    let controller = shell.controller.clone();
+    let action_track = track.clone();
+    let action_popover = popover.downgrade();
+    play_last.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        controller.play_last(vec![action_track.clone()]);
+    });
+    actions.add_action(&play_last);
 
     for (index, playlist) in playlists.into_iter().enumerate() {
         let action_name = format!("add-to-playlist-{index}");
@@ -5701,8 +5874,13 @@ fn present_album_context_menu(
     position: Option<(f64, f64)>,
 ) {
     let menu = gio::Menu::new();
-    menu.append(Some(&tr("Play")), Some("album.play"));
-    menu.append(Some(&tr("Play Next")), Some("album.play-next"));
+    menu.append_item(&menu_item(
+        "Play",
+        "album.play",
+        "media-playback-start-symbolic",
+    ));
+    menu.append_item(&menu_item("Play Next", "album.play-next", PLAY_NEXT_ICON));
+    menu.append_item(&menu_item("Play Later", "album.play-last", PLAY_LATER_ICON));
 
     let playlists = context_menu_playlists(shell);
     if !playlists.is_empty() {
@@ -5763,6 +5941,20 @@ fn present_album_context_menu(
     });
     actions.add_action(&play_next);
 
+    let play_last = gio::SimpleAction::new("play-last", None);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    let action_popover = popover.downgrade();
+    play_last.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+            controller.play_last(tracks);
+        }
+    });
+    actions.add_action(&play_last);
+
     for (index, playlist) in playlists.into_iter().enumerate() {
         let action_name = format!("add-to-playlist-{index}");
         let add = gio::SimpleAction::new(&action_name, None);
@@ -5816,6 +6008,171 @@ fn present_album_context_menu(
     popover.popup();
 }
 
+fn present_artist_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    artist: Artist,
+    position: Option<(f64, f64)>,
+) {
+    let menu = gio::Menu::new();
+    menu.append_item(&menu_item(
+        "Play",
+        "artist.play",
+        "media-playback-start-symbolic",
+    ));
+    menu.append_item(&menu_item("Play Next", "artist.play-next", PLAY_NEXT_ICON));
+    menu.append_item(&menu_item(
+        "Play Later",
+        "artist.play-last",
+        PLAY_LATER_ICON,
+    ));
+
+    let playlists = context_menu_playlists(shell);
+    if !playlists.is_empty() {
+        let playlist_menu = gio::Menu::new();
+        for (index, playlist) in playlists.iter().enumerate() {
+            playlist_menu.append(
+                Some(&playlist.name),
+                Some(&format!("artist.add-to-playlist-{index}")),
+            );
+        }
+        menu.append_submenu(Some(&tr("Add to Playlist")), &playlist_menu);
+    }
+
+    menu.append(
+        Some(&tr(if artist.favorite {
+            "Remove from Favorites"
+        } else {
+            "Add to Favorites"
+        })),
+        Some("artist.favorite"),
+    );
+    menu.append(Some(&tr("Go to Artist")), Some("artist.go-artist"));
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.add_css_class("artist-context-menu");
+    popover.set_parent(target);
+    if let Some((x, y)) = position {
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    }
+
+    let actions = gio::SimpleActionGroup::new();
+
+    let play = gio::SimpleAction::new("play", None);
+    let controller = shell.controller.clone();
+    let artist_id = artist.id.clone();
+    let action_popover = popover.downgrade();
+    play.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
+            controller.play_tracks_now(tracks);
+        }
+    });
+    actions.add_action(&play);
+
+    let play_next = gio::SimpleAction::new("play-next", None);
+    let controller = shell.controller.clone();
+    let artist_id = artist.id.clone();
+    let action_popover = popover.downgrade();
+    play_next.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
+            for track in tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        }
+    });
+    actions.add_action(&play_next);
+
+    let play_last = gio::SimpleAction::new("play-last", None);
+    let controller = shell.controller.clone();
+    let artist_id = artist.id.clone();
+    let action_popover = popover.downgrade();
+    play_last.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
+            controller.play_last(tracks);
+        }
+    });
+    actions.add_action(&play_last);
+
+    for (index, playlist) in playlists.into_iter().enumerate() {
+        let action_name = format!("add-to-playlist-{index}");
+        let add = gio::SimpleAction::new(&action_name, None);
+        let controller = shell.controller.clone();
+        let playlist_id = playlist.id;
+        let artist_id = artist.id.clone();
+        let action_popover = popover.downgrade();
+        add.connect_activate(move |_, _| {
+            if let Some(popover) = action_popover.upgrade() {
+                popover.popdown();
+            }
+            if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
+                controller.add_tracks_to_playlist(playlist_id.clone(), tracks);
+            }
+        });
+        actions.add_action(&add);
+    }
+
+    let favorite_action = gio::SimpleAction::new("favorite", None);
+    let controller = shell.controller.clone();
+    let artist_id = artist.id.clone();
+    let favorite = !artist.favorite;
+    let action_popover = popover.downgrade();
+    favorite_action.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        controller.set_artist_favorite(artist_id.clone(), favorite);
+    });
+    actions.add_action(&favorite_action);
+
+    let go_artist = gio::SimpleAction::new("go-artist", None);
+    let shell = Rc::clone(shell);
+    let artist_id = artist.id.clone();
+    let action_popover = popover.downgrade();
+    go_artist.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        shell.navigate(Route::ArtistDetail(artist_id.clone()));
+    });
+    actions.add_action(&go_artist);
+
+    target.insert_action_group("artist", Some(&actions));
+    popover.connect_closed(move |popover| {
+        let popover = popover.clone();
+        glib::idle_add_local_once(move || {
+            popover.unparent();
+        });
+    });
+    popover.popup();
+}
+
+fn artist_tracks_for_context(
+    controller: &AppController,
+    artist_id: &ArtistId,
+) -> Option<Vec<Track>> {
+    controller
+        .cached_artist_detail(artist_id)
+        .ok()
+        .flatten()
+        .map(|detail| detail.tracks)
+        .filter(|tracks| !tracks.is_empty())
+}
+
+fn menu_item(label: &str, action: &str, icon_name: &str) -> gio::MenuItem {
+    let item = gio::MenuItem::new(Some(&tr(label)), Some(action));
+    item.set_icon(&gio::ThemedIcon::new(icon_name));
+    item
+}
+
 fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
     shell
         .controller
@@ -5861,6 +6218,14 @@ fn context_album(shell: &Rc<Shell>, fallback: &Album) -> Album {
     .unwrap_or_else(|| fallback.clone())
 }
 
+fn context_artist(shell: &Rc<Shell>, fallback: &Artist) -> Artist {
+    {
+        let library = shell.state.library.borrow();
+        library_artist(&library, &fallback.id)
+    }
+    .unwrap_or_else(|| fallback.clone())
+}
+
 fn library_album(library: &LibrarySnapshot, album_id: &AlbumId) -> Option<Album> {
     library
         .albums
@@ -5873,6 +6238,16 @@ fn library_album(library: &LibrarySnapshot, album_id: &AlbumId) -> Option<Album>
                 .flat_map(|section| section.albums.iter()),
         )
         .find(|album| album.id == *album_id)
+        .cloned()
+}
+
+fn library_artist(library: &LibrarySnapshot, artist_id: &ArtistId) -> Option<Artist> {
+    library
+        .artists
+        .iter()
+        .chain(library.album_artists.iter())
+        .chain(library.search.artists.iter())
+        .find(|artist| artist.id == *artist_id)
         .cloned()
 }
 
@@ -5989,14 +6364,18 @@ fn add_dynamic_link_hover(target: &gtk::Widget, label: &gtk::Label) {
 
 impl ArtworkTile {
     fn new(size: i32, seed: u32) -> Self {
+        Self::new_sized(size, size, seed)
+    }
+
+    fn new_sized(width: i32, height: i32, seed: u32) -> Self {
         let area = gtk::DrawingArea::new();
         area.add_css_class("cover-tile");
         area.add_css_class("card");
-        area.set_content_width(size);
-        area.set_content_height(size);
-        area.set_width_request(size);
-        area.set_height_request(size);
-        area.set_size_request(size, size);
+        area.set_content_width(width);
+        area.set_content_height(height);
+        area.set_width_request(width);
+        area.set_height_request(height);
+        area.set_size_request(width, height);
         area.set_hexpand(false);
         area.set_vexpand(false);
         area.set_halign(gtk::Align::Start);
@@ -6018,7 +6397,7 @@ impl ArtworkTile {
 
         Self {
             area,
-            size,
+            size: width.max(height),
             seed,
             pixbuf,
             generation,

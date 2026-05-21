@@ -180,12 +180,12 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             route: Route::Tracks,
         },
         SidebarRouteItem::Artists => NavItem {
-            icon_name: "system-users-symbolic",
+            icon_name: "avatar-default-symbolic",
             label: "Artists",
             route: Route::Artists,
         },
         SidebarRouteItem::AlbumArtists => NavItem {
-            icon_name: "avatar-default-symbolic",
+            icon_name: "system-users-symbolic",
             label: "Album Artists",
             route: Route::AlbumArtists,
         },

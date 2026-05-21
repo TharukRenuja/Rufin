@@ -10,10 +10,10 @@ use super::layout::{
     home_album_content_width, home_album_page_size,
 };
 use super::{
-    GRID_COVER_SIZE, HomeSectionState, Shell, add_card_label_link, add_link_hover,
-    album_artist_route, favorite_button_is_active, favorite_icon_button, icon_button,
-    install_album_context_menu, install_track_context_menu, set_favorite_button_active,
-    stable_seed, track_artist_route,
+    GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, add_card_label_link,
+    add_link_hover, album_artist_route, favorite_button_is_active, favorite_icon_button,
+    icon_button, install_album_context_menu, install_track_context_menu,
+    set_favorite_button_active, stable_seed, track_artist_route,
 };
 use crate::controller::AppController;
 
@@ -181,13 +181,36 @@ pub(super) fn album_cover_tile(
         .connect_clicked(move |_| open_shell.navigate(Route::AlbumDetail(open_album_id.clone())));
     overlay.set_child(Some(&album_button));
 
-    let (shade, play, favorite) = cover_hover_controls(size, "Play album", album.favorite);
+    let controls = cover_hover_controls(size, "Play album", album.favorite);
     if let Some(controller) = controller {
         let controller = controller.clone();
         let album_id = album.id.clone();
-        play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
+        controls
+            .play
+            .connect_clicked(move |_| controller.play_album_now(album_id.clone()));
     }
-    shell.register_favorite_button(album_favorite_key(&album.id), &favorite);
+    if let Some(controller) = controller {
+        let controller = controller.clone();
+        let album_id = album.id.clone();
+        controls.play_next.connect_clicked(move |_| {
+            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+                for track in tracks.iter().rev() {
+                    controller.play_next(track.clone());
+                }
+            }
+        });
+    }
+    if let Some(controller) = controller {
+        let controller = controller.clone();
+        let album_id = album.id.clone();
+        controls.play_last.connect_clicked(move |_| {
+            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+                controller.play_last(tracks);
+            }
+        });
+    }
+    let favorite = controls.favorite.as_ref().expect("favorite button");
+    shell.register_favorite_button(album_favorite_key(&album.id), favorite);
     if let Some(controller) = controller {
         let controller = controller.clone();
         let album_id = album.id.clone();
@@ -195,10 +218,8 @@ pub(super) fn album_cover_tile(
             controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
         });
     }
-    overlay.add_overlay(&shade);
-    overlay.add_overlay(&play);
-    overlay.add_overlay(&favorite);
-    connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
 
     overlay.upcast()
 }
@@ -249,21 +270,34 @@ pub(super) fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     cover_button.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
     overlay.set_child(Some(&cover_button));
 
-    let (shade, play, favorite) = cover_hover_controls(size, "Play track", track.favorite);
+    let controls = cover_hover_controls(size, "Play track", track.favorite);
     let controller = shell.controller.clone();
     let track_for_play = track.clone();
-    play.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
+    controls
+        .play
+        .connect_clicked(move |_| controller.play_now(track_for_play.clone()));
 
-    shell.register_favorite_button(track_favorite_key(&track.id), &favorite);
+    let controller = shell.controller.clone();
+    let track_for_play_next = track.clone();
+    controls
+        .play_next
+        .connect_clicked(move |_| controller.play_next(track_for_play_next.clone()));
+
+    let controller = shell.controller.clone();
+    let track_for_play_last = track.clone();
+    controls
+        .play_last
+        .connect_clicked(move |_| controller.play_last(vec![track_for_play_last.clone()]));
+
+    let favorite = controls.favorite.as_ref().expect("favorite button");
+    shell.register_favorite_button(track_favorite_key(&track.id), favorite);
     let controller = shell.controller.clone();
     let track_id = track.id.clone();
     favorite.connect_clicked(move |button| {
         controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
     });
-    overlay.add_overlay(&shade);
-    overlay.add_overlay(&play);
-    overlay.add_overlay(&favorite);
-    connect_cover_hover(&overlay, &shade, &play, Some(&favorite));
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
 
     overlay.upcast()
 }
@@ -279,7 +313,12 @@ pub(super) fn playlist_cover_tile(
     playlist_button.add_css_class("album-cover-button");
     playlist_button.add_css_class("flat");
     constrain_cover_widget(&playlist_button, size);
-    playlist_button.set_child(Some(&shell.cover_tile_for(
+    let cover_refs = shell
+        .controller
+        .cached_playlist_cover_refs(&playlist.id)
+        .unwrap_or_default();
+    playlist_button.set_child(Some(&shell.cover_group_tile_for(
+        cover_refs,
         playlist.image_ref.as_ref(),
         stable_seed(playlist.id.as_str()),
         size,
@@ -292,17 +331,32 @@ pub(super) fn playlist_cover_tile(
     });
     overlay.set_child(Some(&playlist_button));
 
-    let (shade, play) = cover_play_hover_controls(size, "Play playlist");
+    let controls = cover_play_hover_controls(size, "Play playlist");
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
-    play.connect_clicked(move |_| {
+    controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
             controller.play_tracks_now(detail.tracks);
         }
     });
-    overlay.add_overlay(&shade);
-    overlay.add_overlay(&play);
-    connect_cover_hover(&overlay, &shade, &play, None);
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    controls.play_next.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
+            for track in detail.tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        }
+    });
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    controls.play_last.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
+            controller.play_last(detail.tracks);
+        }
+    });
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
 
     overlay.upcast()
 }
@@ -337,82 +391,132 @@ pub(super) fn cover_overlay(size: i32) -> gtk::Overlay {
     overlay
 }
 
+pub(super) struct CoverHoverControls {
+    pub(super) shade: gtk::Box,
+    pub(super) transport: gtk::Box,
+    pub(super) play_next: gtk::Button,
+    pub(super) play: gtk::Button,
+    pub(super) play_last: gtk::Button,
+    pub(super) favorite: Option<gtk::Button>,
+}
+
+impl CoverHoverControls {
+    pub(super) fn add_to_overlay(&self, overlay: &gtk::Overlay) {
+        overlay.add_overlay(&self.shade);
+        overlay.add_overlay(&self.transport);
+        if let Some(favorite) = self.favorite.as_ref() {
+            overlay.add_overlay(favorite);
+        }
+    }
+
+    pub(super) fn connect_hover(&self, overlay: &gtk::Overlay) {
+        let motion = gtk::EventControllerMotion::new();
+        let shade_for_enter = self.shade.clone();
+        let transport_for_enter = self.transport.clone();
+        let favorite_for_enter = self.favorite.clone();
+        motion.connect_enter(move |_, _, _| {
+            shade_for_enter.set_visible(true);
+            transport_for_enter.set_visible(true);
+            if let Some(favorite) = favorite_for_enter.as_ref() {
+                favorite.set_visible(true);
+            }
+        });
+        let shade_for_leave = self.shade.clone();
+        let transport_for_leave = self.transport.clone();
+        let favorite_for_leave = self.favorite.clone();
+        motion.connect_leave(move |_| {
+            shade_for_leave.set_visible(false);
+            transport_for_leave.set_visible(false);
+            if let Some(favorite) = favorite_for_leave.as_ref() {
+                favorite.set_visible(false);
+            }
+        });
+        overlay.add_controller(motion);
+    }
+}
+
 pub(super) fn cover_hover_controls(
     size: i32,
     play_label: &str,
     favorite_active: bool,
-) -> (gtk::Box, gtk::Button, gtk::Button) {
-    let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    shade.add_css_class("cover-hover-layer");
-    constrain_cover_widget(&shade, size);
-    shade.set_can_target(false);
-    shade.set_visible(false);
-
-    let play = icon_button("media-playback-start-symbolic", play_label);
-    play.add_css_class("cover-hover-button");
-    play.add_css_class("cover-play-button");
-    play.set_halign(gtk::Align::Center);
-    play.set_valign(gtk::Align::Center);
-    play.set_visible(false);
-
+) -> CoverHoverControls {
+    let mut controls = cover_play_hover_controls(size, play_label);
     let favorite = favorite_icon_button("Favorite");
     favorite.add_css_class("cover-hover-button");
     favorite.add_css_class("cover-favorite-button");
     favorite.set_halign(gtk::Align::End);
     favorite.set_valign(gtk::Align::Start);
-    favorite.set_margin_top(8);
-    favorite.set_margin_end(8);
+    favorite.set_margin_top(6);
+    favorite.set_margin_end(6);
     favorite.set_visible(false);
     set_favorite_button_active(&favorite, favorite_active);
-
-    (shade, play, favorite)
+    controls.favorite = Some(favorite);
+    controls
 }
 
-pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> (gtk::Box, gtk::Button) {
+pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> CoverHoverControls {
+    const SIDE_BUTTON_SIZE: i32 = 34;
+    const PLAY_BUTTON_SIZE: i32 = 54;
+
     let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
     shade.add_css_class("cover-hover-layer");
     constrain_cover_widget(&shade, size);
     shade.set_can_target(false);
     shade.set_visible(false);
 
+    let play_next = icon_button(PLAY_NEXT_ICON, "Play Next");
+    play_next.add_css_class("cover-hover-button");
+    play_next.add_css_class("cover-side-button");
+    pin_cover_hover_button(&play_next, SIDE_BUTTON_SIZE);
+    play_next.set_visible(true);
+
     let play = icon_button("media-playback-start-symbolic", play_label);
     play.add_css_class("cover-hover-button");
     play.add_css_class("cover-play-button");
-    play.set_halign(gtk::Align::Center);
-    play.set_valign(gtk::Align::Center);
-    play.set_visible(false);
+    pin_cover_hover_button(&play, PLAY_BUTTON_SIZE);
+    nudge_cover_play_icon(&play);
+    play.set_visible(true);
 
-    (shade, play)
+    let play_last = icon_button(PLAY_LATER_ICON, "Play Later");
+    play_last.add_css_class("cover-hover-button");
+    play_last.add_css_class("cover-side-button");
+    pin_cover_hover_button(&play_last, SIDE_BUTTON_SIZE);
+    play_last.set_visible(true);
+
+    let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    transport.add_css_class("cover-hover-transport");
+    transport.set_halign(gtk::Align::Center);
+    transport.set_valign(gtk::Align::Center);
+    transport.set_visible(false);
+    transport.append(&play_next);
+    transport.append(&play);
+    transport.append(&play_last);
+
+    CoverHoverControls {
+        shade,
+        transport,
+        play_next,
+        play,
+        play_last,
+        favorite: None,
+    }
 }
 
-pub(super) fn connect_cover_hover(
-    overlay: &gtk::Overlay,
-    shade: &gtk::Box,
-    play: &gtk::Button,
-    favorite: Option<&gtk::Button>,
-) {
-    let motion = gtk::EventControllerMotion::new();
-    let shade_for_enter = shade.clone();
-    let play_for_enter = play.clone();
-    let favorite_for_enter = favorite.cloned();
-    motion.connect_enter(move |_, _, _| {
-        shade_for_enter.set_visible(true);
-        play_for_enter.set_visible(true);
-        if let Some(favorite) = favorite_for_enter.as_ref() {
-            favorite.set_visible(true);
-        }
-    });
-    let shade_for_leave = shade.clone();
-    let play_for_leave = play.clone();
-    let favorite_for_leave = favorite.cloned();
-    motion.connect_leave(move |_| {
-        shade_for_leave.set_visible(false);
-        play_for_leave.set_visible(false);
-        if let Some(favorite) = favorite_for_leave.as_ref() {
-            favorite.set_visible(false);
-        }
-    });
-    overlay.add_controller(motion);
+fn pin_cover_hover_button(button: &gtk::Button, size: i32) {
+    button.set_size_request(size, size);
+    button.set_halign(gtk::Align::Center);
+    button.set_valign(gtk::Align::Center);
+    button.set_hexpand(false);
+    button.set_vexpand(false);
+}
+
+fn nudge_cover_play_icon(button: &gtk::Button) {
+    let Some(child) = button.child() else {
+        return;
+    };
+    if let Ok(image) = child.downcast::<gtk::Image>() {
+        image.set_margin_start(2);
+    }
 }
 
 pub(super) fn constrain_cover_widget(widget: &impl IsA<gtk::Widget>, size: i32) {

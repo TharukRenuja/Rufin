@@ -312,14 +312,14 @@ menubutton.server-selector > button:hover {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
 }
 
-.cover-play-button {
-  min-width: 48px;
-  min-height: 48px;
+.cover-hover-transport {
+  background: transparent;
 }
 
 .cover-favorite-button {
-  min-width: 34px;
-  min-height: 34px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
 }
 
 .favorite-toggle {
@@ -334,6 +334,10 @@ menubutton.server-selector > button:hover {
 
 .cover-hover-button.favorite-toggle.active-toggle {
   background: color-mix(in srgb, @window_bg_color 78%, transparent);
+}
+
+.cover-favorite-button.favorite-toggle {
+  font-size: 13px;
 }
 
 .album-title,
@@ -540,6 +544,20 @@ scale.volume-slider trough {
 .icon-button {
   min-width: 34px;
   min-height: 34px;
+}
+
+.icon-button.cover-play-button {
+  min-width: 54px;
+  min-height: 54px;
+  padding: 0;
+  -gtk-icon-size: 24px;
+}
+
+.icon-button.cover-side-button {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  -gtk-icon-size: 16px;
 }
 
 .icon-button.player-transport-button {

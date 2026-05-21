@@ -7,6 +7,8 @@ use gtk::glib;
 use rufin_core::{RepeatMode, Route, SearchKind, format_duration};
 use rufin_playback::PlaybackState;
 
+use crate::controller::PlaybackSnapshot;
+
 use super::player_icons::{
     auto_dj_icon_button, lyrics_icon_button, play_icon_button, queue_sidebar_button,
     random_clover_icon_button, repeat_icon_button, set_repeat_button_icon, shuffle_icon_button,
@@ -38,6 +40,9 @@ const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 160;
 const BOTTOM_PLAYER_VOLUME_WIDTH_RATIO: f64 = 1.0 / 16.0;
 const BOTTOM_PLAYER_RIGHT_EDGE_GAP: i32 = 8;
 const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 18;
+const SEEK_PREVIEW_COMMIT_DELAY: Duration = Duration::from_millis(100);
+const SEEK_PREVIEW_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
+const SEEK_PREVIEW_TOLERANCE_MILLIS: u64 = 1_500;
 
 pub(super) struct PlayerControls {
     pub(super) root: gtk::CenterBox,
@@ -228,16 +233,16 @@ impl Shell {
             .repeat_button
             .set_tooltip_text(Some(&crate::i18n::tr(repeat_label(player.repeat_mode))));
 
+        let preview_seconds = self.state.seek_preview_seconds.get();
+        let displayed_seconds = preview_seconds.unwrap_or(player.position_seconds);
         controls
             .elapsed
-            .set_text(&format_duration(player.position_seconds));
-        if !self.state.seeking_player_controls.get() {
-            let max = f64::from(player.duration_seconds.max(1));
-            controls.progress.set_range(0.0, max);
-            controls.progress.set_value(f64::from(
-                player.position_seconds.min(player.duration_seconds),
-            ));
-        }
+            .set_text(&format_duration(displayed_seconds));
+        let max = f64::from(player.duration_seconds.max(1));
+        controls.progress.set_range(0.0, max);
+        controls
+            .progress
+            .set_value(f64::from(displayed_seconds.min(player.duration_seconds)));
         controls
             .duration
             .set_text(&format_duration(player.duration_seconds));
@@ -250,10 +255,37 @@ impl Shell {
         controls.volume.set_value(player.volume);
         self.state.updating_player_controls.set(false);
     }
+
+    pub(in crate::ui) fn maybe_clear_player_seek_preview(
+        &self,
+        player: &PlaybackSnapshot,
+        track_changed: bool,
+    ) {
+        let Some(target_seconds) = self.state.seek_preview_seconds.get() else {
+            return;
+        };
+        if track_changed
+            || player.current.is_none()
+            || seek_preview_matches_position(target_seconds, player.position_millis)
+        {
+            self.clear_player_seek_preview();
+        }
+    }
+
+    fn clear_player_seek_preview(&self) {
+        self.state.seek_preview_seconds.set(None);
+    }
 }
 
 fn player_cover_replacement_is_ready(has_decoded_cover: bool, has_cached_cover_file: bool) -> bool {
     has_decoded_cover || has_cached_cover_file
+}
+
+fn seek_preview_matches_position(target_seconds: u32, position_millis: u64) -> bool {
+    let target_millis = u64::from(target_seconds) * 1_000;
+    let lower = target_millis.saturating_sub(SEEK_PREVIEW_TOLERANCE_MILLIS);
+    let upper = target_millis.saturating_add(SEEK_PREVIEW_TOLERANCE_MILLIS);
+    (lower..=upper).contains(&position_millis)
 }
 
 pub(super) fn build_bottom_player() -> PlayerControls {
@@ -639,6 +671,38 @@ fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
     }
 }
 
+fn queue_player_seek_preview_commit(shell: &Rc<Shell>) {
+    let generation = shell.state.seek_generation.get().saturating_add(1);
+    shell.state.seek_generation.set(generation);
+
+    let shell = Rc::clone(shell);
+    glib::timeout_add_local_once(SEEK_PREVIEW_COMMIT_DELAY, move || {
+        if shell.state.seek_generation.get() == generation {
+            commit_player_seek_preview(&shell, generation);
+        }
+    });
+}
+
+fn commit_player_seek_preview_now(shell: &Rc<Shell>) {
+    let generation = shell.state.seek_generation.get().saturating_add(1);
+    shell.state.seek_generation.set(generation);
+    commit_player_seek_preview(shell, generation);
+}
+
+fn commit_player_seek_preview(shell: &Rc<Shell>, generation: u64) {
+    let Some(seconds) = shell.state.seek_preview_seconds.get() else {
+        return;
+    };
+    shell.controller.seek(seconds);
+
+    let shell = Rc::clone(shell);
+    glib::timeout_add_local_once(SEEK_PREVIEW_SETTLE_WINDOW, move || {
+        if shell.state.seek_generation.get() == generation {
+            shell.clear_player_seek_preview();
+        }
+    });
+}
+
 pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
     connect_bottom_player_volume_resize(shell);
     install_current_track_context_menu(&shell.player_controls.cover.area, shell);
@@ -765,24 +829,23 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
             }
             drop(player);
 
-            seek_shell.state.seeking_player_controls.set(true);
-            let generation = seek_shell.state.seek_generation.get().saturating_add(1);
-            seek_shell.state.seek_generation.set(generation);
             let seconds = seekbar_target_seconds(value, duration_seconds);
+            seek_shell.state.seek_preview_seconds.set(Some(seconds));
             scale.set_value(f64::from(seconds));
             seek_shell
                 .player_controls
                 .elapsed
                 .set_text(&format_duration(seconds));
-            let seek_shell = Rc::clone(&seek_shell);
-            glib::timeout_add_local_once(Duration::from_millis(350), move || {
-                if seek_shell.state.seek_generation.get() == generation {
-                    seek_shell.controller.seek(seconds);
-                    seek_shell.state.seeking_player_controls.set(false);
-                }
-            });
+            queue_player_seek_preview_commit(&seek_shell);
             glib::Propagation::Stop
         });
+
+    let seek_shell = Rc::clone(shell);
+    let seek_click = gtk::GestureClick::new();
+    seek_click.connect_released(move |_, _, _, _| {
+        commit_player_seek_preview_now(&seek_shell);
+    });
+    shell.player_controls.progress.add_controller(seek_click);
 
     let volume_shell = Rc::clone(shell);
     shell
