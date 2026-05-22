@@ -1,0 +1,811 @@
+impl Store {
+    pub fn load_genres(
+        &self,
+        server_id: &ServerId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Genre>> {
+        let total = self.count_linked_genres(server_id)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT genre_id, name,
+                   (
+                       SELECT COUNT(DISTINCT album_id)
+                       FROM album_genres ag
+                       WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                   ) AS album_count,
+                   (
+                       SELECT COUNT(DISTINCT track_id)
+                       FROM track_genres tg
+                       WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                   ) AS track_count,
+                   image_item_id, image_tag
+            FROM genres g
+            WHERE g.server_id = ?1
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM track_genres tg
+                      WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                  )
+              )
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?2 OFFSET ?3
+            ",
+        )?;
+        let items = collect_rows(statement.query_map(
+            params![server_id.as_str(), limit as i64, offset as i64],
+            genre_from_row,
+        )?)?;
+        Ok(PagedResponse::new(items, total))
+    }
+    pub fn load_genres_matching(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Genre>> {
+        let Some(pattern) = like_pattern(query) else {
+            return self.load_genres(server_id, offset, limit);
+        };
+        let total = self.count_linked_genres_like(server_id, &pattern)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT genre_id, name,
+                   (
+                       SELECT COUNT(DISTINCT album_id)
+                       FROM album_genres ag
+                       WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                   ) AS album_count,
+                   (
+                       SELECT COUNT(DISTINCT track_id)
+                       FROM track_genres tg
+                       WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                   ) AS track_count,
+                   image_item_id, image_tag
+            FROM genres g
+            WHERE g.server_id = ?1
+              AND LOWER(g.name) LIKE ?2 ESCAPE '\\'
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM track_genres tg
+                      WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                  )
+              )
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?3 OFFSET ?4
+            ",
+        )?;
+        let items = collect_rows(statement.query_map(
+            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            genre_from_row,
+        )?)?;
+        Ok(PagedResponse::new(items, total))
+    }
+    fn count_linked_genres(&self, server_id: &ServerId) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM genres g
+                WHERE g.server_id = ?1
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM album_genres ag
+                          WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM track_genres tg
+                          WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                      )
+                  )
+                ",
+                params![server_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(u32_from_i64)
+            .map(|count| count as usize)
+            .map_err(StoreError::from)
+    }
+    fn count_linked_genres_like(&self, server_id: &ServerId, pattern: &str) -> StoreResult<usize> {
+        self.connection
+            .query_row(
+                "
+                SELECT COUNT(*)
+                FROM genres g
+                WHERE g.server_id = ?1
+                  AND LOWER(g.name) LIKE ?2 ESCAPE '\\'
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM album_genres ag
+                          WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM track_genres tg
+                          WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                      )
+                  )
+                ",
+                params![server_id.as_str(), pattern],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as usize)
+            .map_err(StoreError::from)
+    }
+    pub fn load_playlists(
+        &self,
+        server_id: &ServerId,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Playlist>> {
+        let total = self.count("playlists", server_id)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT playlist_id, name, track_count, duration_seconds, image_item_id, image_tag
+            FROM playlists
+            WHERE server_id = ?1
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?2 OFFSET ?3
+            ",
+        )?;
+        let items = collect_rows(statement.query_map(
+            params![server_id.as_str(), limit as i64, offset as i64],
+            playlist_from_row,
+        )?)?;
+        Ok(PagedResponse::new(items, total))
+    }
+    pub fn load_playlists_matching(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Playlist>> {
+        let Some(pattern) = like_pattern(query) else {
+            return self.load_playlists(server_id, offset, limit);
+        };
+        if let Some(query) = fts_query(query) {
+            let total = self.count_fts_matches(server_id, "playlist", &query)?;
+            if total > 0 {
+                return self.search_playlists_page(server_id, &query, offset, limit, total);
+            }
+        }
+        self.load_playlists_like(server_id, &pattern, offset, limit)
+    }
+    pub fn upsert_playlist_tracks(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        tracks: &[Track],
+        generation: i64,
+    ) -> StoreResult<()> {
+        let entries = tracks
+            .iter()
+            .enumerate()
+            .map(|(position, track)| PlaylistEntry {
+                entry_id: format!("{}:{position}", track.id.as_str()),
+                track: track.clone(),
+            })
+            .collect::<Vec<_>>();
+        self.upsert_playlist_entries(server_id, playlist_id, &entries, generation)
+    }
+    pub fn upsert_playlist_entries(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        entries: &[PlaylistEntry],
+        generation: i64,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            connection.execute(
+                "DELETE FROM playlist_tracks WHERE server_id = ?1 AND playlist_id = ?2",
+                params![server_id.as_str(), playlist_id.as_str()],
+            )?;
+            let mut statement = connection.prepare(
+                "
+                INSERT INTO playlist_tracks (
+                    server_id, playlist_id, entry_id, track_id, position, sync_generation
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(server_id, playlist_id, entry_id) DO UPDATE SET
+                    track_id = excluded.track_id,
+                    position = excluded.position,
+                    sync_generation = excluded.sync_generation
+                ",
+            )?;
+            for (position, entry) in entries.iter().enumerate() {
+                statement.execute(params![
+                    server_id.as_str(),
+                    playlist_id.as_str(),
+                    entry.entry_id,
+                    entry.track.id.as_str(),
+                    position as i64,
+                    generation,
+                ])?;
+            }
+            Ok(())
+        })
+    }
+    pub fn load_playlist_detail(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+    ) -> StoreResult<Option<PlaylistDetail>> {
+        let playlist = self
+            .connection
+            .query_row(
+                "
+                SELECT playlist_id, name, track_count, duration_seconds, image_item_id, image_tag
+                FROM playlists
+                WHERE server_id = ?1 AND playlist_id = ?2
+                ",
+                params![server_id.as_str(), playlist_id.as_str()],
+                playlist_from_row,
+            )
+            .optional()?;
+        let Some(playlist) = playlist else {
+            return Ok(None);
+        };
+        let mut statement = self.connection.prepare(
+            "
+            SELECT pt.entry_id,
+                   t.track_id, t.album_id, t.title, t.artist, t.artist_id,
+                   t.album, t.year, t.release_date, t.date_added, t.last_played,
+                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   t.disc_number, t.track_number, t.image_item_id, t.image_tag
+            FROM playlist_tracks pt
+            JOIN tracks t
+                ON t.server_id = pt.server_id AND t.track_id = pt.track_id
+            WHERE pt.server_id = ?1 AND pt.playlist_id = ?2
+            ORDER BY pt.position
+            ",
+        )?;
+        let mut entries = collect_rows(statement.query_map(
+            params![server_id.as_str(), playlist_id.as_str()],
+            playlist_entry_from_row,
+        )?)?;
+        let mut tracks = entries
+            .iter()
+            .map(|entry| entry.track.clone())
+            .collect::<Vec<_>>();
+        self.attach_track_metadata(server_id, &mut tracks)?;
+        for (entry, track) in entries.iter_mut().zip(tracks.iter().cloned()) {
+            entry.track = track;
+        }
+        Ok(Some(PlaylistDetail {
+            playlist,
+            tracks,
+            entries,
+        }))
+    }
+    pub fn load_genre_detail(
+        &self,
+        server_id: &ServerId,
+        genre_id: &GenreId,
+    ) -> StoreResult<Option<CachedGenreDetail>> {
+        let genre = self
+            .connection
+            .query_row(
+                "
+                SELECT genre_id, name,
+                       (
+                           SELECT COUNT(DISTINCT album_id)
+                           FROM album_genres ag
+                           WHERE ag.server_id = genres.server_id AND ag.genre_name = genres.name
+                       ) AS album_count,
+                       (
+                           SELECT COUNT(DISTINCT track_id)
+                           FROM track_genres tg
+                           WHERE tg.server_id = genres.server_id AND tg.genre_name = genres.name
+                       ) AS track_count,
+                       image_item_id, image_tag
+                FROM genres
+                WHERE server_id = ?1 AND genre_id = ?2
+                ",
+                params![server_id.as_str(), genre_id.as_str()],
+                genre_from_row,
+            )
+            .optional()?;
+        let Some(genre) = genre else {
+            return Ok(None);
+        };
+        let mut albums_statement = self.connection.prepare(
+            "
+            SELECT DISTINCT a.album_id, a.title, a.artist, a.artist_id, a.year,
+                   a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
+                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.image_item_id, a.image_tag
+            FROM album_genres ag
+            JOIN albums a
+                ON a.server_id = ag.server_id AND a.album_id = ag.album_id
+            WHERE ag.server_id = ?1 AND ag.genre_name = ?2
+            ORDER BY a.title COLLATE NOCASE
+            ",
+        )?;
+        let mut albums = collect_rows(albums_statement.query_map(
+            params![server_id.as_str(), genre.name.as_str()],
+            album_from_row,
+        )?)?;
+        self.attach_album_metadata(server_id, &mut albums)?;
+        let mut tracks_statement = self.connection.prepare(
+            "
+            SELECT DISTINCT t.track_id, t.album_id, t.title, t.artist, t.artist_id,
+                   t.album, t.year, t.release_date, t.date_added, t.last_played,
+                   t.play_count, t.user_rating, t.duration_seconds, t.favorite,
+                   t.disc_number, t.track_number, t.image_item_id, t.image_tag
+            FROM track_genres tg
+            JOIN tracks t
+                ON t.server_id = tg.server_id AND t.track_id = tg.track_id
+            WHERE tg.server_id = ?1 AND tg.genre_name = ?2
+            ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
+                     t.title COLLATE NOCASE
+            ",
+        )?;
+        let mut tracks = collect_rows(tracks_statement.query_map(
+            params![server_id.as_str(), genre.name.as_str()],
+            track_from_row,
+        )?)?;
+        self.attach_track_metadata(server_id, &mut tracks)?;
+        Ok(Some(CachedGenreDetail {
+            genre,
+            albums,
+            tracks,
+        }))
+    }
+    pub fn load_favorite_tracks(&self, server_id: &ServerId) -> StoreResult<Vec<Track>> {
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
+                       t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
+                       t.duration_seconds, t.favorite, t.disc_number, t.track_number, t.image_item_id, t.image_tag
+                FROM tracks t
+                WHERE t.server_id = ?1
+                  AND t.favorite = 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM track_music_folders tmf
+                      WHERE tmf.server_id = t.server_id
+                        AND tmf.track_id = t.track_id
+                        AND tmf.folder_id = ?2
+                  )
+                ORDER BY t.title COLLATE NOCASE
+                LIMIT 500
+                ",
+            )?;
+            collect_rows(statement.query_map(
+                params![server_id.as_str(), folder_id.as_str()],
+                track_from_row,
+            )?)?
+        } else {
+            let mut statement = self.connection.prepare(
+                "
+                SELECT track_id, album_id, title, artist, artist_id, album, year,
+                       release_date, date_added, last_played, play_count, user_rating,
+                       duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
+                FROM tracks
+                WHERE server_id = ?1 AND favorite = 1
+                ORDER BY title COLLATE NOCASE
+                LIMIT 500
+                ",
+            )?;
+            collect_rows(statement.query_map(params![server_id.as_str()], track_from_row)?)?
+        };
+        self.attach_track_metadata(server_id, &mut tracks)?;
+        Ok(tracks)
+    }
+    pub fn set_album_favorite(
+        &self,
+        server_id: &ServerId,
+        album_id: &AlbumId,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE albums SET favorite = ?3 WHERE server_id = ?1 AND album_id = ?2",
+            params![server_id.as_str(), album_id.as_str(), bool_to_i64(favorite)],
+        )?;
+        Ok(())
+    }
+    pub fn set_track_favorite(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE tracks SET favorite = ?3 WHERE server_id = ?1 AND track_id = ?2",
+            params![server_id.as_str(), track_id.as_str(), bool_to_i64(favorite)],
+        )?;
+        Ok(())
+    }
+    pub fn set_artist_favorite(
+        &self,
+        server_id: &ServerId,
+        artist_id: &ArtistId,
+        favorite: bool,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE artists SET favorite = ?3 WHERE server_id = ?1 AND artist_id = ?2",
+            params![
+                server_id.as_str(),
+                artist_id.as_str(),
+                bool_to_i64(favorite)
+            ],
+        )?;
+        self.connection.execute(
+            "UPDATE album_artists SET favorite = ?3 WHERE server_id = ?1 AND artist_id = ?2",
+            params![
+                server_id.as_str(),
+                artist_id.as_str(),
+                bool_to_i64(favorite)
+            ],
+        )?;
+        Ok(())
+    }
+    pub fn rename_playlist(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        name: &str,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "UPDATE playlists SET name = ?3 WHERE server_id = ?1 AND playlist_id = ?2",
+            params![server_id.as_str(), playlist_id.as_str(), name],
+        )?;
+        self.connection.execute(
+            "DELETE FROM library_fts WHERE server_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
+            params![server_id.as_str(), playlist_id.as_str()],
+        )?;
+        self.connection.execute(
+            "INSERT INTO library_fts (server_id, item_type, item_id, title, subtitle)
+             VALUES (?1, 'playlist', ?2, ?3, '')",
+            params![server_id.as_str(), playlist_id.as_str(), name],
+        )?;
+        Ok(())
+    }
+    pub fn save_lyrics(&self, server_id: &ServerId, lyrics: &Lyrics) -> StoreResult<()> {
+        let value = serde_json::to_string(lyrics)?;
+        let source = match lyrics.source {
+            rufin_provider::LyricsSource::Server => "server",
+            rufin_provider::LyricsSource::Remote => "remote",
+            rufin_provider::LyricsSource::Local => "local",
+        };
+        self.connection.execute(
+            "
+            INSERT INTO lyrics_cache (server_id, track_id, source, value, updated_at)
+            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id, track_id) DO UPDATE SET
+                source = excluded.source,
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str(), lyrics.track_id.as_str(), source, value],
+        )?;
+        Ok(())
+    }
+    pub fn load_lyrics(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<Lyrics>> {
+        let value = self
+            .connection
+            .query_row(
+                "
+                SELECT value
+                FROM lyrics_cache
+                WHERE server_id = ?1 AND track_id = ?2
+                ",
+                params![server_id.as_str(), track_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        value
+            .map(|json| serde_json::from_str(&json).map_err(StoreError::from))
+            .unwrap_or_else(|| Ok(None))
+    }
+    pub fn search_library(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        limit: usize,
+    ) -> StoreResult<SearchResults> {
+        let Some(query) = fts_query(query) else {
+            return Ok(SearchResults::default());
+        };
+        Ok(SearchResults {
+            albums: self.search_albums(server_id, &query, limit)?,
+            tracks: self.search_tracks(server_id, &query, limit)?,
+            artists: self.search_artists(server_id, &query, limit)?,
+            playlists: self.search_playlists(server_id, &query, limit)?,
+        })
+    }
+    pub fn save_cover_cache_entry(&self, entry: &CoverCacheEntry) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            INSERT INTO cover_cache (
+                server_id, item_id, image_tag, size, path, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id, item_id, image_tag, size) DO UPDATE SET
+                path = excluded.path,
+                updated_at = excluded.updated_at
+            ",
+            params![
+                entry.server_id.as_str(),
+                entry.item_id.as_str(),
+                entry.image_tag.as_str(),
+                i64::from(entry.size),
+                entry.path.as_str(),
+            ],
+        )?;
+        self.delete_external_image_lookup_miss(
+            &entry.server_id,
+            &entry.item_id,
+            &entry.image_tag,
+            entry.size,
+        )?;
+        Ok(())
+    }
+    pub fn load_cover_cache_entry(
+        &self,
+        server_id: &ServerId,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<Option<CoverCacheEntry>> {
+        self.connection
+            .query_row(
+                "
+                SELECT server_id, item_id, image_tag, size, path
+                FROM cover_cache
+                WHERE server_id = ?1 AND item_id = ?2 AND image_tag = ?3 AND size = ?4
+                ",
+                params![server_id.as_str(), item_id, image_tag, i64::from(size)],
+                |row| {
+                    Ok(CoverCacheEntry {
+                        server_id: ServerId::new(row.get::<_, String>(0)?),
+                        item_id: row.get(1)?,
+                        image_tag: row.get(2)?,
+                        size: u32_from_i64(row.get(3)?),
+                        path: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+    pub fn delete_cover_cache_entry(
+        &self,
+        server_id: &ServerId,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            DELETE FROM cover_cache
+            WHERE server_id = ?1 AND item_id = ?2 AND image_tag = ?3 AND size = ?4
+            ",
+            params![server_id.as_str(), item_id, image_tag, i64::from(size)],
+        )?;
+        Ok(())
+    }
+    pub fn save_external_image_lookup_miss(
+        &self,
+        server_id: &ServerId,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+        reason: &str,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            INSERT INTO external_image_lookup_misses (
+                server_id, item_id, image_tag, size, reason, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id, item_id, image_tag, size) DO UPDATE SET
+                reason = excluded.reason,
+                updated_at = excluded.updated_at
+            ",
+            params![
+                server_id.as_str(),
+                item_id,
+                image_tag,
+                i64::from(size),
+                reason,
+            ],
+        )?;
+        Ok(())
+    }
+    pub fn load_external_image_lookup_miss(
+        &self,
+        server_id: &ServerId,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<bool> {
+        let found = self.connection.query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1
+                FROM external_image_lookup_misses
+                WHERE server_id = ?1 AND item_id = ?2 AND image_tag = ?3 AND size = ?4
+            )
+            ",
+            params![server_id.as_str(), item_id, image_tag, i64::from(size)],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(found)
+    }
+    pub fn delete_external_image_lookup_miss(
+        &self,
+        server_id: &ServerId,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            DELETE FROM external_image_lookup_misses
+            WHERE server_id = ?1 AND item_id = ?2 AND image_tag = ?3 AND size = ?4
+            ",
+            params![server_id.as_str(), item_id, image_tag, i64::from(size)],
+        )?;
+        Ok(())
+    }
+    pub fn schema_version(&self) -> StoreResult<i64> {
+        self.connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .map_err(StoreError::from)
+    }
+    pub fn foreign_keys_enabled(&self) -> StoreResult<bool> {
+        let enabled = self
+            .connection
+            .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))?;
+        Ok(enabled == 1)
+    }
+    pub fn journal_mode(&self) -> StoreResult<String> {
+        self.connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+            .map_err(StoreError::from)
+    }
+    pub fn fts5_available(&self) -> StoreResult<bool> {
+        let exists = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'library_fts'
+            ",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(exists == 1)
+    }
+    fn search_albums(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        limit: usize,
+    ) -> StoreResult<Vec<Album>> {
+        self.search_albums_page(server_id, query, 0, limit, limit)
+            .map(|page| page.items)
+    }
+    fn search_albums_page(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        offset: usize,
+        limit: usize,
+        total: usize,
+    ) -> StoreResult<PagedResponse<Album>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT a.album_id, a.title, a.artist, a.artist_id, a.year,
+                   a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
+                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.image_item_id, a.image_tag
+            FROM library_fts f
+            JOIN albums a
+                ON a.server_id = f.server_id AND a.album_id = f.item_id
+            WHERE f.server_id = ?1
+              AND f.item_type = 'album'
+              AND library_fts MATCH ?2
+            ORDER BY bm25(library_fts)
+            LIMIT ?3 OFFSET ?4
+            ",
+        )?;
+        let mut albums = collect_rows(statement.query_map(
+            params![server_id.as_str(), query, limit as i64, offset as i64],
+            album_from_row,
+        )?)?;
+        self.attach_album_metadata(server_id, &mut albums)?;
+        Ok(PagedResponse::new(albums, total))
+    }
+    fn load_albums_like(
+        &self,
+        server_id: &ServerId,
+        pattern: &str,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Album>> {
+        let total = self.connection.query_row(
+            "
+            SELECT COUNT(*)
+            FROM albums a
+            WHERE a.server_id = ?1
+              AND (
+                  LOWER(a.title) LIKE ?2 ESCAPE '\\'
+                  OR LOWER(a.artist) LIKE ?2 ESCAPE '\\'
+                  OR CAST(a.year AS TEXT) LIKE ?2 ESCAPE '\\'
+                  OR EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = a.server_id
+                        AND ag.album_id = a.album_id
+                        AND LOWER(ag.genre_name) LIKE ?2 ESCAPE '\\'
+                  )
+              )
+            ",
+            params![server_id.as_str(), pattern],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT a.album_id, a.title, a.artist, a.artist_id, a.year,
+                   a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
+                   a.track_count, a.duration_seconds, a.favorite, a.color_seed,
+                   a.image_item_id, a.image_tag
+            FROM albums a
+            WHERE a.server_id = ?1
+              AND (
+                  LOWER(a.title) LIKE ?2 ESCAPE '\\'
+                  OR LOWER(a.artist) LIKE ?2 ESCAPE '\\'
+                  OR CAST(a.year AS TEXT) LIKE ?2 ESCAPE '\\'
+                  OR EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = a.server_id
+                        AND ag.album_id = a.album_id
+                        AND LOWER(ag.genre_name) LIKE ?2 ESCAPE '\\'
+                  )
+              )
+            ORDER BY a.title COLLATE NOCASE
+            LIMIT ?3 OFFSET ?4
+            ",
+        )?;
+        let mut albums = collect_rows(statement.query_map(
+            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            album_from_row,
+        )?)?;
+        self.attach_album_metadata(server_id, &mut albums)?;
+        Ok(PagedResponse::new(albums, total.max(0) as usize))
+    }
+    fn search_tracks(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+        limit: usize,
+    ) -> StoreResult<Vec<Track>> {
+        self.search_tracks_page(server_id, query, 0, limit, limit)
+            .map(|page| page.items)
+    }
+}

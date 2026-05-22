@@ -1,0 +1,798 @@
+fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
+    genres.sort_by(|left, right| {
+        apply_desc(
+            compare_genre(left, right, settings.sort_key),
+            settings.descending,
+        )
+    });
+}
+fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
+    playlists.sort_by(|left, right| {
+        apply_desc(
+            compare_playlist(left, right, settings.sort_key),
+            settings.descending,
+        )
+    });
+}
+fn sort_tracks(tracks: &mut [Track], settings: &LibraryListSettings, favorite_first: bool) {
+    tracks.sort_by(|left, right| {
+        if favorite_first {
+            let favorite = right.favorite.cmp(&left.favorite);
+            if favorite != Ordering::Equal {
+                return favorite;
+            }
+        }
+        let missing = track_field_missing(left, settings.sort_key)
+            .cmp(&track_field_missing(right, settings.sort_key));
+        if missing != Ordering::Equal {
+            return missing;
+        }
+        apply_desc(
+            compare_track(left, right, settings.sort_key),
+            settings.descending,
+        )
+    });
+}
+fn compare_album(left: &Album, right: &Album, field: LibraryField) -> Ordering {
+    match field {
+        LibraryField::AlbumArtist => cmp_string(&left.artist, &right.artist),
+        LibraryField::Year => left.year.cmp(&right.year),
+        LibraryField::ReleaseDate => cmp_option_string(&left.release_date, &right.release_date),
+        LibraryField::DateAdded => cmp_option_string(&left.date_added, &right.date_added),
+        LibraryField::LastPlayed => cmp_option_string(&left.last_played, &right.last_played),
+        LibraryField::PlayCount => cmp_option_u32(left.play_count, right.play_count),
+        LibraryField::UserRating => cmp_option_u8(left.user_rating, right.user_rating),
+        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
+        LibraryField::Favorite => left.favorite.cmp(&right.favorite),
+        _ => cmp_string(&left.title, &right.title),
+    }
+    .then_with(|| cmp_string(&left.title, &right.title))
+}
+fn compare_artist(left: &Artist, right: &Artist, field: LibraryField) -> Ordering {
+    match field {
+        LibraryField::AlbumCount => left.album_count.cmp(&right.album_count),
+        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        LibraryField::LastPlayed => cmp_option_string(&left.last_played, &right.last_played),
+        LibraryField::PlayCount => cmp_option_u32(left.play_count, right.play_count),
+        LibraryField::UserRating => cmp_option_u8(left.user_rating, right.user_rating),
+        LibraryField::Favorite => left.favorite.cmp(&right.favorite),
+        _ => cmp_string(&left.name, &right.name),
+    }
+    .then_with(|| cmp_string(&left.name, &right.name))
+}
+fn compare_genre(left: &Genre, right: &Genre, field: LibraryField) -> Ordering {
+    match field {
+        LibraryField::AlbumCount => left.album_count.cmp(&right.album_count),
+        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        _ => cmp_string(&left.name, &right.name),
+    }
+    .then_with(|| cmp_string(&left.name, &right.name))
+}
+fn compare_playlist(left: &Playlist, right: &Playlist, field: LibraryField) -> Ordering {
+    match field {
+        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
+        _ => cmp_string(&left.name, &right.name),
+    }
+    .then_with(|| cmp_string(&left.name, &right.name))
+}
+fn compare_track(left: &Track, right: &Track, field: LibraryField) -> Ordering {
+    match field {
+        LibraryField::TrackNumber => left
+            .disc_number
+            .cmp(&right.disc_number)
+            .then(left.track_number.cmp(&right.track_number)),
+        LibraryField::Artist => cmp_string(&left.artist, &right.artist),
+        LibraryField::AlbumArtist => cmp_string(
+            &joined_credits(&left.album_artist_credits),
+            &joined_credits(&right.album_artist_credits),
+        ),
+        LibraryField::Album => cmp_string(&left.album, &right.album),
+        LibraryField::Year => left.year.cmp(&right.year),
+        LibraryField::ReleaseDate => cmp_option_string(&left.release_date, &right.release_date),
+        LibraryField::DateAdded => cmp_option_string(&left.date_added, &right.date_added),
+        LibraryField::LastPlayed => cmp_option_string(&left.last_played, &right.last_played),
+        LibraryField::PlayCount => cmp_option_u32(left.play_count, right.play_count),
+        LibraryField::UserRating => cmp_option_u8(left.user_rating, right.user_rating),
+        LibraryField::Genre => cmp_string(&left.genres.join(", "), &right.genres.join(", ")),
+        LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
+        LibraryField::Favorite => left.favorite.cmp(&right.favorite),
+        _ => cmp_string(&left.title, &right.title),
+    }
+    .then_with(|| cmp_string(&left.album, &right.album))
+    .then(left.disc_number.cmp(&right.disc_number))
+    .then(left.track_number.cmp(&right.track_number))
+    .then_with(|| cmp_string(&left.title, &right.title))
+}
+fn album_field_missing(album: &Album, field: LibraryField) -> bool {
+    match field {
+        LibraryField::ReleaseDate => album.release_date.is_none(),
+        LibraryField::DateAdded => album.date_added.is_none(),
+        LibraryField::LastPlayed => album.last_played.is_none(),
+        LibraryField::PlayCount => album.play_count.is_none(),
+        LibraryField::UserRating => album.user_rating.is_none(),
+        _ => false,
+    }
+}
+fn artist_field_missing(artist: &Artist, field: LibraryField) -> bool {
+    match field {
+        LibraryField::LastPlayed => artist.last_played.is_none(),
+        LibraryField::PlayCount => artist.play_count.is_none(),
+        LibraryField::UserRating => artist.user_rating.is_none(),
+        _ => false,
+    }
+}
+fn track_field_missing(track: &Track, field: LibraryField) -> bool {
+    match field {
+        LibraryField::ReleaseDate => track.release_date.is_none(),
+        LibraryField::DateAdded => track.date_added.is_none(),
+        LibraryField::LastPlayed => track.last_played.is_none(),
+        LibraryField::PlayCount => track.play_count.is_none(),
+        LibraryField::UserRating => track.user_rating.is_none(),
+        _ => false,
+    }
+}
+fn album_field(album: &Album, field: LibraryField) -> String {
+    match field {
+        LibraryField::Title | LibraryField::TitleMerged => album.title.clone(),
+        LibraryField::AlbumArtist | LibraryField::Artist => album.artist.clone(),
+        LibraryField::Year => nonzero_year(album.year),
+        LibraryField::ReleaseDate => album.release_date.clone().unwrap_or_default(),
+        LibraryField::DateAdded => album.date_added.clone().unwrap_or_default(),
+        LibraryField::LastPlayed => album.last_played.clone().unwrap_or_default(),
+        LibraryField::PlayCount => option_count(album.play_count),
+        LibraryField::UserRating => option_rating(album.user_rating),
+        LibraryField::Genre => album.genres.join(", "),
+        LibraryField::SongCount => format!("{} {}", album.track_count, tr("tracks")),
+        LibraryField::Duration => format_duration(album.duration_seconds),
+        LibraryField::Favorite => favorite_text(album.favorite),
+        _ => String::new(),
+    }
+}
+fn artist_field(artist: &Artist, field: LibraryField) -> String {
+    match field {
+        LibraryField::Title | LibraryField::TitleMerged => artist.name.clone(),
+        LibraryField::AlbumCount => format!("{} {}", artist.album_count, tr("albums")),
+        LibraryField::SongCount => format!("{} {}", artist.track_count, tr("tracks")),
+        LibraryField::LastPlayed => artist.last_played.clone().unwrap_or_default(),
+        LibraryField::PlayCount => option_count(artist.play_count),
+        LibraryField::UserRating => option_rating(artist.user_rating),
+        LibraryField::Favorite => favorite_text(artist.favorite),
+        _ => String::new(),
+    }
+}
+fn genre_field(genre: &Genre, field: LibraryField) -> String {
+    match field {
+        LibraryField::Title | LibraryField::TitleMerged => genre.name.clone(),
+        LibraryField::AlbumCount => format!("{} {}", genre.album_count, tr("albums")),
+        LibraryField::SongCount => format!("{} {}", genre.track_count, tr("tracks")),
+        _ => String::new(),
+    }
+}
+fn playlist_field(playlist: &Playlist, field: LibraryField) -> String {
+    match field {
+        LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
+        LibraryField::SongCount => format!("{} {}", playlist.track_count, tr("tracks")),
+        LibraryField::Duration => format_duration(playlist.duration_seconds),
+        _ => String::new(),
+    }
+}
+fn track_field(track: &Track, field: LibraryField) -> String {
+    match field {
+        LibraryField::Title | LibraryField::TitleMerged => track.title.clone(),
+        LibraryField::Artist => track.artist.clone(),
+        LibraryField::AlbumArtist => joined_credits(&track.album_artist_credits),
+        LibraryField::Album => track.album.clone(),
+        LibraryField::Year => nonzero_year(track.year),
+        LibraryField::ReleaseDate => track.release_date.clone().unwrap_or_default(),
+        LibraryField::DateAdded => track.date_added.clone().unwrap_or_default(),
+        LibraryField::LastPlayed => track.last_played.clone().unwrap_or_default(),
+        LibraryField::PlayCount => option_count(track.play_count),
+        LibraryField::UserRating => option_rating(track.user_rating),
+        LibraryField::Genre => track.genres.join(", "),
+        LibraryField::DiscNumber => track.disc_number.to_string(),
+        LibraryField::TrackNumber => format!("{}-{:02}", track.disc_number, track.track_number),
+        LibraryField::Duration => format_duration(track.duration_seconds),
+        LibraryField::Favorite => favorite_text(track.favorite),
+        _ => String::new(),
+    }
+}
+fn track_matches_query(track: &Track, query: &str) -> bool {
+    track.title.to_lowercase().contains(query)
+        || track.artist.to_lowercase().contains(query)
+        || joined_credits(&track.album_artist_credits)
+            .to_lowercase()
+            .contains(query)
+        || track.album.to_lowercase().contains(query)
+        || track.genres.join(" ").to_lowercase().contains(query)
+        || track.year.to_string().contains(query)
+}
+fn album_matches_query(album: &Album, query: &str) -> bool {
+    album.title.to_lowercase().contains(query)
+        || album.artist.to_lowercase().contains(query)
+        || album.genres.join(" ").to_lowercase().contains(query)
+        || album.year.to_string().contains(query)
+}
+fn artist_matches_query(artist: &Artist, query: &str) -> bool {
+    artist.name.to_lowercase().contains(query)
+}
+fn genre_matches_query(genre: &Genre, query: &str) -> bool {
+    genre.name.to_lowercase().contains(query)
+}
+fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
+    playlist.name.to_lowercase().contains(query)
+}
+fn item_at<T: Clone + 'static>(model: &gio::ListStore, position: u32) -> Option<T> {
+    model
+        .item(position)
+        .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
+        .map(|boxed| boxed.borrow::<T>().clone())
+}
+fn item_at_from_item<T: Clone + 'static>(item: &gtk::ListItem) -> Option<T> {
+    item.item()
+        .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
+        .map(|boxed| boxed.borrow::<T>().clone())
+}
+fn clear_list_item_child(_: &gtk::SignalListItemFactory, item: &glib::Object) {
+    if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+        item.set_child(None::<&gtk::Widget>);
+    }
+}
+fn replace_tracks_in_model(model: &gio::ListStore, tracks: Vec<Track>) {
+    let additions = tracks
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
+}
+fn replace_album_detail_items_in_model(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
+    let additions = rows
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
+}
+fn append_album_detail_items_to_model(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
+    let additions = rows
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(model.n_items(), 0, &additions);
+}
+fn center_label(text: &str, css_class: &str) -> gtk::Widget {
+    let label = gtk::Label::new(Some(text));
+    if !css_class.is_empty() {
+        label.add_css_class(css_class);
+    }
+    label.set_xalign(0.5);
+    label.set_wrap(true);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.upcast()
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AlbumDetailMetaLabelSpec {
+    width: i32,
+    horizontal_policy: gtk::PolicyType,
+    vertical_policy: gtk::PolicyType,
+    overflow: gtk::Overflow,
+    propagate_natural_width: bool,
+    wrap: bool,
+}
+fn album_detail_meta_label_spec(width: i32) -> AlbumDetailMetaLabelSpec {
+    AlbumDetailMetaLabelSpec {
+        width,
+        horizontal_policy: gtk::PolicyType::Never,
+        vertical_policy: gtk::PolicyType::Never,
+        overflow: gtk::Overflow::Hidden,
+        propagate_natural_width: false,
+        wrap: false,
+    }
+}
+fn album_detail_meta_label(text: &str, css_class: &str, width: i32) -> gtk::Widget {
+    let spec = album_detail_meta_label_spec(width);
+    let label = gtk::Label::new(Some(text));
+    if !css_class.is_empty() {
+        label.add_css_class(css_class);
+    }
+    label.set_xalign(0.5);
+    label.set_wrap(spec.wrap);
+    label.set_single_line_mode(true);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_chars(1);
+    label.set_halign(gtk::Align::Fill);
+    label.set_hexpand(false);
+
+    let clip = gtk::ScrolledWindow::new();
+    clip.add_css_class("card-label-clip");
+    clip.set_policy(spec.horizontal_policy, spec.vertical_policy);
+    clip.set_overflow(spec.overflow);
+    clip.set_width_request(spec.width);
+    clip.set_size_request(spec.width, -1);
+    clip.set_min_content_width(spec.width);
+    clip.set_max_content_width(spec.width);
+    clip.set_propagate_natural_width(spec.propagate_natural_width);
+    clip.set_propagate_natural_height(true);
+    clip.set_hexpand(false);
+    clip.set_child(Some(&label));
+    clip.upcast()
+}
+fn album_fact_text(album: &Album) -> String {
+    format!(
+        "{} • {} {} • {}",
+        nonzero_year(album.year),
+        album.track_count,
+        tr("tracks"),
+        format_duration(album.duration_seconds)
+    )
+}
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum LibraryFieldSet {
+    Row,
+    Grid,
+    Detail,
+}
+fn populate_library_field_rows(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+) {
+    for row in rows.borrow_mut().drain(..) {
+        group.remove(&row);
+    }
+
+    let settings = shell.library_settings(key);
+    let field_set = field_set_for_layout(settings.layout);
+    group.set_title(&tr(field_group_title(field_set)));
+
+    let active = active_fields_for_set(&settings, field_set).to_vec();
+    let mut order = active.clone();
+    for field in available_fields_for_set(key, field_set) {
+        if !order.contains(field) {
+            order.push(*field);
+        }
+    }
+    for field in order {
+        let row = library_field_config_row(shell, key, field_set, field, &active, group, rows);
+        group.add(&row);
+        rows.borrow_mut().push(row);
+    }
+}
+fn library_field_config_row(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    field_set: LibraryFieldSet,
+    field: LibraryField,
+    active: &[LibraryField],
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+) -> adw::ActionRow {
+    let enabled = active.contains(&field);
+    let row = adw::ActionRow::builder()
+        .title(tr(field.title()))
+        .subtitle(if enabled { tr("Visible") } else { tr("Hidden") })
+        .build();
+
+    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    drag.add_css_class("dim-label");
+    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+    row.add_prefix(&drag);
+
+    let check = gtk::CheckButton::new();
+    check.set_active(enabled);
+    check.set_sensitive(can_toggle_field(active, field_set, field));
+    check.set_valign(gtk::Align::Center);
+    row.add_prefix(&check);
+    row.set_activatable_widget(Some(&check));
+
+    let up = gtk::Button::from_icon_name("go-up-symbolic");
+    up.add_css_class("flat");
+    up.set_tooltip_text(Some(&tr("Move up")));
+    up.set_valign(gtk::Align::Center);
+    up.set_sensitive(enabled);
+    row.add_suffix(&up);
+
+    let down = gtk::Button::from_icon_name("go-down-symbolic");
+    down.add_css_class("flat");
+    down.set_tooltip_text(Some(&tr("Move down")));
+    down.set_valign(gtk::Align::Center);
+    down.set_sensitive(enabled);
+    row.add_suffix(&down);
+
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        check.connect_toggled(move |check| {
+            shell.update_library_list_settings(key, |settings| {
+                set_field_enabled(settings, key, field_set, field, check.is_active());
+            });
+            populate_library_field_rows(&shell, key, &group, &rows);
+            shell.render_current_route_preserving_scroll();
+        });
+    }
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        up.connect_clicked(move |_| {
+            shell.update_library_list_settings(key, |settings| {
+                move_visible_field(settings, field_set, field, -1);
+            });
+            populate_library_field_rows(&shell, key, &group, &rows);
+            shell.render_current_route_preserving_scroll();
+        });
+    }
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        down.connect_clicked(move |_| {
+            shell.update_library_list_settings(key, |settings| {
+                move_visible_field(settings, field_set, field, 1);
+            });
+            populate_library_field_rows(&shell, key, &group, &rows);
+            shell.render_current_route_preserving_scroll();
+        });
+    }
+
+    let source = gtk::DragSource::builder()
+        .actions(gtk::gdk::DragAction::MOVE)
+        .build();
+    let field_id = library_field_drag_id(field).to_string();
+    source.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(&field_id.to_value()))
+    });
+    drag.add_controller(source);
+
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let shell = Rc::clone(shell);
+    let group = group.clone();
+    let rows = Rc::clone(rows);
+    let row_for_drop = row.clone();
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(source_id) = value.get::<String>() else {
+            return false;
+        };
+        let Some(source_field) = library_field_from_drag_id(&source_id) else {
+            return false;
+        };
+        if source_field == field {
+            return false;
+        }
+        let after = y > f64::from(row_for_drop.height()) / 2.0;
+        shell.update_library_list_settings(key, |settings| {
+            reorder_visible_field(settings, field_set, source_field, field, after);
+        });
+        populate_library_field_rows(&shell, key, &group, &rows);
+        shell.render_current_route_preserving_scroll();
+        true
+    });
+    row.add_controller(drop_target);
+
+    row
+}
+fn layout_button_content(layout: LibraryLayout) -> gtk::Widget {
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.set_margin_top(6);
+    content.set_margin_bottom(6);
+    content.set_margin_start(10);
+    content.set_margin_end(10);
+    content.append(&gtk::Image::from_icon_name(layout_icon(layout)));
+    content.append(&gtk::Label::new(Some(&tr(layout_title(layout)))));
+    content.upcast()
+}
+fn sync_layout_buttons(
+    buttons: &Rc<RefCell<Vec<(LibraryLayout, gtk::ToggleButton)>>>,
+    active_layout: LibraryLayout,
+) {
+    for (layout, button) in buttons.borrow().iter() {
+        button.set_active(*layout == active_layout);
+    }
+}
+fn supported_layouts(key: LibraryListKey) -> Vec<LibraryLayout> {
+    let mut layouts = vec![LibraryLayout::Row, LibraryLayout::Grid];
+    if key.supports_layout(LibraryLayout::Detail) {
+        layouts.push(LibraryLayout::Detail);
+    }
+    layouts
+}
+fn field_group_title(field_set: LibraryFieldSet) -> &'static str {
+    match field_set {
+        LibraryFieldSet::Row => "Columns",
+        LibraryFieldSet::Grid => "Grid labels",
+        LibraryFieldSet::Detail => "Detail track columns",
+    }
+}
+fn field_set_for_layout(layout: LibraryLayout) -> LibraryFieldSet {
+    match layout {
+        LibraryLayout::Grid => LibraryFieldSet::Grid,
+        LibraryLayout::Detail => LibraryFieldSet::Detail,
+        LibraryLayout::Row => LibraryFieldSet::Row,
+    }
+}
+fn active_fields_for_set(
+    settings: &LibraryListSettings,
+    field_set: LibraryFieldSet,
+) -> &[LibraryField] {
+    match field_set {
+        LibraryFieldSet::Grid => &settings.grid_fields,
+        LibraryFieldSet::Detail => &settings.detail_track_fields,
+        LibraryFieldSet::Row => &settings.row_fields,
+    }
+}
+fn active_fields_for_set_mut(
+    settings: &mut LibraryListSettings,
+    field_set: LibraryFieldSet,
+) -> &mut Vec<LibraryField> {
+    match field_set {
+        LibraryFieldSet::Grid => &mut settings.grid_fields,
+        LibraryFieldSet::Detail => &mut settings.detail_track_fields,
+        LibraryFieldSet::Row => &mut settings.row_fields,
+    }
+}
+fn available_fields_for_set(
+    key: LibraryListKey,
+    field_set: LibraryFieldSet,
+) -> &'static [LibraryField] {
+    match field_set {
+        LibraryFieldSet::Grid => rufin_core::available_grid_fields(key),
+        LibraryFieldSet::Detail => rufin_core::available_row_fields(LibraryListKey::Tracks),
+        LibraryFieldSet::Row => rufin_core::available_row_fields(key),
+    }
+}
+fn set_field_enabled(
+    settings: &mut LibraryListSettings,
+    key: LibraryListKey,
+    field_set: LibraryFieldSet,
+    field: LibraryField,
+    enabled: bool,
+) {
+    let order = available_fields_for_set(key, field_set).to_vec();
+    let fields = active_fields_for_set_mut(settings, field_set);
+    if enabled {
+        insert_field_in_order(fields, field, &order);
+    } else {
+        fields.retain(|candidate| *candidate != field);
+    }
+}
+fn insert_field_in_order(
+    fields: &mut Vec<LibraryField>,
+    field: LibraryField,
+    order: &[LibraryField],
+) {
+    if fields.contains(&field) {
+        return;
+    }
+    let target_order = order
+        .iter()
+        .position(|candidate| *candidate == field)
+        .unwrap_or(usize::MAX);
+    let insert_at = fields
+        .iter()
+        .position(|candidate| {
+            order
+                .iter()
+                .position(|ordered| ordered == candidate)
+                .unwrap_or(usize::MAX)
+                > target_order
+        })
+        .unwrap_or(fields.len());
+    fields.insert(insert_at, field);
+}
+fn move_visible_field(
+    settings: &mut LibraryListSettings,
+    field_set: LibraryFieldSet,
+    field: LibraryField,
+    delta: isize,
+) {
+    let fields = active_fields_for_set_mut(settings, field_set);
+    let Some(index) = fields.iter().position(|candidate| *candidate == field) else {
+        return;
+    };
+    let new_index = if delta < 0 {
+        index.saturating_sub(1)
+    } else {
+        (index + 1).min(fields.len().saturating_sub(1))
+    };
+    fields.swap(index, new_index);
+}
+fn reorder_visible_field(
+    settings: &mut LibraryListSettings,
+    field_set: LibraryFieldSet,
+    source: LibraryField,
+    target: LibraryField,
+    after: bool,
+) {
+    let fields = active_fields_for_set_mut(settings, field_set);
+    let Some(source_index) = fields.iter().position(|field| *field == source) else {
+        return;
+    };
+    let field = fields.remove(source_index);
+    let Some(mut target_index) = fields.iter().position(|field| *field == target) else {
+        fields.insert(source_index.min(fields.len()), field);
+        return;
+    };
+    if after {
+        target_index += 1;
+    }
+    fields.insert(target_index.min(fields.len()), field);
+}
+fn can_toggle_field(
+    active: &[LibraryField],
+    field_set: LibraryFieldSet,
+    field: LibraryField,
+) -> bool {
+    if !active.contains(&field) {
+        return true;
+    }
+    if field_set == LibraryFieldSet::Grid {
+        return true;
+    }
+    !row_field_is_usable(field)
+        || active
+            .iter()
+            .filter(|field| row_field_is_usable(**field))
+            .count()
+            > 1
+}
+fn row_field_is_usable(field: LibraryField) -> bool {
+    !matches!(
+        field,
+        LibraryField::RowIndex
+            | LibraryField::Image
+            | LibraryField::TrackNumber
+            | LibraryField::DiscNumber
+            | LibraryField::Favorite
+    )
+}
+fn library_field_drag_id(field: LibraryField) -> &'static str {
+    match field {
+        LibraryField::RowIndex => "RowIndex",
+        LibraryField::Image => "Image",
+        LibraryField::Title => "Title",
+        LibraryField::TitleMerged => "TitleMerged",
+        LibraryField::Artist => "Artist",
+        LibraryField::AlbumArtist => "AlbumArtist",
+        LibraryField::Album => "Album",
+        LibraryField::Year => "Year",
+        LibraryField::ReleaseDate => "ReleaseDate",
+        LibraryField::DateAdded => "DateAdded",
+        LibraryField::LastPlayed => "LastPlayed",
+        LibraryField::PlayCount => "PlayCount",
+        LibraryField::UserRating => "UserRating",
+        LibraryField::Genre => "Genre",
+        LibraryField::TrackNumber => "TrackNumber",
+        LibraryField::DiscNumber => "DiscNumber",
+        LibraryField::SongCount => "SongCount",
+        LibraryField::AlbumCount => "AlbumCount",
+        LibraryField::Duration => "Duration",
+        LibraryField::Favorite => "Favorite",
+    }
+}
+fn library_field_from_drag_id(id: &str) -> Option<LibraryField> {
+    [
+        LibraryField::RowIndex,
+        LibraryField::Image,
+        LibraryField::Title,
+        LibraryField::TitleMerged,
+        LibraryField::Artist,
+        LibraryField::AlbumArtist,
+        LibraryField::Album,
+        LibraryField::Year,
+        LibraryField::ReleaseDate,
+        LibraryField::DateAdded,
+        LibraryField::LastPlayed,
+        LibraryField::PlayCount,
+        LibraryField::UserRating,
+        LibraryField::Genre,
+        LibraryField::TrackNumber,
+        LibraryField::DiscNumber,
+        LibraryField::SongCount,
+        LibraryField::AlbumCount,
+        LibraryField::Duration,
+        LibraryField::Favorite,
+    ]
+    .into_iter()
+    .find(|field| library_field_drag_id(*field) == id)
+}
+fn next_layout(key: LibraryListKey, layout: LibraryLayout) -> LibraryLayout {
+    if key.supports_layout(LibraryLayout::Detail) {
+        match layout {
+            LibraryLayout::Grid => LibraryLayout::Detail,
+            LibraryLayout::Detail => LibraryLayout::Row,
+            LibraryLayout::Row => LibraryLayout::Grid,
+        }
+    } else {
+        match layout {
+            LibraryLayout::Grid => LibraryLayout::Row,
+            LibraryLayout::Row | LibraryLayout::Detail => LibraryLayout::Grid,
+        }
+    }
+}
+fn layout_icon(layout: LibraryLayout) -> &'static str {
+    match layout {
+        LibraryLayout::Grid => "view-grid-symbolic",
+        LibraryLayout::Row => "view-list-symbolic",
+        LibraryLayout::Detail => "view-list-details-symbolic",
+    }
+}
+fn layout_title(layout: LibraryLayout) -> &'static str {
+    match layout {
+        LibraryLayout::Grid => "Grid",
+        LibraryLayout::Row => "Rows",
+        LibraryLayout::Detail => "Detail",
+    }
+}
+fn column_width(field: LibraryField) -> i32 {
+    match field {
+        LibraryField::RowIndex => 48,
+        LibraryField::Image | LibraryField::Favorite => 56,
+        LibraryField::Title | LibraryField::TitleMerged => 220,
+        LibraryField::Album
+        | LibraryField::Artist
+        | LibraryField::AlbumArtist
+        | LibraryField::Genre => 170,
+        LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 118,
+        LibraryField::PlayCount
+        | LibraryField::UserRating
+        | LibraryField::SongCount
+        | LibraryField::AlbumCount => 96,
+        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 68,
+        LibraryField::Duration => 76,
+    }
+}
+fn apply_desc(ordering: Ordering, descending: bool) -> Ordering {
+    if descending {
+        ordering.reverse()
+    } else {
+        ordering
+    }
+}
+fn cmp_string(left: &str, right: &str) -> Ordering {
+    left.to_lowercase().cmp(&right.to_lowercase())
+}
+fn cmp_option_string(left: &Option<String>, right: &Option<String>) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => cmp_string(left, right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+fn cmp_option_u32(left: Option<u32>, right: Option<u32>) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+fn cmp_option_u8(left: Option<u8>, right: Option<u8>) -> Ordering {
+    cmp_option_u32(left.map(u32::from), right.map(u32::from))
+}
+fn option_count(value: Option<u32>) -> String {
+    value.map(|value| value.to_string()).unwrap_or_default()
+}
+fn option_rating(value: Option<u8>) -> String {
+    value.map(|value| value.to_string()).unwrap_or_default()
+}
+fn favorite_text(favorite: bool) -> String {
+    if favorite { "♥" } else { "" }.to_string()
+}
+fn nonzero_year(year: u16) -> String {
+    if year == 0 {
+        String::new()
+    } else {
+        year.to_string()
+    }
+}
+fn joined_credits(credits: &[rufin_core::ArtistCredit]) -> String {
+    credits
+        .iter()
+        .map(|credit| credit.name.trim())
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+}

@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;

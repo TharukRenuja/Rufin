@@ -371,8 +371,10 @@ mod tests {
 
     #[test]
     fn layout_degrades_right_sidebar_before_left_sidebar() {
-        let mut settings = LayoutSettings::default();
-        settings.narrow_enabled = false;
+        let mut settings = LayoutSettings {
+            narrow_enabled: false,
+            ..Default::default()
+        };
         settings.default_profile.right_sidebar = RightSidebarMode::Spacious;
 
         let resolved = resolve_layout(&settings, NORMAL_SIDEBAR_WIDTH + 800);

@@ -533,7 +533,7 @@ mod tests {
         });
 
         assert_eq!(
-            lastfm_album_image_url(&value).unwrap(),
+            lastfm_album_image_url(&value).expect("lastfm album image url"),
             Some("https://example.test/large.jpg".to_string())
         );
     }
@@ -545,7 +545,10 @@ mod tests {
             "message": "Album not found"
         });
 
-        assert_eq!(lastfm_album_image_url(&value).unwrap(), None);
+        assert_eq!(
+            lastfm_album_image_url(&value).expect("lastfm album not found"),
+            None
+        );
     }
 
     #[test]
@@ -563,7 +566,7 @@ mod tests {
         });
 
         assert_eq!(
-            lastfm_album_image_url(&value).unwrap(),
+            lastfm_album_image_url(&value).expect("lastfm album placeholder image url"),
             Some("https://example.test/small.jpg".to_string())
         );
     }

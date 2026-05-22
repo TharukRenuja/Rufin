@@ -555,12 +555,16 @@ fn local_access_draft(
 ) -> LocalAccessDraft {
     LocalAccessDraft {
         folder: folder.borrow().clone(),
-        server_prefix: remote
-            .then(|| server_prefix.text().trim().to_string())
-            .unwrap_or_default(),
-        local_prefix: remote
-            .then(|| local_prefix.text().trim().to_string())
-            .unwrap_or_default(),
+        server_prefix: if remote {
+            server_prefix.text().trim().to_string()
+        } else {
+            String::new()
+        },
+        local_prefix: if remote {
+            local_prefix.text().trim().to_string()
+        } else {
+            String::new()
+        },
     }
 }
 

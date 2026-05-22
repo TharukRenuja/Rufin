@@ -112,7 +112,7 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
     let accessible_label = format!("{}: {}", tr("Source"), content.name);
     let icon_name = source_icon_name(&content);
 
-    selector.normal_icon.set_icon_name(Some(&icon_name));
+    selector.normal_icon.set_icon_name(Some(icon_name));
     selector.normal_name.set_text(&content.name);
     selector.normal_subtitle.set_text("");
     selector.normal_subtitle.set_visible(false);
@@ -123,7 +123,7 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         .normal_button
         .set_popover(Some(&server_selection_popover(shell, &content)));
 
-    selector.compact_icon.set_icon_name(Some(&icon_name));
+    selector.compact_icon.set_icon_name(Some(icon_name));
     selector
         .compact_label
         .set_text(&compact_sidebar_label_text(&content.name));
@@ -367,7 +367,7 @@ fn server_option_row(
     let icon_name = server
         .map(server_icon_name)
         .unwrap_or("network-server-symbolic");
-    row_content.append(&gtk::Image::from_icon_name(&icon_name));
+    row_content.append(&gtk::Image::from_icon_name(icon_name));
 
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
     labels.set_hexpand(true);

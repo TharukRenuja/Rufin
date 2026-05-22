@@ -1,0 +1,747 @@
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+use adw::prelude::*;
+use rufin_core::{
+    AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
+    EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_NARROW_LAYOUT_THRESHOLD,
+    MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
+    SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
+};
+use rufin_playback::available_audio_outputs;
+use crate::{
+    external_scrobbling::{self, AudioscrobblerSession},
+    i18n::tr,
+};
+use super::{
+    Shell,
+    layout::{large_popup_content_height, large_popup_content_width},
+};
+const PREFERENCES_DIALOG_WIDTH: i32 = 700;
+const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
+const SURFACE_SCROLL_FACTOR: f64 = 2.5;
+const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
+const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
+pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
+    present_preferences_dialog_with_page(shell, PreferencesInitialPage::General);
+}
+pub(super) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
+    present_preferences_dialog_with_page(shell, PreferencesInitialPage::Library);
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreferencesInitialPage {
+    General,
+    Library,
+}
+fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: PreferencesInitialPage) {
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Preferences"), "")));
+    toolbar.add_top_bar(&header);
+
+    let stack = adw::ViewStack::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+    let switcher = adw::ViewSwitcher::builder()
+        .policy(adw::ViewSwitcherPolicy::Wide)
+        .stack(&stack)
+        .build();
+    let switcher_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    switcher_bar.add_css_class("preferences-tab-bar");
+    switcher_bar.set_halign(gtk::Align::Center);
+    switcher_bar.append(&switcher);
+    toolbar.add_top_bar(&switcher_bar);
+    toolbar.set_content(Some(&stack));
+
+    let dialog = adw::Dialog::builder()
+        .title(tr("Preferences"))
+        .content_width(large_popup_content_width(PREFERENCES_DIALOG_WIDTH))
+        .content_height(large_popup_content_height(
+            shell.window.height(),
+            PREFERENCES_DIALOG_HEIGHT,
+        ))
+        .child(&toolbar)
+        .build();
+    dialog.add_css_class("preferences");
+
+    let general_page = general_page(shell);
+    let layout_page = layout_page(shell);
+    let scrobbling_page = scrobbling_page(shell);
+    let playback_page = playback_page(shell);
+    let library_page = library::library_page(shell, &dialog);
+    stack.add_titled_with_icon(
+        &general_page,
+        Some("general"),
+        &tr("General"),
+        "preferences-system-symbolic",
+    );
+    stack.add_titled_with_icon(
+        &layout_page,
+        Some("layout"),
+        &tr("Layout"),
+        "preferences-desktop-display-symbolic",
+    );
+    stack.add_titled_with_icon(
+        &scrobbling_page,
+        Some("scrobbling"),
+        &tr("Scrobbling"),
+        "emblem-shared-symbolic",
+    );
+    stack.add_titled_with_icon(
+        &playback_page,
+        Some("playback"),
+        &tr("Playback"),
+        "media-playback-start-symbolic",
+    );
+    stack.add_titled_with_icon(
+        &library_page,
+        Some("library"),
+        &tr("Library"),
+        "audio-x-generic-symbolic",
+    );
+    if matches!(initial_page, PreferencesInitialPage::Library) {
+        stack.set_visible_child_name("library");
+    }
+
+    dialog.present(Some(&shell.window));
+}
+fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title(tr("General"))
+        .icon_name("preferences-system-symbolic")
+        .build();
+
+    let settings = shell.state.settings.borrow().clone();
+
+    let privacy_group = adw::PreferencesGroup::builder()
+        .title(tr("Privacy"))
+        .build();
+    let private_row = adw::SwitchRow::builder()
+        .title(tr("Private mode"))
+        .active(settings.private_mode)
+        .build();
+    let private_shell = Rc::clone(shell);
+    private_row.connect_active_notify(move |row| {
+        private_shell.set_private_mode(row.is_active());
+    });
+    privacy_group.add(&private_row);
+
+    let notifications_row = adw::SwitchRow::builder()
+        .title(tr("Now playing notifications"))
+        .active(settings.notifications_enabled)
+        .build();
+    let notifications_shell = Rc::clone(shell);
+    notifications_row.connect_active_notify(move |row| {
+        notifications_shell.set_notifications_enabled(row.is_active());
+    });
+    privacy_group.add(&notifications_row);
+    page.add(&privacy_group);
+
+    let metadata_group = adw::PreferencesGroup::builder()
+        .title(tr("Metadata"))
+        .build();
+    let external_metadata_row = adw::SwitchRow::builder()
+        .title(tr("External cover lookup"))
+        .active(settings.external_metadata_enabled)
+        .build();
+    let metadata_shell = Rc::clone(shell);
+    external_metadata_row.connect_active_notify(move |row| {
+        metadata_shell.set_external_metadata_enabled(row.is_active());
+    });
+    metadata_group.add(&external_metadata_row);
+    page.add(&metadata_group);
+
+    let lyrics_group = adw::PreferencesGroup::builder().title(tr("Lyrics")).build();
+    let external_row = adw::SwitchRow::builder()
+        .title(tr("External lyric lookup"))
+        .active(settings.external_lyrics_enabled)
+        .build();
+
+    let prefer_server_row = adw::SwitchRow::builder()
+        .title(tr("Prefer server lyrics"))
+        .active(settings.prefer_server_lyrics)
+        .sensitive(settings.external_lyrics_enabled)
+        .build();
+    let prefer_server_shell = Rc::clone(shell);
+    prefer_server_row.connect_active_notify(move |row| {
+        prefer_server_shell.set_prefer_server_lyrics(row.is_active());
+    });
+
+    let external_shell = Rc::clone(shell);
+    let prefer_server_row_for_external = prefer_server_row.clone();
+    external_row.connect_active_notify(move |row| {
+        let enabled = row.is_active();
+        prefer_server_row_for_external.set_sensitive(enabled);
+        external_shell.set_external_lyrics_enabled(enabled);
+    });
+    lyrics_group.add(&external_row);
+    lyrics_group.add(&prefer_server_row);
+
+    let ask_save_row = adw::SwitchRow::builder()
+        .title(tr("Ask where to save to lyrics"))
+        .subtitle(tr(
+            "If not set, lyrics are exported to the folder you set, or your ~/Music folder",
+        ))
+        .active(settings.ask_lyrics_save_path)
+        .build();
+    let ask_save_shell = Rc::clone(shell);
+    ask_save_row.connect_active_notify(move |row| {
+        ask_save_shell.set_ask_lyrics_save_path(row.is_active());
+    });
+    lyrics_group.add(&ask_save_row);
+
+    let export_subtitle = settings
+        .lyrics_export_folder
+        .clone()
+        .unwrap_or_else(|| tr("Use ~/Music"));
+    let export_folder_row = adw::ActionRow::builder()
+        .title(tr("Lyrics export folder"))
+        .subtitle(export_subtitle)
+        .build();
+    let export_button = gtk::Button::with_label(&tr("Choose"));
+    export_button.set_valign(gtk::Align::Center);
+    export_folder_row.add_suffix(&export_button);
+    export_folder_row.set_activatable_widget(Some(&export_button));
+    let export_shell = Rc::clone(shell);
+    let export_row = export_folder_row.clone();
+    export_button.connect_clicked(move |_| {
+        let shell = Rc::clone(&export_shell);
+        let row = export_row.clone();
+        gtk::glib::spawn_future_local(async move {
+            let dialog = gtk::FileDialog::builder()
+                .title(tr("Select Lyrics Export Folder"))
+                .build();
+            let Ok(folder) = dialog.select_folder_future(Some(&shell.window)).await else {
+                return;
+            };
+            let Some(path) = folder.path() else {
+                return;
+            };
+            let text = path.display().to_string();
+            row.set_subtitle(&text);
+            shell.set_lyrics_export_folder(Some(text));
+        });
+    });
+    lyrics_group.add(&export_folder_row);
+    page.add(&lyrics_group);
+
+    let discord_group = adw::PreferencesGroup::builder()
+        .title(tr("Discord"))
+        .build();
+    let presence_row = adw::SwitchRow::builder()
+        .title(tr("Rich presence"))
+        .active(settings.discord_presence_enabled)
+        .build();
+    let presence_shell = Rc::clone(shell);
+    presence_row.connect_active_notify(move |row| {
+        presence_shell.set_discord_presence_enabled(row.is_active());
+    });
+    discord_group.add(&presence_row);
+
+    let display_titles = [tr("Application name"), tr("Song title"), tr("Artist name")];
+    let display_refs = display_titles
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let display_options = gtk::StringList::new(&display_refs);
+    let display_row = adw::ComboRow::builder()
+        .title(tr("Status display"))
+        .model(&display_options)
+        .selected(discord_display_index(settings.discord_display_type))
+        .build();
+    let display_shell = Rc::clone(shell);
+    display_row.connect_selected_notify(move |row| {
+        display_shell.set_discord_display_type(discord_display_from_index(row.selected()));
+    });
+    discord_group.add(&display_row);
+
+    let link_titles = [
+        tr("None"),
+        tr("Last.fm"),
+        tr("MusicBrainz"),
+        tr("MusicBrainz with Last.fm fallback"),
+    ];
+    let link_refs = link_titles.iter().map(String::as_str).collect::<Vec<_>>();
+    let link_options = gtk::StringList::new(&link_refs);
+    let link_row = adw::ComboRow::builder()
+        .title(tr("Activity links and MusicBrainz covers"))
+        .model(&link_options)
+        .selected(discord_link_index(settings.discord_link_type))
+        .build();
+    let link_shell = Rc::clone(shell);
+    link_row.connect_selected_notify(move |row| {
+        link_shell.set_discord_link_type(discord_link_from_index(row.selected()));
+    });
+    discord_group.add(&link_row);
+
+    let paused_row = adw::SwitchRow::builder()
+        .title(tr("Show paused status"))
+        .active(settings.discord_show_paused)
+        .build();
+    let paused_shell = Rc::clone(shell);
+    paused_row.connect_active_notify(move |row| {
+        paused_shell.set_discord_show_paused(row.is_active());
+    });
+    discord_group.add(&paused_row);
+
+    let listening_row = adw::SwitchRow::builder()
+        .title(tr("Use listening activity"))
+        .subtitle(tr("Set the Discord activity type to Listening"))
+        .active(settings.discord_show_as_listening)
+        .build();
+    let listening_shell = Rc::clone(shell);
+    listening_row.connect_active_notify(move |row| {
+        listening_shell.set_discord_show_as_listening(row.is_active());
+    });
+    discord_group.add(&listening_row);
+
+    let state_icon_row = adw::SwitchRow::builder()
+        .title(tr("Show playback icon"))
+        .active(settings.discord_show_state_icon)
+        .build();
+    let state_icon_shell = Rc::clone(shell);
+    state_icon_row.connect_active_notify(move |row| {
+        state_icon_shell.set_discord_show_state_icon(row.is_active());
+    });
+    discord_group.add(&state_icon_row);
+
+    let lastfm_row = adw::PasswordEntryRow::builder()
+        .title(tr("Last.fm API key"))
+        .show_apply_button(true)
+        .build();
+    lastfm_row.set_text(&settings.lastfm_api_key);
+    let lastfm_shell = Rc::clone(shell);
+    lastfm_row.connect_apply(move |row| {
+        lastfm_shell.set_lastfm_api_key(row.text().to_string());
+    });
+    discord_group.add(&lastfm_row);
+
+    page.add(&discord_group);
+
+    page
+}
+fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
+    let settings = shell.state.settings.borrow().clone();
+    let group = adw::PreferencesGroup::builder()
+        .title(tr("Interface"))
+        .build();
+
+    let default_left_row = left_sidebar_row(
+        &tr("Default left sidebar"),
+        settings.layout.default_profile.left_sidebar,
+    );
+    let default_left_shell = Rc::clone(shell);
+    default_left_row.connect_selected_notify(move |row| {
+        let mode = left_sidebar_mode_from_index(row.selected());
+        default_left_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.default_profile.left_sidebar == mode {
+                return false;
+            }
+            settings.layout.default_profile.left_sidebar = mode;
+            true
+        });
+        default_left_shell.update_layout();
+    });
+    group.add(&default_left_row);
+
+    let default_right_row = right_sidebar_row(
+        &tr("Default right sidebar"),
+        settings.layout.default_profile.right_sidebar,
+    );
+    let default_right_shell = Rc::clone(shell);
+    default_right_row.connect_selected_notify(move |row| {
+        let mode = right_sidebar_mode_from_index(row.selected());
+        default_right_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.default_profile.right_sidebar == mode {
+                return false;
+            }
+            settings.layout.default_profile.right_sidebar = mode;
+            if mode.is_visible() {
+                settings.layout.default_profile.last_visible_right_sidebar = mode;
+            }
+            settings.layout.sanitize();
+            true
+        });
+        default_right_shell.update_layout();
+    });
+    group.add(&default_right_row);
+
+    let lyrics_panel_row = adw::SwitchRow::builder()
+        .title(tr("Show Lyrics Panel"))
+        .active(settings.lyrics_panel_visible)
+        .build();
+    let lyrics_panel_shell = Rc::clone(shell);
+    lyrics_panel_row.connect_active_notify(move |row| {
+        lyrics_panel_shell.set_lyrics_panel_visible(row.is_active());
+    });
+    group.add(&lyrics_panel_row);
+
+    let narrow_row = adw::SwitchRow::builder()
+        .title(tr("Use different layout below threshold"))
+        .active(settings.layout.narrow_enabled)
+        .build();
+    group.add(&narrow_row);
+
+    let threshold_adjustment = gtk::Adjustment::new(
+        f64::from(settings.layout.narrow_threshold),
+        f64::from(MIN_NARROW_LAYOUT_THRESHOLD),
+        f64::from(MAX_NARROW_LAYOUT_THRESHOLD),
+        10.0,
+        100.0,
+        0.0,
+    );
+    let threshold_row = adw::SpinRow::builder()
+        .title(tr("Narrow layout threshold"))
+        .adjustment(&threshold_adjustment)
+        .digits(0)
+        .numeric(true)
+        .sensitive(settings.layout.narrow_enabled)
+        .build();
+    let threshold_shell = Rc::clone(shell);
+    threshold_row.connect_value_notify(move |row| {
+        let threshold = row.value().round() as i32;
+        threshold_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.narrow_threshold == threshold {
+                return false;
+            }
+            settings.layout.narrow_threshold = threshold;
+            settings.layout.sanitize();
+            true
+        });
+        threshold_shell.update_layout();
+    });
+    group.add(&threshold_row);
+
+    let narrow_left_row = left_sidebar_row(
+        &tr("Narrow left sidebar"),
+        settings.layout.narrow_profile.left_sidebar,
+    );
+    narrow_left_row.set_sensitive(settings.layout.narrow_enabled);
+    let narrow_left_shell = Rc::clone(shell);
+    narrow_left_row.connect_selected_notify(move |row| {
+        let mode = left_sidebar_mode_from_index(row.selected());
+        narrow_left_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.narrow_profile.left_sidebar == mode {
+                return false;
+            }
+            settings.layout.narrow_profile.left_sidebar = mode;
+            true
+        });
+        narrow_left_shell.update_layout();
+    });
+    group.add(&narrow_left_row);
+
+    let narrow_right_row = right_sidebar_row(
+        &tr("Narrow right sidebar"),
+        settings.layout.narrow_profile.right_sidebar,
+    );
+    narrow_right_row.set_sensitive(settings.layout.narrow_enabled);
+    let narrow_right_shell = Rc::clone(shell);
+    narrow_right_row.connect_selected_notify(move |row| {
+        let mode = right_sidebar_mode_from_index(row.selected());
+        narrow_right_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.narrow_profile.right_sidebar == mode {
+                return false;
+            }
+            settings.layout.narrow_profile.right_sidebar = mode;
+            if mode.is_visible() {
+                settings.layout.narrow_profile.last_visible_right_sidebar = mode;
+            }
+            settings.layout.sanitize();
+            true
+        });
+        narrow_right_shell.update_layout();
+    });
+    group.add(&narrow_right_row);
+
+    let threshold_row_for_toggle = threshold_row.clone();
+    let narrow_left_row_for_toggle = narrow_left_row.clone();
+    let narrow_right_row_for_toggle = narrow_right_row.clone();
+    let narrow_shell = Rc::clone(shell);
+    narrow_row.connect_active_notify(move |row| {
+        let enabled = row.is_active();
+        threshold_row_for_toggle.set_sensitive(enabled);
+        narrow_left_row_for_toggle.set_sensitive(enabled);
+        narrow_right_row_for_toggle.set_sensitive(enabled);
+        narrow_shell.update_app_settings("layout setting", |settings| {
+            if settings.layout.narrow_enabled == enabled {
+                return false;
+            }
+            settings.layout.narrow_enabled = enabled;
+            true
+        });
+        narrow_shell.update_layout();
+    });
+
+    group
+}
+fn sidebar_items_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title(tr("Sidebar Items"))
+        .build();
+    let rows = Rc::new(RefCell::new(Vec::<adw::ActionRow>::new()));
+    populate_sidebar_item_rows(shell, &group, &rows);
+    group
+}
+fn populate_sidebar_item_rows(
+    shell: &Rc<Shell>,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+) {
+    for row in rows.borrow_mut().drain(..) {
+        group.remove(&row);
+    }
+
+    let items = shell.state.settings.borrow().sidebar.route_items.clone();
+    for entry in items {
+        let row = sidebar_item_row(shell, group, rows, entry);
+        group.add(&row);
+        rows.borrow_mut().push(row);
+    }
+
+    let server_row = adw::ActionRow::builder()
+        .title(tr("Server selector"))
+        .subtitle(if shell.state.settings.borrow().sidebar.server_visible {
+            tr("Visible")
+        } else {
+            tr("Hidden")
+        })
+        .build();
+    let server_switch = gtk::Switch::new();
+    server_switch.set_active(shell.state.settings.borrow().sidebar.server_visible);
+    server_switch.set_valign(gtk::Align::Center);
+    server_row.add_suffix(&server_switch);
+    server_row.set_activatable_widget(Some(&server_switch));
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        server_switch.connect_active_notify(move |switch| {
+            let visible = switch.is_active();
+            shell.update_app_settings("sidebar setting", |settings| {
+                if settings.sidebar.server_visible == visible {
+                    return false;
+                }
+                settings.sidebar.server_visible = visible;
+                true
+            });
+            shell.rebuild_sidebar_navigation();
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        });
+    }
+    group.add(&server_row);
+    rows.borrow_mut().push(server_row);
+}
+fn sidebar_item_row(
+    shell: &Rc<Shell>,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
+    entry: SidebarRouteItemSettings,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(tr(sidebar_route_item_title(entry.item)))
+        .subtitle(if entry.visible {
+            tr("Visible")
+        } else {
+            tr("Hidden")
+        })
+        .build();
+
+    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    drag.add_css_class("dim-label");
+    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+    row.add_prefix(&drag);
+
+    let visible = gtk::Switch::new();
+    visible.set_active(entry.visible);
+    visible.set_valign(gtk::Align::Center);
+    row.add_suffix(&visible);
+    row.set_activatable_widget(Some(&visible));
+
+    let up = gtk::Button::from_icon_name("go-up-symbolic");
+    up.add_css_class("flat");
+    up.set_tooltip_text(Some(&tr("Move up")));
+    up.set_valign(gtk::Align::Center);
+    row.add_suffix(&up);
+
+    let down = gtk::Button::from_icon_name("go-down-symbolic");
+    down.add_css_class("flat");
+    down.set_tooltip_text(Some(&tr("Move down")));
+    down.set_valign(gtk::Align::Center);
+    row.add_suffix(&down);
+
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        visible.connect_active_notify(move |switch| {
+            let item = entry.item;
+            let is_visible = switch.is_active();
+            shell.update_app_settings("sidebar setting", |settings| {
+                if let Some(stored) = settings
+                    .sidebar
+                    .route_items
+                    .iter_mut()
+                    .find(|stored| stored.item == item)
+                {
+                    if stored.visible == is_visible {
+                        return false;
+                    }
+                    stored.visible = is_visible;
+                }
+                settings.sidebar.sanitize();
+                true
+            });
+            shell.rebuild_sidebar_navigation();
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        });
+    }
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        up.connect_clicked(move |_| {
+            move_sidebar_item(&shell, entry.item, -1);
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        });
+    }
+    {
+        let shell = Rc::clone(shell);
+        let group = group.clone();
+        let rows = Rc::clone(rows);
+        down.connect_clicked(move |_| {
+            move_sidebar_item(&shell, entry.item, 1);
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        });
+    }
+
+    let source = gtk::DragSource::builder()
+        .actions(gtk::gdk::DragAction::MOVE)
+        .build();
+    let item_id = sidebar_route_item_drag_id(entry.item).to_string();
+    source.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(&item_id.to_value()))
+    });
+    drag.add_controller(source);
+
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let shell = Rc::clone(shell);
+    let group = group.clone();
+    let rows = Rc::clone(rows);
+    let row_for_drop = row.clone();
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(source_id) = value.get::<String>() else {
+            return false;
+        };
+        let Some(source_item) = sidebar_route_item_from_drag_id(&source_id) else {
+            return false;
+        };
+        if source_item == entry.item {
+            return false;
+        }
+        let after = y > f64::from(row_for_drop.height()) / 2.0;
+        let changed = shell
+            .update_app_settings("sidebar setting", |settings| {
+                let changed = reorder_sidebar_item_settings(
+                    &mut settings.sidebar.route_items,
+                    source_item,
+                    entry.item,
+                    after,
+                );
+                if changed {
+                    settings.sidebar.sanitize();
+                }
+                changed
+            })
+            .is_some();
+        if changed {
+            shell.rebuild_sidebar_navigation();
+            populate_sidebar_item_rows(&shell, &group, &rows);
+        }
+        changed
+    });
+    row.add_controller(drop_target);
+
+    row
+}
+fn move_sidebar_item(shell: &Rc<Shell>, item: SidebarRouteItem, delta: isize) {
+    shell.update_app_settings("sidebar setting", |settings| {
+        let Some(index) = settings
+            .sidebar
+            .route_items
+            .iter()
+            .position(|entry| entry.item == item)
+        else {
+            return false;
+        };
+        let new_index = if delta < 0 {
+            index.saturating_sub(1)
+        } else {
+            (index + 1).min(settings.sidebar.route_items.len().saturating_sub(1))
+        };
+        if index == new_index {
+            return false;
+        }
+        settings.sidebar.route_items.swap(index, new_index);
+        settings.sidebar.sanitize();
+        true
+    });
+    shell.rebuild_sidebar_navigation();
+}
+fn reorder_sidebar_item_settings(
+    items: &mut Vec<SidebarRouteItemSettings>,
+    source: SidebarRouteItem,
+    target: SidebarRouteItem,
+    after: bool,
+) -> bool {
+    if source == target {
+        return false;
+    }
+    let before = items.clone();
+    let Some(source_index) = items.iter().position(|entry| entry.item == source) else {
+        return false;
+    };
+    let entry = items.remove(source_index);
+    let Some(mut target_index) = items.iter().position(|entry| entry.item == target) else {
+        items.insert(source_index.min(items.len()), entry);
+        return false;
+    };
+    if after {
+        target_index += 1;
+    }
+    items.insert(target_index.min(items.len()), entry);
+    *items != before
+}
+fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
+    match item {
+        SidebarRouteItem::Home => "Home",
+        SidebarRouteItem::Favorites => "Favorites",
+        SidebarRouteItem::Albums => "Albums",
+        SidebarRouteItem::Tracks => "Tracks",
+        SidebarRouteItem::Artists => "Artists",
+        SidebarRouteItem::AlbumArtists => "AlbumArtists",
+        SidebarRouteItem::Genres => "Genres",
+        SidebarRouteItem::Folders => "Folders",
+        SidebarRouteItem::Playlists => "Playlists",
+    }
+}
+fn sidebar_route_item_from_drag_id(id: &str) -> Option<SidebarRouteItem> {
+    SidebarRouteItem::all()
+        .into_iter()
+        .find(|item| sidebar_route_item_drag_id(*item) == id)
+}
+fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
+    match item {
+        SidebarRouteItem::Home => "Home",
+        SidebarRouteItem::Favorites => "Favorites",
+        SidebarRouteItem::Albums => "Albums",
+        SidebarRouteItem::Tracks => "Tracks",
+        SidebarRouteItem::Artists => "Artists",
+        SidebarRouteItem::AlbumArtists => "Album Artists",
+        SidebarRouteItem::Genres => "Genres",
+        SidebarRouteItem::Folders => "Folders",
+        SidebarRouteItem::Playlists => "Playlists",
+    }
+}

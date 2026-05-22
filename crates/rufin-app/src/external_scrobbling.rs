@@ -681,7 +681,7 @@ mod tests {
         });
 
         assert_eq!(
-            audioscrobbler_session_from_value(&value, "Last.fm").unwrap(),
+            audioscrobbler_session_from_value(&value, "Last.fm").expect("audioscrobbler session"),
             AudioscrobblerSession {
                 username: "listener".to_string(),
                 session_key: "session-key".to_string(),
