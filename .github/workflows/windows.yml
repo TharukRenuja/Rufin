@@ -65,6 +65,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up MSYS2
+        id: msys2
         uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2
         with:
           msystem: UCRT64
@@ -127,8 +128,11 @@ jobs:
 
       - name: Stage Windows runtime
         shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
-          ./packaging/windows/package.ps1 -MsysPrefix C:\msys64\ucrt64
+          $msysPrefix = Join-Path $env:MSYS2_LOCATION "ucrt64"
+          ./packaging/windows/package.ps1 -MsysPrefix $msysPrefix
 
       - name: Install Inno Setup
         shell: pwsh
