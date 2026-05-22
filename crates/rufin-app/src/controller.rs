@@ -59,10 +59,13 @@ const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
-const DATABASE_FILE_NAME: &str = "rufin.sqlite";
+const CACHE_DATABASE_FILE_NAME: &str = "rufin-cache.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const STORE_DIR_NAME: &str = "store";
 const COVER_CACHE_DIR_NAME: &str = "covers";
+const LYRICS_CACHE_DIR_NAME: &str = "lyrics";
+const PLAYBACK_CACHE_DIR_NAME: &str = "playback";
+const TMP_CACHE_DIR_NAME: &str = "tmp";
 const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
 
 #[derive(Clone, Debug)]
@@ -330,7 +333,7 @@ enum HomeRefreshTarget {
 #[derive(Clone)]
 enum StoreHandle {
     Path {
-        database_path: PathBuf,
+        cache_database_path: PathBuf,
         settings_path: PathBuf,
     },
     Memory {
@@ -341,15 +344,18 @@ enum StoreHandle {
 
 impl StoreHandle {
     fn open_for_app() -> Result<Self, String> {
-        let database_path = app_database_path();
-        if let Some(parent) = database_path.parent() {
+        if let Some(cache_root) = cache_dir() {
+            ensure_app_cache_dirs(&cache_root)?;
+        }
+        let cache_database_path = app_cache_database_path();
+        if let Some(parent) = cache_database_path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        Store::open(&database_path).map_err(|error| error.to_string())?;
+        Store::open(&cache_database_path).map_err(|error| error.to_string())?;
 
         let settings_path = app_settings_path();
         let handle = Self::Path {
-            database_path,
+            cache_database_path,
             settings_path,
         };
         Ok(handle)
@@ -369,8 +375,11 @@ impl StoreHandle {
         operation: impl FnOnce(&Store) -> Result<T, StoreError>,
     ) -> Result<T, String> {
         match self {
-            Self::Path { database_path, .. } => {
-                let store = Store::open(database_path).map_err(|error| error.to_string())?;
+            Self::Path {
+                cache_database_path,
+                ..
+            } => {
+                let store = Store::open(cache_database_path).map_err(|error| error.to_string())?;
                 operation(&store).map_err(|error| error.to_string())
             }
             Self::Memory { store, .. } => {
@@ -424,7 +433,10 @@ impl StoreHandle {
 
     fn database_exists(&self) -> bool {
         match self {
-            Self::Path { database_path, .. } => database_path.exists(),
+            Self::Path {
+                cache_database_path,
+                ..
+            } => cache_database_path.exists(),
             Self::Memory { .. } => true,
         }
     }
@@ -5898,10 +5910,6 @@ fn emit_playlist_changed_result(
     }
 }
 
-fn data_dir() -> Option<PathBuf> {
-    ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.data_dir().to_path_buf())
-}
-
 fn config_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.config_dir().to_path_buf())
 }
@@ -5910,14 +5918,16 @@ fn cache_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.cache_dir().to_path_buf())
 }
 
-fn app_database_path() -> PathBuf {
-    data_dir()
-        .map(|dir| app_database_path_for_data_dir(&dir))
-        .unwrap_or_else(|| PathBuf::from(DATABASE_FILE_NAME))
+fn app_cache_database_path() -> PathBuf {
+    cache_dir()
+        .map(|dir| app_cache_database_path_for_cache_dir(&dir))
+        .unwrap_or_else(|| PathBuf::from(CACHE_DATABASE_FILE_NAME))
 }
 
-fn app_database_path_for_data_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join(STORE_DIR_NAME).join(DATABASE_FILE_NAME)
+fn app_cache_database_path_for_cache_dir(cache_dir: &Path) -> PathBuf {
+    cache_dir
+        .join(STORE_DIR_NAME)
+        .join(CACHE_DATABASE_FILE_NAME)
 }
 
 fn app_settings_path() -> PathBuf {
@@ -5936,6 +5946,36 @@ fn cover_cache_dir() -> Option<PathBuf> {
 
 fn cover_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(COVER_CACHE_DIR_NAME)
+}
+
+fn lyrics_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(LYRICS_CACHE_DIR_NAME)
+}
+
+fn playback_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(PLAYBACK_CACHE_DIR_NAME)
+}
+
+fn tmp_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(TMP_CACHE_DIR_NAME)
+}
+
+fn ensure_app_cache_dirs(cache_dir: &Path) -> Result<(), String> {
+    for dir in [
+        app_cache_database_path_for_cache_dir(cache_dir)
+            .parent()
+            .map(Path::to_path_buf),
+        Some(cover_cache_dir_for_cache_dir(cache_dir)),
+        Some(lyrics_cache_dir_for_cache_dir(cache_dir)),
+        Some(playback_cache_dir_for_cache_dir(cache_dir)),
+        Some(tmp_cache_dir_for_cache_dir(cache_dir)),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn cover_cache_path_for_key(key: &str) -> Option<PathBuf> {
@@ -6018,15 +6058,17 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AppController, ControllerEvent, DATABASE_FILE_NAME, LOCAL_SOURCE_SERVER_ID,
+        AppController, CACHE_DATABASE_FILE_NAME, ControllerEvent, LOCAL_SOURCE_SERVER_ID,
         LibrarySnapshot, RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME,
         SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle, activate_logged_in_server,
-        app_database_path_for_data_dir, app_settings_path_for_config_dir, auto_dj_candidates,
-        cover_cache_dir_for_cache_dir, home_refresh_completed_event, load_settings_from_store,
-        load_snapshot, playback_snapshot_from_queue, prefetch_home_section,
-        promote_prefetched_home_section, refresh_home_section, refresh_home_sections,
-        refresh_home_sections_without_explore, refresh_playlist_pages, restore_queue,
-        sync_page_finished, sync_provider,
+        app_cache_database_path_for_cache_dir, app_settings_path_for_config_dir,
+        auto_dj_candidates, cover_cache_dir_for_cache_dir, ensure_app_cache_dirs,
+        home_refresh_completed_event, load_settings_from_store, load_snapshot,
+        lyrics_cache_dir_for_cache_dir, playback_cache_dir_for_cache_dir,
+        playback_snapshot_from_queue, prefetch_home_section, promote_prefetched_home_section,
+        refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
+        refresh_playlist_pages, restore_queue, sync_page_finished, sync_provider,
+        tmp_cache_dir_for_cache_dir,
     };
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
@@ -7519,9 +7561,9 @@ mod tests {
     fn path_settings_round_trip_uses_config_file_without_sqlite() {
         let dir = unique_test_dir("settings-round-trip");
         let settings_path = dir.join("config").join(SETTINGS_FILE_NAME);
-        let database_path = dir.join(DATABASE_FILE_NAME);
+        let cache_database_path = dir.join(CACHE_DATABASE_FILE_NAME);
         let store = StoreHandle::Path {
-            database_path: database_path.clone(),
+            cache_database_path: cache_database_path.clone(),
             settings_path: settings_path.clone(),
         };
         let settings = AppSettings {
@@ -7534,7 +7576,7 @@ mod tests {
 
         assert_eq!(load_settings_from_store(&store), settings);
         assert!(settings_path.exists());
-        assert!(!database_path.exists());
+        assert!(!cache_database_path.exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -7556,8 +7598,10 @@ mod tests {
         let root = PathBuf::from("/tmp/rufin-path-layout");
 
         assert_eq!(
-            app_database_path_for_data_dir(&root.join("data")),
-            root.join("data").join("store").join(DATABASE_FILE_NAME)
+            app_cache_database_path_for_cache_dir(&root.join("cache")),
+            root.join("cache")
+                .join("store")
+                .join(CACHE_DATABASE_FILE_NAME)
         );
         assert_eq!(
             app_settings_path_for_config_dir(&root.join("config")),
@@ -7567,6 +7611,33 @@ mod tests {
             cover_cache_dir_for_cache_dir(&root.join("cache")),
             root.join("cache").join("covers")
         );
+        assert_eq!(
+            lyrics_cache_dir_for_cache_dir(&root.join("cache")),
+            root.join("cache").join("lyrics")
+        );
+        assert_eq!(
+            playback_cache_dir_for_cache_dir(&root.join("cache")),
+            root.join("cache").join("playback")
+        );
+        assert_eq!(
+            tmp_cache_dir_for_cache_dir(&root.join("cache")),
+            root.join("cache").join("tmp")
+        );
+    }
+
+    #[test]
+    fn app_cache_layout_creates_expected_subdirs_without_playlist_folder() {
+        let root = unique_test_dir("cache-layout");
+
+        ensure_app_cache_dirs(&root).expect("ensure cache layout");
+
+        assert!(root.join("store").is_dir());
+        assert!(root.join("covers").is_dir());
+        assert!(root.join("lyrics").is_dir());
+        assert!(root.join("playback").is_dir());
+        assert!(root.join("tmp").is_dir());
+        assert!(!root.join("playlists").exists());
+        let _cleanup = fs::remove_dir_all(root);
     }
 
     #[test]
