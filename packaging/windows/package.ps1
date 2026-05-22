@@ -46,15 +46,31 @@ function Copy-FileSet {
         throw "Source directory was not found: $SourceDir"
     }
 
-    $files = @(Get-ChildItem -LiteralPath $SourceDir -Filter $Filter -File)
+    $files = @(
+        Get-ChildItem -LiteralPath $SourceDir -Filter $Filter |
+            Where-Object { -not $_.PSIsContainer }
+    )
     if ($files.Count -eq 0) {
         throw "No files matching $Filter were found in $SourceDir"
     }
 
     New-Item -ItemType Directory -Force $DestinationDir | Out-Null
     foreach ($file in $files) {
+        $copySource = $file.FullName
+        $targetProperty = $file.PSObject.Properties["Target"]
+        if ($targetProperty -and $targetProperty.Value) {
+            $target = @($targetProperty.Value)[0]
+            if ($target.StartsWith('/') -or $target.StartsWith('\')) {
+                $msysRoot = Split-Path -Parent (Split-Path -Parent $SourceDir)
+                $target = Join-Path $msysRoot ($target.TrimStart('/', '\') -replace '/', '\')
+            } elseif (-not [System.IO.Path]::IsPathRooted($target)) {
+                $target = Join-Path $file.DirectoryName $target
+            }
+            $copySource = (Resolve-Path -LiteralPath $target).Path
+        }
+
         Copy-Item `
-            -LiteralPath $file.FullName `
+            -LiteralPath $copySource `
             -Destination (Join-Path $DestinationDir $file.Name) `
             -Force
     }
