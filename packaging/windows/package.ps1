@@ -35,6 +35,33 @@ function Copy-FileIfExists {
     }
 }
 
+function Copy-FileSet {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDir,
+        [Parameter(Mandatory = $true)][string]$DestinationDir,
+        [Parameter(Mandatory = $true)][string]$Filter
+    )
+
+    if (-not (Test-Path $SourceDir)) {
+        throw "Source directory was not found: $SourceDir"
+    }
+
+    $files = @(Get-ChildItem -LiteralPath $SourceDir -Filter $Filter -File)
+    if ($files.Count -eq 0) {
+        throw "No files matching $Filter were found in $SourceDir"
+    }
+
+    New-Item -ItemType Directory -Force $DestinationDir | Out-Null
+    foreach ($file in $files) {
+        Copy-Item `
+            -LiteralPath $file.FullName `
+            -Destination (Join-Path $DestinationDir $file.Name) `
+            -Force
+    }
+
+    return $files.Count
+}
+
 if (-not (Test-Path $MsysPrefix)) {
     throw "MSYS2 UCRT64 prefix was not found: $MsysPrefix"
 }
@@ -63,8 +90,11 @@ Copy-FileIfExists `
     (Join-Path $RepoRoot "data\io.github.screwys.Rufin.metainfo.xml") `
     (Join-Path $appShare "metainfo\io.github.screwys.Rufin.metainfo.xml")
 
-Get-ChildItem -Path (Join-Path $MsysPrefix "bin") -Filter "*.dll" |
-    Copy-Item -Destination $StageDir -Force
+$runtimeDllCount = Copy-FileSet `
+    -SourceDir (Join-Path $MsysPrefix "bin") `
+    -DestinationDir $StageDir `
+    -Filter "*.dll"
+Write-Host "Copied $runtimeDllCount UCRT64 runtime DLLs"
 
 foreach ($helper in @("gspawn-win64-helper.exe", "gspawn-win64-helper-console.exe")) {
     Copy-FileIfExists `

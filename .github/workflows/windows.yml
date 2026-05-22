@@ -179,6 +179,11 @@ jobs:
             }
             throw "Installed Rufin executable was not found: $installedExe"
           }
+          $installedDlls = @(Get-ChildItem -LiteralPath $installDir -Filter "*.dll" -File)
+          Write-Host "Installed Rufin runtime has $($installedDlls.Count) top-level DLLs"
+          if ($installedDlls.Count -eq 0) {
+            throw "Installed Rufin runtime has no top-level DLLs"
+          }
 
           $runtimeStdout = Join-Path $env:RUNNER_TEMP "rufin-runtime.out"
           $runtimeStderr = Join-Path $env:RUNNER_TEMP "rufin-runtime.err"
