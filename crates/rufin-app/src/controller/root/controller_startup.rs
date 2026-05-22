@@ -17,6 +17,7 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
         }
     }
 
+    let prefetch_initial_covers = initial_cover_cache_required(&context.store, &server_id);
     let generation = match context
         .store
         .with_store(|store| store.begin_sync(&server_id))
@@ -41,8 +42,12 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
             &context.store,
             &context.runtime,
             &context.secrets,
+            &context.events,
+            &context.cover_in_flight,
+            &context.cover_slots,
             &saved,
             generation,
+            prefetch_initial_covers,
         );
         if let Ok(mut running) = context.sync_in_flight.lock() {
             running.remove(&server_id);
@@ -259,12 +264,27 @@ fn start_prefetched_home_section_promotion_thread(
         }
     });
 }
+
+fn initial_cover_cache_required(store: &StoreHandle, server_id: &ServerId) -> bool {
+    store
+        .with_store(|store| {
+            let albums = store.load_albums(server_id, 0, 1)?;
+            let tracks = store.load_tracks(server_id, 0, 1)?;
+            Ok(albums.total == 0 && tracks.total == 0)
+        })
+        .unwrap_or(true)
+}
+
 fn run_sync_job(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
+    events: &Sender<ControllerEvent>,
+    cover_in_flight: &Arc<Mutex<HashSet<String>>>,
+    cover_slots: &Arc<(Mutex<usize>, Condvar)>,
     saved: &SavedServer,
     generation: i64,
+    prefetch_initial_covers: bool,
 ) -> Result<(), String> {
     let provider = provider_for_saved(store, runtime, secrets, saved)?;
     runtime.block_on(sync_provider_generation(
@@ -272,7 +292,22 @@ fn run_sync_job(
         &saved.server.id,
         provider.as_music_provider(),
         generation,
-    ))
+    ))?;
+    if prefetch_initial_covers {
+        let _sent = events.send(ControllerEvent::LoginStatus(
+            "Caching library artwork...".to_string(),
+        ));
+        covers::prefetch_initial_provider_cover_cache(
+            store,
+            runtime,
+            secrets,
+            events,
+            cover_in_flight,
+            cover_slots,
+            saved,
+        )?;
+    }
+    Ok(())
 }
 fn refresh_home_sections_without_explore_for_saved(
     store: &StoreHandle,

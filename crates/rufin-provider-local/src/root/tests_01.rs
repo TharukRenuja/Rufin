@@ -49,6 +49,39 @@
         assert_eq!(tracks.total, 2);
         assert_eq!(tracks.items.len(), 2);
     }
+    #[test]
+    fn local_tracks_share_album_cover_ref() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let album_id = AlbumId::new("local:album:test");
+        let first_cover = LocalCover::Embedded {
+            path: dir.path().join("first.flac"),
+            content_type: Some("image/jpeg".to_string()),
+        };
+        let second_cover = LocalCover::Embedded {
+            path: dir.path().join("second.flac"),
+            content_type: Some("image/jpeg".to_string()),
+        };
+
+        let library = build_library(
+            vec![
+                scanned_test_track(1, album_id.clone(), None),
+                scanned_test_track(2, album_id.clone(), Some(first_cover)),
+                scanned_test_track(3, album_id, Some(second_cover)),
+            ],
+            Vec::new(),
+            HashMap::new(),
+        );
+
+        assert_eq!(library.albums.len(), 1);
+        assert_eq!(library.covers.len(), 1);
+        let album_cover = library.albums[0].image_ref.clone().expect("album cover");
+        assert!(
+            library
+                .tracks
+                .iter()
+                .all(|track| track.image_ref.as_ref() == Some(&album_cover))
+        );
+    }
     #[tokio::test]
     async fn local_folder_root_lists_configured_roots() {
         let first = tempfile::tempdir().expect("first root");
@@ -124,4 +157,42 @@
         let result = provider.folder(Some(&outside), None).await;
 
         assert!(matches!(result, Err(ProviderError::NotFound)));
+    }
+
+    fn scanned_test_track(
+        number: u32,
+        album_id: AlbumId,
+        cover: Option<LocalCover>,
+    ) -> ScannedTrack {
+        let artist = ArtistCredit {
+            id: ArtistId::new("local:artist:example"),
+            name: "Example Artist".to_string(),
+        };
+        ScannedTrack {
+            track: Track {
+                id: TrackId::fake(number),
+                album_id,
+                title: format!("Track {number}"),
+                artist: artist.name.clone(),
+                artist_id: Some(artist.id.clone()),
+                artist_credits: vec![artist.clone()],
+                album_artist_credits: vec![artist],
+                album: "Example Album".to_string(),
+                year: 2024,
+                release_date: None,
+                date_added: None,
+                last_played: None,
+                play_count: None,
+                user_rating: None,
+                duration_seconds: 60,
+                favorite: false,
+                disc_number: 1,
+                track_number: number as u16,
+                image_ref: None,
+                genres: Vec::new(),
+                local_path: Some(format!("/tmp/rufin-track-{number}.flac")),
+            },
+            album_artist: "Example Artist".to_string(),
+            cover,
+        }
     }

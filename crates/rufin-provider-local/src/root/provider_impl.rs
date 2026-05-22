@@ -11,14 +11,8 @@ fn build_library(
     let mut tracks = Vec::with_capacity(scanned.len());
 
     for mut scanned_track in scanned {
+        let cover = scanned_track.cover.take();
         let track = &mut scanned_track.track;
-        let cover_ref = scanned_track.cover.map(|cover| {
-            let cover_id = cover_id(&cover);
-            covers.entry(cover_id.clone()).or_insert(cover);
-            ImageRef::new(cover_id, None)
-        });
-        track.image_ref = cover_ref.clone();
-
         let album_entry =
             albums
                 .entry(track.album_id.clone())
@@ -43,14 +37,18 @@ fn build_library(
                         duration_seconds: 0,
                         favorite: false,
                         color_seed: stable_hash(track.album_id.as_str()) as u32,
-                        image_ref: cover_ref.clone(),
+                        image_ref: None,
                         genres: Vec::new(),
                     },
                     album_artist_keys: BTreeSet::new(),
                     artist_keys: BTreeSet::new(),
                 });
-        if album_entry.album.image_ref.is_none() {
-            album_entry.album.image_ref = cover_ref;
+        if album_entry.album.image_ref.is_none()
+            && let Some(cover) = cover
+        {
+            let cover_id = cover_id(&cover);
+            covers.entry(cover_id.clone()).or_insert(cover);
+            album_entry.album.image_ref = Some(ImageRef::new(cover_id, None));
         }
         album_entry.album.track_count = album_entry.album.track_count.saturating_add(1);
         album_entry.album.duration_seconds = album_entry
@@ -106,6 +104,20 @@ fn build_library(
             genre.tracks.insert(track.id.clone());
         }
         tracks.push(track.clone());
+    }
+
+    let album_image_refs = albums
+        .iter()
+        .filter_map(|(id, entry)| {
+            entry
+                .album
+                .image_ref
+                .clone()
+                .map(|image_ref| (id.clone(), image_ref))
+        })
+        .collect::<HashMap<_, _>>();
+    for track in &mut tracks {
+        track.image_ref = album_image_refs.get(&track.album_id).cloned();
     }
 
     let mut albums = albums

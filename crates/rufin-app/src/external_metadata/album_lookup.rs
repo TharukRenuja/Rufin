@@ -23,16 +23,34 @@ pub fn fetch_album_cover(
     size: u32,
     lastfm_api_key: &str,
 ) -> Result<Vec<u8>, String> {
-    let client = Client::builder()
+    thread_local! {
+        static ALBUM_COVER_CLIENT: Result<Client, String> = build_album_cover_client();
+    }
+
+    ALBUM_COVER_CLIENT.with(|client| {
+        let client = client.as_ref().map_err(Clone::clone)?;
+        fetch_album_cover_with_client(client, art, size, lastfm_api_key)
+    })
+}
+
+fn build_album_cover_client() -> Result<Client, String> {
+    Client::builder()
         .timeout(Duration::from_secs(8))
         .user_agent(EXTERNAL_METADATA_USER_AGENT)
         .build()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())
+}
 
+fn fetch_album_cover_with_client(
+    client: &Client,
+    art: &ExternalAlbumArt,
+    size: u32,
+    lastfm_api_key: &str,
+) -> Result<Vec<u8>, String> {
     let mut errors = Vec::new();
     if !lastfm_api_key.trim().is_empty() {
-        match lastfm_album_cover_url(&client, art, lastfm_api_key) {
-            Ok(Some(url)) => match download_image(&client, &url) {
+        match lastfm_album_cover_url(client, art, lastfm_api_key) {
+            Ok(Some(url)) => match download_image(client, &url) {
                 Ok(bytes) => return Ok(bytes),
                 Err(error) => errors.push(error),
             },
@@ -41,10 +59,10 @@ pub fn fetch_album_cover(
         }
     }
 
-    match cover_art_archive_release_group_urls(&client, art, size) {
+    match cover_art_archive_release_group_urls(client, art, size) {
         Ok(urls) => {
             for url in urls {
-                match download_image(&client, &url) {
+                match download_image(client, &url) {
                     Ok(bytes) => return Ok(bytes),
                     Err(error) => errors.push(error),
                 }
@@ -53,10 +71,10 @@ pub fn fetch_album_cover(
         Err(error) => errors.push(error),
     }
 
-    match cover_art_archive_release_urls(&client, art, size) {
+    match cover_art_archive_release_urls(client, art, size) {
         Ok(urls) => {
             for url in urls {
-                match download_image(&client, &url) {
+                match download_image(client, &url) {
                     Ok(bytes) => return Ok(bytes),
                     Err(error) => errors.push(error),
                 }
