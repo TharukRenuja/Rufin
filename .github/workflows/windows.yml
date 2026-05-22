@@ -179,7 +179,35 @@ jobs:
             }
             throw "Installed Rufin executable was not found: $installedExe"
           }
-          & $installedExe --help | Out-Null
+
+          $runtimeStdout = Join-Path $env:RUNNER_TEMP "rufin-runtime.out"
+          $runtimeStderr = Join-Path $env:RUNNER_TEMP "rufin-runtime.err"
+          $previousPath = $env:PATH
+          try {
+            $env:PATH = "$installDir;$env:PATH"
+            $runtimeProcess = Start-Process `
+              -FilePath $installedExe `
+              -ArgumentList "--validate-runtime" `
+              -WorkingDirectory $installDir `
+              -RedirectStandardOutput $runtimeStdout `
+              -RedirectStandardError $runtimeStderr `
+              -Wait `
+              -PassThru
+          } catch {
+            Get-ChildItem $installDir | Select-Object Name, Length
+            throw "Installed Rufin executable failed to start: $_"
+          } finally {
+            $env:PATH = $previousPath
+          }
+          foreach ($runtimeLog in @($runtimeStdout, $runtimeStderr)) {
+            if ((Test-Path $runtimeLog) -and (Get-Item $runtimeLog).Length -gt 0) {
+              Get-Content $runtimeLog
+            }
+          }
+          if ($runtimeProcess.ExitCode -ne 0) {
+            Get-ChildItem $installDir | Select-Object Name, Length
+            throw "Installed Rufin executable exited with code $($runtimeProcess.ExitCode)"
+          }
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -54,6 +54,9 @@ struct Cli {
 
     #[arg(long)]
     forget_active_server: bool,
+
+    #[arg(long, hide = true)]
+    validate_runtime: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -73,6 +76,10 @@ impl From<FakeScaleArg> for FakeScale {
 
 fn main() {
     let cli = Cli::parse();
+    if cli.validate_runtime {
+        return;
+    }
+
     init_tracing();
     i18n::init();
 
