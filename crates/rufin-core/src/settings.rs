@@ -5,6 +5,12 @@ use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 2;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
+pub const DEFAULT_WINDOW_WIDTH: i32 = 800;
+pub const DEFAULT_WINDOW_HEIGHT: i32 = 600;
+pub const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
+pub const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
+pub const MAX_RESTORED_WINDOW_WIDTH: i32 = 1_400;
+pub const MAX_RESTORED_WINDOW_HEIGHT: i32 = 900;
 pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
 const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
 
@@ -1318,6 +1324,10 @@ pub struct AppSettings {
     pub home_sections: Vec<HomeSectionKind>,
     #[serde(default)]
     pub home_blocks: Vec<HomeBlockKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_height: Option<i32>,
     #[serde(default = "default_lyrics_panel_visible")]
     pub lyrics_panel_visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1361,6 +1371,8 @@ impl Default for AppSettings {
             playback: PlaybackSettings::default(),
             home_sections: default_home_sections(),
             home_blocks: default_home_blocks(),
+            window_width: None,
+            window_height: None,
             lyrics_panel_visible: true,
             queue_lyrics_position: None,
             queue_lyrics_ratio: None,
@@ -1395,6 +1407,14 @@ impl AppSettings {
         self.layout.sanitize();
         self.sidebar.sanitize();
         self.sources.sanitize();
+        if let Some((width, height)) = sanitized_window_size(self.window_width, self.window_height)
+        {
+            self.window_width = Some(width);
+            self.window_height = Some(height);
+        } else {
+            self.window_width = None;
+            self.window_height = None;
+        }
         self.migrate_home_blocks();
         self.migrate_library_lists();
     }
@@ -1462,6 +1482,17 @@ impl AppSettings {
     }
 }
 
+pub fn sanitized_window_size(width: Option<i32>, height: Option<i32>) -> Option<(i32, i32)> {
+    let (width, height) = (width?, height?);
+    if width < MIN_RESTORED_WINDOW_WIDTH || height < MIN_RESTORED_WINDOW_HEIGHT {
+        return None;
+    }
+    Some((
+        width.clamp(MIN_RESTORED_WINDOW_WIDTH, MAX_RESTORED_WINDOW_WIDTH),
+        height.clamp(MIN_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_HEIGHT),
+    ))
+}
+
 fn sanitize_home_blocks(blocks: &mut Vec<HomeBlockKind>) {
     let mut seen = Vec::new();
     blocks.retain(|block| {
@@ -1480,11 +1511,13 @@ fn sanitize_home_blocks(blocks: &mut Vec<HomeBlockKind>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType,
-        DiscordLinkType, EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode,
-        LibraryField, LibraryLayout, LibraryListKey, LocalLibraryFolder, PlaybackTransitionMode,
-        ReplayGainMode, RightSidebarMode, ScrobblingSettings, SidebarRouteItem, StreamQuality,
-        TrackSortKey, TrackTableColumn,
+        AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID,
+        DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, DiscordDisplayType, DiscordLinkType,
+        EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode, LibraryField,
+        LibraryLayout, LibraryListKey, LocalLibraryFolder, MAX_RESTORED_WINDOW_HEIGHT,
+        MAX_RESTORED_WINDOW_WIDTH, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
+        ScrobblingSettings, SidebarRouteItem, StreamQuality, TrackSortKey, TrackTableColumn,
+        sanitized_window_size,
     };
 
     #[test]
@@ -1558,6 +1591,10 @@ mod tests {
             settings.layout.narrow_profile.right_sidebar,
             RightSidebarMode::Default
         );
+        assert_eq!(DEFAULT_WINDOW_WIDTH, 800);
+        assert_eq!(DEFAULT_WINDOW_HEIGHT, 600);
+        assert_eq!(settings.window_width, None);
+        assert_eq!(settings.window_height, None);
         assert!(settings.sidebar.server_visible);
         assert!(
             settings
@@ -1739,6 +1776,8 @@ mod tests {
         assert!(restored.sidebar.server_visible);
         assert_eq!(restored.queue_lyrics_position, None);
         assert_eq!(restored.queue_lyrics_ratio, None);
+        assert_eq!(restored.window_width, None);
+        assert_eq!(restored.window_height, None);
         assert!(restored.auto_dj_enabled);
         assert!(!restored.external_lyrics_enabled);
         assert!(restored.external_metadata_enabled);
@@ -1764,6 +1803,20 @@ mod tests {
         assert_eq!(restored.scrobbling.librefm.api_secret, "rufin");
         assert!(!restored.scrobbling.listenbrainz.enabled);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::Title);
+    }
+
+    #[test]
+    fn window_size_restore_rejects_tiny_and_clamps_huge_geometry() {
+        assert_eq!(sanitized_window_size(None, Some(700)), None);
+        assert_eq!(sanitized_window_size(Some(400), Some(700)), None);
+        assert_eq!(
+            sanitized_window_size(Some(1061), Some(2251)),
+            Some((1061, MAX_RESTORED_WINDOW_HEIGHT))
+        );
+        assert_eq!(
+            sanitized_window_size(Some(1800), Some(1200)),
+            Some((MAX_RESTORED_WINDOW_WIDTH, MAX_RESTORED_WINDOW_HEIGHT))
+        );
     }
 
     #[test]

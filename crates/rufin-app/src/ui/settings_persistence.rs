@@ -1,14 +1,37 @@
 use std::rc::Rc;
 
+use adw::prelude::*;
 use rufin_core::{
     AppSettings, DiscordDisplayType, DiscordLinkType, HomeBlockKind, LibraryListKey,
     LibraryListSettings, PlaybackSettings, Route, ScrobblingSettings, TrackTableSettings,
+    sanitized_window_size,
 };
 use tracing::warn;
 
 use super::{Shell, current_playback_track_id};
 
 impl Shell {
+    pub(super) fn save_window_state(&self) {
+        if self.window.is_maximized() || self.window.is_fullscreen() {
+            return;
+        }
+        let Some((width, height)) = sanitized_window_size(
+            Some(self.window.default_width()),
+            Some(self.window.default_height()),
+        ) else {
+            return;
+        };
+
+        self.update_app_settings("window state", |settings| {
+            if settings.window_width == Some(width) && settings.window_height == Some(height) {
+                return false;
+            }
+            settings.window_width = Some(width);
+            settings.window_height = Some(height);
+            true
+        });
+    }
+
     pub(super) fn sync_auto_dj_setting_from_playback(&self, enabled: bool) {
         let mut settings = self.state.settings.borrow_mut();
         if settings.auto_dj_enabled != enabled {

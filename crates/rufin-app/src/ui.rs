@@ -39,10 +39,11 @@ use gtk::glib;
 #[cfg(unix)]
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, HomeSection,
-    HomeSectionKind, ImageRef, LeftSidebarMode, LibraryListKey, Playlist, PlaylistId, QueueEntry,
-    QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, Track, TrackId, TrackSortKey,
-    TrackTableColumn, TrackTableSettings, format_duration,
+    Album, AlbumId, AppSettings, Artist, ArtistId, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH,
+    FolderPathItem, Genre, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryListKey,
+    Playlist, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack,
+    SearchKind, Track, TrackId, TrackSortKey, TrackTableColumn, TrackTableSettings,
+    format_duration, sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -532,9 +533,13 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         }),
     };
 
+    let (window_width, window_height) =
+        initial_window_size(settings.window_width, settings.window_height);
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Rufin")
+        .default_width(window_width)
+        .default_height(window_height)
         .build();
 
     let root_stack = gtk::Stack::new();
@@ -631,6 +636,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     build_compact_navigation(&shell);
     shell.update_server_selector();
     connect_shell_actions(&shell, main_menu);
+    install_window_state_persistence(&shell);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_split(&shell);
     connect_lyrics_search_controls(&shell);
@@ -4473,6 +4479,17 @@ fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
         subtitle.push_str(&tr("No lyrics"));
     }
     subtitle
+}
+
+fn initial_window_size(width: Option<i32>, height: Option<i32>) -> (i32, i32) {
+    sanitized_window_size(width, height).unwrap_or((DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT))
+}
+
+fn install_window_state_persistence(shell: &Rc<Shell>) {
+    let save_shell = Rc::clone(shell);
+    shell.application.connect_shutdown(move |_| {
+        save_shell.save_window_state();
+    });
 }
 
 fn connect_layout_resize(shell: &Rc<Shell>) {
