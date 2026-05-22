@@ -114,6 +114,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Save Server Settings");
     let _ = tr("Connect");
     let _ = tr("Connect to Music Server");
+    let _ = tr("Preparing library...");
+    let _ = tr("Library sync complete");
     let _ = tr("Choose a provider, pick a server, or enter the address manually");
     let _ = tr("Choose a provider, pick a discovered server, or enter the address manually");
     let _ = tr("Provider");
@@ -126,7 +128,15 @@ fn catalog_strings_for_extraction() {
         "Choose a folder to scan and play locally from the computer (For flatpak users, if the folder is not in ~/Music, you need to give folder permissions from Flatseal)",
     );
     let _ = tr("Music Folder");
+    let _ = tr("Music Folders");
     let _ = tr("No folder selected");
+    let _ = tr("No folders selected");
+    let _ = tr("folders selected");
+    let _ = tr("Add");
+    let _ = tr("Add Folder");
+    let _ = tr("Add another folder to the Local source");
+    let _ = tr("Choose one or more folders to scan and play directly from this computer");
+    let _ = tr("Choose at least one local music folder");
     let _ = tr("Choose");
     let _ = tr("Local Playback Access");
     let _ = tr("Optionally map server tracks to files on this computer");

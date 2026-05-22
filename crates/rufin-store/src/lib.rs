@@ -10,6 +10,8 @@ use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use thiserror::Error;
 
 const SCHEMA_VERSION: i64 = 10;
+const CACHE_KEY_PART_MAX_LEN: usize = 180;
+const CACHE_KEY_HASH_LEN: usize = 16;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -5158,13 +5160,30 @@ fn u32_from_i64(value: i64) -> u32 {
 }
 
 fn encode_key_part(value: &str) -> String {
-    value
+    let encoded: String = value
         .chars()
         .map(|character| match character {
             'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
             _ => '_',
         })
-        .collect()
+        .collect();
+
+    if encoded.len() <= CACHE_KEY_PART_MAX_LEN {
+        return encoded;
+    }
+
+    let prefix_len = CACHE_KEY_PART_MAX_LEN - CACHE_KEY_HASH_LEN - 1;
+    let prefix = encoded.chars().take(prefix_len).collect::<String>();
+    format!("{prefix}_{:016x}", stable_hash(value))
+}
+
+fn stable_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[cfg(test)]
@@ -7804,6 +7823,29 @@ mod tests {
         assert_eq!(
             lyrics_cache_key(&server_id, "track/one"),
             "server_one/track_one"
+        );
+    }
+
+    #[test]
+    fn cache_key_parts_are_bounded_for_long_local_cover_ids() {
+        let server_id = ServerId::new("local:server:test");
+        let long_item_id = format!("local:cover:embedded:{}", "nested-folder-".repeat(40));
+        let key = image_cache_key(&server_id, &long_item_id, "untagged", 256);
+        let parts = key.split('/').collect::<Vec<_>>();
+
+        assert_eq!(parts.len(), 4);
+        assert!(parts.iter().all(|part| part.len() <= 180));
+        assert!(parts[1].starts_with("local_cover_embedded_nested-folder-"));
+        assert!(parts[1].len() < long_item_id.len());
+        assert_eq!(
+            image_cache_key(&server_id, &long_item_id, "untagged", 256),
+            key
+        );
+
+        let other_item_id = format!("local:cover:embedded:{}", "nested-folder-".repeat(39));
+        assert_ne!(
+            image_cache_key(&server_id, &other_item_id, "untagged", 256),
+            key
         );
     }
 

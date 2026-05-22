@@ -106,6 +106,12 @@ const INITIAL_COVER_PRIME_LIMIT: usize = 24;
 const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
 const INITIAL_TRACK_THUMB_PRIME_LIMIT: usize = 18;
 const INITIAL_TRACK_THUMB_PRIME_BUDGET: Duration = Duration::from_millis(120);
+const FIRST_RUN_COVER_PRIME_TIMEOUT_MS: u64 = 8_000;
+const FIRST_RUN_COVER_PRIME_POLL_MS: u64 = 33;
+const FIRST_RUN_HOME_SECTION_COVER_LIMIT: usize = 8;
+const FIRST_RUN_GRID_COVER_PRIME_LIMIT: usize = 192;
+const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
+const LIBRARY_PREPARING_STATUS: &str = "Preparing library...";
 const FAVORITE_EMPTY_GLYPH: &str = "♡";
 const FAVORITE_FILLED_GLYPH: &str = "♥";
 const PLAYLIST_ENTRY_DRAG_WIDTH: i32 = 18;
@@ -173,6 +179,8 @@ struct AppState {
     startup_route_revealed: Cell<bool>,
     first_run_connection_pending: Cell<bool>,
     first_run_connection_ready: Cell<bool>,
+    first_run_cover_prime_generation: Cell<u64>,
+    first_run_cover_prime_pending: RefCell<HashSet<String>>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
     server_discovery_status: RefCell<String>,
     server_discovery_running: Cell<bool>,
@@ -215,6 +223,13 @@ struct CoverDecodeJob {
 }
 
 struct StartupCoverWarmJob {
+    key: String,
+    image_ref: ImageRef,
+    fetch_size: u32,
+    size: i32,
+}
+
+struct FirstRunCoverPrimeJob {
     key: String,
     image_ref: ImageRef,
     fetch_size: u32,
@@ -481,6 +496,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         startup_route_revealed: Cell::new(!defer_initial_route),
         first_run_connection_pending: Cell::new(false),
         first_run_connection_ready: Cell::new(false),
+        first_run_cover_prime_generation: Cell::new(0),
+        first_run_cover_prime_pending: RefCell::new(HashSet::new()),
         discovered_servers: RefCell::new(Vec::new()),
         server_discovery_status: RefCell::new("Searching will start automatically".to_string()),
         server_discovery_running: Cell::new(false),
@@ -1109,12 +1126,14 @@ fn unique_cover_refs(image_refs: Vec<ImageRef>) -> Vec<ImageRef> {
 }
 
 fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
-    let mut sizes = Vec::from([
-        preferred_size,
-        GRID_COVER_SIZE,
-        THUMB_COVER_SIZE,
-        DETAIL_COVER_SIZE,
-    ]);
+    let mut sizes = Vec::from([preferred_size]);
+    if preferred_size <= THUMB_COVER_SIZE {
+        sizes.extend([THUMB_COVER_SIZE, GRID_COVER_SIZE, DETAIL_COVER_SIZE]);
+    } else if preferred_size <= GRID_COVER_SIZE {
+        sizes.extend([GRID_COVER_SIZE, DETAIL_COVER_SIZE]);
+    } else {
+        sizes.push(DETAIL_COVER_SIZE);
+    }
     let mut seen = HashSet::new();
     sizes.retain(|size| seen.insert(*size));
     sizes
@@ -1243,6 +1262,120 @@ fn initial_cached_track_thumbnail_covers(shell: &Rc<Shell>) -> Vec<(String, Path
             Some((key, path))
         })
         .collect()
+}
+
+fn first_run_cover_prime_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
+    let mut refs = Vec::new();
+    let mut seen = HashSet::new();
+
+    for section in &library.home_sections {
+        for album in section
+            .albums
+            .iter()
+            .take(FIRST_RUN_HOME_SECTION_COVER_LIMIT)
+        {
+            push_first_run_cover_ref(&mut refs, &mut seen, album.image_ref.as_ref());
+        }
+        for track in section
+            .tracks
+            .iter()
+            .take(FIRST_RUN_HOME_SECTION_COVER_LIMIT)
+        {
+            push_first_run_cover_ref(&mut refs, &mut seen, track.image_ref.as_ref());
+        }
+    }
+
+    for track in library.tracks.iter().take(TRACK_ROUTE_PAGE_SIZE) {
+        push_first_run_cover_ref(&mut refs, &mut seen, track.image_ref.as_ref());
+    }
+
+    for genre in library.genres.iter().take(GRID_ROUTE_PAGE_SIZE) {
+        for image_ref in genre_grid_cover_refs_from_snapshot(library, genre) {
+            push_first_run_cover_ref(&mut refs, &mut seen, Some(&image_ref));
+        }
+        push_first_run_cover_ref(&mut refs, &mut seen, genre.image_ref.as_ref());
+    }
+
+    for album in library.albums.iter().take(GRID_ROUTE_PAGE_SIZE) {
+        push_first_run_cover_ref(&mut refs, &mut seen, album.image_ref.as_ref());
+    }
+    for artist in library
+        .artists
+        .iter()
+        .chain(library.album_artists.iter())
+        .take(GRID_ROUTE_PAGE_SIZE * 2)
+    {
+        push_first_run_cover_ref(&mut refs, &mut seen, artist.image_ref.as_ref());
+    }
+    for playlist in library.playlists.iter().take(GRID_ROUTE_PAGE_SIZE) {
+        push_first_run_cover_ref(&mut refs, &mut seen, playlist.image_ref.as_ref());
+    }
+
+    refs
+}
+
+fn genre_grid_cover_refs_from_snapshot(library: &LibrarySnapshot, genre: &Genre) -> Vec<ImageRef> {
+    let mut refs = Vec::new();
+    for album in &library.albums {
+        if album.genres.iter().any(|name| name == &genre.name) {
+            push_unique_image_ref(&mut refs, album.image_ref.as_ref());
+            if refs.len() >= 4 {
+                return refs;
+            }
+        }
+    }
+    if !refs.is_empty() {
+        return refs;
+    }
+
+    let mut seen_albums = HashSet::new();
+    for track in &library.tracks {
+        if track.genres.iter().any(|name| name == &genre.name)
+            && !seen_albums.contains(&track.album_id)
+        {
+            let before = refs.len();
+            push_unique_image_ref(&mut refs, track.image_ref.as_ref());
+            if refs.len() > before {
+                seen_albums.insert(track.album_id.clone());
+            }
+            if refs.len() >= 4 {
+                return refs;
+            }
+        }
+    }
+    refs
+}
+
+fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
+    if refs.len() >= 4 {
+        return;
+    }
+    let Some(image_ref) = image_ref else {
+        return;
+    };
+    if !refs.iter().any(|existing| existing == image_ref) {
+        refs.push(image_ref.clone());
+    }
+}
+
+fn push_first_run_cover_ref(
+    refs: &mut Vec<ImageRef>,
+    seen: &mut HashSet<(String, String)>,
+    image_ref: Option<&ImageRef>,
+) {
+    if refs.len() >= FIRST_RUN_GRID_COVER_PRIME_LIMIT {
+        return;
+    }
+    let Some(image_ref) = image_ref else {
+        return;
+    };
+    let key = (
+        image_ref.item_id.clone(),
+        image_ref.tag.clone().unwrap_or_default(),
+    );
+    if seen.insert(key) {
+        refs.push(image_ref.clone());
+    }
 }
 
 fn prefetched_explore_from_snapshot(snapshot: &LibrarySnapshot) -> Option<PrefetchedHomeSection> {
@@ -1825,6 +1958,59 @@ impl Shell {
 
     fn schedule_first_run_app_reveal(self: &Rc<Self>) {
         self.log_layout_snapshot("first_run_reveal_queued");
+        if let Some(generation) = self.begin_first_run_cover_prime() {
+            let started_at = Instant::now();
+            let shell = Rc::clone(self);
+            glib::timeout_add_local(
+                Duration::from_millis(FIRST_RUN_COVER_PRIME_POLL_MS),
+                move || {
+                    if shell.state.first_run_cover_prime_generation.get() != generation {
+                        return glib::ControlFlow::Break;
+                    }
+                    let pending = shell.state.first_run_cover_prime_pending.borrow().len();
+                    let expired = started_at.elapsed()
+                        >= Duration::from_millis(FIRST_RUN_COVER_PRIME_TIMEOUT_MS);
+                    if pending == 0 || expired {
+                        if expired && pending > 0 {
+                            debug!(
+                                pending,
+                                "revealing first-run route with cover prime still pending"
+                            );
+                        }
+                        shell
+                            .state
+                            .first_run_cover_prime_pending
+                            .borrow_mut()
+                            .clear();
+                        shell.finish_first_run_app_reveal();
+                        glib::ControlFlow::Break
+                    } else {
+                        glib::ControlFlow::Continue
+                    }
+                },
+            );
+            return;
+        }
+
+        self.finish_first_run_app_reveal();
+    }
+
+    fn finish_first_run_app_reveal(self: &Rc<Self>) {
+        if self.state.first_run_connection_pending.get() {
+            self.state.library.borrow_mut().sync_status = tr(LIBRARY_SYNC_COMPLETE_STATUS);
+            self.render_current_route();
+        }
+
+        self.state.first_run_cover_prime_generation.set(
+            self.state
+                .first_run_cover_prime_generation
+                .get()
+                .saturating_add(1),
+        );
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .clear();
 
         let shell = Rc::clone(self);
         glib::idle_add_local_once(move || {
@@ -1857,6 +2043,72 @@ impl Shell {
                 },
             );
         });
+    }
+
+    fn begin_first_run_cover_prime(self: &Rc<Self>) -> Option<u64> {
+        let generation = self
+            .state
+            .first_run_cover_prime_generation
+            .get()
+            .saturating_add(1);
+        self.state.first_run_cover_prime_generation.set(generation);
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .clear();
+
+        let jobs = self.first_run_cover_prime_jobs();
+        if jobs.is_empty() {
+            return None;
+        }
+
+        let mut pending = HashSet::new();
+        for job in jobs {
+            if self.state.decoded_covers.borrow().contains_key(&job.key) {
+                continue;
+            }
+            pending.insert(job.key.clone());
+            if let Some(path) = self.controller.cached_cover_path_for_key(&job.key) {
+                self.start_cover_decode_from_path(
+                    job.key,
+                    path,
+                    job.size,
+                    CoverDecodePriority::Visible,
+                );
+            } else {
+                self.controller
+                    .request_cover_for_key(job.key, job.image_ref, job.fetch_size);
+            }
+        }
+
+        if pending.is_empty() {
+            return None;
+        }
+        let pending_count = pending.len();
+        *self.state.first_run_cover_prime_pending.borrow_mut() = pending;
+        info!(covers = pending_count, "started first-run cover prime");
+        Some(generation)
+    }
+
+    fn first_run_cover_prime_jobs(&self) -> Vec<FirstRunCoverPrimeJob> {
+        let image_refs = first_run_cover_prime_refs(&self.state.library.borrow());
+        let mut seen = HashSet::new();
+        let mut jobs = Vec::new();
+        for image_ref in image_refs {
+            let Some(key) = self.cover_cache_key(&image_ref, GRID_COVER_SIZE) else {
+                continue;
+            };
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            jobs.push(FirstRunCoverPrimeJob {
+                key,
+                image_ref,
+                fetch_size: GRID_COVER_SIZE,
+                size: GRID_COVER_SIZE as i32,
+            });
+        }
+        jobs
     }
 
     fn update_server_selector(self: &Rc<Self>) {
@@ -3754,6 +4006,10 @@ impl Shell {
         let Some(pixbuf) = self.state.decoded_covers.borrow().get(key).cloned() else {
             return false;
         };
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
         let bindings = self.take_live_cover_bindings(key);
         apply_pixbuf_to_bindings(bindings, pixbuf);
         true
@@ -3816,6 +4072,10 @@ impl Shell {
 
     fn finish_cover_decode(&self, key: &str) {
         self.state.cover_decodes.borrow_mut().remove(key);
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
     }
 
     fn pending_cover_size(&self, key: &str) -> Option<i32> {
@@ -4555,12 +4815,20 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     }
                 }
                 ControllerEvent::LoginStatus(status) => {
-                    if status == "Library sync complete" {
+                    let sync_complete = status == LIBRARY_SYNC_COMPLETE_STATUS;
+                    if sync_complete {
                         shell.state.first_run_connection_ready.set(true);
                     }
+                    let first_run_connection_pending =
+                        shell.state.first_run_connection_pending.get();
+                    let display_status = if sync_complete && first_run_connection_pending {
+                        tr(LIBRARY_PREPARING_STATUS)
+                    } else {
+                        status
+                    };
                     let should_render = {
                         let mut library = shell.state.library.borrow_mut();
-                        library.sync_status = status;
+                        library.sync_status = display_status;
                         route_displays_sync_status(
                             shell.state.routes.borrow().current(),
                             library.first_run,

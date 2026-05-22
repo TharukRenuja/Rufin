@@ -706,25 +706,17 @@ fn cached_cover_path_for_saved_size(
     Ok(None)
 }
 
-fn cover_cache_size_candidates(size: u32) -> [u32; 3] {
+fn cover_cache_size_candidates(size: u32) -> Vec<u32> {
     if size <= EXTERNAL_THUMB_COVER_SIZE {
-        [
+        vec![
             EXTERNAL_THUMB_COVER_SIZE,
             EXTERNAL_PREFETCH_COVER_SIZE,
             EXTERNAL_DETAIL_COVER_SIZE,
         ]
     } else if size <= EXTERNAL_PREFETCH_COVER_SIZE {
-        [
-            EXTERNAL_PREFETCH_COVER_SIZE,
-            EXTERNAL_DETAIL_COVER_SIZE,
-            EXTERNAL_THUMB_COVER_SIZE,
-        ]
+        vec![EXTERNAL_PREFETCH_COVER_SIZE, EXTERNAL_DETAIL_COVER_SIZE]
     } else {
-        [
-            EXTERNAL_DETAIL_COVER_SIZE,
-            EXTERNAL_PREFETCH_COVER_SIZE,
-            EXTERNAL_THUMB_COVER_SIZE,
-        ]
+        vec![EXTERNAL_DETAIL_COVER_SIZE, EXTERNAL_PREFETCH_COVER_SIZE]
     }
 }
 

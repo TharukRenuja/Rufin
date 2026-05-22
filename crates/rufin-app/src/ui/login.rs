@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::i18n::tr;
@@ -26,16 +26,19 @@ impl Shell {
         header.pack_end(&close);
         toolbar.add_top_bar(&header);
 
-        let child = self.add_server_view();
-        toolbar.set_content(Some(&child));
         let dialog = adw::Dialog::builder()
             .content_width(large_popup_content_width(ADD_SERVER_DIALOG_WIDTH))
             .content_height(large_popup_content_height(
                 self.window.height(),
                 ADD_SERVER_DIALOG_HEIGHT,
             ))
-            .child(&toolbar)
             .build();
+        let dialog_for_connect = dialog.clone();
+        let child = self.add_server_view_with_connect_handler(Some(Rc::new(move || {
+            dialog_for_connect.close();
+        })));
+        toolbar.set_content(Some(&child));
+        dialog.set_child(Some(&toolbar));
         let dialog_for_close = dialog.clone();
         close.connect_clicked(move |_| {
             dialog_for_close.close();
@@ -44,6 +47,13 @@ impl Shell {
     }
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
+        self.add_server_view_with_connect_handler(None)
+    }
+
+    fn add_server_view_with_connect_handler(
+        self: &Rc<Self>,
+        on_connect_started: Option<Rc<dyn Fn()>>,
+    ) -> gtk::Widget {
         if self.state.first_run_connection_pending.get() {
             return self.connection_progress_view();
         }
@@ -117,22 +127,34 @@ impl Shell {
         server_group.add(&trust);
         content.append(&server_group);
 
-        let local_folder = Rc::new(RefCell::new(None::<PathBuf>));
+        let default_local_folder = default_music_folder();
+        let local_folders = Rc::new(RefCell::new(
+            default_local_folder.clone().into_iter().collect::<Vec<_>>(),
+        ));
         let local_group = adw::PreferencesGroup::builder()
             .title(tr("Local Library"))
             .description(tr(
-                "Choose a folder to scan and play directly from this computer",
+                "Choose one or more folders to scan and play directly from this computer",
             ))
             .build();
         let local_folder_row = adw::ActionRow::builder()
-            .title(tr("Music Folder"))
-            .subtitle(tr("No folder selected"))
+            .title(tr("Music Folders"))
+            .subtitle(local_folders_subtitle(&local_folders.borrow()))
             .build();
         let local_folder_button = gtk::Button::with_label(&tr("Choose"));
         local_folder_button.set_valign(gtk::Align::Center);
         local_folder_row.add_suffix(&local_folder_button);
         local_folder_row.set_activatable_widget(Some(&local_folder_button));
         local_group.add(&local_folder_row);
+        let add_local_folder_row = adw::ActionRow::builder()
+            .title(tr("Add Folder"))
+            .subtitle(tr("Add another folder to the Local source"))
+            .build();
+        let add_local_folder_button = gtk::Button::with_label(&tr("Add"));
+        add_local_folder_button.set_valign(gtk::Align::Center);
+        add_local_folder_row.add_suffix(&add_local_folder_button);
+        add_local_folder_row.set_activatable_widget(Some(&add_local_folder_button));
+        local_group.add(&add_local_folder_row);
         local_group.set_visible(false);
         content.append(&local_group);
 
@@ -161,19 +183,24 @@ impl Shell {
         let password_input = password.clone();
         let trust_input = trust.clone();
         let provider_input = provider.clone();
-        let local_folder_input = Rc::clone(&local_folder);
+        let local_folders_input = Rc::clone(&local_folders);
         let status_input = status.clone();
         let shell = Rc::clone(self);
+        let on_connect_started = on_connect_started.clone();
         login.connect_clicked(move |_| {
             let provider = StreamingProvider::from_index(provider_input.selected());
             if provider == StreamingProvider::Local {
-                let Some(root) = local_folder_input.borrow().clone() else {
-                    status_input.set_text(&tr("Choose a local music folder"));
+                let roots = local_folders_input.borrow().clone();
+                if roots.is_empty() {
+                    status_input.set_text(&tr("Choose at least one local music folder"));
                     status_input.set_visible(true);
                     return;
-                };
+                }
                 shell.begin_first_run_connection(&tr("Caching local library..."));
-                controller.add_local_server(root);
+                if let Some(on_connect_started) = on_connect_started.as_ref() {
+                    on_connect_started();
+                }
+                controller.add_local_server_folders(roots);
             } else {
                 if !remote_login_ready(&url_input, &username_input, &password_input) {
                     status_input.set_text(&tr("Enter a server address, username, and password"));
@@ -181,6 +208,9 @@ impl Shell {
                     return;
                 }
                 shell.begin_first_run_connection(&tr("Connecting to music server..."));
+                if let Some(on_connect_started) = on_connect_started.as_ref() {
+                    on_connect_started();
+                }
                 controller.login(
                     provider,
                     url_input.text().to_string(),
@@ -211,7 +241,7 @@ impl Shell {
         );
         update_connect_button(
             StreamingProvider::from_index(provider.selected()),
-            &local_folder,
+            &local_folders,
             &url,
             &username,
             &password,
@@ -219,7 +249,7 @@ impl Shell {
         );
         let refresh_connect_button: Rc<dyn Fn()> = Rc::new({
             let provider = provider.clone();
-            let local_folder = Rc::clone(&local_folder);
+            let local_folders = Rc::clone(&local_folders);
             let url = url.clone();
             let username = username.clone();
             let password = password.clone();
@@ -227,7 +257,7 @@ impl Shell {
             move || {
                 update_connect_button(
                     StreamingProvider::from_index(provider.selected()),
-                    &local_folder,
+                    &local_folders,
                     &url,
                     &username,
                     &password,
@@ -257,18 +287,45 @@ impl Shell {
             &self.window,
             &local_folder_button,
             &local_folder_row,
-            Rc::clone(&local_folder),
+            Rc::new(RefCell::new(default_local_folder)),
             {
                 let login = login.clone();
                 let provider = provider.clone();
-                let local_folder = Rc::clone(&local_folder);
+                let local_folders = Rc::clone(&local_folders);
+                let local_folder_row = local_folder_row.clone();
                 let url = url.clone();
                 let username = username.clone();
                 let password = password.clone();
-                move |_| {
+                move |path| {
+                    replace_primary_local_folder(&local_folders, path);
+                    local_folder_row.set_subtitle(&local_folders_subtitle(&local_folders.borrow()));
                     update_connect_button(
                         StreamingProvider::from_index(provider.selected()),
-                        &local_folder,
+                        &local_folders,
+                        &url,
+                        &username,
+                        &password,
+                        &login,
+                    );
+                }
+            },
+        );
+        connect_add_local_folder_button(
+            &self.window,
+            &add_local_folder_button,
+            &local_folder_row,
+            Rc::clone(&local_folders),
+            {
+                let login = login.clone();
+                let provider = provider.clone();
+                let local_folders = Rc::clone(&local_folders);
+                let url = url.clone();
+                let username = username.clone();
+                let password = password.clone();
+                move || {
+                    update_connect_button(
+                        StreamingProvider::from_index(provider.selected()),
+                        &local_folders,
                         &url,
                         &username,
                         &password,
@@ -440,14 +497,14 @@ fn update_provider_rows(
 
 fn update_connect_button(
     provider: StreamingProvider,
-    local_folder: &Rc<RefCell<Option<PathBuf>>>,
+    local_folders: &Rc<RefCell<Vec<PathBuf>>>,
     url: &adw::EntryRow,
     username: &adw::EntryRow,
     password: &adw::PasswordEntryRow,
     login: &gtk::Button,
 ) {
     let ready = if provider == StreamingProvider::Local {
-        local_folder.borrow().is_some()
+        !local_folders.borrow().is_empty()
     } else {
         remote_login_ready(url, username, password)
     };
@@ -470,6 +527,51 @@ fn remote_login_ready(
         && !password.text().trim().is_empty()
 }
 
+fn default_music_folder() -> Option<PathBuf> {
+    let user_dirs = directories::UserDirs::new()?;
+    Some(
+        user_dirs
+            .audio_dir()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| user_dirs.home_dir().join("Music")),
+    )
+}
+
+fn path_subtitle(path: &Path) -> String {
+    path.display().to_string()
+}
+
+fn local_folders_subtitle(folders: &[PathBuf]) -> String {
+    match folders {
+        [] => tr("No folders selected"),
+        [folder] => path_subtitle(folder),
+        folders => format!("{} {}", folders.len(), tr("folders selected")),
+    }
+}
+
+fn replace_primary_local_folder(folders: &Rc<RefCell<Vec<PathBuf>>>, path: PathBuf) {
+    let mut folders = folders.borrow_mut();
+    if let Some(index) = folders.iter().position(|folder| folder == &path) {
+        if index != 0 {
+            folders.remove(index);
+            folders.insert(0, path);
+        }
+        return;
+    }
+    if folders.is_empty() {
+        folders.push(path);
+    } else {
+        folders[0] = path;
+    }
+}
+
+fn append_local_folder(folders: &Rc<RefCell<Vec<PathBuf>>>, path: PathBuf) {
+    let mut folders = folders.borrow_mut();
+    if !folders.iter().any(|folder| folder == &path) {
+        folders.push(path);
+    }
+}
+
 pub(super) fn connect_folder_button(
     window: &adw::ApplicationWindow,
     button: &gtk::Button,
@@ -486,20 +588,60 @@ pub(super) fn connect_folder_button(
         let target = Rc::clone(&target);
         let on_changed = Rc::clone(&on_changed);
         gtk::glib::spawn_future_local(async move {
+            let selected_folder = target.borrow().as_ref().map(gtk::gio::File::for_path);
             let dialog = gtk::FileDialog::builder()
                 .title(tr("Select Music Folder"))
                 .build();
+            if let Some(folder) = selected_folder.as_ref() {
+                dialog.set_initial_folder(Some(folder));
+            }
             let Ok(folder) = dialog.select_folder_future(Some(&window)).await else {
                 return;
             };
             let Some(path) = folder.path() else {
                 return;
             };
-            row.set_subtitle(&path.display().to_string());
+            row.set_subtitle(&path_subtitle(&path));
             *target.borrow_mut() = Some(path);
             if let Some(path) = target.borrow().as_ref() {
                 on_changed(path.clone());
             }
+        });
+    });
+}
+
+fn connect_add_local_folder_button(
+    window: &adw::ApplicationWindow,
+    button: &gtk::Button,
+    row: &adw::ActionRow,
+    folders: Rc<RefCell<Vec<PathBuf>>>,
+    on_changed: impl Fn() + 'static,
+) {
+    let window = window.clone();
+    let row = row.clone();
+    let on_changed: Rc<dyn Fn()> = Rc::new(on_changed);
+    button.connect_clicked(move |_| {
+        let window = window.clone();
+        let row = row.clone();
+        let folders = Rc::clone(&folders);
+        let on_changed = Rc::clone(&on_changed);
+        gtk::glib::spawn_future_local(async move {
+            let selected_folder = folders.borrow().last().map(gtk::gio::File::for_path);
+            let dialog = gtk::FileDialog::builder()
+                .title(tr("Select Music Folder"))
+                .build();
+            if let Some(folder) = selected_folder.as_ref() {
+                dialog.set_initial_folder(Some(folder));
+            }
+            let Ok(folder) = dialog.select_folder_future(Some(&window)).await else {
+                return;
+            };
+            let Some(path) = folder.path() else {
+                return;
+            };
+            append_local_folder(&folders, path);
+            row.set_subtitle(&local_folders_subtitle(&folders.borrow()));
+            on_changed();
         });
     });
 }

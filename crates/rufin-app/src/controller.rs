@@ -20,7 +20,8 @@ use rufin_playback::{
 };
 use rufin_provider::{
     FavoriteItemId, FolderDetail, Lyrics, MusicProvider, PagedRequest, PlaybackReport,
-    PlaybackReportKind, PlaylistEntry, SavedProviderSession, SearchResults, StreamRequest,
+    PlaybackReportKind, PlaylistEntry, ProviderSession, SavedProviderSession, SearchResults,
+    StreamRequest,
 };
 use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
 #[cfg(unix)]
@@ -1874,6 +1875,7 @@ impl AppController {
         let secrets = Arc::clone(&sync_context.secrets);
         let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
+        let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
@@ -1897,69 +1899,27 @@ impl AppController {
                 }
             };
 
-            let saved = SavedServer {
-                server: session.server.clone(),
-                user_id: session.user_id.clone(),
-                username: session.username.clone(),
+            let saved = match activate_logged_in_server(
+                &store,
+                &queue,
+                &playback,
+                &playback_snapshot,
+                &auto_dj_enabled,
+                &events,
+                &session,
                 trust_invalid_cert,
-            };
-            if let Err(error) = store.with_store(|store| {
-                store.save_server(&saved)?;
-                if let Some(root) = local_access_root.as_ref().and_then(|path| path.to_str()) {
-                    store.save_server_local_access(&ServerLocalAccess {
-                        server_id: saved.server.id.clone(),
-                        root_path: root.to_string(),
-                        path_replace_from: trimmed_optional(path_replace_from.as_deref()),
-                        path_replace_to: Some(root.to_string()),
-                    })?;
+                local_access_root.as_deref(),
+                path_replace_from.as_deref(),
+            ) {
+                Ok(saved) => saved,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
                 }
-                store.set_active_server(&saved.server.id)?;
-                Ok(())
-            }) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
-            }
-            let mut settings = load_settings_from_store(&store);
-            settings.sources.selected =
-                Some(LibrarySourceSelection::Server(saved.server.id.clone()));
-            settings.migrate_defaults();
-            if let Err(error) = store.save_settings(&settings) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
-            }
+            };
             if let Err(error) = secrets.save_token(&saved.server.id, &session.access_token) {
                 let _sent = events.send(ControllerEvent::Error(error.to_string()));
                 return;
-            }
-            let queue_snapshot = QueueEngine::new(saved.server.id.clone()).snapshot();
-            if let Ok(mut queue) = queue.lock() {
-                *queue = Some(QueueEngine::restore(queue_snapshot.clone()));
-            }
-            let auto_dj_enabled = auto_dj_enabled
-                .lock()
-                .map(|enabled| *enabled)
-                .unwrap_or_default();
-            let player = playback_snapshot_from_queue(
-                Some(&QueueEngine::restore(queue_snapshot.clone())),
-                auto_dj_enabled,
-                &load_settings_from_store(&store).playback,
-            );
-            if let Ok(mut snapshot) = playback_snapshot.lock() {
-                *snapshot = player.clone();
-            }
-            let _sent = events.send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
-            let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
-
-            let _sent = events.send(ControllerEvent::LoginStatus(
-                "Connected. Loading cached library...".to_string(),
-            ));
-            match load_snapshot(&store) {
-                Ok(snapshot) => {
-                    let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
-                }
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
-                }
             }
 
             start_sync_thread(sync_context, saved);
@@ -1967,35 +1927,63 @@ impl AppController {
     }
 
     pub fn add_local_server(&self, root_path: PathBuf) {
-        self.add_local_library_folder_with_selection(root_path, true);
+        self.add_local_server_folders(vec![root_path]);
+    }
+
+    pub fn add_local_server_folders(&self, root_paths: Vec<PathBuf>) {
+        self.add_local_library_folders_with_selection(root_paths, true);
     }
 
     pub fn add_local_library_folder(&self, root_path: PathBuf) {
-        self.add_local_library_folder_with_selection(root_path, false);
+        self.add_local_library_folders_with_selection(vec![root_path], false);
     }
 
-    fn add_local_library_folder_with_selection(&self, root_path: PathBuf, select_local: bool) {
+    fn add_local_library_folders_with_selection(
+        &self,
+        root_paths: Vec<PathBuf>,
+        select_local: bool,
+    ) {
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
+        let queue = Arc::clone(&self.queue);
+        let playback = Arc::clone(&self.playback);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
-            let identity = match LocalProvider::identity_for_root(&root_path) {
-                Ok(identity) => identity,
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error.to_string()));
-                    return;
+            if root_paths.is_empty() {
+                let _sent = events.send(ControllerEvent::Error(
+                    "Choose at least one local music folder.".to_string(),
+                ));
+                return;
+            }
+            let mut local_paths = Vec::new();
+            for root_path in root_paths {
+                match LocalProvider::identity_for_root(&root_path) {
+                    Ok(identity) => {
+                        if !local_paths.iter().any(|path| path == &identity.base_url) {
+                            local_paths.push(identity.base_url);
+                        }
+                    }
+                    Err(error) => {
+                        let _sent = events.send(ControllerEvent::Error(error.to_string()));
+                        return;
+                    }
                 }
-            };
+            }
             let mut settings = load_settings_from_store(&store);
-            if !settings
-                .sources
-                .local_folders
-                .iter()
-                .any(|folder| folder.path == identity.base_url)
-            {
-                settings.sources.local_folders.push(LocalLibraryFolder {
-                    path: identity.base_url,
-                });
+            for path in local_paths {
+                if !settings
+                    .sources
+                    .local_folders
+                    .iter()
+                    .any(|folder| folder.path == path)
+                {
+                    settings
+                        .sources
+                        .local_folders
+                        .push(LocalLibraryFolder { path });
+                }
             }
             if select_local {
                 settings.sources.selected = Some(LibrarySourceSelection::Local);
@@ -2018,6 +2006,20 @@ impl AppController {
             {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
+            }
+            if select_local {
+                if let Err(error) = activate_queue_for_saved_and_emit(
+                    &store,
+                    &queue,
+                    &playback,
+                    &playback_snapshot,
+                    &auto_dj_enabled,
+                    &events,
+                    &saved,
+                ) {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
             }
             emit_snapshot(&store, &events);
             if select_local {
@@ -2080,6 +2082,10 @@ impl AppController {
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
+        let queue = Arc::clone(&self.queue);
+        let playback = Arc::clone(&self.playback);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
             let mut settings = load_settings_from_store(&store);
             settings.sources.selected = Some(source.clone());
@@ -2101,6 +2107,18 @@ impl AppController {
                     if let Err(error) =
                         store.with_store(|store| store.set_active_server(&saved.server.id))
                     {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        return;
+                    }
+                    if let Err(error) = activate_queue_for_saved_and_emit(
+                        &store,
+                        &queue,
+                        &playback,
+                        &playback_snapshot,
+                        &auto_dj_enabled,
+                        &events,
+                        &saved,
+                    ) {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
@@ -2129,6 +2147,18 @@ impl AppController {
                             return;
                         }
                     };
+                    if let Err(error) = activate_queue_for_saved_and_emit(
+                        &store,
+                        &queue,
+                        &playback,
+                        &playback_snapshot,
+                        &auto_dj_enabled,
+                        &events,
+                        &saved,
+                    ) {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        return;
+                    }
                     active_server_needs_sync(&store, &saved.server.id).then_some(saved)
                 }
             };
@@ -3341,12 +3371,33 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
         }
     }
 
+    let generation = match context
+        .store
+        .with_store(|store| store.begin_sync(&server_id))
+    {
+        Ok(generation) => generation,
+        Err(error) => {
+            if let Ok(mut running) = context.sync_in_flight.lock() {
+                running.remove(&server_id);
+            }
+            let _sent = context.events.send(ControllerEvent::Error(error));
+            return;
+        }
+    };
+    emit_snapshot(&context.store, &context.events);
+
     thread::spawn(move || {
         let provider_name = provider_display_name(&saved.server.provider);
         let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
             "Syncing {provider_name} library..."
         )));
-        let sync_result = run_sync_job(&context.store, &context.runtime, &context.secrets, &saved);
+        let sync_result = run_sync_job(
+            &context.store,
+            &context.runtime,
+            &context.secrets,
+            &saved,
+            generation,
+        );
         if let Ok(mut running) = context.sync_in_flight.lock() {
             running.remove(&server_id);
         }
@@ -3573,12 +3624,14 @@ fn run_sync_job(
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
+    generation: i64,
 ) -> Result<(), String> {
     let provider = provider_for_saved(store, runtime, secrets, saved)?;
-    runtime.block_on(sync_provider(
+    runtime.block_on(sync_provider_generation(
         store,
         &saved.server.id,
         provider.as_music_provider(),
+        generation,
     ))
 }
 
@@ -3642,6 +3695,7 @@ fn prefetch_home_section_for_saved(
     ))
 }
 
+#[cfg(test)]
 #[instrument(skip(store, provider), fields(server_id = %server_id.as_str()))]
 async fn sync_provider(
     store: &StoreHandle,
@@ -3649,6 +3703,16 @@ async fn sync_provider(
     provider: &(impl MusicProvider + ?Sized),
 ) -> Result<(), String> {
     let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    sync_provider_generation(store, server_id, provider, generation).await
+}
+
+#[instrument(skip(store, provider), fields(server_id = %server_id.as_str(), generation))]
+async fn sync_provider_generation(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &(impl MusicProvider + ?Sized),
+    generation: i64,
+) -> Result<(), String> {
     info!(generation, "started provider cache sync");
     sync_album_pages(store, server_id, provider, generation).await?;
     sync_track_pages(store, server_id, provider, generation).await?;
@@ -4555,6 +4619,132 @@ fn restore_queue(store: &StoreHandle, server: Option<&ServerIdentity>) -> Option
             warn!(%error, "failed to restore queue snapshot");
             Some(QueueEngine::new(server.id.clone()))
         }
+    }
+}
+
+fn activate_logged_in_server(
+    store: &StoreHandle,
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+    events: &Sender<ControllerEvent>,
+    session: &ProviderSession,
+    trust_invalid_cert: bool,
+    local_access_root: Option<&Path>,
+    path_replace_from: Option<&str>,
+) -> Result<SavedServer, String> {
+    let saved = SavedServer {
+        server: session.server.clone(),
+        user_id: session.user_id.clone(),
+        username: session.username.clone(),
+        trust_invalid_cert,
+    };
+    store.with_store(|store| {
+        store.save_server(&saved)?;
+        if let Some(root) = local_access_root.and_then(Path::to_str) {
+            store.save_server_local_access(&ServerLocalAccess {
+                server_id: saved.server.id.clone(),
+                root_path: root.to_string(),
+                path_replace_from: trimmed_optional(path_replace_from),
+                path_replace_to: Some(root.to_string()),
+            })?;
+        }
+        store.set_active_server(&saved.server.id)?;
+        Ok(())
+    })?;
+    let mut settings = load_settings_from_store(store);
+    settings.sources.selected = Some(LibrarySourceSelection::Server(saved.server.id.clone()));
+    settings.migrate_defaults();
+    store.save_settings(&settings)?;
+
+    activate_queue_for_saved_and_emit(
+        store,
+        queue,
+        playback,
+        playback_snapshot,
+        auto_dj_enabled,
+        events,
+        &saved,
+    )?;
+    let _sent = events.send(ControllerEvent::LoginStatus(
+        "Connected. Loading cached library...".to_string(),
+    ));
+    emit_snapshot(store, events);
+    Ok(saved)
+}
+
+fn activate_queue_for_saved_and_emit(
+    store: &StoreHandle,
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+    events: &Sender<ControllerEvent>,
+    saved: &SavedServer,
+) -> Result<(), String> {
+    let Some((queue_snapshot, player)) =
+        activate_queue_for_saved(store, queue, playback_snapshot, auto_dj_enabled, saved)?
+    else {
+        return Ok(());
+    };
+    stop_playback_backend(playback, events);
+    let _sent = events.send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
+    let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
+    Ok(())
+}
+
+fn activate_queue_for_saved(
+    store: &StoreHandle,
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+    saved: &SavedServer,
+) -> Result<Option<(QueueSnapshot, PlaybackSnapshot)>, String> {
+    let mut queue = queue
+        .lock()
+        .map_err(|_| "queue lock was poisoned".to_string())?;
+    let current_server_id = queue.as_ref().map(|queue| queue.snapshot().server_id);
+    if current_server_id.as_ref() == Some(&saved.server.id) {
+        return Ok(None);
+    }
+
+    let restored = restore_queue(store, Some(&saved.server))
+        .unwrap_or_else(|| QueueEngine::new(saved.server.id.clone()));
+    let queue_snapshot = restored.snapshot();
+    let auto_dj_enabled = auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default();
+    let player = playback_snapshot_from_queue(
+        Some(&restored),
+        auto_dj_enabled,
+        &load_settings_for_saved(store, saved).playback,
+    );
+    *queue = Some(restored);
+    drop(queue);
+
+    if let Ok(mut snapshot) = playback_snapshot.lock() {
+        *snapshot = player.clone();
+    }
+
+    Ok(Some((queue_snapshot, player)))
+}
+
+fn stop_playback_backend(
+    playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    events: &Sender<ControllerEvent>,
+) {
+    if let Err(error) = playback
+        .lock()
+        .map_err(|_| "playback lock was poisoned".to_string())
+        .and_then(|mut playback| {
+            playback
+                .send(PlaybackCommand::Stop)
+                .map_err(|error| error.to_string())
+        })
+    {
+        let _sent = events.send(ControllerEvent::Error(error));
     }
 }
 
@@ -5801,8 +5991,8 @@ mod tests {
     use super::{
         AppController, ControllerEvent, DATABASE_FILE_NAME, LOCAL_SOURCE_SERVER_ID,
         LibrarySnapshot, RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME,
-        SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle, auto_dj_candidates,
-        home_refresh_completed_event, load_settings_from_store, load_snapshot,
+        SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle, activate_logged_in_server,
+        auto_dj_candidates, home_refresh_completed_event, load_settings_from_store, load_snapshot,
         playback_snapshot_from_queue, prefetch_home_section, promote_prefetched_home_section,
         refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
         refresh_playlist_pages, restore_queue, sync_page_finished, sync_provider,
@@ -5820,7 +6010,7 @@ mod tests {
     };
     use rufin_provider::{
         FavoriteItemId, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest, PlayedFilter,
-        PlaylistEntry,
+        PlaylistEntry, ProviderSession,
     };
     use rufin_provider_local::LOCAL_PROVIDER_ID;
     use rufin_secrets::{MemorySecretStore, SecretStore};
@@ -5888,7 +6078,7 @@ mod tests {
     }
 
     #[test]
-    fn source_selection_is_saved_separately_from_playback_queue() {
+    fn source_selection_activates_queue_for_selected_source() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap(Some(FakeScale::Small));
         let server_id = snapshot.server.as_ref().expect("server").id.clone();
@@ -5901,6 +6091,11 @@ mod tests {
         let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
 
         controller.select_source(LibrarySourceSelection::Local);
+        let local_queue = wait_for_queue(&events).expect("local queue");
+        assert_eq!(local_queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
+        assert!(local_queue.entries.is_empty());
+        let local_playback = wait_for_playback_state(&controller, &events, PlaybackState::Stopped);
+        assert!(local_playback.current.is_none());
         let local_snapshot = wait_for_snapshot(&events);
 
         assert_eq!(
@@ -5911,31 +6106,11 @@ mod tests {
             controller.load_settings().sources.selected,
             Some(LibrarySourceSelection::Local)
         );
-        assert_eq!(
-            controller
-                .queue
-                .lock()
-                .expect("queue")
-                .as_ref()
-                .expect("queue")
-                .snapshot()
-                .entries[0]
-                .track_id,
-            first.id
-        );
-        assert_eq!(
-            controller
-                .playback_snapshot
-                .lock()
-                .expect("playback")
-                .current
-                .as_ref()
-                .expect("current")
-                .track_id,
-            first.id
-        );
 
         controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
+        let restored_queue = wait_for_queue(&events).expect("restored server queue");
+        assert_eq!(restored_queue.server_id, server_id);
+        assert_eq!(restored_queue.entries[0].track_id, first.id);
         let server_snapshot = wait_for_snapshot(&events);
 
         assert_eq!(
@@ -5945,6 +6120,123 @@ mod tests {
         assert_eq!(
             controller.load_settings().sources.selected,
             Some(LibrarySourceSelection::Server(server_id))
+        );
+    }
+
+    #[test]
+    fn first_run_local_server_initializes_active_queue() {
+        let (controller, events, _snapshot, initial_queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        assert!(initial_queue.is_none());
+        let root = unique_test_dir("first-run-local-queue");
+        fs::create_dir_all(&root).expect("create root");
+
+        controller.add_local_server(root.clone());
+
+        let queue = wait_for_queue(&events).expect("local queue");
+        assert_eq!(queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
+        let snapshot = wait_for_snapshot(&events);
+        assert_eq!(
+            snapshot.selected_source,
+            Some(LibrarySourceSelection::Local)
+        );
+        assert_eq!(
+            controller
+                .queue
+                .lock()
+                .expect("queue")
+                .as_ref()
+                .expect("queue")
+                .snapshot()
+                .server_id
+                .as_str(),
+            LOCAL_SOURCE_SERVER_ID
+        );
+        let _cleanup = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn first_run_local_server_accepts_multiple_folders() {
+        let (controller, events, _snapshot, initial_queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        assert!(initial_queue.is_none());
+        let first = unique_test_dir("first-run-local-folder-one");
+        let second = unique_test_dir("first-run-local-folder-two");
+        fs::create_dir_all(&first).expect("create first root");
+        fs::create_dir_all(&second).expect("create second root");
+
+        controller.add_local_server_folders(vec![first.clone(), second.clone()]);
+
+        let queue = wait_for_queue(&events).expect("local queue");
+        assert_eq!(queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
+        let snapshot = wait_for_snapshot(&events);
+        assert_eq!(
+            snapshot.selected_source,
+            Some(LibrarySourceSelection::Local)
+        );
+        assert_eq!(
+            snapshot.local_folders,
+            vec![
+                LocalLibraryFolder {
+                    path: first.to_string_lossy().into_owned()
+                },
+                LocalLibraryFolder {
+                    path: second.to_string_lossy().into_owned()
+                }
+            ]
+        );
+        let _cleanup_first = fs::remove_dir_all(first);
+        let _cleanup_second = fs::remove_dir_all(second);
+    }
+
+    #[test]
+    fn logged_in_server_is_selected_before_token_save() {
+        let (controller, events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let server_id = ServerId::new("jellyfin:server:new");
+        let session = ProviderSession {
+            server: ServerIdentity {
+                id: server_id.clone(),
+                provider: "jellyfin".to_string(),
+                name: "New Server".to_string(),
+                base_url: "https://library.example.test".to_string(),
+            },
+            user_id: "user-id".to_string(),
+            username: "listener".to_string(),
+            access_token: "token".to_string(),
+        };
+
+        activate_logged_in_server(
+            &controller.store,
+            &controller.queue,
+            &controller.playback,
+            &controller.playback_snapshot,
+            &controller.auto_dj_enabled,
+            &controller.events,
+            &session,
+            false,
+            None,
+            None,
+        )
+        .expect("activate logged-in server");
+
+        let queue = wait_for_queue(&events).expect("server queue");
+        assert_eq!(queue.server_id, server_id);
+        let snapshot = wait_for_snapshot(&events);
+        assert_eq!(
+            snapshot.selected_source,
+            Some(LibrarySourceSelection::Server(server_id.clone()))
+        );
+        assert_eq!(
+            snapshot.server.as_ref().map(|server| server.id.clone()),
+            Some(server_id.clone())
+        );
+        assert_eq!(
+            controller
+                .secrets
+                .load_token(&server_id)
+                .expect("load token"),
+            None
         );
     }
 
@@ -6816,6 +7108,53 @@ mod tests {
             controller.cached_cover_path(&image_ref, 512),
             Some(path.clone())
         );
+        assert_eq!(
+            controller.cached_cover_path(&image_ref, 96),
+            Some(path.clone())
+        );
+        let _cleanup = fs::remove_file(path);
+    }
+
+    #[test]
+    fn thumbnail_cached_cover_does_not_satisfy_grid_request() {
+        let (controller, _events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let server_id = ServerId::new("jellyfin:server:test");
+        let saved = SavedServer {
+            server: ServerIdentity {
+                id: server_id.clone(),
+                provider: "jellyfin".to_string(),
+                name: "Test".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        };
+        let path = std::env::temp_dir().join(format!(
+            "rufin-provider-cover-{}-{}.jpg",
+            std::process::id(),
+            "thumbnail"
+        ));
+        fs::write(&path, [1_u8, 2, 3]).expect("write cover");
+        let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+
+        controller
+            .store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&server_id)?;
+                store.save_cover_cache_entry(&CoverCacheEntry {
+                    server_id: server_id.clone(),
+                    item_id: image_ref.item_id.clone(),
+                    image_tag: "tag-one".to_string(),
+                    size: 96,
+                    path: path.to_string_lossy().to_string(),
+                })
+            })
+            .expect("seed cover cache");
+
+        assert_eq!(controller.cached_cover_path(&image_ref, 256), None);
         assert_eq!(
             controller.cached_cover_path(&image_ref, 96),
             Some(path.clone())
