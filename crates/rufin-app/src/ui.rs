@@ -43,6 +43,8 @@ mod settings_persistence;
 
 mod source_selector;
 
+mod update_notice;
+
 include!("ui/root/types.rs");
 include!("ui/root/build.rs");
 include!("ui/root/perf_monitor_01.rs");

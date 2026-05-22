@@ -623,6 +623,13 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
 
     shell.window.present();
+    if options.fake_scale.is_none()
+        && !options.ui_perf_run
+        && !options.ui_perf_observe
+        && options.smoke_exit_ms.is_none()
+    {
+        update_notice::schedule_release_notice(&shell);
+    }
     if defer_initial_route {
         shell.schedule_startup_route_reveal();
     }

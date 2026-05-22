@@ -152,8 +152,34 @@ jobs:
             throw "Windows installer was not produced"
           }
           $installDir = Join-Path $env:RUNNER_TEMP "Rufin"
-          & $installer.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="$installDir"
-          & (Join-Path $installDir "rufin.exe") --help | Out-Null
+          $installLog = Join-Path $env:RUNNER_TEMP "rufin-install.log"
+          $installerArgs = @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/DIR=`"$installDir`"",
+            "/LOG=`"$installLog`""
+          )
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList $installerArgs -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path $installLog) {
+              Get-Content $installLog
+            }
+            throw "Windows installer exited with code $($process.ExitCode)"
+          }
+
+          $installedExe = Join-Path $installDir "rufin.exe"
+          $deadline = (Get-Date).AddSeconds(60)
+          while (-not (Test-Path $installedExe) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 250
+          }
+          if (-not (Test-Path $installedExe)) {
+            if (Test-Path $installLog) {
+              Get-Content $installLog
+            }
+            throw "Installed Rufin executable was not found: $installedExe"
+          }
+          & $installedExe --help | Out-Null
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
