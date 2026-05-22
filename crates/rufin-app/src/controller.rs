@@ -61,6 +61,8 @@ const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 const DATABASE_FILE_NAME: &str = "rufin.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";
+const STORE_DIR_NAME: &str = "store";
+const COVER_CACHE_DIR_NAME: &str = "covers";
 const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
 
 #[derive(Clone, Debug)]
@@ -339,17 +341,13 @@ enum StoreHandle {
 
 impl StoreHandle {
     fn open_for_app() -> Result<Self, String> {
-        let database_path = data_dir()
-            .map(|dir| dir.join(DATABASE_FILE_NAME))
-            .unwrap_or_else(|| PathBuf::from(DATABASE_FILE_NAME));
+        let database_path = app_database_path();
         if let Some(parent) = database_path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         Store::open(&database_path).map_err(|error| error.to_string())?;
 
-        let settings_path = config_dir()
-            .map(|dir| dir.join(SETTINGS_FILE_NAME))
-            .unwrap_or_else(|| PathBuf::from(SETTINGS_FILE_NAME));
+        let settings_path = app_settings_path();
         let handle = Self::Path {
             database_path,
             settings_path,
@@ -5912,6 +5910,38 @@ fn cache_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.cache_dir().to_path_buf())
 }
 
+fn app_database_path() -> PathBuf {
+    data_dir()
+        .map(|dir| app_database_path_for_data_dir(&dir))
+        .unwrap_or_else(|| PathBuf::from(DATABASE_FILE_NAME))
+}
+
+fn app_database_path_for_data_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(STORE_DIR_NAME).join(DATABASE_FILE_NAME)
+}
+
+fn app_settings_path() -> PathBuf {
+    config_dir()
+        .map(|dir| app_settings_path_for_config_dir(&dir))
+        .unwrap_or_else(|| PathBuf::from(SETTINGS_FILE_NAME))
+}
+
+fn app_settings_path_for_config_dir(config_dir: &Path) -> PathBuf {
+    config_dir.join(SETTINGS_FILE_NAME)
+}
+
+fn cover_cache_dir() -> Option<PathBuf> {
+    cache_dir().map(|dir| cover_cache_dir_for_cache_dir(&dir))
+}
+
+fn cover_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(COVER_CACHE_DIR_NAME)
+}
+
+fn cover_cache_path_for_key(key: &str) -> Option<PathBuf> {
+    cover_cache_dir().map(|dir| dir.join(key))
+}
+
 fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -5923,8 +5953,7 @@ fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
 }
 
 fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
-    let Some(path) =
-        cache_dir().map(|dir| dir.join("covers").join(encode_key_part(server_id.as_str())))
+    let Some(path) = cover_cache_dir().map(|dir| dir.join(encode_key_part(server_id.as_str())))
     else {
         return Ok(());
     };
@@ -5992,10 +6021,12 @@ mod tests {
         AppController, ControllerEvent, DATABASE_FILE_NAME, LOCAL_SOURCE_SERVER_ID,
         LibrarySnapshot, RandomPlayAction, RandomPlayRequest, SETTINGS_FILE_NAME,
         SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT, StoreHandle, activate_logged_in_server,
-        auto_dj_candidates, home_refresh_completed_event, load_settings_from_store, load_snapshot,
-        playback_snapshot_from_queue, prefetch_home_section, promote_prefetched_home_section,
-        refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
-        refresh_playlist_pages, restore_queue, sync_page_finished, sync_provider,
+        app_database_path_for_data_dir, app_settings_path_for_config_dir, auto_dj_candidates,
+        cover_cache_dir_for_cache_dir, home_refresh_completed_event, load_settings_from_store,
+        load_snapshot, playback_snapshot_from_queue, prefetch_home_section,
+        promote_prefetched_home_section, refresh_home_section, refresh_home_sections,
+        refresh_home_sections_without_explore, refresh_playlist_pages, restore_queue,
+        sync_page_finished, sync_provider,
     };
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
@@ -7518,6 +7549,24 @@ mod tests {
             );
         }
         let _cleanup = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn app_paths_separate_config_data_and_cache_roots() {
+        let root = PathBuf::from("/tmp/rufin-path-layout");
+
+        assert_eq!(
+            app_database_path_for_data_dir(&root.join("data")),
+            root.join("data").join("store").join(DATABASE_FILE_NAME)
+        );
+        assert_eq!(
+            app_settings_path_for_config_dir(&root.join("config")),
+            root.join("config").join(SETTINGS_FILE_NAME)
+        );
+        assert_eq!(
+            cover_cache_dir_for_cache_dir(&root.join("cache")),
+            root.join("cache").join("covers")
+        );
     }
 
     #[test]

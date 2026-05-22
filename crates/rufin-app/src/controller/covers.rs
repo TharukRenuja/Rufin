@@ -16,8 +16,8 @@ use tracing::{debug, info, warn};
 use crate::external_metadata;
 
 use super::{
-    AppController, ControllerEvent, IMAGE_TAG_UNTAGGED, StoreHandle, acquire_cover_slot, cache_dir,
-    load_settings_from_store, provider_for_saved, release_cover_slot,
+    AppController, ControllerEvent, IMAGE_TAG_UNTAGGED, StoreHandle, acquire_cover_slot,
+    cover_cache_path_for_key, load_settings_from_store, provider_for_saved, release_cover_slot,
 };
 
 const EXTERNAL_PREFETCH_PAGE_SIZE: usize = 500;
@@ -752,7 +752,7 @@ fn save_external_lookup_miss(
 }
 
 fn cached_cover_path_for_key(key: &str) -> Option<PathBuf> {
-    let path = cache_dir()?.join("covers").join(key);
+    let path = cover_cache_path_for_key(key)?;
     path.exists().then_some(path)
 }
 
@@ -790,8 +790,7 @@ fn fetch_and_cache_cover(
 
     let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
     let key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
-    let path = cache_dir()
-        .map(|dir| dir.join("covers").join(&key))
+    let path = cover_cache_path_for_key(&key)
         .ok_or_else(|| "cache directory is unavailable".to_string())?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
