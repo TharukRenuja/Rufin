@@ -2340,9 +2340,20 @@ fn genre_cover_refs(shell: &Rc<Shell>, genre: &Genre) -> Vec<ImageRef> {
             }
         }
     }
+    if !refs.is_empty() {
+        return refs;
+    }
+
+    let mut seen_albums = HashSet::new();
     for track in &library.tracks {
-        if track.genres.iter().any(|name| name == &genre.name) {
+        if track.genres.iter().any(|name| name == &genre.name)
+            && !seen_albums.contains(&track.album_id)
+        {
+            let before = refs.len();
             push_unique_image_ref(&mut refs, track.image_ref.as_ref());
+            if refs.len() > before {
+                seen_albums.insert(track.album_id.clone());
+            }
             if refs.len() >= 4 {
                 return refs;
             }
