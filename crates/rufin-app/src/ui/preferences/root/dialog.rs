@@ -380,7 +380,7 @@ fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     group.add(&lyrics_panel_row);
 
     let narrow_row = adw::SwitchRow::builder()
-        .title(tr("Use different layout below threshold"))
+        .title(tr("Use different layout below a threshold width"))
         .active(settings.layout.narrow_enabled)
         .build();
     group.add(&narrow_row);
@@ -400,6 +400,9 @@ fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
         .numeric(true)
         .sensitive(settings.layout.narrow_enabled)
         .build();
+    let threshold_unit = gtk::Label::new(Some("px"));
+    threshold_unit.add_css_class("dim-label");
+    threshold_row.add_suffix(&threshold_unit);
     let threshold_shell = Rc::clone(shell);
     threshold_row.connect_value_notify(move |row| {
         let threshold = row.value().round() as i32;
