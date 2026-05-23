@@ -1,0 +1,55 @@
+{
+  "app-id": "io.github.screwys.Rufin",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "50",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "rufin",
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {
+      "CARGO_NET_OFFLINE": "true"
+    }
+  },
+  "finish-args": [
+    "--share=ipc",
+    "--share=network",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--socket=pulseaudio",
+    "--device=dri",
+    "--filesystem=xdg-music",
+    "--filesystem=xdg-run/discord-ipc-0",
+    "--filesystem=xdg-run/app/com.discordapp.Discord:create",
+    "--own-name=org.mpris.MediaPlayer2.io.github.screwys.Rufin",
+    "--talk-name=org.freedesktop.secrets"
+  ],
+  "modules": [
+    {
+      "name": "rufin",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm644 cargo/config .cargo/config.toml",
+        "target_triple=\"$(rustc -vV | sed -n 's/^host: //p')\" && cargo fetch --locked --offline --manifest-path Cargo.toml --target \"$target_triple\" --verbose",
+        "target_triple=\"$(rustc -vV | sed -n 's/^host: //p')\" && cargo build --release --locked --offline -p rufin-app --target \"$target_triple\"",
+        "target_triple=\"$(rustc -vV | sed -n 's/^host: //p')\" && install -Dm755 \"target/$target_triple/release/rufin\" /app/bin/rufin",
+        "install -Dm644 data/io.github.screwys.Rufin.desktop /app/share/applications/io.github.screwys.Rufin.desktop",
+        "install -Dm644 data/io.github.screwys.Rufin.metainfo.xml /app/share/metainfo/io.github.screwys.Rufin.metainfo.xml",
+        "install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg /app/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg",
+        "install -Dm644 -t /app/share/icons/hicolor/scalable/status data/icons/hicolor/scalable/status/*.svg",
+        "install -Dm644 -t /app/share/icons/hicolor/64x64/apps data/icons/hicolor/64x64/apps/*.png"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/screwys/Rufin.git",
+          "tag": "v0.3.2",
+          "commit": "ced4b295e4a7a51ec2b6511a374228ec8a4cc8bf"
+        },
+        "cargo-sources.json"
+      ]
+    }
+  ]
+}

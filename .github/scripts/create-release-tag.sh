@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] VERSION SUMMARY
+Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] [--skip-flathub] VERSION SUMMARY
 
 Updates release metadata, commits it, and creates a signed annotated release
 tag whose message includes commits since the previous release tag. VERSION may
@@ -19,6 +19,7 @@ base_tag=""
 dry_run=0
 push_tag=0
 replace_tag=0
+skip_flathub=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --replace)
       replace_tag=1
+      shift
+      ;;
+    --skip-flathub)
+      skip_flathub=1
       shift
       ;;
     -h|--help)
@@ -117,7 +122,8 @@ write_notes() {
     echo "Changelog"
     echo
     git log --reverse --pretty=format:'%s (%h)' "$base_tag"..HEAD |
-      grep -v '^chore(release): bump version to ' || true
+      grep -v '^chore(release): bump version to ' |
+      grep -v '^chore(flatpak): update Flathub manifest for v' || true
     echo
   } > "$notes_file"
 }
@@ -151,6 +157,15 @@ fi
 
 git tag -s "$version" -F "$notes_file"
 git show "$version" --no-patch
+
+flathub_manifest="packaging/flatpak/io.github.screwys.Rufin.flathub.json"
+if [[ "$skip_flathub" != "1" && -f "$flathub_manifest" ]]; then
+  bash .github/scripts/update-flathub-manifest.sh --manifest "$flathub_manifest" "$version"
+  if ! git diff --quiet -- "$flathub_manifest"; then
+    git add "$flathub_manifest"
+    git commit -m "chore(flatpak): update Flathub manifest for $version"
+  fi
+fi
 
 if [[ "$push_tag" == "1" ]]; then
   git push origin HEAD:main

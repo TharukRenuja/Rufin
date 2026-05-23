@@ -12,6 +12,36 @@
   <description>
     <p>Rufin is a native GTK music client shell with Jellyfin login, a cached read-only library, and native GStreamer playback.</p>
   </description>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Browse music and control playback</caption>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/Rufin.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Browse artists</caption>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/artists.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Browse albums</caption>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/albums.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Browse tracks</caption>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/tracks.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Configure playback and app behavior</caption>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/general.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Customize the library layout</caption>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/customize_display.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Configure library sources</caption>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/library.png</image>
+    </screenshot>
+  </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
