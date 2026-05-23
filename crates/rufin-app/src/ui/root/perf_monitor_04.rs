@@ -34,6 +34,7 @@ impl Shell {
                 size,
                 priority,
             } = job;
+            shell.record_perf_cover_decode_start(&key);
             match load_cover_pixbuf(path.clone(), size, priority.glib_priority()).await {
                 Ok(pixbuf) => {
                     shell.finish_cover_decode(&key);
@@ -168,6 +169,16 @@ impl Shell {
             perf.record_cover_ready(key);
         }
     }
+    fn record_perf_cover_path_ready(&self, key: &str) {
+        if let Some(perf) = &self.state.perf {
+            perf.record_cover_path_ready(key);
+        }
+    }
+    fn record_perf_cover_decode_start(&self, key: &str) {
+        if let Some(perf) = &self.state.perf {
+            perf.record_cover_decode_start(key);
+        }
+    }
     fn record_perf_cover_decode_ok(&self, key: &str) {
         if let Some(perf) = &self.state.perf {
             perf.record_cover_decode_ok(key);
@@ -191,6 +202,11 @@ impl Shell {
     fn record_perf_cover_stale_key(&self, key: &str) {
         if let Some(perf) = &self.state.perf {
             perf.record_cover_stale_key(key);
+        }
+    }
+    fn record_perf_track_row_bind(&self, column: &'static str, elapsed: Duration) {
+        if let Some(perf) = &self.state.perf {
+            perf.record_track_row_bind(column, elapsed);
         }
     }
     #[allow(clippy::too_many_arguments)]

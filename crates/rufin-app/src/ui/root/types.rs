@@ -39,6 +39,7 @@ use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, artist_favorite_key,
     clear_favorite_controls, favorite_change_needs_route_render, favorite_control_key,
     merge_favorite_snapshot, register_favorite_control, track_favorite_key,
+    unregister_favorite_control,
     update_favorite_controls,
 };
 use layout::{
@@ -66,7 +67,7 @@ const THUMB_COVER_SIZE: u32 = 96;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
 const COVER_WARM_BATCH_SIZE: usize = 3;
-const COVER_WARM_MAX_IN_FLIGHT: usize = 3;
+const COVER_PATH_LOOKUP_MAX_IN_FLIGHT: usize = 3;
 const COVER_WARM_INITIAL_DELAY_MS: u64 = 250;
 const COVER_WARM_INTERVAL_MS: u64 = 32;
 const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
@@ -75,6 +76,7 @@ const STARTUP_COVER_WARM_DELAY_MS: u64 = 1_500;
 const STARTUP_COVER_WARM_BATCH_SIZE: usize = 1;
 const STARTUP_COVER_WARM_INTERVAL_MS: u64 = 80;
 const UI_PERF_MANUAL_SCROLL_IDLE_MS: u64 = 750;
+const UI_PERF_TRACK_ROW_BIND_SLOW_US: u64 = 4_000;
 const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
 const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
 const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
@@ -162,6 +164,7 @@ struct AppState {
     server_discovery_running: Cell<bool>,
     server_discovery_started: Cell<bool>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
+    cover_path_lookups: RefCell<HashSet<String>>,
     cover_decodes: RefCell<HashSet<String>>,
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
@@ -292,7 +295,11 @@ struct UiPerfInner {
     route_renders: Vec<UiPerfRouteRender>,
     route_scrolls: Vec<UiPerfRouteScroll>,
     active_scroll: Option<UiPerfActiveScroll>,
+    last_route_hint: Option<String>,
+    gap_samples: Vec<UiPerfGapSample>,
     cover_pending: HashMap<String, Instant>,
+    cover_path_ready: HashMap<String, u64>,
+    cover_decode_started: HashMap<String, u64>,
     cover_latencies: Vec<UiPerfAssetLatency>,
     max_cover_latency_ms: u64,
     over_budget_assets: usize,
@@ -303,8 +310,27 @@ struct UiPerfInner {
     cover_decode_ok: usize,
     cover_decode_error: usize,
     cover_stale_ignored: usize,
+    track_row_binds: HashMap<&'static str, UiPerfBindStats>,
+    track_row_contracts: Vec<UiPerfTrackRowContractSample>,
     tracks_row_contract_samples: usize,
     tracks_row_contract_failures: usize,
+}
+#[derive(Default)]
+struct UiPerfBindStats {
+    samples: usize,
+    total_us: u64,
+    max_us: u64,
+    slow_samples: usize,
+}
+struct UiPerfTrackRowContractSample {
+    scenario: &'static str,
+    visible_start: usize,
+    visible_end: usize,
+    ready: usize,
+    coverless: usize,
+    pending: usize,
+    missing: usize,
+    failed: bool,
 }
 struct UiPerfActiveScroll {
     route: String,
@@ -337,9 +363,19 @@ struct UiPerfRouteScroll {
     covers_ready: usize,
     decoded_covers: usize,
 }
+struct UiPerfGapSample {
+    phase: &'static str,
+    route: String,
+    scenario: &'static str,
+    elapsed_ms: u64,
+    gap_ms: u64,
+}
 struct UiPerfAssetLatency {
     key: String,
     elapsed_ms: u64,
+    path_ready_ms: Option<u64>,
+    queue_wait_ms: Option<u64>,
+    decode_ms: Option<u64>,
 }
 #[derive(Clone, Copy)]
 enum UiPerfScenario {
@@ -461,6 +497,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         server_discovery_running: Cell::new(false),
         server_discovery_started: Cell::new(false),
         cover_bindings: RefCell::new(HashMap::new()),
+        cover_path_lookups: RefCell::new(HashSet::new()),
         cover_decodes: RefCell::new(HashSet::new()),
         cover_decode_queue: RefCell::new(VecDeque::new()),
         cover_warm_generation: Cell::new(0),

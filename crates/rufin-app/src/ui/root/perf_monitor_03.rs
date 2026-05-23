@@ -386,6 +386,30 @@ impl Shell {
     ) -> gtk::Widget {
         let tile = ArtworkTile::new_sized(width, height, seed);
         let widget = tile.widget();
+        self.bind_cover_tile_for_dimensions(&tile, image_ref, seed, width, height, fetch_size);
+        widget
+    }
+
+    fn bind_cover_tile_for(
+        self: &Rc<Self>,
+        tile: &ArtworkTile,
+        image_ref: Option<&ImageRef>,
+        seed: u32,
+        size: i32,
+        fetch_size: u32,
+    ) {
+        self.bind_cover_tile_for_dimensions(tile, image_ref, seed, size, size, fetch_size);
+    }
+
+    fn bind_cover_tile_for_dimensions(
+        self: &Rc<Self>,
+        tile: &ArtworkTile,
+        image_ref: Option<&ImageRef>,
+        seed: u32,
+        width: i32,
+        height: i32,
+        fetch_size: u32,
+    ) {
         let decode_size = cover_decode_size(width.max(height), fetch_size);
 
         if let Some(image_ref) = image_ref
@@ -395,29 +419,45 @@ impl Shell {
                 self.decoded_cover_for_ref(image_ref, fetch_size, decode_size)
             {
                 self.record_perf_cover_cache_hit(&cache_key);
-                tile.set_pixbuf_if_current(tile.generation(), pixbuf);
+                tile.bind_image(seed, Some(pixbuf));
             } else {
+                let generation = tile.bind_image(seed, None);
                 let shell = Rc::clone(self);
                 let tile_for_map = tile.clone();
                 let image_ref = image_ref.clone();
-                let started = Rc::new(Cell::new(false));
-                widget.connect_map(move |_| {
-                    if started.replace(true) {
+                let key_for_request = key.clone();
+                let request = move || {
+                    if !tile_for_map.is_live_generation(generation) {
                         return;
                     }
                     shell.request_cover_for_tile(
                         &tile_for_map,
-                        key.clone(),
+                        key_for_request.clone(),
                         image_ref.clone(),
                         decode_size,
                         fetch_size,
                     );
-                });
+                };
+                if tile.area.is_mapped() {
+                    glib::idle_add_local_once(request);
+                } else {
+                    let started = Rc::new(Cell::new(false));
+                    let tile_for_map = tile.clone();
+                    tile.area.connect_map(move |_| {
+                        if started.replace(true) || !tile_for_map.is_live_generation(generation) {
+                            return;
+                        }
+                        request();
+                    });
+                }
             }
         } else if image_ref.is_none() {
+            tile.bind_image(seed, None);
+            self.record_perf_coverless_tile();
+        } else {
+            tile.bind_image(seed, None);
             self.record_perf_coverless_tile();
         }
-        widget
     }
     fn prime_cover_ref_from_cache_now(
         &self,
@@ -547,9 +587,20 @@ impl Shell {
                     generation,
                 });
         }
-        if let Some(path) = self.controller.cached_cover_path(&image_ref, fetch_size) {
-            let shell = Rc::clone(self);
-            glib::idle_add_local_once(move || {
+        let shell = Rc::clone(self);
+        let controller = self.controller.clone();
+        let candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
+        glib::spawn_future_local(async move {
+            let path = gtk::gio::spawn_blocking(move || {
+                candidate_keys
+                    .iter()
+                    .find_map(|key| controller.cached_cover_path_for_key(key))
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(path) = path {
+                shell.record_perf_cover_path_ready(&key);
                 shell.record_perf_cover_ready(&key);
                 shell.start_cover_decode_from_path(
                     key,
@@ -557,11 +608,43 @@ impl Shell {
                     decode_size,
                     CoverDecodePriority::Visible,
                 );
+            } else {
+                shell.state.cover_bindings.borrow_mut().remove(&key);
+                shell.record_perf_cover_stale_key(&key);
+                shell.record_perf_coverless_tile();
+            }
+        });
+    }
+    fn start_warm_cover_path_lookup(
+        self: &Rc<Self>,
+        key: String,
+        image_ref: ImageRef,
+        fetch_size: u32,
+        size: i32,
+    ) {
+        if self
+            .state
+            .cover_path_lookups
+            .borrow_mut()
+            .insert(key.clone())
+        {
+            let shell = Rc::clone(self);
+            let controller = self.controller.clone();
+            let candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
+            glib::spawn_future_local(async move {
+                let path = gtk::gio::spawn_blocking(move || {
+                    candidate_keys
+                        .iter()
+                        .find_map(|key| controller.cached_cover_path_for_key(key))
+                })
+                .await
+                .ok()
+                .flatten();
+                shell.state.cover_path_lookups.borrow_mut().remove(&key);
+                if let Some(path) = path {
+                    shell.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Warm);
+                }
             });
-        } else {
-            self.state.cover_bindings.borrow_mut().remove(&key);
-            self.record_perf_cover_stale_key(&key);
-            self.record_perf_coverless_tile();
         }
     }
     fn warm_cover_refs(self: &Rc<Self>, image_refs: Vec<ImageRef>, fetch_size: u32, size: i32) {
@@ -681,12 +764,17 @@ impl Shell {
                     return glib::ControlFlow::Continue;
                 }
 
-                let in_flight = shell.state.cover_decodes.borrow().len();
-                if in_flight >= COVER_WARM_MAX_IN_FLIGHT {
+                let in_flight = shell
+                    .state
+                    .cover_decodes
+                    .borrow()
+                    .len()
+                    .saturating_add(shell.state.cover_path_lookups.borrow().len());
+                if in_flight >= COVER_PATH_LOOKUP_MAX_IN_FLIGHT {
                     return glib::ControlFlow::Continue;
                 }
 
-                let capacity = COVER_WARM_MAX_IN_FLIGHT.saturating_sub(in_flight);
+                let capacity = COVER_PATH_LOOKUP_MAX_IN_FLIGHT.saturating_sub(in_flight);
                 let mut processed = 0;
                 while processed < STARTUP_COVER_WARM_BATCH_SIZE.min(capacity) {
                     let Some(job) = jobs.borrow_mut().pop_front() else {
@@ -697,20 +785,16 @@ impl Shell {
                         .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
                         .is_some()
                         || shell.state.cover_decodes.borrow().contains(&job.key)
+                        || shell.state.cover_path_lookups.borrow().contains(&job.key)
                     {
                         continue;
                     }
-                    if let Some(path) = shell
-                        .controller
-                        .cached_cover_path(&job.image_ref, job.fetch_size)
-                    {
-                        shell.start_cover_decode_from_path(
-                            job.key,
-                            path,
-                            job.size,
-                            CoverDecodePriority::Warm,
-                        );
-                    }
+                    shell.start_warm_cover_path_lookup(
+                        job.key,
+                        job.image_ref,
+                        job.fetch_size,
+                        job.size,
+                    );
                 }
 
                 if jobs.borrow().is_empty() {
@@ -793,12 +877,17 @@ impl Shell {
                 return glib::ControlFlow::Continue;
             }
 
-            let in_flight = shell.state.cover_decodes.borrow().len();
-            if in_flight >= COVER_WARM_MAX_IN_FLIGHT {
+            let in_flight = shell
+                .state
+                .cover_decodes
+                .borrow()
+                .len()
+                .saturating_add(shell.state.cover_path_lookups.borrow().len());
+            if in_flight >= COVER_PATH_LOOKUP_MAX_IN_FLIGHT {
                 return glib::ControlFlow::Continue;
             }
 
-            let capacity = COVER_WARM_MAX_IN_FLIGHT.saturating_sub(in_flight);
+            let capacity = COVER_PATH_LOOKUP_MAX_IN_FLIGHT.saturating_sub(in_flight);
             let mut processed = 0;
             while processed < COVER_WARM_BATCH_SIZE.min(capacity) {
                 let Some((key, image_ref)) = jobs.borrow_mut().pop_front() else {
@@ -807,12 +896,11 @@ impl Shell {
                 processed += 1;
                 if shell.decoded_cover_has_min_size(&key, size)
                     || shell.state.cover_decodes.borrow().contains(&key)
+                    || shell.state.cover_path_lookups.borrow().contains(&key)
                 {
                     continue;
                 }
-                if let Some(path) = shell.controller.cached_cover_path(&image_ref, fetch_size) {
-                    shell.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Warm);
-                }
+                shell.start_warm_cover_path_lookup(key, image_ref, fetch_size, size);
             }
 
             if jobs.borrow().is_empty() {
@@ -838,6 +926,12 @@ impl Shell {
             image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
             size,
         ))
+    }
+    fn cover_cache_candidate_keys(&self, image_ref: &ImageRef, preferred_size: u32) -> Vec<String> {
+        decoded_cover_candidate_sizes(preferred_size)
+            .into_iter()
+            .filter_map(|size| self.cover_cache_key(image_ref, size))
+            .collect()
     }
     fn decoded_cover_for_ref(
         &self,

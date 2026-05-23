@@ -537,11 +537,73 @@ fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track> {
         local_path: None,
     })
 }
+#[derive(Clone)]
+struct TrackFavoriteCell {
+    button: gtk::Button,
+    current_track: Rc<RefCell<Option<Track>>>,
+    current_key: Rc<RefCell<Option<FavoriteControlKey>>>,
+}
+
+thread_local! {
+    static TRACK_FAVORITE_CELLS: RefCell<HashMap<usize, TrackFavoriteCell>> = RefCell::new(HashMap::new());
+}
+
+fn store_track_favorite_cell(list_item: &gtk::ListItem, cell: TrackFavoriteCell) {
+    let key = list_item_storage_key(list_item);
+    TRACK_FAVORITE_CELLS.with(|cells| {
+        cells.borrow_mut().insert(key, cell);
+    });
+}
+
+fn track_favorite_cell(list_item: &gtk::ListItem) -> Option<TrackFavoriteCell> {
+    let key = list_item_storage_key(list_item);
+    TRACK_FAVORITE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn remove_track_favorite_cell(list_item: &gtk::ListItem) {
+    let key = list_item_storage_key(list_item);
+    TRACK_FAVORITE_CELLS.with(|cells| {
+        cells.borrow_mut().remove(&key);
+    });
+}
+
 fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_track = Rc::new(RefCell::new(None::<Track>));
+        let current_key = Rc::new(RefCell::new(None::<FavoriteControlKey>));
+        let button = favorite_icon_button("Favorite");
+        install_dynamic_track_context_menu(&button, &setup_shell, Rc::clone(&current_track));
+
+        let controller = setup_shell.controller.clone();
+        let click_track = Rc::clone(&current_track);
+        button.connect_clicked(move |button| {
+            let Some(track) = click_track.borrow().as_ref().cloned() else {
+                return;
+            };
+            controller.set_track_favorite(track.id, !favorite_button_is_active(button));
+        });
+
+        list_item.set_child(Some(&button));
+        store_track_favorite_cell(
+            list_item,
+            TrackFavoriteCell {
+                button,
+                current_track,
+                current_key,
+            },
+        );
+    });
+
+    let bind_shell = Rc::clone(&shell);
     factory.connect_bind(move |_, list_item| {
+        let bind_started = bind_shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -552,21 +614,49 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
             return;
         };
         let track = boxed.borrow::<Track>().clone();
-        let button = favorite_icon_button("Favorite");
-        set_favorite_button_active(&button, track.favorite);
-        shell.register_favorite_button(track_favorite_key(&track.id), &button);
-        install_track_context_menu(&button, &shell, track.clone());
-        let controller = shell.controller.clone();
-        let track_id = track.id.clone();
-        button.connect_clicked(move |button| {
-            controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
-        });
-        list_item.set_child(Some(&button));
+        let Some(cell) = track_favorite_cell(list_item) else {
+            return;
+        };
+        let next_key = track_favorite_key(&track.id);
+        let mut current_key = cell.current_key.borrow_mut();
+        if current_key.as_ref() != Some(&next_key) {
+            if let Some(previous_key) = current_key.as_ref() {
+                bind_shell.unregister_favorite_button(previous_key, &cell.button);
+            }
+            bind_shell.register_favorite_button(next_key.clone(), &cell.button);
+            *current_key = Some(next_key);
+        }
+        drop(current_key);
+
+        set_favorite_button_active(&cell.button, track.favorite);
+        *cell.current_track.borrow_mut() = Some(track);
+
+        if let Some(bind_started) = bind_started {
+            bind_shell.record_perf_track_row_bind("Favorite", bind_started.elapsed());
+        }
     });
 
-    factory.connect_unbind(|_, list_item| {
+    let unbind_shell = Rc::clone(&shell);
+    factory.connect_unbind(move |_, list_item| {
         if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-            list_item.set_child(None::<&gtk::Widget>);
+            if let Some(cell) = track_favorite_cell(list_item) {
+                if let Some(previous_key) = cell.current_key.borrow_mut().take() {
+                    unbind_shell.unregister_favorite_button(&previous_key, &cell.button);
+                }
+                *cell.current_track.borrow_mut() = None;
+            }
+        }
+    });
+
+    let teardown_shell = Rc::clone(&shell);
+    factory.connect_teardown(move |_, list_item| {
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
+            if let Some(cell) = track_favorite_cell(list_item)
+                && let Some(previous_key) = cell.current_key.borrow_mut().take()
+            {
+                teardown_shell.unregister_favorite_button(&previous_key, &cell.button);
+            }
+            remove_track_favorite_cell(list_item);
         }
     });
 
@@ -589,6 +679,27 @@ fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
     motion.connect_leave(move |_| {
         leave_label.remove_css_class("hovered-link");
         leave_label.set_text(&leave_text);
+    });
+    target.add_controller(motion);
+}
+fn add_stateful_link_hover(
+    target: &gtk::Widget,
+    label: &gtk::Label,
+    text: Rc<RefCell<String>>,
+) {
+    let enter_label = label.clone();
+    let enter_text = Rc::clone(&text);
+    let leave_label = label.clone();
+    let leave_text = text;
+    let motion = gtk::EventControllerMotion::new();
+    motion.connect_enter(move |_, _, _| {
+        let escaped_text = glib::markup_escape_text(enter_text.borrow().as_str());
+        enter_label.add_css_class("hovered-link");
+        enter_label.set_markup(&format!("<u>{escaped_text}</u>"));
+    });
+    motion.connect_leave(move |_| {
+        leave_label.remove_css_class("hovered-link");
+        leave_label.set_text(leave_text.borrow().as_str());
     });
     target.add_controller(motion);
 }
@@ -674,6 +785,15 @@ impl ArtworkTile {
     fn set_seed(&self, seed: u32) {
         self.seed.set(seed);
         self.area.queue_draw();
+    }
+
+    fn bind_image(&self, seed: u32, pixbuf: Option<Pixbuf>) -> u64 {
+        let generation = self.generation.get().saturating_add(1);
+        self.generation.set(generation);
+        self.seed.set(seed);
+        *self.pixbuf.borrow_mut() = pixbuf;
+        self.area.queue_draw();
+        generation
     }
 
     fn set_pixbuf_if_current(&self, generation: u64, pixbuf: Pixbuf) -> bool {

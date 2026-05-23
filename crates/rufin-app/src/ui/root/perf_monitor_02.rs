@@ -193,6 +193,9 @@ impl Shell {
     fn register_favorite_button(&self, key: FavoriteControlKey, button: &gtk::Button) {
         register_favorite_control(&self.state.favorite_controls, key, button);
     }
+    fn unregister_favorite_button(&self, key: &FavoriteControlKey, button: &gtk::Button) {
+        unregister_favorite_control(&self.state.favorite_controls, key, button);
+    }
     fn update_visible_favorite_buttons(&self, item_id: &FavoriteItemId, favorite: bool) {
         let key = favorite_control_key(item_id);
         update_favorite_controls(&self.state.favorite_controls, &key, favorite);

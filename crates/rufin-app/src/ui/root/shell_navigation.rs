@@ -169,8 +169,8 @@ fn track_table_column(shell: &Rc<Shell>, column: TrackTableColumn) -> gtk::Colum
                 Some(Route::AlbumDetail(track.album_id.clone())),
             )
         }),
-        TrackTableColumn::Year => track_column("Year", 70, |track| track.year.to_string()),
-        TrackTableColumn::Duration => track_column("Duration", 90, |track| {
+        TrackTableColumn::Year => track_column(shell, "Year", 70, |track| track.year.to_string()),
+        TrackTableColumn::Duration => track_column(shell, "Duration", 90, |track| {
             format_duration(track.duration_seconds)
         }),
         TrackTableColumn::Favorite => track_favorite_column(shell),
@@ -399,12 +399,82 @@ fn showcase_color_component(seed: u32, shift: u8) -> u8 {
     let value = ((seed >> shift) & 0xff) as f64;
     (value * 0.72 + 48.0).round().clamp(0.0, 232.0) as u8
 }
-fn track_column<F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
+#[derive(Clone)]
+struct TrackIdentityCell {
+    cover: ArtworkTile,
+    title: gtk::Label,
+    artist_button: gtk::Button,
+    artist_button_label: gtk::Label,
+    artist_label: gtk::Label,
+    artist_route: Rc<RefCell<Option<Route>>>,
+    artist_hover_text: Rc<RefCell<String>>,
+    current_track: Rc<RefCell<Option<Track>>>,
+}
+
+#[derive(Clone)]
+struct TrackLinkCell {
+    button: gtk::Button,
+    button_label: gtk::Label,
+    label: gtk::Label,
+    route: Rc<RefCell<Option<Route>>>,
+    hover_text: Rc<RefCell<String>>,
+    current_track: Rc<RefCell<Option<Track>>>,
+}
+
+thread_local! {
+    static TRACK_IDENTITY_CELLS: RefCell<HashMap<usize, TrackIdentityCell>> = RefCell::new(HashMap::new());
+    static TRACK_LINK_CELLS: RefCell<HashMap<usize, TrackLinkCell>> = RefCell::new(HashMap::new());
+}
+
+fn list_item_storage_key(list_item: &gtk::ListItem) -> usize {
+    list_item.as_ptr() as usize
+}
+
+fn store_track_identity_cell(list_item: &gtk::ListItem, cell: TrackIdentityCell) {
+    let key = list_item_storage_key(list_item);
+    TRACK_IDENTITY_CELLS.with(|cells| {
+        cells.borrow_mut().insert(key, cell);
+    });
+}
+
+fn track_identity_cell(list_item: &gtk::ListItem) -> Option<TrackIdentityCell> {
+    let key = list_item_storage_key(list_item);
+    TRACK_IDENTITY_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn remove_track_identity_cell(list_item: &gtk::ListItem) {
+    let key = list_item_storage_key(list_item);
+    TRACK_IDENTITY_CELLS.with(|cells| {
+        cells.borrow_mut().remove(&key);
+    });
+}
+
+fn store_track_link_cell(list_item: &gtk::ListItem, cell: TrackLinkCell) {
+    let key = list_item_storage_key(list_item);
+    TRACK_LINK_CELLS.with(|cells| {
+        cells.borrow_mut().insert(key, cell);
+    });
+}
+
+fn track_link_cell(list_item: &gtk::ListItem) -> Option<TrackLinkCell> {
+    let key = list_item_storage_key(list_item);
+    TRACK_LINK_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn remove_track_link_cell(list_item: &gtk::ListItem) {
+    let key = list_item_storage_key(list_item);
+    TRACK_LINK_CELLS.with(|cells| {
+        cells.borrow_mut().remove(&key);
+    });
+}
+
+fn track_column<F>(shell: &Rc<Shell>, title: &'static str, width: i32, value: F) -> gtk::ColumnViewColumn
 where
     F: Fn(&Track) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let value = Rc::new(value);
+    let shell = Rc::clone(shell);
 
     factory.connect_setup(|_, list_item| {
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
@@ -417,6 +487,7 @@ where
     });
 
     factory.connect_bind(move |_, list_item| {
+        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -434,6 +505,9 @@ where
         };
         let track = boxed.borrow::<Track>();
         label.set_text(&value(&track));
+        if let Some(bind_started) = bind_started {
+            shell.record_perf_track_row_bind(title, bind_started.elapsed());
+        }
     });
 
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
@@ -475,7 +549,102 @@ fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+
+        let current_track = Rc::new(RefCell::new(None::<Track>));
+        let artist_route = Rc::new(RefCell::new(None::<Route>));
+        let artist_hover_text = Rc::new(RefCell::new(String::new()));
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.add_css_class("track-identity");
+        row.set_valign(gtk::Align::Center);
+        row.set_hexpand(true);
+
+        let cover = ArtworkTile::new(48, 0);
+        row.append(&cover.widget());
+
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        labels.set_valign(gtk::Align::Center);
+        labels.set_hexpand(true);
+
+        let title = gtk::Label::new(None);
+        title.add_css_class("track-title");
+        title.set_xalign(0.0);
+        title.set_halign(gtk::Align::Fill);
+        title.set_hexpand(true);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        labels.append(&title);
+
+        let artist_button_label = gtk::Label::new(None);
+        artist_button_label.add_css_class("muted");
+        artist_button_label.add_css_class("table-link-label");
+        artist_button_label.set_xalign(0.0);
+        artist_button_label.set_halign(gtk::Align::Start);
+        artist_button_label.set_hexpand(false);
+        artist_button_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        artist_button_label.set_width_chars(1);
+        artist_button_label.set_max_width_chars(28);
+
+        let artist_button = gtk::Button::new();
+        artist_button.add_css_class("flat");
+        artist_button.add_css_class("table-link");
+        artist_button.add_css_class("track-artist-link");
+        artist_button.set_halign(gtk::Align::Start);
+        artist_button.set_hexpand(false);
+        artist_button.set_cursor_from_name(Some("pointer"));
+        add_stateful_link_hover(
+            artist_button.upcast_ref(),
+            &artist_button_label,
+            Rc::clone(&artist_hover_text),
+        );
+        artist_button.set_child(Some(&artist_button_label));
+        artist_button.set_visible(false);
+        labels.append(&artist_button);
+
+        let artist_label = gtk::Label::new(None);
+        artist_label.add_css_class("muted");
+        artist_label.add_css_class("table-link-label");
+        artist_label.set_xalign(0.0);
+        artist_label.set_halign(gtk::Align::Start);
+        artist_label.set_hexpand(false);
+        artist_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        artist_label.set_width_chars(1);
+        artist_label.set_max_width_chars(28);
+        artist_label.set_visible(false);
+        labels.append(&artist_label);
+
+        let click_shell = Rc::clone(&setup_shell);
+        let route_for_click = Rc::clone(&artist_route);
+        artist_button.connect_clicked(move |_| {
+            if let Some(route) = route_for_click.borrow().clone() {
+                click_shell.navigate(route);
+            }
+        });
+
+        row.append(&labels);
+        install_dynamic_track_context_menu(&row, &setup_shell, Rc::clone(&current_track));
+        list_item.set_child(Some(&row));
+        store_track_identity_cell(
+            list_item,
+            TrackIdentityCell {
+                cover,
+                title,
+                artist_button,
+                artist_button_label,
+                artist_label,
+                artist_route,
+                artist_hover_text,
+                current_track,
+            },
+        );
+    });
+
     factory.connect_bind(move |_, list_item| {
+        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -485,72 +654,65 @@ fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
         let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
             return;
         };
+        let Some(cell) = track_identity_cell(list_item) else {
+            return;
+        };
         let track = boxed.borrow::<Track>().clone();
         let artist_text = track.artist.clone();
         let artist_route = track_artist_route(&track);
-        let cover = shell.cover_tile_for(
+        shell.bind_cover_tile_for(
+            &cell.cover,
             track.image_ref.as_ref(),
             stable_seed(track.id.as_str()),
             48,
             THUMB_COVER_SIZE,
         );
+        cell.title.set_text(&track.title);
+        *cell.current_track.borrow_mut() = Some(track);
 
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        row.add_css_class("track-identity");
-        row.set_valign(gtk::Align::Center);
-        row.set_hexpand(true);
-        row.append(&cover);
-
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        labels.set_valign(gtk::Align::Center);
-        labels.set_hexpand(true);
-
-        let title = gtk::Label::new(Some(&track.title));
-        title.add_css_class("track-title");
-        title.set_xalign(0.0);
-        title.set_halign(gtk::Align::Fill);
-        title.set_hexpand(true);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        labels.append(&title);
-
-        if !artist_text.trim().is_empty() {
-            let artist = gtk::Label::new(Some(&artist_text));
-            artist.add_css_class("muted");
-            artist.add_css_class("table-link-label");
-            artist.set_xalign(0.0);
-            artist.set_halign(gtk::Align::Start);
-            artist.set_hexpand(false);
-            artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            artist.set_width_chars(1);
-            artist.set_max_width_chars(28);
-
-            if let Some(route) = artist_route {
-                let button = gtk::Button::new();
-                button.add_css_class("flat");
-                button.add_css_class("table-link");
-                button.add_css_class("track-artist-link");
-                button.set_halign(gtk::Align::Start);
-                button.set_hexpand(false);
-                button.set_cursor_from_name(Some("pointer"));
-                add_link_hover(button.upcast_ref(), &artist, &artist_text);
-                button.set_child(Some(&artist));
-
-                let shell = Rc::clone(&shell);
-                button.connect_clicked(move |_| shell.navigate(route.clone()));
-                labels.append(&button);
-            } else {
-                labels.append(&artist);
-            }
+        if artist_text.trim().is_empty() {
+            *cell.artist_route.borrow_mut() = None;
+            cell.artist_hover_text.borrow_mut().clear();
+            cell.artist_button.set_visible(false);
+            cell.artist_label.set_visible(false);
+        } else if let Some(route) = artist_route {
+            *cell.artist_route.borrow_mut() = Some(route);
+            *cell.artist_hover_text.borrow_mut() = artist_text.clone();
+            cell.artist_button_label.set_text(&artist_text);
+            cell.artist_button.set_visible(true);
+            cell.artist_label.set_visible(false);
+        } else {
+            *cell.artist_route.borrow_mut() = None;
+            cell.artist_hover_text.borrow_mut().clear();
+            cell.artist_label.set_text(&artist_text);
+            cell.artist_button.set_visible(false);
+            cell.artist_label.set_visible(true);
         }
 
-        row.append(&labels);
-        install_track_context_menu(&row, &shell, track);
-        list_item.set_child(Some(&row));
+        if let Some(bind_started) = bind_started {
+            shell.record_perf_track_row_bind("Title", bind_started.elapsed());
+        }
     });
 
     factory.connect_unbind(|_, list_item| {
         if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-            list_item.set_child(None::<&gtk::Widget>);
+            if let Some(cell) = track_identity_cell(list_item) {
+                cell.title.set_text("");
+                cell.artist_button_label.set_text("");
+                cell.artist_label.set_text("");
+                cell.artist_button.set_visible(false);
+                cell.artist_label.set_visible(false);
+                cell.artist_hover_text.borrow_mut().clear();
+                *cell.artist_route.borrow_mut() = None;
+                *cell.current_track.borrow_mut() = None;
+                cell.cover.bind_image(0, None);
+            }
+        }
+    });
+
+    factory.connect_teardown(|_, list_item| {
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
+            remove_track_identity_cell(list_item);
         }
     });
 
@@ -561,7 +723,7 @@ fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
 }
 fn track_link_column<F>(
     shell: &Rc<Shell>,
-    title: &str,
+    title: &'static str,
     width: i32,
     value: F,
 ) -> gtk::ColumnViewColumn
@@ -572,7 +734,76 @@ where
     let value = Rc::new(value);
     let shell = Rc::clone(shell);
 
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, list_item| {
+        let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_track = Rc::new(RefCell::new(None::<Track>));
+        let route = Rc::new(RefCell::new(None::<Route>));
+        let hover_text = Rc::new(RefCell::new(String::new()));
+
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        root.set_valign(gtk::Align::Center);
+        root.set_halign(gtk::Align::Start);
+        root.set_hexpand(false);
+
+        let button_label = gtk::Label::new(None);
+        button_label.add_css_class("table-link-label");
+        button_label.set_xalign(0.0);
+        button_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        button_label.set_halign(gtk::Align::Start);
+        button_label.set_hexpand(false);
+        button_label.set_width_chars(1);
+        button_label.set_max_width_chars((width / 8).clamp(8, 32));
+
+        let button = gtk::Button::new();
+        button.add_css_class("flat");
+        button.add_css_class("table-link");
+        button.set_halign(gtk::Align::Start);
+        button.set_hexpand(false);
+        button.set_cursor_from_name(Some("pointer"));
+        add_stateful_link_hover(button.upcast_ref(), &button_label, Rc::clone(&hover_text));
+        button.set_child(Some(&button_label));
+        button.set_visible(false);
+        root.append(&button);
+
+        let label = gtk::Label::new(None);
+        label.add_css_class("table-link-label");
+        label.set_xalign(0.0);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_halign(gtk::Align::Start);
+        label.set_hexpand(false);
+        label.set_width_chars(1);
+        label.set_max_width_chars((width / 8).clamp(8, 32));
+        label.set_visible(false);
+        root.append(&label);
+
+        let click_shell = Rc::clone(&setup_shell);
+        let route_for_click = Rc::clone(&route);
+        button.connect_clicked(move |_| {
+            if let Some(route) = route_for_click.borrow().clone() {
+                click_shell.navigate(route);
+            }
+        });
+
+        install_dynamic_track_context_menu(&root, &setup_shell, Rc::clone(&current_track));
+        list_item.set_child(Some(&root));
+        store_track_link_cell(
+            list_item,
+            TrackLinkCell {
+                button,
+                button_label,
+                label,
+                route,
+                hover_text,
+                current_track,
+            },
+        );
+    });
+
     factory.connect_bind(move |_, list_item| {
+        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -582,43 +813,47 @@ where
         let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
             return;
         };
-        let track = boxed.borrow::<Track>().clone();
-        let (text, route) = value(&track);
-        let label = gtk::Label::new(Some(&text));
-        label.add_css_class("table-link-label");
-        label.set_xalign(0.0);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_halign(gtk::Align::Start);
-        label.set_hexpand(false);
-        label.set_width_chars(1);
-        label.set_max_width_chars((width / 8).clamp(8, 32));
-
-        let Some(route) = route else {
-            install_track_context_menu(&label, &shell, track);
-            list_item.set_child(Some(&label));
+        let Some(cell) = track_link_cell(list_item) else {
             return;
         };
-
-        let button = gtk::Button::new();
-        button.add_css_class("flat");
-        button.add_css_class("table-link");
-        button.set_halign(gtk::Align::Start);
-        button.set_hexpand(false);
-        button.set_cursor_from_name(Some("pointer"));
-
-        add_link_hover(button.upcast_ref(), &label, &text);
-
-        button.set_child(Some(&label));
-        install_track_context_menu(&button, &shell, track);
-
-        let shell = Rc::clone(&shell);
-        button.connect_clicked(move |_| shell.navigate(route.clone()));
-        list_item.set_child(Some(&button));
+        let track = boxed.borrow::<Track>().clone();
+        let (text, route) = value(&track);
+        *cell.current_track.borrow_mut() = Some(track);
+        if let Some(route) = route {
+            *cell.route.borrow_mut() = Some(route);
+            *cell.hover_text.borrow_mut() = text.clone();
+            cell.button_label.set_text(&text);
+            cell.button.set_visible(true);
+            cell.label.set_visible(false);
+        } else {
+            *cell.route.borrow_mut() = None;
+            cell.hover_text.borrow_mut().clear();
+            cell.label.set_text(&text);
+            cell.button.set_visible(false);
+            cell.label.set_visible(true);
+        }
+        if let Some(bind_started) = bind_started {
+            shell.record_perf_track_row_bind(title, bind_started.elapsed());
+        }
     });
 
     factory.connect_unbind(|_, list_item| {
         if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-            list_item.set_child(None::<&gtk::Widget>);
+            if let Some(cell) = track_link_cell(list_item) {
+                cell.button_label.set_text("");
+                cell.label.set_text("");
+                cell.button.set_visible(false);
+                cell.label.set_visible(false);
+                cell.hover_text.borrow_mut().clear();
+                *cell.route.borrow_mut() = None;
+                *cell.current_track.borrow_mut() = None;
+            }
+        }
+    });
+
+    factory.connect_teardown(|_, list_item| {
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
+            remove_track_link_cell(list_item);
         }
     });
 
@@ -652,20 +887,30 @@ fn album_artist_route(album: &Album) -> Option<Route> {
     }
 }
 fn install_track_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>, track: Track) {
+    install_dynamic_track_context_menu(target, shell, Rc::new(RefCell::new(Some(track))));
+}
+fn install_dynamic_track_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    track: Rc<RefCell<Option<Track>>>,
+) {
     let target = target.as_ref();
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
-    let click_track = track.clone();
+    let click_track = Rc::clone(&track);
     let click = gtk::GestureClick::new();
     click.set_button(3);
     click.connect_pressed(move |_, _, x, y| {
         let Some(target) = target_weak.upgrade() else {
             return;
         };
+        let Some(track) = click_track.borrow().clone() else {
+            return;
+        };
         present_track_context_menu(
             &target,
             &click_shell,
-            context_track(&click_shell, &click_track),
+            context_track(&click_shell, &track),
             Some((x, y)),
         );
     });
@@ -681,11 +926,13 @@ fn install_track_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>,
         if !opens_menu {
             return glib::Propagation::Proceed;
         }
-        if let Some(target) = target_weak.upgrade() {
+        if let Some(target) = target_weak.upgrade()
+            && let Some(track) = key_track.borrow().clone()
+        {
             present_track_context_menu(
                 &target,
                 &key_shell,
-                context_track(&key_shell, &key_track),
+                context_track(&key_shell, &track),
                 None,
             );
         }

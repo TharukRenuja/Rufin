@@ -68,24 +68,6 @@ listview.album-detail-list row:selected {
   background: color-mix(in srgb, @accent_bg_color 16%, transparent);
 }
 
-scrolledwindow.library-route-scroller scrollbar.vertical slider {
-  min-height: 24px;
-  min-width: 8px;
-}
-
-scrolledwindow.library-route-scroller scrollbar.vertical {
-  min-width: 12px;
-}
-
-scrolledwindow.library-route-compact-scroll-thumb scrollbar.vertical slider {
-  min-height: 16px;
-  min-width: 6px;
-}
-
-scrolledwindow.library-route-compact-scroll-thumb scrollbar.vertical {
-  min-width: 8px;
-}
-
 .startup-loading-page {
   min-height: 240px;
 }

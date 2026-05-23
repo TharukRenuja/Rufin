@@ -12,13 +12,13 @@ use rufin_core::{
 };
 use tracing::{info, warn};
 use super::{
-    CoverDecodePriority, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE, PRIMARY_ROUTE_MARGIN_START, Route,
-    Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, album_favorite_key, append_albums_to_model,
-    append_artists_to_model, append_genres_to_model, append_playlists_to_model,
-    append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader,
-    cover_decode_size, favorite_button_is_active, favorite_icon_button, finish_grid_page,
-    icon_button, install_album_context_menu, install_artist_context_menu,
-    install_track_context_menu,
+    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE,
+    PRIMARY_ROUTE_MARGIN_START, Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE,
+    album_favorite_key, append_albums_to_model, append_artists_to_model, append_genres_to_model,
+    append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
+    connect_paged_grid_loader, cover_decode_size, favorite_button_is_active, favorite_icon_button,
+    finish_grid_page, icon_button, install_album_context_menu, install_artist_context_menu,
+    install_dynamic_track_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     replace_playlists_in_model, set_favorite_button_active, stable_seed, text_button,
@@ -600,7 +600,7 @@ fn record_track_row_contract_sample(
     let mut ready = 0_usize;
     let mut coverless = 0_usize;
     let mut pending = 0_usize;
-    let mut missing = 0_usize;
+    let missing = 0_usize;
     for index in visible_start..visible_end {
         let Some(track) = item_at::<Track>(model, index as u32) else {
             continue;
@@ -614,16 +614,10 @@ fn record_track_row_contract_sample(
             .is_some()
         {
             ready = ready.saturating_add(1);
-        } else if shell.cover_cache_key(&image_ref, fetch_size).is_none()
-            || shell
-                .controller
-                .external_cover_lookup_known_missing(&image_ref, fetch_size)
-        {
+        } else if shell.cover_cache_key(&image_ref, fetch_size).is_none() {
             coverless = coverless.saturating_add(1);
-        } else if shell.controller.cached_cover_path(&image_ref, fetch_size).is_some() {
-            pending = pending.saturating_add(1);
         } else {
-            missing = missing.saturating_add(1);
+            pending = pending.saturating_add(1);
         }
     }
     if let Some(perf) = &shell.state.perf {

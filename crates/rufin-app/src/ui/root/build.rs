@@ -10,9 +10,11 @@ impl UiPerfMonitor {
     fn record_tick_gap(&self, gap: Duration) {
         let gap_ms = duration_ms(gap);
         let now = Instant::now();
+        let elapsed_ms = duration_ms(self.started_at.elapsed());
         let mut inner = self.inner.borrow_mut();
         inner.ticks = inner.ticks.saturating_add(1);
         inner.max_gap_ms = inner.max_gap_ms.max(gap_ms);
+        let mut gap_sample = None;
         if inner.active_scroll.is_some() {
             if gap_ms > self.options.max_gap_ms {
                 inner.over_budget_ticks = inner.over_budget_ticks.saturating_add(1);
@@ -21,6 +23,13 @@ impl UiPerfMonitor {
                 active.max_gap_ms = active.max_gap_ms.max(gap_ms);
                 if gap_ms > self.options.max_gap_ms {
                     active.over_budget_ticks = active.over_budget_ticks.saturating_add(1);
+                    gap_sample = Some(UiPerfGapSample {
+                        phase: "scroll",
+                        route: active.route.clone(),
+                        scenario: active.scenario,
+                        elapsed_ms,
+                        gap_ms,
+                    });
                     if self.options.terminal_events {
                         println!(
                             "RUFIN_PERF_TICK_GAP gap_ms={} phase=scroll route={} scenario={}",
@@ -31,17 +40,31 @@ impl UiPerfMonitor {
             }
         } else {
             inner.max_idle_gap_ms = inner.max_idle_gap_ms.max(gap_ms);
+            if gap_ms > self.options.max_gap_ms {
+                gap_sample = Some(UiPerfGapSample {
+                    phase: "idle",
+                    route: inner
+                        .last_route_hint
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    scenario: "idle",
+                    elapsed_ms,
+                    gap_ms,
+                });
+            }
             if self.options.terminal_events && gap_ms > self.options.max_gap_ms {
                 println!(
                     "RUFIN_PERF_IDLE_GAP gap_ms={} elapsed_ms={}",
-                    gap_ms,
-                    duration_ms(self.started_at.elapsed())
+                    gap_ms, elapsed_ms
                 );
             }
             if gap_ms > self.options.asset_ms {
                 inner.over_budget_ticks = inner.over_budget_ticks.saturating_add(1);
                 inner.over_budget_idle_ticks = inner.over_budget_idle_ticks.saturating_add(1);
             }
+        }
+        if let Some(sample) = gap_sample {
+            inner.gap_samples.push(sample);
         }
         let finish_manual_scroll = inner.active_scroll.as_ref().is_some_and(|active| {
             active.scenario == "manual"
@@ -58,6 +81,9 @@ impl UiPerfMonitor {
         if self.options.terminal_events {
             println!("RUFIN_PERF route_render route={route} elapsed_ms={elapsed_ms}");
         }
+        self.inner
+            .borrow_mut()
+            .last_route_hint = Some(route.clone());
         self.inner
             .borrow_mut()
             .route_renders
@@ -82,7 +108,9 @@ impl UiPerfMonitor {
             decodes_at_start: inner.cover_decode_ok,
         };
         drop(inner);
-        self.inner.borrow_mut().active_scroll = Some(active);
+        let mut inner = self.inner.borrow_mut();
+        inner.last_route_hint = Some(active.route.clone());
+        inner.active_scroll = Some(active);
     }
 
     fn record_scroll_step(&self, route: &str, value: f64, max_adjustment: f64) {
@@ -173,6 +201,7 @@ impl UiPerfMonitor {
 
         if inner.active_scroll.is_none() {
             let now = Instant::now();
+            inner.last_route_hint = Some(route.to_string());
             inner.active_scroll = Some(UiPerfActiveScroll {
                 route: route.to_string(),
                 scenario: "manual",
@@ -216,10 +245,30 @@ impl UiPerfMonitor {
         let mut inner = self.inner.borrow_mut();
         inner.cover_cache_hits += 1;
         inner.cover_pending.remove(key);
+        inner.cover_path_ready.remove(key);
+        inner.cover_decode_started.remove(key);
     }
 
     fn record_cover_ready(&self, _key: &str) {
         self.inner.borrow_mut().cover_ready_events += 1;
+    }
+
+    fn record_cover_path_ready(&self, key: &str) {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(started_at) = inner.cover_pending.get(key) {
+            let elapsed_ms = duration_ms(started_at.elapsed());
+            inner.cover_path_ready.insert(key.to_string(), elapsed_ms);
+        }
+    }
+
+    fn record_cover_decode_start(&self, key: &str) {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(started_at) = inner.cover_pending.get(key) {
+            let elapsed_ms = duration_ms(started_at.elapsed());
+            inner
+                .cover_decode_started
+                .insert(key.to_string(), elapsed_ms);
+        }
     }
 
     fn record_cover_decode_ok(&self, key: &str) {
@@ -227,6 +276,17 @@ impl UiPerfMonitor {
         inner.cover_decode_ok += 1;
         if let Some(started_at) = inner.cover_pending.remove(key) {
             let elapsed_ms = duration_ms(started_at.elapsed());
+            let path_ready_ms = inner.cover_path_ready.remove(key);
+            let decode_start_ms = inner.cover_decode_started.remove(key);
+            let queue_wait_ms = match (path_ready_ms, decode_start_ms) {
+                (Some(path_ready_ms), Some(decode_start_ms)) => {
+                    Some(decode_start_ms.saturating_sub(path_ready_ms))
+                }
+                _ => None,
+            };
+            let decode_ms = decode_start_ms.map(|decode_start_ms| {
+                elapsed_ms.saturating_sub(decode_start_ms)
+            });
             inner.max_cover_latency_ms = inner.max_cover_latency_ms.max(elapsed_ms);
             if elapsed_ms > self.options.asset_ms {
                 inner.over_budget_assets = inner.over_budget_assets.saturating_add(1);
@@ -234,7 +294,13 @@ impl UiPerfMonitor {
             inner.cover_latencies.push(UiPerfAssetLatency {
                 key: key.to_string(),
                 elapsed_ms,
+                path_ready_ms,
+                queue_wait_ms,
+                decode_ms,
             });
+        } else {
+            inner.cover_path_ready.remove(key);
+            inner.cover_decode_started.remove(key);
         }
     }
 
@@ -242,6 +308,8 @@ impl UiPerfMonitor {
         let mut inner = self.inner.borrow_mut();
         inner.cover_decode_error += 1;
         inner.cover_pending.remove(key);
+        inner.cover_path_ready.remove(key);
+        inner.cover_decode_started.remove(key);
     }
 
     fn record_cover_stale_ignored(&self) {
@@ -254,7 +322,27 @@ impl UiPerfMonitor {
     }
 
     fn record_cover_stale_key(&self, key: &str) {
-        self.inner.borrow_mut().cover_pending.remove(key);
+        let mut inner = self.inner.borrow_mut();
+        inner.cover_pending.remove(key);
+        inner.cover_path_ready.remove(key);
+        inner.cover_decode_started.remove(key);
+    }
+
+    fn record_track_row_bind(&self, column: &'static str, elapsed: Duration) {
+        let elapsed_us = duration_us(elapsed);
+        let mut inner = self.inner.borrow_mut();
+        let stats = inner.track_row_binds.entry(column).or_default();
+        stats.samples = stats.samples.saturating_add(1);
+        stats.total_us = stats.total_us.saturating_add(elapsed_us);
+        stats.max_us = stats.max_us.max(elapsed_us);
+        if elapsed_us > UI_PERF_TRACK_ROW_BIND_SLOW_US {
+            stats.slow_samples = stats.slow_samples.saturating_add(1);
+            if self.options.terminal_events {
+                println!(
+                    "RUFIN_PERF_TRACK_BIND_SLOW column={column} elapsed_us={elapsed_us}"
+                );
+            }
+        }
     }
 
     fn record_tracks_row_contract(
@@ -276,6 +364,18 @@ impl UiPerfMonitor {
                 inner.tracks_row_contract_failures =
                     inner.tracks_row_contract_failures.saturating_add(1);
             }
+            inner
+                .track_row_contracts
+                .push(UiPerfTrackRowContractSample {
+                    scenario,
+                    visible_start,
+                    visible_end,
+                    ready,
+                    coverless,
+                    pending,
+                    missing,
+                    failed,
+                });
         }
         if self.options.terminal_events || failed {
             println!(
@@ -391,13 +491,62 @@ impl UiPerfMonitor {
             "RUFIN_ACCEPT_TRACKS_ROW_SUMMARY samples={} failures={}",
             inner.tracks_row_contract_samples, inner.tracks_row_contract_failures
         );
+        for sample in inner.track_row_contracts.iter().filter(|sample| sample.failed).take(30) {
+            let _ = writeln!(
+                report,
+                "RUFIN_ACCEPT_TRACKS_ROW scenario={} visible_start={} visible_end={} ready={} coverless={} pending={} missing={} result=FAIL",
+                sample.scenario,
+                sample.visible_start,
+                sample.visible_end,
+                sample.ready,
+                sample.coverless,
+                sample.pending,
+                sample.missing
+            );
+        }
+        let mut gap_samples = inner.gap_samples.iter().collect::<Vec<_>>();
+        gap_samples.sort_by_key(|sample| std::cmp::Reverse(sample.gap_ms));
+        for sample in gap_samples.into_iter().take(20) {
+            let _ = writeln!(
+                report,
+                "RUFIN_PERF_GAP phase={} route={} scenario={} elapsed_ms={} gap_ms={}",
+                sample.phase,
+                sample.route,
+                sample.scenario,
+                sample.elapsed_ms,
+                sample.gap_ms
+            );
+        }
+        let mut bind_stats = inner.track_row_binds.iter().collect::<Vec<_>>();
+        bind_stats.sort_by_key(|(column, _)| **column);
+        for (column, stats) in bind_stats {
+            let avg_us = if stats.samples > 0 {
+                stats.total_us / stats.samples as u64
+            } else {
+                0
+            };
+            let _ = writeln!(
+                report,
+                "RUFIN_PERF_TRACK_BIND column={} samples={} total_us={} avg_us={} max_us={} slow_samples={}",
+                column,
+                stats.samples,
+                stats.total_us,
+                avg_us,
+                stats.max_us,
+                stats.slow_samples
+            );
+        }
         let mut slow_assets = inner.cover_latencies.iter().collect::<Vec<_>>();
         slow_assets.sort_by_key(|sample| std::cmp::Reverse(sample.elapsed_ms));
         for sample in slow_assets.into_iter().take(30) {
             let _ = writeln!(
                 report,
-                "RUFIN_PERF_ASSET key={} elapsed_ms={}",
-                sample.key, sample.elapsed_ms
+                "RUFIN_PERF_ASSET key={} elapsed_ms={} path_ready_ms={} queue_wait_ms={} decode_ms={}",
+                sample.key,
+                sample.elapsed_ms,
+                optional_ms(sample.path_ready_ms),
+                optional_ms(sample.queue_wait_ms),
+                optional_ms(sample.decode_ms)
             );
         }
         for key in inner.cover_pending.keys().take(30) {
@@ -408,6 +557,12 @@ impl UiPerfMonitor {
 }
 fn duration_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+fn duration_us(duration: Duration) -> u64 {
+    duration.as_micros().min(u128::from(u64::MAX)) as u64
+}
+fn optional_ms(value: Option<u64>) -> String {
+    value.map_or_else(|| "none".to_string(), |value| value.to_string())
 }
 fn default_ui_perf_output_path(prefix: &str) -> Option<PathBuf> {
     let directory = PathBuf::from(".local").join("perf");

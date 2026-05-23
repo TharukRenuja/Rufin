@@ -382,33 +382,138 @@ where
     column.set_expand(expand);
     column
 }
-fn track_image_column(shell: &Rc<Shell>, title: &str, width: i32) -> gtk::ColumnViewColumn {
+#[derive(Clone)]
+struct LibraryTrackImageCell {
+    cover: ArtworkTile,
+    current_track: Rc<RefCell<Option<Track>>>,
+}
+
+#[derive(Clone)]
+struct LibraryTrackTextCell {
+    label: gtk::Label,
+    current_track: Rc<RefCell<Option<Track>>>,
+}
+
+#[derive(Clone)]
+struct LibraryTrackMergedCell {
+    cover: ArtworkTile,
+    title: gtk::Label,
+    subtitle: gtk::Label,
+    current_track: Rc<RefCell<Option<Track>>>,
+}
+
+#[derive(Clone)]
+struct LibraryTrackFavoriteCell {
+    button: gtk::Button,
+    current_track: Rc<RefCell<Option<Track>>>,
+}
+
+thread_local! {
+    static LIBRARY_TRACK_IMAGE_CELLS: RefCell<HashMap<usize, LibraryTrackImageCell>> = RefCell::new(HashMap::new());
+    static LIBRARY_TRACK_TEXT_CELLS: RefCell<HashMap<usize, LibraryTrackTextCell>> = RefCell::new(HashMap::new());
+    static LIBRARY_TRACK_MERGED_CELLS: RefCell<HashMap<usize, LibraryTrackMergedCell>> = RefCell::new(HashMap::new());
+    static LIBRARY_TRACK_FAVORITE_CELLS: RefCell<HashMap<usize, LibraryTrackFavoriteCell>> = RefCell::new(HashMap::new());
+}
+
+fn library_list_item_storage_key(list_item: &gtk::ListItem) -> usize {
+    list_item.as_ptr() as usize
+}
+
+fn track_image_cell(item: &gtk::ListItem) -> Option<LibraryTrackImageCell> {
+    let key = library_list_item_storage_key(item);
+    LIBRARY_TRACK_IMAGE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn track_text_cell(item: &gtk::ListItem) -> Option<LibraryTrackTextCell> {
+    let key = library_list_item_storage_key(item);
+    LIBRARY_TRACK_TEXT_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn track_merged_cell(item: &gtk::ListItem) -> Option<LibraryTrackMergedCell> {
+    let key = library_list_item_storage_key(item);
+    LIBRARY_TRACK_MERGED_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn track_favorite_cell(item: &gtk::ListItem) -> Option<LibraryTrackFavoriteCell> {
+    let key = library_list_item_storage_key(item);
+    LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn track_image_column(shell: &Rc<Shell>, title: &'static str, width: i32) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
+
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_track = Rc::new(RefCell::new(None::<Track>));
+        let cover = ArtworkTile::new(48, 0);
+        let widget = cover.widget();
+        install_dynamic_track_context_menu(&widget, &setup_shell, Rc::clone(&current_track));
+        item.set_child(Some(&widget));
+        let key = library_list_item_storage_key(item);
+        LIBRARY_TRACK_IMAGE_CELLS.with(|cells| {
+            cells.borrow_mut().insert(
+                key,
+                LibraryTrackImageCell {
+                    cover,
+                    current_track,
+                },
+            );
+        });
+    });
+
     factory.connect_bind(move |_, item| {
+        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let Some(track) = item_at_from_item::<Track>(item) else {
             return;
         };
-        let cover = shell.cover_tile_for(
+        let Some(cell) = track_image_cell(item) else {
+            return;
+        };
+        shell.bind_cover_tile_for(
+            &cell.cover,
             track.image_ref.as_ref(),
             stable_seed(track.id.as_str()),
             48,
             THUMB_COVER_SIZE,
         );
-        install_track_context_menu(&cover, &shell, track);
-        item.set_child(Some(&cover));
+        *cell.current_track.borrow_mut() = Some(track);
+        if let Some(bind_started) = bind_started {
+            shell.record_perf_track_row_bind(title, bind_started.elapsed());
+        }
     });
-    factory.connect_unbind(clear_list_item_child);
+
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = track_image_cell(item)
+        {
+            *cell.current_track.borrow_mut() = None;
+            cell.cover.bind_image(0, None);
+        }
+    });
+
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = library_list_item_storage_key(item);
+            LIBRARY_TRACK_IMAGE_CELLS.with(|cells| {
+                cells.borrow_mut().remove(&key);
+            });
+        }
+    });
+
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
     column
 }
 fn track_text_column<F>(
     shell: &Rc<Shell>,
-    title: &str,
+    title: &'static str,
     width: i32,
     expand: bool,
     value: F,
@@ -419,22 +524,64 @@ where
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
     let value = Rc::new(value);
+
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_track = Rc::new(RefCell::new(None::<Track>));
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_wrap(false);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_single_line_mode(true);
+        install_dynamic_track_context_menu(&label, &setup_shell, Rc::clone(&current_track));
+        item.set_child(Some(&label));
+        let key = library_list_item_storage_key(item);
+        LIBRARY_TRACK_TEXT_CELLS.with(|cells| {
+            cells
+                .borrow_mut()
+                .insert(key, LibraryTrackTextCell { label, current_track });
+        });
+    });
+
     factory.connect_bind(move |_, item| {
+        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let Some(track) = item_at_from_item::<Track>(item) else {
             return;
         };
-        let label = gtk::Label::new(Some(&(value)(&track)));
-        label.set_xalign(0.0);
-        label.set_wrap(false);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_single_line_mode(true);
-        install_track_context_menu(&label, &shell, track);
-        item.set_child(Some(&label));
+        let Some(cell) = track_text_cell(item) else {
+            return;
+        };
+        cell.label.set_text(&(value)(&track));
+        *cell.current_track.borrow_mut() = Some(track);
+        if let Some(bind_started) = bind_started {
+            shell.record_perf_track_row_bind(title, bind_started.elapsed());
+        }
     });
-    factory.connect_unbind(clear_list_item_child);
+
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = track_text_cell(item)
+        {
+            cell.label.set_text("");
+            *cell.current_track.borrow_mut() = None;
+        }
+    });
+
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = library_list_item_storage_key(item);
+            LIBRARY_TRACK_TEXT_CELLS.with(|cells| {
+                cells.borrow_mut().remove(&key);
+            });
+        }
+    });
+
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
     column.set_resizable(true);
@@ -511,7 +658,7 @@ where
 }
 fn track_merged_column<Title, Subtitle, Image, Seed>(
     shell: &Rc<Shell>,
-    title: &str,
+    title: &'static str,
     width: i32,
     title_value: Title,
     subtitle_value: Subtitle,
@@ -530,43 +677,102 @@ where
     let subtitle_value = Rc::new(subtitle_value);
     let image_ref = Rc::new(image_ref);
     let seed = Rc::new(seed);
+
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_track = Rc::new(RefCell::new(None::<Track>));
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.set_valign(gtk::Align::Center);
+
+        let cover = ArtworkTile::new(48, 0);
+        row.append(&cover.widget());
+
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let title = gtk::Label::new(None);
+        title.set_xalign(0.0);
+        title.set_wrap(false);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        title.set_single_line_mode(true);
+        labels.append(&title);
+
+        let subtitle = gtk::Label::new(None);
+        subtitle.add_css_class("muted");
+        subtitle.set_xalign(0.0);
+        subtitle.set_wrap(false);
+        subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        subtitle.set_single_line_mode(true);
+        subtitle.set_visible(false);
+        labels.append(&subtitle);
+
+        row.append(&labels);
+        install_dynamic_track_context_menu(&row, &setup_shell, Rc::clone(&current_track));
+        item.set_child(Some(&row));
+        let key = library_list_item_storage_key(item);
+        LIBRARY_TRACK_MERGED_CELLS.with(|cells| {
+            cells.borrow_mut().insert(
+                key,
+                LibraryTrackMergedCell {
+                    cover,
+                    title,
+                    subtitle,
+                    current_track,
+                },
+            );
+        });
+    });
+
     factory.connect_bind(move |_, item| {
+        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let Some(track) = item_at_from_item::<Track>(item) else {
             return;
         };
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        row.set_valign(gtk::Align::Center);
-        row.append(&shell.cover_tile_for(
+        let Some(cell) = track_merged_cell(item) else {
+            return;
+        };
+        shell.bind_cover_tile_for(
+            &cell.cover,
             image_ref(&track).as_ref(),
             seed(&track),
             48,
             THUMB_COVER_SIZE,
-        ));
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        let title = gtk::Label::new(Some(&title_value(&track)));
-        title.set_xalign(0.0);
-        title.set_wrap(false);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        title.set_single_line_mode(true);
-        labels.append(&title);
+        );
+        cell.title.set_text(&title_value(&track));
         let subtitle = subtitle_value(&track);
-        if !subtitle.trim().is_empty() {
-            let subtitle = gtk::Label::new(Some(&subtitle));
-            subtitle.add_css_class("muted");
-            subtitle.set_xalign(0.0);
-            subtitle.set_wrap(false);
-            subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            subtitle.set_single_line_mode(true);
-            labels.append(&subtitle);
+        cell.subtitle.set_text(&subtitle);
+        cell.subtitle.set_visible(!subtitle.trim().is_empty());
+        *cell.current_track.borrow_mut() = Some(track);
+        if let Some(bind_started) = bind_started {
+            shell.record_perf_track_row_bind(title, bind_started.elapsed());
         }
-        row.append(&labels);
-        install_track_context_menu(&row, &shell, track);
-        item.set_child(Some(&row));
     });
-    factory.connect_unbind(clear_list_item_child);
+
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = track_merged_cell(item)
+        {
+            cell.title.set_text("");
+            cell.subtitle.set_text("");
+            cell.subtitle.set_visible(false);
+            cell.cover.bind_image(0, None);
+            *cell.current_track.borrow_mut() = None;
+        }
+    });
+
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = library_list_item_storage_key(item);
+            LIBRARY_TRACK_MERGED_CELLS.with(|cells| {
+                cells.borrow_mut().remove(&key);
+            });
+        }
+    });
+
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
     column.set_fixed_width(width);
     column.set_resizable(true);
@@ -624,23 +830,71 @@ fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
 fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
+
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_track = Rc::new(RefCell::new(None::<Track>));
+        let button = favorite_icon_button("Favorite track");
+        install_dynamic_track_context_menu(&button, &setup_shell, Rc::clone(&current_track));
+        let controller = setup_shell.controller.clone();
+        let click_track = Rc::clone(&current_track);
+        button.connect_clicked(move |button| {
+            let Some(track) = click_track.borrow().as_ref().cloned() else {
+                return;
+            };
+            controller.set_track_favorite(track.id, !favorite_button_is_active(button));
+        });
+        item.set_child(Some(&button));
+        let key = library_list_item_storage_key(item);
+        LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| {
+            cells.borrow_mut().insert(
+                key,
+                LibraryTrackFavoriteCell {
+                    button,
+                    current_track,
+                },
+            );
+        });
+    });
+
     factory.connect_bind(move |_, item| {
+        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let Some(track) = item_at_from_item::<Track>(item) else {
             return;
         };
-        let button = favorite_icon_button("Favorite track");
-        set_favorite_button_active(&button, track.favorite);
-        install_track_context_menu(&button, &shell, track.clone());
-        let controller = shell.controller.clone();
-        button.connect_clicked(move |button| {
-            controller.set_track_favorite(track.id.clone(), !favorite_button_is_active(button));
-        });
-        item.set_child(Some(&button));
+        let Some(cell) = track_favorite_cell(item) else {
+            return;
+        };
+        set_favorite_button_active(&cell.button, track.favorite);
+        *cell.current_track.borrow_mut() = Some(track);
+        if let Some(bind_started) = bind_started {
+            shell.record_perf_track_row_bind("Favorite", bind_started.elapsed());
+        }
     });
-    factory.connect_unbind(clear_list_item_child);
+
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = track_favorite_cell(item)
+        {
+            *cell.current_track.borrow_mut() = None;
+        }
+    });
+
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = library_list_item_storage_key(item);
+            LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| {
+                cells.borrow_mut().remove(&key);
+            });
+        }
+    });
+
     let column = gtk::ColumnViewColumn::new(Some(""), Some(factory));
     column.set_fixed_width(column_width(LibraryField::Favorite));
     column

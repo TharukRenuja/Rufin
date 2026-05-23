@@ -24,12 +24,8 @@ fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
 fn configure_library_route_scroller(
     shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
-    key: LibraryListKey,
 ) {
     scroller.add_css_class("library-route-scroller");
-    if library_route_uses_compact_scroll_thumb(key) {
-        scroller.add_css_class("library-route-compact-scroll-thumb");
-    }
     scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
     scroller.set_min_content_width(0);
     scroller.set_propagate_natural_width(false);
@@ -42,16 +38,6 @@ fn configure_library_route_scroller(
     scroller.vadjustment().connect_value_changed(move |_| {
         adjustment_shell.pause_cover_warm_for_interaction();
     });
-}
-fn library_route_uses_compact_scroll_thumb(key: LibraryListKey) -> bool {
-    matches!(
-        key,
-        LibraryListKey::Tracks
-            | LibraryListKey::Albums
-            | LibraryListKey::Artists
-            | LibraryListKey::AlbumArtists
-            | LibraryListKey::FavoriteTracks
-    )
 }
 fn album_collection_widget(
     shell: &Rc<Shell>,
