@@ -87,8 +87,6 @@ cargo run -p rufin-app
 
 ## Development
 
-Run the app locally with `cargo run -p rufin-app`
-
 Pass app flags after `--`, for example `cargo run -p rufin-app -- --ui-perf-observe`
 
 ```text
@@ -104,7 +102,7 @@ Usage: rufin [OPTIONS]
 | `--forget-active-server` | Removes the active server state and exits. |
 | `-h`, `--help` | Prints command-line help. |
 
-Common checks before sending changes:
+For tests:
 
 ```bash
 cargo fmt --check
