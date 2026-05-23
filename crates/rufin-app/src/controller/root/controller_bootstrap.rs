@@ -8,6 +8,8 @@ impl AppController {
         Option<QueueSnapshot>,
         PlaybackSnapshot,
     ) {
+        #[cfg(test)]
+        let test_permit = Some(controller_test_permit());
         let (events, receiver) = channel();
         let runtime = Runtime::new()
             .map(Arc::new)
@@ -48,6 +50,8 @@ impl AppController {
                 cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
                 cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
+                #[cfg(test)]
+                _test_permit: test_permit,
             };
             return (
                 controller,
@@ -94,6 +98,8 @@ impl AppController {
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
             external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
+            #[cfg(test)]
+            _test_permit: test_permit,
         };
         (
             controller,
@@ -111,6 +117,7 @@ impl AppController {
         Option<QueueSnapshot>,
         PlaybackSnapshot,
     ) {
+        let test_permit = Some(controller_test_permit());
         let (events, receiver) = channel();
         let runtime = Runtime::new()
             .map(Arc::new)
@@ -145,6 +152,7 @@ impl AppController {
             cover_in_flight: Arc::new(Mutex::new(HashSet::new())),
             external_cover_prefetch_in_flight: Arc::new(Mutex::new(HashSet::new())),
             cover_slots: Arc::new((Mutex::new(0), Condvar::new())),
+            _test_permit: test_permit,
         };
         (
             controller,

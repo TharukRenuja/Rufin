@@ -4,6 +4,8 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
+#[cfg(test)]
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use directories::ProjectDirs;
@@ -266,6 +268,39 @@ pub struct AppController {
     cover_in_flight: Arc<Mutex<HashSet<String>>>,
     external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
+    #[cfg(test)]
+    _test_permit: Option<ControllerTestPermit>,
+}
+#[cfg(test)]
+#[derive(Clone)]
+struct ControllerTestPermit {
+    _inner: Arc<ControllerTestPermitInner>,
+}
+#[cfg(test)]
+struct ControllerTestPermitInner;
+#[cfg(test)]
+static CONTROLLER_TEST_GATE: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
+#[cfg(test)]
+fn controller_test_permit() -> ControllerTestPermit {
+    let (lock, cvar) = CONTROLLER_TEST_GATE.get_or_init(|| (Mutex::new(false), Condvar::new()));
+    let mut occupied = lock.lock().expect("controller test gate");
+    while *occupied {
+        occupied = cvar.wait(occupied).expect("controller test gate");
+    }
+    *occupied = true;
+    ControllerTestPermit {
+        _inner: Arc::new(ControllerTestPermitInner),
+    }
+}
+#[cfg(test)]
+impl Drop for ControllerTestPermitInner {
+    fn drop(&mut self) {
+        let (lock, cvar) = CONTROLLER_TEST_GATE.get_or_init(|| (Mutex::new(false), Condvar::new()));
+        if let Ok(mut occupied) = lock.lock() {
+            *occupied = false;
+            cvar.notify_one();
+        }
+    }
 }
 struct HomeRefreshContext {
     store: StoreHandle,
