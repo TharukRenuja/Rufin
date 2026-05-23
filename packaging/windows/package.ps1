@@ -133,6 +133,12 @@ Copy-DirectoryContents (Join-Path $MsysPrefix "share\mime") (Join-Path $appShare
 Copy-DirectoryContents (Join-Path $MsysPrefix "share\themes") (Join-Path $appShare "themes")
 Copy-DirectoryContents (Join-Path $MsysPrefix "share\licenses") (Join-Path $appShare "licenses")
 
+$iconCacheBuilder = Join-Path $MsysPrefix "bin\gtk-update-icon-cache.exe"
+$hicolorIconDir = Join-Path $appShare "icons\hicolor"
+if ((Test-Path $iconCacheBuilder) -and (Test-Path $hicolorIconDir)) {
+    & $iconCacheBuilder -q -t -f $hicolorIconDir
+}
+
 $settingsDir = Join-Path $StageDir "etc\gtk-4.0"
 New-Item -ItemType Directory -Force $settingsDir | Out-Null
 Set-Content `

@@ -40,7 +40,7 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     queue_header.set_margin_top(6);
     queue_header.set_margin_bottom(2);
     queue_header.set_margin_start(12);
-    queue_header.set_margin_end(56);
+    queue_header.set_margin_end(96);
 
     let queue_search = gtk::SearchEntry::new();
     queue_search.add_css_class("queue-search");
@@ -50,7 +50,7 @@ pub(super) fn build_right_panel() -> RightPanelParts {
     queue_search.set_height_request(34);
     queue_header.append(&queue_search);
 
-    let queue_clear_button = icon_button("window-close-symbolic", "Clear queue");
+    let queue_clear_button = icon_button("edit-clear-symbolic", "Clear queue");
     queue_header.append(&queue_clear_button);
     root.append(&queue_header);
 

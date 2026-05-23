@@ -3,8 +3,8 @@ use gtk::gio;
 
 use crate::i18n::tr;
 
-const MAIN_MENU_MARGIN_END: i32 = 12;
-const MAIN_MENU_MARGIN_TOP: i32 = 9;
+const WINDOW_CONTROLS_MARGIN_END: i32 = 12;
+const WINDOW_CONTROLS_MARGIN_TOP: i32 = 9;
 
 pub(super) struct MainAreaParts {
     pub(super) root: adw::ToolbarView,
@@ -83,13 +83,20 @@ pub(super) fn build_content_chrome(
     root.set_vexpand(true);
     root.set_child(Some(&content_body));
 
+    let window_controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    window_controls.add_css_class("window-controls");
+    window_controls.set_halign(gtk::Align::End);
+    window_controls.set_valign(gtk::Align::Start);
+    window_controls.set_margin_top(WINDOW_CONTROLS_MARGIN_TOP);
+    window_controls.set_margin_end(WINDOW_CONTROLS_MARGIN_END);
+
     let main_menu = primary_menu_button();
-    main_menu.set_halign(gtk::Align::End);
-    main_menu.set_valign(gtk::Align::Start);
-    main_menu.set_margin_top(MAIN_MENU_MARGIN_TOP);
-    main_menu.set_margin_end(MAIN_MENU_MARGIN_END);
-    root.add_overlay(&main_menu);
-    root.set_measure_overlay(&main_menu, false);
+    let close_button = gtk::WindowControls::new(gtk::PackType::End);
+    close_button.set_decoration_layout(Some(":close"));
+    window_controls.append(&main_menu);
+    window_controls.append(&close_button);
+    root.add_overlay(&window_controls);
+    root.set_measure_overlay(&window_controls, false);
 
     ContentChromeParts {
         root,

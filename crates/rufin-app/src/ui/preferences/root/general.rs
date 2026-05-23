@@ -1,7 +1,7 @@
 fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Scrobbling"))
-        .icon_name("emblem-shared-symbolic")
+        .icon_name(SCROBBLING_ICON_NAME)
         .build();
     let app_settings = shell.state.settings.borrow().clone();
     let settings = app_settings.scrobbling.clone();

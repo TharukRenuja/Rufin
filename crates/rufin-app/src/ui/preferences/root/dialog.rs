@@ -23,6 +23,7 @@ const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
 const SURFACE_SCROLL_FACTOR: f64 = 2.5;
 const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
+const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
 pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
     present_preferences_dialog_with_page(shell, PreferencesInitialPage::General);
 }
@@ -87,7 +88,7 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
         &scrobbling_page,
         Some("scrobbling"),
         &tr("Scrobbling"),
-        "emblem-shared-symbolic",
+        SCROBBLING_ICON_NAME,
     );
     stack.add_titled_with_icon(
         &playback_page,
