@@ -108,6 +108,26 @@ impl AppController {
         cached_cover_path_for_key(key)
     }
 
+    pub fn external_cover_lookup_known_missing(&self, image_ref: &ImageRef, size: u32) -> bool {
+        if !external_metadata::is_external_image_ref(image_ref) {
+            return false;
+        }
+        let Some(saved) = self
+            .store
+            .with_store(|store| store.active_server())
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+        external_lookup_miss_size_candidates(size)
+            .into_iter()
+            .any(|candidate_size| {
+                external_lookup_miss_cached(&self.store, &saved, image_ref, candidate_size)
+                    .unwrap_or(false)
+            })
+    }
+
     pub fn retry_external_cover_lookups(&self) -> Result<(), String> {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(());
@@ -1062,6 +1082,20 @@ fn cover_cache_size_candidates(size: u32) -> Vec<u32> {
     } else {
         vec![EXTERNAL_DETAIL_COVER_SIZE, EXTERNAL_PREFETCH_COVER_SIZE]
     }
+}
+
+fn external_lookup_miss_size_candidates(size: u32) -> Vec<u32> {
+    let mut sizes = vec![size];
+    for candidate_size in [
+        EXTERNAL_THUMB_COVER_SIZE,
+        EXTERNAL_PREFETCH_COVER_SIZE,
+        EXTERNAL_DETAIL_COVER_SIZE,
+    ] {
+        if !sizes.contains(&candidate_size) {
+            sizes.push(candidate_size);
+        }
+    }
+    sizes
 }
 
 fn external_lookup_miss_cached(

@@ -1,6 +1,7 @@
     use std::collections::HashMap;
     use rufin_core::{
-        Album, AlbumId, LibraryLayout, LibraryListKey, LibraryListSettings, Track, TrackId,
+        Album, AlbumId, ImageRef, LibraryLayout, LibraryListKey, LibraryListSettings, Track,
+        TrackId,
     };
     #[test]
     fn library_route_inset_keeps_margins_inside_scrollers() {
@@ -15,10 +16,12 @@
         let spec = super::album_detail_meta_label_spec(168);
 
         assert_eq!(spec.width, 168);
+        assert_eq!(spec.height, super::ALBUM_DETAIL_META_LABEL_HEIGHT);
         assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
         assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
         assert_eq!(spec.overflow, gtk::Overflow::Hidden);
         assert!(!spec.propagate_natural_width);
+        assert!(!spec.propagate_natural_height);
         assert!(!spec.wrap);
     }
     #[test]
@@ -48,6 +51,10 @@
             layout: LibraryLayout::Grid,
             ..LibraryListSettings::for_key(LibraryListKey::Playlists)
         };
+        let artists_grid = LibraryListSettings {
+            layout: LibraryLayout::Grid,
+            ..LibraryListSettings::for_key(LibraryListKey::Artists)
+        };
 
         assert!(super::library_layout_loads_complete_page(
             LibraryListKey::Tracks,
@@ -69,6 +76,43 @@
             LibraryListKey::Playlists,
             &playlists_grid
         ));
+        assert!(super::library_layout_loads_complete_page(
+            LibraryListKey::Artists,
+            &artists_grid
+        ));
+    }
+    #[test]
+    fn track_cover_refs_for_settings_include_full_sorted_track_set_once() {
+        let settings = LibraryListSettings {
+            layout: LibraryLayout::Row,
+            ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+        };
+        let mut duplicate = test_track_with_image(90, "Duplicate", "shared-cover");
+        duplicate.track_number = 90;
+        let mut duplicate_later = test_track_with_image(91, "Duplicate Later", "shared-cover");
+        duplicate_later.track_number = 91;
+        let tracks = (0..80)
+            .map(|index| {
+                test_track_with_image(
+                    index,
+                    &format!("Track {index:02}"),
+                    &format!("cover-{index:02}"),
+                )
+            })
+            .chain(std::iter::once(duplicate))
+            .chain(std::iter::once(duplicate_later))
+            .collect::<Vec<_>>();
+
+        let refs = super::track_cover_refs_for_settings(&tracks, &settings);
+
+        assert_eq!(refs.len(), 81);
+        assert!(refs.iter().any(|image_ref| image_ref.item_id == "cover-79"));
+        assert_eq!(
+            refs.iter()
+                .filter(|image_ref| image_ref.item_id == "shared-cover")
+                .count(),
+            1
+        );
     }
     #[test]
     fn album_detail_tracks_keep_disc_track_order() {
@@ -103,6 +147,7 @@
                 test_track(3, "Fourth", 1, 4),
                 test_track(4, "Third", 1, 3),
                 test_track(5, "Fifth", 1, 5),
+                test_track(6, "Sixth", 1, 6),
             ],
         );
 
@@ -113,30 +158,36 @@
             super::AlbumDetailItem::Lead {
                 album,
                 inline_tracks,
-                last_in_album: false,
+                last_in_album: true,
             } if album.title == "A Album"
                 && inline_tracks
                     .iter()
                     .map(|track| track.title.as_str())
                     .collect::<Vec<_>>()
-                    == vec!["First", "Second", "Third", "Fourth"]
+                    == vec!["First", "Second", "Third", "Fourth", "Fifth", "Sixth"]
         ));
         assert!(matches!(
             &rows[1],
-            super::AlbumDetailItem::Track {
-                track,
-                index: 4,
-                last_in_album: true,
-            } if track.title == "Fifth"
-        ));
-        assert!(matches!(
-            &rows[2],
             super::AlbumDetailItem::Lead {
                 album,
                 inline_tracks,
                 last_in_album: true,
             } if album.title == "B Album" && inline_tracks.is_empty()
         ));
+    }
+    #[test]
+    fn album_detail_virtual_range_keeps_boundary_rows_visible() {
+        let rows = vec![
+            test_virtual_row(0, 100),
+            test_virtual_row(100, 100),
+            test_virtual_row(200, 100),
+        ];
+
+        assert_eq!(super::album_detail_virtual_range(&rows, 50.0, 150.0), (0, 2));
+        assert_eq!(
+            super::album_detail_virtual_range(&rows, 101.0, 250.0),
+            (1, 3)
+        );
     }
     #[test]
     fn complete_cached_page_expands_partial_page_to_total() {
@@ -192,6 +243,23 @@
             image_ref: None,
             genres: Vec::new(),
             local_path: None,
+        }
+    }
+    fn test_track_with_image(id: u32, title: &str, image_id: &str) -> Track {
+        Track {
+            image_ref: Some(ImageRef::new(image_id.to_string(), None)),
+            ..test_track(id, title, 1, id as u16)
+        }
+    }
+    fn test_virtual_row(top: i32, height: i32) -> super::AlbumDetailVirtualRow {
+        super::AlbumDetailVirtualRow {
+            item: super::AlbumDetailItem::Track {
+                track: test_track(top as u32, "Track", 1, 1),
+                index: 0,
+                last_in_album: false,
+            },
+            top,
+            height,
         }
     }
     fn test_album(id: u32, title: &str) -> Album {

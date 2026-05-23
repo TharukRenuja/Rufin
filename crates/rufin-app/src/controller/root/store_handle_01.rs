@@ -159,7 +159,16 @@ impl AppController {
         };
         let settings = load_settings_for_saved(&self.store, &saved);
         self.store
-            .with_store(|store| store.load_tracks(&saved.server.id, offset, limit))
+            .with_store(|store| {
+                let sort = settings.library_list(rufin_core::LibraryListKey::Tracks);
+                store.load_tracks_sorted(
+                    &saved.server.id,
+                    sort.sort_key,
+                    sort.descending,
+                    offset,
+                    limit,
+                )
+            })
             .map(|mut page| {
                 external_metadata::normalize_tracks(&mut page.items, &settings);
                 page
@@ -190,7 +199,17 @@ impl AppController {
         };
         let settings = load_settings_for_saved(&self.store, &saved);
         self.store
-            .with_store(|store| store.load_tracks_matching(&saved.server.id, query, offset, limit))
+            .with_store(|store| {
+                let sort = settings.library_list(rufin_core::LibraryListKey::Tracks);
+                store.load_tracks_matching_sorted(
+                    &saved.server.id,
+                    query,
+                    sort.sort_key,
+                    sort.descending,
+                    offset,
+                    limit,
+                )
+            })
             .map(|mut page| {
                 external_metadata::normalize_tracks(&mut page.items, &settings);
                 page

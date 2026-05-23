@@ -5,8 +5,8 @@ use std::{
 };
 use rufin_core::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
-    ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId, QueueSnapshot, ServerId,
-    ServerIdentity, Track, TrackId,
+    ImageRef, LibraryField, MusicFolder, MusicFolderId, Playlist, PlaylistId, QueueSnapshot,
+    ServerId, ServerIdentity, Track, TrackId,
 };
 use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};

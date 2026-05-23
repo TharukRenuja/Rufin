@@ -1,6 +1,9 @@
-use std::cell::RefCell;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::{
+    cell::{Cell, RefCell},
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::Duration,
+};
 
 use crate::i18n::tr;
 use crate::providers::StreamingProvider;
@@ -34,7 +37,7 @@ impl Shell {
             ))
             .build();
         let dialog_for_connect = dialog.clone();
-        let child = self.add_server_view_with_connect_handler(Some(Rc::new(move || {
+        let child = self.add_server_view_with_success_handler(Some(Rc::new(move || {
             dialog_for_connect.close();
         })));
         toolbar.set_content(Some(&child));
@@ -47,12 +50,12 @@ impl Shell {
     }
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
-        self.add_server_view_with_connect_handler(None)
+        self.add_server_view_with_success_handler(None)
     }
 
-    fn add_server_view_with_connect_handler(
+    fn add_server_view_with_success_handler(
         self: &Rc<Self>,
-        on_connect_started: Option<Rc<dyn Fn()>>,
+        on_connect_succeeded: Option<Rc<dyn Fn()>>,
     ) -> gtk::Widget {
         if self.state.first_run_connection_pending.get() {
             return self.connection_progress_view();
@@ -177,6 +180,10 @@ impl Shell {
         actions.set_halign(gtk::Align::End);
         let login = text_button("network-server-symbolic", "Connect");
         login.add_css_class("suggested-action");
+        connect_entry_row_activation(&url, &login);
+        connect_entry_row_activation(&username, &login);
+        connect_password_entry_row_activation(&password, &login);
+        provider.add_controller(local_provider_enter_controller(&provider, &login));
         let controller = self.controller.clone();
         let url_input = url.clone();
         let username_input = username.clone();
@@ -186,7 +193,9 @@ impl Shell {
         let local_folders_input = Rc::clone(&local_folders);
         let status_input = status.clone();
         let shell = Rc::clone(self);
-        let on_connect_started = on_connect_started.clone();
+        let connect_attempt_started = Rc::new(Cell::new(false));
+        let connect_attempt_started_for_click = Rc::clone(&connect_attempt_started);
+        let login_for_click = login.clone();
         login.connect_clicked(move |_| {
             let provider = StreamingProvider::from_index(provider_input.selected());
             if provider == StreamingProvider::Local {
@@ -196,10 +205,13 @@ impl Shell {
                     status_input.set_visible(true);
                     return;
                 }
-                shell.begin_first_run_connection(&tr("Caching local library..."));
-                if let Some(on_connect_started) = on_connect_started.as_ref() {
-                    on_connect_started();
-                }
+                let message = tr("Caching local library...");
+                connect_attempt_started_for_click.set(true);
+                status_input.remove_css_class("error-text");
+                status_input.set_text(&message);
+                status_input.set_visible(true);
+                login_for_click.set_sensitive(false);
+                shell.begin_first_run_connection(&message);
                 controller.add_local_server_folders(roots);
             } else {
                 if !remote_login_ready(&url_input, &username_input, &password_input) {
@@ -207,10 +219,13 @@ impl Shell {
                     status_input.set_visible(true);
                     return;
                 }
-                shell.begin_first_run_connection(&tr("Connecting to music server..."));
-                if let Some(on_connect_started) = on_connect_started.as_ref() {
-                    on_connect_started();
-                }
+                let message = tr("Connecting to music server...");
+                connect_attempt_started_for_click.set(true);
+                status_input.remove_css_class("error-text");
+                status_input.set_text(&message);
+                status_input.set_visible(true);
+                login_for_click.set_sensitive(false);
+                shell.begin_first_run_connection(&message);
                 controller.login(
                     provider,
                     url_input.text().to_string(),
@@ -222,6 +237,18 @@ impl Shell {
                 );
             }
         });
+        connect_add_server_status_watcher(
+            self,
+            &status,
+            &login,
+            &provider,
+            &local_folders,
+            &url,
+            &username,
+            &password,
+            connect_attempt_started,
+            on_connect_succeeded,
+        );
         actions.append(&login);
         content.append(&actions);
 
@@ -509,6 +536,115 @@ fn update_connect_button(
         remote_login_ready(url, username, password)
     };
     login.set_sensitive(ready);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn connect_add_server_status_watcher(
+    shell: &Rc<Shell>,
+    status: &gtk::Label,
+    login: &gtk::Button,
+    provider: &adw::ComboRow,
+    local_folders: &Rc<RefCell<Vec<PathBuf>>>,
+    url: &adw::EntryRow,
+    username: &adw::EntryRow,
+    password: &adw::PasswordEntryRow,
+    connect_attempt_started: Rc<Cell<bool>>,
+    on_connect_succeeded: Option<Rc<dyn Fn()>>,
+) {
+    let shell = Rc::clone(shell);
+    let status = status.clone();
+    let login = login.clone();
+    let provider = provider.clone();
+    let local_folders = Rc::clone(local_folders);
+    let url = url.clone();
+    let username = username.clone();
+    let password = password.clone();
+    gtk::glib::timeout_add_local(Duration::from_millis(100), move || {
+        if status.root().is_none() {
+            return gtk::glib::ControlFlow::Break;
+        }
+
+        let pending = shell.state.first_run_connection_pending.get();
+        let (sync_status, last_error) = {
+            let library = shell.state.library.borrow();
+            (library.sync_status.clone(), library.last_error.clone())
+        };
+
+        if pending {
+            status.remove_css_class("error-text");
+            status.set_text(&sync_status);
+            status.set_visible(!sync_status.trim().is_empty());
+            login.set_sensitive(false);
+            return gtk::glib::ControlFlow::Continue;
+        }
+
+        if let Some(error) = last_error {
+            connect_attempt_started.set(false);
+            status.set_text(&error);
+            status.add_css_class("error-text");
+            status.set_visible(true);
+            update_connect_button(
+                StreamingProvider::from_index(provider.selected()),
+                &local_folders,
+                &url,
+                &username,
+                &password,
+                &login,
+            );
+            return gtk::glib::ControlFlow::Continue;
+        }
+
+        if connect_attempt_started.get() {
+            if let Some(on_connect_succeeded) = on_connect_succeeded.as_ref() {
+                on_connect_succeeded();
+            }
+            return gtk::glib::ControlFlow::Break;
+        }
+
+        gtk::glib::ControlFlow::Continue
+    });
+}
+
+fn connect_entry_row_activation(entry: &adw::EntryRow, login: &gtk::Button) {
+    let login = login.clone();
+    entry.connect_entry_activated(move |_| {
+        activate_connect_if_ready(&login);
+    });
+}
+
+fn connect_password_entry_row_activation(entry: &adw::PasswordEntryRow, login: &gtk::Button) {
+    let login = login.clone();
+    entry.connect_entry_activated(move |_| {
+        activate_connect_if_ready(&login);
+    });
+}
+
+fn local_provider_enter_controller(
+    provider: &adw::ComboRow,
+    login: &gtk::Button,
+) -> gtk::EventControllerKey {
+    let controller = gtk::EventControllerKey::new();
+    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let login = login.clone();
+    let provider = provider.clone();
+    controller.connect_key_pressed(move |_, key, _, _| {
+        let local = StreamingProvider::from_index(provider.selected()) == StreamingProvider::Local;
+        let enter = key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter;
+        if local && enter && activate_connect_if_ready(&login) {
+            gtk::glib::Propagation::Stop
+        } else {
+            gtk::glib::Propagation::Proceed
+        }
+    });
+    controller
+}
+
+fn activate_connect_if_ready(login: &gtk::Button) -> bool {
+    if !login.is_sensitive() {
+        return false;
+    }
+    login.emit_clicked();
+    true
 }
 
 fn remote_login_ready(

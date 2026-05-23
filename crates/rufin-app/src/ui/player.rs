@@ -134,7 +134,8 @@ impl Shell {
                 let cover_key_changed =
                     controls.cover_key.borrow().as_deref() != Some(key.as_str());
                 if cover_key_changed {
-                    let has_decoded_cover = self.state.decoded_covers.borrow().contains_key(&key);
+                    let has_decoded_cover =
+                        self.decoded_cover_has_min_size(&key, BOTTOM_PLAYER_COVER_SIZE);
                     let has_cached_cover_file = self
                         .controller
                         .cached_cover_path(image_ref, THUMB_COVER_SIZE)

@@ -69,7 +69,7 @@
             RightSidebarMode::Comfortable
         );
         assert!(settings.layout.narrow_enabled);
-        assert_eq!(settings.layout.narrow_threshold, 1_000);
+        assert_eq!(settings.layout.narrow_threshold, 1_300);
         assert_eq!(
             settings.layout.narrow_profile.left_sidebar,
             LeftSidebarMode::Compact
@@ -78,8 +78,8 @@
             settings.layout.narrow_profile.right_sidebar,
             RightSidebarMode::Default
         );
-        assert_eq!(DEFAULT_WINDOW_WIDTH, 800);
-        assert_eq!(DEFAULT_WINDOW_HEIGHT, 600);
+        assert_eq!(DEFAULT_WINDOW_WIDTH, 1_500);
+        assert_eq!(DEFAULT_WINDOW_HEIGHT, 900);
         assert_eq!(settings.window_width, None);
         assert_eq!(settings.window_height, None);
         assert!(settings.sidebar.server_visible);
@@ -300,6 +300,10 @@
         );
         assert_eq!(
             sanitized_window_size(Some(1800), Some(1200)),
+            Some((1800, 1200))
+        );
+        assert_eq!(
+            sanitized_window_size(Some(5000), Some(3000)),
             Some((MAX_RESTORED_WINDOW_WIDTH, MAX_RESTORED_WINDOW_HEIGHT))
         );
     }

@@ -15,10 +15,11 @@ use gtk::glib;
 use mpris_server::Player as MprisPlayer;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH,
-    FolderPathItem, Genre, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryListKey,
-    Playlist, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack,
-    SearchKind, Track, TrackId, TrackSortKey, TrackTableColumn, TrackTableSettings,
-    format_duration, sanitized_window_size,
+    FolderPathItem, Genre, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryField,
+    LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, PlaylistId, QueueEntry,
+    QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem, Track,
+    TrackId, TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
+    sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -65,21 +66,22 @@ const THUMB_COVER_SIZE: u32 = 96;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
 const COVER_WARM_BATCH_SIZE: usize = 3;
-const COVER_WARM_MAX_IN_FLIGHT: usize = 6;
+const COVER_WARM_MAX_IN_FLIGHT: usize = 3;
 const COVER_WARM_INITIAL_DELAY_MS: u64 = 250;
 const COVER_WARM_INTERVAL_MS: u64 = 32;
-const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
-const STARTUP_COVER_WARM_DELAY_MS: u64 = 450;
-const STARTUP_COVER_WARM_BATCH_SIZE: usize = 2;
-const STARTUP_COVER_WARM_INTERVAL_MS: u64 = 40;
+const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
+const COVER_DECODE_MAX_IN_FLIGHT: usize = 3;
+const STARTUP_COVER_WARM_DELAY_MS: u64 = 1_500;
+const STARTUP_COVER_WARM_BATCH_SIZE: usize = 1;
+const STARTUP_COVER_WARM_INTERVAL_MS: u64 = 80;
+const UI_PERF_MANUAL_SCROLL_IDLE_MS: u64 = 750;
 const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
-const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 900;
+const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
 const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
-const STARTUP_TRACK_THUMB_PRIME_DELAY_MS: u64 = 80;
-const INITIAL_COVER_PRIME_LIMIT: usize = 24;
-const INITIAL_COVER_PRIME_BUDGET: Duration = Duration::from_millis(300);
-const INITIAL_TRACK_THUMB_PRIME_LIMIT: usize = 18;
-const INITIAL_TRACK_THUMB_PRIME_BUDGET: Duration = Duration::from_millis(120);
+const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
+const STARTUP_GRID_COVER_LIMIT: usize = 48;
+const STARTUP_VISIBLE_TRACK_COVER_LIMIT: usize = TRACK_ROUTE_PAGE_SIZE * 4;
+const STARTUP_CACHED_COVER_PRIME_LIMIT: usize = 3_072;
 const FIRST_RUN_COVER_PRIME_TIMEOUT_MS: u64 = 8_000;
 const FIRST_RUN_COVER_PRIME_POLL_MS: u64 = 33;
 const FIRST_RUN_HOME_SECTION_COVER_LIMIT: usize = 8;
@@ -149,6 +151,8 @@ struct AppState {
     playlist_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
     startup_route_revealed: Cell<bool>,
+    startup_cover_prime_generation: Cell<u64>,
+    startup_cover_prime_pending: RefCell<HashSet<String>>,
     first_run_connection_pending: Cell<bool>,
     first_run_connection_ready: Cell<bool>,
     first_run_cover_prime_generation: Cell<u64>,
@@ -161,8 +165,12 @@ struct AppState {
     cover_decodes: RefCell<HashSet<String>>,
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
+    cover_warm_paused_until: Cell<Option<Instant>>,
     startup_cover_warm_generation: Cell<u64>,
-    decoded_covers: RefCell<HashMap<String, Pixbuf>>,
+    route_cover_gate_started: RefCell<HashMap<&'static str, Instant>>,
+    route_cover_gate_queued: RefCell<HashSet<&'static str>>,
+    route_cover_gate_timed_out: RefCell<HashSet<&'static str>>,
+    decoded_covers: RefCell<HashMap<String, DecodedCover>>,
     decoded_cover_order: RefCell<VecDeque<String>>,
     favorite_controls: FavoriteControls,
     folder_request_generation: Cell<u64>,
@@ -183,6 +191,11 @@ struct LyricsSearchDialog {
 struct CoverBinding {
     tile: ArtworkTile,
     generation: u64,
+}
+#[derive(Clone)]
+struct DecodedCover {
+    pixbuf: Pixbuf,
+    size: i32,
 }
 struct CoverDecodeJob {
     key: String,
@@ -290,11 +303,14 @@ struct UiPerfInner {
     cover_decode_ok: usize,
     cover_decode_error: usize,
     cover_stale_ignored: usize,
+    tracks_row_contract_samples: usize,
+    tracks_row_contract_failures: usize,
 }
 struct UiPerfActiveScroll {
     route: String,
     scenario: &'static str,
     started_at: Instant,
+    last_step_at: Instant,
     steps: usize,
     max_gap_ms: u64,
     over_budget_ticks: usize,
@@ -329,22 +345,15 @@ struct UiPerfAssetLatency {
 enum UiPerfScenario {
     HumanScroll,
     FastScroll,
-    Jump,
+    FullSweep,
     DragSweep,
 }
 impl UiPerfScenario {
-    const ALL: [Self; 4] = [
-        Self::HumanScroll,
-        Self::FastScroll,
-        Self::Jump,
-        Self::DragSweep,
-    ];
-
     fn name(self) -> &'static str {
         match self {
             Self::HumanScroll => "human_scroll",
             Self::FastScroll => "fast_scroll",
-            Self::Jump => "jump",
+            Self::FullSweep => "full_sweep",
             Self::DragSweep => "drag_sweep",
         }
     }
@@ -402,7 +411,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let first_run = library.first_run;
     let perf_observe = options.ui_perf_observe && !options.ui_perf_run;
     let perf_enabled = options.ui_perf_run || perf_observe;
-    let defer_initial_route = !options.ui_perf_run && !first_run;
+    let defer_initial_route = !first_run;
     let perf_requires_assets =
         perf_enabled && options.fake_scale.is_none() && library_has_image_refs(&library);
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
@@ -441,6 +450,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         playlist_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
         startup_route_revealed: Cell::new(!defer_initial_route),
+        startup_cover_prime_generation: Cell::new(0),
+        startup_cover_prime_pending: RefCell::new(HashSet::new()),
         first_run_connection_pending: Cell::new(false),
         first_run_connection_ready: Cell::new(false),
         first_run_cover_prime_generation: Cell::new(0),
@@ -453,7 +464,11 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         cover_decodes: RefCell::new(HashSet::new()),
         cover_decode_queue: RefCell::new(VecDeque::new()),
         cover_warm_generation: Cell::new(0),
+        cover_warm_paused_until: Cell::new(None),
         startup_cover_warm_generation: Cell::new(0),
+        route_cover_gate_started: RefCell::new(HashMap::new()),
+        route_cover_gate_queued: RefCell::new(HashSet::new()),
+        route_cover_gate_timed_out: RefCell::new(HashSet::new()),
         decoded_covers: RefCell::new(HashMap::new()),
         decoded_cover_order: RefCell::new(VecDeque::new()),
         favorite_controls: RefCell::new(HashMap::new()),
@@ -463,7 +478,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
             Rc::new(UiPerfMonitor::new(UiPerfOptions {
                 max_gap_ms: options.ui_perf_max_gap_ms,
                 route_ms: options.ui_perf_route_ms,
-                duration_ms: options.ui_perf_duration_ms.max(15_000),
+                duration_ms: options.ui_perf_duration_ms.max(1_000),
                 asset_ms: options.ui_perf_asset_ms,
                 require_assets: perf_requires_assets,
                 terminal_events: options.ui_perf_run,
@@ -590,14 +605,12 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     #[cfg(unix)]
     install_mpris(&shell);
     shell.update_layout();
-    prime_first_cached_cover(&shell);
     if defer_initial_route {
         shell.render_startup_loading_view();
     } else {
         shell.render_current_route();
         shell.refresh_home_for_current_visit();
     }
-    shell.schedule_startup_cover_warm();
     shell.render_queue_panel();
     shell.render_lyrics_panel();
     shell.update_bottom_player();

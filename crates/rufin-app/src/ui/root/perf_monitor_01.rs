@@ -479,18 +479,17 @@ impl Shell {
             return;
         }
 
-        let prime_shell = Rc::clone(self);
-        glib::timeout_add_local_once(
-            Duration::from_millis(STARTUP_TRACK_THUMB_PRIME_DELAY_MS),
-            move || {
-                if !prime_shell.state.startup_route_revealed.get()
-                    && !prime_shell.login_screen_active()
-                {
-                    prime_first_track_thumbnail_covers(&prime_shell);
+        let cover_prime_generation = Rc::new(Cell::new(None::<u64>));
+        {
+            let shell = Rc::clone(self);
+            let cover_prime_generation = Rc::clone(&cover_prime_generation);
+            glib::idle_add_local_once(move || {
+                if shell.state.startup_route_revealed.get() || shell.login_screen_active() {
+                    return;
                 }
-            },
-        );
-
+                cover_prime_generation.set(shell.begin_startup_cover_prime());
+            });
+        }
         let started_at = Instant::now();
         let shell = Rc::clone(self);
         glib::timeout_add_local(
@@ -503,10 +502,26 @@ impl Shell {
                 shell.update_layout();
                 let elapsed = started_at.elapsed();
                 let width_ready = shell.layout_width() > 1 && shell.route_host.width() > 1;
+                let pending_covers = cover_prime_generation
+                    .get()
+                    .filter(|generation| {
+                        shell.state.startup_cover_prime_generation.get() == *generation
+                    })
+                    .map(|_| shell.state.startup_cover_prime_pending.borrow().len())
+                    .unwrap_or(usize::from(cover_prime_generation.get().is_none()));
                 let reveal_ready =
-                    width_ready && elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MIN_MS);
+                    width_ready
+                        && pending_covers == 0
+                        && elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MIN_MS);
                 let reveal_expired = elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MAX_MS);
                 if reveal_ready || reveal_expired {
+                    if reveal_expired && pending_covers > 0 {
+                        warn!(
+                            pending_covers,
+                            elapsed_ms = elapsed.as_millis() as u64,
+                            "revealing startup route with cached cover prime still pending"
+                        );
+                    }
                     shell.reveal_startup_route();
                     glib::ControlFlow::Break
                 } else {
@@ -515,13 +530,92 @@ impl Shell {
             },
         );
     }
+    fn begin_startup_cover_prime(self: &Rc<Self>) -> Option<u64> {
+        let generation = self
+            .state
+            .startup_cover_prime_generation
+            .get()
+            .saturating_add(1);
+        self.state.startup_cover_prime_generation.set(generation);
+        self.state.startup_cover_prime_pending.borrow_mut().clear();
+
+        let jobs = startup_cover_prime_jobs(self);
+        let mut pending_count = 0_usize;
+        for job in jobs {
+            if self
+                .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
+                .is_some()
+            {
+                continue;
+            }
+            let Some((key, path)) =
+                self.cached_cover_path_for_startup_prime(&job.image_ref, job.fetch_size)
+            else {
+                continue;
+            };
+            self.state
+                .startup_cover_prime_pending
+                .borrow_mut()
+                .insert(key.clone());
+            pending_count = pending_count.saturating_add(1);
+            self.start_cover_decode_from_path(key, path, job.size, CoverDecodePriority::Warm);
+        }
+
+        if pending_count == 0 {
+            None
+        } else {
+            info!(covers = pending_count, "started startup cached cover prime");
+            Some(generation)
+        }
+    }
+    fn cached_cover_path_for_startup_prime(
+        &self,
+        image_ref: &ImageRef,
+        preferred_size: u32,
+    ) -> Option<(String, PathBuf)> {
+        for size in decoded_cover_candidate_sizes(preferred_size) {
+            let key = self.cover_cache_key(image_ref, size)?;
+            if let Some(path) = self.controller.cached_cover_path_for_key(&key) {
+                return Some((key, path));
+            }
+        }
+        None
+    }
     fn reveal_startup_route(self: &Rc<Self>) {
         if self.state.startup_route_revealed.replace(true) || self.login_screen_active() {
             return;
         }
 
         self.update_layout();
+        self.prewarm_startup_route_widgets();
         self.render_current_route();
+    }
+    fn prewarm_startup_route_widgets(self: &Rc<Self>) {
+        let settings = self.state.settings.borrow().clone();
+        self.prewarm_startup_artist_route(false);
+        if sidebar_route_visible(&settings, SidebarRouteItem::AlbumArtists) {
+            self.prewarm_startup_artist_route(true);
+        }
+    }
+    fn prewarm_startup_artist_route(self: &Rc<Self>, album_artist: bool) {
+        let route_name = if album_artist {
+            "AlbumArtists"
+        } else {
+            "Artists"
+        };
+        let started = Instant::now();
+        let view = route_boundary(self.library_artist_list_view(album_artist));
+        view.set_visible(false);
+        view.set_can_target(false);
+        self.route_host.append(&view);
+        self.route_host.remove(&view);
+        if self.state.perf.is_some() {
+            println!(
+                "RUFIN_PERF_ROUTE_PREWARM route={} elapsed_ms={}",
+                route_name,
+                started.elapsed().as_millis() as u64
+            );
+        }
     }
     fn schedule_first_run_app_reveal(self: &Rc<Self>) {
         self.log_layout_snapshot("first_run_reveal_queued");
@@ -629,7 +723,7 @@ impl Shell {
 
         let mut pending = HashSet::new();
         for job in jobs {
-            if self.state.decoded_covers.borrow().contains_key(&job.key) {
+            if self.decoded_cover_has_min_size(&job.key, job.size) {
                 continue;
             }
             pending.insert(job.key.clone());

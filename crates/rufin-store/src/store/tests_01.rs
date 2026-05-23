@@ -5,8 +5,8 @@
     };
     use rufin_core::{
         Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection,
-        HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId, QueueEngine,
-        ServerId, ServerIdentity, Track, TrackId,
+        HomeSectionKind, ImageRef, LibraryField, MusicFolder, MusicFolderId, Playlist, PlaylistId,
+        QueueEngine, ServerId, ServerIdentity, Track, TrackId,
     };
     use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
     #[test]
@@ -699,6 +699,68 @@
         assert_eq!(album_page.items.len(), 5);
         assert_eq!(track_page.total, 1005);
         assert_eq!(track_page.items.len(), 5);
+    }
+    #[test]
+    fn sorted_track_pages_keep_global_order_across_page_boundaries() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let mut first_album = album(1);
+        first_album.title = "Alpha Album".to_string();
+        let mut second_album = album(2);
+        second_album.title = "Beta Album".to_string();
+        let mut tracks = vec![
+            track(1, &second_album),
+            track(2, &first_album),
+            track(3, &first_album),
+            track(4, &second_album),
+        ];
+        for track in &mut tracks {
+            track.title = format!("Needle {}", track.track_number);
+        }
+        store
+            .upsert_albums(&saved.server.id, &[first_album, second_album], generation)
+            .expect("upsert albums");
+        store
+            .upsert_tracks(&saved.server.id, &tracks, generation)
+            .expect("upsert tracks");
+
+        let full_page = store
+            .load_tracks_sorted(&saved.server.id, LibraryField::Album, false, 0, 10)
+            .expect("load full sorted page");
+        let first_page = store
+            .load_tracks_sorted(&saved.server.id, LibraryField::Album, false, 0, 2)
+            .expect("load first sorted page");
+        let second_page = store
+            .load_tracks_sorted(&saved.server.id, LibraryField::Album, false, 2, 2)
+            .expect("load second sorted page");
+        let combined_ids = first_page
+            .items
+            .iter()
+            .chain(second_page.items.iter())
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+        let full_ids = full_page
+            .items
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(full_ids, vec![tracks[1].id.clone(), tracks[2].id.clone(), tracks[0].id.clone(), tracks[3].id.clone()]);
+        assert_eq!(combined_ids, full_ids);
+
+        let search_page = store
+            .load_tracks_matching_sorted(&saved.server.id, "Needle", LibraryField::Album, false, 0, 10)
+            .expect("load sorted search page");
+        assert_eq!(
+            search_page
+                .items
+                .iter()
+                .map(|track| track.id.clone())
+                .collect::<Vec<_>>(),
+            full_ids
+        );
     }
     #[test]
     fn paged_search_reads_items_beyond_previous_snapshot_caps() {

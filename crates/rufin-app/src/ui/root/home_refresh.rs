@@ -708,7 +708,16 @@ async fn load_cover_pixbuf(
 ) -> Result<Pixbuf, glib::Error> {
     let file = gio::File::for_path(path);
     let stream = file.read_future(priority).await?;
-    Pixbuf::from_stream_at_scale_future(&stream, size, size, true).await
+    let decode_size = cover_pixbuf_decode_size(size);
+    Pixbuf::from_stream_at_scale_future(&stream, decode_size, decode_size, true).await
+}
+fn cover_pixbuf_decode_size(size: i32) -> i32 {
+    let size = size.max(1);
+    if size >= DETAIL_COVER_SIZE as i32 {
+        size
+    } else {
+        size.saturating_mul(2).min(DETAIL_COVER_SIZE as i32)
+    }
 }
 fn apply_pixbuf_to_bindings(bindings: Vec<CoverBinding>, pixbuf: Pixbuf) {
     for binding in bindings {

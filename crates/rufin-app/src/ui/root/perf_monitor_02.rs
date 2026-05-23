@@ -42,6 +42,7 @@ impl Shell {
     fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
         self.cancel_cover_warm();
+        self.cancel_startup_cover_warm();
         self.update_layout();
         self.state.home_section_views.borrow_mut().clear();
         if !self.state.startup_route_revealed.get() && !self.login_screen_active() {
@@ -70,6 +71,13 @@ impl Shell {
 
         let route = self.state.routes.borrow().current().clone();
         let route_name = format!("{route:?}");
+        self.reset_inactive_route_cover_gates(match route {
+            Route::Tracks => Some("tracks"),
+            Route::Albums => Some("albums"),
+            Route::Artists => Some("artists"),
+            Route::AlbumArtists => Some("album_artists"),
+            _ => None,
+        });
         self.route_title.set_title(&tr(route.title()));
         self.set_history_buttons_sensitive(
             self.state.routes.borrow().can_back(),
@@ -77,6 +85,7 @@ impl Shell {
         );
         update_navigation_selection(self.as_ref());
 
+        let view_started = Instant::now();
         let view = match route {
             Route::Home => self.home_view(),
             Route::Albums => self.library_albums_view(),
@@ -98,10 +107,40 @@ impl Shell {
                 self.search_view(&query, library)
             }
         };
+        let view_ms = view_started.elapsed().as_millis() as u64;
 
+        let append_started = Instant::now();
         self.route_host.append(&route_boundary(view));
+        let append_ms = append_started.elapsed().as_millis() as u64;
+        let observe_started = Instant::now();
         self.observe_route_scroll(&route_name);
+        let observe_ms = observe_started.elapsed().as_millis() as u64;
+        if self.state.perf.is_some() {
+            println!(
+                "RUFIN_PERF_ROUTE_PHASE route={} view_ms={} append_ms={} observe_ms={} total_ms={}",
+                route_name,
+                view_ms,
+                append_ms,
+                observe_ms,
+                render_started.elapsed().as_millis() as u64
+            );
+        }
         self.record_perf_route_render(route_name, render_started.elapsed());
+        self.schedule_startup_cover_warm();
+    }
+    fn reset_inactive_route_cover_gates(&self, active_route_key: Option<&'static str>) {
+        self.state
+            .route_cover_gate_started
+            .borrow_mut()
+            .retain(|route_key, _| Some(*route_key) == active_route_key);
+        self.state
+            .route_cover_gate_queued
+            .borrow_mut()
+            .retain(|route_key| Some(*route_key) == active_route_key);
+        self.state
+            .route_cover_gate_timed_out
+            .borrow_mut()
+            .retain(|route_key| Some(*route_key) == active_route_key);
     }
     fn render_current_route_preserving_scroll(self: &Rc<Self>) {
         let scroll_value = self.current_route_scroll_value();
@@ -231,6 +270,7 @@ impl Shell {
         header.add_css_class("album-detail-showcase");
         add_album_seed_gradient_class(&header, album.color_seed);
         header.set_hexpand(true);
+        self.prime_cover_ref_from_cache_now(album.image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
         let cover = self.cover_tile_for(
             album.image_ref.as_ref(),
             album.color_seed,

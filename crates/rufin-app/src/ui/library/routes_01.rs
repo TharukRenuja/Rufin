@@ -24,6 +24,9 @@ impl Shell {
                 })
         });
         let initial_load_ms = load_started.elapsed().as_millis() as u64;
+        if gate_album_route_covers(self, &page.items, &settings) {
+            return self.startup_loading_view();
+        }
         let complete_started = Instant::now();
         let page = complete_cached_page(
             page,
@@ -42,6 +45,7 @@ impl Shell {
             self.album_tracks_for_layout(&albums.borrow(), &settings),
         ));
         let album_tracks_ms = tracks_started.elapsed().as_millis() as u64;
+        warm_album_covers_for_settings(self, &albums.borrow(), &settings);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let model_started = Instant::now();
         populate_album_collection_model(
@@ -86,6 +90,11 @@ impl Shell {
                         &albums.borrow(),
                         &shell.library_settings(LibraryListKey::Albums),
                     );
+                    warm_album_covers_for_settings(
+                        &shell,
+                        &albums.borrow(),
+                        &shell.library_settings(LibraryListKey::Albums),
+                    );
                     populate_album_collection_model(
                         &model,
                         &albums.borrow(),
@@ -121,6 +130,11 @@ impl Shell {
                         *albums.borrow_mut() = page.items;
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
+                        warm_album_covers_for_settings(
+                            &shell,
+                            &albums.borrow(),
+                            &settings,
+                        );
                         populate_album_collection_model(
                             &model,
                             &albums.borrow(),
@@ -163,6 +177,11 @@ impl Shell {
                         albums.borrow_mut().extend(items.iter().cloned());
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
+                        warm_album_covers_for_settings(
+                            &shell,
+                            &albums.borrow(),
+                            &settings,
+                        );
                         append_album_collection_model(
                             &model,
                             items,
@@ -180,8 +199,30 @@ impl Shell {
         };
 
         let content_started = Instant::now();
-        let content = album_collection_widget(self, model, LibraryListKey::Albums);
+        let detail_virtual = (settings.layout == LibraryLayout::Detail).then(album_detail_virtual_list);
+        let content: gtk::Widget = detail_virtual
+            .as_ref()
+            .map(|list| list.widget.clone().upcast())
+            .unwrap_or_else(|| album_collection_widget(self, model.clone(), LibraryListKey::Albums));
         let content_ms = content_started.elapsed().as_millis() as u64;
+        let configure_scroller = {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let settings = settings.clone();
+            let detail_virtual = detail_virtual.clone();
+            Rc::new(move |scroller: &gtk::ScrolledWindow| {
+                connect_album_viewport_cover_warm(&shell, scroller, &model, &settings);
+                if let Some(list) = &detail_virtual {
+                    connect_album_detail_virtual_list(
+                        &shell,
+                        scroller,
+                        &model,
+                        LibraryListKey::Albums,
+                        list,
+                    );
+                }
+            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
+        };
         let shell_started = Instant::now();
         let view = self.library_page_shell(
             LibraryListKey::Albums,
@@ -190,6 +231,7 @@ impl Shell {
             search,
             content,
             Some(load_next),
+            Some(configure_scroller),
         );
         let shell_ms = shell_started.elapsed().as_millis() as u64;
         if settings.layout == LibraryLayout::Detail {
@@ -209,10 +251,22 @@ impl Shell {
         view
     }
     pub(super) fn library_tracks_route_view(self: &Rc<Self>) -> gtk::Widget {
+        let started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Tracks);
         if library_layout_loads_complete_page(LibraryListKey::Tracks, &settings)
             && let Some(page) = self.complete_track_snapshot_page()
         {
+            if self.state.perf.is_some() {
+                println!(
+                    "RUFIN_PERF_TRACKS_LOAD source=snapshot tracks={} total={} elapsed_ms={}",
+                    page.items.len(),
+                    page.total,
+                    started.elapsed().as_millis()
+                );
+            }
+            if gate_track_route_covers(self, &page.items, &settings) {
+                return self.startup_loading_view();
+            }
             return self.library_tracks_page(page.items, page.total);
         }
 
@@ -235,12 +289,23 @@ impl Shell {
                     self.state.library.borrow().cached_track_count,
                 )
             });
+        if gate_track_route_covers(self, &page.items, &settings) {
+            return self.startup_loading_view();
+        }
         let page = complete_cached_page(
             page,
             library_layout_loads_complete_page(LibraryListKey::Tracks, &settings),
             |limit| self.controller.cached_tracks_page(0, limit),
             "tracks",
         );
+        if self.state.perf.is_some() {
+            println!(
+                "RUFIN_PERF_TRACKS_LOAD source=store tracks={} total={} elapsed_ms={}",
+                page.items.len(),
+                page.total,
+                started.elapsed().as_millis()
+            );
+        }
         self.library_tracks_page(page.items, page.total)
     }
     pub(super) fn library_artist_list_view(self: &Rc<Self>, album_artist: bool) -> gtk::Widget {
@@ -284,10 +349,14 @@ impl Shell {
             |limit| self.controller.cached_artists_page(album_artist, 0, limit),
             "artists",
         );
+        if gate_artist_route_covers(self, &page.items, &settings, album_artist) {
+            return self.startup_loading_view();
+        }
         let complete_page = page.items.len() >= page.total;
         let source_artists = Rc::new(page.items.clone());
         let artists = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        warm_artist_covers_for_settings(self, &artists.borrow(), &settings);
         populate_artist_model(&model, &artists.borrow(), &settings);
 
         let search = gtk::SearchEntry::new();
@@ -319,6 +388,11 @@ impl Shell {
                         .collect::<Vec<_>>();
                     let count = values.len();
                     *artists.borrow_mut() = values;
+                    warm_artist_covers_for_settings(
+                        &shell,
+                        &artists.borrow(),
+                        &shell.library_settings(key),
+                    );
                     populate_artist_model(&model, &artists.borrow(), &shell.library_settings(key));
                     cursor.offset.set(count);
                     cursor.total.set(count);
@@ -352,6 +426,7 @@ impl Shell {
                         );
                         let count = page.items.len();
                         *artists.borrow_mut() = page.items;
+                        warm_artist_covers_for_settings(&shell, &artists.borrow(), &settings);
                         populate_artist_model(&model, &artists.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, page.total);
                     }
@@ -385,6 +460,7 @@ impl Shell {
                         let count = page.items.len();
                         let mut items = page.items;
                         sort_artists(&mut items, &shell.library_settings(key));
+                        warm_artist_covers_for_settings(&shell, &items, &shell.library_settings(key));
                         artists.borrow_mut().extend(items.iter().cloned());
                         append_artists_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
@@ -404,6 +480,7 @@ impl Shell {
             search,
             artist_collection_widget(self, model, key),
             Some(load_next),
+            None,
         )
     }
     pub(super) fn library_genre_list_view(self: &Rc<Self>) -> gtk::Widget {
@@ -438,6 +515,7 @@ impl Shell {
         let source_genres = Rc::new(page.items.clone());
         let genres = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        warm_genre_covers_for_settings(self, &genres.borrow(), &settings);
         populate_genre_model(&model, &genres.borrow(), &settings);
 
         let search = gtk::SearchEntry::new();
@@ -469,6 +547,11 @@ impl Shell {
                         .collect::<Vec<_>>();
                     let count = values.len();
                     *genres.borrow_mut() = values;
+                    warm_genre_covers_for_settings(
+                        &shell,
+                        &genres.borrow(),
+                        &shell.library_settings(LibraryListKey::Genres),
+                    );
                     populate_genre_model(
                         &model,
                         &genres.borrow(),
@@ -501,6 +584,7 @@ impl Shell {
                         );
                         let count = page.items.len();
                         *genres.borrow_mut() = page.items;
+                        warm_genre_covers_for_settings(&shell, &genres.borrow(), &settings);
                         populate_genre_model(&model, &genres.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, page.total);
                     }
@@ -533,6 +617,11 @@ impl Shell {
                         let count = page.items.len();
                         let mut items = page.items;
                         sort_genres(&mut items, &shell.library_settings(LibraryListKey::Genres));
+                        warm_genre_covers_for_settings(
+                            &shell,
+                            &items,
+                            &shell.library_settings(LibraryListKey::Genres),
+                        );
                         genres.borrow_mut().extend(items.iter().cloned());
                         append_genres_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
@@ -552,6 +641,7 @@ impl Shell {
             search,
             genre_collection_widget(self, model),
             Some(load_next),
+            None,
         )
     }
     pub(super) fn library_playlists_view(self: &Rc<Self>) -> gtk::Widget {
@@ -586,6 +676,7 @@ impl Shell {
         let source_playlists = Rc::new(page.items.clone());
         let playlists = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        warm_playlist_covers_for_settings(self, &playlists.borrow(), &settings);
         populate_playlist_model(&model, &playlists.borrow(), &settings);
 
         let search = gtk::SearchEntry::new();
@@ -619,6 +710,11 @@ impl Shell {
                         .collect::<Vec<_>>();
                     let count = values.len();
                     *playlists.borrow_mut() = values;
+                    warm_playlist_covers_for_settings(
+                        &shell,
+                        &playlists.borrow(),
+                        &shell.library_settings(LibraryListKey::Playlists),
+                    );
                     populate_playlist_model(
                         &model,
                         &playlists.borrow(),
@@ -655,6 +751,7 @@ impl Shell {
                         );
                         let count = page.items.len();
                         *playlists.borrow_mut() = page.items;
+                        warm_playlist_covers_for_settings(&shell, &playlists.borrow(), &settings);
                         populate_playlist_model(&model, &playlists.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, page.total);
                     }
@@ -690,6 +787,11 @@ impl Shell {
                             &mut items,
                             &shell.library_settings(LibraryListKey::Playlists),
                         );
+                        warm_playlist_covers_for_settings(
+                            &shell,
+                            &items,
+                            &shell.library_settings(LibraryListKey::Playlists),
+                        );
                         playlists.borrow_mut().extend(items.iter().cloned());
                         append_playlists_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
@@ -709,6 +811,7 @@ impl Shell {
             search,
             playlist_collection_widget(self, model),
             Some(load_next),
+            None,
         )
     }
     pub(super) fn library_tracks_panel(
@@ -753,12 +856,7 @@ impl Shell {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
-            scroller.add_css_class("library-route-scroller");
-            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
-            scroller.set_min_content_width(0);
-            scroller.set_propagate_natural_width(false);
-            scroller.set_hexpand(true);
-            scroller.set_vexpand(true);
+            configure_library_route_scroller(self, &scroller, key);
             scroller.set_child(Some(&library_route_inset(view)));
             wrapper.append(&scroller);
         }
@@ -774,13 +872,15 @@ impl Shell {
         let empty = tracks.is_empty();
         let source_tracks = Rc::new(tracks);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let settings = self.library_settings(key);
         let visible_count = populate_track_model_for_settings(
             &model,
             source_tracks.as_ref(),
-            &self.library_settings(key),
+            &settings,
             "",
             false,
         );
+        warm_track_covers_for_settings(self, source_tracks.as_ref(), &settings);
         if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
             on_visible_count_changed(visible_count);
         }
@@ -793,13 +893,15 @@ impl Shell {
             let source_tracks = Rc::clone(&source_tracks);
             let on_visible_count_changed = on_visible_count_changed.clone();
             search.connect_search_changed(move |entry| {
+                let settings = shell.library_settings(key);
                 let visible_count = populate_track_model_for_settings(
                     &model,
                     source_tracks.as_ref(),
-                    &shell.library_settings(key),
+                    &settings,
                     entry.text().as_str(),
                     false,
                 );
+                warm_track_covers_for_settings(&shell, source_tracks.as_ref(), &settings);
                 if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
                     on_visible_count_changed(visible_count);
                 }

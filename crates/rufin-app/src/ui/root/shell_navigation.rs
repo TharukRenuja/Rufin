@@ -14,11 +14,13 @@ fn ui_perf_next_scroll_value(
             let step = (adjustment.page_size() * 0.95).max(260.0);
             bounce_scroll_value(adjustment.value(), step, max_value, direction)
         }
-        UiPerfScenario::Jump => {
-            let points = [0.0, 0.25, 0.85, 0.45, 1.0, 0.10, 0.65, 0.0];
+        UiPerfScenario::FullSweep => {
             let index = jump_index.get();
             jump_index.set(index.saturating_add(1));
-            max_value * points[index % points.len()]
+            let phase_index = index % 48;
+            let phase = (phase_index.min(23) as f64 / 23.0).clamp(0.0, 1.0);
+            let fraction = if phase_index < 24 { phase } else { 1.0 - phase };
+            max_value * fraction
         }
         UiPerfScenario::DragSweep => {
             let index = jump_index.get();
@@ -314,6 +316,7 @@ fn route_boundary(view: gtk::Widget) -> gtk::Widget {
     scroller.set_overflow(spec.overflow);
     scroller.set_min_content_width(spec.min_content_width);
     scroller.set_propagate_natural_width(spec.propagate_natural_width);
+    scroller.set_propagate_natural_height(false);
     scroller.set_hexpand(spec.hexpand);
     scroller.set_vexpand(spec.vexpand);
     scroller.set_child(Some(&view));

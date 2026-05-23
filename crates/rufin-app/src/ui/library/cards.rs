@@ -1,4 +1,4 @@
-fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
+pub(super) fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
     genres.sort_by(|left, right| {
         apply_desc(
             compare_genre(left, right, settings.sort_key),
@@ -6,7 +6,7 @@ fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
         )
     });
 }
-fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
+pub(super) fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
     playlists.sort_by(|left, right| {
         apply_desc(
             compare_playlist(left, right, settings.sort_key),
@@ -14,7 +14,11 @@ fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
         )
     });
 }
-fn sort_tracks(tracks: &mut [Track], settings: &LibraryListSettings, favorite_first: bool) {
+pub(super) fn sort_tracks(
+    tracks: &mut [Track],
+    settings: &LibraryListSettings,
+    favorite_first: bool,
+) {
     tracks.sort_by(|left, right| {
         if favorite_first {
             let favorite = right.favorite.cmp(&left.favorite);
@@ -273,19 +277,23 @@ fn center_label(text: &str, css_class: &str) -> gtk::Widget {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AlbumDetailMetaLabelSpec {
     width: i32,
+    height: i32,
     horizontal_policy: gtk::PolicyType,
     vertical_policy: gtk::PolicyType,
     overflow: gtk::Overflow,
     propagate_natural_width: bool,
+    propagate_natural_height: bool,
     wrap: bool,
 }
 fn album_detail_meta_label_spec(width: i32) -> AlbumDetailMetaLabelSpec {
     AlbumDetailMetaLabelSpec {
         width,
+        height: ALBUM_DETAIL_META_LABEL_HEIGHT,
         horizontal_policy: gtk::PolicyType::Never,
         vertical_policy: gtk::PolicyType::Never,
         overflow: gtk::Overflow::Hidden,
         propagate_natural_width: false,
+        propagate_natural_height: false,
         wrap: false,
     }
 }
@@ -308,11 +316,14 @@ fn album_detail_meta_label(text: &str, css_class: &str, width: i32) -> gtk::Widg
     clip.set_policy(spec.horizontal_policy, spec.vertical_policy);
     clip.set_overflow(spec.overflow);
     clip.set_width_request(spec.width);
-    clip.set_size_request(spec.width, -1);
+    clip.set_height_request(spec.height);
+    clip.set_size_request(spec.width, spec.height);
     clip.set_min_content_width(spec.width);
     clip.set_max_content_width(spec.width);
+    clip.set_min_content_height(spec.height);
+    clip.set_max_content_height(spec.height);
     clip.set_propagate_natural_width(spec.propagate_natural_width);
-    clip.set_propagate_natural_height(true);
+    clip.set_propagate_natural_height(spec.propagate_natural_height);
     clip.set_hexpand(false);
     clip.set_child(Some(&label));
     clip.upcast()

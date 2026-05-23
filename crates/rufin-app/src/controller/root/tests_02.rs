@@ -106,6 +106,48 @@
         let _cleanup = fs::remove_file(path);
     }
     #[test]
+    fn external_cover_known_miss_applies_to_route_visible_sizes() {
+        let (controller, _events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let server_id = ServerId::new("jellyfin:server:test");
+        let saved = SavedServer {
+            server: ServerIdentity {
+                id: server_id.clone(),
+                provider: "jellyfin".to_string(),
+                name: "Test".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        };
+        let image_ref = ImageRef::new(
+            "external:album:Example%20Artist:Example%20Album",
+            Some("external-v1-test".to_string()),
+        );
+        controller
+            .store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&server_id)?;
+                store.save_external_image_lookup_miss(
+                    &server_id,
+                    &image_ref.item_id,
+                    "external-v1-test",
+                    256,
+                    "external cover lookup found no usable image",
+                )
+            })
+            .expect("seed external miss");
+
+        assert!(controller.external_cover_lookup_known_missing(&image_ref, 96));
+        assert!(controller.external_cover_lookup_known_missing(&image_ref, 512));
+        assert!(!controller.external_cover_lookup_known_missing(
+            &ImageRef::new("jellyfin:album:one", Some("tag-one".to_string())),
+            256
+        ));
+    }
+    #[test]
     fn provider_cached_cover_reuses_available_size() {
         let (controller, _events, _snapshot, _queue, _player) =
             AppController::bootstrap_memory_for_test();

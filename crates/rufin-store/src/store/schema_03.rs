@@ -577,14 +577,25 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Track>> {
+        self.load_tracks_sorted(server_id, LibraryField::Title, false, offset, limit)
+    }
+    pub fn load_tracks_sorted(
+        &self,
+        server_id: &ServerId,
+        sort_key: LibraryField,
+        descending: bool,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<PagedResponse<Track>> {
         let selected_folder = self.selected_music_folder_id(server_id)?;
         let total = if let Some(folder_id) = selected_folder.as_ref() {
             self.count_tracks_in_music_folder(server_id, folder_id)?
         } else {
             self.count("tracks", server_id)?
         };
+        let order_by = track_order_by_sql("t", sort_key, descending);
         let mut items = if let Some(folder_id) = selected_folder.as_ref() {
-            let mut statement = self.connection.prepare(
+            let sql = format!(
                 "
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
@@ -599,10 +610,11 @@ impl Store {
                         AND tmf.track_id = t.track_id
                         AND tmf.folder_id = ?4
                   )
-                ORDER BY t.title COLLATE NOCASE
+                ORDER BY {order_by}
                 LIMIT ?2 OFFSET ?3
-                ",
-            )?;
+                "
+            );
+            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![
                     server_id.as_str(),
@@ -613,17 +625,18 @@ impl Store {
                 track_from_row,
             )?)?
         } else {
-            let mut statement = self.connection.prepare(
+            let sql = format!(
                 "
                 SELECT track_id, album_id, title, artist, artist_id, album, year,
                        release_date, date_added, last_played, play_count, user_rating,
                        duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
-                FROM tracks
-                WHERE server_id = ?1
-                ORDER BY title COLLATE NOCASE
+                FROM tracks t
+                WHERE t.server_id = ?1
+                ORDER BY {order_by}
                 LIMIT ?2 OFFSET ?3
-                ",
-            )?;
+                "
+            );
+            let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
                 params![server_id.as_str(), limit as i64, offset as i64],
                 track_from_row,

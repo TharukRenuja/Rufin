@@ -8,6 +8,7 @@ impl Shell {
         let source_albums = Rc::new(albums.to_vec());
         let settings = self.library_settings(key);
         let album_tracks = self.album_tracks_for_layout(&source_albums, &settings);
+        warm_album_covers_for_settings(self, &source_albums, &settings);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         populate_album_collection_model(&model, &source_albums, &settings, &album_tracks);
 
@@ -27,6 +28,7 @@ impl Shell {
                     .collect::<Vec<_>>();
                 let settings = shell.library_settings(key);
                 let album_tracks = shell.album_tracks_for_layout(&albums, &settings);
+                warm_album_covers_for_settings(&shell, &albums, &settings);
                 populate_album_collection_model(&model, &albums, &settings, &album_tracks);
             });
         }
@@ -40,25 +42,15 @@ impl Shell {
         wrapper.upcast()
     }
     fn library_tracks_page(self: &Rc<Self>, tracks: Vec<Track>, total: usize) -> gtk::Widget {
-        let tracks = Rc::new(RefCell::new(tracks));
-        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Tracks);
         let complete_page = library_layout_loads_complete_page(LibraryListKey::Tracks, &settings);
-        let model_generation = Rc::new(Cell::new(0_u64));
-        if complete_page {
-            populate_track_model_for_settings_incremental(
-                self,
-                &model,
-                &tracks.borrow(),
-                &settings,
-                "",
-                false,
-                Rc::clone(&model_generation),
-            );
-        } else {
-            populate_track_model_for_settings(&model, &tracks.borrow(), &settings, "", false);
-        }
-        warm_track_covers_for_settings(self, &tracks.borrow(), &settings);
+
+        let tracks = Rc::new(RefCell::new(tracks));
+        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let populate_started = Instant::now();
+        populate_track_model_for_settings(&model, &tracks.borrow(), &settings, "", false);
+        let populate_ms = populate_started.elapsed().as_millis();
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
         search.set_hexpand(true);
@@ -74,21 +66,19 @@ impl Shell {
             let tracks = Rc::clone(&tracks);
             let cursor = Rc::clone(&cursor);
             let query = Rc::clone(&query);
-            let model_generation = Rc::clone(&model_generation);
             search.connect_search_changed(move |entry| {
                 let text = entry.text().trim().to_string();
-                model_generation.set(model_generation.get().saturating_add(1));
                 *query.borrow_mut() = text.clone();
                 if complete_page {
-                    let visible_count = populate_track_model_for_settings_incremental(
-                        &shell,
+                    let settings = shell.library_settings(LibraryListKey::Tracks);
+                    let visible_count = populate_track_model_for_settings(
                         &model,
                         &tracks.borrow(),
-                        &shell.library_settings(LibraryListKey::Tracks),
+                        &settings,
                         &text,
                         false,
-                        Rc::clone(&model_generation),
                     );
+                    warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                     cursor.offset.set(visible_count);
                     cursor.total.set(visible_count);
                     cursor.loading.set(false);
@@ -167,14 +157,37 @@ impl Shell {
                 }
             }) as Rc<dyn Fn()>
         };
-        self.library_page_shell(
+        let track_viewport_warm = {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let settings = settings.clone();
+            Rc::new(move |scroller: &gtk::ScrolledWindow| {
+                connect_track_viewport_cover_warm(&shell, scroller, &model, &settings);
+                connect_track_row_contract_observer(&shell, scroller, &model, &settings);
+            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
+        };
+        let shell_started = Instant::now();
+        let view = self.library_page_shell(
             LibraryListKey::Tracks,
             tracks.borrow().is_empty(),
             "Cached tracks will appear here after the background sync finishes.",
             search,
             track_collection_widget(self, model, LibraryListKey::Tracks),
             Some(load_next),
-        )
+            Some(track_viewport_warm),
+        );
+        if self.state.perf.is_some() {
+            println!(
+                "RUFIN_PERF_TRACKS_PAGE tracks={} total={} complete={} populate_ms={} shell_ms={} total_ms={}",
+                tracks.borrow().len(),
+                total,
+                complete_page,
+                populate_ms,
+                shell_started.elapsed().as_millis(),
+                started.elapsed().as_millis()
+            );
+        }
+        view
     }
     fn library_page_shell(
         self: &Rc<Self>,
@@ -184,6 +197,7 @@ impl Shell {
         search: gtk::SearchEntry,
         content: gtk::Widget,
         load_next: Option<Rc<dyn Fn()>>,
+        configure_scroller: Option<Rc<dyn Fn(&gtk::ScrolledWindow)>>,
     ) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
@@ -197,13 +211,11 @@ impl Shell {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
-            scroller.add_css_class("library-route-scroller");
-            scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
-            scroller.set_min_content_width(0);
-            scroller.set_propagate_natural_width(false);
-            scroller.set_hexpand(true);
-            scroller.set_vexpand(true);
+            configure_library_route_scroller(self, &scroller, key);
             scroller.set_child(Some(&library_route_inset(content)));
+            if let Some(configure_scroller) = configure_scroller {
+                configure_scroller(&scroller);
+            }
             if let Some(load_next) = load_next {
                 connect_paged_grid_loader(&scroller, load_next);
             }

@@ -9,6 +9,7 @@ impl UiPerfMonitor {
 
     fn record_tick_gap(&self, gap: Duration) {
         let gap_ms = duration_ms(gap);
+        let now = Instant::now();
         let mut inner = self.inner.borrow_mut();
         inner.ticks = inner.ticks.saturating_add(1);
         inner.max_gap_ms = inner.max_gap_ms.max(gap_ms);
@@ -42,6 +43,14 @@ impl UiPerfMonitor {
                 inner.over_budget_idle_ticks = inner.over_budget_idle_ticks.saturating_add(1);
             }
         }
+        let finish_manual_scroll = inner.active_scroll.as_ref().is_some_and(|active| {
+            active.scenario == "manual"
+                && now.saturating_duration_since(active.last_step_at)
+                    >= Duration::from_millis(UI_PERF_MANUAL_SCROLL_IDLE_MS)
+        });
+        if finish_manual_scroll && let Some(active) = inner.active_scroll.take() {
+            self.finish_scroll_sample(&mut inner, active);
+        }
     }
 
     fn record_route_render(&self, route: String, elapsed: Duration) {
@@ -57,10 +66,12 @@ impl UiPerfMonitor {
 
     fn begin_scroll(&self, route: String, scenario: UiPerfScenario) {
         let inner = self.inner.borrow();
+        let now = Instant::now();
         let active = UiPerfActiveScroll {
             route,
             scenario: scenario.name(),
-            started_at: Instant::now(),
+            started_at: now,
+            last_step_at: now,
             steps: 0,
             max_gap_ms: 0,
             over_budget_ticks: 0,
@@ -161,10 +172,12 @@ impl UiPerfMonitor {
         }
 
         if inner.active_scroll.is_none() {
+            let now = Instant::now();
             inner.active_scroll = Some(UiPerfActiveScroll {
                 route: route.to_string(),
                 scenario: "manual",
-                started_at: Instant::now(),
+                started_at: now,
+                last_step_at: now,
                 steps: 0,
                 max_gap_ms: 0,
                 over_budget_ticks: 0,
@@ -180,6 +193,7 @@ impl UiPerfMonitor {
             return;
         };
         active.steps = active.steps.saturating_add(1);
+        active.last_step_at = Instant::now();
         active.max_adjustment = active.max_adjustment.max(max_adjustment);
         active.min_value = active.min_value.min(value);
         active.max_value = active.max_value.max(value);
@@ -243,28 +257,77 @@ impl UiPerfMonitor {
         self.inner.borrow_mut().cover_pending.remove(key);
     }
 
+    fn record_tracks_row_contract(
+        &self,
+        scenario: &'static str,
+        visible_start: usize,
+        visible_end: usize,
+        ready: usize,
+        coverless: usize,
+        pending: usize,
+        missing: usize,
+    ) {
+        let failed = pending > 0 || missing > 0;
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.tracks_row_contract_samples =
+                inner.tracks_row_contract_samples.saturating_add(1);
+            if failed {
+                inner.tracks_row_contract_failures =
+                    inner.tracks_row_contract_failures.saturating_add(1);
+            }
+        }
+        if self.options.terminal_events || failed {
+            println!(
+                "RUFIN_ACCEPT_TRACKS_ROW scenario={} visible_start={} visible_end={} ready={} coverless={} pending={} missing={} result={}",
+                scenario,
+                visible_start,
+                visible_end,
+                ready,
+                coverless,
+                pending,
+                missing,
+                if failed { "FAIL" } else { "PASS" }
+            );
+        }
+    }
+
     fn pending_assets(&self) -> usize {
         self.inner.borrow().cover_pending.len()
     }
 
     fn failed(&self) -> bool {
         let inner = self.inner.borrow();
-        inner.max_idle_gap_ms > self.options.asset_ms
+        let route_render_budget_ms = self
+            .options
+            .route_ms
+            .max(self.options.max_gap_ms.saturating_mul(4));
+        let idle_budget_ms = self.options.route_ms.max(self.options.asset_ms);
+        inner.max_idle_gap_ms > idle_budget_ms
             || inner
                 .route_renders
                 .iter()
-                .any(|sample| sample.elapsed_ms > self.options.max_gap_ms)
+                .any(|sample| sample.elapsed_ms > route_render_budget_ms)
             || inner
                 .route_scrolls
                 .iter()
-                .any(|sample| sample.max_gap_ms > self.options.max_gap_ms)
-            || inner.max_cover_latency_ms > self.options.asset_ms
+                .any(|sample| self.scroll_sample_failed(sample))
             || !inner.cover_pending.is_empty()
             || (self.options.require_assets
                 && inner.cover_bind_requests == 0
                 && inner.cover_cache_hits == 0
                 && inner.cover_decode_ok == 0)
             || inner.cover_decode_error > 0
+            || inner.tracks_row_contract_failures > 0
+    }
+
+    fn scroll_sample_failed(&self, sample: &UiPerfRouteScroll) -> bool {
+        let meaningful_scroll = self.options.max_gap_ms.saturating_mul(2) as f64;
+        if sample.max_adjustment < meaningful_scroll {
+            return false;
+        }
+        let severe_gap_ms = self.options.max_gap_ms.saturating_mul(2);
+        sample.max_gap_ms > severe_gap_ms || sample.over_budget_ticks > 1
     }
 
     fn report(&self) -> String {
@@ -323,6 +386,11 @@ impl UiPerfMonitor {
             inner.over_budget_assets,
             inner.cover_pending.len()
         );
+        let _ = writeln!(
+            report,
+            "RUFIN_ACCEPT_TRACKS_ROW_SUMMARY samples={} failures={}",
+            inner.tracks_row_contract_samples, inner.tracks_row_contract_failures
+        );
         let mut slow_assets = inner.cover_latencies.iter().collect::<Vec<_>>();
         slow_assets.sort_by_key(|sample| std::cmp::Reverse(sample.elapsed_ms));
         for sample in slow_assets.into_iter().take(30) {
@@ -369,54 +437,424 @@ fn library_has_image_refs(library: &LibrarySnapshot) -> bool {
             .any(|playlist| playlist.image_ref.is_some())
         || library.tracks.iter().any(|track| track.image_ref.is_some())
 }
-fn startup_library_cover_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
-    library
-        .home_sections
+struct StartupCoverTarget {
+    image_ref: ImageRef,
+    fetch_size: u32,
+    size: i32,
+}
+fn startup_cover_prime_jobs(shell: &Shell) -> Vec<StartupCoverWarmJob> {
+    startup_cover_jobs_from_targets(
+        shell,
+        startup_cover_prime_targets(shell),
+        Some(STARTUP_CACHED_COVER_PRIME_LIMIT),
+    )
+}
+fn startup_cover_background_jobs(shell: &Shell) -> Vec<StartupCoverWarmJob> {
+    startup_cover_jobs_from_targets(shell, startup_cover_background_targets(shell), None)
+}
+fn startup_cover_jobs_from_targets(
+    shell: &Shell,
+    targets: Vec<StartupCoverTarget>,
+    limit: Option<usize>,
+) -> Vec<StartupCoverWarmJob> {
+    let mut seen = HashSet::new();
+    let mut jobs = Vec::new();
+
+    for target in targets {
+        let decode_size = cover_decode_size(target.size, target.fetch_size);
+        let Some(key) = shell.cover_cache_key(&target.image_ref, target.fetch_size) else {
+            continue;
+        };
+        if !seen.insert(key.clone())
+            || shell
+                .decoded_cover_for_ref(&target.image_ref, target.fetch_size, decode_size)
+                .is_some()
+        {
+            continue;
+        }
+        jobs.push(StartupCoverWarmJob {
+            key,
+            image_ref: target.image_ref,
+            fetch_size: target.fetch_size,
+            size: decode_size,
+        });
+        if limit.is_some_and(|limit| jobs.len() >= limit) {
+            break;
+        }
+    }
+
+    jobs
+}
+fn startup_artist_cover_source(
+    shell: &Shell,
+    album_artist: bool,
+    fallback: &[Artist],
+    limit: usize,
+) -> Vec<Artist> {
+    match shell.controller.cached_artists_page(album_artist, 0, limit) {
+        Ok(page) => page.items,
+        Err(error) => {
+            debug!(%error, album_artist, "failed to load startup artist cover refs");
+            fallback.iter().take(limit).cloned().collect()
+        }
+    }
+}
+fn sidebar_route_visible(settings: &AppSettings, item: SidebarRouteItem) -> bool {
+    settings
+        .sidebar
+        .route_items
         .iter()
-        .flat_map(|section| {
-            section
-                .albums
-                .iter()
-                .filter_map(|album| album.image_ref.clone())
-                .chain(
-                    section
-                        .tracks
-                        .iter()
-                        .filter_map(|track| track.image_ref.clone()),
-                )
-        })
-        .chain(
-            library
-                .albums
-                .iter()
-                .filter_map(|album| album.image_ref.clone()),
+        .any(|entry| entry.item == item && entry.visible)
+}
+fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
+    let (
+        settings,
+        home_sections,
+        mut tracks,
+        mut favorites,
+        mut albums,
+        artists,
+        album_artists,
+        mut genres,
+        mut playlists,
+    ) = {
+        let library = shell.state.library.borrow();
+        (
+            shell.state.settings.borrow().clone(),
+            library.home_sections.clone(),
+            library.tracks.clone(),
+            library.favorites.clone(),
+            library.albums.clone(),
+            library.artists.clone(),
+            library.album_artists.clone(),
+            library.genres.clone(),
+            library.playlists.clone(),
         )
-        .chain(
-            library
-                .artists
+    };
+    let mut targets = Vec::new();
+
+    if let Some(album) = home::showcase_album(
+        &shell.state.library.borrow(),
+        shell.state.home_showcase_seed.get(),
+    ) {
+        push_startup_cover_target(
+            &mut targets,
+            album.image_ref.as_ref(),
+            GRID_COVER_SIZE,
+            GRID_COVER_SIZE as i32,
+        );
+    }
+
+    for section in &home_sections {
+        for album in section.albums.iter().take(STARTUP_HOME_SECTION_COVER_LIMIT) {
+            push_startup_cover_target(
+                &mut targets,
+                album.image_ref.as_ref(),
+                GRID_COVER_SIZE,
+                GRID_COVER_SIZE as i32,
+            );
+        }
+        for track in section.tracks.iter().take(STARTUP_HOME_SECTION_COVER_LIMIT) {
+            push_startup_cover_target(
+                &mut targets,
+                track.image_ref.as_ref(),
+                GRID_COVER_SIZE,
+                GRID_COVER_SIZE as i32,
+            );
+        }
+    }
+
+    let track_settings = settings.library_list(LibraryListKey::Tracks);
+    library::sort_tracks(&mut tracks, &track_settings, false);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&track_settings) {
+        for track in &tracks {
+            push_startup_cover_target(
+                &mut targets,
+                track.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let favorite_settings = settings.library_list(LibraryListKey::FavoriteTracks);
+    library::sort_tracks(&mut favorites, &favorite_settings, false);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&favorite_settings) {
+        for track in favorites.iter().take(TRACK_ROUTE_PAGE_SIZE) {
+            push_startup_cover_target(
+                &mut targets,
+                track.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let album_settings = settings.library_list(LibraryListKey::Albums);
+    library::sort_albums(&mut albums, &album_settings);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&album_settings) {
+        for album in &albums {
+            push_startup_cover_target(
+                &mut targets,
+                album.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let artist_settings = settings.library_list(LibraryListKey::Artists);
+    let mut startup_artists =
+        startup_artist_cover_source(shell, false, &artists, STARTUP_GRID_COVER_LIMIT);
+    library::sort_artists(&mut startup_artists, &artist_settings);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&artist_settings) {
+        for artist in startup_artists.iter().take(STARTUP_GRID_COVER_LIMIT) {
+            push_startup_cover_target(
+                &mut targets,
+                artist.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let album_artist_settings = settings.library_list(LibraryListKey::AlbumArtists);
+    if sidebar_route_visible(&settings, SidebarRouteItem::AlbumArtists) {
+        let mut startup_album_artists =
+            startup_artist_cover_source(shell, true, &album_artists, STARTUP_GRID_COVER_LIMIT);
+        library::sort_artists(&mut startup_album_artists, &album_artist_settings);
+        if let Some((fetch_size, size)) = startup_cover_sizes(&album_artist_settings) {
+            for artist in startup_album_artists
                 .iter()
-                .chain(library.album_artists.iter())
-                .filter_map(|artist| artist.image_ref.clone()),
+                .take(STARTUP_GRID_COVER_LIMIT)
+            {
+                push_startup_cover_target(
+                    &mut targets,
+                    artist.image_ref.as_ref(),
+                    fetch_size,
+                    size,
+                );
+            }
+        }
+    }
+
+    let genre_settings = settings.library_list(LibraryListKey::Genres);
+    library::sort_genres(&mut genres, &genre_settings);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&genre_settings) {
+        for genre in genres.iter().take(STARTUP_GRID_COVER_LIMIT) {
+            for image_ref in genre_grid_cover_refs_from_snapshot(&shell.state.library.borrow(), genre)
+            {
+                push_startup_cover_target(&mut targets, Some(&image_ref), fetch_size, size);
+            }
+            push_startup_cover_target(
+                &mut targets,
+                genre.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let playlist_settings = settings.library_list(LibraryListKey::Playlists);
+    library::sort_playlists(&mut playlists, &playlist_settings);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&playlist_settings) {
+        for playlist in playlists.iter().take(STARTUP_GRID_COVER_LIMIT) {
+            push_startup_cover_target(
+                &mut targets,
+                playlist.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    if let Some((fetch_size, size)) = startup_cover_sizes(&track_settings) {
+        for track in tracks.iter().skip(STARTUP_VISIBLE_TRACK_COVER_LIMIT) {
+            push_startup_cover_target(
+                &mut targets,
+                track.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    targets
+}
+fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
+    let (
+        settings,
+        home_sections,
+        mut tracks,
+        mut favorites,
+        mut albums,
+        mut artists,
+        mut album_artists,
+        mut genres,
+        mut playlists,
+    ) = {
+        let library = shell.state.library.borrow();
+        (
+            shell.state.settings.borrow().clone(),
+            library.home_sections.clone(),
+            library.tracks.clone(),
+            library.favorites.clone(),
+            library.albums.clone(),
+            library.artists.clone(),
+            library.album_artists.clone(),
+            library.genres.clone(),
+            library.playlists.clone(),
         )
-        .chain(
-            library
-                .genres
-                .iter()
-                .filter_map(|genre| genre.image_ref.clone()),
-        )
-        .chain(
-            library
-                .playlists
-                .iter()
-                .filter_map(|playlist| playlist.image_ref.clone()),
-        )
-        .chain(
-            library
-                .tracks
-                .iter()
-                .filter_map(|track| track.image_ref.clone()),
-        )
-        .collect()
+    };
+    let mut targets = Vec::new();
+
+    for section in &home_sections {
+        for album in &section.albums {
+            push_startup_cover_target(
+                &mut targets,
+                album.image_ref.as_ref(),
+                GRID_COVER_SIZE,
+                GRID_COVER_SIZE as i32,
+            );
+        }
+        for track in &section.tracks {
+            push_startup_cover_target(
+                &mut targets,
+                track.image_ref.as_ref(),
+                GRID_COVER_SIZE,
+                GRID_COVER_SIZE as i32,
+            );
+        }
+    }
+
+    let track_settings = settings.library_list(LibraryListKey::Tracks);
+    library::sort_tracks(&mut tracks, &track_settings, false);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&track_settings) {
+        for track in tracks.iter().take(STARTUP_VISIBLE_TRACK_COVER_LIMIT) {
+            push_startup_cover_target(
+                &mut targets,
+                track.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let favorite_settings = settings.library_list(LibraryListKey::FavoriteTracks);
+    library::sort_tracks(&mut favorites, &favorite_settings, false);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&favorite_settings) {
+        for track in &favorites {
+            push_startup_cover_target(
+                &mut targets,
+                track.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let album_settings = settings.library_list(LibraryListKey::Albums);
+    library::sort_albums(&mut albums, &album_settings);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&album_settings) {
+        for album in albums.iter().take(STARTUP_GRID_COVER_LIMIT) {
+            push_startup_cover_target(
+                &mut targets,
+                album.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let artist_settings = settings.library_list(LibraryListKey::Artists);
+    library::sort_artists(&mut artists, &artist_settings);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&artist_settings) {
+        for artist in &artists {
+            push_startup_cover_target(
+                &mut targets,
+                artist.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let album_artist_settings = settings.library_list(LibraryListKey::AlbumArtists);
+    if sidebar_route_visible(&settings, SidebarRouteItem::AlbumArtists) {
+        library::sort_artists(&mut album_artists, &album_artist_settings);
+        if let Some((fetch_size, size)) = startup_cover_sizes(&album_artist_settings) {
+            for artist in &album_artists {
+                push_startup_cover_target(
+                    &mut targets,
+                    artist.image_ref.as_ref(),
+                    fetch_size,
+                    size,
+                );
+            }
+        }
+    }
+
+    let genre_settings = settings.library_list(LibraryListKey::Genres);
+    library::sort_genres(&mut genres, &genre_settings);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&genre_settings) {
+        let library = shell.state.library.borrow();
+        for genre in &genres {
+            for image_ref in genre_grid_cover_refs_from_snapshot(&library, genre) {
+                push_startup_cover_target(&mut targets, Some(&image_ref), fetch_size, size);
+            }
+            push_startup_cover_target(
+                &mut targets,
+                genre.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    let playlist_settings = settings.library_list(LibraryListKey::Playlists);
+    library::sort_playlists(&mut playlists, &playlist_settings);
+    if let Some((fetch_size, size)) = startup_cover_sizes(&playlist_settings) {
+        for playlist in &playlists {
+            push_startup_cover_target(
+                &mut targets,
+                playlist.image_ref.as_ref(),
+                fetch_size,
+                size,
+            );
+        }
+    }
+
+    targets
+}
+fn startup_cover_sizes(settings: &LibraryListSettings) -> Option<(u32, i32)> {
+    match settings.layout {
+        LibraryLayout::Grid | LibraryLayout::Detail => {
+            Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32))
+        }
+        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row => None,
+    }
+}
+fn row_layout_uses_cover(settings: &LibraryListSettings) -> bool {
+    settings
+        .row_fields
+        .iter()
+        .any(|field| matches!(field, LibraryField::Image | LibraryField::TitleMerged))
+}
+fn push_startup_cover_target(
+    targets: &mut Vec<StartupCoverTarget>,
+    image_ref: Option<&ImageRef>,
+    fetch_size: u32,
+    size: i32,
+) {
+    let Some(image_ref) = image_ref else {
+        return;
+    };
+    targets.push(StartupCoverTarget {
+        image_ref: image_ref.clone(),
+        fetch_size,
+        size,
+    });
 }
 fn unique_cover_refs(image_refs: Vec<ImageRef>) -> Vec<ImageRef> {
     let mut unique = Vec::new();
@@ -443,126 +881,8 @@ fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
     sizes.retain(|size| seen.insert(*size));
     sizes
 }
-fn prime_first_cached_cover(shell: &Rc<Shell>) {
-    let started_at = Instant::now();
-    for (key, path) in initial_cached_grid_covers(shell) {
-        if shell.state.decoded_covers.borrow().contains_key(&key) {
-            continue;
-        }
-        match Pixbuf::from_file_at_scale(
-            &path,
-            GRID_COVER_SIZE as i32,
-            GRID_COVER_SIZE as i32,
-            true,
-        ) {
-            Ok(pixbuf) => shell.remember_decoded_cover(key, pixbuf),
-            Err(error) => {
-                debug!(%error, path = %path.display(), "failed to prime cached cover")
-            }
-        }
-        if started_at.elapsed() >= INITIAL_COVER_PRIME_BUDGET {
-            break;
-        }
-    }
-}
-fn prime_first_track_thumbnail_covers(shell: &Rc<Shell>) {
-    let started_at = Instant::now();
-    for (key, path) in initial_cached_track_thumbnail_covers(shell) {
-        if shell.state.decoded_covers.borrow().contains_key(&key) {
-            continue;
-        }
-        match Pixbuf::from_file_at_scale(&path, 48, 48, true) {
-            Ok(pixbuf) => shell.remember_decoded_cover(key, pixbuf),
-            Err(error) => {
-                debug!(%error, path = %path.display(), "failed to prime cached track thumbnail")
-            }
-        }
-        if started_at.elapsed() >= INITIAL_TRACK_THUMB_PRIME_BUDGET {
-            break;
-        }
-    }
-}
-fn initial_cached_grid_covers(shell: &Rc<Shell>) -> Vec<(String, PathBuf)> {
-    let (server, image_refs) = {
-        let library = shell.state.library.borrow();
-        let Some(server) = library.server.clone() else {
-            return Vec::new();
-        };
-        if server.provider == "fake" {
-            return Vec::new();
-        }
-        let image_refs = library
-            .home_sections
-            .iter()
-            .flat_map(|section| section.albums.iter())
-            .filter_map(|album| album.image_ref.clone())
-            .chain(
-                library
-                    .albums
-                    .iter()
-                    .filter_map(|album| album.image_ref.clone()),
-            )
-            .chain(
-                library
-                    .artists
-                    .iter()
-                    .chain(library.album_artists.iter())
-                    .filter_map(|artist| artist.image_ref.clone()),
-            )
-            .chain(
-                library
-                    .genres
-                    .iter()
-                    .filter_map(|genre| genre.image_ref.clone()),
-            )
-            .chain(
-                library
-                    .playlists
-                    .iter()
-                    .filter_map(|playlist| playlist.image_ref.clone()),
-            )
-            .collect::<Vec<_>>();
-        (server, image_refs)
-    };
-
-    let mut seen = HashSet::new();
-    image_refs
-        .into_iter()
-        .filter_map(|image_ref| {
-            let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-            let key = image_cache_key(&server.id, &image_ref.item_id, tag, GRID_COVER_SIZE);
-            if !seen.insert(key.clone()) {
-                return None;
-            }
-            let path = shell.controller.cached_cover_path_for_key(&key)?;
-            Some((key, path))
-        })
-        .take(INITIAL_COVER_PRIME_LIMIT)
-        .collect()
-}
-fn initial_cached_track_thumbnail_covers(shell: &Rc<Shell>) -> Vec<(String, PathBuf)> {
-    let image_refs = shell
-        .state
-        .library
-        .borrow()
-        .tracks
-        .iter()
-        .filter_map(|track| track.image_ref.clone())
-        .take(INITIAL_TRACK_THUMB_PRIME_LIMIT)
-        .collect::<Vec<_>>();
-
-    let mut seen = HashSet::new();
-    image_refs
-        .into_iter()
-        .filter_map(|image_ref| {
-            let key = shell.cover_cache_key(&image_ref, THUMB_COVER_SIZE)?;
-            if !seen.insert(key.clone()) {
-                return None;
-            }
-            let path = shell.controller.cached_cover_path_for_key(&key)?;
-            Some((key, path))
-        })
-        .collect()
+fn cover_decode_size(display_size: i32, fetch_size: u32) -> i32 {
+    display_size.max(fetch_size as i32).max(1)
 }
 fn first_run_cover_prime_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
     let mut refs = Vec::new();

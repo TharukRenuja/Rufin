@@ -746,27 +746,6 @@ fn populate_track_model_for_settings(
     replace_tracks_in_model(model, values);
     visible_count
 }
-fn populate_track_model_for_settings_incremental(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    tracks: &[Track],
-    settings: &LibraryListSettings,
-    query: &str,
-    favorite_first: bool,
-    generation: Rc<Cell<u64>>,
-) -> usize {
-    let mut values = tracks_for_settings(tracks, settings, query, favorite_first);
-    let visible_count = values.len();
-    if values.len() <= TRACK_INITIAL_COMPLETE_ROWS {
-        replace_tracks_in_model(model, values);
-        return visible_count;
-    }
-
-    let remaining = values.split_off(TRACK_INITIAL_COMPLETE_ROWS);
-    replace_tracks_in_model(model, values);
-    append_tracks_incrementally(Rc::clone(shell), model.clone(), remaining, generation);
-    visible_count
-}
 fn tracks_for_settings(
     tracks: &[Track],
     settings: &LibraryListSettings,
@@ -782,46 +761,7 @@ fn tracks_for_settings(
     sort_tracks(&mut values, settings, favorite_first);
     values
 }
-fn append_tracks_incrementally(
-    shell: Rc<Shell>,
-    model: gio::ListStore,
-    mut tracks: Vec<Track>,
-    generation: Rc<Cell<u64>>,
-) {
-    if tracks.is_empty() {
-        return;
-    }
-
-    let generation_id = generation.get();
-    tracks.reverse();
-    let tracks = Rc::new(RefCell::new(tracks));
-    glib::idle_add_local(move || {
-        if generation.get() != generation_id
-            || !matches!(shell.state.routes.borrow().current(), &Route::Tracks)
-        {
-            return glib::ControlFlow::Break;
-        }
-
-        let mut chunk = Vec::with_capacity(TRACK_COMPLETE_APPEND_ROWS);
-        {
-            let mut tracks = tracks.borrow_mut();
-            for _ in 0..TRACK_COMPLETE_APPEND_ROWS {
-                let Some(track) = tracks.pop() else {
-                    break;
-                };
-                chunk.push(track);
-            }
-        }
-        append_tracks_to_model(&model, chunk);
-
-        if tracks.borrow().is_empty() {
-            glib::ControlFlow::Break
-        } else {
-            glib::ControlFlow::Continue
-        }
-    });
-}
-fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
+pub(super) fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
     albums.sort_by(|left, right| {
         let missing = album_field_missing(left, settings.sort_key)
             .cmp(&album_field_missing(right, settings.sort_key));
@@ -834,7 +774,7 @@ fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
         )
     });
 }
-fn sort_artists(artists: &mut [Artist], settings: &LibraryListSettings) {
+pub(super) fn sort_artists(artists: &mut [Artist], settings: &LibraryListSettings) {
     artists.sort_by(|left, right| {
         let missing = artist_field_missing(left, settings.sort_key)
             .cmp(&artist_field_missing(right, settings.sort_key));

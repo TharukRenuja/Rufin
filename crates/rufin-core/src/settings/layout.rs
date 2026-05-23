@@ -3,12 +3,12 @@ use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 2;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
-pub const DEFAULT_WINDOW_WIDTH: i32 = 800;
-pub const DEFAULT_WINDOW_HEIGHT: i32 = 600;
+pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
+pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
 pub const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
 pub const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
-pub const MAX_RESTORED_WINDOW_WIDTH: i32 = 1_400;
-pub const MAX_RESTORED_WINDOW_HEIGHT: i32 = 900;
+pub const MAX_RESTORED_WINDOW_WIDTH: i32 = 3_400;
+pub const MAX_RESTORED_WINDOW_HEIGHT: i32 = 2_000;
 pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
 const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
 fn default_lyrics_panel_visible() -> bool {
@@ -33,7 +33,7 @@ fn default_narrow_layout_enabled() -> bool {
     true
 }
 fn default_narrow_layout_threshold() -> i32 {
-    1_000
+    1_300
 }
 pub const MIN_NARROW_LAYOUT_THRESHOLD: i32 = 700;
 pub const MAX_NARROW_LAYOUT_THRESHOLD: i32 = 3_400;

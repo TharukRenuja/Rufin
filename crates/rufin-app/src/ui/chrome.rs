@@ -58,7 +58,7 @@ pub(super) fn build_content_chrome(
     main_well.set_overflow(gtk::Overflow::Hidden);
     main_well.set_min_content_width(0);
     main_well.set_propagate_natural_width(false);
-    main_well.set_propagate_natural_height(true);
+    main_well.set_propagate_natural_height(false);
     main_well.set_hexpand(true);
     main_well.set_vexpand(true);
     main_well.set_child(Some(main_area));

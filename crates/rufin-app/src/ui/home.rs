@@ -16,7 +16,7 @@ use super::{
     icon_button,
 };
 
-fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
+pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
     let explore_first_id = library
         .home_sections
         .iter()

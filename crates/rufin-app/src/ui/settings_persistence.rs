@@ -15,10 +15,9 @@ impl Shell {
         if self.window.is_maximized() || self.window.is_fullscreen() {
             return;
         }
-        let Some((width, height)) = sanitized_window_size(
-            Some(self.window.default_width()),
-            Some(self.window.default_height()),
-        ) else {
+        let Some((width, height)) =
+            sanitized_window_size(Some(self.window.width()), Some(self.window.height()))
+        else {
             return;
         };
 

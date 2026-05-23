@@ -1,3 +1,6 @@
+const UI_PERF_ROUTE_GATE_POLL_MS: u64 = 33;
+const UI_PERF_ROUTE_GATE_TIMEOUT_MS: u64 = 3_500;
+
 fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let normal_back_shell = Rc::clone(shell);
     shell
@@ -549,20 +552,16 @@ fn start_ui_perf_run(shell: &Rc<Shell>, app: &adw::Application) {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "stdout_only".to_string())
     );
-    let heartbeat = Rc::new(RefCell::new(Some(start_ui_perf_heartbeat(Rc::clone(
-        &perf,
-    )))));
-    let routes = ui_perf_routes(shell);
-    let runs = Rc::new(RefCell::new(ui_perf_plan(
-        routes,
+    let plan = ui_perf_plan(
+        shell,
         perf.options.duration_ms,
         perf.options.route_ms,
-    )));
+    );
+    println!("RUFIN_PERF route_plan {}", ui_perf_plan_summary(&plan));
+    let runs = Rc::new(RefCell::new(plan));
     let shell = Rc::clone(shell);
     let app = app.clone();
-    glib::timeout_add_local_once(Duration::from_millis(250), move || {
-        run_next_ui_perf_route(shell, app, perf, runs, heartbeat);
-    });
+    wait_for_ui_perf_startup_reveal(shell, app, perf, runs, Instant::now());
 }
 fn start_ui_perf_observe(shell: &Rc<Shell>, app: &adw::Application) {
     let Some(perf) = shell.state.perf.clone() else {
@@ -611,6 +610,31 @@ fn start_ui_perf_heartbeat(perf: Rc<UiPerfMonitor>) -> glib::SourceId {
         glib::ControlFlow::Continue
     })
 }
+fn wait_for_ui_perf_startup_reveal(
+    shell: Rc<Shell>,
+    app: adw::Application,
+    perf: Rc<UiPerfMonitor>,
+    runs: Rc<RefCell<VecDeque<(Route, UiPerfScenario)>>>,
+    started_at: Instant,
+) {
+    if shell.state.startup_route_revealed.get() || shell.login_screen_active() {
+        println!(
+            "RUFIN_PERF startup_reveal elapsed_ms={}",
+            duration_ms(started_at.elapsed())
+        );
+        let heartbeat = Rc::new(RefCell::new(Some(start_ui_perf_heartbeat(Rc::clone(
+            &perf,
+        )))));
+        glib::timeout_add_local_once(Duration::from_millis(250), move || {
+            run_next_ui_perf_route(shell, app, perf, runs, heartbeat);
+        });
+        return;
+    }
+
+    glib::timeout_add_local_once(Duration::from_millis(STARTUP_ROUTE_REVEAL_POLL_MS), move || {
+        wait_for_ui_perf_startup_reveal(shell, app, perf, runs, started_at);
+    });
+}
 fn run_next_ui_perf_route(
     shell: Rc<Shell>,
     app: adw::Application,
@@ -640,7 +664,11 @@ fn run_next_ui_perf_route(
         "RUFIN_PERF route_begin route={route_name} scenario={}",
         scenario.name()
     );
-    shell.navigate(route);
+    if shell.state.routes.borrow().current() == &route {
+        reset_ui_perf_route_scroll_position(&shell);
+    } else {
+        shell.navigate(route);
+    }
 
     let shell_for_scroll = Rc::clone(&shell);
     let app_for_next = app.clone();
@@ -648,56 +676,108 @@ fn run_next_ui_perf_route(
     let runs_for_next = Rc::clone(&runs);
     let heartbeat_for_next = Rc::clone(&heartbeat);
     glib::timeout_add_local_once(Duration::from_millis(120), move || {
-        perf_for_scroll.begin_scroll(route_name.clone(), scenario);
-        let scroll_source = Rc::new(RefCell::new(None::<glib::SourceId>));
-        if let Some(scroller) =
-            find_largest_scrolled_window(&shell_for_scroll.route_host.clone().upcast())
-        {
-            let direction = Rc::new(Cell::new(1.0_f64));
-            let jump_index = Rc::new(Cell::new(0_usize));
-            let perf_for_tick = Rc::clone(&perf_for_scroll);
-            let route_for_tick = route_name.clone();
-            let direction_for_tick = Rc::clone(&direction);
-            let jump_index_for_tick = Rc::clone(&jump_index);
-            let id = glib::timeout_add_local(Duration::from_millis(16), move || {
-                let adjustment = scroller.vadjustment();
-                let page_size = adjustment.page_size().max(1.0);
-                let max_value = (adjustment.upper() - page_size).max(0.0);
-                if max_value > 1.0 {
-                    let next = ui_perf_next_scroll_value(
-                        scenario,
-                        &adjustment,
-                        max_value,
-                        &direction_for_tick,
-                        &jump_index_for_tick,
-                    );
-                    adjustment.set_value(next);
-                    perf_for_tick.record_scroll_step(&route_for_tick, next, max_value);
-                }
-                glib::ControlFlow::Continue
-            });
-            *scroll_source.borrow_mut() = Some(id);
-        } else {
-            perf_for_scroll.record_scroll_note(&route_name, "no_scrolled_window");
-        }
-
-        glib::timeout_add_local_once(
-            Duration::from_millis(perf_for_scroll.options.route_ms),
-            move || {
-                if let Some(source) = scroll_source.borrow_mut().take() {
-                    source.remove();
-                }
-                perf_for_scroll.finish_scroll();
-                run_next_ui_perf_route(
-                    shell_for_scroll,
-                    app_for_next,
-                    perf_for_scroll,
-                    runs_for_next,
-                    heartbeat_for_next,
-                );
-            },
+        begin_ui_perf_route_scroll(
+            shell_for_scroll,
+            app_for_next,
+            perf_for_scroll,
+            runs_for_next,
+            heartbeat_for_next,
+            route_name,
+            scenario,
+            Instant::now(),
         );
     });
+}
+fn begin_ui_perf_route_scroll(
+    shell: Rc<Shell>,
+    app: adw::Application,
+    perf: Rc<UiPerfMonitor>,
+    runs: Rc<RefCell<VecDeque<(Route, UiPerfScenario)>>>,
+    heartbeat: Rc<RefCell<Option<glib::SourceId>>>,
+    route_name: String,
+    scenario: UiPerfScenario,
+    wait_started_at: Instant,
+) {
+    if route_cover_gate_active_for_current_route(&shell)
+        && wait_started_at.elapsed() < Duration::from_millis(UI_PERF_ROUTE_GATE_TIMEOUT_MS)
+    {
+        glib::timeout_add_local_once(Duration::from_millis(UI_PERF_ROUTE_GATE_POLL_MS), move || {
+            begin_ui_perf_route_scroll(
+                shell,
+                app,
+                perf,
+                runs,
+                heartbeat,
+                route_name,
+                scenario,
+                wait_started_at,
+            );
+        });
+        return;
+    }
+
+    perf.begin_scroll(route_name.clone(), scenario);
+    let scroll_source = Rc::new(RefCell::new(None::<glib::SourceId>));
+    if let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) {
+        let direction = Rc::new(Cell::new(1.0_f64));
+        let jump_index = Rc::new(Cell::new(0_usize));
+        let perf_for_tick = Rc::clone(&perf);
+        let route_for_tick = route_name.clone();
+        let direction_for_tick = Rc::clone(&direction);
+        let jump_index_for_tick = Rc::clone(&jump_index);
+        let id = glib::timeout_add_local(Duration::from_millis(16), move || {
+            let adjustment = scroller.vadjustment();
+            let page_size = adjustment.page_size().max(1.0);
+            let max_value = (adjustment.upper() - page_size).max(0.0);
+            if max_value > 1.0 {
+                let next = ui_perf_next_scroll_value(
+                    scenario,
+                    &adjustment,
+                    max_value,
+                    &direction_for_tick,
+                    &jump_index_for_tick,
+                );
+                adjustment.set_value(next);
+                perf_for_tick.record_scroll_step(&route_for_tick, next, max_value);
+            }
+            glib::ControlFlow::Continue
+        });
+        *scroll_source.borrow_mut() = Some(id);
+    } else {
+        perf.record_scroll_note(&route_name, "no_scrolled_window");
+    }
+
+    glib::timeout_add_local_once(Duration::from_millis(perf.options.route_ms), move || {
+        if let Some(source) = scroll_source.borrow_mut().take() {
+            source.remove();
+        }
+        perf.finish_scroll();
+        run_next_ui_perf_route(shell, app, perf, runs, heartbeat);
+    });
+}
+fn route_cover_gate_active_for_current_route(shell: &Shell) -> bool {
+    let route_key = match shell.state.routes.borrow().current() {
+        Route::Tracks => "tracks",
+        Route::Albums => "albums",
+        Route::Artists => "artists",
+        Route::AlbumArtists => "album_artists",
+        _ => return false,
+    };
+    shell
+        .state
+        .route_cover_gate_started
+        .borrow()
+        .contains_key(route_key)
+        && !shell
+            .state
+            .route_cover_gate_timed_out
+            .borrow()
+            .contains(route_key)
+}
+fn reset_ui_perf_route_scroll_position(shell: &Shell) {
+    if let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) {
+        scroller.vadjustment().set_value(0.0);
+    }
 }
 fn finish_ui_perf_run(perf: Rc<UiPerfMonitor>, app: adw::Application) {
     let failed = write_ui_perf_report(&perf, true);
@@ -724,9 +804,64 @@ fn write_ui_perf_report(perf: &UiPerfMonitor, print_stdout: bool) -> bool {
     }
     perf.failed()
 }
-fn ui_perf_routes(shell: &Shell) -> Vec<Route> {
+fn ui_perf_plan_summary(plan: &VecDeque<(Route, UiPerfScenario)>) -> String {
+    let mut summary = String::new();
+    for (index, (route, scenario)) in plan.iter().enumerate() {
+        if index > 0 {
+            summary.push_str(" -> ");
+        }
+        let _ = write!(
+            summary,
+            "{}:{route:?}:{}",
+            index + 1,
+            scenario.name()
+        );
+    }
+    summary
+}
+fn ui_perf_critical_plan(shell: &Shell) -> Vec<(Route, UiPerfScenario)> {
+    let mut runs = vec![
+        (Route::Tracks, UiPerfScenario::HumanScroll),
+        (Route::Tracks, UiPerfScenario::FastScroll),
+        (Route::Tracks, UiPerfScenario::FullSweep),
+        (Route::Tracks, UiPerfScenario::DragSweep),
+        (Route::Albums, UiPerfScenario::HumanScroll),
+        (Route::Albums, UiPerfScenario::FastScroll),
+        (Route::Albums, UiPerfScenario::DragSweep),
+        (Route::Tracks, UiPerfScenario::HumanScroll),
+        (Route::Albums, UiPerfScenario::HumanScroll),
+    ];
+    let album_id = {
+        let library = shell.state.library.borrow();
+        library
+            .albums
+            .iter()
+            .find(|album| album.image_ref.is_some())
+            .or_else(|| library.albums.first())
+            .map(|album| album.id.clone())
+    };
+    if let Some(album_id) = album_id {
+        runs.push((
+            Route::AlbumDetail(album_id),
+            UiPerfScenario::HumanScroll,
+        ));
+    }
+    runs
+}
+fn ui_perf_broad_routes(shell: &Shell) -> Vec<Route> {
     let library = shell.state.library.borrow();
-    let mut routes = vec![Route::Home, Route::Albums];
+    let settings = shell.state.settings.borrow().clone();
+    let artists_visible = sidebar_route_visible(&settings, SidebarRouteItem::Artists);
+    let album_artists_visible = sidebar_route_visible(&settings, SidebarRouteItem::AlbumArtists);
+    let genres_visible = sidebar_route_visible(&settings, SidebarRouteItem::Genres);
+    let playlists_visible = sidebar_route_visible(&settings, SidebarRouteItem::Playlists);
+    let mut routes = Vec::new();
+    if artists_visible {
+        routes.push(Route::Artists);
+    }
+    if sidebar_route_visible(&settings, SidebarRouteItem::Favorites) {
+        routes.push(Route::Favorites);
+    }
     let image_album = library
         .albums
         .iter()
@@ -743,50 +878,44 @@ fn ui_perf_routes(shell: &Shell) -> Vec<Route> {
     {
         routes.push(Route::AlbumDetail(album.id.clone()));
     }
-    routes.push(Route::Favorites);
-    routes.push(Route::Artists);
-    let image_artist = library
-        .artists
-        .iter()
-        .find(|artist| artist.image_ref.is_some())
-        .or_else(|| library.artists.first());
-    if let Some(artist) = image_artist {
-        routes.push(Route::ArtistDetail(artist.id.clone()));
+    if sidebar_route_visible(&settings, SidebarRouteItem::Favorites) {
+        routes.push(Route::Favorites);
     }
-    if let Some(artist) = library
-        .artists
-        .iter()
-        .find(|artist| artist.image_ref.is_none())
-        .filter(|artist| image_artist.is_none_or(|image_artist| image_artist.id != artist.id))
-    {
-        routes.push(Route::ArtistDetail(artist.id.clone()));
+    if artists_visible {
+        routes.push(Route::Artists);
+        let image_artist = library
+            .artists
+            .iter()
+            .find(|artist| artist.image_ref.is_some())
+            .or_else(|| library.artists.first());
+        if let Some(artist) = image_artist {
+            routes.push(Route::ArtistDetail(artist.id.clone()));
+        }
+        if let Some(artist) = library
+            .artists
+            .iter()
+            .find(|artist| artist.image_ref.is_none())
+            .filter(|artist| image_artist.is_none_or(|image_artist| image_artist.id != artist.id))
+        {
+            routes.push(Route::ArtistDetail(artist.id.clone()));
+        }
     }
-    routes.push(Route::AlbumArtists);
-    if let Some(artist) = library
-        .album_artists
-        .iter()
-        .find(|artist| artist.image_ref.is_some())
-        .or_else(|| library.album_artists.first())
-    {
-        routes.push(Route::ArtistDetail(artist.id.clone()));
+    if album_artists_visible {
+        routes.push(Route::AlbumArtists);
+        if let Some(artist) = library
+            .album_artists
+            .iter()
+            .find(|artist| artist.image_ref.is_some())
+            .or_else(|| library.album_artists.first())
+        {
+            routes.push(Route::ArtistDetail(artist.id.clone()));
+        }
     }
-    routes.push(Route::Genres);
-    if let Some(genre) = library
-        .genres
-        .iter()
-        .find(|genre| genre.image_ref.is_some())
-        .or_else(|| library.genres.first())
-    {
-        routes.push(Route::GenreDetail(genre.id.clone()));
+    if genres_visible {
+        routes.push(Route::Genres);
     }
-    routes.push(Route::Playlists);
-    if let Some(playlist) = library
-        .playlists
-        .iter()
-        .find(|playlist| playlist.image_ref.is_some())
-        .or_else(|| library.playlists.first())
-    {
-        routes.push(Route::PlaylistDetail(playlist.id.clone()));
+    if playlists_visible {
+        routes.push(Route::Playlists);
     }
     let search_query = library
         .albums
@@ -798,23 +927,37 @@ fn ui_perf_routes(shell: &Shell) -> Vec<Route> {
         query: search_query,
         kind: SearchKind::All,
     });
-    routes.extend([Route::Tracks, Route::Albums, Route::Tracks, Route::Albums]);
+    routes.push(Route::Home);
     routes
 }
-fn ui_perf_plan(
-    routes: Vec<Route>,
+fn ui_perf_plan(shell: &Shell, duration_ms: u64, route_ms: u64) -> VecDeque<(Route, UiPerfScenario)> {
+    ui_perf_take_plan(
+        ui_perf_critical_plan(shell),
+        ui_perf_broad_routes(shell),
+        duration_ms,
+        route_ms,
+    )
+}
+fn ui_perf_take_plan(
+    mut critical: Vec<(Route, UiPerfScenario)>,
+    broad_routes: Vec<Route>,
     duration_ms: u64,
     route_ms: u64,
 ) -> VecDeque<(Route, UiPerfScenario)> {
-    let base = routes
-        .into_iter()
-        .flat_map(|route| {
-            UiPerfScenario::ALL
-                .into_iter()
-                .map(move |scenario| (route.clone(), scenario))
-        })
-        .collect::<Vec<_>>();
+    critical.extend(
+        broad_routes
+            .into_iter()
+            .map(|route| (route, UiPerfScenario::HumanScroll)),
+    );
+    if critical.is_empty() {
+        critical.push((Route::Home, UiPerfScenario::HumanScroll));
+    }
     let run_ms = route_ms.saturating_add(140).max(1);
-    let needed = ((duration_ms.saturating_add(run_ms - 1)) / run_ms).max(base.len() as u64);
-    base.iter().cloned().cycle().take(needed as usize).collect()
+    let needed = ((duration_ms.saturating_add(run_ms - 1)) / run_ms).max(1);
+    critical
+        .iter()
+        .cloned()
+        .cycle()
+        .take(needed as usize)
+        .collect()
 }

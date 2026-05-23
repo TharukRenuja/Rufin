@@ -386,12 +386,14 @@ impl Shell {
     ) -> gtk::Widget {
         let tile = ArtworkTile::new_sized(width, height, seed);
         let widget = tile.widget();
-        let decode_size = width.max(height);
+        let decode_size = cover_decode_size(width.max(height), fetch_size);
 
         if let Some(image_ref) = image_ref
             && let Some(key) = self.cover_cache_key(image_ref, fetch_size)
         {
-            if let Some((cache_key, pixbuf)) = self.decoded_cover_for_ref(image_ref, fetch_size) {
+            if let Some((cache_key, pixbuf)) =
+                self.decoded_cover_for_ref(image_ref, fetch_size, decode_size)
+            {
                 self.record_perf_cover_cache_hit(&cache_key);
                 tile.set_pixbuf_if_current(tile.generation(), pixbuf);
             } else {
@@ -416,6 +418,38 @@ impl Shell {
             self.record_perf_coverless_tile();
         }
         widget
+    }
+    fn prime_cover_ref_from_cache_now(
+        &self,
+        image_ref: Option<&ImageRef>,
+        fetch_size: u32,
+        size: i32,
+    ) {
+        let Some(image_ref) = image_ref else {
+            return;
+        };
+        let decode_size = cover_decode_size(size, fetch_size);
+        if self
+            .decoded_cover_for_ref(image_ref, fetch_size, decode_size)
+            .is_some()
+        {
+            return;
+        }
+        let Some((key, path)) = self.cached_cover_path_for_startup_prime(image_ref, fetch_size)
+        else {
+            return;
+        };
+        if self.decoded_cover_has_min_size(&key, decode_size) {
+            return;
+        }
+        match Pixbuf::from_file_at_scale(&path, decode_size, decode_size, true) {
+            Ok(pixbuf) => {
+                self.remember_decoded_cover(key, pixbuf);
+            }
+            Err(error) => {
+                debug!(%error, path = %path.display(), "failed to prime cached cover");
+            }
+        }
     }
     fn cover_group_tile_for(
         self: &Rc<Self>,
@@ -491,7 +525,10 @@ impl Shell {
         size: i32,
         fetch_size: u32,
     ) {
-        if let Some((cache_key, pixbuf)) = self.decoded_cover_for_ref(&image_ref, fetch_size) {
+        let decode_size = cover_decode_size(size, fetch_size);
+        if let Some((cache_key, pixbuf)) =
+            self.decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
+        {
             self.record_perf_cover_cache_hit(&cache_key);
             tile.set_pixbuf_if_current(tile.generation(), pixbuf);
             return;
@@ -514,14 +551,21 @@ impl Shell {
             let shell = Rc::clone(self);
             glib::idle_add_local_once(move || {
                 shell.record_perf_cover_ready(&key);
-                shell.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
+                shell.start_cover_decode_from_path(
+                    key,
+                    path,
+                    decode_size,
+                    CoverDecodePriority::Visible,
+                );
             });
         } else {
-            self.controller
-                .request_cover_for_key(key, image_ref, fetch_size);
+            self.state.cover_bindings.borrow_mut().remove(&key);
+            self.record_perf_cover_stale_key(&key);
+            self.record_perf_coverless_tile();
         }
     }
     fn warm_cover_refs(self: &Rc<Self>, image_refs: Vec<ImageRef>, fetch_size: u32, size: i32) {
+        let decode_size = cover_decode_size(size, fetch_size);
         let generation = self.next_cover_warm_generation();
         let mut seen = HashSet::new();
         let mut jobs = VecDeque::new();
@@ -531,7 +575,9 @@ impl Shell {
                 continue;
             };
             if !seen.insert(key.clone())
-                || self.decoded_cover_for_ref(&image_ref, fetch_size).is_some()
+                || self
+                    .decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
+                    .is_some()
             {
                 continue;
             }
@@ -542,7 +588,45 @@ impl Shell {
             return;
         }
 
-        self.schedule_cover_warm_jobs(Rc::new(RefCell::new(jobs)), fetch_size, size, generation);
+        self.schedule_cover_warm_jobs(
+            Rc::new(RefCell::new(jobs)),
+            fetch_size,
+            decode_size,
+            generation,
+            COVER_WARM_INITIAL_DELAY_MS,
+        );
+    }
+    fn warm_cover_refs_now(self: &Rc<Self>, image_refs: Vec<ImageRef>, fetch_size: u32, size: i32) {
+        let decode_size = cover_decode_size(size, fetch_size);
+        let generation = self.next_cover_warm_generation();
+        let mut seen = HashSet::new();
+        let mut jobs = VecDeque::new();
+
+        for image_ref in image_refs {
+            let Some(key) = self.cover_cache_key(&image_ref, fetch_size) else {
+                continue;
+            };
+            if !seen.insert(key.clone())
+                || self
+                    .decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
+                    .is_some()
+            {
+                continue;
+            }
+            jobs.push_back((key, image_ref));
+        }
+
+        if jobs.is_empty() {
+            return;
+        }
+
+        self.schedule_cover_warm_jobs(
+            Rc::new(RefCell::new(jobs)),
+            fetch_size,
+            decode_size,
+            generation,
+            0,
+        );
     }
     fn schedule_startup_cover_warm(self: &Rc<Self>) {
         let generation = self
@@ -569,30 +653,14 @@ impl Shell {
             },
         );
     }
+    fn cancel_startup_cover_warm(&self) {
+        self.state
+            .startup_cover_warm_generation
+            .set(self.state.startup_cover_warm_generation.get().saturating_add(1));
+        self.cancel_queued_warm_cover_decodes();
+    }
     fn startup_cover_warm_jobs(&self) -> VecDeque<StartupCoverWarmJob> {
-        let image_refs = startup_library_cover_refs(&self.state.library.borrow());
-        let mut seen = HashSet::new();
-        let mut jobs = VecDeque::new();
-
-        for image_ref in image_refs {
-            let fetch_size = GRID_COVER_SIZE;
-            let Some(key) = self.cover_cache_key(&image_ref, fetch_size) else {
-                continue;
-            };
-            if !seen.insert(key.clone())
-                || self.decoded_cover_for_ref(&image_ref, fetch_size).is_some()
-            {
-                continue;
-            }
-            jobs.push_back(StartupCoverWarmJob {
-                key,
-                image_ref,
-                fetch_size,
-                size: GRID_COVER_SIZE as i32,
-            });
-        }
-
-        jobs
+        startup_cover_background_jobs(self).into_iter().collect()
     }
     fn start_startup_cover_warm_jobs(
         self: &Rc<Self>,
@@ -609,6 +677,9 @@ impl Shell {
                 if jobs.borrow().is_empty() {
                     return glib::ControlFlow::Break;
                 }
+                if shell.cover_warm_is_paused() {
+                    return glib::ControlFlow::Continue;
+                }
 
                 let in_flight = shell.state.cover_decodes.borrow().len();
                 if in_flight >= COVER_WARM_MAX_IN_FLIGHT {
@@ -623,7 +694,7 @@ impl Shell {
                     };
                     processed += 1;
                     if shell
-                        .decoded_cover_for_ref(&job.image_ref, job.fetch_size)
+                        .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
                         .is_some()
                         || shell.state.cover_decodes.borrow().contains(&job.key)
                     {
@@ -659,6 +730,22 @@ impl Shell {
         self.state
             .cover_warm_generation
             .set(self.state.cover_warm_generation.get().saturating_add(1));
+        self.cancel_queued_warm_cover_decodes();
+    }
+    fn pause_cover_warm_for_interaction(&self) {
+        self.state.cover_warm_paused_until.set(Some(
+            Instant::now() + Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
+        ));
+    }
+    fn cover_warm_is_paused(&self) -> bool {
+        let Some(until) = self.state.cover_warm_paused_until.get() else {
+            return false;
+        };
+        if Instant::now() < until {
+            return true;
+        }
+        self.state.cover_warm_paused_until.set(None);
+        false
     }
     fn schedule_cover_warm_jobs(
         self: &Rc<Self>,
@@ -666,10 +753,20 @@ impl Shell {
         fetch_size: u32,
         size: i32,
         generation: u64,
+        initial_delay_ms: u64,
     ) {
         let shell = Rc::clone(self);
+        if initial_delay_ms == 0 {
+            glib::idle_add_local_once(move || {
+                if shell.state.cover_warm_generation.get() == generation {
+                    shell.start_cover_warm_jobs(jobs, fetch_size, size, generation);
+                }
+            });
+            return;
+        }
+
         glib::timeout_add_local_once(
-            Duration::from_millis(COVER_WARM_INITIAL_DELAY_MS),
+            Duration::from_millis(initial_delay_ms),
             move || {
                 if shell.state.cover_warm_generation.get() == generation {
                     shell.start_cover_warm_jobs(jobs, fetch_size, size, generation);
@@ -692,6 +789,9 @@ impl Shell {
             if jobs.borrow().is_empty() {
                 return glib::ControlFlow::Break;
             }
+            if shell.cover_warm_is_paused() {
+                return glib::ControlFlow::Continue;
+            }
 
             let in_flight = shell.state.cover_decodes.borrow().len();
             if in_flight >= COVER_WARM_MAX_IN_FLIGHT {
@@ -705,7 +805,7 @@ impl Shell {
                     break;
                 };
                 processed += 1;
-                if shell.state.decoded_covers.borrow().contains_key(&key)
+                if shell.decoded_cover_has_min_size(&key, size)
                     || shell.state.cover_decodes.borrow().contains(&key)
                 {
                     continue;
@@ -743,13 +843,16 @@ impl Shell {
         &self,
         image_ref: &ImageRef,
         preferred_size: u32,
+        min_size: i32,
     ) -> Option<(String, Pixbuf)> {
         for size in decoded_cover_candidate_sizes(preferred_size) {
             let Some(key) = self.cover_cache_key(image_ref, size) else {
                 continue;
             };
-            if let Some(pixbuf) = self.state.decoded_covers.borrow().get(&key).cloned() {
-                return Some((key, pixbuf));
+            if let Some(cover) = self.state.decoded_covers.borrow().get(&key).cloned()
+                && cover.size >= min_size
+            {
+                return Some((key, cover.pixbuf));
             }
         }
         None
@@ -759,9 +862,11 @@ impl Shell {
         let size = self
             .pending_cover_size(key)
             .unwrap_or(GRID_COVER_SIZE as i32);
-        if let Some(pixbuf) = self.state.decoded_covers.borrow().get(key).cloned() {
+        if let Some(cover) = self.state.decoded_covers.borrow().get(key).cloned()
+            && cover.size >= size
+        {
             let bindings = self.take_live_cover_bindings(key);
-            apply_pixbuf_to_bindings(bindings, pixbuf);
+            apply_pixbuf_to_bindings(bindings, cover.pixbuf);
             return;
         }
         self.start_cover_decode_from_path(
@@ -778,7 +883,7 @@ impl Shell {
         size: i32,
         priority: CoverDecodePriority,
     ) {
-        if self.apply_decoded_cover_if_available(&key) {
+        if self.apply_decoded_cover_if_available(&key, size) {
             return;
         }
 
@@ -825,16 +930,23 @@ impl Shell {
 
         self.drain_cover_decode_queue();
     }
-    fn apply_decoded_cover_if_available(&self, key: &str) -> bool {
-        let Some(pixbuf) = self.state.decoded_covers.borrow().get(key).cloned() else {
+    fn apply_decoded_cover_if_available(&self, key: &str, min_size: i32) -> bool {
+        let Some(cover) = self.state.decoded_covers.borrow().get(key).cloned() else {
             return false;
         };
+        if cover.size < min_size {
+            return false;
+        }
+        self.state
+            .startup_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
         self.state
             .first_run_cover_prime_pending
             .borrow_mut()
             .remove(key);
         let bindings = self.take_live_cover_bindings(key);
-        apply_pixbuf_to_bindings(bindings, pixbuf);
+        apply_pixbuf_to_bindings(bindings, cover.pixbuf);
         true
     }
 }

@@ -53,6 +53,122 @@
         assert!(report.contains("RUFIN_PERF_SCROLL route=Albums scenario=manual"));
     }
     #[test]
+    fn ui_perf_plan_keeps_home_out_of_the_critical_window() {
+        let plan = super::ui_perf_take_plan(
+            vec![
+                (Route::Tracks, super::UiPerfScenario::HumanScroll),
+                (Route::Tracks, super::UiPerfScenario::FastScroll),
+                (Route::Albums, super::UiPerfScenario::HumanScroll),
+            ],
+            vec![Route::Artists, Route::Home],
+            2_000,
+            500,
+        );
+
+        let routes = plan
+            .iter()
+            .map(|(route, _)| route.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            routes,
+            vec![Route::Tracks, Route::Tracks, Route::Albums, Route::Artists]
+        );
+    }
+    #[test]
+    fn ui_perf_route_render_budget_is_not_the_scroll_gap_budget() {
+        let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
+            max_gap_ms: 120,
+            route_ms: 650,
+            duration_ms: 15_000,
+            asset_ms: 300,
+            require_assets: true,
+            terminal_events: false,
+            observe_scroll: false,
+            output: None,
+        });
+
+        monitor.record_route_render("Albums".to_string(), std::time::Duration::from_millis(300));
+        monitor.record_cover_cache_hit("cached-cover");
+
+        assert!(!monitor.failed());
+    }
+    #[test]
+    fn ui_perf_scroll_failure_allows_one_borderline_tick() {
+        let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
+            max_gap_ms: 120,
+            route_ms: 650,
+            duration_ms: 15_000,
+            asset_ms: 300,
+            require_assets: true,
+            terminal_events: false,
+            observe_scroll: false,
+            output: None,
+        });
+
+        monitor.record_cover_cache_hit("cached-cover");
+        monitor.inner.borrow_mut().route_scrolls.push(super::UiPerfRouteScroll {
+            route: "Tracks".to_string(),
+            scenario: "drag_sweep",
+            elapsed_ms: 500,
+            steps: 12,
+            max_gap_ms: 126,
+            over_budget_ticks: 1,
+            max_adjustment: 1_000.0,
+            min_value: 0.0,
+            max_value: 50.0,
+            covers_ready: 0,
+            decoded_covers: 0,
+        });
+        assert!(!monitor.failed());
+
+        monitor.inner.borrow_mut().route_scrolls.push(super::UiPerfRouteScroll {
+            route: "Tracks".to_string(),
+            scenario: "drag_sweep",
+            elapsed_ms: 500,
+            steps: 12,
+            max_gap_ms: 300,
+            over_budget_ticks: 1,
+            max_adjustment: 1_000.0,
+            min_value: 0.0,
+            max_value: 50.0,
+            covers_ready: 0,
+            decoded_covers: 0,
+        });
+        assert!(monitor.failed());
+    }
+    #[test]
+    fn ui_perf_scroll_failure_ignores_nearly_static_routes() {
+        let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
+            max_gap_ms: 120,
+            route_ms: 650,
+            duration_ms: 15_000,
+            asset_ms: 300,
+            require_assets: true,
+            terminal_events: false,
+            observe_scroll: false,
+            output: None,
+        });
+        let tiny_scroll = super::UiPerfRouteScroll {
+            route: "Playlists".to_string(),
+            scenario: "human_scroll",
+            elapsed_ms: 800,
+            steps: 0,
+            max_gap_ms: 650,
+            over_budget_ticks: 3,
+            max_adjustment: 97.0,
+            min_value: 0.0,
+            max_value: 97.0,
+            covers_ready: 0,
+            decoded_covers: 0,
+        };
+        assert!(!monitor.scroll_sample_failed(&tiny_scroll));
+        let meaningful_scroll = super::UiPerfRouteScroll {
+            max_adjustment: 1_000.0,
+            ..tiny_scroll
+        };
+        assert!(monitor.scroll_sample_failed(&meaningful_scroll));
+    }
+    #[test]
     fn queue_lyrics_position_clamps_to_available_height() {
         assert_eq!(clamp_queue_lyrics_position(800, 1701), 500);
         assert_eq!(clamp_queue_lyrics_position(800, 10), 120);

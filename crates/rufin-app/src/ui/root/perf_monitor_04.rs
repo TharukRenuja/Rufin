@@ -7,7 +7,11 @@ impl Shell {
             let Some(job) = self.state.cover_decode_queue.borrow_mut().pop_front() else {
                 break;
             };
-            if self.apply_decoded_cover_if_available(&job.key) {
+            if job.priority == CoverDecodePriority::Warm && self.cover_warm_is_paused() {
+                self.state.cover_decode_queue.borrow_mut().push_front(job);
+                break;
+            }
+            if self.apply_decoded_cover_if_available(&job.key, job.size) {
                 continue;
             }
             if !self
@@ -34,7 +38,7 @@ impl Shell {
                 Ok(pixbuf) => {
                     shell.finish_cover_decode(&key);
                     shell.record_perf_cover_decode_ok(&key);
-                    shell.remember_decoded_cover(key.clone(), pixbuf.clone());
+                    let pixbuf = shell.remember_decoded_cover(key.clone(), pixbuf);
                     let bindings = shell.take_live_cover_bindings(&key);
                     apply_pixbuf_to_bindings(bindings, pixbuf);
                 }
@@ -55,9 +59,19 @@ impl Shell {
     fn finish_cover_decode(&self, key: &str) {
         self.state.cover_decodes.borrow_mut().remove(key);
         self.state
+            .startup_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
+        self.state
             .first_run_cover_prime_pending
             .borrow_mut()
             .remove(key);
+    }
+    fn cancel_queued_warm_cover_decodes(&self) {
+        self.state
+            .cover_decode_queue
+            .borrow_mut()
+            .retain(|job| job.priority != CoverDecodePriority::Warm);
     }
     fn pending_cover_size(&self, key: &str) -> Option<i32> {
         self.state
@@ -66,6 +80,7 @@ impl Shell {
             .get(key)
             .and_then(|bindings| bindings.first())
             .map(|binding| binding.tile.size())
+            .or_else(|| cover_size_from_cache_key(key))
     }
     fn take_live_cover_bindings(&self, key: &str) -> Vec<CoverBinding> {
         let Some(bindings) = self.state.cover_bindings.borrow_mut().remove(key) else {
@@ -91,15 +106,27 @@ impl Shell {
         }
         live
     }
-    fn remember_decoded_cover(&self, key: String, pixbuf: Pixbuf) {
+    fn remember_decoded_cover(&self, key: String, pixbuf: Pixbuf) -> Pixbuf {
+        let size = pixbuf.width().min(pixbuf.height()).max(1);
         let mut covers = self.state.decoded_covers.borrow_mut();
+        if let Some(existing) = covers.get(&key)
+            && existing.size >= size
+        {
+            return existing.pixbuf.clone();
+        }
         if !covers.contains_key(&key) {
             self.state
                 .decoded_cover_order
                 .borrow_mut()
                 .push_back(key.clone());
         }
-        covers.insert(key, pixbuf);
+        covers.insert(
+            key,
+            DecodedCover {
+                pixbuf: pixbuf.clone(),
+                size,
+            },
+        );
         let mut order = self.state.decoded_cover_order.borrow_mut();
         while covers.len() > DECODED_COVER_CACHE_LIMIT {
             let Some(oldest) = order.pop_front() else {
@@ -107,6 +134,14 @@ impl Shell {
             };
             covers.remove(&oldest);
         }
+        pixbuf
+    }
+    fn decoded_cover_has_min_size(&self, key: &str, min_size: i32) -> bool {
+        self.state
+            .decoded_covers
+            .borrow()
+            .get(key)
+            .is_some_and(|cover| cover.size >= min_size)
     }
     fn record_perf_route_render(&self, route: String, elapsed: Duration) {
         if let Some(perf) = &self.state.perf {
@@ -276,4 +311,10 @@ impl Shell {
         popover.set_child(Some(&content));
         popover
     }
+}
+fn cover_size_from_cache_key(key: &str) -> Option<i32> {
+    key.rsplit('/')
+        .next()
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|size| *size > 0)
 }
