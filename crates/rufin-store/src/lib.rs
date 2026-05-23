@@ -1,9 +1,9 @@
 include!("store/types.rs");
-include!("store/schema_01.rs");
-include!("store/schema_02.rs");
-include!("store/schema_03.rs");
-include!("store/schema_04.rs");
-include!("store/schema_05.rs");
+include!("store/store_lifecycle_schema.rs");
+include!("store/library_cache_writes.rs");
+include!("store/library_cache_reads.rs");
+include!("store/library_auxiliary_cache.rs");
+include!("store/library_search_helpers.rs");
 include!("store/servers.rs");
 
 #[cfg(test)]
