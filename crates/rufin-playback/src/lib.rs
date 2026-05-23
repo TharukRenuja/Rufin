@@ -1,5 +1,6 @@
 include!("playback/types.rs");
 include!("playback/fake_backend.rs");
+include!("playback/gstreamer_backend.rs");
 
 #[cfg(test)]
 mod tests {

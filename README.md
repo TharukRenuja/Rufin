@@ -84,3 +84,31 @@ git clone https://github.com/screwys/Rufin.git
 cd Rufin
 cargo run -p rufin-app
 ```
+
+## Development
+
+Run the app locally with `cargo run -p rufin-app`
+
+Pass app flags after `--`, for example `cargo run -p rufin-app -- --ui-perf-observe`
+
+```text
+Usage: rufin [OPTIONS]
+```
+
+| Option | Usage |
+| --- | --- |
+| `--fake-scale <small\|large>` | Starts with a generated small or large fake library. |
+| `--ui-perf-run` | Runs the automated startup, route, scroll, and artwork performance pass, then exits. |
+| `--ui-perf-observe` | Records manual route reveal, scroll, and artwork performance while you use the app. |
+| `--clear-cache` | Clears the active server cache and exits. |
+| `--forget-active-server` | Removes the active server state and exits. |
+| `-h`, `--help` | Prints command-line help. |
+
+Common checks before sending changes:
+
+```bash
+cargo fmt --check
+cargo test --workspace
+```
+
+UI perf reports default to `.local/perf/rufin-ui-perf-<pid>.log` for `--ui-perf-run` and `.local/perf/rufin-ui-observe-<pid>.log` for `--ui-perf-observe`.
