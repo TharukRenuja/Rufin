@@ -23,7 +23,6 @@
     "--filesystem=xdg-music",
     "--filesystem=xdg-run/discord-ipc-0",
     "--filesystem=xdg-run/app/com.discordapp.Discord:create",
-    "--own-name=org.mpris.MediaPlayer2.io.github.screwys.Rufin",
     "--talk-name=org.freedesktop.secrets"
   ],
   "modules": [
