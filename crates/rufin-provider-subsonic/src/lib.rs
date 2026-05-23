@@ -4,5 +4,5 @@ include!("root/provider_impl.rs");
 
 #[cfg(test)]
 mod tests {
-    include!("root/tests_01.rs");
+    include!("root/tests.rs");
 }

@@ -8,7 +8,7 @@ include!("store/servers.rs");
 
 #[cfg(test)]
 mod tests {
-    include!("store/tests_01.rs");
-    include!("store/tests_02.rs");
-    include!("store/tests_03.rs");
+    include!("store/schema_cache_tests.rs");
+    include!("store/library_relationship_tests.rs");
+    include!("store/sync_search_cover_tests.rs");
 }

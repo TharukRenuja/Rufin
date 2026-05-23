@@ -8,6 +8,6 @@ include!("root/provider_impl.rs");
 
 #[cfg(test)]
 mod tests {
-    include!("root/tests_01.rs");
-    include!("root/tests_02.rs");
+    include!("root/library_api_tests.rs");
+    include!("root/lyrics_playback_tests.rs");
 }

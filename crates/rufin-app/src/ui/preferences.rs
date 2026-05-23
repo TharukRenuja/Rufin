@@ -7,5 +7,5 @@ include!("preferences/root/layout.rs");
 
 #[cfg(test)]
 mod tests {
-    include!("preferences/root/tests_01.rs");
+    include!("preferences/root/reorder_tests.rs");
 }

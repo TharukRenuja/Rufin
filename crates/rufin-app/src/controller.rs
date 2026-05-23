@@ -36,8 +36,8 @@ include!("controller/root/playback_queue.rs");
 
 #[cfg(test)]
 mod tests {
-    include!("controller/root/tests_01.rs");
-    include!("controller/root/tests_02.rs");
-    include!("controller/root/tests_03.rs");
-    include!("controller/root/tests_04.rs");
+    include!("controller/root/test_support.rs");
+    include!("controller/root/startup_sync_tests.rs");
+    include!("controller/root/cover_playback_tests.rs");
+    include!("controller/root/lyrics_local_access_tests.rs");
 }

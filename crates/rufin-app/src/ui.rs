@@ -83,5 +83,5 @@ include!("ui/root/layout_rendering.rs");
 
 #[cfg(test)]
 mod tests {
-    include!("ui/root/tests_01.rs");
+    include!("ui/root/shell_tests.rs");
 }
