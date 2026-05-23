@@ -1,0 +1,228 @@
+impl Shell {
+    fn playlist_detail_view(self: &Rc<Self>, playlist_id: PlaylistId) -> gtk::Widget {
+        let detail = self
+            .controller
+            .cached_playlist_detail(&playlist_id)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                let library = self.state.library.borrow();
+                let playlist = library
+                    .playlists
+                    .iter()
+                    .find(|playlist| playlist.id.as_str() == playlist_id.as_str())
+                    .cloned()?;
+                Some(rufin_provider::PlaylistDetail {
+                    playlist,
+                    tracks: Vec::new(),
+                    entries: Vec::new(),
+                })
+            });
+        let Some(detail) = detail else {
+            return self
+                .placeholder_view("Playlist", "The selected cached playlist was not found.");
+        };
+        let seed = stable_seed(detail.playlist.id.as_str());
+        let cover_refs = track_cover_refs_for_items(&detail.tracks);
+        let summary = format!(
+            "{} {} • {}",
+            detail.playlist.track_count,
+            tr("tracks"),
+            format_duration(detail.playlist.duration_seconds)
+        );
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_min_content_width(0);
+        scroller.set_vexpand(true);
+
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 20);
+        wrapper.add_css_class("route-content");
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_margin_top(28);
+        wrapper.set_margin_bottom(36);
+        wrapper.set_margin_start(32);
+        wrapper.set_margin_end(32);
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
+        header.append(&self.cover_group_tile_for(
+            cover_refs,
+            detail.playlist.image_ref.as_ref(),
+            seed,
+            160,
+            DETAIL_COVER_SIZE,
+        ));
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        metadata.set_valign(gtk::Align::Center);
+        let title = gtk::Label::new(Some(&detail.playlist.name));
+        title.add_css_class("detail-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        let summary = gtk::Label::new(Some(&summary));
+        summary.add_css_class("muted");
+        summary.set_xalign(0.0);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let play = text_button("media-playback-start-symbolic", "Play");
+        let controller = self.controller.clone();
+        let tracks = detail.tracks.clone();
+        play.connect_clicked(move |_| controller.play_tracks_now(tracks.clone()));
+        actions.append(&play);
+        let rename = text_button("document-edit-symbolic", "Rename");
+        let shell = Rc::clone(self);
+        let playlist_id_for_rename = detail.playlist.id.clone();
+        let current_name = detail.playlist.name.clone();
+        rename.connect_clicked(move |_| {
+            shell.rename_playlist_dialog(playlist_id_for_rename.clone(), current_name.clone())
+        });
+        actions.append(&rename);
+        let add_current = text_button("list-add-symbolic", "Add current");
+        let current_track = self
+            .state
+            .player
+            .borrow()
+            .current
+            .as_ref()
+            .and_then(|entry| {
+                self.state
+                    .library
+                    .borrow()
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == entry.track_id)
+                    .cloned()
+            });
+        add_current.set_sensitive(current_track.is_some());
+        let controller = self.controller.clone();
+        let playlist_id_for_add = detail.playlist.id.clone();
+        add_current.connect_clicked(move |_| {
+            if let Some(track) = current_track.clone() {
+                controller.add_tracks_to_playlist(playlist_id_for_add.clone(), vec![track]);
+            }
+        });
+        actions.append(&add_current);
+        metadata.append(&title);
+        metadata.append(&summary);
+        metadata.append(&actions);
+        header.append(&metadata);
+        wrapper.append(&header);
+
+        if detail.entries.is_empty() {
+            wrapper
+                .append(&self.placeholder_view("Tracks", "No cached tracks are linked here yet."));
+        } else {
+            wrapper.append(&self.playlist_entries_view(&detail));
+        }
+        scroller.set_child(Some(&wrapper));
+        scroller.upcast()
+    }
+    fn playlist_entries_view(
+        self: &Rc<Self>,
+        detail: &rufin_provider::PlaylistDetail,
+    ) -> gtk::Widget {
+        let entries = Rc::new(detail.entries.clone());
+        let state = Rc::new(RefCell::new(PlaylistEntryListState::default()));
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
+
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        toolbar.add_css_class("track-toolbar");
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        toolbar.append(&search);
+
+        let sort_titles = PLAYLIST_ENTRY_SORTS
+            .iter()
+            .map(|sort| tr(sort.title()))
+            .collect::<Vec<_>>();
+        let sort_refs = sort_titles.iter().map(String::as_str).collect::<Vec<_>>();
+        let sort_options = gtk::StringList::new(&sort_refs);
+        let sort_dropdown = gtk::DropDown::new(Some(sort_options), None::<gtk::Expression>);
+        toolbar.append(&sort_dropdown);
+
+        let direction = gtk::Button::from_icon_name("view-sort-ascending-symbolic");
+        direction.add_css_class("flat");
+        direction.set_tooltip_text(Some(&tr("Change sort order")));
+        toolbar.append(&direction);
+        wrapper.append(&toolbar);
+
+        wrapper.append(&playlist_entries_header_row());
+
+        let list = gtk::ListBox::new();
+        list.add_css_class("track-table");
+        list.add_css_class("playlist-entry-list");
+        list.set_hexpand(true);
+        list.set_halign(gtk::Align::Fill);
+        list.set_selection_mode(gtk::SelectionMode::None);
+
+        rebuild_playlist_entries_list(self, &list, &entries, &state.borrow(), &detail.playlist.id);
+
+        {
+            let shell = Rc::clone(self);
+            let list = list.clone();
+            let entries = Rc::clone(&entries);
+            let state = Rc::clone(&state);
+            let playlist_id = detail.playlist.id.clone();
+            search.connect_search_changed(move |entry| {
+                state.borrow_mut().query = entry.text().trim().to_string();
+                rebuild_playlist_entries_list(
+                    &shell,
+                    &list,
+                    &entries,
+                    &state.borrow(),
+                    &playlist_id,
+                );
+            });
+        }
+        {
+            let shell = Rc::clone(self);
+            let list = list.clone();
+            let entries = Rc::clone(&entries);
+            let state = Rc::clone(&state);
+            let playlist_id = detail.playlist.id.clone();
+            sort_dropdown.connect_selected_notify(move |dropdown| {
+                let selected = PLAYLIST_ENTRY_SORTS
+                    .get(dropdown.selected() as usize)
+                    .copied()
+                    .unwrap_or(PlaylistEntrySort::Order);
+                state.borrow_mut().sort = selected;
+                rebuild_playlist_entries_list(
+                    &shell,
+                    &list,
+                    &entries,
+                    &state.borrow(),
+                    &playlist_id,
+                );
+            });
+        }
+        {
+            let shell = Rc::clone(self);
+            let list = list.clone();
+            let entries = Rc::clone(&entries);
+            let state = Rc::clone(&state);
+            let playlist_id = detail.playlist.id.clone();
+            direction.connect_clicked(move |button| {
+                let descending = {
+                    let mut state = state.borrow_mut();
+                    state.descending = !state.descending;
+                    state.descending
+                };
+                button.set_icon_name(if descending {
+                    "view-sort-descending-symbolic"
+                } else {
+                    "view-sort-ascending-symbolic"
+                });
+                rebuild_playlist_entries_list(
+                    &shell,
+                    &list,
+                    &entries,
+                    &state.borrow(),
+                    &playlist_id,
+                );
+            });
+        }
+        wrapper.append(&list);
+        wrapper.upcast()
+    }
+}
