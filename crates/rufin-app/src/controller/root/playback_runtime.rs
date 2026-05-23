@@ -1,0 +1,134 @@
+impl AppController {
+    fn send_playback_command(&self, command: PlaybackCommand) -> Result<(), String> {
+        self.playback
+            .lock()
+            .map_err(|_| "playback lock was poisoned".to_string())?
+            .send(command)
+            .map_err(|error| error.to_string())
+    }
+    fn persist_playback_settings(&self, update: impl FnOnce(&mut PlaybackSettings)) {
+        let mut settings = self.load_settings();
+        update(&mut settings.playback);
+        settings.playback.sanitize();
+        if let Err(error) = self.save_settings(&settings) {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+    }
+    fn start_current_track(&self) {
+        let Some((server_id, entry, next_entry, position_seconds, playback_settings)) =
+            self.current_playback_request()
+        else {
+            let _sent = self
+                .events
+                .send(ControllerEvent::Error("Queue is empty.".to_string()));
+            return;
+        };
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.current = Some(entry.clone());
+            snapshot.state = PlaybackState::Buffering;
+            snapshot.position_seconds = position_seconds;
+            snapshot.position_millis = u64::from(position_seconds) * 1_000;
+            snapshot.duration_seconds = entry.duration_seconds;
+            snapshot.last_error = None;
+        });
+        self.emit_playback_snapshot();
+        self.report_playback(PlaybackReportKind::Started, false);
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let playback = Arc::clone(&self.playback);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let item = match resolve_prepared_item(
+                &store,
+                &runtime,
+                &secrets,
+                &server_id,
+                &entry,
+                &playback_settings,
+            ) {
+                Ok(item) => item,
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            };
+            let next = next_entry.and_then(|entry| {
+                match resolve_prepared_item(
+                    &store,
+                    &runtime,
+                    &secrets,
+                    &server_id,
+                    &entry,
+                    &playback_settings,
+                ) {
+                    Ok(item) => Some(item),
+                    Err(error) => {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        None
+                    }
+                }
+            });
+            let command = PlaybackCommand::PlayPrepared {
+                item,
+                next,
+                start_position_seconds: position_seconds,
+                settings: playback_settings,
+            };
+            if let Err(error) = playback
+                .lock()
+                .map_err(|_| "playback lock was poisoned".to_string())
+                .and_then(|mut playback| playback.send(command).map_err(|error| error.to_string()))
+            {
+                if let Ok(mut snapshot) = playback_snapshot.lock() {
+                    snapshot.state = PlaybackState::Stopped;
+                    snapshot.last_error = Some(error.clone());
+                }
+                let _sent = events.send(ControllerEvent::Error(error));
+            }
+        });
+    }
+    fn current_queue_entry(&self) -> Option<(ServerId, QueueEntry, u32)> {
+        self.queue.lock().ok().and_then(|queue| {
+            let queue = queue.as_ref()?;
+            let snapshot = queue.snapshot();
+            let entry = queue.current()?.clone();
+            Some((snapshot.server_id, entry, snapshot.progress_seconds))
+        })
+    }
+    fn current_playback_request(
+        &self,
+    ) -> Option<(
+        ServerId,
+        QueueEntry,
+        Option<QueueEntry>,
+        u32,
+        PlaybackSettings,
+    )> {
+        let playback_settings = self.load_settings().playback;
+        self.queue.lock().ok().and_then(|queue| {
+            let queue = queue.as_ref()?;
+            let snapshot = queue.snapshot();
+            let entry = queue.current()?.clone();
+            let next = next_queue_entry_after_current(queue);
+            Some((
+                snapshot.server_id,
+                entry,
+                next,
+                snapshot.progress_seconds,
+                playback_settings,
+            ))
+        })
+    }
+    fn prepare_next_stream(&self) {
+        prepare_next_stream_from_handles(
+            self.store.clone(),
+            Arc::clone(&self.runtime),
+            Arc::clone(&self.secrets),
+            Arc::clone(&self.playback),
+            Arc::clone(&self.queue),
+            self.events.clone(),
+        );
+    }
+}
