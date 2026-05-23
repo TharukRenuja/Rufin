@@ -50,16 +50,23 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let lastfm_api_shell = Rc::clone(shell);
     lastfm_api_key.connect_apply(move |row| {
         let api_key = row.text().trim().to_string();
-        lastfm_api_shell.update_app_settings("Last.fm API key setting", |settings| {
-            if settings.lastfm_api_key == api_key && settings.scrobbling.lastfm.api_key == api_key {
-                return false;
-            }
-            settings.lastfm_api_key = api_key.clone();
-            settings.scrobbling.lastfm.api_key = api_key;
-            settings.scrobbling.lastfm.session_key.clear();
-            settings.scrobbling.lastfm.username.clear();
-            true
-        });
+        if lastfm_api_shell
+            .update_app_settings("Last.fm API key setting", |settings| {
+                if settings.lastfm_api_key == api_key
+                    && settings.scrobbling.lastfm.api_key == api_key
+                {
+                    return false;
+                }
+                settings.lastfm_api_key = api_key.clone();
+                settings.scrobbling.lastfm.api_key = api_key;
+                settings.scrobbling.lastfm.session_key.clear();
+                settings.scrobbling.lastfm.username.clear();
+                true
+            })
+            .is_some()
+        {
+            lastfm_api_shell.retry_external_cover_lookups("Last.fm API key setting");
+        }
     });
     lastfm_group.add(&lastfm_api_key);
 
@@ -372,6 +379,7 @@ async fn connect_lastfm_session(
                 settings.scrobbling.lastfm.session_key = session.session_key.clone();
                 true
             });
+            shell.retry_external_cover_lookups("Last.fm connection setting");
             shell.update_discord_presence(&shell.state.player.borrow());
             return Ok(session);
         }

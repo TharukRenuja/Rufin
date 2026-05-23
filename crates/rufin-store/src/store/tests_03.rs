@@ -428,6 +428,50 @@
         );
     }
     #[test]
+    fn external_image_lookup_misses_can_be_cleared_for_server() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        let other = saved_server_with_id("other-server");
+        store.save_server(&saved).expect("save server");
+        store.save_server(&other).expect("save other server");
+        for server_id in [&saved.server.id, &other.server.id] {
+            store
+                .save_external_image_lookup_miss(
+                    server_id,
+                    "external:album:artist:album",
+                    "external-v1-tag",
+                    256,
+                    "not found",
+                )
+                .expect("save lookup miss");
+        }
+
+        store
+            .clear_external_image_lookup_misses(&saved.server.id)
+            .expect("clear lookup misses");
+
+        assert!(
+            !store
+                .load_external_image_lookup_miss(
+                    &saved.server.id,
+                    "external:album:artist:album",
+                    "external-v1-tag",
+                    256,
+                )
+                .expect("load cleared lookup miss")
+        );
+        assert!(
+            store
+                .load_external_image_lookup_miss(
+                    &other.server.id,
+                    "external:album:artist:album",
+                    "external-v1-tag",
+                    256,
+                )
+                .expect("load other lookup miss")
+        );
+    }
+    #[test]
     fn cover_cache_success_clears_external_image_lookup_miss() {
         let store = Store::open_memory().expect("open store");
         let saved = saved_server();
@@ -599,9 +643,12 @@
         );
     }
     fn saved_server() -> SavedServer {
+        saved_server_with_id("jellyfin:server:test")
+    }
+    fn saved_server_with_id(server_id: &str) -> SavedServer {
         SavedServer {
             server: ServerIdentity {
-                id: ServerId::new("jellyfin:server:test"),
+                id: ServerId::new(server_id),
                 provider: "jellyfin".to_string(),
                 name: "Test Server".to_string(),
                 base_url: "https://music.example".to_string(),

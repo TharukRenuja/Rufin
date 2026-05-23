@@ -108,6 +108,25 @@ impl AppController {
         cached_cover_path_for_key(key)
     }
 
+    pub fn retry_external_cover_lookups(&self) -> Result<(), String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(());
+        };
+        self.store
+            .with_store(|store| store.clear_external_image_lookup_misses(&saved.server.id))?;
+        start_external_metadata_cover_prefetch_thread(
+            self.store.clone(),
+            Arc::clone(&self.runtime),
+            Arc::clone(&self.secrets),
+            self.events.clone(),
+            Arc::clone(&self.cover_in_flight),
+            Arc::clone(&self.external_cover_prefetch_in_flight),
+            Arc::clone(&self.cover_slots),
+            saved,
+        );
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn request_cover(&self, image_ref: ImageRef, size: u32) {
         let Some(saved) = self
@@ -664,19 +683,15 @@ fn prefetch_synced_album_covers(
             );
             return Ok(());
         }
-        let albums = store.with_store(|store| {
-            store.load_albums_without_image_ref(
-                &saved.server.id,
-                offset,
-                EXTERNAL_PREFETCH_PAGE_SIZE,
-            )
+        let page = store.with_store(|store| {
+            store.load_albums(&saved.server.id, offset, EXTERNAL_PREFETCH_PAGE_SIZE)
         })?;
-        if albums.is_empty() {
+        if page.items.is_empty() {
             return Ok(());
         }
-        let album_count = albums.len();
+        let album_count = page.items.len();
         stats.album_rows += album_count;
-        let image_refs = external_album_image_refs_from_albums(albums, &settings);
+        let image_refs = external_album_image_refs_from_albums(page.items, &settings);
         stats.album_image_refs += image_refs.len();
         for image_ref in image_refs {
             if !external_metadata::enabled(&load_settings_from_store(store))
@@ -1224,6 +1239,30 @@ mod tests {
                 &settings,
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn synced_external_cover_candidates_keep_existing_external_refs() {
+        let settings = AppSettings {
+            external_metadata_enabled: true,
+            ..AppSettings::default()
+        };
+        let refs = external_album_image_refs_from_albums(
+            vec![Album {
+                image_ref: Some(ImageRef::new(
+                    "external:album:Example%20Artist:Example%20Album",
+                    Some("external-v1-existing".to_string()),
+                )),
+                ..album_without_cover(1, "Example Album", "Example Artist")
+            }],
+            &settings,
+        );
+
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].item_id,
+            "external:album:Example%20Artist:Example%20Album"
         );
     }
 

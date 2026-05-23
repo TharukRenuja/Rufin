@@ -56,6 +56,12 @@ impl Shell {
         Some(settings)
     }
 
+    pub(super) fn retry_external_cover_lookups(&self, warning_action: &'static str) {
+        if let Err(error) = self.controller.retry_external_cover_lookups() {
+            warn!(%error, action = warning_action, "failed to retry external cover lookups");
+        }
+    }
+
     pub(super) fn set_external_lyrics_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("lyrics setting", |settings| {
@@ -176,6 +182,7 @@ impl Shell {
             })
             .is_some()
         {
+            self.retry_external_cover_lookups("Last.fm API key setting");
             self.update_discord_presence(&self.state.player.borrow());
         }
     }

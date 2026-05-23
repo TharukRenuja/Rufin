@@ -672,6 +672,16 @@ impl Store {
         )?;
         Ok(())
     }
+    pub fn clear_external_image_lookup_misses(&self, server_id: &ServerId) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            DELETE FROM external_image_lookup_misses
+            WHERE server_id = ?1
+            ",
+            params![server_id.as_str()],
+        )?;
+        Ok(())
+    }
     pub fn schema_version(&self) -> StoreResult<i64> {
         self.connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
