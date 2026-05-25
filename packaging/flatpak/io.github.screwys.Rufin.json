@@ -31,9 +31,9 @@
       "buildsystem": "simple",
       "build-commands": [
         "install -Dm644 cargo/config .cargo/config.toml",
-        "target_triple=\"$(rustc -vV | sed -n 's/^host: //p')\" && cargo fetch --locked --offline --manifest-path Cargo.toml --target \"$target_triple\" --verbose",
-        "target_triple=\"$(rustc -vV | sed -n 's/^host: //p')\" && cargo build --release --locked --offline -p rufin-app --target \"$target_triple\"",
-        "target_triple=\"$(rustc -vV | sed -n 's/^host: //p')\" && install -Dm755 \"target/$target_triple/release/rufin\" /app/bin/rufin",
+        "cargo fetch --locked --offline --manifest-path Cargo.toml --verbose",
+        "cargo build --release --locked --offline -p rufin-app",
+        "install -Dm755 target/release/rufin /app/bin/rufin",
         "install -Dm644 data/io.github.screwys.Rufin.desktop /app/share/applications/io.github.screwys.Rufin.desktop",
         "install -Dm644 data/io.github.screwys.Rufin.metainfo.xml /app/share/metainfo/io.github.screwys.Rufin.metainfo.xml",
         "install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg /app/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg",
