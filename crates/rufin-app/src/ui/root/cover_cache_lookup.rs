@@ -48,6 +48,7 @@ impl Shell {
         if let Some(cover) = self.state.decoded_covers.borrow().get(key).cloned()
             && cover.size >= size
         {
+            self.touch_decoded_cover(key, CoverDecodePriority::Visible);
             let bindings = self.take_live_cover_bindings(key);
             apply_pixbuf_to_bindings(bindings, cover.pixbuf);
             return;
@@ -66,7 +67,10 @@ impl Shell {
         size: i32,
         priority: CoverDecodePriority,
     ) {
-        if self.apply_decoded_cover_if_available(&key, size) {
+        if self.apply_decoded_cover_if_available(&key, size, priority) {
+            return;
+        }
+        if priority == CoverDecodePriority::Warm && !self.decoded_cover_has_warm_capacity(size) {
             return;
         }
 
@@ -76,11 +80,14 @@ impl Shell {
 
         {
             let mut queue = self.state.cover_decode_queue.borrow_mut();
+            let requires_live_binding = priority == CoverDecodePriority::Visible
+                && self.state.cover_bindings.borrow().contains_key(&key);
             if let Some(position) = queue.iter().position(|job| job.key == key) {
                 let Some(mut job) = queue.remove(position) else {
                     return;
                 };
                 job.size = job.size.max(size);
+                job.requires_live_binding |= requires_live_binding;
                 job.priority = if job.priority == CoverDecodePriority::Visible
                     || priority == CoverDecodePriority::Visible
                 {
@@ -103,6 +110,7 @@ impl Shell {
                 path,
                 size,
                 priority,
+                requires_live_binding,
             };
             if priority == CoverDecodePriority::Visible {
                 queue.push_front(job);
@@ -113,13 +121,19 @@ impl Shell {
 
         self.drain_cover_decode_queue();
     }
-    fn apply_decoded_cover_if_available(&self, key: &str, min_size: i32) -> bool {
+    fn apply_decoded_cover_if_available(
+        &self,
+        key: &str,
+        min_size: i32,
+        priority: CoverDecodePriority,
+    ) -> bool {
         let Some(cover) = self.state.decoded_covers.borrow().get(key).cloned() else {
             return false;
         };
         if cover.size < min_size {
             return false;
         }
+        self.touch_decoded_cover(key, priority);
         self.state
             .startup_cover_prime_pending
             .borrow_mut()

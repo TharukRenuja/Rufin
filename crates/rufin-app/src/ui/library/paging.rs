@@ -12,7 +12,7 @@ use rufin_core::{
 };
 use tracing::{info, warn};
 use super::{
-    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE,
+    ArtworkTile, CoverDecodePriority, DETAIL_COVER_SIZE, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE,
     PRIMARY_ROUTE_MARGIN_START, Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE,
     album_favorite_key, append_albums_to_model, append_artists_to_model, append_genres_to_model,
     append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
@@ -449,14 +449,16 @@ impl Shell {
         if self.decoded_cover_has_min_size(key, size) {
             return true;
         }
-        let decode_size = if size >= 512 {
+        let decode_size = if size >= DETAIL_COVER_SIZE as i32 {
+            size
+        } else if size >= GRID_COVER_SIZE as i32 {
             size
         } else {
-            size.saturating_mul(2).min(512)
+            size.saturating_mul(2).min(GRID_COVER_SIZE as i32)
         };
         match Pixbuf::from_file_at_scale(path, decode_size, decode_size, true) {
             Ok(pixbuf) => {
-                self.remember_decoded_cover(key.to_string(), pixbuf);
+                self.remember_decoded_cover(key.to_string(), pixbuf, CoverDecodePriority::Visible);
                 self.record_perf_cover_decode_ok(key);
                 true
             }

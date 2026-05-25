@@ -581,7 +581,7 @@ impl LibraryListKey {
 
     fn default_layout(self) -> LibraryLayout {
         match self {
-            Self::Albums => LibraryLayout::Detail,
+            Self::Albums => LibraryLayout::Row,
             Self::Tracks
             | Self::FavoriteTracks
             | Self::AlbumDetailTracks

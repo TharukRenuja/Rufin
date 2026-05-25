@@ -766,8 +766,14 @@ impl ArtworkTile {
         self.area.clone().upcast()
     }
 
-    fn size(&self) -> i32 {
-        self.size
+    fn downgrade(&self) -> ArtworkTileWeak {
+        ArtworkTileWeak {
+            area: self.area.downgrade(),
+            size: self.size,
+            seed: Rc::clone(&self.seed),
+            pixbuf: Rc::clone(&self.pixbuf),
+            generation: Rc::clone(&self.generation),
+        }
     }
 
     fn generation(&self) -> u64 {
@@ -775,7 +781,7 @@ impl ArtworkTile {
     }
 
     fn is_live_generation(&self, generation: u64) -> bool {
-        self.generation.get() == generation
+        self.generation.get() == generation && self.area.root().is_some()
     }
 
     fn advance_generation(&self) {
@@ -821,6 +827,26 @@ impl ArtworkTile {
         true
     }
 }
+impl ArtworkTileWeak {
+    fn upgrade(&self) -> Option<ArtworkTile> {
+        Some(ArtworkTile {
+            area: self.area.upgrade()?,
+            size: self.size,
+            seed: Rc::clone(&self.seed),
+            pixbuf: Rc::clone(&self.pixbuf),
+            generation: Rc::clone(&self.generation),
+        })
+    }
+
+    fn size(&self) -> i32 {
+        self.size
+    }
+
+    fn is_live_generation(&self, generation: u64) -> bool {
+        self.upgrade()
+            .is_some_and(|tile| tile.is_live_generation(generation))
+    }
+}
 async fn load_cover_pixbuf(
     path: PathBuf,
     size: i32,
@@ -835,15 +861,17 @@ fn cover_pixbuf_decode_size(size: i32) -> i32 {
     let size = size.max(1);
     if size >= DETAIL_COVER_SIZE as i32 {
         size
+    } else if size >= GRID_COVER_SIZE as i32 {
+        size
     } else {
-        size.saturating_mul(2).min(DETAIL_COVER_SIZE as i32)
+        size.saturating_mul(2).min(GRID_COVER_SIZE as i32)
     }
 }
 fn apply_pixbuf_to_bindings(bindings: Vec<CoverBinding>, pixbuf: Pixbuf) {
     for binding in bindings {
-        binding
-            .tile
-            .set_pixbuf_if_current(binding.generation, pixbuf.clone());
+        if let Some(tile) = binding.tile.upgrade() {
+            tile.set_pixbuf_if_current(binding.generation, pixbuf.clone());
+        }
     }
 }
 fn draw_fallback_cover(context: &gtk::cairo::Context, seed: u32, width: i32, height: i32) {

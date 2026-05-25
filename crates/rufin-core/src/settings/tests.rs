@@ -102,7 +102,7 @@
         assert_eq!(settings.home_blocks.len(), 7);
         assert_eq!(
             settings.library_list(LibraryListKey::Albums).layout,
-            LibraryLayout::Detail
+            LibraryLayout::Row
         );
         assert_eq!(
             settings.library_list(LibraryListKey::Tracks).layout,

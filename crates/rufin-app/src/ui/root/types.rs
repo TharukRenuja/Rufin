@@ -66,6 +66,7 @@ const DETAIL_COVER_SIZE: u32 = 512;
 const THUMB_COVER_SIZE: u32 = 96;
 const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
+const DECODED_COVER_CACHE_SOFT_BYTES: usize = 128 * 1024 * 1024;
 const COVER_WARM_BATCH_SIZE: usize = 3;
 const COVER_PATH_LOOKUP_MAX_IN_FLIGHT: usize = 3;
 const COVER_WARM_INITIAL_DELAY_MS: u64 = 250;
@@ -174,7 +175,9 @@ struct AppState {
     route_cover_gate_queued: RefCell<HashSet<&'static str>>,
     route_cover_gate_timed_out: RefCell<HashSet<&'static str>>,
     decoded_covers: RefCell<HashMap<String, DecodedCover>>,
-    decoded_cover_order: RefCell<VecDeque<String>>,
+    decoded_cover_order: RefCell<VecDeque<DecodedCoverOrderEntry>>,
+    decoded_cover_bytes: Cell<usize>,
+    decoded_cover_touch: Cell<u64>,
     favorite_controls: FavoriteControls,
     folder_request_generation: Cell<u64>,
     folder_state: RefCell<FolderRouteState>,
@@ -192,19 +195,27 @@ struct LyricsSearchDialog {
 }
 #[derive(Clone)]
 struct CoverBinding {
-    tile: ArtworkTile,
+    tile: ArtworkTileWeak,
     generation: u64,
 }
 #[derive(Clone)]
 struct DecodedCover {
     pixbuf: Pixbuf,
     size: i32,
+    bytes: usize,
+    last_used: u64,
+    priority: CoverDecodePriority,
+}
+struct DecodedCoverOrderEntry {
+    key: String,
+    last_used: u64,
 }
 struct CoverDecodeJob {
     key: String,
     path: PathBuf,
     size: i32,
     priority: CoverDecodePriority,
+    requires_live_binding: bool,
 }
 struct StartupCoverWarmJob {
     key: String,
@@ -234,6 +245,14 @@ impl CoverDecodePriority {
 #[derive(Clone)]
 struct ArtworkTile {
     area: gtk::DrawingArea,
+    size: i32,
+    seed: Rc<Cell<u32>>,
+    pixbuf: Rc<RefCell<Option<Pixbuf>>>,
+    generation: Rc<Cell<u64>>,
+}
+#[derive(Clone)]
+struct ArtworkTileWeak {
+    area: glib::WeakRef<gtk::DrawingArea>,
     size: i32,
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
@@ -508,6 +527,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         route_cover_gate_timed_out: RefCell::new(HashSet::new()),
         decoded_covers: RefCell::new(HashMap::new()),
         decoded_cover_order: RefCell::new(VecDeque::new()),
+        decoded_cover_bytes: Cell::new(0),
+        decoded_cover_touch: Cell::new(0),
         favorite_controls: RefCell::new(HashMap::new()),
         folder_request_generation: Cell::new(0),
         folder_state: RefCell::new(FolderRouteState::default()),

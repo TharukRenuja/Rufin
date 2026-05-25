@@ -51,35 +51,47 @@ impl Shell {
                 self.decoded_cover_for_ref(image_ref, fetch_size, decode_size)
             {
                 self.record_perf_cover_cache_hit(&cache_key);
+                self.touch_decoded_cover(&cache_key, CoverDecodePriority::Visible);
                 tile.bind_image(seed, Some(pixbuf));
             } else {
                 let generation = tile.bind_image(seed, None);
                 let shell = Rc::clone(self);
-                let tile_for_map = tile.clone();
                 let image_ref = image_ref.clone();
                 let key_for_request = key.clone();
-                let request = move || {
-                    if !tile_for_map.is_live_generation(generation) {
-                        return;
-                    }
-                    shell.request_cover_for_tile(
-                        &tile_for_map,
-                        key_for_request.clone(),
-                        image_ref.clone(),
-                        decode_size,
-                        fetch_size,
-                    );
-                };
                 if tile.area.is_mapped() {
-                    glib::idle_add_local_once(request);
-                } else {
-                    let started = Rc::new(Cell::new(false));
-                    let tile_for_map = tile.clone();
-                    tile.area.connect_map(move |_| {
-                        if started.replace(true) || !tile_for_map.is_live_generation(generation) {
+                    let tile_for_request = tile.clone();
+                    glib::idle_add_local_once(move || {
+                        if !tile_for_request.is_live_generation(generation) {
                             return;
                         }
-                        request();
+                        shell.request_cover_for_tile(
+                            &tile_for_request,
+                            key_for_request,
+                            image_ref,
+                            decode_size,
+                            fetch_size,
+                        );
+                    });
+                } else {
+                    let started = Rc::new(Cell::new(false));
+                    let tile_for_map = tile.downgrade();
+                    tile.area.connect_map(move |_| {
+                        if started.replace(true) {
+                            return;
+                        }
+                        let Some(tile_for_request) = tile_for_map.upgrade() else {
+                            return;
+                        };
+                        if !tile_for_request.is_live_generation(generation) {
+                            return;
+                        }
+                        shell.request_cover_for_tile(
+                            &tile_for_request,
+                            key_for_request.clone(),
+                            image_ref.clone(),
+                            decode_size,
+                            fetch_size,
+                        );
                     });
                 }
             }
@@ -114,9 +126,12 @@ impl Shell {
         if self.decoded_cover_has_min_size(&key, decode_size) {
             return;
         }
+        if !self.decoded_cover_has_warm_capacity(decode_size) {
+            return;
+        }
         match Pixbuf::from_file_at_scale(&path, decode_size, decode_size, true) {
             Ok(pixbuf) => {
-                self.remember_decoded_cover(key, pixbuf);
+                self.remember_decoded_cover(key, pixbuf, CoverDecodePriority::Warm);
             }
             Err(error) => {
                 debug!(%error, path = %path.display(), "failed to prime cached cover");
@@ -202,6 +217,7 @@ impl Shell {
             self.decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
         {
             self.record_perf_cover_cache_hit(&cache_key);
+            self.touch_decoded_cover(&cache_key, CoverDecodePriority::Visible);
             tile.set_pixbuf_if_current(tile.generation(), pixbuf);
             return;
         }
@@ -209,15 +225,13 @@ impl Shell {
         self.record_perf_cover_bind_request(&key);
         let generation = tile.generation();
         {
-            self.state
-                .cover_bindings
-                .borrow_mut()
-                .entry(key.clone())
-                .or_default()
-                .push(CoverBinding {
-                    tile: tile.clone(),
-                    generation,
-                });
+            let mut cover_bindings = self.state.cover_bindings.borrow_mut();
+            let bindings = cover_bindings.entry(key.clone()).or_default();
+            bindings.retain(|binding| binding.tile.is_live_generation(binding.generation));
+            bindings.push(CoverBinding {
+                tile: tile.downgrade(),
+                generation,
+            });
         }
         let shell = Rc::clone(self);
         let controller = self.controller.clone();
@@ -232,6 +246,10 @@ impl Shell {
             .ok()
             .flatten();
             if let Some(path) = path {
+                if !shell.cover_binding_has_live(&key) {
+                    shell.record_perf_cover_stale_key(&key);
+                    return;
+                }
                 shell.record_perf_cover_path_ready(&key);
                 shell.record_perf_cover_ready(&key);
                 shell.start_cover_decode_from_path(

@@ -500,18 +500,32 @@ fn connect_album_detail_virtual_list(
         });
     }
 
-    let scheduled = Rc::new(Cell::new(false));
+    let render_serial = Rc::new(Cell::new(0_u64));
+    let last_scroll_value = Rc::new(Cell::new(adjustment.value()));
     adjustment.connect_value_changed(move |adjustment| {
-        if scheduled.replace(true) {
-            return;
-        }
+        let previous_value = last_scroll_value.replace(adjustment.value());
+        let delta = (adjustment.value() - previous_value).abs();
+        let serial = render_serial.get().saturating_add(1);
+        render_serial.set(serial);
         let adjustment = adjustment.clone();
         let render = Rc::clone(&render);
-        let scheduled = Rc::clone(&scheduled);
-        glib::idle_add_local_once(move || {
-            scheduled.set(false);
-            render(&adjustment);
-        });
+        let render_serial_for_callback = Rc::clone(&render_serial);
+        if delta >= f64::from(album_detail_fast_scroll_render_delta()) {
+            glib::timeout_add_local_once(
+                Duration::from_millis(ALBUM_DETAIL_FAST_SCROLL_RENDER_DELAY_MS),
+                move || {
+                    if render_serial_for_callback.get() == serial {
+                        render(&adjustment);
+                    }
+                },
+            );
+        } else {
+            glib::idle_add_local_once(move || {
+                if render_serial_for_callback.get() == serial {
+                    render(&adjustment);
+                }
+            });
+        }
     });
 }
 fn album_detail_virtual_rows(shell: &Shell, model: &gio::ListStore) -> Vec<AlbumDetailVirtualRow> {
@@ -597,6 +611,10 @@ fn album_detail_virtual_range(
 }
 fn album_detail_virtual_overscan_height() -> i32 {
     LIBRARY_TABLE_ROW_HEIGHT * 8
+}
+const ALBUM_DETAIL_FAST_SCROLL_RENDER_DELAY_MS: u64 = 90;
+fn album_detail_fast_scroll_render_delta() -> i32 {
+    album_detail_virtual_overscan_height() / 2
 }
 #[derive(Clone, Default)]
 struct AlbumDetailTrackSelection {
