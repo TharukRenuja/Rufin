@@ -45,6 +45,11 @@
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.3.6" date="2026-05-25">
+      <description>
+        <p>Removed expensive cover art caching at 512x512, app is now stable at 200-300~MB memory usage.</p>
+      </description>
+    </release>
     <release version="0.3.5" date="2026-05-23">
       <description>
         <p>Bug fixes, performance improvements and refactor</p>
