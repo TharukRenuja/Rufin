@@ -116,17 +116,64 @@ cleanup() {
 }
 trap cleanup EXIT
 
+repo_url_from_origin() {
+  local origin
+  origin="$(git config --get remote.origin.url || true)"
+  case "$origin" in
+    git@github.com:*)
+      origin="https://github.com/${origin#git@github.com:}"
+      ;;
+    ssh://git@github.com/*)
+      origin="https://github.com/${origin#ssh://git@github.com/}"
+      ;;
+  esac
+  origin="${origin%.git}"
+
+  if [[ "$origin" == https://github.com/*/* ]]; then
+    printf '%s\n' "$origin"
+  fi
+}
+
 write_notes() {
+  local repo_url
+  repo_url="$(repo_url_from_origin)"
+
   {
     echo "$summary"
     echo
-    echo "Changelog"
+    echo "## Changelog"
     echo
-    git log --reverse --pretty=format:'%s (%h)' "$base_tag"..HEAD |
-      grep -v '^chore(release): bump version to ' |
-      grep -v '^chore(flatpak): update Flathub manifest for v' || true
+    git log --reverse --pretty=format:'%H%x09%s' "$base_tag"..HEAD |
+      while IFS=$'\t' read -r commit subject || [[ -n "$commit" ]]; do
+        case "$subject" in
+          "chore(release): bump version to "*)
+            continue
+            ;;
+          "chore(flatpak): update Flathub manifest for v"*)
+            continue
+            ;;
+        esac
+
+        short_commit="${commit:0:7}"
+        if [[ -n "$repo_url" ]]; then
+          printf -- '- %s ([%s](%s/commit/%s))\n' \
+            "$subject" "$short_commit" "$repo_url" "$commit"
+        else
+          printf -- '- %s (%s)\n' "$subject" "$short_commit"
+        fi
+      done
+    if [[ -n "$repo_url" ]]; then
+      echo
+      printf '[Full changelog](%s/compare/%s...%s)\n' "$repo_url" "$base_tag" "$version"
+    fi
     echo
   } > "$notes_file"
+}
+
+print_notes() {
+  echo "Release notes (Markdown)"
+  echo
+  cat "$notes_file"
 }
 
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
@@ -137,7 +184,7 @@ fi
 
 write_notes
 
-cat "$notes_file"
+print_notes
 
 if [[ "$dry_run" == "1" ]]; then
   exit 0
@@ -150,7 +197,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 
 write_notes
-cat "$notes_file"
+print_notes
 
 if [[ "$replace_tag" == "1" ]] && git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
   git tag -d "$version"
