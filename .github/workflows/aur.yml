@@ -1,9 +1,9 @@
 name: AUR
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       package:
@@ -20,6 +20,7 @@ on:
         required: true
         default: false
         type: boolean
+
 permissions:
   contents: read
 

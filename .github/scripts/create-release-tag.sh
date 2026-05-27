@@ -5,9 +5,10 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] [--skip-flathub] VERSION SUMMARY
 
-Updates release metadata, commits it, and creates a signed annotated release
-tag whose message includes commits since the previous release tag. VERSION may
-be vX.Y.Z or X.Y.Z.
+Updates release metadata, commits it, and creates a signed annotated tag whose
+message includes commits since the previous release tag. VERSION may be vX.Y.Z
+or X.Y.Z. With --push, pushes main and the signed tag only; publish the GitHub
+Release manually from the existing tag afterwards.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
@@ -174,4 +175,5 @@ if [[ "$push_tag" == "1" ]]; then
   else
     git push origin "$version"
   fi
+  printf '\nPushed signed tag %s. Create the GitHub Release manually from this existing tag.\n' "$version"
 fi

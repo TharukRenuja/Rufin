@@ -1,9 +1,9 @@
 name: Windows
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       ref:
