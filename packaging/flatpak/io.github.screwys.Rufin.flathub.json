@@ -45,7 +45,16 @@
           "type": "git",
           "url": "https://github.com/screwys/Rufin.git",
           "tag": "v0.3.10",
-          "commit": "d0e51e811ad4afe40ae93ddff086d914a1182b63"
+          "commit": "d0e51e811ad4afe40ae93ddff086d914a1182b63",
+          "x-checker-data": {
+            "type": "json",
+            "url": "https://api.github.com/repos/screwys/Rufin/releases/latest",
+            "tag-query": ".tag_name",
+            "version-query": "$tag | sub(\"^v\"; \"\")",
+            "timestamp-query": ".published_at",
+            "is-main-source": true,
+            "release-url-template": "https://github.com/screwys/Rufin/releases/tag/v$version"
+          }
         },
         "cargo-sources.json"
       ]
