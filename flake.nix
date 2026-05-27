@@ -25,7 +25,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           inherit (pkgs) lib;
-          appManifest = builtins.fromTOML (builtins.readFile ./crates/rufin-app/Cargo.toml);
+          workspaceManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           gstRuntimePlugins = with pkgs.gst_all_1; [
             gst-plugins-base
             gst-plugins-good
@@ -37,7 +37,7 @@
         rec {
           rufin = pkgs.rustPlatform.buildRustPackage {
             pname = "rufin";
-            version = appManifest.package.version;
+            version = workspaceManifest.workspace.package.version;
 
             src = lib.cleanSourceWith {
               src = ./.;
