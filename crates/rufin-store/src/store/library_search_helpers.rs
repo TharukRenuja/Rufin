@@ -873,6 +873,41 @@ impl Store {
         }
         Ok(())
     }
+    pub fn load_artist_fallback_albums(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+        artist_ids: &[ArtistId],
+    ) -> StoreResult<HashMap<ArtistId, Album>> {
+        let mut fallback_by_artist = HashMap::<ArtistId, Album>::new();
+        if artist_ids.is_empty() {
+            return Ok(fallback_by_artist);
+        }
+
+        for chunk in artist_ids.chunks(500) {
+            let values_placeholders = std::iter::repeat_n("(?)", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = artist_fallback_albums_sql(album_artist, &values_placeholders);
+            let mut values = Vec::with_capacity(chunk.len() + if album_artist { 2 } else { 4 });
+            values.extend(chunk.iter().map(ArtistId::as_str));
+            values.extend(std::iter::repeat_n(
+                server_id.as_str(),
+                if album_artist { 2 } else { 4 },
+            ));
+
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                Ok((ArtistId::new(row.get::<_, String>(16)?), album_from_row(row)?))
+            })?;
+            for row in rows {
+                let (artist_id, album) = row?;
+                fallback_by_artist.entry(artist_id).or_insert(album);
+            }
+        }
+
+        Ok(fallback_by_artist)
+    }
     fn load_genre_links(
         &self,
         server_id: &ServerId,

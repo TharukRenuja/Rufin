@@ -35,8 +35,6 @@ const ALBUM_DETAIL_TRACK_HEADER_HEIGHT: i32 = 34;
 const ALBUM_DETAIL_META_SPACING: i32 = 6;
 const ALBUM_DETAIL_META_LABEL_HEIGHT: i32 = 20;
 const ALBUM_ROUTE_COVER_GATE_ITEMS: usize = 16;
-const ALBUM_ROW_ROUTE_COVER_GATE_ITEMS: usize = 256;
-const ARTIST_ROUTE_COVER_GATE_ITEMS: usize = 512;
 const ROUTE_COVER_GATE_POLL_MS: u64 = 33;
 const ROUTE_COVER_GATE_TIMEOUT_MS: u64 = 3_000;
 const ROUTE_COVER_GATE_SYNC_DECODE_LIMIT: usize = 0;
@@ -158,6 +156,10 @@ fn gate_album_route_covers(
     albums: &[Album],
     settings: &LibraryListSettings,
 ) -> bool {
+    if !album_route_cover_gate_enabled(settings) {
+        shell.clear_route_cover_gate("albums");
+        return false;
+    }
     let Some((fetch_size, size)) = album_cover_warm_sizes(shell, settings) else {
         shell.clear_route_cover_gate("albums");
         return false;
@@ -177,46 +179,31 @@ fn gate_album_route_covers(
         RouteCoverMissingPolicy::Any,
     )
 }
+fn album_route_cover_gate_enabled(settings: &LibraryListSettings) -> bool {
+    settings.layout == LibraryLayout::Detail
+}
 fn gate_artist_route_covers(
     shell: &Rc<Shell>,
-    artists: &[Artist],
+    _artists: &[Artist],
     settings: &LibraryListSettings,
     album_artist: bool,
 ) -> bool {
-    let route_key = if album_artist {
+    let route_key = artist_route_cover_gate_key(album_artist);
+    shell.clear_route_cover_gate(route_key);
+    artist_route_cover_gate_enabled(settings)
+}
+fn artist_route_cover_gate_enabled(_settings: &LibraryListSettings) -> bool {
+    false
+}
+fn artist_route_cover_gate_key(album_artist: bool) -> &'static str {
+    if album_artist {
         "album_artists"
     } else {
         "artists"
-    };
-    if route_cover_gate_key_for_current_route(shell) != Some(route_key) {
-        return false;
     }
-    let Some((fetch_size, size)) = grid_or_row_cover_warm_sizes(shell, settings) else {
-        shell.clear_route_cover_gate(route_key);
-        return false;
-    };
-    let mut values = artists.to_vec();
-    sort_artists(&mut values, settings);
-    let image_refs = values
-        .iter()
-        .take(ARTIST_ROUTE_COVER_GATE_ITEMS)
-        .filter_map(|artist| artist.image_ref.clone())
-        .collect::<Vec<ImageRef>>();
-    shell.route_cover_gate_needs_loading(
-        route_key,
-        image_refs,
-        fetch_size,
-        size,
-        RouteCoverMissingPolicy::Any,
-    )
 }
-fn album_route_cover_gate_items(settings: &LibraryListSettings) -> usize {
-    match settings.layout {
-        LibraryLayout::Row if album_row_layout_uses_cover(settings) => {
-            ALBUM_ROW_ROUTE_COVER_GATE_ITEMS
-        }
-        _ => ALBUM_ROUTE_COVER_GATE_ITEMS,
-    }
+fn album_route_cover_gate_items(_settings: &LibraryListSettings) -> usize {
+    ALBUM_ROUTE_COVER_GATE_ITEMS
 }
 fn route_cover_gate_key_for_current_route(shell: &Shell) -> Option<&'static str> {
     match shell.state.routes.borrow().current() {

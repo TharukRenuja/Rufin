@@ -186,8 +186,20 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     }
     external_metadata::normalize_albums(&mut albums, &metadata_settings);
     external_metadata::normalize_tracks(&mut tracks, &metadata_settings);
-    external_metadata::normalize_artists(&mut artists, &metadata_settings);
-    external_metadata::normalize_artists(&mut album_artists, &metadata_settings);
+    normalize_artist_collection_image_refs(
+        store,
+        &saved,
+        &mut artists,
+        false,
+        &metadata_settings,
+    )?;
+    normalize_artist_collection_image_refs(
+        store,
+        &saved,
+        &mut album_artists,
+        true,
+        &metadata_settings,
+    )?;
     external_metadata::normalize_tracks(&mut favorites, &metadata_settings);
     let status = sync_state
         .as_ref()
@@ -254,6 +266,46 @@ fn normalize_artist_detail_image_refs(detail: &mut CachedArtistDetail, settings:
             artist_fallback_image_ref(&detail.albums, &detail.appears_on, &detail.tracks);
     }
     external_metadata::normalize_artist(&mut detail.artist, settings);
+}
+fn normalize_artist_collection_image_refs(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    artists: &mut [Artist],
+    album_artist: bool,
+    settings: &AppSettings,
+) -> Result<(), String> {
+    external_metadata::normalize_artists(artists, settings);
+    let missing_artist_ids = artists
+        .iter()
+        .filter(|artist| artist.image_ref.is_none())
+        .map(|artist| artist.id.clone())
+        .collect::<Vec<_>>();
+    if missing_artist_ids.is_empty() {
+        return Ok(());
+    }
+
+    let fallback_albums = store.with_store(|store| {
+        store.load_artist_fallback_albums(&saved.server.id, album_artist, &missing_artist_ids)
+    })?;
+    apply_artist_album_fallback_image_refs(artists, fallback_albums, settings);
+    Ok(())
+}
+fn apply_artist_album_fallback_image_refs(
+    artists: &mut [Artist],
+    mut fallback_albums: HashMap<ArtistId, Album>,
+    settings: &AppSettings,
+) {
+    for artist in artists {
+        if artist.image_ref.is_some() {
+            continue;
+        }
+        let Some(mut album) = fallback_albums.remove(&artist.id) else {
+            continue;
+        };
+        external_metadata::normalize_album(&mut album, settings);
+        artist.image_ref = album.image_ref;
+        external_metadata::normalize_artist(artist, settings);
+    }
 }
 fn artist_fallback_image_ref(
     albums: &[Album],

@@ -207,12 +207,17 @@ impl AppController {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_artists(&saved.server.id, album_artist, offset, limit))
-            .map(|mut page| {
-                external_metadata::normalize_artists(&mut page.items, &settings);
-                page
-            })
+        let mut page = self
+            .store
+            .with_store(|store| store.load_artists(&saved.server.id, album_artist, offset, limit))?;
+        normalize_artist_collection_image_refs(
+            &self.store,
+            &saved,
+            &mut page.items,
+            album_artist,
+            &settings,
+        )?;
+        Ok(page)
     }
     pub fn cached_artists_page_matching(
         &self,
@@ -225,14 +230,17 @@ impl AppController {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| {
-                store.load_artists_matching(&saved.server.id, album_artist, query, offset, limit)
-            })
-            .map(|mut page| {
-                external_metadata::normalize_artists(&mut page.items, &settings);
-                page
-            })
+        let mut page = self.store.with_store(|store| {
+            store.load_artists_matching(&saved.server.id, album_artist, query, offset, limit)
+        })?;
+        normalize_artist_collection_image_refs(
+            &self.store,
+            &saved,
+            &mut page.items,
+            album_artist,
+            &settings,
+        )?;
+        Ok(page)
     }
     pub fn cached_genres_page(
         &self,
