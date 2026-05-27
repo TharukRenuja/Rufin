@@ -176,29 +176,24 @@ impl Shell {
             let save_shell = Rc::clone(self);
             let save_track_id = track_id.clone();
             button.connect_clicked(move |_| {
-                if save_shell.state.settings.borrow().ask_lyrics_save_path {
-                    let shell = Rc::clone(&save_shell);
-                    let track_id = save_track_id.clone();
-                    let result = result.clone();
-                    gtk::glib::spawn_future_local(async move {
-                        let dialog = gtk::FileDialog::builder().title(tr("Save Lyrics")).build();
-                        let Ok(file) = dialog.save_future(Some(&shell.window)).await else {
-                            return;
-                        };
-                        let Some(path) = file.path() else {
-                            return;
-                        };
-                        shell
-                            .controller
-                            .save_lyrics_search_result(track_id, result, Some(path));
-                    });
-                } else {
-                    save_shell.controller.save_lyrics_search_result(
-                        save_track_id.clone(),
-                        result.clone(),
-                        None,
-                    );
-                }
+                let shell = Rc::clone(&save_shell);
+                let track_id = save_track_id.clone();
+                let result = result.clone();
+                gtk::glib::spawn_future_local(async move {
+                    let dialog = gtk::FileDialog::builder()
+                        .title(tr("Save Lyrics"))
+                        .initial_name(lyrics_save_filename(&result.track_name))
+                        .build();
+                    let Ok(file) = dialog.save_future(Some(&shell.window)).await else {
+                        return;
+                    };
+                    let Some(path) = file.path() else {
+                        return;
+                    };
+                    shell
+                        .controller
+                        .save_lyrics_search_result(track_id, result, path);
+                });
             });
             dialog.list.append(&row);
         }
@@ -215,4 +210,20 @@ impl Shell {
                 .set_text(&format!("{} {}", tr("Saved to"), path.display()));
         }
     }
+}
+
+fn lyrics_save_filename(track_title: &str) -> String {
+    let stem = track_title
+        .chars()
+        .map(|character| match character {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
+            other if other.is_control() => '_',
+            other => other,
+        })
+        .collect::<String>()
+        .trim()
+        .trim_end_matches('.')
+        .to_string();
+    let stem = if stem.is_empty() { "lyrics" } else { &stem };
+    format!("{stem}.lrc")
 }

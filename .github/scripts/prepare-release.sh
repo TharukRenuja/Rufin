@@ -50,3 +50,8 @@ perl -0pi -e '
 
   die "missing releases section\n" unless s/(  <releases>\n)/$1$entry/;
 ' data/io.github.screwys.Rufin.metainfo.xml
+
+perl -0pi -e '
+  my $version = $ENV{"VERSION"};
+  s{https://raw\.githubusercontent\.com/screwys/Rufin/[^/]+/data/}{https://raw.githubusercontent.com/screwys/Rufin/v$version/data/}g;
+' data/io.github.screwys.Rufin.metainfo.xml

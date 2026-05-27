@@ -99,6 +99,8 @@
                 "$out/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
               install -Dm644 -t "$out/share/icons/hicolor/scalable/status" \
                 data/icons/hicolor/scalable/status/*.svg
+              install -Dm644 -t "$out/share/icons/hicolor/512x512/apps" \
+                data/icons/hicolor/512x512/apps/*.png
               install -Dm644 -t "$out/share/icons/hicolor/64x64/apps" \
                 data/icons/hicolor/64x64/apps/*.png
 

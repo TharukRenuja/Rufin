@@ -229,28 +229,15 @@ fn lrclib_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
 fn save_lrclib_result(
-    store: &StoreHandle,
     server_id: &ServerId,
     entry: &QueueEntry,
     result: &LyricsSearchResult,
-    output_path: Option<PathBuf>,
+    output_path: PathBuf,
 ) -> Result<(PathBuf, Lyrics), String> {
     let content = lyrics_result_content(result)
         .ok_or_else(|| "Selected lyric result has no lyrics to save.".to_string())?;
-    let settings = load_settings_from_store(store);
-    let path = output_path
-        .or_else(|| {
-            local_audio_path_for_track(store, server_id, &entry.track_id)
-                .map(|path| path.with_extension("lrc"))
-        })
-        .map(Ok)
-        .unwrap_or_else(|| lyrics_save_path(&entry.title, &settings))?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let temp_path = path.with_extension("lrc.tmp");
-    fs::write(&temp_path, content).map_err(|error| error.to_string())?;
-    fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
+    let path = output_path;
+    fs::write(&path, content).map_err(|error| error.to_string())?;
     let lyrics = lyrics_from_text(entry.track_id.clone(), result);
     debug!(server_id = %server_id, path = %path.display(), "saved lyric file");
     Ok((path, lyrics))
@@ -357,20 +344,4 @@ fn path_from_server_suffix(suffix: &str) -> PathBuf {
         .split(['/', '\\'])
         .filter(|part| !part.is_empty())
         .collect::<PathBuf>()
-}
-fn lyrics_save_path(track_title: &str, settings: &AppSettings) -> Result<PathBuf, String> {
-    let user_dirs = directories::UserDirs::new()
-        .ok_or_else(|| "Could not find the user home directory.".to_string())?;
-    let base = settings
-        .lyrics_export_folder
-        .as_ref()
-        .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            user_dirs
-                .audio_dir()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| user_dirs.home_dir().join("Music"))
-        });
-    Ok(base.join(format!("{}.lrc", lyrics_file_stem(track_title))))
 }

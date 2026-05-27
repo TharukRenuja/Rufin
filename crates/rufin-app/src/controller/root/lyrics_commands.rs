@@ -133,7 +133,7 @@ impl AppController {
         &self,
         track_id: TrackId,
         result: LyricsSearchResult,
-        output_path: Option<PathBuf>,
+        output_path: PathBuf,
     ) {
         let Some((server_id, entry, _position)) = self.current_queue_entry() else {
             let _sent = self
@@ -150,7 +150,7 @@ impl AppController {
         let store = self.store.clone();
         let events = self.events.clone();
         thread::spawn(move || {
-            match save_lrclib_result(&store, &server_id, &entry, &result, output_path) {
+            match save_lrclib_result(&server_id, &entry, &result, output_path) {
                 Ok((path, lyrics)) => {
                     let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
                     let _sent = events.send(ControllerEvent::LyricsSaved { path, lyrics });

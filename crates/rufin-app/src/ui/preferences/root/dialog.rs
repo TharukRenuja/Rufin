@@ -179,53 +179,6 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     lyrics_group.add(&external_row);
     lyrics_group.add(&prefer_server_row);
-
-    let ask_save_row = adw::SwitchRow::builder()
-        .title(tr("Ask where to save to lyrics"))
-        .subtitle(tr(
-            "If not set, lyrics are exported to the folder you set, or your ~/Music folder",
-        ))
-        .active(settings.ask_lyrics_save_path)
-        .build();
-    let ask_save_shell = Rc::clone(shell);
-    ask_save_row.connect_active_notify(move |row| {
-        ask_save_shell.set_ask_lyrics_save_path(row.is_active());
-    });
-    lyrics_group.add(&ask_save_row);
-
-    let export_subtitle = settings
-        .lyrics_export_folder
-        .clone()
-        .unwrap_or_else(|| tr("Use ~/Music"));
-    let export_folder_row = adw::ActionRow::builder()
-        .title(tr("Lyrics export folder"))
-        .subtitle(export_subtitle)
-        .build();
-    let export_button = gtk::Button::with_label(&tr("Choose"));
-    export_button.set_valign(gtk::Align::Center);
-    export_folder_row.add_suffix(&export_button);
-    export_folder_row.set_activatable_widget(Some(&export_button));
-    let export_shell = Rc::clone(shell);
-    let export_row = export_folder_row.clone();
-    export_button.connect_clicked(move |_| {
-        let shell = Rc::clone(&export_shell);
-        let row = export_row.clone();
-        gtk::glib::spawn_future_local(async move {
-            let dialog = gtk::FileDialog::builder()
-                .title(tr("Select Lyrics Export Folder"))
-                .build();
-            let Ok(folder) = dialog.select_folder_future(Some(&shell.window)).await else {
-                return;
-            };
-            let Some(path) = folder.path() else {
-                return;
-            };
-            let text = path.display().to_string();
-            row.set_subtitle(&text);
-            shell.set_lyrics_export_folder(Some(text));
-        });
-    });
-    lyrics_group.add(&export_folder_row);
     page.add(&lyrics_group);
 
     let discord_group = adw::PreferencesGroup::builder()

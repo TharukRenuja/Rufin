@@ -370,10 +370,6 @@ pub struct AppSettings {
     pub external_metadata_enabled: bool,
     #[serde(default = "default_true")]
     pub prefer_server_lyrics: bool,
-    #[serde(default)]
-    pub ask_lyrics_save_path: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lyrics_export_folder: Option<String>,
     pub discord_presence_enabled: bool,
     #[serde(default = "default_discord_client_id")]
     pub discord_client_id: String,
@@ -432,8 +428,6 @@ impl Default for AppSettings {
             external_lyrics_enabled: true,
             external_metadata_enabled: true,
             prefer_server_lyrics: true,
-            ask_lyrics_save_path: false,
-            lyrics_export_folder: None,
             discord_presence_enabled: false,
             discord_client_id: default_discord_client_id(),
             discord_display_type: DiscordDisplayType::Application,

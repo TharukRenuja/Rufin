@@ -1,22 +1,3 @@
-fn lyrics_file_stem(track_title: &str) -> String {
-    let stem = track_title
-        .chars()
-        .map(|character| match character {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
-            other if other.is_control() => '_',
-            other => other,
-        })
-        .collect::<String>()
-        .trim()
-        .trim_end_matches('.')
-        .to_string();
-    if stem.is_empty() {
-        "lyrics".to_string()
-    } else {
-        stem
-    }
-}
-
 fn lyrics_from_text(track_id: TrackId, result: &LyricsSearchResult) -> Lyrics {
     let content = lyrics_result_content(result).unwrap_or_default();
     Lyrics {

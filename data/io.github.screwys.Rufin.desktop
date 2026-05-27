@@ -1,10 +1,10 @@
 [Desktop Entry]
 Name=Rufin
-Comment=Fast and light music client for music servers and local libraries
+Comment=Play music from anywhere
 Exec=rufin
 Icon=io.github.screwys.Rufin
 Terminal=false
 Type=Application
-Categories=AudioVideo;Audio;Music;Player;GTK;
-Keywords=Jellyfin;Music;Audio;Player;
+Categories=AudioVideo;Audio;Music;Player;
+Keywords=Jellyfin;Subsonic;Navidrome;Music;Audio;Player;GTK;
 StartupNotify=true

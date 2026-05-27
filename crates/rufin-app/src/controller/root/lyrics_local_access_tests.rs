@@ -194,21 +194,51 @@ fn lyrics_search_respects_private_mode_and_preference() {
     );
 }
 #[test]
-fn lyrics_save_path_uses_music_dir_and_track_title() {
-    let path =
-        super::lyrics_save_path("Song Title", &AppSettings::default()).expect("lyrics save path");
-    let path = path.to_string_lossy();
-    assert!(path.contains("Music") || path.contains("music"));
-    assert!(path.ends_with("Song Title.lrc"));
-}
-#[test]
-fn lyrics_save_path_uses_configured_export_folder() {
-    let settings = AppSettings {
-        lyrics_export_folder: Some("/tmp/rufin-lyrics".to_string()),
-        ..AppSettings::default()
+fn saved_lrclib_result_uses_explicit_output_path() {
+    let dir = self::unique_test_dir("lyrics-portal-save");
+    fs::create_dir_all(&dir).expect("create dir");
+    let sidecar = dir.join("Track.lrc");
+    let output = dir.join("Chosen Lyrics.lrc");
+    let entry = rufin_core::QueueEntry {
+        id: rufin_core::QueueEntryId::new("queue-entry:lyrics"),
+        track_id: TrackId::new("jellyfin:track:lyrics-save"),
+        album_id: None,
+        title: "Track".to_string(),
+        artist: "Artist".to_string(),
+        artist_id: None,
+        album: "Album".to_string(),
+        year: 0,
+        duration_seconds: 180,
+        favorite: false,
+        image_ref: None,
+        local_path: Some(dir.join("Track.flac").to_string_lossy().into_owned()),
+        source_format: None,
     };
-    let path = super::lyrics_save_path("Song Title", &settings).expect("lyrics save path");
-    assert_eq!(path, PathBuf::from("/tmp/rufin-lyrics/Song Title.lrc"));
+    let result = super::LyricsSearchResult {
+        id: 1,
+        track_name: "Track".to_string(),
+        artist_name: "Artist".to_string(),
+        album_name: "Album".to_string(),
+        duration_seconds: 180,
+        synced_lyrics: Some("[00:01.00]line one".to_string()),
+        plain_lyrics: None,
+    };
+    let (saved_path, lyrics) = super::save_lrclib_result(
+        &ServerId::new("jellyfin:server:lyrics"),
+        &entry,
+        &result,
+        output.clone(),
+    )
+    .expect("save lyrics");
+    assert_eq!(saved_path, output);
+    assert_eq!(
+        fs::read_to_string(&saved_path).expect("saved lyrics"),
+        "[00:01.00]line one"
+    );
+    assert!(!sidecar.exists());
+    assert!(!dir.join("Chosen Lyrics.lrc.tmp").exists());
+    assert_eq!(lyrics.track_id, entry.track_id);
+    let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
 fn local_sidecar_lyrics_use_same_stem_as_audio_file() {

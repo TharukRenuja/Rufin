@@ -201,11 +201,6 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Search lyrics");
     let _ = tr("Search Lyrics");
     let _ = tr("Save Lyrics");
-    let _ = tr("Ask where to save to lyrics");
-    let _ = tr("If not set, lyrics are exported to the folder you set, or your ~/Music folder");
-    let _ = tr("Lyrics export folder");
-    let _ = tr("Use ~/Music");
-    let _ = tr("Select Lyrics Export Folder");
     let _ = tr("Close");
     let _ = tr("Disable automatic lyric search for this track");
     let _ = tr("No track playing");
