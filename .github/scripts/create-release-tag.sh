@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] [--skip-flathub] VERSION SUMMARY
+Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] [--skip-flathub] [--skip-nix] VERSION SUMMARY
 
 Updates release metadata, commits it, and creates a signed annotated tag whose
 message includes commits since the previous release tag. VERSION may be vX.Y.Z
@@ -21,6 +21,7 @@ dry_run=0
 push_tag=0
 replace_tag=0
 skip_flathub=0
+skip_nix=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -46,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-flathub)
       skip_flathub=1
+      shift
+      ;;
+    --skip-nix)
+      skip_nix=1
       shift
       ;;
     -h|--help)
@@ -176,6 +181,23 @@ print_notes() {
   cat "$notes_file"
 }
 
+update_nix_cargo_hash() {
+  if [[ "$skip_nix" == "1" || ! -f flake.nix ]]; then
+    return
+  fi
+
+  if ! command -v nix >/dev/null 2>&1; then
+    cat >&2 <<'MSG'
+nix is required to refresh flake.nix cargoHash during release preparation.
+Run the release script from a Nix-enabled environment or pass --skip-nix only
+when the Nix package should intentionally remain untouched.
+MSG
+    exit 1
+  fi
+
+  bash .github/scripts/update-nix-cargo-hash.sh
+}
+
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
 if [[ "$commit_count" == "0" ]]; then
   echo "no commits found in range $base_tag..HEAD" >&2
@@ -191,8 +213,12 @@ if [[ "$dry_run" == "1" ]]; then
 fi
 
 bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
+update_nix_cargo_hash
 if ! git diff --quiet || ! git diff --cached --quiet; then
   git add Cargo.lock Cargo.toml data/io.github.screwys.Rufin.metainfo.xml
+  if [[ -f flake.nix ]]; then
+    git add flake.nix
+  fi
   git commit -m "chore(release): bump version to $plain_version"
 fi
 
