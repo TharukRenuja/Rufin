@@ -3,6 +3,8 @@ module.exports = {
   repositories: ["screwys/Rufin"],
   onboarding: false,
   requireConfig: "required",
-  ignorePrAuthor: true,
+  gitIgnoredAuthors: [
+    "renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+  ],
   allowedCommands: ["^bash packaging/flatpak/update-cargo-sources\\.sh$"],
 };
