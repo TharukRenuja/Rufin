@@ -10,7 +10,8 @@ rufin-core = { path = "../rufin-core" }
 thiserror = "2.0.18"
 
 [target.'cfg(unix)'.dependencies]
-secret-service = { version = "5.1.0", features = ["rt-tokio-crypto-rust"] }
+oo7 = "0.6.0"
+tokio = { version = "1.52.3", features = ["rt"] }
 
 [lints]
 workspace = true

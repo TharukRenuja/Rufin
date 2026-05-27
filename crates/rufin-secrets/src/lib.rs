@@ -1,9 +1,9 @@
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use rufin_core::ServerId;
-#[cfg(unix)]
-use secret_service::{EncryptionType, blocking::SecretService};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -75,8 +75,24 @@ impl SecretServiceStore {
         }
     }
 
-    fn connect(&self) -> SecretResult<SecretService<'static>> {
-        SecretService::connect(EncryptionType::Dh)
+    fn token_attributes(&self, server_id: &ServerId) -> Vec<(String, String)> {
+        vec![
+            ("application".to_string(), self.application.clone()),
+            ("kind".to_string(), "jellyfin-token".to_string()),
+            ("server_id".to_string(), server_id.as_str().to_string()),
+        ]
+    }
+
+    fn run<T, Fut>(&self, operation: Fut) -> SecretResult<T>
+    where
+        Fut: Future<Output = oo7::Result<T>>,
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| SecretError::Backend(error.to_string()))?;
+        runtime
+            .block_on(operation)
             .map_err(|error| SecretError::Backend(error.to_string()))
     }
 }
@@ -84,73 +100,44 @@ impl SecretServiceStore {
 #[cfg(unix)]
 impl SecretStore for SecretServiceStore {
     fn save_token(&self, server_id: &ServerId, token: &str) -> SecretResult<()> {
-        let service = self.connect()?;
-        let collection = service
-            .get_default_collection()
-            .or_else(|_| service.get_any_collection())
-            .map_err(|error| SecretError::Backend(error.to_string()))?;
-        let mut attributes = HashMap::new();
-        attributes.insert("application", self.application.as_str());
-        attributes.insert("kind", "jellyfin-token");
-        attributes.insert("server_id", server_id.as_str());
+        let attributes = self.token_attributes(server_id);
         let label = format!("Rufin Jellyfin token {}", server_id.as_str());
+        let token = token.to_string();
 
-        collection
-            .create_item(&label, attributes, token.as_bytes(), true, "text/plain")
-            .map_err(|error| SecretError::Backend(error.to_string()))?;
-        Ok(())
+        self.run(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring
+                .create_item(&label, &attributes, oo7::Secret::text(token), true)
+                .await
+        })
     }
 
     fn load_token(&self, server_id: &ServerId) -> SecretResult<Option<String>> {
-        let service = self.connect()?;
-        let mut attributes = HashMap::new();
-        attributes.insert("application", self.application.as_str());
-        attributes.insert("kind", "jellyfin-token");
-        attributes.insert("server_id", server_id.as_str());
+        let attributes = self.token_attributes(server_id);
+        let secret = self.run(async move {
+            let keyring = oo7::Keyring::new().await?;
+            let Some(item) = keyring.search_items(&attributes).await?.into_iter().next() else {
+                return Ok(None);
+            };
+            if item.is_locked().await? {
+                item.unlock().await?;
+            }
+            Ok(Some(item.secret().await?))
+        })?;
 
-        let results = service
-            .search_items(attributes)
-            .map_err(|error| SecretError::Backend(error.to_string()))?;
-        let item = if let Some(item) = results.unlocked.first() {
-            item
-        } else if let Some(item) = results.locked.first() {
-            item.unlock()
-                .map_err(|error| SecretError::Backend(error.to_string()))?;
-            item
-        } else {
-            return Ok(None);
-        };
-
-        let secret = item
-            .get_secret()
-            .map_err(|error| SecretError::Backend(error.to_string()))?;
-        String::from_utf8(secret)
-            .map(Some)
+        secret
+            .map(|secret| String::from_utf8(secret.as_bytes().to_vec()))
+            .transpose()
             .map_err(|_| SecretError::Utf8)
     }
 
     fn delete_token(&self, server_id: &ServerId) -> SecretResult<()> {
-        let service = self.connect()?;
-        let mut attributes = HashMap::new();
-        attributes.insert("application", self.application.as_str());
-        attributes.insert("kind", "jellyfin-token");
-        attributes.insert("server_id", server_id.as_str());
+        let attributes = self.token_attributes(server_id);
 
-        let results = service
-            .search_items(attributes)
-            .map_err(|error| SecretError::Backend(error.to_string()))?;
-        for item in results.unlocked.iter().chain(results.locked.iter()) {
-            if item
-                .is_locked()
-                .map_err(|error| SecretError::Backend(error.to_string()))?
-            {
-                item.unlock()
-                    .map_err(|error| SecretError::Backend(error.to_string()))?;
-            }
-            item.delete()
-                .map_err(|error| SecretError::Backend(error.to_string()))?;
-        }
-        Ok(())
+        self.run(async move {
+            let keyring = oo7::Keyring::new().await?;
+            keyring.delete(&attributes).await
+        })
     }
 }
 
