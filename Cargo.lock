@@ -2599,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "rufin-app"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "clap",
  "directories",
