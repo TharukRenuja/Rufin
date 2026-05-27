@@ -21,7 +21,7 @@
     "--socket=pulseaudio",
     "--device=dri",
     "--filesystem=xdg-music",
-    "--filesystem=xdg-run/app/com.discordapp.Discord:create"
+    "--filesystem=xdg-run/app/com.discordapp.Discord/discord-ipc-0"
   ],
   "modules": [
     {

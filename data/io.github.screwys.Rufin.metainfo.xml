@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.screwys.Rufin</id>
   <name>Rufin</name>
-  <summary>Native music client</summary>
+  <summary>Music client for servers and local libraries</summary>
   <developer id="io.github.screwys">
     <name>screwys</name>
   </developer>
@@ -10,11 +10,12 @@
   <project_license>GPL-3.0-or-later</project_license>
   <url type="homepage">https://github.com/screwys/Rufin</url>
   <description>
-    <p>Rufin is a native GTK music client shell with Jellyfin login, a cached read-only library, and native GStreamer playback.</p>
+    <p>Rufin is a native GTK4/libadwaita music client for Jellyfin, Subsonic, Navidrome, and local music folders. It creates its own local cache for fast navigation.</p>
+    <p>It comes with built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz; Discord Rich Presence, external lyrics and cover art lookup, and flexible library display options.</p>
   </description>
   <screenshots>
     <screenshot type="default">
-      <caption>Browse music and control playback</caption>
+      <caption>Rufin</caption>
       <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/Rufin.png</image>
     </screenshot>
     <screenshot>
@@ -30,7 +31,7 @@
       <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/tracks.png</image>
     </screenshot>
     <screenshot>
-      <caption>Configure playback and app behavior</caption>
+      <caption>Configure app layout</caption>
       <image type="source">https://raw.githubusercontent.com/screwys/Rufin/main/data/general.png</image>
     </screenshot>
     <screenshot>
