@@ -1,6 +1,6 @@
 # Rufin
 
-<img align="left" alt="Rufin" src="data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" width="120"> Rufin is a native GTK4/libadwaita music client written in Rust. It is created to be a fast, lightweight and customizable music client. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike. [Now available in Flathub!](https://flathub.org/apps/io.github.screwys.Rufin)
+<img align="left" alt="Rufin" src="data/readme-icon.png" width="96"> Rufin is a native GTK4/libadwaita music client written in Rust. It is created to be a fast, lightweight and customizable music client. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike. [Now available in Flathub!](https://flathub.org/apps/io.github.screwys.Rufin)
 <br clear="left">
 
 
