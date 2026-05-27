@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Renovate owns dependency updates for Cargo crates, GitHub Actions, and Nix inputs.",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["cargo", "github-actions", "nix"],
+  "dependencyDashboard": false,
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "automergeType": "pr",
+  "platformAutomerge": false,
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 0,
+  "packageRules": [
+    {
+      "description": "Keep dependency updates manual until branch protection requires strict CI gates.",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "automerge": false
+    },
+    {
+      "description": "Group Rust minor and patch updates.",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "rust minor and patch dependencies",
+      "groupSlug": "rust-minor-patch"
+    },
+    {
+      "description": "Group GitHub Actions updates.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions dependencies",
+      "groupSlug": "github-actions"
+    },
+    {
+      "description": "Group Nix flake input updates.",
+      "matchManagers": ["nix"],
+      "groupName": "nix flake inputs",
+      "groupSlug": "nix-flake-inputs"
+    }
+  ]
+}

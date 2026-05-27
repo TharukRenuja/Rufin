@@ -642,13 +642,13 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
 
     let unbind_shell = Rc::clone(&shell);
     factory.connect_unbind(move |_, list_item| {
-        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-            if let Some(cell) = track_favorite_cell(list_item) {
-                if let Some(previous_key) = cell.current_key.borrow_mut().take() {
-                    unbind_shell.unregister_favorite_button(&previous_key, &cell.button);
-                }
-                *cell.current_track.borrow_mut() = None;
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = track_favorite_cell(list_item)
+        {
+            if let Some(previous_key) = cell.current_key.borrow_mut().take() {
+                unbind_shell.unregister_favorite_button(&previous_key, &cell.button);
             }
+            *cell.current_track.borrow_mut() = None;
         }
     });
 
@@ -863,9 +863,7 @@ async fn load_cover_pixbuf(
 }
 fn cover_pixbuf_decode_size(size: i32) -> i32 {
     let size = size.max(1);
-    if size >= DETAIL_COVER_SIZE as i32 {
-        size
-    } else if size >= GRID_COVER_SIZE as i32 {
+    if size >= GRID_COVER_SIZE as i32 {
         size
     } else {
         size.saturating_mul(2).min(GRID_COVER_SIZE as i32)

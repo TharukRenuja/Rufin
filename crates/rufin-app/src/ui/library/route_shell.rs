@@ -1,3 +1,16 @@
+type LibraryRouteLoader = Rc<dyn Fn()>;
+type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
+
+struct LibraryPageShellOptions {
+    key: LibraryListKey,
+    empty: bool,
+    empty_body: &'static str,
+    search: gtk::SearchEntry,
+    content: gtk::Widget,
+    load_next: Option<LibraryRouteLoader>,
+    configure_scroller: Option<LibraryRouteScrollerConfigurator>,
+}
+
 impl Shell {
     pub(super) fn library_album_collection_panel(
         self: &Rc<Self>,
@@ -167,15 +180,15 @@ impl Shell {
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
         let shell_started = Instant::now();
-        let view = self.library_page_shell(
-            LibraryListKey::Tracks,
-            tracks.borrow().is_empty(),
-            "Cached tracks will appear here after the background sync finishes.",
+        let view = self.library_page_shell(LibraryPageShellOptions {
+            key: LibraryListKey::Tracks,
+            empty: tracks.borrow().is_empty(),
+            empty_body: "Cached tracks will appear here after the background sync finishes.",
             search,
-            track_collection_widget(self, model, LibraryListKey::Tracks),
-            Some(load_next),
-            Some(track_viewport_warm),
-        );
+            content: track_collection_widget(self, model, LibraryListKey::Tracks),
+            load_next: Some(load_next),
+            configure_scroller: Some(track_viewport_warm),
+        });
         if self.state.perf.is_some() {
             println!(
                 "RUFIN_PERF_TRACKS_PAGE tracks={} total={} complete={} populate_ms={} shell_ms={} total_ms={}",
@@ -191,14 +204,17 @@ impl Shell {
     }
     fn library_page_shell(
         self: &Rc<Self>,
-        key: LibraryListKey,
-        empty: bool,
-        empty_body: &str,
-        search: gtk::SearchEntry,
-        content: gtk::Widget,
-        load_next: Option<Rc<dyn Fn()>>,
-        configure_scroller: Option<Rc<dyn Fn(&gtk::ScrolledWindow)>>,
+        options: LibraryPageShellOptions,
     ) -> gtk::Widget {
+        let LibraryPageShellOptions {
+            key,
+            empty,
+            empty_body,
+            search,
+            content,
+            load_next,
+            configure_scroller,
+        } = options;
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);

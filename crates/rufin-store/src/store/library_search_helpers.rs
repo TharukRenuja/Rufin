@@ -1,3 +1,12 @@
+struct SortedTrackSearchPage<'a> {
+    query: &'a str,
+    sort_key: LibraryField,
+    descending: bool,
+    offset: usize,
+    limit: usize,
+    total: usize,
+}
+
 impl Store {
     fn search_tracks_page(
         &self,
@@ -70,15 +79,10 @@ impl Store {
     fn search_tracks_page_sorted(
         &self,
         server_id: &ServerId,
-        query: &str,
-        sort_key: LibraryField,
-        descending: bool,
-        offset: usize,
-        limit: usize,
-        total: usize,
+        page: SortedTrackSearchPage<'_>,
     ) -> StoreResult<PagedResponse<Track>> {
         let selected_folder = self.selected_music_folder_id(server_id)?;
-        let order_by = track_order_by_sql("t", sort_key, descending);
+        let order_by = track_order_by_sql("t", page.sort_key, page.descending);
         let mut tracks = if let Some(folder_id) = selected_folder.as_ref() {
             let sql = format!(
                 "
@@ -107,9 +111,9 @@ impl Store {
             collect_rows(statement.query_map(
                 params![
                     server_id.as_str(),
-                    query,
-                    limit as i64,
-                    offset as i64,
+                    page.query,
+                    page.limit as i64,
+                    page.offset as i64,
                     folder_id.as_str()
                 ],
                 track_from_row,
@@ -133,12 +137,17 @@ impl Store {
             );
             let mut statement = self.connection.prepare(&sql)?;
             collect_rows(statement.query_map(
-                params![server_id.as_str(), query, limit as i64, offset as i64],
+                params![
+                    server_id.as_str(),
+                    page.query,
+                    page.limit as i64,
+                    page.offset as i64
+                ],
                 track_from_row,
             )?)?
         };
         self.attach_track_metadata(server_id, &mut tracks)?;
-        Ok(PagedResponse::new(tracks, total))
+        Ok(PagedResponse::new(tracks, page.total))
     }
     pub fn load_tracks_matching_sorted(
         &self,
@@ -156,7 +165,15 @@ impl Store {
             let total = self.count_track_fts_matches(server_id, &query)?;
             if total > 0 {
                 return self.search_tracks_page_sorted(
-                    server_id, &query, sort_key, descending, offset, limit, total,
+                    server_id,
+                    SortedTrackSearchPage {
+                        query: &query,
+                        sort_key,
+                        descending,
+                        offset,
+                        limit,
+                        total,
+                    },
                 );
             }
         }

@@ -695,18 +695,18 @@ fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     });
 
     factory.connect_unbind(|_, list_item| {
-        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-            if let Some(cell) = track_identity_cell(list_item) {
-                cell.title.set_text("");
-                cell.artist_button_label.set_text("");
-                cell.artist_label.set_text("");
-                cell.artist_button.set_visible(false);
-                cell.artist_label.set_visible(false);
-                cell.artist_hover_text.borrow_mut().clear();
-                *cell.artist_route.borrow_mut() = None;
-                *cell.current_track.borrow_mut() = None;
-                cell.cover.bind_image(0, None);
-            }
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = track_identity_cell(list_item)
+        {
+            cell.title.set_text("");
+            cell.artist_button_label.set_text("");
+            cell.artist_label.set_text("");
+            cell.artist_button.set_visible(false);
+            cell.artist_label.set_visible(false);
+            cell.artist_hover_text.borrow_mut().clear();
+            *cell.artist_route.borrow_mut() = None;
+            *cell.current_track.borrow_mut() = None;
+            cell.cover.bind_image(0, None);
         }
     });
 
@@ -838,16 +838,16 @@ where
     });
 
     factory.connect_unbind(|_, list_item| {
-        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() {
-            if let Some(cell) = track_link_cell(list_item) {
-                cell.button_label.set_text("");
-                cell.label.set_text("");
-                cell.button.set_visible(false);
-                cell.label.set_visible(false);
-                cell.hover_text.borrow_mut().clear();
-                *cell.route.borrow_mut() = None;
-                *cell.current_track.borrow_mut() = None;
-            }
+        if let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = track_link_cell(list_item)
+        {
+            cell.button_label.set_text("");
+            cell.label.set_text("");
+            cell.button.set_visible(false);
+            cell.label.set_visible(false);
+            cell.hover_text.borrow_mut().clear();
+            *cell.route.borrow_mut() = None;
+            *cell.current_track.borrow_mut() = None;
         }
     });
 

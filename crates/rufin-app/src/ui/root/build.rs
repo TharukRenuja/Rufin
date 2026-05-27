@@ -345,17 +345,8 @@ impl UiPerfMonitor {
         }
     }
 
-    fn record_tracks_row_contract(
-        &self,
-        scenario: &'static str,
-        visible_start: usize,
-        visible_end: usize,
-        ready: usize,
-        coverless: usize,
-        pending: usize,
-        missing: usize,
-    ) {
-        let failed = pending > 0 || missing > 0;
+    fn record_tracks_row_contract(&self, contract: UiPerfTrackRowContract) {
+        let failed = contract.pending > 0 || contract.missing > 0;
         {
             let mut inner = self.inner.borrow_mut();
             inner.tracks_row_contract_samples =
@@ -367,26 +358,26 @@ impl UiPerfMonitor {
             inner
                 .track_row_contracts
                 .push(UiPerfTrackRowContractSample {
-                    scenario,
-                    visible_start,
-                    visible_end,
-                    ready,
-                    coverless,
-                    pending,
-                    missing,
+                    scenario: contract.scenario,
+                    visible_start: contract.visible_start,
+                    visible_end: contract.visible_end,
+                    ready: contract.ready,
+                    coverless: contract.coverless,
+                    pending: contract.pending,
+                    missing: contract.missing,
                     failed,
                 });
         }
         if self.options.terminal_events || failed {
             println!(
                 "RUFIN_ACCEPT_TRACKS_ROW scenario={} visible_start={} visible_end={} ready={} coverless={} pending={} missing={} result={}",
-                scenario,
-                visible_start,
-                visible_end,
-                ready,
-                coverless,
-                pending,
-                missing,
+                contract.scenario,
+                contract.visible_start,
+                contract.visible_end,
+                contract.ready,
+                contract.coverless,
+                contract.pending,
+                contract.missing,
                 if failed { "FAIL" } else { "PASS" }
             );
         }

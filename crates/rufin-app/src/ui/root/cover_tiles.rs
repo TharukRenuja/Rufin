@@ -95,9 +95,6 @@ impl Shell {
                     });
                 }
             }
-        } else if image_ref.is_none() {
-            tile.bind_image(seed, None);
-            self.record_perf_coverless_tile();
         } else {
             tile.bind_image(seed, None);
             self.record_perf_coverless_tile();

@@ -39,12 +39,7 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
             "Syncing {provider_name} library..."
         )));
         let sync_result = run_sync_job(
-            &context.store,
-            &context.runtime,
-            &context.secrets,
-            &context.events,
-            &context.cover_in_flight,
-            &context.cover_slots,
+            &context,
             &saved,
             generation,
             prefetch_initial_covers,
@@ -276,34 +271,29 @@ fn initial_cover_cache_required(store: &StoreHandle, server_id: &ServerId) -> bo
 }
 
 fn run_sync_job(
-    store: &StoreHandle,
-    runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    events: &Sender<ControllerEvent>,
-    cover_in_flight: &Arc<Mutex<HashSet<String>>>,
-    cover_slots: &Arc<(Mutex<usize>, Condvar)>,
+    context: &SyncContext,
     saved: &SavedServer,
     generation: i64,
     prefetch_initial_covers: bool,
 ) -> Result<(), String> {
-    let provider = provider_for_saved(store, runtime, secrets, saved)?;
-    runtime.block_on(sync_provider_generation(
-        store,
+    let provider = provider_for_saved(&context.store, &context.runtime, &context.secrets, saved)?;
+    context.runtime.block_on(sync_provider_generation(
+        &context.store,
         &saved.server.id,
         provider.as_music_provider(),
         generation,
     ))?;
     if prefetch_initial_covers {
-        let _sent = events.send(ControllerEvent::LoginStatus(
+        let _sent = context.events.send(ControllerEvent::LoginStatus(
             "Caching library artwork...".to_string(),
         ));
         covers::prefetch_initial_provider_cover_cache(
-            store,
-            runtime,
-            secrets,
-            events,
-            cover_in_flight,
-            cover_slots,
+            &context.store,
+            &context.runtime,
+            &context.secrets,
+            &context.events,
+            &context.cover_in_flight,
+            &context.cover_slots,
             saved,
         )?;
     }

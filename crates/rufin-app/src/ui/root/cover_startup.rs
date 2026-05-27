@@ -1,6 +1,17 @@
 const UI_PERF_ROUTE_GATE_POLL_MS: u64 = 33;
 const UI_PERF_ROUTE_GATE_TIMEOUT_MS: u64 = 3_500;
 
+struct UiPerfRouteScrollRun {
+    shell: Rc<Shell>,
+    app: adw::Application,
+    perf: Rc<UiPerfMonitor>,
+    runs: Rc<RefCell<VecDeque<(Route, UiPerfScenario)>>>,
+    heartbeat: Rc<RefCell<Option<glib::SourceId>>>,
+    route_name: String,
+    scenario: UiPerfScenario,
+    wait_started_at: Instant,
+}
+
 fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let normal_back_shell = Rc::clone(shell);
     shell
@@ -676,55 +687,38 @@ fn run_next_ui_perf_route(
     let runs_for_next = Rc::clone(&runs);
     let heartbeat_for_next = Rc::clone(&heartbeat);
     glib::timeout_add_local_once(Duration::from_millis(120), move || {
-        begin_ui_perf_route_scroll(
-            shell_for_scroll,
-            app_for_next,
-            perf_for_scroll,
-            runs_for_next,
-            heartbeat_for_next,
+        begin_ui_perf_route_scroll(UiPerfRouteScrollRun {
+            shell: shell_for_scroll,
+            app: app_for_next,
+            perf: perf_for_scroll,
+            runs: runs_for_next,
+            heartbeat: heartbeat_for_next,
             route_name,
             scenario,
-            Instant::now(),
-        );
+            wait_started_at: Instant::now(),
+        });
     });
 }
-fn begin_ui_perf_route_scroll(
-    shell: Rc<Shell>,
-    app: adw::Application,
-    perf: Rc<UiPerfMonitor>,
-    runs: Rc<RefCell<VecDeque<(Route, UiPerfScenario)>>>,
-    heartbeat: Rc<RefCell<Option<glib::SourceId>>>,
-    route_name: String,
-    scenario: UiPerfScenario,
-    wait_started_at: Instant,
-) {
-    if route_cover_gate_active_for_current_route(&shell)
-        && wait_started_at.elapsed() < Duration::from_millis(UI_PERF_ROUTE_GATE_TIMEOUT_MS)
+fn begin_ui_perf_route_scroll(run: UiPerfRouteScrollRun) {
+    if route_cover_gate_active_for_current_route(&run.shell)
+        && run.wait_started_at.elapsed() < Duration::from_millis(UI_PERF_ROUTE_GATE_TIMEOUT_MS)
     {
         glib::timeout_add_local_once(Duration::from_millis(UI_PERF_ROUTE_GATE_POLL_MS), move || {
-            begin_ui_perf_route_scroll(
-                shell,
-                app,
-                perf,
-                runs,
-                heartbeat,
-                route_name,
-                scenario,
-                wait_started_at,
-            );
+            begin_ui_perf_route_scroll(run);
         });
         return;
     }
 
-    perf.begin_scroll(route_name.clone(), scenario);
+    run.perf.begin_scroll(run.route_name.clone(), run.scenario);
     let scroll_source = Rc::new(RefCell::new(None::<glib::SourceId>));
-    if let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) {
+    if let Some(scroller) = find_largest_scrolled_window(&run.shell.route_host.clone().upcast()) {
         let direction = Rc::new(Cell::new(1.0_f64));
         let jump_index = Rc::new(Cell::new(0_usize));
-        let perf_for_tick = Rc::clone(&perf);
-        let route_for_tick = route_name.clone();
+        let perf_for_tick = Rc::clone(&run.perf);
+        let route_for_tick = run.route_name.clone();
         let direction_for_tick = Rc::clone(&direction);
         let jump_index_for_tick = Rc::clone(&jump_index);
+        let scenario = run.scenario;
         let id = glib::timeout_add_local(Duration::from_millis(16), move || {
             let adjustment = scroller.vadjustment();
             let page_size = adjustment.page_size().max(1.0);
@@ -744,15 +738,16 @@ fn begin_ui_perf_route_scroll(
         });
         *scroll_source.borrow_mut() = Some(id);
     } else {
-        perf.record_scroll_note(&route_name, "no_scrolled_window");
+        run.perf
+            .record_scroll_note(&run.route_name, "no_scrolled_window");
     }
 
-    glib::timeout_add_local_once(Duration::from_millis(perf.options.route_ms), move || {
+    glib::timeout_add_local_once(Duration::from_millis(run.perf.options.route_ms), move || {
         if let Some(source) = scroll_source.borrow_mut().take() {
             source.remove();
         }
-        perf.finish_scroll();
-        run_next_ui_perf_route(shell, app, perf, runs, heartbeat);
+        run.perf.finish_scroll();
+        run_next_ui_perf_route(run.shell, run.app, run.perf, run.runs, run.heartbeat);
     });
 }
 fn route_cover_gate_active_for_current_route(shell: &Shell) -> bool {

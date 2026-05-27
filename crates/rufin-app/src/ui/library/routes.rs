@@ -224,15 +224,15 @@ impl Shell {
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
         let shell_started = Instant::now();
-        let view = self.library_page_shell(
-            LibraryListKey::Albums,
-            albums.borrow().is_empty(),
-            "Cached albums will appear here after the background sync finishes.",
+        let view = self.library_page_shell(LibraryPageShellOptions {
+            key: LibraryListKey::Albums,
+            empty: albums.borrow().is_empty(),
+            empty_body: "Cached albums will appear here after the background sync finishes.",
             search,
             content,
-            Some(load_next),
-            Some(configure_scroller),
-        );
+            load_next: Some(load_next),
+            configure_scroller: Some(configure_scroller),
+        });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
         if settings.layout == LibraryLayout::Detail {
             info!(
@@ -473,15 +473,15 @@ impl Shell {
             }) as Rc<dyn Fn()>
         };
 
-        self.library_page_shell(
+        self.library_page_shell(LibraryPageShellOptions {
             key,
-            artists.borrow().is_empty(),
-            "Cached rows will appear here after the background sync finishes.",
+            empty: artists.borrow().is_empty(),
+            empty_body: "Cached rows will appear here after the background sync finishes.",
             search,
-            artist_collection_widget(self, model, key),
-            Some(load_next),
-            None,
-        )
+            content: artist_collection_widget(self, model, key),
+            load_next: Some(load_next),
+            configure_scroller: None,
+        })
     }
     pub(super) fn library_genre_list_view(self: &Rc<Self>) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::Genres);
@@ -634,15 +634,15 @@ impl Shell {
             }) as Rc<dyn Fn()>
         };
 
-        self.library_page_shell(
-            LibraryListKey::Genres,
-            genres.borrow().is_empty(),
-            "Cached rows will appear here after the background sync finishes.",
+        self.library_page_shell(LibraryPageShellOptions {
+            key: LibraryListKey::Genres,
+            empty: genres.borrow().is_empty(),
+            empty_body: "Cached rows will appear here after the background sync finishes.",
             search,
-            genre_collection_widget(self, model),
-            Some(load_next),
-            None,
-        )
+            content: genre_collection_widget(self, model),
+            load_next: Some(load_next),
+            configure_scroller: None,
+        })
     }
     pub(super) fn library_playlists_view(self: &Rc<Self>) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::Playlists);
@@ -804,15 +804,15 @@ impl Shell {
             }) as Rc<dyn Fn()>
         };
 
-        self.library_page_shell(
-            LibraryListKey::Playlists,
-            playlists.borrow().is_empty(),
-            "Cached playlists will appear here after the background sync finishes.",
+        self.library_page_shell(LibraryPageShellOptions {
+            key: LibraryListKey::Playlists,
+            empty: playlists.borrow().is_empty(),
+            empty_body: "Cached playlists will appear here after the background sync finishes.",
             search,
-            playlist_collection_widget(self, model),
-            Some(load_next),
-            None,
-        )
+            content: playlist_collection_widget(self, model),
+            load_next: Some(load_next),
+            configure_scroller: None,
+        })
     }
     pub(super) fn library_tracks_panel(
         self: &Rc<Self>,

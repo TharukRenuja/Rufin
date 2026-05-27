@@ -341,6 +341,15 @@ struct UiPerfBindStats {
     max_us: u64,
     slow_samples: usize,
 }
+struct UiPerfTrackRowContract {
+    scenario: &'static str,
+    visible_start: usize,
+    visible_end: usize,
+    ready: usize,
+    coverless: usize,
+    pending: usize,
+    missing: usize,
+}
 struct UiPerfTrackRowContractSample {
     scenario: &'static str,
     visible_start: usize,

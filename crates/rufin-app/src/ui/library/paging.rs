@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use adw::prelude::*;
-use gdk_pixbuf::Pixbuf;
 use gtk::{gio, glib};
 use rufin_core::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
@@ -12,8 +11,9 @@ use rufin_core::{
 };
 use tracing::{info, warn};
 use super::{
-    ArtworkTile, CoverDecodePriority, DETAIL_COVER_SIZE, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE,
+    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE,
     PRIMARY_ROUTE_MARGIN_START, Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE,
+    UiPerfTrackRowContract,
     album_favorite_key, append_albums_to_model, append_artists_to_model, append_genres_to_model,
     append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
     connect_paged_grid_loader, cover_decode_size, favorite_button_is_active, favorite_icon_button,
@@ -37,7 +37,6 @@ const ALBUM_DETAIL_META_LABEL_HEIGHT: i32 = 20;
 const ALBUM_ROUTE_COVER_GATE_ITEMS: usize = 16;
 const ROUTE_COVER_GATE_POLL_MS: u64 = 33;
 const ROUTE_COVER_GATE_TIMEOUT_MS: u64 = 3_000;
-const ROUTE_COVER_GATE_SYNC_DECODE_LIMIT: usize = 0;
 const TRACK_ROUTE_COVER_GATE_ROWS: usize = 64;
 const TRACK_ROW_CONTRACT_SCROLL_DELAY_MS: u64 = 250;
 const TRACK_VIEWPORT_COVER_WARM_AHEAD_ROWS: usize = 128;
@@ -228,28 +227,22 @@ impl Shell {
         let mut pending = 0_usize;
         let mut requested = 0_usize;
         let mut decoding = 0_usize;
-        let use_sync_decode = image_refs.len() <= ROUTE_COVER_GATE_SYNC_DECODE_LIMIT;
 
         for image_ref in &image_refs {
-            let Some(key) = self.cover_cache_key(&image_ref, fetch_size) else {
+            let Some(key) = self.cover_cache_key(image_ref, fetch_size) else {
                 continue;
             };
             if !seen.insert(key.clone())
                 || self
-                    .decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
+                    .decoded_cover_for_ref(image_ref, fetch_size, decode_size)
                     .is_some()
             {
                 continue;
             }
             if let Some((ready_key, path)) =
-                self.cached_cover_path_for_startup_prime(&image_ref, fetch_size)
+                self.cached_cover_path_for_startup_prime(image_ref, fetch_size)
             {
                 if self.decoded_cover_has_min_size(&ready_key, decode_size) {
-                    continue;
-                }
-                if use_sync_decode
-                    && self.decode_route_gate_cover_from_path(&ready_key, &path, decode_size)
-                {
                     continue;
                 }
                 if self.state.cover_decodes.borrow().contains(&ready_key) {
@@ -427,38 +420,6 @@ impl Shell {
             RouteCoverMissingPolicy::Any => true,
         }
     }
-    fn decode_route_gate_cover_from_path(
-        &self,
-        key: &str,
-        path: &std::path::Path,
-        size: i32,
-    ) -> bool {
-        if self.decoded_cover_has_min_size(key, size) {
-            return true;
-        }
-        let decode_size = if size >= DETAIL_COVER_SIZE as i32 {
-            size
-        } else if size >= GRID_COVER_SIZE as i32 {
-            size
-        } else {
-            size.saturating_mul(2).min(GRID_COVER_SIZE as i32)
-        };
-        match Pixbuf::from_file_at_scale(path, decode_size, decode_size, true) {
-            Ok(pixbuf) => {
-                self.remember_decoded_cover(key.to_string(), pixbuf, CoverDecodePriority::Visible);
-                self.record_perf_cover_decode_ok(key);
-                true
-            }
-            Err(error) => {
-                warn!(
-                    %error,
-                    path = %path.display(),
-                    "failed to synchronously decode route gate cover"
-                );
-                false
-            }
-        }
-    }
 }
 fn connect_track_viewport_cover_warm(
     shell: &Rc<Shell>,
@@ -610,7 +571,7 @@ fn record_track_row_contract_sample(
         }
     }
     if let Some(perf) = &shell.state.perf {
-        perf.record_tracks_row_contract(
+        perf.record_tracks_row_contract(UiPerfTrackRowContract {
             scenario,
             visible_start,
             visible_end,
@@ -618,7 +579,7 @@ fn record_track_row_contract_sample(
             coverless,
             pending,
             missing,
-        );
+        });
     }
 }
 fn warm_track_cover_model_viewport(

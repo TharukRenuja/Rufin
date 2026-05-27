@@ -1,0 +1,38 @@
+name: Clippy check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clippy-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workspace:
+    name: Workspace
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: Check Rust formatting
+        run: nix --accept-flake-config develop --command cargo fmt --all -- --check
+
+      - name: Check Rust lints
+        run: nix --accept-flake-config develop --command cargo clippy --workspace --all-targets --locked -- -D warnings
