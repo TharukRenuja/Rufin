@@ -331,7 +331,7 @@ impl Shell {
         );
         self.fullscreen_player
             .meta
-            .set_text(&self.fullscreen_player_meta_text(&player));
+            .set_text(&self.fullscreen_player_meta_text(player));
         self.fullscreen_player
             .meta
             .set_visible(player.current.is_some());
