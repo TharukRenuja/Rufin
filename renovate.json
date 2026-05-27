@@ -3,6 +3,9 @@
   "description": "Renovate owns dependency updates for Cargo crates, GitHub Actions, and Nix inputs.",
   "extends": ["config:recommended"],
   "enabledManagers": ["cargo", "github-actions", "nix"],
+  "nix": {
+    "enabled": true
+  },
   "dependencyDashboard": false,
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
@@ -15,6 +18,15 @@
       "description": "Keep dependency updates manual until branch protection requires strict CI gates.",
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
       "automerge": false
+    },
+    {
+      "description": "Regenerate Flatpak cargo sources after Rust dependency updates.",
+      "matchManagers": ["cargo"],
+      "postUpgradeTasks": {
+        "commands": ["bash packaging/flatpak/update-cargo-sources.sh"],
+        "fileFilters": ["packaging/flatpak/cargo-sources.json"],
+        "executionMode": "branch"
+      }
     },
     {
       "description": "Group Rust minor and patch updates.",
