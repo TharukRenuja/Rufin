@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a problem in Rufin.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: input
+    id: rufin-version
+    attributes:
+      label: Rufin version
+      placeholder: "Example: 0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: server-version
+    attributes:
+      label: Server and version
+      description: Please enter the server version if appliciable, especially if the app needs to interact with the server for the issue
+      placeholder: "Example: Jellyfin v10.11.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install Rufin?
+      options:
+        - Flatpak
+        - AUR
+        - Nix
+        - Local build
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Please describe the problem and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps needed to reproduce the problem.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true

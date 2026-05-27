@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest a new feature or improvement for Rufin.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: server
+    attributes:
+      label: Server
+      options:
+        - Jellyfin
+        - Navidrome
+        - OpenSubsonic
+        - Local
+        - Irrelevant
+    validations:
+      required: true
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: Please describe the feature
+      description: Explain the requested behavior and what a good implementation should be like. Is this implemented in other apps?
+    validations:
+      required: true
