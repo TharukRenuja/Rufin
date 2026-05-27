@@ -2,9 +2,20 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::future::Future;
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
+use std::time::Duration;
 
 use rufin_core::ServerId;
 use thiserror::Error;
+
+#[cfg(unix)]
+const SECRET_SERVICE_TIMEOUT: Duration = Duration::from_secs(15);
+// oo7's Flatpak file backend protects the keyring file per Keyring instance.
+// Reuse one process-wide instance so concurrent Rufin token reads share that lock.
+#[cfg(unix)]
+static SECRET_SERVICE_KEYRING: Mutex<Option<Arc<oo7::Keyring>>> = Mutex::new(None);
+#[cfg(unix)]
+static SECRET_SERVICE_KEYRING_INIT: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
 pub enum SecretError {
@@ -87,13 +98,54 @@ impl SecretServiceStore {
     where
         Fut: Future<Output = oo7::Result<T>>,
     {
+        self.run_with_timeout(operation, SECRET_SERVICE_TIMEOUT)
+    }
+
+    fn run_with_timeout<T, Fut>(&self, operation: Fut, timeout: Duration) -> SecretResult<T>
+    where
+        Fut: Future<Output = oo7::Result<T>>,
+    {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|error| SecretError::Backend(error.to_string()))?;
-        runtime
-            .block_on(operation)
-            .map_err(|error| SecretError::Backend(error.to_string()))
+        let result = runtime
+            .block_on(async { tokio::time::timeout(timeout, operation).await })
+            .map_err(|_| {
+                SecretError::Backend(format!(
+                    "secret service timed out after {}s",
+                    timeout.as_secs_f64()
+                ))
+            })?;
+        result.map_err(|error| SecretError::Backend(error.to_string()))
+    }
+
+    fn keyring(&self) -> SecretResult<Arc<oo7::Keyring>> {
+        if let Some(keyring) = SECRET_SERVICE_KEYRING
+            .lock()
+            .map_err(|_| SecretError::Locked)?
+            .clone()
+        {
+            return Ok(keyring);
+        }
+
+        let _init_guard = SECRET_SERVICE_KEYRING_INIT
+            .lock()
+            .map_err(|_| SecretError::Locked)?;
+
+        if let Some(keyring) = SECRET_SERVICE_KEYRING
+            .lock()
+            .map_err(|_| SecretError::Locked)?
+            .clone()
+        {
+            return Ok(keyring);
+        }
+
+        let keyring = Arc::new(self.run(oo7::Keyring::new())?);
+        *SECRET_SERVICE_KEYRING
+            .lock()
+            .map_err(|_| SecretError::Locked)? = Some(Arc::clone(&keyring));
+        Ok(keyring)
     }
 }
 
@@ -103,9 +155,9 @@ impl SecretStore for SecretServiceStore {
         let attributes = self.token_attributes(server_id);
         let label = format!("Rufin Jellyfin token {}", server_id.as_str());
         let token = token.to_string();
+        let keyring = self.keyring()?;
 
         self.run(async move {
-            let keyring = oo7::Keyring::new().await?;
             keyring
                 .create_item(&label, &attributes, oo7::Secret::text(token), true)
                 .await
@@ -114,8 +166,8 @@ impl SecretStore for SecretServiceStore {
 
     fn load_token(&self, server_id: &ServerId) -> SecretResult<Option<String>> {
         let attributes = self.token_attributes(server_id);
+        let keyring = self.keyring()?;
         let secret = self.run(async move {
-            let keyring = oo7::Keyring::new().await?;
             let Some(item) = keyring.search_items(&attributes).await?.into_iter().next() else {
                 return Ok(None);
             };
@@ -133,20 +185,22 @@ impl SecretStore for SecretServiceStore {
 
     fn delete_token(&self, server_id: &ServerId) -> SecretResult<()> {
         let attributes = self.token_attributes(server_id);
+        let keyring = self.keyring()?;
 
-        self.run(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.delete(&attributes).await
-        })
+        self.run(async move { keyring.delete(&attributes).await })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::SecretServiceStore;
     use super::{MemorySecretStore, SecretStore};
+    #[cfg(unix)]
+    use super::{SecretError, SecretServiceStore};
     use rufin_core::ServerId;
+    #[cfg(unix)]
+    use std::future;
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
 
     #[test]
     fn memory_secret_store_round_trips_tokens() {
@@ -166,5 +220,22 @@ mod tests {
     #[cfg(unix)]
     fn secret_service_store_is_constructible_without_dbus_work() {
         let _store = SecretServiceStore::new();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn secret_service_operations_time_out() {
+        let store = SecretServiceStore::new();
+        let started = Instant::now();
+
+        let error = store
+            .run_with_timeout(
+                future::pending::<oo7::Result<()>>(),
+                Duration::from_millis(5),
+            )
+            .expect_err("timeout error");
+
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(matches!(error, SecretError::Backend(message) if message.contains("timed out")));
     }
 }

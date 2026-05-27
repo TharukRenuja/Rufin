@@ -19,9 +19,10 @@ pub(in crate::ui) fn manage_server_navigation_page(
     shell: &Rc<Shell>,
     server: ServerIdentity,
     navigation: &adw::NavigationView,
+    preferences_dialog: &adw::Dialog,
 ) -> adw::NavigationPage {
     let title = server_display_name(&server);
-    let toolbar = manage_server_toolbar(shell, server, navigation.clone());
+    let toolbar = manage_server_toolbar(shell, server, navigation.clone(), preferences_dialog);
     adw::NavigationPage::new(&toolbar, &title)
 }
 
@@ -29,6 +30,7 @@ fn manage_server_toolbar(
     shell: &Rc<Shell>,
     server: ServerIdentity,
     exit: ManageServerExitSlot,
+    preferences_dialog: &adw::Dialog,
 ) -> adw::ToolbarView {
     let (access, access_status, selected) = {
         let library = shell.state.library.borrow();
@@ -211,7 +213,13 @@ fn manage_server_toolbar(
     actions.append(&save);
     content.append(&actions);
 
-    content.append(&server_actions_group(shell, &server, selected, &exit));
+    content.append(&server_actions_group(
+        shell,
+        &server,
+        selected,
+        &exit,
+        preferences_dialog,
+    ));
     toolbar.set_content(Some(&scroller));
 
     let update_state = Rc::new({
@@ -390,6 +398,7 @@ fn server_actions_group(
     server: &ServerIdentity,
     selected: bool,
     exit: &ManageServerExitSlot,
+    preferences_dialog: &adw::Dialog,
 ) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title(tr("Server Actions"))
@@ -428,8 +437,15 @@ fn server_actions_group(
     let server_id = server.id.clone();
     let server_name = server_display_name(server);
     let exit = exit.clone();
+    let preferences_dialog = preferences_dialog.clone();
     forget.connect_activated(move |_| {
-        confirm_forget_server(&forget_shell, server_id.clone(), &server_name, exit.clone());
+        confirm_forget_server(
+            &forget_shell,
+            server_id.clone(),
+            &server_name,
+            exit.clone(),
+            preferences_dialog.clone(),
+        );
     });
     group.add(&forget);
 
@@ -487,6 +503,7 @@ fn confirm_forget_server(
     server_id: ServerId,
     server_name: &str,
     exit: ManageServerExitSlot,
+    preferences_dialog: adw::Dialog,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(tr("Forget Server"))
@@ -510,6 +527,7 @@ fn confirm_forget_server(
             if response.as_str() == "forget" {
                 controller.forget_server(server_id.clone());
                 close_manage_server(&exit);
+                preferences_dialog.close();
             }
         },
     );

@@ -32,9 +32,7 @@ impl Shell {
             let Some(key) = self.cover_cache_key(image_ref, size) else {
                 continue;
             };
-            if let Some(cover) = self.state.decoded_covers.borrow().get(&key).cloned()
-                && cover.size >= min_size
-            {
+            if let Some(cover) = self.cloned_decoded_cover(&key, min_size) {
                 return Some((key, cover.pixbuf));
             }
         }
@@ -45,9 +43,7 @@ impl Shell {
         let size = self
             .pending_cover_size(key)
             .unwrap_or(GRID_COVER_SIZE as i32);
-        if let Some(cover) = self.state.decoded_covers.borrow().get(key).cloned()
-            && cover.size >= size
-        {
+        if let Some(cover) = self.cloned_decoded_cover(key, size) {
             self.touch_decoded_cover(key, CoverDecodePriority::Visible);
             let bindings = self.take_live_cover_bindings(key);
             apply_pixbuf_to_bindings(bindings, cover.pixbuf);
@@ -127,12 +123,9 @@ impl Shell {
         min_size: i32,
         priority: CoverDecodePriority,
     ) -> bool {
-        let Some(cover) = self.state.decoded_covers.borrow().get(key).cloned() else {
+        let Some(cover) = self.cloned_decoded_cover(key, min_size) else {
             return false;
         };
-        if cover.size < min_size {
-            return false;
-        }
         self.touch_decoded_cover(key, priority);
         self.state
             .startup_cover_prime_pending

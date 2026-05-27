@@ -19,15 +19,8 @@ impl AppController {
                 )));
                 return;
             };
-            if sync_is_running(&sync_in_flight, &saved.server.id) {
-                let _sent = events.send(ControllerEvent::Error(
-                    "Wait for the current library sync to finish before forgetting the server."
-                        .to_string(),
-                ));
-                return;
-            }
-            if let Err(error) = secrets.delete_token(&saved.server.id) {
-                let _sent = events.send(ControllerEvent::Error(error.to_string()));
+            if let Err(error) = cancel_sync_if_running(&sync_in_flight, &saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
             let result = store.with_store(|store| {
@@ -68,6 +61,7 @@ impl AppController {
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(
                 LibrarySnapshot::first_run(),
             )));
+            delete_token_after_forget(secrets, saved.server.id);
         });
     }
     pub fn forget_server(&self, server_id: ServerId) {
@@ -101,15 +95,8 @@ impl AppController {
                 }
             };
             let (saved, active_id) = saved;
-            if sync_is_running(&sync_in_flight, &saved.server.id) {
-                let _sent = events.send(ControllerEvent::Error(
-                    "Wait for the current library sync to finish before forgetting the server."
-                        .to_string(),
-                ));
-                return;
-            }
-            if let Err(error) = secrets.delete_token(&saved.server.id) {
-                let _sent = events.send(ControllerEvent::Error(error.to_string()));
+            if let Err(error) = cancel_sync_if_running(&sync_in_flight, &saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
             let mut settings = load_settings_from_store(&store);
@@ -160,6 +147,7 @@ impl AppController {
                 })));
             }
             emit_snapshot(&store, &events);
+            delete_token_after_forget(secrets, saved.server.id);
         });
     }
     #[allow(clippy::too_many_arguments)]
@@ -204,13 +192,14 @@ impl AppController {
                 }
             };
 
-            let saved = match activate_logged_in_server(
+            let saved = match save_token_and_activate_logged_in_server(
                 &store,
                 &queue,
                 &playback,
                 &playback_snapshot,
                 &auto_dj_enabled,
                 &events,
+                &secrets,
                 &session,
                 trust_invalid_cert,
                 local_access_root.as_deref(),
@@ -222,12 +211,16 @@ impl AppController {
                     return;
                 }
             };
-            if let Err(error) = secrets.save_token(&saved.server.id, &session.access_token) {
-                let _sent = events.send(ControllerEvent::Error(error.to_string()));
-                return;
-            }
 
             start_sync_thread(sync_context, saved);
         });
     }
+}
+
+fn delete_token_after_forget(secrets: Arc<dyn SecretStore>, server_id: ServerId) {
+    thread::spawn(move || {
+        if let Err(error) = secrets.delete_token(&server_id) {
+            warn!(%error, server_id = %server_id, "failed to delete forgotten server token");
+        }
+    });
 }

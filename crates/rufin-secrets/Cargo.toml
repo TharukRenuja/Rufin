@@ -1,6 +1,6 @@
 [package]
 name = "rufin-secrets"
-version = "0.2.5"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,7 @@ thiserror = "2.0.18"
 
 [target.'cfg(unix)'.dependencies]
 oo7 = "0.6.0"
-tokio = { version = "1.52.3", features = ["rt"] }
+tokio = { version = "1.52.3", features = ["rt", "time"] }
 
 [lints]
 workspace = true

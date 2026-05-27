@@ -240,11 +240,15 @@ impl Shell {
         self.state.decoded_cover_bytes.set(bytes);
     }
     fn decoded_cover_has_min_size(&self, key: &str, min_size: i32) -> bool {
+        self.cloned_decoded_cover(key, min_size).is_some()
+    }
+    fn cloned_decoded_cover(&self, key: &str, min_size: i32) -> Option<DecodedCover> {
         self.state
             .decoded_covers
             .borrow()
             .get(key)
-            .is_some_and(|cover| cover.size >= min_size)
+            .filter(|cover| cover.size >= min_size)
+            .cloned()
     }
 }
 fn decoded_cover_eviction_candidate(

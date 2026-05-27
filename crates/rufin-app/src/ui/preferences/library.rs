@@ -70,12 +70,14 @@ fn library_sources_page(
             row.set_activatable(true);
             let settings_shell = Rc::clone(shell);
             let navigation = navigation.clone();
+            let dialog = dialog.clone();
             let server = server.clone();
             row.connect_activated(move |_| {
                 let page = super::super::local_access_mapping::manage_server_navigation_page(
                     &settings_shell,
                     server.clone(),
                     &navigation,
+                    &dialog,
                 );
                 navigation.push(&page);
             });

@@ -73,7 +73,7 @@ fi
 
 plain_version="${tag#v}"
 commit="$(git rev-list -n 1 "$tag")"
-cargo_version="$(git show "$tag:crates/rufin-app/Cargo.toml" |
+cargo_version="$(git show "$tag:Cargo.toml" |
   sed -n 's/^version = "\(.*\)"/\1/p' |
   head -n 1)"
 metainfo_version="$(git show "$tag:data/io.github.screwys.Rufin.metainfo.xml" |

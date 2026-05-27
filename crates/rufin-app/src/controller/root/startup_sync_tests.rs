@@ -14,8 +14,8 @@
         lyrics_cache_dir_for_cache_dir, playback_cache_dir_for_cache_dir,
         playback_snapshot_from_queue, prefetch_home_section, promote_prefetched_home_section,
         refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
-        refresh_playlist_pages, restore_queue, sync_page_finished, sync_provider,
-        tmp_cache_dir_for_cache_dir,
+        refresh_playlist_pages, restore_queue, save_token_and_activate_logged_in_server,
+        sync_page_finished, sync_provider, tmp_cache_dir_for_cache_dir,
     };
     use crate::external_scrobbling::ExternalScrobbleState;
     use rufin_core::{
@@ -37,6 +37,27 @@
     use rufin_test_support::{FakeProvider, FakeScale};
     use tokio::runtime::Runtime;
     use crate::providers::JellyfinLyricsSearch;
+    struct SaveFailingSecretStore;
+    impl SecretStore for SaveFailingSecretStore {
+        fn save_token(
+            &self,
+            _server_id: &ServerId,
+            _token: &str,
+        ) -> rufin_secrets::SecretResult<()> {
+            Err(rufin_secrets::SecretError::Backend(
+                "save failed".to_string(),
+            ))
+        }
+
+        fn load_token(&self, _server_id: &ServerId) -> rufin_secrets::SecretResult<Option<String>> {
+            Ok(None)
+        }
+
+        fn delete_token(&self, _server_id: &ServerId) -> rufin_secrets::SecretResult<()> {
+            Ok(())
+        }
+    }
+
     struct RecordingPlaybackBackend {
         commands: Arc<Mutex<Vec<PlaybackCommand>>>,
         events: Vec<PlaybackEvent>,
@@ -189,7 +210,7 @@
         let _cleanup_second = fs::remove_dir_all(second);
     }
     #[test]
-    fn logged_in_server_is_selected_before_token_save() {
+    fn activate_logged_in_server_selects_server_without_saving_token() {
         let (controller, events, _snapshot, _queue, _player) =
             AppController::bootstrap_memory_for_test();
         let server_id = ServerId::new("jellyfin:server:new");
@@ -235,6 +256,55 @@
                 .expect("load token"),
             None
         );
+    }
+    #[test]
+    fn token_save_failure_does_not_persist_empty_server() {
+        let (controller, events, _snapshot, _queue, _player) =
+            AppController::bootstrap_memory_for_test();
+        let secrets: Arc<dyn SecretStore> = Arc::new(SaveFailingSecretStore);
+        let server_id = ServerId::new("jellyfin:server:new");
+        let session = ProviderSession {
+            server: ServerIdentity {
+                id: server_id,
+                provider: "jellyfin".to_string(),
+                name: "New Server".to_string(),
+                base_url: "https://library.example.test".to_string(),
+            },
+            user_id: "user-id".to_string(),
+            username: "listener".to_string(),
+            access_token: "token".to_string(),
+        };
+        let error = save_token_and_activate_logged_in_server(
+            &controller.store,
+            &controller.queue,
+            &controller.playback,
+            &controller.playback_snapshot,
+            &controller.auto_dj_enabled,
+            &controller.events,
+            &secrets,
+            &session,
+            false,
+            None,
+            None,
+        )
+        .expect_err("token save should fail");
+
+        assert!(error.contains("save failed"));
+        assert_eq!(
+            controller
+                .store
+                .with_store(|store| store.active_server())
+                .expect("active server"),
+            None
+        );
+        assert!(
+            controller
+                .store
+                .with_store(|store| store.list_servers())
+                .expect("servers")
+                .is_empty()
+        );
+        assert!(events.try_recv().is_err());
     }
     #[test]
     fn local_source_snapshot_loads_configured_folders() {

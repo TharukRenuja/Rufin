@@ -1,3 +1,34 @@
+    struct DeleteFailingSecretStore;
+    impl SecretStore for DeleteFailingSecretStore {
+        fn save_token(
+            &self,
+            _server_id: &ServerId,
+            _token: &str,
+        ) -> rufin_secrets::SecretResult<()> {
+            Ok(())
+        }
+
+        fn load_token(&self, _server_id: &ServerId) -> rufin_secrets::SecretResult<Option<String>> {
+            Ok(Some("token".to_string()))
+        }
+
+        fn delete_token(&self, _server_id: &ServerId) -> rufin_secrets::SecretResult<()> {
+            Err(rufin_secrets::SecretError::Backend(
+                "delete failed".to_string(),
+            ))
+        }
+    }
+
+    fn wait_for_token_deleted(secrets: &Arc<dyn SecretStore>, server_id: &ServerId) {
+        for _ in 0..100 {
+            if secrets.load_token(server_id).expect("load token").is_none() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(secrets.load_token(server_id).expect("load token"), None);
+    }
+
     #[test]
     fn startup_sync_policy_uses_empty_fresh_and_error_cache_states() {
         let (controller, events, snapshot, _queue, _player) =
@@ -301,12 +332,64 @@
         controller.forget_active_server();
         let snapshot = wait_for_snapshot(&events);
         assert!(snapshot.first_run);
+        wait_for_token_deleted(&controller.secrets, &server_id);
+    }
+    #[test]
+    fn forget_server_cancels_running_sync_and_emits_first_run() {
+        let (controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let server_id = snapshot.server.expect("server").id;
+        controller
+            .secrets
+            .save_token(&server_id, "token")
+            .expect("save token");
+        controller
+            .sync_in_flight
+            .lock()
+            .expect("sync guard")
+            .insert(server_id.clone());
+
+        controller.forget_server(server_id.clone());
+
+        let snapshot = wait_for_snapshot(&events);
+        assert!(snapshot.first_run);
+        assert!(snapshot.server.is_none());
+        assert!(snapshot.servers.is_empty());
         assert_eq!(
             controller
-                .secrets
-                .load_token(&server_id)
-                .expect("load token"),
-            None
+                .store
+                .with_store(|store| store.list_servers())
+                .expect("servers"),
+            Vec::new()
+        );
+        assert!(
+            !controller
+                .sync_in_flight
+                .lock()
+                .expect("sync guard")
+                .contains(&server_id)
+        );
+        wait_for_token_deleted(&controller.secrets, &server_id);
+    }
+    #[test]
+    fn forget_server_emits_first_run_when_token_delete_fails() {
+        let (mut controller, events, snapshot, _queue, _player) =
+            AppController::bootstrap(Some(FakeScale::Small));
+        let server_id = snapshot.server.expect("server").id;
+        controller.secrets = Arc::new(DeleteFailingSecretStore);
+
+        controller.forget_server(server_id);
+
+        let snapshot = wait_for_snapshot(&events);
+        assert!(snapshot.first_run);
+        assert!(snapshot.server.is_none());
+        assert!(snapshot.servers.is_empty());
+        assert_eq!(
+            controller
+                .store
+                .with_store(|store| store.list_servers())
+                .expect("servers"),
+            Vec::new()
         );
     }
     #[test]

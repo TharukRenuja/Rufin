@@ -20,12 +20,13 @@ export RELEASE_NOTES="$notes"
 
 perl -0pi -e '
   my $version = $ENV{"VERSION"};
-  die "missing package version\n" unless s/^version = "[^"]+"/version = "$version"/m;
-' crates/rufin-app/Cargo.toml
+  die "missing workspace package version\n" unless s/(\[workspace\.package\]\nversion = )"[^"]+"/$1"$version"/m;
+' Cargo.toml
 
 perl -0pi -e '
   my $version = $ENV{"VERSION"};
-  die "missing Cargo.lock rufin-app version\n" unless s/(^name = "rufin-app"\nversion = )"[^"]+"/$1"$version"/m;
+  my $count = s/(^name = "rufin(?:-[^"]*)?"\nversion = )"[^"]+"/$1"$version"/mg;
+  die "missing Cargo.lock Rufin package versions\n" unless $count > 0;
 ' Cargo.lock
 
 perl -0pi -e '

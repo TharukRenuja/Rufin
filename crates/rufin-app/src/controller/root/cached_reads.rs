@@ -474,6 +474,48 @@ fn activate_logged_in_server(
     emit_snapshot(store, events);
     Ok(saved)
 }
+#[allow(clippy::too_many_arguments)]
+fn save_token_and_activate_logged_in_server(
+    store: &StoreHandle,
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+    events: &Sender<ControllerEvent>,
+    secrets: &Arc<dyn SecretStore>,
+    session: &ProviderSession,
+    trust_invalid_cert: bool,
+    local_access_root: Option<&Path>,
+    path_replace_from: Option<&str>,
+) -> Result<SavedServer, String> {
+    secrets
+        .save_token(&session.server.id, &session.access_token)
+        .map_err(|error| error.to_string())?;
+    match activate_logged_in_server(
+        store,
+        queue,
+        playback,
+        playback_snapshot,
+        auto_dj_enabled,
+        events,
+        session,
+        trust_invalid_cert,
+        local_access_root,
+        path_replace_from,
+    ) {
+        Ok(saved) => Ok(saved),
+        Err(error) => {
+            if let Err(delete_error) = secrets.delete_token(&session.server.id) {
+                warn!(
+                    %delete_error,
+                    server_id = %session.server.id,
+                    "failed to delete token after login activation failed"
+                );
+            }
+            Err(error)
+        }
+    }
+}
 fn activate_queue_for_saved_and_emit(
     store: &StoreHandle,
     queue: &Arc<Mutex<Option<QueueEngine>>>,

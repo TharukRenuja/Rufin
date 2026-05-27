@@ -47,6 +47,9 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
         if let Ok(mut running) = context.sync_in_flight.lock() {
             running.remove(&server_id);
         }
+        if !sync_target_is_current(&context.store, &server_id) {
+            return;
+        }
         match sync_result {
             Ok(()) => {
                 covers::start_external_metadata_cover_prefetch_thread(
@@ -83,6 +86,17 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
         }
     });
 }
+
+fn sync_target_is_current(store: &StoreHandle, server_id: &ServerId) -> bool {
+    store
+        .with_store(|store| {
+            Ok(store
+                .active_server()?
+                .is_some_and(|saved| saved.server.id == *server_id))
+        })
+        .unwrap_or(false)
+}
+
 fn start_home_refresh_thread(
     context: HomeRefreshContext,
     saved: SavedServer,

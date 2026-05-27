@@ -110,7 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rufin-app/Cargo.toml | head -n 1)"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
           metainfo_version="$(
             sed -n 's/.*<release version="\([^"]*\)".*/\1/p' data/io.github.screwys.Rufin.metainfo.xml |
               head -n 1
@@ -141,7 +141,7 @@ jobs:
       - name: Build setup.exe
         shell: pwsh
         run: |
-          $version = (Select-String -Path crates/rufin-app/Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
           $stage = Join-Path $PWD "dist/windows/Rufin"
           $output = Join-Path $PWD "dist"
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"

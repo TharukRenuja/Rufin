@@ -1,3 +1,8 @@
+use std::time::Duration;
+
+const JELLYFIN_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const JELLYFIN_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[async_trait(?Send)]
 impl MusicProvider for JellyfinProvider {
     fn identity(&self) -> &ProviderIdentity {
@@ -717,8 +722,22 @@ async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageByt
     })
 }
 fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
+    build_client_with_timeouts(
+        trust_invalid_cert,
+        JELLYFIN_CONNECT_TIMEOUT,
+        JELLYFIN_REQUEST_TIMEOUT,
+    )
+}
+
+fn build_client_with_timeouts(
+    trust_invalid_cert: bool,
+    connect_timeout: Duration,
+    request_timeout: Duration,
+) -> ProviderResult<Client> {
     Client::builder()
         .danger_accept_invalid_certs(trust_invalid_cert)
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
         .build()
         .map_err(map_reqwest_error)
 }

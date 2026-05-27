@@ -144,7 +144,7 @@ fi
 
 bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
 if ! git diff --quiet || ! git diff --cached --quiet; then
-  git add Cargo.lock crates/rufin-app/Cargo.toml data/io.github.screwys.Rufin.metainfo.xml
+  git add Cargo.lock Cargo.toml data/io.github.screwys.Rufin.metainfo.xml
   git commit -m "chore(release): bump version to $plain_version"
 fi
 

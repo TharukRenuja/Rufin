@@ -455,6 +455,16 @@ fn sync_is_running(sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>, server_id: &S
         .unwrap_or(true)
 }
 
+fn cancel_sync_if_running(
+    sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>,
+    server_id: &ServerId,
+) -> Result<bool, String> {
+    sync_in_flight
+        .lock()
+        .map(|mut running| running.remove(server_id))
+        .map_err(|_| "sync guard lock was poisoned".to_string())
+}
+
 fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
     let (lock, ready) = &**slots;
     let Ok(mut active) = lock.lock() else {

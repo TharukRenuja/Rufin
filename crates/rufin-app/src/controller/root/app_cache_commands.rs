@@ -16,14 +16,14 @@ impl AppController {
         let Some(saved) = store.with_store(|store| store.active_server())? else {
             return Err("No active server is saved.".to_string());
         };
-        platform_secret_store()
-            .delete_token(&saved.server.id)
-            .map_err(|error| error.to_string())?;
         store.with_store(|store| {
             store.forget_server(&saved.server.id)?;
             Ok(())
         })?;
         clear_disk_cover_cache(&saved.server.id)?;
+        if let Err(error) = platform_secret_store().delete_token(&saved.server.id) {
+            warn!(%error, server_id = %saved.server.id, "failed to delete forgotten server token");
+        }
         Ok(())
     }
 }

@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/rufin-app/Cargo.toml | head -n 1)"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
           metainfo_version="$(
             sed -n 's/.*<release version="\([^"]*\)".*/\1/p' data/io.github.screwys.Rufin.metainfo.xml |
               head -n 1
