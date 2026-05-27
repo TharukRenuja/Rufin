@@ -1,0 +1,129 @@
+name: Flathub PR
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish to Flathub
+        required: true
+        default: v0.3.9
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flathub-pr-${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+  cancel-in-progress: false
+
+env:
+  FLATHUB_REPO: flathub/io.github.screwys.Rufin
+  FLATHUB_BRANCH: master
+  FLATHUB_MANIFEST: io.github.screwys.Rufin.json
+  LOCAL_FLATHUB_MANIFEST: packaging/flatpak/io.github.screwys.Rufin.flathub.json
+
+jobs:
+  open-pr:
+    name: Open Flathub update PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="${{ inputs.release_tag }}"
+          fi
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify signed release tag
+        run: bash .github/scripts/verify-signed-release-tag.sh "${{ steps.release.outputs.tag }}"
+
+      - name: Verify Flathub token
+        env:
+          FLATHUB_PR_TOKEN: ${{ secrets.FLATHUB_PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$FLATHUB_PR_TOKEN" ]]; then
+            echo "Missing FLATHUB_PR_TOKEN. Add a token with public_repo access as a repository secret." >&2
+            exit 1
+          fi
+
+      - name: Generate Flathub manifest
+        run: |
+          set -euo pipefail
+          bash .github/scripts/update-flathub-manifest.sh \
+            --manifest "$LOCAL_FLATHUB_MANIFEST" \
+            "${{ steps.release.outputs.tag }}"
+          bash packaging/flatpak/update-cargo-sources.sh --check
+          jq empty "$LOCAL_FLATHUB_MANIFEST" packaging/flatpak/cargo-sources.json
+
+      - name: Open or update Flathub PR
+        env:
+          GH_TOKEN: ${{ secrets.FLATHUB_PR_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          branch="update-rufin-${RELEASE_TAG}"
+          flathub_dir="${RUNNER_TEMP}/rufin-flathub"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${FLATHUB_REPO}.git" "$flathub_dir"
+          cd "$flathub_dir"
+          git switch -C "$branch" "origin/${FLATHUB_BRANCH}"
+
+          cp "$GITHUB_WORKSPACE/$LOCAL_FLATHUB_MANIFEST" "$FLATHUB_MANIFEST"
+          cp "$GITHUB_WORKSPACE/packaging/flatpak/cargo-sources.json" cargo-sources.json
+          jq empty "$FLATHUB_MANIFEST" cargo-sources.json
+
+          if git diff --quiet -- "$FLATHUB_MANIFEST" cargo-sources.json; then
+            echo "Flathub manifest is already current for ${RELEASE_TAG}."
+            exit 0
+          fi
+
+          git add "$FLATHUB_MANIFEST" cargo-sources.json
+          git commit -m "chore: update Rufin to ${RELEASE_TAG}"
+          git push --force-with-lease origin "$branch"
+
+          title="Update Rufin to ${RELEASE_TAG}"
+          body="$(printf 'Updates Rufin to %s.\n\nThis PR copies the release manifest generated from the signed tag and the matching vendored Cargo source list.\n' "$RELEASE_TAG")"
+
+          pr_number="$(
+            gh pr list \
+              --repo "$FLATHUB_REPO" \
+              --head "$branch" \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" \
+              --repo "$FLATHUB_REPO" \
+              --title "$title" \
+              --body "$body"
+          else
+            gh pr create \
+              --repo "$FLATHUB_REPO" \
+              --base "$FLATHUB_BRANCH" \
+              --head "$branch" \
+              --title "$title" \
+              --body "$body"
+          fi
