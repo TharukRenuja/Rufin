@@ -707,6 +707,7 @@ impl Store {
     }
     fn attach_album_metadata(&self, server_id: &ServerId, albums: &mut [Album]) -> StoreResult<()> {
         self.attach_album_genres(server_id, albums)?;
+        self.attach_album_track_fallback_image_refs(server_id, albums)?;
         if albums.is_empty() {
             return Ok(());
         }
@@ -718,6 +719,63 @@ impl Store {
         for album in albums {
             album.album_artist_credits =
                 credits.get(album.id.as_str()).cloned().unwrap_or_default();
+        }
+        Ok(())
+    }
+    fn attach_album_track_fallback_image_refs(
+        &self,
+        server_id: &ServerId,
+        albums: &mut [Album],
+    ) -> StoreResult<()> {
+        let missing_ids = albums
+            .iter()
+            .filter(|album| album.image_ref.is_none())
+            .map(|album| album.id.as_str().to_string())
+            .collect::<Vec<_>>();
+        if missing_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut fallback_by_album = HashMap::<String, ImageRef>::new();
+        for chunk in missing_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "
+                SELECT album_id, image_item_id, image_tag
+                FROM tracks
+                WHERE server_id = ?
+                  AND album_id IN ({placeholders})
+                  AND image_item_id IS NOT NULL
+                ORDER BY album_id, disc_number, track_number, title COLLATE NOCASE
+                "
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(server_id.as_str());
+            values.extend(chunk.iter().map(String::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    ImageRef {
+                        item_id: row.get(1)?,
+                        tag: row.get(2)?,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (album_id, image_ref) = row?;
+                fallback_by_album.entry(album_id).or_insert(image_ref);
+            }
+        }
+
+        for album in albums {
+            if album.image_ref.is_none()
+                && let Some(image_ref) = fallback_by_album.remove(album.id.as_str())
+            {
+                album.image_ref = Some(image_ref);
+            }
         }
         Ok(())
     }

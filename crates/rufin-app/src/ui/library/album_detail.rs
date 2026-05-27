@@ -94,27 +94,21 @@ fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget 
 fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => image_column::<Album, _, _>(
+        LibraryField::Image => album_image_column(
             shell,
             "Image",
             column_width(LibraryField::Image),
-            |album| album.image_ref.clone(),
-            |album| album.color_seed,
         ),
-        LibraryField::TitleMerged => merged_column::<Album, _, _, _, _>(
+        LibraryField::TitleMerged => album_merged_column(
             shell,
             "Title",
             column_width(LibraryField::TitleMerged),
-            |album| album.title.clone(),
-            |album| album.artist.clone(),
-            |album| album.image_ref.clone(),
-            |album| album.color_seed,
         ),
-        LibraryField::Title => {
-            expanding_text_column::<Album, _>("Title", 220, |album| album.title.clone())
-        }
+        LibraryField::Title => album_text_column(shell, "Title", 220, true, |album| {
+            album.title.clone()
+        }),
         LibraryField::Favorite => album_favorite_column(shell),
-        _ => text_column::<Album, _>(field.title(), column_width(field), move |album| {
+        _ => album_text_column(shell, field.title(), column_width(field), false, move |album| {
             album_field(album, field)
         }),
     }
@@ -283,6 +277,299 @@ fn row_index_column() -> gtk::ColumnViewColumn {
     column.set_fixed_width(column_width(LibraryField::RowIndex));
     column
 }
+#[derive(Clone)]
+struct LibraryAlbumImageCell {
+    cover: ArtworkTile,
+    current_album: Rc<RefCell<Option<Album>>>,
+}
+
+#[derive(Clone)]
+struct LibraryAlbumTextCell {
+    label: gtk::Label,
+    current_album: Rc<RefCell<Option<Album>>>,
+}
+
+#[derive(Clone)]
+struct LibraryAlbumMergedCell {
+    cover: ArtworkTile,
+    title: gtk::Label,
+    subtitle: gtk::Label,
+    current_album: Rc<RefCell<Option<Album>>>,
+}
+
+thread_local! {
+    static LIBRARY_ALBUM_IMAGE_CELLS: RefCell<HashMap<usize, LibraryAlbumImageCell>> = RefCell::new(HashMap::new());
+    static LIBRARY_ALBUM_TEXT_CELLS: RefCell<HashMap<usize, LibraryAlbumTextCell>> = RefCell::new(HashMap::new());
+    static LIBRARY_ALBUM_MERGED_CELLS: RefCell<HashMap<usize, LibraryAlbumMergedCell>> = RefCell::new(HashMap::new());
+}
+
+fn album_image_cell(item: &gtk::ListItem) -> Option<LibraryAlbumImageCell> {
+    let key = library_list_item_storage_key(item);
+    LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn album_text_cell(item: &gtk::ListItem) -> Option<LibraryAlbumTextCell> {
+    let key = library_list_item_storage_key(item);
+    LIBRARY_ALBUM_TEXT_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn album_merged_cell(item: &gtk::ListItem) -> Option<LibraryAlbumMergedCell> {
+    let key = library_list_item_storage_key(item);
+    LIBRARY_ALBUM_MERGED_CELLS.with(|cells| cells.borrow().get(&key).cloned())
+}
+
+fn album_image_column(
+    shell: &Rc<Shell>,
+    title: &'static str,
+    width: i32,
+) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_album = Rc::new(RefCell::new(None::<Album>));
+        let cover = ArtworkTile::new(48, 0);
+        let widget = cover.widget();
+        install_dynamic_album_context_menu(&widget, &setup_shell, Rc::clone(&current_album));
+        item.set_child(Some(&widget));
+        let key = library_list_item_storage_key(item);
+        LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| {
+            cells.borrow_mut().insert(
+                key,
+                LibraryAlbumImageCell {
+                    cover,
+                    current_album,
+                },
+            );
+        });
+    });
+
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(album) = item_at_from_item::<Album>(item) else {
+            return;
+        };
+        let Some(cell) = album_image_cell(item) else {
+            return;
+        };
+        shell.bind_cover_tile_for(
+            &cell.cover,
+            album.image_ref.as_ref(),
+            album.color_seed,
+            48,
+            THUMB_COVER_SIZE,
+        );
+        *cell.current_album.borrow_mut() = Some(album);
+    });
+
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = album_image_cell(item)
+        {
+            cell.cover.bind_image(0, None);
+            *cell.current_album.borrow_mut() = None;
+        }
+    });
+
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = library_list_item_storage_key(item);
+            LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| {
+                cells.borrow_mut().remove(&key);
+            });
+        }
+    });
+
+    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
+    column.set_fixed_width(width);
+    column
+}
+
+fn album_text_column<F>(
+    shell: &Rc<Shell>,
+    title: &'static str,
+    width: i32,
+    expand: bool,
+    value: F,
+) -> gtk::ColumnViewColumn
+where
+    F: Fn(&Album) -> String + 'static,
+{
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    let value = Rc::new(value);
+
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_album = Rc::new(RefCell::new(None::<Album>));
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        label.set_wrap(false);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_single_line_mode(true);
+        install_dynamic_album_context_menu(&label, &setup_shell, Rc::clone(&current_album));
+        item.set_child(Some(&label));
+        let key = library_list_item_storage_key(item);
+        LIBRARY_ALBUM_TEXT_CELLS.with(|cells| {
+            cells
+                .borrow_mut()
+                .insert(key, LibraryAlbumTextCell { label, current_album });
+        });
+    });
+
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(album) = item_at_from_item::<Album>(item) else {
+            return;
+        };
+        let Some(cell) = album_text_cell(item) else {
+            return;
+        };
+        cell.label.set_text(&(value)(&album));
+        *cell.current_album.borrow_mut() = Some(album);
+    });
+
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = album_text_cell(item)
+        {
+            cell.label.set_text("");
+            *cell.current_album.borrow_mut() = None;
+        }
+    });
+
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = library_list_item_storage_key(item);
+            LIBRARY_ALBUM_TEXT_CELLS.with(|cells| {
+                cells.borrow_mut().remove(&key);
+            });
+        }
+    });
+
+    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
+    column.set_fixed_width(width);
+    column.set_resizable(true);
+    column.set_expand(expand);
+    column
+}
+
+fn album_merged_column(
+    shell: &Rc<Shell>,
+    title: &'static str,
+    width: i32,
+) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+
+    let setup_shell = Rc::clone(&shell);
+    factory.connect_setup(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let current_album = Rc::new(RefCell::new(None::<Album>));
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.set_valign(gtk::Align::Center);
+
+        let cover = ArtworkTile::new(48, 0);
+        row.append(&cover.widget());
+
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let title = gtk::Label::new(None);
+        title.set_xalign(0.0);
+        title.set_wrap(false);
+        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        title.set_single_line_mode(true);
+        labels.append(&title);
+
+        let subtitle = gtk::Label::new(None);
+        subtitle.add_css_class("muted");
+        subtitle.set_xalign(0.0);
+        subtitle.set_wrap(false);
+        subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        subtitle.set_single_line_mode(true);
+        subtitle.set_visible(false);
+        labels.append(&subtitle);
+
+        row.append(&labels);
+        install_dynamic_album_context_menu(&row, &setup_shell, Rc::clone(&current_album));
+        item.set_child(Some(&row));
+        let key = library_list_item_storage_key(item);
+        LIBRARY_ALBUM_MERGED_CELLS.with(|cells| {
+            cells.borrow_mut().insert(
+                key,
+                LibraryAlbumMergedCell {
+                    cover,
+                    title,
+                    subtitle,
+                    current_album,
+                },
+            );
+        });
+    });
+
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(album) = item_at_from_item::<Album>(item) else {
+            return;
+        };
+        let Some(cell) = album_merged_cell(item) else {
+            return;
+        };
+        shell.bind_cover_tile_for(
+            &cell.cover,
+            album.image_ref.as_ref(),
+            album.color_seed,
+            48,
+            THUMB_COVER_SIZE,
+        );
+        cell.title.set_text(&album.title);
+        cell.subtitle.set_text(&album.artist);
+        cell.subtitle.set_visible(!album.artist.trim().is_empty());
+        *cell.current_album.borrow_mut() = Some(album);
+    });
+
+    factory.connect_unbind(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
+            && let Some(cell) = album_merged_cell(item)
+        {
+            cell.title.set_text("");
+            cell.subtitle.set_text("");
+            cell.subtitle.set_visible(false);
+            cell.cover.bind_image(0, None);
+            *cell.current_album.borrow_mut() = None;
+        }
+    });
+
+    factory.connect_teardown(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let key = library_list_item_storage_key(item);
+            LIBRARY_ALBUM_MERGED_CELLS.with(|cells| {
+                cells.borrow_mut().remove(&key);
+            });
+        }
+    });
+
+    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
+    column.set_fixed_width(width);
+    column.set_resizable(true);
+    column.set_expand(true);
+    column
+}
+
 fn image_column<T, F, S>(
     shell: &Rc<Shell>,
     title: &str,
@@ -586,74 +873,6 @@ where
     column.set_fixed_width(width);
     column.set_resizable(true);
     column.set_expand(expand);
-    column
-}
-fn merged_column<T, Title, Subtitle, Image, Seed>(
-    shell: &Rc<Shell>,
-    title: &str,
-    width: i32,
-    title_value: Title,
-    subtitle_value: Subtitle,
-    image_ref: Image,
-    seed: Seed,
-) -> gtk::ColumnViewColumn
-where
-    T: Clone + 'static,
-    Title: Fn(&T) -> String + 'static,
-    Subtitle: Fn(&T) -> String + 'static,
-    Image: Fn(&T) -> Option<rufin_core::ImageRef> + 'static,
-    Seed: Fn(&T) -> u32 + 'static,
-{
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    let title_value = Rc::new(title_value);
-    let subtitle_value = Rc::new(subtitle_value);
-    let image_ref = Rc::new(image_ref);
-    let seed = Rc::new(seed);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let data = boxed.borrow::<T>();
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        row.set_valign(gtk::Align::Center);
-        row.append(&shell.cover_tile_for(
-            image_ref(&data).as_ref(),
-            seed(&data),
-            48,
-            THUMB_COVER_SIZE,
-        ));
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        let title = gtk::Label::new(Some(&title_value(&data)));
-        title.set_xalign(0.0);
-        title.set_wrap(false);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        title.set_single_line_mode(true);
-        labels.append(&title);
-        let subtitle = subtitle_value(&data);
-        if !subtitle.trim().is_empty() {
-            let subtitle = gtk::Label::new(Some(&subtitle));
-            subtitle.add_css_class("muted");
-            subtitle.set_xalign(0.0);
-            subtitle.set_wrap(false);
-            subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            subtitle.set_single_line_mode(true);
-            labels.append(&subtitle);
-        }
-        row.append(&labels);
-        item.set_child(Some(&row));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(true);
     column
 }
 fn track_merged_column<Title, Subtitle, Image, Seed>(

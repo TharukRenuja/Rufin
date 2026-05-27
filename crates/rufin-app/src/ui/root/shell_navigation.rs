@@ -941,20 +941,30 @@ fn install_dynamic_track_context_menu(
     target.add_controller(key);
 }
 fn install_album_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>, album: Album) {
+    install_dynamic_album_context_menu(target, shell, Rc::new(RefCell::new(Some(album))));
+}
+fn install_dynamic_album_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    album: Rc<RefCell<Option<Album>>>,
+) {
     let target = target.as_ref();
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
-    let click_album = album.clone();
+    let click_album = Rc::clone(&album);
     let click = gtk::GestureClick::new();
     click.set_button(3);
     click.connect_pressed(move |_, _, x, y| {
         let Some(target) = target_weak.upgrade() else {
             return;
         };
+        let Some(album) = click_album.borrow().clone() else {
+            return;
+        };
         present_album_context_menu(
             &target,
             &click_shell,
-            context_album(&click_shell, &click_album),
+            context_album(&click_shell, &album),
             Some((x, y)),
         );
     });
@@ -970,11 +980,13 @@ fn install_album_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>,
         if !opens_menu {
             return glib::Propagation::Proceed;
         }
-        if let Some(target) = target_weak.upgrade() {
+        if let Some(target) = target_weak.upgrade()
+            && let Some(album) = key_album.borrow().clone()
+        {
             present_album_context_menu(
                 &target,
                 &key_shell,
-                context_album(&key_shell, &key_album),
+                context_album(&key_shell, &album),
                 None,
             );
         }

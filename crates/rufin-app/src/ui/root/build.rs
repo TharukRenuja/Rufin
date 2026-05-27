@@ -1030,7 +1030,7 @@ fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
     } else if preferred_size <= GRID_COVER_SIZE {
         sizes.extend([GRID_COVER_SIZE, DETAIL_COVER_SIZE]);
     } else {
-        sizes.push(DETAIL_COVER_SIZE);
+        sizes.extend([DETAIL_COVER_SIZE, GRID_COVER_SIZE]);
     }
     let mut seen = HashSet::new();
     sizes.retain(|size| seen.insert(*size));

@@ -674,6 +674,40 @@
         );
     }
     #[test]
+    fn album_reads_use_track_cover_when_album_cover_is_missing() {
+        let store = Store::open_memory().expect("open store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+        let album = album(1);
+        let fallback_image = image_ref("album-track-cover", "album-track-tag");
+        let mut first_track = track(1, &album);
+        first_track.image_ref = Some(fallback_image.clone());
+        let second_track = track(2, &album);
+        store
+            .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+            .expect("upsert album");
+        store
+            .upsert_tracks(
+                &saved.server.id,
+                &[first_track.clone(), second_track.clone()],
+                generation,
+            )
+            .expect("upsert tracks");
+
+        let albums = store
+            .load_albums(&saved.server.id, 0, 25)
+            .expect("load albums");
+        let detail = store
+            .load_album_detail(&saved.server.id, &album.id)
+            .expect("load detail")
+            .expect("detail");
+
+        assert_eq!(albums.items[0].image_ref, Some(fallback_image.clone()));
+        assert_eq!(detail.0.image_ref, Some(fallback_image));
+        assert_eq!(detail.1, vec![first_track, second_track]);
+    }
+    #[test]
     fn paged_reads_return_items_beyond_previous_snapshot_caps() {
         let store = Store::open_memory().expect("open store");
         let saved = saved_server();

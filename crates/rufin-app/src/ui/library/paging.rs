@@ -18,7 +18,7 @@ use super::{
     append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
     connect_paged_grid_loader, cover_decode_size, favorite_button_is_active, favorite_icon_button,
     finish_grid_page, icon_button, install_album_context_menu, install_artist_context_menu,
-    install_dynamic_track_context_menu, install_track_context_menu,
+    install_dynamic_album_context_menu, install_dynamic_track_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     replace_playlists_in_model, set_favorite_button_active, stable_seed, text_button,

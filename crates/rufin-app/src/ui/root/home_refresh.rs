@@ -117,7 +117,9 @@ fn present_track_context_menu(
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        shell.navigate(Route::AlbumDetail(album_id.clone()));
+        let shell = Rc::clone(&shell);
+        let album_id = album_id.clone();
+        glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
     });
     actions.add_action(&go_album);
 
@@ -257,7 +259,9 @@ fn present_album_context_menu(
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        shell.navigate(Route::AlbumDetail(album_id.clone()));
+        let shell = Rc::clone(&shell);
+        let album_id = album_id.clone();
+        glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
     });
     actions.add_action(&go_album);
 

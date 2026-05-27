@@ -15,6 +15,21 @@
     use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
     use std::collections::HashMap;
     #[test]
+    fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
+        let candidates = super::decoded_cover_candidate_sizes(super::DETAIL_COVER_SIZE);
+
+        assert!(candidates.contains(&super::DETAIL_COVER_SIZE));
+        assert!(candidates.contains(&super::GRID_COVER_SIZE));
+        assert!(
+            candidates
+                .iter()
+                .position(|size| *size == super::DETAIL_COVER_SIZE)
+                < candidates
+                    .iter()
+                    .position(|size| *size == super::GRID_COVER_SIZE)
+        );
+    }
+    #[test]
     fn home_section_pages_reset_for_new_home_data() {
         let mut states = HashMap::from([(
             HomeSectionKind::Explore,
