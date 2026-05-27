@@ -20,11 +20,17 @@
       "automerge": false
     },
     {
-      "description": "Regenerate Flatpak cargo sources after Rust dependency updates.",
+      "description": "Regenerate Rust packaging metadata after dependency updates.",
       "matchManagers": ["cargo"],
       "postUpgradeTasks": {
-        "commands": ["bash packaging/flatpak/update-cargo-sources.sh"],
-        "fileFilters": ["packaging/flatpak/cargo-sources.json"],
+        "commands": [
+          "bash packaging/flatpak/update-cargo-sources.sh",
+          "bash .github/scripts/update-nix-cargo-hash.sh"
+        ],
+        "fileFilters": ["packaging/flatpak/cargo-sources.json", "flake.nix"],
+        "installTools": {
+          "nix": {}
+        },
         "executionMode": "branch"
       }
     },

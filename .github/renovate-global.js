@@ -6,5 +6,8 @@ module.exports = {
   gitIgnoredAuthors: [
     "renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
   ],
-  allowedCommands: ["^bash packaging/flatpak/update-cargo-sources\\.sh$"],
+  allowedCommands: [
+    "^bash packaging/flatpak/update-cargo-sources\\.sh$",
+    "^bash \\.github/scripts/update-nix-cargo-hash\\.sh$",
+  ],
 };
