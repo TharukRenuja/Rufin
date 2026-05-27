@@ -20,10 +20,6 @@ on:
         required: true
         default: false
         type: boolean
-  release:
-    types:
-      - published
-
 permissions:
   contents: read
 
