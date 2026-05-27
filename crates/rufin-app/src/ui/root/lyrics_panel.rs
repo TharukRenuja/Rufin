@@ -1,5 +1,11 @@
 impl Shell {
     fn render_lyrics_panel(self: &Rc<Self>) {
+        self.render_lyrics_pane(&self.lyrics_pane);
+        self.render_lyrics_pane(&self.fullscreen_player.lyrics_pane);
+        self.update_lyrics_highlight();
+        self.request_auto_lyrics_if_needed();
+    }
+    fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
         let settings = self.state.settings.borrow();
         let current_track_id = current_playback_track_id(&self.state.player.borrow());
         let has_current_track = current_track_id.is_some();
@@ -14,9 +20,8 @@ impl Shell {
         let clear_auto_search_enabled =
             auto_lyrics_skip_action_enabled(&settings, current_track_id.as_ref(), lyrics.as_ref());
         drop(settings);
-        self.lyrics_pane
-            .set_search_action(&search_label, search_enabled);
-        self.lyrics_pane.set_clear_auto_search_action(
+        pane.set_search_action(&search_label, search_enabled);
+        pane.set_clear_auto_search_action(
             &tr("Disable automatic lyric search for this track"),
             clear_auto_search_enabled,
         );
@@ -25,11 +30,8 @@ impl Shell {
         let seek: Rc<dyn Fn(u64)> = Rc::new(move |position_millis| {
             seek_shell.seek_to_lyrics_position(position_millis);
         });
-        self.lyrics_pane
-            .set_content(lyrics.as_ref(), empty_status, seek);
+        pane.set_content(lyrics.as_ref(), empty_status, seek);
         drop(lyrics);
-        self.update_lyrics_highlight();
-        self.request_auto_lyrics_if_needed();
     }
     fn present_lyrics_search_dialog(self: &Rc<Self>) {
         if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref() {

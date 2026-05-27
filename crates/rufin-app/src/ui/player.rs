@@ -16,8 +16,9 @@ use super::player_icons::{
 };
 use super::{
     ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
-    favorite_icon_button, icon_button_with_image, install_current_track_context_menu,
-    seekbar_target_seconds, set_active_class, set_favorite_button_active,
+    add_widget_click, favorite_icon_button, icon_button_with_image,
+    install_current_track_context_menu, seekbar_target_seconds, set_active_class,
+    set_favorite_button_active,
 };
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
@@ -399,6 +400,12 @@ fn build_now_playing_controls() -> NowPlayingControls {
 
     let cover = ArtworkTile::new(BOTTOM_PLAYER_COVER_SIZE, 42);
     cover.area.set_valign(gtk::Align::Center);
+    cover.area.set_cursor_from_name(Some("pointer"));
+    let cover_label = crate::i18n::tr("Open fullscreen player");
+    cover.area.set_tooltip_text(Some(&cover_label));
+    cover
+        .area
+        .update_property(&[gtk::accessible::Property::Label(&cover_label)]);
     root.append(&cover.area);
 
     let identity = gtk::Box::new(gtk::Orientation::Vertical, 1);
@@ -707,6 +714,10 @@ fn commit_player_seek_preview(shell: &Rc<Shell>, generation: u64) {
 pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
     connect_bottom_player_volume_resize(shell);
     install_current_track_context_menu(&shell.player_controls.cover.area, shell);
+    let fullscreen_shell = Rc::clone(shell);
+    add_widget_click(shell.player_controls.cover.area.upcast_ref(), move || {
+        fullscreen_shell.toggle_fullscreen_player();
+    });
 
     let controller = shell.controller.clone();
     shell

@@ -30,6 +30,35 @@ impl AppController {
             .ok()
             .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot))
     }
+    pub fn cached_track_local_path(&self, track_id: &TrackId) -> Option<String> {
+        let server_id = self
+            .store
+            .with_store(|store| store.active_server())
+            .ok()
+            .flatten()
+            .map(|saved| saved.server.id)?;
+        self.store
+            .with_store(|store| {
+                if let Some(path) = store.track_local_path(&server_id, track_id)? {
+                    return Ok(Some(path));
+                }
+                store.track_local_match_path(&server_id, track_id)
+            })
+            .ok()
+            .flatten()
+    }
+    pub fn cached_track_source_format(&self, track_id: &TrackId) -> Option<String> {
+        let server_id = self
+            .store
+            .with_store(|store| store.active_server())
+            .ok()
+            .flatten()
+            .map(|saved| saved.server.id)?;
+        self.store
+            .with_store(|store| store.track_source_format(&server_id, track_id))
+            .ok()
+            .flatten()
+    }
     fn update_playback_snapshot(&self, operation: impl FnOnce(&mut PlaybackSnapshot)) {
         if let Ok(mut snapshot) = self.playback_snapshot.lock() {
             operation(&mut snapshot);

@@ -42,6 +42,9 @@ use favorites::{
     unregister_favorite_control,
     update_favorite_controls,
 };
+use fullscreen_player::{
+    FullscreenPlayerParts, build_fullscreen_player, connect_fullscreen_player_controls,
+};
 use layout::{
     COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
     PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, resolve_layout, route_content_width,
@@ -144,6 +147,7 @@ struct AppState {
     seek_generation: Cell<u64>,
     queue_filter: RefCell<String>,
     lyrics_panel_visible: Cell<bool>,
+    fullscreen_player_visible: Cell<bool>,
     queue_lyrics_position_save_suppressed: Rc<Cell<u32>>,
     responsive_render_queued: Cell<bool>,
     card_grid_columns: Cell<usize>,
@@ -245,7 +249,7 @@ impl CoverDecodePriority {
 #[derive(Clone)]
 struct ArtworkTile {
     area: gtk::DrawingArea,
-    size: i32,
+    size: Rc<Cell<i32>>,
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
     generation: Rc<Cell<u64>>,
@@ -253,7 +257,7 @@ struct ArtworkTile {
 #[derive(Clone)]
 struct ArtworkTileWeak {
     area: glib::WeakRef<gtk::DrawingArea>,
-    size: i32,
+    size: Rc<Cell<i32>>,
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
     generation: Rc<Cell<u64>>,
@@ -438,6 +442,7 @@ struct Shell {
     window: adw::ApplicationWindow,
     root_stack: gtk::Stack,
     app_root: gtk::Box,
+    app_content_stack: gtk::Stack,
     login_host: gtk::Box,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
@@ -455,6 +460,7 @@ struct Shell {
     queue_clear_button: gtk::Button,
     queue_lyrics_split: gtk::Paned,
     lyrics_pane: LyricsPane,
+    fullscreen_player: FullscreenPlayerParts,
     player_controls: PlayerControls,
 }
 pub fn build(app: &adw::Application, options: AppOptions) {
@@ -504,6 +510,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         seek_generation: Cell::new(0),
         queue_filter: RefCell::new(String::new()),
         lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
+        fullscreen_player_visible: Cell::new(false),
         queue_lyrics_position_save_suppressed: Rc::new(Cell::new(0)),
         responsive_render_queued: Cell::new(false),
         card_grid_columns: Cell::new(0),
@@ -580,6 +587,14 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     app_root.set_hexpand(true);
     app_root.set_vexpand(true);
 
+    let app_content_stack = gtk::Stack::new();
+    app_content_stack.add_css_class("app-content-stack");
+    app_content_stack.set_hhomogeneous(false);
+    app_content_stack.set_vhomogeneous(false);
+    app_content_stack.set_interpolate_size(false);
+    app_content_stack.set_hexpand(true);
+    app_content_stack.set_vexpand(true);
+
     let login_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     login_host.add_css_class("login-root");
     login_host.set_hexpand(true);
@@ -620,13 +635,17 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let content_chrome = build_content_chrome(&main_area, &right_panel);
     let main_menu = content_chrome.main_menu;
     let right_panel_slot = content_chrome.right_panel_slot;
+    let fullscreen_player = build_fullscreen_player();
     let player_controls = build_bottom_player();
 
     upper.append(&normal_nav);
     upper.append(&compact_nav);
     upper.append(&content_chrome.root);
 
-    app_root.append(&upper);
+    app_content_stack.add_named(&upper, Some("main"));
+    app_content_stack.add_named(&fullscreen_player.root, Some("fullscreen-player"));
+
+    app_root.append(&app_content_stack);
     app_root.append(&player_controls.root);
 
     root_stack.add_named(&login_host, Some("login"));
@@ -640,6 +659,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         window,
         root_stack,
         app_root,
+        app_content_stack,
         login_host,
         normal_nav,
         compact_nav,
@@ -657,6 +677,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         queue_clear_button,
         queue_lyrics_split,
         lyrics_pane,
+        fullscreen_player,
         player_controls,
     });
 
@@ -668,6 +689,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_split(&shell);
     connect_lyrics_search_controls(&shell);
+    connect_fullscreen_player_controls(&shell);
     connect_player_controls(&shell);
     #[cfg(unix)]
     install_mpris(&shell);
@@ -681,6 +703,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     shell.render_queue_panel();
     shell.render_lyrics_panel();
     shell.update_bottom_player();
+    shell.update_fullscreen_player();
     shell.update_discord_presence(&shell.state.player.borrow());
     shell.update_right_panel_button();
     shell.update_lyrics_panel_button();

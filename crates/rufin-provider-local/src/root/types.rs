@@ -1,6 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs;
-use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use lofty::file::TaggedFileExt;
 use lofty::picture::{Picture, PictureType};
@@ -19,6 +16,9 @@ use rufin_provider::{
     ProviderError, ProviderIdentity, ProviderResult, RandomTrackRequest, SearchResults,
     StreamDescriptor,
 };
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs;
+use std::path::{Path, PathBuf};
 use url::Url;
 use walkdir::WalkDir;
 pub const LOCAL_PROVIDER_ID: &str = "local";
@@ -719,6 +719,12 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
             image_ref: None,
             genres,
             local_path: Some(path_text),
+            source_format: path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
         },
         album_artist,
         cover,

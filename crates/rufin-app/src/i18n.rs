@@ -288,6 +288,9 @@ fn catalog_strings_for_extraction() {
     let _ = tr("no account");
     let _ = tr("Nothing playing");
     let _ = tr("Queue a track to begin");
+    let _ = tr("Open fullscreen player");
+    let _ = tr("Close fullscreen player");
+    let _ = tr("Queue");
     let _ = tr("No queue items match the search");
     let _ = tr("Artist detail will use cached album and track groups");
     let _ = tr("Genre detail keeps albums above tracks");

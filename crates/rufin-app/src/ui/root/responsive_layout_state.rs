@@ -9,8 +9,16 @@ impl Shell {
         let login_active = self.login_screen_active();
         if login_active {
             self.root_stack.set_visible_child(&self.login_host);
+            self.state.fullscreen_player_visible.set(false);
+            self.app_content_stack.set_visible_child_name("main");
         } else {
             self.root_stack.set_visible_child(&self.app_root);
+            let content_view = if self.state.fullscreen_player_visible.get() {
+                "fullscreen-player"
+            } else {
+                "main"
+            };
+            self.app_content_stack.set_visible_child_name(content_view);
         }
         let previous_left = self
             .state

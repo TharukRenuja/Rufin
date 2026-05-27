@@ -191,6 +191,7 @@
                 image_ref: None,
                 genres: Vec::new(),
                 local_path: Some(format!("/tmp/rufin-track-{number}.flac")),
+                source_format: Some("flac".to_string()),
             },
             album_artist: "Example Artist".to_string(),
             cover,

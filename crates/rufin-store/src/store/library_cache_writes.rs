@@ -205,9 +205,9 @@ impl Store {
                     server_id, track_id, album_id, title, artist, artist_id, album,
                     year, release_date, date_added, last_played, play_count, user_rating,
                     duration_seconds, favorite, disc_number, track_number,
-                    image_item_id, image_tag, local_path, sync_generation
+                    image_item_id, image_tag, local_path, source_format, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
                 ON CONFLICT(server_id, track_id) DO UPDATE SET
                     album_id = excluded.album_id,
                     title = excluded.title,
@@ -227,6 +227,7 @@ impl Store {
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
                     local_path = excluded.local_path,
+                    source_format = excluded.source_format,
                     sync_generation = excluded.sync_generation
                 ",
             )?;
@@ -302,6 +303,7 @@ impl Store {
                     image_item_id,
                     image_tag,
                     track.local_path.as_deref(),
+                    track.source_format.as_deref(),
                     generation,
                 ])?;
                 delete_genres.execute(params![server_id.as_str(), track.id.as_str()])?;

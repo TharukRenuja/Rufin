@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use rufin_core::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId, ImageRef,
@@ -8,7 +9,7 @@ use serde::Deserialize;
 
 use super::{jellyfin_id, stable_hash};
 
-pub(super) const ITEM_FIELDS: &str = "Path,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
+pub(super) const ITEM_FIELDS: &str = "Path,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -35,6 +36,7 @@ pub(super) struct JellyfinItem {
     pub(super) album_id: Option<String>,
     album_primary_image_tag: Option<String>,
     path: Option<String>,
+    container: Option<String>,
     parent_id: Option<String>,
     production_year: Option<i32>,
     date_created: Option<String>,
@@ -130,6 +132,7 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         .as_deref()
         .or(item.parent_id.as_deref())
         .unwrap_or(&item.id);
+    let source_format = source_format_from_item(item.container.as_deref(), item.path.as_deref());
     Track {
         id: TrackId::new(jellyfin_id("track", &item.id)),
         album_id: AlbumId::new(jellyfin_id("album", album_id)),
@@ -164,7 +167,25 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         image_ref,
         genres: item.genres.unwrap_or_default(),
         local_path: item.path,
+        source_format,
     }
+}
+
+fn source_format_from_item(container: Option<&str>, path: Option<&str>) -> Option<String> {
+    container
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let raw_path = path?;
+            let path = raw_path.split(['?', '#']).next().unwrap_or(raw_path);
+            Path::new(path)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
 }
 
 pub(super) fn folder_from_item(item: JellyfinItem) -> Folder {

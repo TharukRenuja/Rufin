@@ -16,6 +16,7 @@ pub struct LyricsPane {
     root: gtk::Box,
     scroller: gtk::ScrolledWindow,
     body: gtk::Box,
+    title: gtk::Label,
     clear_auto_search_button: gtk::Button,
     search_button: gtk::Button,
     rows: Rc<RefCell<Vec<LyricsRow>>>,
@@ -85,6 +86,7 @@ impl LyricsPane {
             root,
             scroller,
             body,
+            title,
             clear_auto_search_button,
             search_button,
             rows: Rc::new(RefCell::new(Vec::new())),
@@ -99,6 +101,10 @@ impl LyricsPane {
 
     pub fn widget(&self) -> &gtk::Box {
         &self.root
+    }
+
+    pub fn set_title(&self, title: &str) {
+        self.title.set_text(title);
     }
 
     pub fn connect_search_clicked(&self, search: impl Fn() + 'static) {

@@ -170,7 +170,7 @@ fn track_table_column(shell: &Rc<Shell>, column: TrackTableColumn) -> gtk::Colum
             )
         }),
         TrackTableColumn::Year => track_column(shell, "Year", 70, |track| track.year.to_string()),
-        TrackTableColumn::Duration => track_column(shell, "Duration", 90, |track| {
+        TrackTableColumn::Duration => track_column(shell, "◷", 90, |track| {
             format_duration(track.duration_seconds)
         }),
         TrackTableColumn::Favorite => track_favorite_column(shell),

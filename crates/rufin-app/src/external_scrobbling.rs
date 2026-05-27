@@ -723,6 +723,8 @@ mod tests {
             duration_seconds: 180,
             favorite: false,
             image_ref: None,
+            local_path: None,
+            source_format: None,
         }
     }
 }

@@ -37,7 +37,8 @@ impl Shell {
             return;
         }
         let settings = self.state.settings.borrow();
-        let request = auto_lyrics_request_for_settings(&settings, &track_id);
+        let lyrics_surface_visible = self.lyrics_surface_visible();
+        let request = auto_lyrics_request_for_settings(&settings, &track_id, lyrics_surface_visible);
         drop(settings);
         let Some(request) = request else {
             return;
@@ -89,13 +90,20 @@ impl Shell {
         let lyrics = self.state.lyrics.borrow();
         self.lyrics_pane
             .update_highlight(lyrics.as_ref(), position_millis);
+        self.fullscreen_player
+            .lyrics_pane
+            .update_highlight(lyrics.as_ref(), position_millis);
         self.schedule_next_lyrics_highlight(position_millis);
+    }
+    fn lyrics_surface_visible(&self) -> bool {
+        self.state.lyrics_panel_visible.get() || self.state.fullscreen_player_visible.get()
     }
     fn current_position_millis(&self) -> u64 {
         self.state.player.borrow().position_millis
     }
     fn seek_to_lyrics_position(self: &Rc<Self>, position_millis: u64) {
         self.lyrics_pane.clear_follow_scroll_pause();
+        self.fullscreen_player.lyrics_pane.clear_follow_scroll_pause();
         self.controller.seek_millis(position_millis);
         self.update_lyrics_highlight_at(position_millis);
     }

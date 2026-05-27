@@ -215,6 +215,11 @@ fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
         .or(song.parent.as_ref())
         .map(raw_id_string)
         .unwrap_or_else(|| raw_id.clone());
+    let source_format = source_format_from_song(
+        song.suffix.as_deref(),
+        song.content_type.as_deref(),
+        song.path.as_deref(),
+    );
     Track {
         id: TrackId::new(provider.id("track", &raw_id)),
         album_id: AlbumId::new(provider.id("album", &album_id)),
@@ -245,7 +250,36 @@ fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
         image_ref: image_ref(provider, song.cover_art),
         genres: genres_from_item(song.genre, song.genres),
         local_path: song.path,
+        source_format,
     }
+}
+
+fn source_format_from_song(
+    suffix: Option<&str>,
+    content_type: Option<&str>,
+    path: Option<&str>,
+) -> Option<String> {
+    suffix
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            content_type
+                .and_then(|value| value.rsplit('/').next())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            let raw_path = path?;
+            let path = raw_path.split(['?', '#']).next().unwrap_or(raw_path);
+            std::path::Path::new(path)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
 }
 fn artist_from_dto(provider: &SubsonicProvider, artist: SubsonicArtist) -> Artist {
     let raw_id = raw_id_string(&artist.id);
@@ -535,6 +569,10 @@ struct SubsonicSong {
     disc_number: Option<i32>,
     #[serde(default)]
     path: Option<String>,
+    #[serde(default)]
+    suffix: Option<String>,
+    #[serde(default, rename = "contentType")]
+    content_type: Option<String>,
     #[serde(default)]
     starred: Option<serde_json::Value>,
 }

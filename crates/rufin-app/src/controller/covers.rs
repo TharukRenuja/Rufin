@@ -1425,6 +1425,7 @@ mod tests {
             image_ref: None,
             genres: Vec::new(),
             local_path: None,
+            source_format: None,
         }
     }
 

@@ -654,6 +654,7 @@ mod tests {
             image_ref: None,
             genres: Vec::new(),
             local_path: None,
+            source_format: None,
         }
     }
 
@@ -670,6 +671,8 @@ mod tests {
             duration_seconds: 60,
             favorite: false,
             image_ref: None,
+            local_path: None,
+            source_format: None,
         }
     }
 

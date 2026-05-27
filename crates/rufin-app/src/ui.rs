@@ -10,6 +10,8 @@ mod favorites;
 
 mod folders;
 
+mod fullscreen_player;
+
 mod home;
 
 mod layout;

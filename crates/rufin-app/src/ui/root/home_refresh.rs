@@ -538,7 +538,8 @@ fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track> {
         track_number: 0,
         image_ref: entry.image_ref.clone(),
         genres: Vec::new(),
-        local_path: None,
+        local_path: entry.local_path.clone(),
+        source_format: entry.source_format.clone(),
     })
 }
 #[derive(Clone)]
@@ -686,11 +687,7 @@ fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
     });
     target.add_controller(motion);
 }
-fn add_stateful_link_hover(
-    target: &gtk::Widget,
-    label: &gtk::Label,
-    text: Rc<RefCell<String>>,
-) {
+fn add_stateful_link_hover(target: &gtk::Widget, label: &gtk::Label, text: Rc<RefCell<String>>) {
     let enter_label = label.clone();
     let enter_text = Rc::clone(&text);
     let leave_label = label.clone();
@@ -744,6 +741,7 @@ impl ArtworkTile {
         area.set_valign(gtk::Align::Start);
 
         let seed = Rc::new(Cell::new(seed));
+        let size = Rc::new(Cell::new(width.max(height)));
         let pixbuf = Rc::new(RefCell::new(None::<Pixbuf>));
         let generation = Rc::new(Cell::new(0));
         let draw_seed = Rc::clone(&seed);
@@ -759,7 +757,7 @@ impl ArtworkTile {
 
         Self {
             area,
-            size: width.max(height),
+            size,
             seed,
             pixbuf,
             generation,
@@ -773,7 +771,7 @@ impl ArtworkTile {
     fn downgrade(&self) -> ArtworkTileWeak {
         ArtworkTileWeak {
             area: self.area.downgrade(),
-            size: self.size,
+            size: Rc::clone(&self.size),
             seed: Rc::clone(&self.seed),
             pixbuf: Rc::clone(&self.pixbuf),
             generation: Rc::clone(&self.generation),
@@ -794,6 +792,20 @@ impl ArtworkTile {
 
     fn set_seed(&self, seed: u32) {
         self.seed.set(seed);
+        self.area.queue_draw();
+    }
+
+    fn set_square_size(&self, size: i32) {
+        let size = size.max(1);
+        if self.size.replace(size) == size {
+            return;
+        }
+        self.area.set_content_width(size);
+        self.area.set_content_height(size);
+        self.area.set_width_request(size);
+        self.area.set_height_request(size);
+        self.area.set_size_request(size, size);
+        self.area.queue_resize();
         self.area.queue_draw();
     }
 
@@ -835,7 +847,7 @@ impl ArtworkTileWeak {
     fn upgrade(&self) -> Option<ArtworkTile> {
         Some(ArtworkTile {
             area: self.area.upgrade()?,
-            size: self.size,
+            size: Rc::clone(&self.size),
             seed: Rc::clone(&self.seed),
             pixbuf: Rc::clone(&self.pixbuf),
             generation: Rc::clone(&self.generation),
@@ -843,7 +855,7 @@ impl ArtworkTileWeak {
     }
 
     fn size(&self) -> i32 {
-        self.size
+        self.size.get()
     }
 
     fn is_live_generation(&self, generation: u64) -> bool {

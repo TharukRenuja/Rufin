@@ -63,6 +63,10 @@ pub struct QueueEntry {
     pub favorite: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_ref: Option<ImageRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_format: Option<String>,
 }
 
 impl QueueEntry {
@@ -79,6 +83,8 @@ impl QueueEntry {
             duration_seconds: track.duration_seconds,
             favorite: track.favorite,
             image_ref: track.image_ref.clone(),
+            local_path: track.local_path.clone(),
+            source_format: track.source_format.clone(),
         }
     }
 }
@@ -552,6 +558,7 @@ mod tests {
             image_ref: None,
             genres: Vec::new(),
             local_path: None,
+            source_format: None,
         }
     }
 
@@ -606,6 +613,8 @@ mod tests {
         let mut track = track(1);
         track.album_id = AlbumId::fake(9);
         track.artist_id = Some(crate::domain::ArtistId::fake(7));
+        track.local_path = Some("/music/album/track.flac".to_string());
+        track.source_format = Some("flac".to_string());
 
         queue.play_now(&track);
         let entry = queue.current().expect("current entry");
@@ -613,6 +622,8 @@ mod tests {
         assert_eq!(entry.album_id, Some(AlbumId::fake(9)));
         assert_eq!(entry.artist_id, Some(crate::domain::ArtistId::fake(7)));
         assert_eq!(entry.year, 2026);
+        assert_eq!(entry.local_path.as_deref(), Some("/music/album/track.flac"));
+        assert_eq!(entry.source_format.as_deref(), Some("flac"));
     }
 
     #[test]

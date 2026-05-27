@@ -49,6 +49,24 @@ fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
     shell
         .lyrics_pane
         .connect_clear_auto_search_clicked(move || lyrics_shell.suppress_auto_lyrics_for_current());
+
+    let fullscreen_lyrics_shell = Rc::clone(shell);
+    shell
+        .fullscreen_player
+        .lyrics_pane
+        .connect_search_clicked(move || {
+            if current_playback_track_id(&fullscreen_lyrics_shell.state.player.borrow()).is_none() {
+                return;
+            }
+            fullscreen_lyrics_shell.present_lyrics_search_dialog();
+        });
+    let fullscreen_lyrics_shell = Rc::clone(shell);
+    shell
+        .fullscreen_player
+        .lyrics_pane
+        .connect_clear_auto_search_clicked(move || {
+            fullscreen_lyrics_shell.suppress_auto_lyrics_for_current()
+        });
 }
 fn submit_lyrics_search(shell: &Rc<Shell>) {
     let Some(dialog) = shell.state.lyrics_search_dialog.borrow().clone() else {
@@ -84,8 +102,9 @@ enum AutoLyricsRequest {
 fn auto_lyrics_request_for_settings(
     settings: &AppSettings,
     track_id: &rufin_core::TrackId,
+    lyrics_surface_visible: bool,
 ) -> Option<AutoLyricsRequest> {
-    if !settings.lyrics_panel_visible {
+    if !lyrics_surface_visible {
         return None;
     }
     if settings.private_mode
@@ -424,6 +443,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     *shell.state.queue.borrow_mut() = *queue;
                     shell.render_queue_panel();
                     shell.update_bottom_player();
+                    shell.update_fullscreen_player();
                 }
                 ControllerEvent::Playback(player) => {
                     let previous_player = shell.state.player.borrow().clone();
@@ -450,6 +470,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         *shell.state.lyrics.borrow_mut() = None;
                         *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
                         shell.lyrics_pane.clear_follow_scroll_pause();
+                        shell.fullscreen_player.lyrics_pane.clear_follow_scroll_pause();
                         shell.cancel_scheduled_lyrics_highlight();
                         shell.render_queue_panel();
                         shell.render_lyrics_panel();
@@ -457,6 +478,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         shell.notify_now_playing(&next_snapshot);
                     }
                     shell.update_bottom_player();
+                    shell.update_fullscreen_player();
                     if lyrics_timing_changed {
                         shell.update_lyrics_highlight();
                     }

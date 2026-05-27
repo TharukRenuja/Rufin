@@ -234,6 +234,7 @@ impl Store {
                 image_item_id TEXT,
                 image_tag TEXT,
                 local_path TEXT,
+                source_format TEXT,
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, track_id)
             );
@@ -424,6 +425,7 @@ impl Store {
                 ON track_local_matches(server_id, track_id);
             ",
         )?;
+        self.ensure_column("tracks", "source_format", "TEXT")?;
         self.connection
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -446,6 +448,15 @@ impl Store {
             .prepare(&format!("PRAGMA table_info({table})"))?;
         let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
         Ok(collect_rows(columns)?.iter().any(|name| name == column))
+    }
+    fn ensure_column(&self, table: &str, column: &str, definition: &str) -> StoreResult<()> {
+        if self.table_exists(table)? && !self.table_has_column(table, column)? {
+            self.connection.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+                [],
+            )?;
+        }
+        Ok(())
     }
     pub fn load_queue_snapshot(&self, server_id: &ServerId) -> StoreResult<Option<QueueSnapshot>> {
         let value = self

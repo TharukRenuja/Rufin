@@ -96,7 +96,7 @@ impl Store {
                 SELECT t.track_id, t.album_id, t.title, t.artist, t.artist_id, t.album, t.year,
                        t.release_date, t.date_added, t.last_played, t.play_count, t.user_rating,
                        t.duration_seconds, t.favorite, t.disc_number, t.track_number,
-                       t.image_item_id, t.image_tag
+                       t.image_item_id, t.image_tag, t.local_path, t.source_format
                 FROM {table} h
                 JOIN tracks t
                   ON t.server_id = h.server_id
@@ -302,7 +302,8 @@ impl Store {
                 "
                 SELECT track_id, album_id, title, artist, artist_id, album, year,
                        release_date, date_added, last_played, play_count, user_rating,
-                       duration_seconds, favorite, disc_number, track_number, image_item_id, image_tag
+                       duration_seconds, favorite, disc_number, track_number, image_item_id,
+                       image_tag, local_path, source_format
                 FROM tracks
                 WHERE server_id = ?1 AND album_id = ?2
                 ORDER BY disc_number, track_number, title COLLATE NOCASE
@@ -657,7 +658,7 @@ impl Store {
                 SELECT track_id, album_id, title, artist, artist_id, album, year,
                        release_date, date_added, last_played, play_count, user_rating,
                        duration_seconds, favorite, disc_number, track_number,
-                       image_item_id, image_tag, local_path
+                       image_item_id, image_tag, local_path, source_format
                 FROM tracks
                 WHERE server_id = ?1 AND track_id = ?2
                 ",
@@ -689,13 +690,32 @@ impl Store {
             .map(|value| value.flatten())
             .map_err(StoreError::from)
     }
+    pub fn track_source_format(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<String>> {
+        self.connection
+            .query_row(
+                "
+                SELECT source_format
+                FROM tracks
+                WHERE server_id = ?1 AND track_id = ?2
+                ",
+                params![server_id.as_str(), track_id.as_str()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map(|value| value.flatten())
+            .map_err(StoreError::from)
+    }
     pub fn load_tracks_for_local_matching(&self, server_id: &ServerId) -> StoreResult<Vec<Track>> {
         let mut statement = self.connection.prepare(
             "
             SELECT track_id, album_id, title, artist, artist_id, album, year,
                    release_date, date_added, last_played, play_count, user_rating,
                    duration_seconds, favorite, disc_number, track_number, image_item_id,
-                   image_tag, local_path
+                   image_tag, local_path, source_format
             FROM tracks
             WHERE server_id = ?1
             ORDER BY album COLLATE NOCASE, disc_number, track_number, title COLLATE NOCASE

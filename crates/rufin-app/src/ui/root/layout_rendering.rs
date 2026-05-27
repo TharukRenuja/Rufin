@@ -128,12 +128,7 @@ fn playlist_entries_header_row() -> gtk::Widget {
         playlist_header_text_label("Title", PLAYLIST_ENTRY_TITLE_MAX_CHARS).upcast(),
         playlist_header_album_label("Album", PLAYLIST_ENTRY_ALBUM_MAX_CHARS).upcast(),
     ));
-    row.append(&playlist_header_label(
-        "Duration",
-        PLAYLIST_ENTRY_DURATION_WIDTH,
-        false,
-        0.5,
-    ));
+    row.append(&playlist_duration_header_icon());
     row.append(&fixed_spacer(PLAYLIST_ENTRY_REMOVE_WIDTH));
     row.upcast()
 }
@@ -149,6 +144,16 @@ fn playlist_header_label(text: &str, width: i32, expand: bool, xalign: f32) -> g
         label.set_max_width_chars(PLAYLIST_ENTRY_TITLE_MAX_CHARS);
     }
     label
+}
+fn playlist_duration_header_icon() -> gtk::Image {
+    let image = gtk::Image::from_icon_name("appointment-soon-symbolic");
+    let label = tr("Duration");
+    image.add_css_class("muted");
+    image.set_width_request(PLAYLIST_ENTRY_DURATION_WIDTH);
+    image.set_halign(gtk::Align::Center);
+    image.set_tooltip_text(Some(&label));
+    image.update_property(&[gtk::accessible::Property::Label(&label)]);
+    image
 }
 fn playlist_header_text_label(text: &str, max_width_chars: i32) -> gtk::Label {
     let label = gtk::Label::new(Some(&tr(text)));

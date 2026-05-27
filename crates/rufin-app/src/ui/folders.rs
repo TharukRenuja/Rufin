@@ -339,13 +339,16 @@ fn table_header_label(label: &str) -> gtk::Label {
     text
 }
 
-fn duration_header_label() -> gtk::Label {
-    let text = gtk::Label::new(Some(&tr("Duration")));
-    text.add_css_class("muted");
-    text.set_xalign(1.0);
-    text.set_hexpand(false);
-    text.set_width_request(FOLDER_DURATION_COLUMN_WIDTH);
-    text
+fn duration_header_label() -> gtk::Image {
+    let image = gtk::Image::from_icon_name("appointment-soon-symbolic");
+    let label = tr("Duration");
+    image.add_css_class("muted");
+    image.set_hexpand(false);
+    image.set_width_request(FOLDER_DURATION_COLUMN_WIDTH);
+    image.set_halign(gtk::Align::End);
+    image.set_tooltip_text(Some(&label));
+    image.update_property(&[gtk::accessible::Property::Label(&label)]);
+    image
 }
 
 fn folder_table_folder_row(
@@ -565,6 +568,7 @@ mod tests {
                 image_ref: None,
                 genres: Vec::new(),
                 local_path: None,
+                source_format: None,
             },
             rufin_core::Track {
                 id: rufin_core::TrackId::new("track-long"),
@@ -589,6 +593,7 @@ mod tests {
                 image_ref: None,
                 genres: Vec::new(),
                 local_path: None,
+                source_format: None,
             },
         ];
 

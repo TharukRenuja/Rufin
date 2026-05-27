@@ -101,6 +101,7 @@ fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<Track> {
         image_ref: image_ref_from_row(row, offset + 16, offset + 17)?,
         genres: Vec::new(),
         local_path: row.get::<_, Option<String>>(offset + 18).ok().flatten(),
+        source_format: row.get::<_, Option<String>>(offset + 19).ok().flatten(),
     })
 }
 fn artist_from_row(row: &Row<'_>) -> rusqlite::Result<Artist> {

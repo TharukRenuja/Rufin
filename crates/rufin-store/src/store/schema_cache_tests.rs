@@ -219,6 +219,7 @@
         let album = album(1);
         let mut track = track(1, &album);
         track.local_path = Some("/home/me/Music/Track 1.flac".to_string());
+        track.source_format = Some("flac".to_string());
         store
             .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
             .expect("upsert track");
@@ -227,6 +228,12 @@
                 .track_local_path(&saved.server.id, &track.id)
                 .expect("track local path"),
             track.local_path
+        );
+        assert_eq!(
+            store
+                .track_source_format(&saved.server.id, &track.id)
+                .expect("track source format"),
+            track.source_format
         );
     }
     #[test]
