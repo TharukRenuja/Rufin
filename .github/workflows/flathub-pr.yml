@@ -23,6 +23,7 @@ env:
   FLATHUB_BRANCH: master
   FLATHUB_MANIFEST: io.github.screwys.Rufin.json
   LOCAL_FLATHUB_MANIFEST: packaging/flatpak/io.github.screwys.Rufin.flathub.json
+  LOCAL_FLATHUB_README: packaging/flatpak/README.flathub.md
 
 jobs:
   open-pr:
@@ -92,19 +93,20 @@ jobs:
 
           cp "$GITHUB_WORKSPACE/$LOCAL_FLATHUB_MANIFEST" "$FLATHUB_MANIFEST"
           cp "$GITHUB_WORKSPACE/packaging/flatpak/cargo-sources.json" cargo-sources.json
+          cp "$GITHUB_WORKSPACE/$LOCAL_FLATHUB_README" README.md
           jq empty "$FLATHUB_MANIFEST" cargo-sources.json
 
-          if git diff --quiet -- "$FLATHUB_MANIFEST" cargo-sources.json; then
+          if git diff --quiet -- "$FLATHUB_MANIFEST" cargo-sources.json README.md; then
             echo "Flathub manifest is already current for ${RELEASE_TAG}."
             exit 0
           fi
 
-          git add "$FLATHUB_MANIFEST" cargo-sources.json
+          git add "$FLATHUB_MANIFEST" cargo-sources.json README.md
           git commit -m "chore: update Rufin to ${RELEASE_TAG}"
           git push --force-with-lease origin "$branch"
 
           title="Update Rufin to ${RELEASE_TAG}"
-          body="$(printf 'Updates Rufin to %s.\n\nThis PR copies the release manifest generated from the signed tag and the matching vendored Cargo source list.\n' "$RELEASE_TAG")"
+          body="$(printf 'Updates Rufin to %s.\n\nThis PR copies the release manifest generated from the signed tag, the matching vendored Cargo source list, and the Flathub repository README.\n' "$RELEASE_TAG")"
 
           pr_number="$(
             gh pr list \
