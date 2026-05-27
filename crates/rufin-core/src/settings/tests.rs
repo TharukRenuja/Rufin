@@ -183,7 +183,6 @@
         );
         assert_eq!(settings.track_table.sort_key, TrackSortKey::Title);
         assert!(settings.suppressed_auto_lyrics_track_ids.is_empty());
-        assert!(!settings.suppress_release_notices);
     }
     #[test]
     fn app_settings_sanitize_local_library_folders() {
@@ -288,7 +287,6 @@
         assert_eq!(restored.scrobbling.librefm.api_secret, "rufin");
         assert!(!restored.scrobbling.listenbrainz.enabled);
         assert_eq!(restored.track_table.sort_key, TrackSortKey::Title);
-        assert!(!restored.suppress_release_notices);
     }
     #[test]
     fn window_size_restore_rejects_tiny_and_clamps_huge_geometry() {

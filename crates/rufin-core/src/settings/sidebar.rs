@@ -413,8 +413,6 @@ pub struct AppSettings {
     pub library_lists: Vec<LibraryListSettingsEntry>,
     #[serde(default)]
     pub suppressed_auto_lyrics_track_ids: Vec<String>,
-    #[serde(default)]
-    pub suppress_release_notices: bool,
 }
 impl Default for AppSettings {
     fn default() -> Self {
@@ -450,7 +448,6 @@ impl Default for AppSettings {
             track_table: TrackTableSettings::default(),
             library_lists: default_library_list_settings(),
             suppressed_auto_lyrics_track_ids: Vec::new(),
-            suppress_release_notices: false,
         }
     }
 }

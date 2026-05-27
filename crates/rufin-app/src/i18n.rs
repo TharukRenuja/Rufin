@@ -112,7 +112,6 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Save");
     let _ = tr("Save Mapping");
     let _ = tr("Save Server Settings");
-    let _ = tr("Don't show again");
     let _ = tr("Connect");
     let _ = tr("Connect to Music Server");
     let _ = tr("Preparing library...");

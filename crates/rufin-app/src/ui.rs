@@ -45,8 +45,6 @@ mod settings_persistence;
 
 mod source_selector;
 
-mod update_notice;
-
 include!("ui/root/types.rs");
 include!("ui/root/build.rs");
 include!("ui/root/home_visible_sections.rs");
