@@ -516,7 +516,13 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                     shell.apply_folder_load_failed(request_id, path, error);
                 }
                 ControllerEvent::CoverReady { key, path } => {
+                    #[cfg(unix)]
+                    let update_mpris_art = shell.current_mpris_art_key_is(&key);
                     shell.apply_cover_ready(&key, &path);
+                    #[cfg(unix)]
+                    if update_mpris_art {
+                        shell.update_mpris_player();
+                    }
                 }
                 ControllerEvent::ServerDiscovery {
                     servers,
