@@ -1,6 +1,6 @@
 # Rufin
 
-<img align="left" alt="Rufin" src="data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" width="120"> Rufin is a native GTK4/libadwaita music client written in Rust. Greatly influenced by [feishin](https://github.com/jeffvli/feishin), it is not as feature-rich, but it aims to offer a similar experience without any web stack. It supports playback from your music server(s) or your local folder(s) with playback reporting.
+<img align="left" alt="Rufin" src="data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg" width="120"> Rufin is a native GTK4/libadwaita music client written in Rust. It is created to be a fast, lightweight and customizable music client. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike. [Now available in Flathub!](https://flathub.org/apps/io.github.screwys.Rufin)
 <br clear="left">
 
 
@@ -45,13 +45,11 @@
 # Installation
 
 ## Flatpak
-
-You can install the flatpak directly, without building it yourself:
-
-```bash
-curl -L -o io.github.screwys.Rufin.flatpak https://github.com/screwys/Rufin/releases/latest/download/io.github.screwys.Rufin.flatpak
-flatpak install --user --or-update --bundle io.github.screwys.Rufin.flatpak
-```
+<p>
+  <a href="https://flathub.org/apps/io.github.screwys.Rufin">
+    <img width="240" alt="Get it on Flathub" src="https://flathub.org/api/badge?svg&locale=en">
+  </a>
+</p>
 
 ## AUR
 
@@ -110,3 +108,15 @@ cargo test --workspace
 ```
 
 UI perf reports default to `.local/perf/rufin-ui-perf-<pid>.log` for `--ui-perf-run` and `.local/perf/rufin-ui-observe-<pid>.log` for `--ui-perf-observe`.
+
+## Credits
+
+[GTK 4](https://www.gtk.org/)
+
+[libadwaita](https://gitlab.gnome.org/GNOME/libadwaita/)
+
+[gtk-rs](https://gtk-rs.org/) 
+
+[GStreamer](https://gstreamer.freedesktop.org/)
+
+This app is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), both in client design and in how certain parts should work. It aims to bring a similar experience, altought not as feature-rich, to a native desktop app without a web stack.
