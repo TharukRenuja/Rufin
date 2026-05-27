@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.screwys.Rufin</id>
   <name>Rufin</name>
-  <summary>Play music from anywhere</summary>
+  <summary>Native music client</summary>
   <developer id="io.github.screwys">
     <name>screwys</name>
   </developer>
