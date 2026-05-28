@@ -21,7 +21,11 @@ impl Shell {
                 }
                 shell.update_layout();
                 if route_uses_responsive_cards(shell.state.routes.borrow().current()) {
-                    shell.render_current_route();
+                    let width = route_content_width(shell.as_ref());
+                    if shell.state.responsive_route_render_width.get() == width {
+                        return;
+                    }
+                    shell.render_current_route_preserving_scroll();
                 }
             },
         );
@@ -46,7 +50,10 @@ impl Shell {
                 if route_uses_responsive_cards(shell.state.routes.borrow().current())
                     && !shell.login_screen_active()
                 {
-                    shell.render_current_route();
+                    let width = route_content_width(shell.as_ref());
+                    if shell.state.responsive_route_render_width.get() != width {
+                        shell.render_current_route_preserving_scroll();
+                    }
                 }
             },
         );

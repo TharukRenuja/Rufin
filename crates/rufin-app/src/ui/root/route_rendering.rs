@@ -46,6 +46,13 @@ impl Shell {
             self.state.routes.borrow().can_forward(),
         );
         update_navigation_selection(self.as_ref());
+        if route_uses_responsive_cards(&route) {
+            self.state
+                .responsive_route_render_width
+                .set(route_content_width(self.as_ref()));
+        } else {
+            self.state.responsive_route_render_width.set(0);
+        }
 
         let view_started = Instant::now();
         let view = match route {

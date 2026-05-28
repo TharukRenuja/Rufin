@@ -28,8 +28,6 @@ impl Shell {
         if self.state.home_refresh_started_for_visit.replace(true) {
             return;
         }
-        self.controller
-            .refresh_home_sections_without_explore_for_active();
         self.controller.prefetch_explore_for_active();
     }
     pub(in crate::ui) fn refresh_playlists_for_current_visit(self: &Rc<Self>) {

@@ -429,6 +429,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     snapshot,
                     include_explore,
                 } => {
+                    let previous_sections = shell.state.library.borrow().home_sections.clone();
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     let snapshot = *snapshot;
@@ -443,7 +444,11 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.promote_cached_prefetched_explore();
                     }
                     shell.update_server_selector();
-                    shell.refresh_visible_home_sections(&sections, include_explore);
+                    shell.refresh_changed_visible_home_sections(
+                        &previous_sections,
+                        &sections,
+                        include_explore,
+                    );
                     shell.schedule_startup_cover_warm();
                 }
                 ControllerEvent::HomeSectionPrefetched { server_id, section } => {

@@ -11,9 +11,8 @@ use crate::i18n::tr;
 
 use super::cards::{render_home_album_page, render_home_track_page};
 use super::{
-    GRID_COVER_SIZE, HOME_ALBUM_GAP, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON,
-    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class,
-    icon_button,
+    GRID_COVER_SIZE, HOME_ALBUM_GAP, PLAY_LATER_ICON, PLAY_NEXT_ICON, PRIMARY_ROUTE_MARGIN_END,
+    PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class, icon_button,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -303,38 +302,12 @@ impl Shell {
 
         let shell = Rc::clone(self);
         previous.connect_clicked(move |_| {
-            let mut states = shell.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            state.page_start = state.page_start.saturating_sub(state.page_size);
-            drop(states);
-            shell.render_current_route();
+            shell.show_previous_home_section_page(section_kind);
         });
 
         let shell = Rc::clone(self);
         next.connect_clicked(move |_| {
-            let mut states = shell.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            let next_page = state.page_start.saturating_add(state.page_size);
-            let album_count = shell
-                .state
-                .library
-                .borrow()
-                .home_sections
-                .iter()
-                .find(|section| section.kind == section_kind)
-                .map(|section| section.albums.len())
-                .unwrap_or(0);
-            if next_page < album_count {
-                state.page_start = next_page;
-            }
-            drop(states);
-            shell.render_current_route();
+            shell.show_next_home_section_page(section_kind);
         });
 
         let shell = Rc::clone(self);
@@ -375,38 +348,12 @@ impl Shell {
 
         let shell = Rc::clone(self);
         previous.connect_clicked(move |_| {
-            let mut states = shell.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            state.page_start = state.page_start.saturating_sub(state.page_size);
-            drop(states);
-            shell.render_current_route();
+            shell.show_previous_home_section_page(section_kind);
         });
 
         let shell = Rc::clone(self);
         next.connect_clicked(move |_| {
-            let mut states = shell.state.home_section_state.borrow_mut();
-            let state = states.entry(section_kind).or_insert(HomeSectionState {
-                page_start: 0,
-                page_size: 2,
-            });
-            let next_page = state.page_start.saturating_add(state.page_size);
-            let track_count = shell
-                .state
-                .library
-                .borrow()
-                .home_sections
-                .iter()
-                .find(|section| section.kind == section_kind)
-                .map(|section| section.tracks.len())
-                .unwrap_or(0);
-            if next_page < track_count {
-                state.page_start = next_page;
-            }
-            drop(states);
-            shell.render_current_route();
+            shell.show_next_home_section_page(section_kind);
         });
 
         let shell = Rc::clone(self);

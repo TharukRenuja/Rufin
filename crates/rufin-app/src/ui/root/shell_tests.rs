@@ -9,8 +9,8 @@ use super::{
     snapshot_event_outcome,
 };
 use rufin_core::{
-    Album, AlbumId, AppSettings, ArtistId, HomeSectionKind, LibrarySourceSelection, QueueEntry,
-    QueueEntryId, Route, SearchKind, Track, TrackId, TrackSortKey, TrackTableSettings,
+    Album, AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, LibrarySourceSelection,
+    QueueEntry, QueueEntryId, Route, SearchKind, Track, TrackId, TrackSortKey, TrackTableSettings,
 };
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
 use std::collections::HashMap;
@@ -42,6 +42,31 @@ pub(in crate::ui) fn home_section_pages_reset_for_new_home_data() {
     super::reset_home_section_pages(&mut states);
 
     assert!(states.is_empty());
+}
+#[test]
+pub(in crate::ui) fn home_refresh_targets_only_changed_visible_sections() {
+    let explore = test_home_album_section(HomeSectionKind::Explore, 1);
+    let most_played = test_home_album_section(HomeSectionKind::MostPlayed, 2);
+    let previous = vec![explore.clone(), most_played.clone()];
+    let mut changed_explore = explore.clone();
+    changed_explore.albums[0].title = "Different explore album".to_string();
+    let mut changed_most_played = most_played.clone();
+    changed_most_played.albums[0].title = "Different most played album".to_string();
+    let sections = vec![changed_explore, changed_most_played];
+    let visible = vec![
+        HomeSectionKind::Explore,
+        HomeSectionKind::MostPlayed,
+        HomeSectionKind::RecentlyPlayed,
+    ];
+
+    assert_eq!(
+        super::changed_visible_home_section_kinds(visible.clone(), &previous, &sections, false),
+        vec![HomeSectionKind::MostPlayed]
+    );
+    assert_eq!(
+        super::changed_visible_home_section_kinds(visible, &previous, &sections, true),
+        vec![HomeSectionKind::Explore, HomeSectionKind::MostPlayed]
+    );
 }
 #[test]
 pub(in crate::ui) fn snapshot_event_outcome_prioritizes_first_run_completion() {
@@ -624,6 +649,15 @@ pub(in crate::ui) fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Al
         color_seed: 1,
         image_ref: None,
         genres: Vec::new(),
+    }
+}
+pub(in crate::ui) fn test_home_album_section(kind: HomeSectionKind, album_id: u32) -> HomeSection {
+    let mut album = test_album("Album Artist", Some(ArtistId::fake(album_id)));
+    album.id = AlbumId::fake(album_id);
+    HomeSection {
+        kind,
+        albums: vec![album],
+        tracks: Vec::new(),
     }
 }
 pub(in crate::ui) fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Track {

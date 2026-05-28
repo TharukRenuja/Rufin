@@ -54,6 +54,7 @@ pub(in crate::controller) fn sync_page_finished(
 ) -> bool {
     item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < PAGE_SIZE)
 }
+#[cfg(test)]
 pub(in crate::controller) fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
     [
         HomeSectionKind::Explore,
