@@ -1,5 +1,6 @@
 use super::*;
 use rufin_provider::MusicProvider;
+use std::time::Duration;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 #[tokio::test]
@@ -274,6 +275,36 @@ async fn image_bytes_fetch_cover_art() {
 
     assert_eq!(image.bytes, vec![1, 2, 3]);
     assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
+}
+#[tokio::test]
+async fn subsonic_json_maps_delayed_response_timeout_to_network_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getUser.view"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(200))
+                .set_body_json(serde_json::json!({
+                    "subsonic-response": {
+                        "status": "ok",
+                        "version": "1.16.1",
+                        "user": { "username": "demo" }
+                    }
+                })),
+        )
+        .mount(&server)
+        .await;
+    let base_url = normalize_base_url(&server.uri()).expect("base url");
+    let url = endpoint(&base_url, "getUser").expect("endpoint");
+    let client =
+        build_client_with_timeouts(false, Duration::from_secs(1), Duration::from_millis(20))
+            .expect("client");
+
+    let error = subsonic_json::<AuthenticateBody>(client.get(url))
+        .await
+        .expect_err("timeout");
+
+    assert!(matches!(error, ProviderError::Network(_)));
 }
 #[tokio::test]
 async fn music_folders_load_subsonic_music_folders() {

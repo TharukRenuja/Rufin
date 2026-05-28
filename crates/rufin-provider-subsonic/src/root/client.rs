@@ -1,5 +1,10 @@
 use super::*;
 
+use std::time::Duration;
+
+const SUBSONIC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const SUBSONIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[async_trait(?Send)]
 impl MusicProvider for SubsonicProvider {
     fn identity(&self) -> &ProviderIdentity {
@@ -806,8 +811,22 @@ pub(super) async fn subsonic_bytes(request: reqwest::RequestBuilder) -> Provider
     })
 }
 pub(super) fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
+    build_client_with_timeouts(
+        trust_invalid_cert,
+        SUBSONIC_CONNECT_TIMEOUT,
+        SUBSONIC_REQUEST_TIMEOUT,
+    )
+}
+
+pub(super) fn build_client_with_timeouts(
+    trust_invalid_cert: bool,
+    connect_timeout: Duration,
+    request_timeout: Duration,
+) -> ProviderResult<Client> {
     Client::builder()
         .danger_accept_invalid_certs(trust_invalid_cert)
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
         .build()
         .map_err(map_reqwest_error)
 }
