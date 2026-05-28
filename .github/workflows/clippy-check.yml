@@ -1,4 +1,4 @@
-name: Clippy check
+name: Rust CI
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: clippy-check-${{ github.ref }}
+  group: rust-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -39,3 +39,6 @@ jobs:
 
       - name: Check Rust lints
         run: nix --accept-flake-config develop --command cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Run Rust tests
+        run: nix --accept-flake-config develop --command cargo test --workspace --locked
