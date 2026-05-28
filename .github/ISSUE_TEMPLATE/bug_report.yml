@@ -3,7 +3,16 @@ description: Report a problem in Rufin.
 title: "[Bug]: "
 labels:
   - bug
+  - triage
 body:
+  - type: checkboxes
+    id: duplicate-check
+    attributes:
+      label: Duplicate check
+      options:
+        - label: I have already searched through open/closed issues
+          required: true
+
   - type: input
     id: rufin-version
     attributes:

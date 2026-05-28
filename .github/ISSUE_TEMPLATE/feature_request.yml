@@ -3,7 +3,16 @@ description: Suggest a new feature or improvement for Rufin.
 title: "[Feature]: "
 labels:
   - enhancement
+  - triage
 body:
+  - type: checkboxes
+    id: duplicate-check
+    attributes:
+      label: Duplicate check
+      options:
+        - label: I have already searched through open/closed issues
+          required: true
+
   - type: dropdown
     id: server
     attributes:

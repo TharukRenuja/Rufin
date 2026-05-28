@@ -1,0 +1,72 @@
+name: Issue labels
+
+on:
+  issues:
+    types:
+      - opened
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  server-labels:
+    name: Server labels
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Apply server labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          section_value() {
+            local heading="$1"
+
+            awk -v heading="$heading" '
+              $0 == "### " heading {
+                in_section = 1
+                next
+              }
+
+              in_section && /^### / {
+                exit
+              }
+
+              in_section {
+                print
+              }
+            ' <<< "$ISSUE_BODY"
+          }
+
+          server_text="$(
+            {
+              section_value "Server"
+              section_value "Server and version"
+            } | tr '[:upper:]' '[:lower:]'
+          )"
+
+          labels=()
+
+          if [[ "$server_text" == *jellyfin* ]]; then
+            labels+=("jellyfin")
+          fi
+
+          if [[ "$server_text" == *navidrome* ]]; then
+            labels+=("navidrome")
+          fi
+
+          if [[ "$server_text" == *opensubsonic* || "$server_text" == *"open subsonic"* ]]; then
+            labels+=("opensubsonic")
+          fi
+
+          if [[ "$server_text" =~ (^|[^[:alpha:]])local([^[:alpha:]]|$) ]]; then
+            labels+=("local")
+          fi
+
+          if ((${#labels[@]})); then
+            IFS=,
+            gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "${labels[*]}"
+          fi
