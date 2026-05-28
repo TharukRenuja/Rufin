@@ -80,7 +80,7 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
         .build();
     dialog.add_css_class("preferences");
 
-    let general_page = general_page(shell);
+    let general_page = general_page(shell, &dialog);
     let layout_page = layout_page(shell);
     let scrobbling_page = scrobbling_page(shell);
     let playback_page = playback_page(shell);
@@ -121,7 +121,7 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
 
     dialog.present(Some(&shell.window));
 }
-fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("General"))
         .icon_name("preferences-system-symbolic")
@@ -140,7 +140,6 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let language_model = gtk::StringList::new(&language_titles);
     let language_row = adw::ComboRow::builder()
         .title(tr("Language"))
-        .subtitle(tr("Restart Rufin to apply language changes"))
         .model(&language_model)
         .selected(i18n::language_option_index(
             language_options.as_ref(),
@@ -149,18 +148,22 @@ fn general_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .build();
     let language_shell = Rc::clone(shell);
     let language_options_for_row = Rc::clone(&language_options);
+    let dialog_for_language = dialog.clone();
     language_row.connect_selected_notify(move |row| {
         let Some(option) = language_options_for_row.get(row.selected() as usize) else {
             return;
         };
         let language = option.id.clone();
-        language_shell.update_app_settings("language setting", |settings| {
-            if settings.language == language {
-                return false;
-            }
-            settings.language = language;
-            true
-        });
+        if language_shell.set_language_preference(language) {
+            let reopen_shell = Rc::clone(&language_shell);
+            dialog_for_language.close();
+            gtk::glib::idle_add_local_once(move || {
+                present_preferences_dialog_with_page(
+                    &reopen_shell,
+                    PreferencesInitialPage::General,
+                );
+            });
+        }
     });
     language_group.add(&language_row);
     page.add(&language_group);

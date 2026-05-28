@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use crate::i18n::{self, tr};
 use adw::prelude::*;
 use rufin_core::{
     AppSettings, DiscordDisplayType, DiscordLinkType, HomeBlockKind, LibraryListKey,
@@ -8,7 +9,7 @@ use rufin_core::{
 };
 use tracing::warn;
 
-use super::{Shell, current_playback_track_id};
+use super::{Shell, chrome, current_playback_track_id};
 
 impl Shell {
     pub(super) fn save_window_state(&self) {
@@ -148,6 +149,79 @@ impl Shell {
             settings.notifications_enabled = enabled;
             true
         });
+    }
+
+    pub(super) fn set_language_preference(self: &Rc<Self>, language: String) -> bool {
+        let Some(settings) = self.update_app_settings("language setting", |settings| {
+            if settings.language == language {
+                return false;
+            }
+            settings.language = language;
+            true
+        }) else {
+            return false;
+        };
+
+        i18n::set_language_preference(&settings.language);
+        self.relocalize_visible_ui();
+        true
+    }
+
+    fn relocalize_visible_ui(self: &Rc<Self>) {
+        self.relocalize_static_controls();
+        self.rebuild_sidebar_navigation();
+        self.render_current_route_preserving_scroll();
+        self.render_queue_panel();
+        self.render_lyrics_panel();
+        self.update_bottom_player();
+        self.update_fullscreen_player();
+        self.update_right_panel_button();
+        self.update_lyrics_panel_button();
+    }
+
+    fn relocalize_static_controls(&self) {
+        chrome::relocalize_primary_menu_button(&self.main_menu);
+        relocalize_icon_button(&self.normal_back_button, "Back");
+        relocalize_icon_button(&self.compact_back_button, "Back");
+        relocalize_icon_button(&self.normal_forward_button, "Forward");
+        relocalize_icon_button(&self.compact_forward_button, "Forward");
+
+        let cover_label = tr("Open fullscreen player");
+        self.player_controls
+            .cover
+            .area
+            .set_tooltip_text(Some(&cover_label));
+        self.player_controls
+            .cover
+            .area
+            .update_property(&[gtk::accessible::Property::Label(&cover_label)]);
+
+        relocalize_icon_button(&self.player_controls.previous_button, "Previous");
+        relocalize_icon_button(&self.player_controls.next_button, "Next");
+        relocalize_icon_button(&self.player_controls.shuffle_button, "Shuffle");
+        relocalize_icon_button(&self.player_controls.random_button, "Play random");
+        relocalize_icon_button(&self.player_controls.favorite_button, "Favorite");
+        relocalize_icon_button(&self.player_controls.mute_button, "Mute");
+        relocalize_icon_button(
+            &self.fullscreen_player.close_button,
+            "Close fullscreen player",
+        );
+
+        let search_label = tr("Search queue");
+        self.queue_search
+            .update_property(&[gtk::accessible::Property::Label(&search_label)]);
+        relocalize_icon_button(&self.queue_clear_button, "Clear queue");
+        self.lyrics_pane.set_title(&tr("Lyrics"));
+        let lyrics_title = tr("Lyrics");
+        self.fullscreen_player
+            .stack
+            .page(self.fullscreen_player.lyrics_pane.widget())
+            .set_title(Some(&lyrics_title));
+        let queue_title = tr("Queue");
+        self.fullscreen_player
+            .stack
+            .page(&self.fullscreen_player.queue_panel)
+            .set_title(Some(&queue_title));
     }
 
     pub(super) fn set_discord_presence_enabled(self: &Rc<Self>, enabled: bool) {
@@ -340,4 +414,10 @@ impl Shell {
             self.render_current_route();
         }
     }
+}
+
+fn relocalize_icon_button(button: &gtk::Button, label: &str) {
+    let label = tr(label);
+    button.set_tooltip_text(Some(&label));
+    button.update_property(&[gtk::accessible::Property::Label(&label)]);
 }

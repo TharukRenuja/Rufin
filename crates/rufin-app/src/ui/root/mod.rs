@@ -53,7 +53,7 @@ use crate::controller::{
     PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
 };
 use crate::external_metadata;
-use crate::i18n::tr;
+use crate::i18n::{self, tr};
 use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
 use adw::prelude::*;
 use chrome::{build_content_chrome, build_main_area};
@@ -572,6 +572,7 @@ pub(in crate::ui) struct Shell {
     server_selector: ServerSelector,
     route_title: adw::WindowTitle,
     route_host: gtk::Box,
+    main_menu: gtk::MenuButton,
     normal_back_button: gtk::Button,
     normal_forward_button: gtk::Button,
     compact_back_button: gtk::Button,
@@ -605,6 +606,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let perf_observe = options.ui_perf_observe && !options.ui_perf_run;
     let perf_enabled = options.ui_perf_run || perf_observe;
     let defer_initial_route = !first_run;
+    let language_preference = i18n::effective_language_preference(&settings.language);
+    i18n::set_language_preference(&language_preference);
     let perf_requires_assets =
         perf_enabled && options.fake_scale.is_none() && library_has_image_refs(&library);
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
@@ -789,6 +792,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         server_selector,
         route_title,
         route_host,
+        main_menu: main_menu.clone(),
         normal_back_button,
         normal_forward_button,
         compact_back_button,

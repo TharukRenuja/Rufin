@@ -119,6 +119,13 @@ fn primary_menu_button() -> gtk::MenuButton {
     button
 }
 
+pub(super) fn relocalize_primary_menu_button(button: &gtk::MenuButton) {
+    let label = tr("Main Menu");
+    button.set_tooltip_text(Some(&label));
+    button.update_property(&[gtk::accessible::Property::Label(&label)]);
+    button.set_menu_model(Some(&primary_menu_model()));
+}
+
 fn primary_menu_model() -> gio::Menu {
     let menu = gio::Menu::new();
     let view = gio::Menu::new();

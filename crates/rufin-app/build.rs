@@ -9,15 +9,90 @@ fn main() {
         env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
     );
     let icon_path = manifest_dir.join("../../packaging/windows/assets/rufin.ico");
+    let po_dir = manifest_dir.join("../../po");
 
     println!("cargo:rerun-if-changed={}", icon_path.display());
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed={}", po_dir.display());
+
+    let build_locale_dir = compile_translation_catalogs(&po_dir);
+    println!(
+        "cargo:rustc-env=RUFIN_BUILD_LOCALEDIR={}",
+        build_locale_dir.display()
+    );
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
 
     compile_windows_resource(&icon_path);
+}
+
+fn compile_translation_catalogs(po_dir: &Path) -> PathBuf {
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    let locale_dir = out_dir.join("share/locale");
+    if locale_dir.exists() {
+        fs::remove_dir_all(&locale_dir).expect("remove stale generated gettext catalogs");
+    }
+
+    let po_files = translation_source_files(po_dir);
+    if po_files.is_empty() {
+        return locale_dir;
+    }
+    for po_file in &po_files {
+        println!("cargo:rerun-if-changed={}", po_file.display());
+    }
+
+    if !msgfmt_available() {
+        println!("cargo:warning=msgfmt was not found; local .po translations will not be compiled");
+        return locale_dir;
+    }
+
+    for po_file in po_files {
+        let lang = po_file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("translation file has UTF-8 stem");
+        let target_dir = locale_dir.join(lang).join("LC_MESSAGES");
+        fs::create_dir_all(&target_dir).expect("create generated gettext catalog directory");
+        let target_file = target_dir.join("rufin.mo");
+        let status = Command::new("msgfmt")
+            .arg("--check")
+            .arg(&po_file)
+            .arg("-o")
+            .arg(&target_file)
+            .status();
+        match status {
+            Ok(status) if status.success() => {}
+            Ok(status) => panic!(
+                "msgfmt failed for {} with status {status}",
+                po_file.display()
+            ),
+            Err(error) => panic!("failed to run msgfmt for {}: {error}", po_file.display()),
+        }
+    }
+
+    locale_dir
+}
+
+fn translation_source_files(po_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(po_dir) else {
+        return Vec::new();
+    };
+    let mut files = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("po"))
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+}
+
+fn msgfmt_available() -> bool {
+    Command::new("msgfmt")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 fn compile_windows_resource(icon_path: &Path) {

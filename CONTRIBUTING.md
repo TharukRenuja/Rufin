@@ -8,4 +8,4 @@ For commit names and PRs, you may use [Conventional Commits](https://www.convent
 
 # Translations
 
-Each language lives in one file: `po/<locale>.po`. To start a translation, copy `po/rufin.pot` to a new locale file, a full locale id like `tr_TR.po`, `de_DE.po`, or `pt_BR.po`, set `Language: locale_id \n` and translate  `msgstr ""` values.
+Each language lives in one file: `po/<locale>.po`. To start a translation, copy `po/rufin.pot` to a new locale file, a full locale id like `tr_TR.po`, `de_DE.po`, or `pt_BR.po`, set `Language: locale_id \n` and translate  `msgstr ""` values. When running Rufin from source with Cargo, local `.po` files are compiled automatically for testing if `msgfmt` is installed.

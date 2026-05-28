@@ -33,6 +33,7 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) artist: gtk::Label,
     pub(super) album: gtk::Label,
     pub(super) meta: gtk::Label,
+    pub(super) stack: adw::ViewStack,
     pub(super) lyrics_pane: LyricsPane,
     pub(super) queue_panel: gtk::Box,
 }
@@ -127,6 +128,7 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         artist,
         album,
         meta,
+        stack,
         lyrics_pane,
         queue_panel,
     }

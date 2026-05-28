@@ -32,18 +32,21 @@ pub fn init(language_preference: &str) {
 }
 
 pub fn startup_language_preference() -> String {
+    let Ok(value) = fs::read_to_string(app_settings_path()) else {
+        return effective_language_preference(&default_language_preference());
+    };
+    let Ok(mut settings) = serde_json::from_str::<AppSettings>(&value) else {
+        return effective_language_preference(&default_language_preference());
+    };
+    settings.migrate_defaults();
+    effective_language_preference(&settings.language)
+}
+
+pub fn effective_language_preference(saved_language_preference: &str) -> String {
     if let Ok(value) = env::var("RUFIN_LANGUAGE") {
         return sanitize_language_preference(&value);
     }
-
-    let Ok(value) = fs::read_to_string(app_settings_path()) else {
-        return default_language_preference();
-    };
-    let Ok(mut settings) = serde_json::from_str::<AppSettings>(&value) else {
-        return default_language_preference();
-    };
-    settings.migrate_defaults();
-    settings.language
+    sanitize_language_preference(saved_language_preference)
 }
 
 pub fn language_options() -> Vec<LanguageOption> {
@@ -90,6 +93,10 @@ pub fn language_option_index(options: &[LanguageOption], language_preference: &s
 
 pub fn tr(message: &str) -> String {
     gettext(message)
+}
+
+pub fn set_language_preference(language_preference: &str) {
+    apply_language_preference(language_preference);
 }
 
 fn apply_language_preference(language_preference: &str) {
@@ -164,6 +171,12 @@ fn locale_dir() -> PathBuf {
 
 fn locale_dir_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
+    if let Some(path) = option_env!("RUFIN_BUILD_LOCALEDIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+    {
+        candidates.push(path);
+    }
     if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
         candidates.push(PathBuf::from(manifest_dir).join("../../po"));
     }
@@ -234,11 +247,7 @@ fn language_display_name(id: &str) -> String {
     let Some(name) = language_name(code) else {
         return id.to_string();
     };
-    if id == code {
-        name.to_string()
-    } else {
-        format!("{name} ({id})")
-    }
+    name.to_string()
 }
 
 fn language_code(id: &str) -> &str {
@@ -303,7 +312,6 @@ fn catalog_strings_for_extraction() {
     let _ = tr("System default");
     let _ = tr("English");
     let _ = tr("Language");
-    let _ = tr("Restart Rufin to apply language changes");
     let _ = tr("Home");
     let _ = tr("Favorites");
     let _ = tr("Albums");
@@ -622,7 +630,7 @@ mod tests {
             },
             LanguageOption {
                 id: "tr_TR".to_string(),
-                title: "Turkish (tr_TR)".to_string(),
+                title: "Turkish".to_string(),
             },
         ];
 
@@ -632,8 +640,9 @@ mod tests {
     }
 
     #[test]
-    fn language_display_name_keeps_locale_context() {
-        assert_eq!(language_display_name("pt_BR"), "Portuguese (pt_BR)");
+    fn language_display_name_uses_clean_language_name() {
+        assert_eq!(language_display_name("pt_BR"), "Portuguese");
+        assert_eq!(language_display_name("tr_TR"), "Turkish");
         assert_eq!(language_display_name("zz_ZZ"), "zz_ZZ");
     }
 }
