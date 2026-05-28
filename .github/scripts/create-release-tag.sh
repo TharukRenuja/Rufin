@@ -157,6 +157,9 @@ write_notes() {
           "chore(flatpak): update Flathub manifest for v"*)
             continue
             ;;
+          "chore(aur): update stable package for v"*)
+            continue
+            ;;
         esac
 
         short_commit="${commit:0:7}"
@@ -254,6 +257,15 @@ publish_github_release() {
   printf '\nPublished GitHub Release %s with the authenticated gh user.\n' "$version"
 }
 
+update_aur_stable_package() {
+  bash .github/scripts/update-aur-stable-package.sh "$version"
+  if ! git diff --quiet -- packaging/aur/rufin/PKGBUILD packaging/aur/rufin/.SRCINFO; then
+    git add packaging/aur/rufin/PKGBUILD packaging/aur/rufin/.SRCINFO
+    git commit -m "chore(aur): update stable package for $version"
+    git push origin HEAD:main
+  fi
+}
+
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
 if [[ "$commit_count" == "0" ]]; then
   echo "no commits found in range $base_tag..HEAD" >&2
@@ -308,5 +320,6 @@ if [[ "$push_tag" == "1" ]]; then
   else
     git push origin "$version"
   fi
+  update_aur_stable_package
   publish_github_release
 fi

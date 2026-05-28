@@ -110,16 +110,7 @@ jobs:
           RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
-          tag_name="$RELEASE_TAG"
-          version="${tag_name#v}"
-          pkgbuild="packaging/aur/rufin/PKGBUILD"
-          checksum="$(
-            curl -LfsS "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${version}.tar.gz" |
-              sha256sum |
-              awk '{print $1}'
-          )"
-          sed -i "s/^pkgver=.*/pkgver=${version}/" "$pkgbuild"
-          sed -i "s/^sha256sums=.*/sha256sums=('${checksum}')/" "$pkgbuild"
+          bash .github/scripts/update-aur-stable-package.sh --skip-srcinfo "$RELEASE_TAG"
 
       - name: Build packages
         env:
