@@ -754,15 +754,30 @@ pub(in crate::controller) fn next_queue_entry_after_current(
     let mut preview = QueueEngine::restore(queue.snapshot());
     preview.advance_after_end_of_stream().cloned()
 }
-pub(in crate::controller) fn queue_current_matches(
-    queue: &Arc<Mutex<Option<QueueEngine>>>,
-    current_entry_id: &QueueEntryId,
+
+#[derive(Clone, Debug)]
+pub(in crate::controller) struct NextPreloadRequest {
+    pub(in crate::controller) server_id: ServerId,
+    pub(in crate::controller) current_entry_id: QueueEntryId,
+    pub(in crate::controller) next_entry_id: QueueEntryId,
+    pub(in crate::controller) next_entry: QueueEntry,
+    pub(in crate::controller) playback_settings: PlaybackSettings,
+}
+
+fn queue_state_matches_next_preload_request(
+    queue: Option<&QueueEngine>,
+    request: &NextPreloadRequest,
 ) -> bool {
-    queue
-        .lock()
-        .ok()
-        .and_then(|queue| queue.as_ref().and_then(|queue| queue.current().cloned()))
-        .is_some_and(|entry| entry.id == *current_entry_id)
+    let Some(queue) = queue else {
+        return false;
+    };
+    let Some(current) = queue.current() else {
+        return false;
+    };
+    if current.id != request.current_entry_id {
+        return false;
+    }
+    next_queue_entry_after_current(queue).is_some_and(|entry| entry.id == request.next_entry_id)
 }
 pub(in crate::controller) fn shuffle_seed() -> u64 {
     SystemTime::now()
@@ -892,6 +907,33 @@ pub(in crate::controller) fn resolve_prepared_item(
     )?;
     Ok(prepared_item_from_entry(entry, stream))
 }
+pub(in crate::controller) fn send_prepared_next_if_queue_matches(
+    playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    events: &Sender<ControllerEvent>,
+    request: &NextPreloadRequest,
+    prepared: PreparedPlaybackItem,
+) -> bool {
+    let Ok(queue) = queue.lock() else {
+        return false;
+    };
+    if !queue_state_matches_next_preload_request(queue.as_ref(), request) {
+        return false;
+    }
+    if let Err(error) = playback
+        .lock()
+        .map_err(|_| "playback lock was poisoned".to_string())
+        .and_then(|mut playback| {
+            playback
+                .send(PlaybackCommand::PrepareNext(Some(prepared)))
+                .map_err(|error| error.to_string())
+        })
+    {
+        let _sent = events.send(ControllerEvent::Error(error));
+        return false;
+    }
+    true
+}
 pub(in crate::controller) fn prepare_next_stream_from_handles(
     store: StoreHandle,
     runtime: Arc<Runtime>,
@@ -901,9 +943,7 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
     events: Sender<ControllerEvent>,
 ) {
     let playback_settings = load_settings_from_store(&store).playback;
-    let Some((server_id, current_entry_id, next_entry, playback_settings)) =
-        next_preload_request_from_queue(&queue, playback_settings)
-    else {
+    let Some(request) = next_preload_request_from_queue(&queue, playback_settings) else {
         if let Err(error) = playback
             .lock()
             .map_err(|_| "playback lock was poisoned".to_string())
@@ -923,9 +963,9 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
             &store,
             &runtime,
             &secrets,
-            &server_id,
-            &next_entry,
-            &playback_settings,
+            &request.server_id,
+            &request.next_entry,
+            &request.playback_settings,
         ) {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -933,31 +973,26 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
                 return;
             }
         };
-        if !queue_current_matches(&queue, &current_entry_id) {
-            return;
-        }
-        if let Err(error) = playback
-            .lock()
-            .map_err(|_| "playback lock was poisoned".to_string())
-            .and_then(|mut playback| {
-                playback
-                    .send(PlaybackCommand::PrepareNext(Some(prepared)))
-                    .map_err(|error| error.to_string())
-            })
-        {
-            let _sent = events.send(ControllerEvent::Error(error));
-        }
+        let _sent =
+            send_prepared_next_if_queue_matches(&playback, &queue, &events, &request, prepared);
     });
 }
 pub(in crate::controller) fn next_preload_request_from_queue(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     playback_settings: PlaybackSettings,
-) -> Option<(ServerId, QueueEntryId, QueueEntry, PlaybackSettings)> {
+) -> Option<NextPreloadRequest> {
     queue.lock().ok().and_then(|queue| {
         let queue = queue.as_ref()?;
         let server_id = queue.snapshot().server_id;
         let current_entry_id = queue.current()?.id.clone();
-        let next = next_queue_entry_after_current(queue)?;
-        Some((server_id, current_entry_id, next, playback_settings))
+        let next_entry = next_queue_entry_after_current(queue)?;
+        let next_entry_id = next_entry.id.clone();
+        Some(NextPreloadRequest {
+            server_id,
+            current_entry_id,
+            next_entry_id,
+            next_entry,
+            playback_settings,
+        })
     })
 }

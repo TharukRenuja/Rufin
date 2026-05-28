@@ -492,6 +492,50 @@ pub(in crate::controller) fn local_access_changes_reprepare_next_stream_for_back
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
+pub(in crate::controller) fn prepared_next_send_rejects_stale_duplicate_track_entry() {
+    let (_controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap(Some(FakeScale::Small));
+    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let first = snapshot.tracks[0].clone();
+    let repeated = snapshot.tracks[1].clone();
+    let mut engine = QueueEngine::new(server_id);
+    engine.play_now(&first);
+    let initial_next_entry_id = engine.append(&repeated);
+    let replacement_next_entry_id = engine.append(&repeated);
+    let queue = Arc::new(Mutex::new(Some(engine)));
+    let request =
+        next_preload_request_from_queue(&queue, PlaybackSettings::default()).expect("request");
+    assert_eq!(request.next_entry_id, initial_next_entry_id);
+    {
+        let mut queue = queue.lock().expect("queue");
+        let queue = queue.as_mut().expect("queue");
+        assert!(queue.move_after_current(&replacement_next_entry_id));
+    }
+    let (current_entry_id, next_entry_id, next_track_id) = {
+        let queue = queue.lock().expect("queue");
+        let queue = queue.as_ref().expect("queue");
+        let current = queue.current().expect("current");
+        let next = next_queue_entry_after_current(queue).expect("next");
+        (current.id.clone(), next.id, next.track_id)
+    };
+    assert_eq!(current_entry_id, request.current_entry_id);
+    assert_eq!(next_track_id, request.next_entry.track_id);
+    assert_ne!(next_entry_id, request.next_entry_id);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let playback = Arc::new(Mutex::new(
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands))) as Box<dyn PlaybackBackend>,
+    ));
+    let (events, _receiver) = channel();
+    let prepared = prepared_item_from_entry(
+        &request.next_entry,
+        StreamDescriptor::new("fake://local/stream/duplicate"),
+    );
+    assert!(!send_prepared_next_if_queue_matches(
+        &playback, &queue, &events, &request, prepared
+    ));
+    assert!(commands.lock().expect("commands").is_empty());
+}
+#[test]
 pub(in crate::controller) fn activate_queue_entry_starts_selected_track() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap(Some(FakeScale::Small));
