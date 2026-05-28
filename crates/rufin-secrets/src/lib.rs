@@ -120,7 +120,23 @@ impl SecretServiceStore {
         result.map_err(|error| SecretError::Backend(error.to_string()))
     }
 
-    fn keyring(&self) -> SecretResult<Arc<oo7::Keyring>> {
+    fn run_with_keyring<T, Fut, Op>(&self, operation: Op) -> SecretResult<T>
+    where
+        Fut: Future<Output = oo7::Result<T>>,
+        Op: FnOnce(Arc<oo7::Keyring>) -> Fut,
+    {
+        if should_cache_keyring(oo7::ashpd::is_sandboxed()) {
+            let keyring = self.cached_keyring()?;
+            return self.run(operation(keyring));
+        }
+
+        self.run(async move {
+            let keyring = Arc::new(oo7::Keyring::new().await?);
+            operation(keyring).await
+        })
+    }
+
+    fn cached_keyring(&self) -> SecretResult<Arc<oo7::Keyring>> {
         if let Some(keyring) = SECRET_SERVICE_KEYRING
             .lock()
             .map_err(|_| SecretError::Locked)?
@@ -150,14 +166,20 @@ impl SecretServiceStore {
 }
 
 #[cfg(unix)]
+fn should_cache_keyring(sandboxed: bool) -> bool {
+    // Native DBus keyrings are tied to the runtime that drives their connection.
+    // The sandbox file backend needs reuse to avoid per-instance file locks.
+    sandboxed
+}
+
+#[cfg(unix)]
 impl SecretStore for SecretServiceStore {
     fn save_token(&self, server_id: &ServerId, token: &str) -> SecretResult<()> {
         let attributes = self.token_attributes(server_id);
         let label = format!("Rufin Jellyfin token {}", server_id.as_str());
         let token = token.to_string();
-        let keyring = self.keyring()?;
 
-        self.run(async move {
+        self.run_with_keyring(move |keyring| async move {
             keyring
                 .create_item(&label, &attributes, oo7::Secret::text(token), true)
                 .await
@@ -166,8 +188,7 @@ impl SecretStore for SecretServiceStore {
 
     fn load_token(&self, server_id: &ServerId) -> SecretResult<Option<String>> {
         let attributes = self.token_attributes(server_id);
-        let keyring = self.keyring()?;
-        let secret = self.run(async move {
+        let secret = self.run_with_keyring(move |keyring| async move {
             let Some(item) = keyring.search_items(&attributes).await?.into_iter().next() else {
                 return Ok(None);
             };
@@ -185,9 +206,8 @@ impl SecretStore for SecretServiceStore {
 
     fn delete_token(&self, server_id: &ServerId) -> SecretResult<()> {
         let attributes = self.token_attributes(server_id);
-        let keyring = self.keyring()?;
 
-        self.run(async move { keyring.delete(&attributes).await })
+        self.run_with_keyring(move |keyring| async move { keyring.delete(&attributes).await })
     }
 }
 
