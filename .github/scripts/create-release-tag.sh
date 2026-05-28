@@ -139,37 +139,138 @@ repo_url_from_origin() {
   fi
 }
 
-write_notes() {
+github_repo_from_origin() {
   local repo_url
   repo_url="$(repo_url_from_origin)"
+
+  if [[ "$repo_url" == https://github.com/*/* ]]; then
+    printf '%s\n' "${repo_url#https://github.com/}"
+  fi
+}
+
+github_metadata_available() {
+  [[ -n "${1:-}" ]] &&
+    command -v gh >/dev/null 2>&1 &&
+    gh auth status >/dev/null 2>&1
+}
+
+release_note_pr_for_commit() {
+  local repo_slug="$1"
+  local commit="$2"
+  local output
+
+  if output="$(gh api -H 'Accept: application/vnd.github+json' \
+    "repos/$repo_slug/commits/$commit/pulls" \
+    --jq 'if length == 0 then empty else ((map(select(.merged_at != null)) | sort_by(.merged_at) | .[-1]) // .[0]) | [.number, .title, .user.login] | @tsv end' \
+    2>/dev/null)"; then
+    printf '%s\n' "$output"
+  fi
+}
+
+first_merged_pr_for_author() {
+  local repo_slug="$1"
+  local author="$2"
+  local output
+
+  if output="$(gh api --method GET search/issues \
+    -f q="repo:$repo_slug type:pr is:merged author:$author" \
+    -f sort=created \
+    -f order=asc \
+    -f per_page=1 \
+    --jq '.items[0].number // empty' \
+    2>/dev/null)"; then
+    printf '%s\n' "$output"
+  fi
+}
+
+write_changelog() {
+  local repo_url="$1"
+  local repo_slug="$2"
+  local use_github_metadata=0
+
+  if github_metadata_available "$repo_slug"; then
+    use_github_metadata=1
+  fi
+
+  declare -A seen_prs=()
+  declare -A first_pr_by_author=()
+  declare -A new_contributor_seen=()
+  local new_contributors=()
+
+  while IFS=$'\t' read -r commit subject || [[ -n "$commit" ]]; do
+    case "$subject" in
+      "chore(release): bump version to "*)
+        continue
+        ;;
+      "chore(flatpak): update Flathub manifest for v"*)
+        continue
+        ;;
+      "chore(aur): update stable package for v"*)
+        continue
+        ;;
+    esac
+
+    local pr_info=""
+    if [[ "$use_github_metadata" == "1" ]]; then
+      pr_info="$(release_note_pr_for_commit "$repo_slug" "$commit")"
+    fi
+
+    if [[ -n "$pr_info" ]]; then
+      local pr_number pr_title pr_author
+      IFS=$'\t' read -r pr_number pr_title pr_author <<< "$pr_info"
+
+      if [[ -z "${seen_prs[$pr_number]+x}" ]]; then
+        seen_prs[$pr_number]=1
+        printf -- '- %s by @%s in #%s\n' "$pr_title" "$pr_author" "$pr_number"
+
+        if [[ -n "$pr_author" ]]; then
+          if [[ -z "${first_pr_by_author[$pr_author]+x}" ]]; then
+            first_pr_by_author[$pr_author]="$(first_merged_pr_for_author "$repo_slug" "$pr_author")"
+          fi
+
+          if [[ "${first_pr_by_author[$pr_author]}" == "$pr_number" &&
+            -z "${new_contributor_seen[$pr_author]+x}" ]]; then
+            new_contributor_seen[$pr_author]=1
+            new_contributors+=("$pr_author"$'\t'"$pr_number")
+          fi
+        fi
+      fi
+      continue
+    fi
+
+    short_commit="${commit:0:7}"
+    if [[ -n "$repo_url" ]]; then
+      printf -- '- %s ([%s](%s/commit/%s))\n' \
+        "$subject" "$short_commit" "$repo_url" "$commit"
+    else
+      printf -- '- %s (%s)\n' "$subject" "$short_commit"
+    fi
+  done < <(git log --reverse --pretty=format:'%H%x09%s' "$base_tag"..HEAD)
+
+  if [[ "${#new_contributors[@]}" -gt 0 ]]; then
+    echo
+    echo "## New Contributors"
+    echo
+    local contributor
+    for contributor in "${new_contributors[@]}"; do
+      local author pr_number
+      IFS=$'\t' read -r author pr_number <<< "$contributor"
+      printf -- '- @%s made their first contribution in #%s\n' "$author" "$pr_number"
+    done
+  fi
+}
+
+write_notes() {
+  local repo_url repo_slug
+  repo_url="$(repo_url_from_origin)"
+  repo_slug="$(github_repo_from_origin)"
 
   {
     echo "$summary"
     echo
     echo "## Changelog"
     echo
-    git log --reverse --pretty=format:'%H%x09%s' "$base_tag"..HEAD |
-      while IFS=$'\t' read -r commit subject || [[ -n "$commit" ]]; do
-        case "$subject" in
-          "chore(release): bump version to "*)
-            continue
-            ;;
-          "chore(flatpak): update Flathub manifest for v"*)
-            continue
-            ;;
-          "chore(aur): update stable package for v"*)
-            continue
-            ;;
-        esac
-
-        short_commit="${commit:0:7}"
-        if [[ -n "$repo_url" ]]; then
-          printf -- '- %s ([%s](%s/commit/%s))\n' \
-            "$subject" "$short_commit" "$repo_url" "$commit"
-        else
-          printf -- '- %s (%s)\n' "$subject" "$short_commit"
-        fi
-      done
+    write_changelog "$repo_url" "$repo_slug"
     echo
   } > "$notes_file"
 }
