@@ -2,22 +2,19 @@ use super::*;
 
 pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
     let server_id = saved.server.id.clone();
-    match context.sync_in_flight.lock() {
-        Ok(mut running) => {
-            if !running.insert(server_id.clone()) {
-                let _sent = context.events.send(ControllerEvent::LoginStatus(
-                    "Sync already running.".to_string(),
-                ));
-                return;
-            }
-        }
-        Err(_) => {
-            let _sent = context.events.send(ControllerEvent::Error(
-                "Sync guard lock was poisoned.".to_string(),
+    let permit = match context.sync_in_flight.acquire(server_id.clone()) {
+        Ok(Some(permit)) => permit,
+        Ok(None) => {
+            let _sent = context.events.send(ControllerEvent::LoginStatus(
+                "Sync already running.".to_string(),
             ));
             return;
         }
-    }
+        Err(error) => {
+            let _sent = context.events.send(ControllerEvent::Error(error));
+            return;
+        }
+    };
 
     let prefetch_initial_covers = initial_cover_cache_required(&context.store, &server_id);
     let generation = match context
@@ -26,9 +23,6 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
     {
         Ok(generation) => generation,
         Err(error) => {
-            if let Ok(mut running) = context.sync_in_flight.lock() {
-                running.remove(&server_id);
-            }
             let _sent = context.events.send(ControllerEvent::Error(error));
             return;
         }
@@ -41,9 +35,7 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
             "Syncing {provider_name} library..."
         )));
         let sync_result = run_sync_job(&context, &saved, generation, prefetch_initial_covers);
-        if let Ok(mut running) = context.sync_in_flight.lock() {
-            running.remove(&server_id);
-        }
+        drop(permit);
         if !sync_target_is_current(&context.store, &server_id) {
             return;
         }
@@ -110,19 +102,14 @@ pub(in crate::controller) fn start_home_refresh_thread(
     if sync_is_running(&context.sync_in_flight, &server_id) {
         return;
     }
-    match context.home_refresh_in_flight.lock() {
-        Ok(mut running) => {
-            if !running.insert(server_id.clone()) {
-                return;
-            }
-        }
-        Err(_) => {
-            let _sent = context.events.send(ControllerEvent::Error(
-                "Home refresh guard lock was poisoned.".to_string(),
-            ));
+    let permit = match context.home_refresh_in_flight.acquire(server_id) {
+        Ok(Some(permit)) => permit,
+        Ok(None) => return,
+        Err(error) => {
+            let _sent = context.events.send(ControllerEvent::Error(error));
             return;
         }
-    }
+    };
 
     thread::spawn(move || {
         let result = match target {
@@ -133,17 +120,9 @@ pub(in crate::controller) fn start_home_refresh_thread(
                 &saved,
                 kind,
             ),
-            HomeRefreshTarget::WithoutExplore => refresh_home_sections_without_explore_for_saved(
-                &context.store,
-                &context.runtime,
-                &context.secrets,
-                &saved,
-            ),
         }
         .and_then(|()| load_snapshot(&context.store).map(Box::new));
-        if let Ok(mut running) = context.home_refresh_in_flight.lock() {
-            running.remove(&server_id);
-        }
+        drop(permit);
         match result {
             Ok(snapshot) => {
                 let _sent = context
@@ -168,27 +147,20 @@ pub(in crate::controller) fn start_playlist_refresh_thread(
     if sync_is_running(&context.sync_in_flight, &server_id) {
         return;
     }
-    match context.playlist_refresh_in_flight.lock() {
-        Ok(mut running) => {
-            if !running.insert(server_id.clone()) {
-                return;
-            }
-        }
-        Err(_) => {
-            let _sent = context.events.send(ControllerEvent::Error(
-                "Playlist refresh guard lock was poisoned.".to_string(),
-            ));
+    let permit = match context.playlist_refresh_in_flight.acquire(server_id) {
+        Ok(Some(permit)) => permit,
+        Ok(None) => return,
+        Err(error) => {
+            let _sent = context.events.send(ControllerEvent::Error(error));
             return;
         }
-    }
+    };
 
     thread::spawn(move || {
         let result =
             refresh_playlists_for_saved(&context.store, &context.runtime, &context.secrets, &saved)
                 .and_then(|()| load_snapshot(&context.store).map(Box::new));
-        if let Ok(mut running) = context.playlist_refresh_in_flight.lock() {
-            running.remove(&server_id);
-        }
+        drop(permit);
         match result {
             Ok(snapshot) => {
                 let _sent = context.events.send(ControllerEvent::Snapshot(snapshot));
@@ -220,19 +192,17 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
     if sync_is_running(&context.sync_in_flight, &server_id) {
         return;
     }
-    match context.explore_prefetch_in_flight.lock() {
-        Ok(mut running) => {
-            if !running.insert(server_id.clone()) {
-                return;
-            }
-        }
-        Err(_) => {
-            let _sent = context.events.send(ControllerEvent::Error(
-                "Explore prefetch guard lock was poisoned.".to_string(),
-            ));
+    let permit = match context
+        .explore_prefetch_in_flight
+        .acquire(server_id.clone())
+    {
+        Ok(Some(permit)) => permit,
+        Ok(None) => return,
+        Err(error) => {
+            let _sent = context.events.send(ControllerEvent::Error(error));
             return;
         }
-    }
+    };
 
     thread::spawn(move || {
         let result = prefetch_home_section_for_saved(
@@ -242,9 +212,7 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
             &saved,
             HomeSectionKind::Explore,
         );
-        if let Ok(mut running) = context.explore_prefetch_in_flight.lock() {
-            running.remove(&server_id);
-        }
+        drop(permit);
         match result {
             Ok(section) => {
                 let _sent = context
@@ -321,19 +289,6 @@ pub(in crate::controller) fn run_sync_job(
         )?;
     }
     Ok(())
-}
-pub(in crate::controller) fn refresh_home_sections_without_explore_for_saved(
-    store: &StoreHandle,
-    runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    saved: &SavedServer,
-) -> Result<(), String> {
-    let provider = provider_for_saved(store, runtime, secrets, saved)?;
-    runtime.block_on(refresh_home_sections_without_explore(
-        store,
-        &saved.server.id,
-        provider.as_music_provider(),
-    ))
 }
 pub(in crate::controller) fn refresh_playlists_for_saved(
     store: &StoreHandle,
@@ -854,6 +809,7 @@ pub(in crate::controller) async fn refresh_home_sections(
         .map_err(|error| error.to_string())?;
     cache_home_sections(store, server_id, &sections, generation)
 }
+#[cfg(test)]
 pub(in crate::controller) async fn refresh_home_sections_without_explore(
     store: &StoreHandle,
     server_id: &ServerId,

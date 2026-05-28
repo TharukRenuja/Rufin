@@ -443,23 +443,17 @@ pub(in crate::controller) fn encode_key_part(value: &str) -> String {
 }
 
 pub(in crate::controller) fn sync_is_running(
-    sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>,
+    sync_in_flight: &InFlightGuards<ServerId>,
     server_id: &ServerId,
 ) -> bool {
-    sync_in_flight
-        .lock()
-        .map(|running| running.contains(server_id))
-        .unwrap_or(true)
+    sync_in_flight.contains_or_blocked(server_id)
 }
 
 pub(in crate::controller) fn cancel_sync_if_running(
-    sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>,
+    sync_in_flight: &InFlightGuards<ServerId>,
     server_id: &ServerId,
 ) -> Result<bool, String> {
-    sync_in_flight
-        .lock()
-        .map(|mut running| running.remove(server_id))
-        .map_err(|_| "sync guard lock was poisoned".to_string())
+    sync_in_flight.remove(server_id)
 }
 
 pub(in crate::controller) fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {

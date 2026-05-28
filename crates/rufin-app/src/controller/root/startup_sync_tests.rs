@@ -793,6 +793,50 @@ pub(in crate::controller) fn home_section_refresh_uses_home_update_event() {
     ));
 }
 #[test]
+pub(in crate::controller) fn in_flight_permit_suppresses_duplicates_until_release() {
+    let guards = InFlightGuards::new("Test");
+    let server_id = ServerId::new("test-server");
+    let permit = guards
+        .acquire(server_id.clone())
+        .expect("guard lock")
+        .expect("first permit");
+
+    assert!(guards.contains_or_blocked(&server_id));
+    assert!(
+        guards
+            .acquire(server_id.clone())
+            .expect("duplicate guard lock")
+            .is_none()
+    );
+
+    drop(permit);
+
+    assert!(!guards.contains_or_blocked(&server_id));
+    assert!(
+        guards
+            .acquire(server_id)
+            .expect("guard lock after release")
+            .is_some()
+    );
+}
+#[test]
+pub(in crate::controller) fn in_flight_guards_keep_poisoned_locks_blocking() {
+    let guards = InFlightGuards::new("Test");
+    let poisoned = guards.clone();
+    let _panic = std::thread::spawn(move || {
+        let _running = poisoned.inner.lock().expect("guard lock");
+        panic!("poison in-flight guard");
+    })
+    .join();
+
+    assert!(guards.contains_or_blocked(&ServerId::new("test-server")));
+    let error = match guards.acquire(ServerId::new("another-test-server")) {
+        Ok(_) => panic!("poisoned guard accepted a permit"),
+        Err(error) => error,
+    };
+    assert_eq!(error, "Test guard lock was poisoned.");
+}
+#[test]
 pub(in crate::controller) fn home_refresh_without_explore_leaves_explore_cache_unchanged() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");

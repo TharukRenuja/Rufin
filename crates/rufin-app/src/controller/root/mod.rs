@@ -43,6 +43,7 @@ use rufin_test_support::{FakeProvider, FakeScale};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::Hash;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
@@ -349,10 +350,10 @@ pub struct AppController {
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
     external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
     pub(in crate::controller) events: Sender<ControllerEvent>,
-    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    playlist_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    explore_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    sync_in_flight: InFlightGuards<ServerId>,
+    home_refresh_in_flight: InFlightGuards<ServerId>,
+    playlist_refresh_in_flight: InFlightGuards<ServerId>,
+    explore_prefetch_in_flight: InFlightGuards<ServerId>,
     pub(in crate::controller) cover_in_flight: Arc<Mutex<HashSet<String>>>,
     pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
@@ -390,21 +391,101 @@ impl Drop for ControllerTestPermitInner {
         }
     }
 }
+#[derive(Clone)]
+pub(in crate::controller) struct InFlightGuards<K>
+where
+    K: Eq + Hash,
+{
+    name: &'static str,
+    inner: Arc<Mutex<HashSet<K>>>,
+}
+pub(in crate::controller) struct InFlightPermit<K>
+where
+    K: Eq + Hash,
+{
+    guards: InFlightGuards<K>,
+    key: Option<K>,
+}
+impl<K> InFlightGuards<K>
+where
+    K: Eq + Hash,
+{
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            inner: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    fn contains_or_blocked(&self, key: &K) -> bool {
+        self.inner
+            .lock()
+            .map(|running| running.contains(key))
+            .unwrap_or(true)
+    }
+
+    fn remove(&self, key: &K) -> Result<bool, String> {
+        self.inner
+            .lock()
+            .map(|mut running| running.remove(key))
+            .map_err(|_| self.poisoned_message())
+    }
+
+    fn poisoned_message(&self) -> String {
+        format!("{} guard lock was poisoned.", self.name)
+    }
+}
+impl<K> InFlightGuards<K>
+where
+    K: Clone + Eq + Hash,
+{
+    fn acquire(&self, key: K) -> Result<Option<InFlightPermit<K>>, String> {
+        let mut running = self.inner.lock().map_err(|_| self.poisoned_message())?;
+        if !running.insert(key.clone()) {
+            return Ok(None);
+        }
+        Ok(Some(InFlightPermit {
+            guards: self.clone(),
+            key: Some(key),
+        }))
+    }
+}
+impl<K> Drop for InFlightPermit<K>
+where
+    K: Eq + Hash,
+{
+    fn drop(&mut self) {
+        let Some(key) = self.key.take() else {
+            return;
+        };
+        match self.guards.inner.lock() {
+            Ok(mut running) => {
+                running.remove(&key);
+            }
+            Err(_) => {
+                warn!(
+                    guard = self.guards.name,
+                    "in-flight guard lock was poisoned during release"
+                );
+            }
+        }
+    }
+}
 pub(in crate::controller) struct HomeRefreshContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
-    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    sync_in_flight: InFlightGuards<ServerId>,
+    home_refresh_in_flight: InFlightGuards<ServerId>,
 }
 pub(in crate::controller) struct PlaylistRefreshContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
-    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    playlist_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    sync_in_flight: InFlightGuards<ServerId>,
+    playlist_refresh_in_flight: InFlightGuards<ServerId>,
 }
 #[derive(Clone)]
 pub(in crate::controller) struct SyncContext {
@@ -412,7 +493,7 @@ pub(in crate::controller) struct SyncContext {
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
-    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    sync_in_flight: InFlightGuards<ServerId>,
     cover_in_flight: Arc<Mutex<HashSet<String>>>,
     external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
@@ -422,12 +503,11 @@ pub(in crate::controller) struct ExplorePrefetchContext {
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
-    sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    explore_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    sync_in_flight: InFlightGuards<ServerId>,
+    explore_prefetch_in_flight: InFlightGuards<ServerId>,
 }
 #[derive(Clone, Copy, Debug)]
 pub(in crate::controller) enum HomeRefreshTarget {
-    WithoutExplore,
     Section(HomeSectionKind),
 }
 #[derive(Clone)]

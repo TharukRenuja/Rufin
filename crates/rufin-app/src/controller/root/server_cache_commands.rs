@@ -5,7 +5,7 @@ impl AppController {
     pub fn clear_active_server_cache(&self) {
         let store = self.store.clone();
         let events = self.events.clone();
-        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        let sync_in_flight = self.sync_in_flight.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_server())
@@ -51,7 +51,7 @@ impl AppController {
     pub fn clear_server_cache(&self, server_id: ServerId) {
         let store = self.store.clone();
         let events = self.events.clone();
-        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        let sync_in_flight = self.sync_in_flight.clone();
         thread::spawn(move || {
             let saved = match store.with_store(|store| {
                 Ok(store

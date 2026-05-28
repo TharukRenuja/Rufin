@@ -10,7 +10,7 @@ impl AppController {
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        let sync_in_flight = self.sync_in_flight.clone();
         thread::spawn(move || {
             let Some(saved) = store
                 .with_store(|store| store.active_server())
@@ -74,7 +74,7 @@ impl AppController {
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
-        let sync_in_flight = Arc::clone(&self.sync_in_flight);
+        let sync_in_flight = self.sync_in_flight.clone();
         thread::spawn(move || {
             let saved = match store.with_store(|store| {
                 let active_id = store.active_server()?.map(|saved| saved.server.id);

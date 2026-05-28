@@ -42,15 +42,6 @@ impl AppController {
             ));
         }
     }
-    pub fn refresh_home_sections_without_explore_for_active(&self) {
-        let active = self
-            .store
-            .with_store(|store| store.active_server())
-            .unwrap_or(None);
-        if let Some(saved) = active {
-            self.start_home_refresh_for_saved(saved, HomeRefreshTarget::WithoutExplore);
-        }
-    }
     pub fn refresh_home_section_for_active(&self, kind: HomeSectionKind) {
         let active = self
             .store
@@ -103,8 +94,8 @@ impl AppController {
                 runtime: Arc::clone(&self.runtime),
                 secrets: Arc::clone(&self.secrets),
                 events: self.events.clone(),
-                sync_in_flight: Arc::clone(&self.sync_in_flight),
-                explore_prefetch_in_flight: Arc::clone(&self.explore_prefetch_in_flight),
+                sync_in_flight: self.sync_in_flight.clone(),
+                explore_prefetch_in_flight: self.explore_prefetch_in_flight.clone(),
             },
             saved,
         );
@@ -120,8 +111,8 @@ impl AppController {
                 runtime: Arc::clone(&self.runtime),
                 secrets: Arc::clone(&self.secrets),
                 events: self.events.clone(),
-                sync_in_flight: Arc::clone(&self.sync_in_flight),
-                home_refresh_in_flight: Arc::clone(&self.home_refresh_in_flight),
+                sync_in_flight: self.sync_in_flight.clone(),
+                home_refresh_in_flight: self.home_refresh_in_flight.clone(),
             },
             saved,
             target,
@@ -134,8 +125,8 @@ impl AppController {
                 runtime: Arc::clone(&self.runtime),
                 secrets: Arc::clone(&self.secrets),
                 events: self.events.clone(),
-                sync_in_flight: Arc::clone(&self.sync_in_flight),
-                playlist_refresh_in_flight: Arc::clone(&self.playlist_refresh_in_flight),
+                sync_in_flight: self.sync_in_flight.clone(),
+                playlist_refresh_in_flight: self.playlist_refresh_in_flight.clone(),
             },
             saved,
         );
@@ -146,7 +137,7 @@ impl AppController {
             runtime: Arc::clone(&self.runtime),
             secrets: Arc::clone(&self.secrets),
             events: self.events.clone(),
-            sync_in_flight: Arc::clone(&self.sync_in_flight),
+            sync_in_flight: self.sync_in_flight.clone(),
             cover_in_flight: Arc::clone(&self.cover_in_flight),
             external_cover_prefetch_in_flight: Arc::clone(&self.external_cover_prefetch_in_flight),
             cover_slots: Arc::clone(&self.cover_slots),

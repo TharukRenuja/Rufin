@@ -344,11 +344,11 @@ pub(in crate::controller) fn forget_server_cancels_running_sync_and_emits_first_
         .secrets
         .save_token(&server_id, "token")
         .expect("save token");
-    controller
+    let _permit = controller
         .sync_in_flight
-        .lock()
+        .acquire(server_id.clone())
         .expect("sync guard")
-        .insert(server_id.clone());
+        .expect("sync permit");
 
     controller.forget_server(server_id.clone());
 
@@ -363,13 +363,7 @@ pub(in crate::controller) fn forget_server_cancels_running_sync_and_emits_first_
             .expect("servers"),
         Vec::new()
     );
-    assert!(
-        !controller
-            .sync_in_flight
-            .lock()
-            .expect("sync guard")
-            .contains(&server_id)
-    );
+    assert!(!controller.sync_in_flight.contains_or_blocked(&server_id));
     wait_for_token_deleted(&controller.secrets, &server_id);
 }
 #[test]
@@ -398,11 +392,11 @@ pub(in crate::controller) fn duplicate_resync_requests_do_not_start_another_sync
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap(Some(FakeScale::Small));
     let server_id = snapshot.server.expect("server").id;
-    controller
+    let _permit = controller
         .sync_in_flight
-        .lock()
+        .acquire(server_id)
         .expect("sync guard")
-        .insert(server_id);
+        .expect("sync permit");
     controller.resync_active_server();
     assert_eq!(wait_for_status(&events), "Sync already running.");
 }
