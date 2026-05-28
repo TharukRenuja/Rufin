@@ -3,12 +3,12 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] [--skip-flathub] [--skip-nix] VERSION SUMMARY
+Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] [--skip-flathub] [--skip-github-release] VERSION SUMMARY
 
 Updates release metadata, commits it, and creates a signed annotated tag whose
 message includes commits since the previous release tag. VERSION may be vX.Y.Z
-or X.Y.Z. With --push, pushes main and the signed tag only; publish the GitHub
-Release manually from the existing tag afterwards.
+or X.Y.Z. With --push, pushes main and the signed tag, then publishes the
+GitHub Release from the tag using the authenticated gh user.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
@@ -21,7 +21,7 @@ dry_run=0
 push_tag=0
 replace_tag=0
 skip_flathub=0
-skip_nix=0
+skip_github_release=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,8 +49,8 @@ while [[ $# -gt 0 ]]; do
       skip_flathub=1
       shift
       ;;
-    --skip-nix)
-      skip_nix=1
+    --skip-github-release)
+      skip_github_release=1
       shift
       ;;
     -h|--help)
@@ -182,20 +182,76 @@ print_notes() {
 }
 
 update_nix_cargo_hash() {
-  if [[ "$skip_nix" == "1" || ! -f flake.nix ]]; then
+  if [[ ! -f flake.nix ]]; then
     return
   fi
 
-  if ! command -v nix >/dev/null 2>&1; then
-    cat >&2 <<'MSG'
+  if command -v nix >/dev/null 2>&1; then
+    bash .github/scripts/update-nix-cargo-hash.sh
+    return
+  fi
+
+  if command -v distrobox >/dev/null 2>&1 &&
+    distrobox list 2>/dev/null | grep -Eq '(^|[[:space:]])rufin-arch([[:space:]]|$)'; then
+    local root_quoted
+    printf -v root_quoted '%q' "$(pwd)"
+    distrobox enter --name rufin-arch -- bash -lc \
+      "cd $root_quoted && bash .github/scripts/update-nix-cargo-hash.sh"
+    return
+  fi
+
+  cat >&2 <<'MSG'
 nix is required to refresh flake.nix cargoHash during release preparation.
-Run the release script from a Nix-enabled environment or pass --skip-nix only
-when the Nix package should intentionally remain untouched.
+Install Nix, or make sure the rufin-arch Distrobox is available with Nix
+installed, before creating a release.
+MSG
+  exit 1
+}
+
+check_github_release_prereqs() {
+  if [[ "$skip_github_release" == "1" ]]; then
+    return
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    cat >&2 <<'MSG'
+gh is required to publish the GitHub Release after pushing the signed tag.
+Install GitHub CLI, authenticate it, or pass --skip-github-release to push
+the tag without publishing the release.
 MSG
     exit 1
   fi
 
-  bash .github/scripts/update-nix-cargo-hash.sh
+  if ! gh auth status >/dev/null 2>&1; then
+    cat >&2 <<'MSG'
+gh must be authenticated to publish the GitHub Release as the local user.
+Run `gh auth login`, or pass --skip-github-release to push the tag without
+publishing the release.
+MSG
+    exit 1
+  fi
+
+  if gh release view "$version" >/dev/null 2>&1; then
+    cat >&2 <<MSG
+GitHub Release already exists for $version.
+Delete or edit the existing release, or pass --skip-github-release to skip
+publishing from this script.
+MSG
+    exit 1
+  fi
+}
+
+publish_github_release() {
+  if [[ "$skip_github_release" == "1" ]]; then
+    printf '\nPushed signed tag %s. Skipped GitHub Release publication.\n' "$version"
+    return
+  fi
+
+  gh release create "$version" \
+    --title "$version" \
+    --notes-from-tag \
+    --verify-tag
+  printf '\nPublished GitHub Release %s with the authenticated gh user.\n' "$version"
 }
 
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
@@ -210,6 +266,10 @@ print_notes
 
 if [[ "$dry_run" == "1" ]]; then
   exit 0
+fi
+
+if [[ "$push_tag" == "1" ]]; then
+  check_github_release_prereqs
 fi
 
 bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
@@ -248,5 +308,5 @@ if [[ "$push_tag" == "1" ]]; then
   else
     git push origin "$version"
   fi
-  printf '\nPushed signed tag %s. Create the GitHub Release manually from this existing tag.\n' "$version"
+  publish_github_release
 fi
