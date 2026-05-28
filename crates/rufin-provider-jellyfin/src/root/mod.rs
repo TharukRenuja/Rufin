@@ -1,4 +1,9 @@
-use std::sync::Arc;
+pub use crate::discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
+use crate::item::{
+    ITEM_FIELDS, ItemQueryResult, JellyfinItem, album_from_item, artist_from_item,
+    folder_from_item, genre_from_item, is_audio_item, parent_folder_id, playlist_from_item,
+    track_from_item,
+};
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
@@ -6,6 +11,8 @@ use rufin_core::{
     HomeSectionKind, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity,
     Track, TrackId,
 };
+#[cfg(test)]
+use rufin_core::{ArtistCredit, ArtistId, ImageRef};
 use rufin_provider::{
     AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,
     ImageRequest, LoginRequest, LyricLine, Lyrics, LyricsSource, MusicProvider, PagedRequest,
@@ -14,15 +21,23 @@ use rufin_provider::{
     RandomTrackRequest, SavedProviderSession, SearchResults, StreamDescriptor, StreamRequest,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::sync::Arc;
 use tracing::instrument;
-pub use discovery::{DiscoveredJellyfinServer, discover_jellyfin_servers};
-use item::{
-    ITEM_FIELDS, ItemQueryResult, JellyfinItem, album_from_item, artist_from_item,
-    folder_from_item, genre_from_item, is_audio_item, parent_folder_id, playlist_from_item,
-    track_from_item,
-};
+
+mod client;
+mod provider_impl;
+
+use client::*;
+pub(crate) use client::{jellyfin_id, normalize_base_url, stable_hash};
+use provider_impl::*;
+
 #[cfg(test)]
-use rufin_core::{ArtistCredit, ArtistId, ImageRef};
+mod library_api_tests;
+#[cfg(test)]
+mod lyrics_playback_tests;
+#[cfg(test)]
+use lyrics_playback_tests::provider;
+
 const CLIENT_NAME: &str = "Rufin";
 const DEVICE_NAME: &str = "Rufin";
 const DEVICE_ID: &str = "rufin-native";

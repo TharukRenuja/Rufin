@@ -62,7 +62,7 @@ pub(super) enum ActiveLayoutProfile {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct ResolvedLayout {
+pub(in crate::ui) struct ResolvedLayout {
     pub(super) profile: ActiveLayoutProfile,
     pub(super) left_sidebar: LeftSidebarMode,
     pub(super) right_sidebar: RightSidebarMode,

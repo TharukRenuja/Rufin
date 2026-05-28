@@ -1,3 +1,9 @@
+use gst::glib;
+use gst::prelude::*;
+use gstreamer as gst;
+use rufin_core::{
+    EQUALIZER_BAND_COUNT, PlaybackSettings, PlaybackTransitionMode, ReplayGainMode, TrackId,
+};
 use std::collections::VecDeque;
 use std::f64::consts::FRAC_PI_2;
 use std::fmt;
@@ -5,14 +11,24 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use gst::glib;
-use gst::prelude::*;
-use gstreamer as gst;
-use rufin_core::{
-    EQUALIZER_BAND_COUNT, PlaybackSettings, PlaybackTransitionMode, ReplayGainMode, TrackId,
-};
 use thiserror::Error;
 use tracing::{debug, error, instrument, warn};
+
+mod fake_backend;
+mod gstreamer_backend;
+
+pub use fake_backend::FakePlaybackBackend;
+pub use gstreamer_backend::{GStreamerPlaybackBackend, LazyGStreamerPlaybackBackend};
+
+#[cfg(test)]
+use gstreamer_backend::{
+    CrossfadeState, GstEngine, PendingSeek, PlayerPipeline, SharedPlaybackState, Slot,
+};
+use gstreamer_backend::{clock_seconds_from_millis, position_event, redact_sensitive_uri};
+
+#[cfg(test)]
+mod tests;
+
 const SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
 const TRACK_START_SETTLE_WINDOW: Duration = Duration::from_millis(10_000);
 const STARTUP_SEEK_SETTLE_WINDOW: Duration = Duration::from_millis(10_000);

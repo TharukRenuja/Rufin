@@ -1,3 +1,5 @@
+use super::*;
+
 #[async_trait(?Send)]
 impl MusicProvider for SubsonicProvider {
     fn identity(&self) -> &ProviderIdentity {
@@ -676,18 +678,18 @@ impl MusicProvider for SubsonicProvider {
     }
 }
 #[derive(Clone, Debug)]
-struct SubsonicCredential {
-    salt: String,
-    token: String,
+pub(super) struct SubsonicCredential {
+    pub(super) salt: String,
+    pub(super) token: String,
 }
 impl SubsonicCredential {
-    fn from_password(password: &str) -> Self {
+    pub(super) fn from_password(password: &str) -> Self {
         let salt = random_salt();
         let token = format!("{:x}", md5::compute(format!("{password}{salt}")));
         Self { salt, token }
     }
 
-    fn parse(raw: &str) -> ProviderResult<Self> {
+    pub(super) fn parse(raw: &str) -> ProviderResult<Self> {
         let Some((salt, token)) = raw.split_once(':') else {
             return Err(ProviderError::Other(
                 "saved Subsonic credential is invalid".to_string(),
@@ -704,11 +706,11 @@ impl SubsonicCredential {
         })
     }
 
-    fn serialize(&self) -> String {
+    pub(super) fn serialize(&self) -> String {
         format!("{}:{}", self.salt, self.token)
     }
 
-    fn common_query<'a>(
+    pub(super) fn common_query<'a>(
         &'a self,
         username: &'a str,
         extra: &'a [(&'a str, &'a str)],
@@ -726,11 +728,11 @@ impl SubsonicCredential {
     }
 }
 #[derive(Debug)]
-struct SubsonicApiResponse<T> {
-    body: T,
-    server_type: Option<String>,
+pub(super) struct SubsonicApiResponse<T> {
+    pub(super) body: T,
+    pub(super) server_type: Option<String>,
 }
-async fn subsonic_json<T: DeserializeOwned>(
+pub(super) async fn subsonic_json<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
 ) -> ProviderResult<SubsonicApiResponse<T>> {
     let response = request.send().await.map_err(map_reqwest_error)?;
@@ -772,7 +774,7 @@ async fn subsonic_json<T: DeserializeOwned>(
         server_type: envelope.response.server_type,
     })
 }
-async fn subsonic_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
+pub(super) async fn subsonic_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
     let response = request.send().await.map_err(map_reqwest_error)?;
     let status = response.status();
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -803,13 +805,13 @@ async fn subsonic_bytes(request: reqwest::RequestBuilder) -> ProviderResult<Imag
         content_type,
     })
 }
-fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
+pub(super) fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
     Client::builder()
         .danger_accept_invalid_certs(trust_invalid_cert)
         .build()
         .map_err(map_reqwest_error)
 }
-fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
+pub(super) fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
     let trimmed = raw.trim().trim_end_matches('/');
     let candidate = if trimmed.contains("://") {
         trimmed.to_string()
@@ -827,7 +829,7 @@ fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
     url.set_path(&normalized_path);
     Ok(url)
 }
-fn endpoint(base_url: &Url, method: &str) -> ProviderResult<Url> {
+pub(super) fn endpoint(base_url: &Url, method: &str) -> ProviderResult<Url> {
     let mut url = base_url.clone();
     let base_path = base_url.path().trim_end_matches('/');
     let method = method.trim_end_matches(".view");

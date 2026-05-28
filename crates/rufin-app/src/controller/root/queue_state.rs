@@ -1,5 +1,7 @@
+use super::*;
+
 impl AppController {
-    fn persist_and_emit_queue(&self) {
+    pub(in crate::controller) fn persist_and_emit_queue(&self) {
         let queue_snapshot = self.queue_snapshot();
         if let Some(snapshot) = &queue_snapshot {
             self.persist_queue_snapshot(snapshot);
@@ -11,12 +13,12 @@ impl AppController {
         self.emit_playback_snapshot();
         self.prepare_next_stream();
     }
-    fn persist_current_queue_snapshot(&self) {
+    pub(in crate::controller) fn persist_current_queue_snapshot(&self) {
         if let Some(snapshot) = self.queue_snapshot() {
             self.persist_queue_snapshot(&snapshot);
         }
     }
-    fn persist_queue_snapshot(&self, snapshot: &QueueSnapshot) {
+    pub(in crate::controller) fn persist_queue_snapshot(&self, snapshot: &QueueSnapshot) {
         if let Err(error) = self
             .store
             .with_store(|store| store.save_queue_snapshot(snapshot))
@@ -24,7 +26,7 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
         }
     }
-    fn queue_snapshot(&self) -> Option<QueueSnapshot> {
+    pub(in crate::controller) fn queue_snapshot(&self) -> Option<QueueSnapshot> {
         self.queue
             .lock()
             .ok()
@@ -59,12 +61,15 @@ impl AppController {
             .ok()
             .flatten()
     }
-    fn update_playback_snapshot(&self, operation: impl FnOnce(&mut PlaybackSnapshot)) {
+    pub(in crate::controller) fn update_playback_snapshot(
+        &self,
+        operation: impl FnOnce(&mut PlaybackSnapshot),
+    ) {
         if let Ok(mut snapshot) = self.playback_snapshot.lock() {
             operation(&mut snapshot);
         }
     }
-    fn sync_playback_snapshot_from_queue(&self) {
+    pub(in crate::controller) fn sync_playback_snapshot_from_queue(&self) {
         let queue = self.queue.lock().ok();
         let queue = queue.as_ref().and_then(|queue| queue.as_ref());
         self.update_playback_snapshot(|snapshot| {
@@ -94,7 +99,7 @@ impl AppController {
             }
         });
     }
-    fn emit_playback_snapshot(&self) {
+    pub(in crate::controller) fn emit_playback_snapshot(&self) {
         let snapshot = self
             .playback_snapshot
             .lock()

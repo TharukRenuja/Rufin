@@ -1,17 +1,19 @@
-fn reset_database_files(path: &Path) -> StoreResult<()> {
+use super::*;
+
+pub(super) fn reset_database_files(path: &Path) -> StoreResult<()> {
     remove_file_if_exists(path)?;
     remove_file_if_exists(&sqlite_sidecar_path(path, "-wal"))?;
     remove_file_if_exists(&sqlite_sidecar_path(path, "-shm"))?;
     Ok(())
 }
-fn remove_file_if_exists(path: &Path) -> StoreResult<()> {
+pub(super) fn remove_file_if_exists(path: &Path) -> StoreResult<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(StoreError::from(error)),
     }
 }
-fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+pub(super) fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     let mut value = path.as_os_str().to_os_string();
     value.push(suffix);
     PathBuf::from(value)
@@ -32,7 +34,7 @@ pub fn lyrics_cache_key(server_id: &ServerId, track_id: &str) -> String {
         encode_key_part(track_id)
     )
 }
-fn saved_server_from_row(row: &Row<'_>) -> rusqlite::Result<SavedServer> {
+pub(super) fn saved_server_from_row(row: &Row<'_>) -> rusqlite::Result<SavedServer> {
     Ok(SavedServer {
         server: ServerIdentity {
             id: ServerId::new(row.get::<_, String>(0)?),
@@ -45,7 +47,7 @@ fn saved_server_from_row(row: &Row<'_>) -> rusqlite::Result<SavedServer> {
         trust_invalid_cert: row.get::<_, i64>(6)? == 1,
     })
 }
-fn album_from_row(row: &Row<'_>) -> rusqlite::Result<Album> {
+pub(super) fn album_from_row(row: &Row<'_>) -> rusqlite::Result<Album> {
     let artist_id = row.get::<_, Option<String>>(3)?.map(ArtistId::new);
     Ok(Album {
         id: AlbumId::new(row.get::<_, String>(0)?),
@@ -68,16 +70,16 @@ fn album_from_row(row: &Row<'_>) -> rusqlite::Result<Album> {
         genres: Vec::new(),
     })
 }
-fn track_from_row(row: &Row<'_>) -> rusqlite::Result<Track> {
+pub(super) fn track_from_row(row: &Row<'_>) -> rusqlite::Result<Track> {
     track_from_row_at(row, 0)
 }
-fn playlist_entry_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistEntry> {
+pub(super) fn playlist_entry_from_row(row: &Row<'_>) -> rusqlite::Result<PlaylistEntry> {
     Ok(PlaylistEntry {
         entry_id: row.get(0)?,
         track: track_from_row_at(row, 1)?,
     })
 }
-fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<Track> {
+pub(super) fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<Track> {
     let artist_id = row.get::<_, Option<String>>(offset + 4)?.map(ArtistId::new);
     Ok(Track {
         id: TrackId::new(row.get::<_, String>(offset)?),
@@ -104,7 +106,7 @@ fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<Track> {
         source_format: row.get::<_, Option<String>>(offset + 19).ok().flatten(),
     })
 }
-fn artist_from_row(row: &Row<'_>) -> rusqlite::Result<Artist> {
+pub(super) fn artist_from_row(row: &Row<'_>) -> rusqlite::Result<Artist> {
     Ok(Artist {
         id: ArtistId::new(row.get::<_, String>(0)?),
         name: row.get(1)?,
@@ -117,15 +119,15 @@ fn artist_from_row(row: &Row<'_>) -> rusqlite::Result<Artist> {
         image_ref: image_ref_from_row(row, 8, 9)?,
     })
 }
-fn optional_u32_from_row(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u32>> {
+pub(super) fn optional_u32_from_row(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u32>> {
     row.get::<_, Option<i64>>(index)
         .map(|value| value.map(u32_from_i64))
 }
-fn optional_u8_from_row(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u8>> {
+pub(super) fn optional_u8_from_row(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u8>> {
     row.get::<_, Option<i64>>(index)
         .map(|value| value.map(|value| u16_from_i64(value).min(u16::from(u8::MAX)) as u8))
 }
-fn image_ref_from_row(
+pub(super) fn image_ref_from_row(
     row: &Row<'_>,
     item_index: usize,
     tag_index: usize,
@@ -138,13 +140,16 @@ fn image_ref_from_row(
         tag: row.get::<_, Option<String>>(tag_index)?,
     }))
 }
-fn image_ref_parts(image_ref: Option<&ImageRef>) -> (Option<&str>, Option<&str>) {
+pub(super) fn image_ref_parts(image_ref: Option<&ImageRef>) -> (Option<&str>, Option<&str>) {
     match image_ref {
         Some(image_ref) => (Some(image_ref.item_id.as_str()), image_ref.tag.as_deref()),
         None => (None, None),
     }
 }
-fn artist_fallback_image_refs_sql(album_artist: bool, values_placeholders: &str) -> String {
+pub(super) fn artist_fallback_image_refs_sql(
+    album_artist: bool,
+    values_placeholders: &str,
+) -> String {
     if album_artist {
         return format!(
             "
@@ -223,7 +228,7 @@ fn artist_fallback_image_refs_sql(album_artist: bool, values_placeholders: &str)
         "
     )
 }
-fn artist_fallback_albums_sql(album_artist: bool, values_placeholders: &str) -> String {
+pub(super) fn artist_fallback_albums_sql(album_artist: bool, values_placeholders: &str) -> String {
     if album_artist {
         return format!(
             "
@@ -318,7 +323,7 @@ fn artist_fallback_albums_sql(album_artist: bool, values_placeholders: &str) -> 
         "
     )
 }
-fn artist_list_filter(album_artist: bool) -> &'static str {
+pub(super) fn artist_list_filter(album_artist: bool) -> &'static str {
     if album_artist {
         ""
     } else {
@@ -340,7 +345,7 @@ fn artist_list_filter(album_artist: bool) -> &'static str {
               )"
     }
 }
-fn artist_list_filter_for_alias(album_artist: bool, alias: &str) -> String {
+pub(super) fn artist_list_filter_for_alias(album_artist: bool, alias: &str) -> String {
     if album_artist {
         String::new()
     } else {
@@ -364,20 +369,20 @@ fn artist_list_filter_for_alias(album_artist: bool, alias: &str) -> String {
         )
     }
 }
-fn album_artist_credits(album: &Album) -> Vec<ArtistCredit> {
+pub(super) fn album_artist_credits(album: &Album) -> Vec<ArtistCredit> {
     explicit_artist_credits(&album.album_artist_credits)
 }
-fn track_artist_credits(track: &Track) -> Vec<ArtistCredit> {
+pub(super) fn track_artist_credits(track: &Track) -> Vec<ArtistCredit> {
     artist_credits_or_scalar(
         &track.artist_credits,
         track.artist_id.as_ref(),
         &track.artist,
     )
 }
-fn explicit_artist_credits(credits: &[ArtistCredit]) -> Vec<ArtistCredit> {
+pub(super) fn explicit_artist_credits(credits: &[ArtistCredit]) -> Vec<ArtistCredit> {
     artist_credits_or_scalar(credits, None, "")
 }
-fn artist_credits_or_scalar(
+pub(super) fn artist_credits_or_scalar(
     credits: &[ArtistCredit],
     scalar_id: Option<&ArtistId>,
     scalar_name: &str,
@@ -417,7 +422,7 @@ fn artist_credits_or_scalar(
 
     result
 }
-fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
+pub(super) fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
     let first = tracks
         .first()
         .expect("album fallback requires at least one track");
@@ -445,7 +450,7 @@ fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Album {
         genres: first.genres.clone(),
     }
 }
-fn track_matches_artist(
+pub(super) fn track_matches_artist(
     track: &Track,
     artist_id: &ArtistId,
     artist_name_lower: Option<&str>,
@@ -466,7 +471,7 @@ fn track_matches_artist(
             .map(|artist_name| track.artist.to_lowercase() == artist_name)
             .unwrap_or(false)
 }
-fn artist_fallback_image_ref(
+pub(super) fn artist_fallback_image_ref(
     albums: &[Album],
     appears_on: &[Album],
     tracks: &[Track],
@@ -477,7 +482,7 @@ fn artist_fallback_image_ref(
         .or_else(|| appears_on.first().and_then(|album| album.image_ref.clone()))
         .or_else(|| tracks.first().and_then(|track| track.image_ref.clone()))
 }
-fn synthesize_artist_from_links(
+pub(super) fn synthesize_artist_from_links(
     artist_id: &ArtistId,
     albums: &[Album],
     appears_on: &[Album],
@@ -520,7 +525,7 @@ fn synthesize_artist_from_links(
         image_ref: artist_fallback_image_ref(albums, appears_on, tracks),
     }
 }
-fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
+pub(super) fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
     Ok(Genre {
         id: GenreId::new(row.get::<_, String>(0)?),
         name: row.get(1)?,
@@ -529,7 +534,7 @@ fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
         image_ref: image_ref_from_row(row, 4, 5)?,
     })
 }
-fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
+pub(super) fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
     Ok(Playlist {
         id: PlaylistId::new(row.get::<_, String>(0)?),
         name: row.get(1)?,
@@ -538,12 +543,12 @@ fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
         image_ref: image_ref_from_row(row, 4, 5)?,
     })
 }
-fn stable_seed(value: &str) -> u32 {
+pub(super) fn stable_seed(value: &str) -> u32 {
     value.bytes().fold(0x811c_9dc5, |hash, byte| {
         hash.wrapping_mul(16_777_619) ^ u32::from(byte)
     })
 }
-fn repair_linked_artists(
+pub(super) fn repair_linked_artists(
     connection: &Connection,
     server_id: &ServerId,
     generation: i64,
@@ -650,7 +655,7 @@ fn repair_linked_artists(
     refresh_artist_fts(connection, server_id, "album_artists", "album_artist")?;
     Ok(())
 }
-fn repair_linked_genres(
+pub(super) fn repair_linked_genres(
     connection: &Connection,
     server_id: &ServerId,
     generation: i64,
@@ -696,7 +701,7 @@ fn repair_linked_genres(
     }
     Ok(())
 }
-fn refresh_artist_fts(
+pub(super) fn refresh_artist_fts(
     connection: &Connection,
     server_id: &ServerId,
     table: &str,
@@ -717,13 +722,13 @@ fn refresh_artist_fts(
     connection.execute(&sql, params![server_id.as_str()])?;
     Ok(())
 }
-fn collect_rows<T>(
+pub(super) fn collect_rows<T>(
     rows: rusqlite::MappedRows<'_, impl FnMut(&Row<'_>) -> rusqlite::Result<T>>,
 ) -> StoreResult<Vec<T>> {
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(StoreError::from)
 }
-fn clear_library_cache_on_connection(
+pub(super) fn clear_library_cache_on_connection(
     connection: &Connection,
     server_id: &ServerId,
 ) -> StoreResult<()> {
@@ -757,7 +762,7 @@ fn clear_library_cache_on_connection(
     )?;
     Ok(())
 }
-fn home_section_kinds() -> [HomeSectionKind; 5] {
+pub(super) fn home_section_kinds() -> [HomeSectionKind; 5] {
     [
         HomeSectionKind::Explore,
         HomeSectionKind::MostPlayed,
@@ -766,7 +771,7 @@ fn home_section_kinds() -> [HomeSectionKind; 5] {
         HomeSectionKind::RecentlyReleased,
     ]
 }
-fn home_section_kind_key(kind: HomeSectionKind) -> &'static str {
+pub(super) fn home_section_kind_key(kind: HomeSectionKind) -> &'static str {
     match kind {
         HomeSectionKind::Explore => "explore",
         HomeSectionKind::MostPlayed => "most_played",
@@ -775,7 +780,7 @@ fn home_section_kind_key(kind: HomeSectionKind) -> &'static str {
         HomeSectionKind::RecentlyReleased => "recently_released",
     }
 }
-fn fts_query(query: &str) -> Option<String> {
+pub(super) fn fts_query(query: &str) -> Option<String> {
     let tokens = query
         .split_whitespace()
         .filter_map(|token| {
@@ -789,7 +794,7 @@ fn fts_query(query: &str) -> Option<String> {
 
     (!tokens.is_empty()).then(|| tokens.join(" "))
 }
-fn like_pattern(query: &str) -> Option<String> {
+pub(super) fn like_pattern(query: &str) -> Option<String> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return None;
@@ -810,19 +815,19 @@ fn like_pattern(query: &str) -> Option<String> {
     Some(pattern)
 }
 
-fn bool_to_i64(value: bool) -> i64 {
+pub(super) fn bool_to_i64(value: bool) -> i64 {
     i64::from(value)
 }
 
-fn u16_from_i64(value: i64) -> u16 {
+pub(super) fn u16_from_i64(value: i64) -> u16 {
     value.clamp(0, i64::from(u16::MAX)) as u16
 }
 
-fn u32_from_i64(value: i64) -> u32 {
+pub(super) fn u32_from_i64(value: i64) -> u32 {
     value.clamp(0, i64::from(u32::MAX)) as u32
 }
 
-fn encode_key_part(value: &str) -> String {
+pub(super) fn encode_key_part(value: &str) -> String {
     let encoded: String = value
         .chars()
         .map(|character| match character {
@@ -840,7 +845,7 @@ fn encode_key_part(value: &str) -> String {
     format!("{prefix}_{:016x}", stable_hash(value))
 }
 
-fn stable_hash(value: &str) -> u64 {
+pub(super) fn stable_hash(value: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in value.as_bytes() {
         hash ^= u64::from(*byte);

@@ -1,5 +1,10 @@
+use super::*;
+
 impl Shell {
-    fn playlist_detail_view(self: &Rc<Self>, playlist_id: PlaylistId) -> gtk::Widget {
+    pub(in crate::ui) fn playlist_detail_view(
+        self: &Rc<Self>,
+        playlist_id: PlaylistId,
+    ) -> gtk::Widget {
         let detail = self
             .controller
             .cached_playlist_detail(&playlist_id)
@@ -115,7 +120,7 @@ impl Shell {
         scroller.set_child(Some(&wrapper));
         scroller.upcast()
     }
-    fn playlist_entries_view(
+    pub(in crate::ui) fn playlist_entries_view(
         self: &Rc<Self>,
         detail: &rufin_provider::PlaylistDetail,
     ) -> gtk::Widget {

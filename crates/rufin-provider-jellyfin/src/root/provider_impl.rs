@@ -1,4 +1,6 @@
-fn lyrics_from_dto(track_id: TrackId, source: LyricsSource, dto: LyricDto) -> Lyrics {
+use super::*;
+
+pub(super) fn lyrics_from_dto(track_id: TrackId, source: LyricsSource, dto: LyricDto) -> Lyrics {
     Lyrics {
         track_id,
         source,
@@ -18,81 +20,81 @@ fn lyrics_from_dto(track_id: TrackId, source: LyricsSource, dto: LyricDto) -> Ly
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct PublicSystemInfo {
-    server_name: Option<String>,
-    local_address: Option<String>,
+pub(super) struct PublicSystemInfo {
+    pub(super) server_name: Option<String>,
+    pub(super) local_address: Option<String>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
-struct AuthenticateByNameRequest {
-    username: String,
+pub(super) struct AuthenticateByNameRequest {
+    pub(super) username: String,
     #[serde(rename = "Pw")]
-    password: String,
+    pub(super) password: String,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct AuthenticationResult {
-    access_token: String,
-    server_id: Option<String>,
-    user: JellyfinUser,
+pub(super) struct AuthenticationResult {
+    pub(super) access_token: String,
+    pub(super) server_id: Option<String>,
+    pub(super) user: JellyfinUser,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct JellyfinUser {
-    id: String,
-    name: String,
+pub(super) struct JellyfinUser {
+    pub(super) id: String,
+    pub(super) name: String,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
-struct CreatePlaylistDto {
-    name: String,
-    ids: Vec<String>,
-    user_id: Option<String>,
-    media_type: Option<String>,
-    is_public: bool,
+pub(super) struct CreatePlaylistDto {
+    pub(super) name: String,
+    pub(super) ids: Vec<String>,
+    pub(super) user_id: Option<String>,
+    pub(super) media_type: Option<String>,
+    pub(super) is_public: bool,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
-struct UpdatePlaylistDto {
-    name: Option<String>,
+pub(super) struct UpdatePlaylistDto {
+    pub(super) name: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct PlaylistCreationResult {
-    id: String,
+pub(super) struct PlaylistCreationResult {
+    pub(super) id: String,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct LyricDto {
-    lyrics: Option<Vec<LyricLineDto>>,
+pub(super) struct LyricDto {
+    pub(super) lyrics: Option<Vec<LyricLineDto>>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct LyricLineDto {
-    text: Option<String>,
-    start: Option<i64>,
+pub(super) struct LyricLineDto {
+    pub(super) text: Option<String>,
+    pub(super) start: Option<i64>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct RemoteLyricInfoDto {
-    id: String,
+pub(super) struct RemoteLyricInfoDto {
+    pub(super) id: String,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
-struct PlaybackReportDto {
-    can_seek: bool,
-    item_id: String,
-    is_paused: bool,
-    is_muted: bool,
-    position_ticks: i64,
-    volume_level: i32,
-    play_method: &'static str,
-    repeat_mode: &'static str,
-    playback_order: &'static str,
-    failed: bool,
+pub(super) struct PlaybackReportDto {
+    pub(super) can_seek: bool,
+    pub(super) item_id: String,
+    pub(super) is_paused: bool,
+    pub(super) is_muted: bool,
+    pub(super) position_ticks: i64,
+    pub(super) volume_level: i32,
+    pub(super) play_method: &'static str,
+    pub(super) repeat_mode: &'static str,
+    pub(super) playback_order: &'static str,
+    pub(super) failed: bool,
 }
 impl PlaybackReportDto {
-    fn from_report(report: PlaybackReport) -> Self {
+    pub(super) fn from_report(report: PlaybackReport) -> Self {
         Self {
             can_seek: true,
             item_id: raw_item_id(report.track_id.as_str()).to_string(),

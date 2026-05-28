@@ -2,12 +2,6 @@ mod discovery;
 
 mod item;
 
-include!("root/types.rs");
-include!("root/client.rs");
-include!("root/provider_impl.rs");
+mod root;
 
-#[cfg(test)]
-mod tests {
-    include!("root/library_api_tests.rs");
-    include!("root/lyrics_playback_tests.rs");
-}
+pub use root::*;

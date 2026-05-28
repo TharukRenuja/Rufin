@@ -1,18 +1,20 @@
-type LibraryRouteLoader = Rc<dyn Fn()>;
-type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
+use super::*;
 
-struct LibraryPageShellOptions {
-    key: LibraryListKey,
-    empty: bool,
-    empty_body: &'static str,
-    search: gtk::SearchEntry,
-    content: gtk::Widget,
-    load_next: Option<LibraryRouteLoader>,
-    configure_scroller: Option<LibraryRouteScrollerConfigurator>,
+pub(in crate::ui) type LibraryRouteLoader = Rc<dyn Fn()>;
+pub(in crate::ui) type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
+
+pub(in crate::ui) struct LibraryPageShellOptions {
+    pub(in crate::ui) key: LibraryListKey,
+    pub(in crate::ui) empty: bool,
+    pub(in crate::ui) empty_body: &'static str,
+    pub(in crate::ui) search: gtk::SearchEntry,
+    pub(in crate::ui) content: gtk::Widget,
+    pub(in crate::ui) load_next: Option<LibraryRouteLoader>,
+    pub(in crate::ui) configure_scroller: Option<LibraryRouteScrollerConfigurator>,
 }
 
 impl Shell {
-    pub(super) fn library_album_collection_panel(
+    pub(in crate::ui) fn library_album_collection_panel(
         self: &Rc<Self>,
         albums: &[Album],
         key: LibraryListKey,
@@ -54,7 +56,11 @@ impl Shell {
         wrapper.append(&album_collection_widget(self, model, key));
         wrapper.upcast()
     }
-    fn library_tracks_page(self: &Rc<Self>, tracks: Vec<Track>, total: usize) -> gtk::Widget {
+    pub(in crate::ui) fn library_tracks_page(
+        self: &Rc<Self>,
+        tracks: Vec<Track>,
+        total: usize,
+    ) -> gtk::Widget {
         let started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Tracks);
         let complete_page = library_layout_loads_complete_page(LibraryListKey::Tracks, &settings);
@@ -202,7 +208,7 @@ impl Shell {
         }
         view
     }
-    fn library_page_shell(
+    pub(in crate::ui) fn library_page_shell(
         self: &Rc<Self>,
         options: LibraryPageShellOptions,
     ) -> gtk::Widget {
@@ -240,7 +246,7 @@ impl Shell {
 
         wrapper.upcast()
     }
-    fn library_toolbar(
+    pub(in crate::ui) fn library_toolbar(
         self: &Rc<Self>,
         key: LibraryListKey,
         search: gtk::SearchEntry,
@@ -331,7 +337,7 @@ impl Shell {
         toolbar.append(&configure);
         toolbar.upcast()
     }
-    fn present_library_config_dialog(self: &Rc<Self>, key: LibraryListKey) {
+    pub(in crate::ui) fn present_library_config_dialog(self: &Rc<Self>, key: LibraryListKey) {
         let toolbar = adw::ToolbarView::new();
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new(&tr("Customize display"), &tr(key.title()));
@@ -430,10 +436,10 @@ impl Shell {
             .build();
         dialog.present(Some(&self.window));
     }
-    fn library_settings(&self, key: LibraryListKey) -> LibraryListSettings {
+    pub(in crate::ui) fn library_settings(&self, key: LibraryListKey) -> LibraryListSettings {
         self.state.settings.borrow().library_list(key)
     }
-    fn album_tracks_for(&self, albums: &[Album]) -> HashMap<AlbumId, Vec<Track>> {
+    pub(in crate::ui) fn album_tracks_for(&self, albums: &[Album]) -> HashMap<AlbumId, Vec<Track>> {
         if let Some(tracks_by_album) = self.complete_snapshot_tracks_for_albums(albums) {
             return tracks_by_album;
         }
@@ -449,7 +455,7 @@ impl Shell {
                 HashMap::new()
             })
     }
-    fn album_tracks_for_layout(
+    pub(in crate::ui) fn album_tracks_for_layout(
         &self,
         albums: &[Album],
         settings: &LibraryListSettings,
@@ -460,7 +466,9 @@ impl Shell {
             HashMap::new()
         }
     }
-    fn complete_track_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Track>> {
+    pub(in crate::ui) fn complete_track_snapshot_page(
+        &self,
+    ) -> Option<rufin_provider::PagedResponse<Track>> {
         let library = self.state.library.borrow();
         if library.cached_track_count > library.tracks.len() {
             return None;
@@ -470,7 +478,9 @@ impl Shell {
             library.cached_track_count,
         ))
     }
-    fn complete_album_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Album>> {
+    pub(in crate::ui) fn complete_album_snapshot_page(
+        &self,
+    ) -> Option<rufin_provider::PagedResponse<Album>> {
         let library = self.state.library.borrow();
         if library.cached_album_count > library.albums.len() {
             return None;
@@ -480,7 +490,7 @@ impl Shell {
             library.cached_album_count,
         ))
     }
-    fn complete_artist_snapshot_page(
+    pub(in crate::ui) fn complete_artist_snapshot_page(
         &self,
         album_artist: bool,
     ) -> Option<rufin_provider::PagedResponse<Artist>> {
@@ -495,7 +505,9 @@ impl Shell {
         }
         Some(rufin_provider::PagedResponse::new(items.clone(), total))
     }
-    fn complete_genre_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Genre>> {
+    pub(in crate::ui) fn complete_genre_snapshot_page(
+        &self,
+    ) -> Option<rufin_provider::PagedResponse<Genre>> {
         let library = self.state.library.borrow();
         if library.cached_genre_count > library.genres.len() {
             return None;
@@ -505,7 +517,9 @@ impl Shell {
             library.cached_genre_count,
         ))
     }
-    fn complete_playlist_snapshot_page(&self) -> Option<rufin_provider::PagedResponse<Playlist>> {
+    pub(in crate::ui) fn complete_playlist_snapshot_page(
+        &self,
+    ) -> Option<rufin_provider::PagedResponse<Playlist>> {
         let library = self.state.library.borrow();
         if library.cached_playlist_count > library.playlists.len() {
             return None;
@@ -515,7 +529,7 @@ impl Shell {
             library.cached_playlist_count,
         ))
     }
-    fn complete_snapshot_tracks_for_albums(
+    pub(in crate::ui) fn complete_snapshot_tracks_for_albums(
         &self,
         albums: &[Album],
     ) -> Option<HashMap<AlbumId, Vec<Track>>> {

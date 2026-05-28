@@ -1,4 +1,6 @@
-fn map_reqwest_error(mut error: reqwest::Error) -> ProviderError {
+use super::*;
+
+pub(super) fn map_reqwest_error(mut error: reqwest::Error) -> ProviderError {
     if let Some(url) = error.url_mut() {
         redact_subsonic_query(url);
     }
@@ -16,7 +18,7 @@ fn map_reqwest_error(mut error: reqwest::Error) -> ProviderError {
         ProviderError::Other(message)
     }
 }
-fn redact_subsonic_query(url: &mut Url) {
+pub(super) fn redact_subsonic_query(url: &mut Url) {
     let pairs = url
         .query_pairs()
         .map(|(key, value)| {
@@ -30,12 +32,12 @@ fn redact_subsonic_query(url: &mut Url) {
         .collect::<Vec<_>>();
     url.query_pairs_mut().clear().extend_pairs(pairs);
 }
-fn redacted_subsonic_url(url: &Url) -> String {
+pub(super) fn redacted_subsonic_url(url: &Url) -> String {
     let mut redacted = url.clone();
     redact_subsonic_query(&mut redacted);
     redacted.to_string()
 }
-fn subsonic_capabilities() -> ProviderCapabilities {
+pub(super) fn subsonic_capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
         lyrics: true,
         playback_reporting: true,
@@ -47,16 +49,16 @@ fn subsonic_capabilities() -> ProviderCapabilities {
         ..ProviderCapabilities::default()
     }
 }
-fn raw_item_id(id: &str) -> &str {
+pub(super) fn raw_item_id(id: &str) -> &str {
     id.rsplit(':').next().unwrap_or(id)
 }
-fn raw_id_string(id: &SubsonicId) -> String {
+pub(super) fn raw_id_string(id: &SubsonicId) -> String {
     id.0.clone()
 }
-fn playlist_entry_id(playlist_id: &PlaylistId, index: usize, track_id: &str) -> String {
+pub(super) fn playlist_entry_id(playlist_id: &PlaylistId, index: usize, track_id: &str) -> String {
     format!("{}:{index}:{track_id}", playlist_id.as_str())
 }
-fn page<T>(items: Vec<T>, request: PagedRequest) -> PagedResponse<T> {
+pub(super) fn page<T>(items: Vec<T>, request: PagedRequest) -> PagedResponse<T> {
     let total = items.len();
     PagedResponse::new(
         items
@@ -67,14 +69,14 @@ fn page<T>(items: Vec<T>, request: PagedRequest) -> PagedResponse<T> {
         total,
     )
 }
-fn current_year() -> u16 {
+pub(super) fn current_year() -> u16 {
     let days_since_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() / 86_400)
         .unwrap_or_default();
     year_from_unix_days(days_since_epoch)
 }
-fn year_from_unix_days(mut days: u64) -> u16 {
+pub(super) fn year_from_unix_days(mut days: u64) -> u16 {
     let mut year = 1970_u16;
     loop {
         let days_in_year = if is_leap_year(year) { 366 } else { 365 };
@@ -85,10 +87,10 @@ fn year_from_unix_days(mut days: u64) -> u16 {
         year = year.saturating_add(1);
     }
 }
-fn is_leap_year(year: u16) -> bool {
+pub(super) fn is_leap_year(year: u16) -> bool {
     (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
-fn random_salt() -> String {
+pub(super) fn random_salt() -> String {
     let mut bytes = [0_u8; SALT_BYTES];
     if getrandom::fill(&mut bytes).is_err() {
         let seed = SystemTime::now()
@@ -101,49 +103,55 @@ fn random_salt() -> String {
     }
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
-fn stable_server_id(provider_id: &str, base_url: &str, username: &str) -> String {
+pub(super) fn stable_server_id(provider_id: &str, base_url: &str, username: &str) -> String {
     format!(
         "{:016x}",
         stable_hash(&format!("{provider_id}:{base_url}:{username}"))
     )
 }
-fn stable_hash(input: &str) -> u64 {
+pub(super) fn stable_hash(input: &str) -> u64 {
     input.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
-fn color_seed(id: &str) -> u32 {
+pub(super) fn color_seed(id: &str) -> u32 {
     (stable_hash(id) & 0xffff_ffff) as u32
 }
-fn u16_from_option(value: Option<i32>) -> u16 {
+pub(super) fn u16_from_option(value: Option<i32>) -> u16 {
     value.unwrap_or_default().clamp(0, i32::from(u16::MAX)) as u16
 }
-fn u16_from_u32(value: Option<u32>) -> u16 {
+pub(super) fn u16_from_u32(value: Option<u32>) -> u16 {
     value.unwrap_or_default().min(u32::from(u16::MAX)) as u16
 }
-fn favorite(value: &Option<serde_json::Value>) -> bool {
+pub(super) fn favorite(value: &Option<serde_json::Value>) -> bool {
     value.as_ref().is_some_and(|value| match value {
         serde_json::Value::Bool(value) => *value,
         serde_json::Value::String(value) => !value.trim().is_empty(),
         _ => false,
     })
 }
-fn image_ref(provider: &SubsonicProvider, cover_art: Option<SubsonicId>) -> Option<ImageRef> {
+pub(super) fn image_ref(
+    provider: &SubsonicProvider,
+    cover_art: Option<SubsonicId>,
+) -> Option<ImageRef> {
     cover_art.map(|id| ImageRef::new(provider.id("cover", &id.0), None))
 }
-fn folder_from_artist(provider: &SubsonicProvider, artist: SubsonicArtist) -> Folder {
+pub(super) fn folder_from_artist(provider: &SubsonicProvider, artist: SubsonicArtist) -> Folder {
     Folder {
         id: FolderId::new(provider.id("folder", artist.id.0.as_str())),
         name: artist.name.unwrap_or_else(|| "Untitled Folder".to_string()),
     }
 }
-fn folder_from_child(provider: &SubsonicProvider, child: SubsonicSong) -> Folder {
+pub(super) fn folder_from_child(provider: &SubsonicProvider, child: SubsonicSong) -> Folder {
     Folder {
         id: FolderId::new(provider.id("folder", child.id.0.as_str())),
         name: child.title.unwrap_or_else(|| "Untitled Folder".to_string()),
     }
 }
-fn folder_from_directory(provider: &SubsonicProvider, directory: &SubsonicDirectory) -> Folder {
+pub(super) fn folder_from_directory(
+    provider: &SubsonicProvider,
+    directory: &SubsonicDirectory,
+) -> Folder {
     Folder {
         id: FolderId::new(provider.id("folder", directory.id.0.as_str())),
         name: directory
@@ -152,7 +160,7 @@ fn folder_from_directory(provider: &SubsonicProvider, directory: &SubsonicDirect
             .unwrap_or_else(|| "Untitled Folder".to_string()),
     }
 }
-fn sort_folders_by_name(folders: &mut [Folder]) {
+pub(super) fn sort_folders_by_name(folders: &mut [Folder]) {
     folders.sort_by(|left, right| {
         left.name
             .to_lowercase()
@@ -160,7 +168,7 @@ fn sort_folders_by_name(folders: &mut [Folder]) {
             .then_with(|| left.id.cmp(&right.id))
     });
 }
-fn genres_from_item(genre: Option<String>, genres: Vec<GenreName>) -> Vec<String> {
+pub(super) fn genres_from_item(genre: Option<String>, genres: Vec<GenreName>) -> Vec<String> {
     let mut values = Vec::new();
     if let Some(genre) = genre.filter(|genre| !genre.trim().is_empty()) {
         values.push(genre);
@@ -172,7 +180,7 @@ fn genres_from_item(genre: Option<String>, genres: Vec<GenreName>) -> Vec<String
     }
     values
 }
-fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) -> Album {
+pub(super) fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) -> Album {
     let raw_id = raw_id_string(&album.id);
     Album {
         id: AlbumId::new(provider.id("album", &raw_id)),
@@ -207,7 +215,7 @@ fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) -> Album {
         genres: genres_from_item(album.genre, album.genres),
     }
 }
-fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
+pub(super) fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
     let raw_id = raw_id_string(&song.id);
     let album_id = song
         .album_id
@@ -254,7 +262,7 @@ fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
     }
 }
 
-fn source_format_from_song(
+pub(super) fn source_format_from_song(
     suffix: Option<&str>,
     content_type: Option<&str>,
     path: Option<&str>,
@@ -281,7 +289,7 @@ fn source_format_from_song(
                 .map(ToString::to_string)
         })
 }
-fn artist_from_dto(provider: &SubsonicProvider, artist: SubsonicArtist) -> Artist {
+pub(super) fn artist_from_dto(provider: &SubsonicProvider, artist: SubsonicArtist) -> Artist {
     let raw_id = raw_id_string(&artist.id);
     Artist {
         id: ArtistId::new(provider.id("artist", &raw_id)),
@@ -299,7 +307,7 @@ fn artist_from_dto(provider: &SubsonicProvider, artist: SubsonicArtist) -> Artis
         image_ref: image_ref(provider, artist.cover_art),
     }
 }
-fn genre_from_dto(provider: &SubsonicProvider, genre: SubsonicGenre) -> Genre {
+pub(super) fn genre_from_dto(provider: &SubsonicProvider, genre: SubsonicGenre) -> Genre {
     Genre {
         id: GenreId::new(provider.id("genre", &genre.value)),
         name: genre.value,
@@ -308,7 +316,7 @@ fn genre_from_dto(provider: &SubsonicProvider, genre: SubsonicGenre) -> Genre {
         image_ref: None,
     }
 }
-fn normalized_date(value: Option<String>) -> Option<String> {
+pub(super) fn normalized_date(value: Option<String>) -> Option<String> {
     let value = value?.trim().to_string();
     if value.is_empty() {
         return None;
@@ -321,7 +329,10 @@ fn normalized_date(value: Option<String>) -> Option<String> {
     }
     Some(value)
 }
-fn playlist_from_dto(provider: &SubsonicProvider, playlist: SubsonicPlaylist) -> Playlist {
+pub(super) fn playlist_from_dto(
+    provider: &SubsonicProvider,
+    playlist: SubsonicPlaylist,
+) -> Playlist {
     let raw_id = raw_id_string(&playlist.id);
     Playlist {
         id: PlaylistId::new(provider.id("playlist", &raw_id)),
@@ -334,297 +345,297 @@ fn playlist_from_dto(provider: &SubsonicProvider, playlist: SubsonicPlaylist) ->
     }
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct SubsonicEmpty {}
+pub(super) struct SubsonicEmpty {}
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicEnvelope<T> {
+pub(super) struct SubsonicEnvelope<T> {
     #[serde(rename = "subsonic-response")]
-    response: SubsonicResponse<T>,
+    pub(super) response: SubsonicResponse<T>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicResponse<T> {
-    status: String,
+pub(super) struct SubsonicResponse<T> {
+    pub(super) status: String,
     #[serde(default, rename = "type")]
-    server_type: Option<String>,
+    pub(super) server_type: Option<String>,
     #[serde(default)]
-    error: Option<SubsonicError>,
+    pub(super) error: Option<SubsonicError>,
     #[serde(flatten)]
-    body: T,
+    pub(super) body: T,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicError {
-    message: String,
+pub(super) struct SubsonicError {
+    pub(super) message: String,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct AuthenticateBody {
-    user: SubsonicUser,
+pub(super) struct AuthenticateBody {
+    pub(super) user: SubsonicUser,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicUser {
-    username: String,
+pub(super) struct SubsonicUser {
+    pub(super) username: String,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct AlbumListBody {
+pub(super) struct AlbumListBody {
     #[serde(default, rename = "albumList2")]
-    album_list: AlbumList,
+    pub(super) album_list: AlbumList,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct AlbumList {
+pub(super) struct AlbumList {
     #[serde(default)]
-    album: Vec<SubsonicAlbum>,
+    pub(super) album: Vec<SubsonicAlbum>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct AlbumBody {
-    album: SubsonicAlbum,
+pub(super) struct AlbumBody {
+    pub(super) album: SubsonicAlbum,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct SearchBody {
+pub(super) struct SearchBody {
     #[serde(default, rename = "searchResult3")]
-    search_result: Option<SearchResult>,
+    pub(super) search_result: Option<SearchResult>,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct SearchResult {
+pub(super) struct SearchResult {
     #[serde(default)]
-    album: Option<Vec<SubsonicAlbum>>,
+    pub(super) album: Option<Vec<SubsonicAlbum>>,
     #[serde(default)]
-    artist: Option<Vec<SubsonicArtist>>,
+    pub(super) artist: Option<Vec<SubsonicArtist>>,
     #[serde(default)]
-    song: Option<Vec<SubsonicSong>>,
+    pub(super) song: Option<Vec<SubsonicSong>>,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct MusicFoldersBody {
+pub(super) struct MusicFoldersBody {
     #[serde(default, rename = "musicFolders")]
-    music_folders: MusicFolders,
+    pub(super) music_folders: MusicFolders,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct MusicFolders {
+pub(super) struct MusicFolders {
     #[serde(default, rename = "musicFolder")]
-    music_folder: Vec<SubsonicMusicFolder>,
+    pub(super) music_folder: Vec<SubsonicMusicFolder>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicMusicFolder {
-    id: SubsonicId,
-    name: String,
+pub(super) struct SubsonicMusicFolder {
+    pub(super) id: SubsonicId,
+    pub(super) name: String,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct IndexesBody {
+pub(super) struct IndexesBody {
     #[serde(default)]
-    indexes: Option<ArtistsIndex>,
+    pub(super) indexes: Option<ArtistsIndex>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct MusicDirectoryBody {
-    directory: SubsonicDirectory,
+pub(super) struct MusicDirectoryBody {
+    pub(super) directory: SubsonicDirectory,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicDirectory {
-    id: SubsonicId,
+pub(super) struct SubsonicDirectory {
+    pub(super) id: SubsonicId,
     #[serde(default)]
-    name: Option<String>,
+    pub(super) name: Option<String>,
     #[serde(default)]
-    parent: Option<SubsonicId>,
+    pub(super) parent: Option<SubsonicId>,
     #[serde(default)]
-    child: Vec<SubsonicSong>,
+    pub(super) child: Vec<SubsonicSong>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct ArtistsBody {
-    artists: ArtistsIndex,
+pub(super) struct ArtistsBody {
+    pub(super) artists: ArtistsIndex,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct ArtistsIndex {
+pub(super) struct ArtistsIndex {
     #[serde(default)]
-    index: Vec<ArtistIndex>,
+    pub(super) index: Vec<ArtistIndex>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct ArtistIndex {
+pub(super) struct ArtistIndex {
     #[serde(default)]
-    artist: Vec<SubsonicArtist>,
+    pub(super) artist: Vec<SubsonicArtist>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct GenresBody {
-    genres: GenresList,
+pub(super) struct GenresBody {
+    pub(super) genres: GenresList,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct GenresList {
+pub(super) struct GenresList {
     #[serde(default)]
-    genre: Vec<SubsonicGenre>,
+    pub(super) genre: Vec<SubsonicGenre>,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct PlaylistsBody {
+pub(super) struct PlaylistsBody {
     #[serde(default)]
-    playlists: Option<PlaylistsList>,
+    pub(super) playlists: Option<PlaylistsList>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct PlaylistsList {
+pub(super) struct PlaylistsList {
     #[serde(default)]
-    playlist: Vec<SubsonicPlaylist>,
+    pub(super) playlist: Vec<SubsonicPlaylist>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct PlaylistBody {
-    playlist: SubsonicPlaylist,
+pub(super) struct PlaylistBody {
+    pub(super) playlist: SubsonicPlaylist,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SongBody {
-    song: SubsonicSong,
+pub(super) struct SongBody {
+    pub(super) song: SubsonicSong,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct RandomSongsBody {
+pub(super) struct RandomSongsBody {
     #[serde(default, rename = "randomSongs")]
-    random_songs: Option<SongsList>,
+    pub(super) random_songs: Option<SongsList>,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct SongsByGenreBody {
+pub(super) struct SongsByGenreBody {
     #[serde(default, rename = "songsByGenre")]
-    songs_by_genre: Option<SongsList>,
+    pub(super) songs_by_genre: Option<SongsList>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SongsList {
+pub(super) struct SongsList {
     #[serde(default)]
-    song: Vec<SubsonicSong>,
+    pub(super) song: Vec<SubsonicSong>,
 }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct LyricsBody {
+pub(super) struct LyricsBody {
     #[serde(default)]
-    lyrics: Option<SubsonicLyrics>,
+    pub(super) lyrics: Option<SubsonicLyrics>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicLyrics {
+pub(super) struct SubsonicLyrics {
     #[serde(default)]
-    value: Option<String>,
+    pub(super) value: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicAlbum {
-    id: SubsonicId,
+pub(super) struct SubsonicAlbum {
+    pub(super) id: SubsonicId,
     #[serde(default)]
-    album: Option<String>,
+    pub(super) album: Option<String>,
     #[serde(default)]
-    title: Option<String>,
+    pub(super) title: Option<String>,
     #[serde(default)]
-    name: Option<String>,
+    pub(super) name: Option<String>,
     #[serde(default)]
-    artist: Option<String>,
+    pub(super) artist: Option<String>,
     #[serde(default, rename = "artistId")]
-    artist_id: Option<SubsonicId>,
+    pub(super) artist_id: Option<SubsonicId>,
     #[serde(default, rename = "coverArt")]
-    cover_art: Option<SubsonicId>,
+    pub(super) cover_art: Option<SubsonicId>,
     #[serde(default, rename = "songCount")]
-    song_count: Option<u32>,
+    pub(super) song_count: Option<u32>,
     #[serde(default)]
-    duration: Option<u32>,
+    pub(super) duration: Option<u32>,
     #[serde(default)]
-    year: Option<i32>,
+    pub(super) year: Option<i32>,
     #[serde(default)]
-    created: Option<String>,
+    pub(super) created: Option<String>,
     #[serde(default)]
-    played: Option<String>,
+    pub(super) played: Option<String>,
     #[serde(default, rename = "playCount")]
-    play_count: Option<u64>,
+    pub(super) play_count: Option<u64>,
     #[serde(default, rename = "userRating")]
-    user_rating: Option<u32>,
+    pub(super) user_rating: Option<u32>,
     #[serde(default)]
-    genre: Option<String>,
+    pub(super) genre: Option<String>,
     #[serde(default)]
-    genres: Vec<GenreName>,
+    pub(super) genres: Vec<GenreName>,
     #[serde(default)]
-    song: Vec<SubsonicSong>,
+    pub(super) song: Vec<SubsonicSong>,
     #[serde(default)]
-    starred: Option<serde_json::Value>,
+    pub(super) starred: Option<serde_json::Value>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicSong {
-    id: SubsonicId,
+pub(super) struct SubsonicSong {
+    pub(super) id: SubsonicId,
     #[serde(default)]
-    parent: Option<SubsonicId>,
+    pub(super) parent: Option<SubsonicId>,
     #[serde(default, rename = "isDir")]
-    is_dir: Option<bool>,
+    pub(super) is_dir: Option<bool>,
     #[serde(default)]
-    title: Option<String>,
+    pub(super) title: Option<String>,
     #[serde(default)]
-    album: Option<String>,
+    pub(super) album: Option<String>,
     #[serde(default, rename = "albumId")]
-    album_id: Option<SubsonicId>,
+    pub(super) album_id: Option<SubsonicId>,
     #[serde(default)]
-    artist: Option<String>,
+    pub(super) artist: Option<String>,
     #[serde(default, rename = "artistId")]
-    artist_id: Option<SubsonicId>,
+    pub(super) artist_id: Option<SubsonicId>,
     #[serde(default, rename = "coverArt")]
-    cover_art: Option<SubsonicId>,
+    pub(super) cover_art: Option<SubsonicId>,
     #[serde(default)]
-    duration: Option<u32>,
+    pub(super) duration: Option<u32>,
     #[serde(default)]
-    track: Option<i32>,
+    pub(super) track: Option<i32>,
     #[serde(default)]
-    year: Option<i32>,
+    pub(super) year: Option<i32>,
     #[serde(default)]
-    created: Option<String>,
+    pub(super) created: Option<String>,
     #[serde(default)]
-    played: Option<String>,
+    pub(super) played: Option<String>,
     #[serde(default, rename = "playCount")]
-    play_count: Option<u64>,
+    pub(super) play_count: Option<u64>,
     #[serde(default, rename = "userRating")]
-    user_rating: Option<u32>,
+    pub(super) user_rating: Option<u32>,
     #[serde(default)]
-    genre: Option<String>,
+    pub(super) genre: Option<String>,
     #[serde(default)]
-    genres: Vec<GenreName>,
+    pub(super) genres: Vec<GenreName>,
     #[serde(default, rename = "discNumber")]
-    disc_number: Option<i32>,
+    pub(super) disc_number: Option<i32>,
     #[serde(default)]
-    path: Option<String>,
+    pub(super) path: Option<String>,
     #[serde(default)]
-    suffix: Option<String>,
+    pub(super) suffix: Option<String>,
     #[serde(default, rename = "contentType")]
-    content_type: Option<String>,
+    pub(super) content_type: Option<String>,
     #[serde(default)]
-    starred: Option<serde_json::Value>,
+    pub(super) starred: Option<serde_json::Value>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicArtist {
-    id: SubsonicId,
+pub(super) struct SubsonicArtist {
+    pub(super) id: SubsonicId,
     #[serde(default)]
-    name: Option<String>,
+    pub(super) name: Option<String>,
     #[serde(default, rename = "coverArt")]
-    cover_art: Option<SubsonicId>,
+    pub(super) cover_art: Option<SubsonicId>,
     #[serde(default, rename = "albumCount")]
-    album_count: Option<u32>,
+    pub(super) album_count: Option<u32>,
     #[serde(default, rename = "songCount")]
-    song_count: Option<u32>,
+    pub(super) song_count: Option<u32>,
     #[serde(default)]
-    played: Option<String>,
+    pub(super) played: Option<String>,
     #[serde(default, rename = "playCount")]
-    play_count: Option<u64>,
+    pub(super) play_count: Option<u64>,
     #[serde(default, rename = "userRating")]
-    user_rating: Option<u32>,
+    pub(super) user_rating: Option<u32>,
     #[serde(default)]
-    starred: Option<serde_json::Value>,
+    pub(super) starred: Option<serde_json::Value>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicGenre {
+pub(super) struct SubsonicGenre {
     #[serde(default, alias = "name")]
-    value: String,
+    pub(super) value: String,
     #[serde(default, rename = "albumCount")]
-    album_count: Option<u32>,
+    pub(super) album_count: Option<u32>,
     #[serde(default, rename = "songCount")]
-    song_count: Option<u32>,
+    pub(super) song_count: Option<u32>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct SubsonicPlaylist {
-    id: SubsonicId,
+pub(super) struct SubsonicPlaylist {
+    pub(super) id: SubsonicId,
     #[serde(default)]
-    name: Option<String>,
+    pub(super) name: Option<String>,
     #[serde(default, rename = "coverArt")]
-    cover_art: Option<SubsonicId>,
+    pub(super) cover_art: Option<SubsonicId>,
     #[serde(default, rename = "songCount")]
-    song_count: Option<u32>,
+    pub(super) song_count: Option<u32>,
     #[serde(default)]
-    duration: Option<u32>,
+    pub(super) duration: Option<u32>,
     #[serde(default)]
-    entry: Option<Vec<SubsonicSong>>,
+    pub(super) entry: Option<Vec<SubsonicSong>>,
 }
 #[derive(Clone, Debug, Deserialize)]
-struct GenreName {
-    name: String,
+pub(super) struct GenreName {
+    pub(super) name: String,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SubsonicId(String);
+pub(super) struct SubsonicId(pub(super) String);
 impl<'de> Deserialize<'de> for SubsonicId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -633,7 +644,7 @@ impl<'de> Deserialize<'de> for SubsonicId {
         deserializer.deserialize_any(SubsonicIdVisitor)
     }
 }
-struct SubsonicIdVisitor;
+pub(super) struct SubsonicIdVisitor;
 impl Visitor<'_> for SubsonicIdVisitor {
     type Value = SubsonicId;
 

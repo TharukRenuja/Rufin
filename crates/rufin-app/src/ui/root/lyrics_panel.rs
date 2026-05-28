@@ -1,11 +1,13 @@
+use super::*;
+
 impl Shell {
-    fn render_lyrics_panel(self: &Rc<Self>) {
+    pub(in crate::ui) fn render_lyrics_panel(self: &Rc<Self>) {
         self.render_lyrics_pane(&self.lyrics_pane);
         self.render_lyrics_pane(&self.fullscreen_player.lyrics_pane);
         self.update_lyrics_highlight();
         self.request_auto_lyrics_if_needed();
     }
-    fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
+    pub(in crate::ui) fn render_lyrics_pane(self: &Rc<Self>, pane: &LyricsPane) {
         let settings = self.state.settings.borrow();
         let current_track_id = current_playback_track_id(&self.state.player.borrow());
         let has_current_track = current_track_id.is_some();
@@ -33,7 +35,7 @@ impl Shell {
         pane.set_content(lyrics.as_ref(), empty_status, seek);
         drop(lyrics);
     }
-    fn present_lyrics_search_dialog(self: &Rc<Self>) {
+    pub(in crate::ui) fn present_lyrics_search_dialog(self: &Rc<Self>) {
         if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref() {
             dialog.dialog.present(Some(&self.window));
             dialog.title_entry.grab_focus();
@@ -136,7 +138,7 @@ impl Shell {
         search_dialog.title_entry.grab_focus();
         submit_lyrics_search(self);
     }
-    fn apply_lyrics_search_results(
+    pub(in crate::ui) fn apply_lyrics_search_results(
         self: &Rc<Self>,
         track_id: rufin_core::TrackId,
         _artist_name: String,
@@ -198,7 +200,7 @@ impl Shell {
             dialog.list.append(&row);
         }
     }
-    fn apply_lyrics_saved(self: &Rc<Self>, path: PathBuf, lyrics: Lyrics) {
+    pub(in crate::ui) fn apply_lyrics_saved(self: &Rc<Self>, path: PathBuf, lyrics: Lyrics) {
         let track_id = lyrics.track_id.clone();
         *self.state.lyrics.borrow_mut() = Some(lyrics);
         self.render_lyrics_panel();
@@ -212,7 +214,7 @@ impl Shell {
     }
 }
 
-fn lyrics_save_filename(track_title: &str) -> String {
+pub(in crate::ui) fn lyrics_save_filename(track_title: &str) -> String {
     let stem = track_title
         .chars()
         .map(|character| match character {

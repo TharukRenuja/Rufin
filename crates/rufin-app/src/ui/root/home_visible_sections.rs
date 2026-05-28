@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn register_home_section_view(
+    pub(in crate::ui) fn register_home_section_view(
         &self,
         section_kind: HomeSectionKind,
         root: &gtk::Box,
@@ -21,7 +23,7 @@ impl Shell {
             },
         );
     }
-    fn refresh_visible_home_section(
+    pub(in crate::ui) fn refresh_visible_home_section(
         self: &Rc<Self>,
         section_kind: HomeSectionKind,
         sections: &[HomeSection],
@@ -36,7 +38,7 @@ impl Shell {
             self.hide_visible_home_section(section_kind);
         }
     }
-    fn refresh_visible_home_sections(
+    pub(in crate::ui) fn refresh_visible_home_sections(
         self: &Rc<Self>,
         sections: &[HomeSection],
         include_explore: bool,
@@ -59,7 +61,10 @@ impl Shell {
             self.refresh_visible_home_section(section_kind, sections);
         }
     }
-    fn render_visible_home_section(self: &Rc<Self>, section: &HomeSection) -> bool {
+    pub(in crate::ui) fn render_visible_home_section(
+        self: &Rc<Self>,
+        section: &HomeSection,
+    ) -> bool {
         let view = self
             .state
             .home_section_views
@@ -92,7 +97,7 @@ impl Shell {
         }
         true
     }
-    fn hide_visible_home_section(&self, section_kind: HomeSectionKind) -> bool {
+    pub(in crate::ui) fn hide_visible_home_section(&self, section_kind: HomeSectionKind) -> bool {
         let view = self
             .state
             .home_section_views

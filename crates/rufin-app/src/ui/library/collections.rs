@@ -1,17 +1,19 @@
+use super::*;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct LibraryRouteInsetSpec {
-    margin_start: i32,
-    margin_end: i32,
-    hexpand: bool,
+pub(in crate::ui) struct LibraryRouteInsetSpec {
+    pub(in crate::ui) margin_start: i32,
+    pub(in crate::ui) margin_end: i32,
+    pub(in crate::ui) hexpand: bool,
 }
-fn library_route_inset_spec() -> LibraryRouteInsetSpec {
+pub(in crate::ui) fn library_route_inset_spec() -> LibraryRouteInsetSpec {
     LibraryRouteInsetSpec {
         margin_start: PRIMARY_ROUTE_MARGIN_START,
         margin_end: 0,
         hexpand: true,
     }
 }
-fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
+pub(in crate::ui) fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
     let spec = library_route_inset_spec();
     // this keeps the scrollbar at the pane edge while the actual
     // library content keeps the same visual inset.
@@ -21,7 +23,7 @@ fn library_route_inset(child: gtk::Widget) -> gtk::Widget {
     child.set_halign(gtk::Align::Fill);
     child
 }
-fn configure_library_route_scroller(
+pub(in crate::ui) fn configure_library_route_scroller(
     shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
 ) {
@@ -39,7 +41,7 @@ fn configure_library_route_scroller(
         adjustment_shell.pause_cover_warm_for_interaction();
     });
 }
-fn album_collection_widget(
+pub(in crate::ui) fn album_collection_widget(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
@@ -52,7 +54,7 @@ fn album_collection_widget(
         LibraryLayout::Grid | LibraryLayout::Detail => album_grid(shell, model, key).upcast(),
     }
 }
-fn artist_collection_widget(
+pub(in crate::ui) fn artist_collection_widget(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
@@ -62,19 +64,25 @@ fn artist_collection_widget(
         LibraryLayout::Grid | LibraryLayout::Detail => artist_grid(shell, model, key).upcast(),
     }
 }
-fn genre_collection_widget(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::Widget {
+pub(in crate::ui) fn genre_collection_widget(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+) -> gtk::Widget {
     match shell.library_settings(LibraryListKey::Genres).layout {
         LibraryLayout::Row => genre_table(shell, model).upcast(),
         LibraryLayout::Grid | LibraryLayout::Detail => genre_grid(shell, model).upcast(),
     }
 }
-fn playlist_collection_widget(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::Widget {
+pub(in crate::ui) fn playlist_collection_widget(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+) -> gtk::Widget {
     match shell.library_settings(LibraryListKey::Playlists).layout {
         LibraryLayout::Row => playlist_table(shell, model).upcast(),
         LibraryLayout::Grid | LibraryLayout::Detail => playlist_grid(shell, model).upcast(),
     }
 }
-fn track_collection_widget(
+pub(in crate::ui) fn track_collection_widget(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
@@ -86,7 +94,11 @@ fn track_collection_widget(
         }
     }
 }
-fn album_grid(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -> gtk::GridView {
+pub(in crate::ui) fn album_grid(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    key: LibraryListKey,
+) -> gtk::GridView {
     let (columns, card_size) = shell.responsive_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
@@ -125,7 +137,11 @@ fn album_grid(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -> 
     });
     grid
 }
-fn artist_grid(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -> gtk::GridView {
+pub(in crate::ui) fn artist_grid(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    key: LibraryListKey,
+) -> gtk::GridView {
     let (columns, card_size) = shell.responsive_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
@@ -164,7 +180,7 @@ fn artist_grid(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) ->
     });
     grid
 }
-fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
+pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     let (columns, card_size) = shell.responsive_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
@@ -198,7 +214,7 @@ fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     });
     grid
 }
-fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
+pub(in crate::ui) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     let (columns, card_size) = shell.responsive_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
@@ -236,7 +252,11 @@ fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     });
     grid
 }
-fn track_grid(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -> gtk::GridView {
+pub(in crate::ui) fn track_grid(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    key: LibraryListKey,
+) -> gtk::GridView {
     let (columns, card_size) = shell.responsive_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
@@ -275,7 +295,11 @@ fn track_grid(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -> 
     });
     grid
 }
-fn album_table(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -> gtk::ColumnView {
+pub(in crate::ui) fn album_table(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    key: LibraryListKey,
+) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
     table.add_css_class("track-table");
@@ -293,7 +317,11 @@ fn album_table(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) ->
     });
     table
 }
-fn artist_table(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -> gtk::ColumnView {
+pub(in crate::ui) fn artist_table(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    key: LibraryListKey,
+) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
     table.add_css_class("track-table");
@@ -311,7 +339,7 @@ fn artist_table(shell: &Rc<Shell>, model: gio::ListStore, key: LibraryListKey) -
     });
     table
 }
-fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
+pub(in crate::ui) fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model));
     let table = gtk::ColumnView::new(Some(selection));
     table.add_css_class("track-table");
@@ -323,7 +351,7 @@ fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     }
     table
 }
-fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
+pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
     table.add_css_class("track-table");
@@ -342,7 +370,7 @@ fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     });
     table
 }
-fn track_table(
+pub(in crate::ui) fn track_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
@@ -373,7 +401,7 @@ fn track_table(
     });
     table
 }
-fn album_detail_list(
+pub(in crate::ui) fn album_detail_list(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
@@ -416,25 +444,25 @@ fn album_detail_list(
     list
 }
 #[derive(Clone)]
-struct AlbumDetailVirtualList {
-    widget: gtk::Box,
-    top_spacer: gtk::Box,
-    rows: gtk::Box,
-    bottom_spacer: gtk::Box,
-    selection: AlbumDetailTrackSelection,
+pub(in crate::ui) struct AlbumDetailVirtualList {
+    pub(in crate::ui) widget: gtk::Box,
+    pub(in crate::ui) top_spacer: gtk::Box,
+    pub(in crate::ui) rows: gtk::Box,
+    pub(in crate::ui) bottom_spacer: gtk::Box,
+    pub(in crate::ui) selection: AlbumDetailTrackSelection,
 }
 #[derive(Clone)]
-struct AlbumDetailVirtualRow {
-    item: AlbumDetailItem,
-    top: i32,
-    height: i32,
+pub(in crate::ui) struct AlbumDetailVirtualRow {
+    pub(in crate::ui) item: AlbumDetailItem,
+    pub(in crate::ui) top: i32,
+    pub(in crate::ui) height: i32,
 }
 impl AlbumDetailVirtualRow {
-    fn bottom(&self) -> i32 {
+    pub(in crate::ui) fn bottom(&self) -> i32 {
         self.top.saturating_add(self.height)
     }
 }
-fn album_detail_virtual_list() -> AlbumDetailVirtualList {
+pub(in crate::ui) fn album_detail_virtual_list() -> AlbumDetailVirtualList {
     let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
     widget.add_css_class("track-table");
     widget.add_css_class("album-detail-list");
@@ -459,7 +487,7 @@ fn album_detail_virtual_list() -> AlbumDetailVirtualList {
         selection: AlbumDetailTrackSelection::default(),
     }
 }
-fn connect_album_detail_virtual_list(
+pub(in crate::ui) fn connect_album_detail_virtual_list(
     shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
     model: &gio::ListStore,
@@ -528,7 +556,10 @@ fn connect_album_detail_virtual_list(
         }
     });
 }
-fn album_detail_virtual_rows(shell: &Shell, model: &gio::ListStore) -> Vec<AlbumDetailVirtualRow> {
+pub(in crate::ui) fn album_detail_virtual_rows(
+    shell: &Shell,
+    model: &gio::ListStore,
+) -> Vec<AlbumDetailVirtualRow> {
     let compact = compact_detail_layout(shell);
     let cover_size = if compact { 148 } else { 220 };
     let mut rows = Vec::with_capacity(model.n_items() as usize);
@@ -543,7 +574,7 @@ fn album_detail_virtual_rows(shell: &Shell, model: &gio::ListStore) -> Vec<Album
     }
     rows
 }
-fn render_album_detail_virtual_rows(
+pub(in crate::ui) fn render_album_detail_virtual_rows(
     shell: &Rc<Shell>,
     key: LibraryListKey,
     list: &AlbumDetailVirtualList,
@@ -593,7 +624,7 @@ fn render_album_detail_virtual_rows(
         ));
     }
 }
-fn album_detail_virtual_range(
+pub(in crate::ui) fn album_detail_virtual_range(
     rows: &[AlbumDetailVirtualRow],
     visible_top: f64,
     visible_bottom: f64,
@@ -609,27 +640,27 @@ fn album_detail_virtual_range(
         .max(start);
     (start, end)
 }
-fn album_detail_virtual_overscan_height() -> i32 {
+pub(in crate::ui) fn album_detail_virtual_overscan_height() -> i32 {
     LIBRARY_TABLE_ROW_HEIGHT * 8
 }
-const ALBUM_DETAIL_FAST_SCROLL_RENDER_DELAY_MS: u64 = 90;
-fn album_detail_fast_scroll_render_delta() -> i32 {
+pub(in crate::ui) const ALBUM_DETAIL_FAST_SCROLL_RENDER_DELAY_MS: u64 = 90;
+pub(in crate::ui) fn album_detail_fast_scroll_render_delta() -> i32 {
     album_detail_virtual_overscan_height() / 2
 }
 #[derive(Clone, Default)]
-struct AlbumDetailTrackSelection {
-    selected_track_id: Rc<RefCell<Option<TrackId>>>,
-    selected_row: Rc<RefCell<Option<gtk::Widget>>>,
+pub(in crate::ui) struct AlbumDetailTrackSelection {
+    pub(in crate::ui) selected_track_id: Rc<RefCell<Option<TrackId>>>,
+    pub(in crate::ui) selected_row: Rc<RefCell<Option<gtk::Widget>>>,
 }
 impl AlbumDetailTrackSelection {
-    fn bind_row(&self, row: &gtk::Widget, track_id: &TrackId) {
+    pub(in crate::ui) fn bind_row(&self, row: &gtk::Widget, track_id: &TrackId) {
         if self.selected_track_id.borrow().as_ref() == Some(track_id) {
             row.add_css_class("album-detail-track-selected");
             *self.selected_row.borrow_mut() = Some(row.clone());
         }
     }
 
-    fn select_row(&self, row: &gtk::Widget, track_id: TrackId) {
+    pub(in crate::ui) fn select_row(&self, row: &gtk::Widget, track_id: TrackId) {
         if let Some(previous) = self.selected_row.borrow_mut().take() {
             previous.remove_css_class("album-detail-track-selected");
         }
@@ -639,7 +670,7 @@ impl AlbumDetailTrackSelection {
     }
 }
 #[derive(Clone, Debug, PartialEq)]
-enum AlbumDetailItem {
+pub(in crate::ui) enum AlbumDetailItem {
     Lead {
         album: Album,
         inline_tracks: Vec<Track>,
@@ -651,7 +682,7 @@ enum AlbumDetailItem {
         last_in_album: bool,
     },
 }
-fn album_detail_item_row(
+pub(in crate::ui) fn album_detail_item_row(
     shell: &Rc<Shell>,
     row: AlbumDetailItem,
     key: LibraryListKey,
@@ -670,7 +701,7 @@ fn album_detail_item_row(
         } => album_detail_track_row(shell, &track, index, last_in_album, key, selection),
     }
 }
-fn album_detail_lead_row(
+pub(in crate::ui) fn album_detail_lead_row(
     shell: &Rc<Shell>,
     album: &Album,
     inline_tracks: &[Track],
@@ -716,7 +747,7 @@ fn album_detail_lead_row(
     row.append(&track_area);
     row.upcast()
 }
-fn album_detail_track_row(
+pub(in crate::ui) fn album_detail_track_row(
     shell: &Rc<Shell>,
     track: &Track,
     index: usize,
@@ -750,7 +781,7 @@ fn album_detail_track_row(
     ));
     row.upcast()
 }
-fn album_detail_meta(
+pub(in crate::ui) fn album_detail_meta(
     shell: &Rc<Shell>,
     album: &Album,
     cover_size: i32,
@@ -781,7 +812,11 @@ fn album_detail_meta(
     }
     meta.upcast()
 }
-fn album_detail_cover_tile(shell: &Rc<Shell>, album: &Album, cover_size: i32) -> gtk::Widget {
+pub(in crate::ui) fn album_detail_cover_tile(
+    shell: &Rc<Shell>,
+    album: &Album,
+    cover_size: i32,
+) -> gtk::Widget {
     let overlay = cards::cover_overlay(cover_size);
     overlay.set_child(Some(&shell.cover_tile_for(
         album.image_ref.as_ref(),
@@ -828,7 +863,7 @@ fn album_detail_cover_tile(shell: &Rc<Shell>, album: &Album, cover_size: i32) ->
     install_album_context_menu(&overlay, shell, album.clone());
     overlay.upcast()
 }
-fn album_detail_track_header(fields: &[LibraryField]) -> gtk::Widget {
+pub(in crate::ui) fn album_detail_track_header(fields: &[LibraryField]) -> gtk::Widget {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     row.add_css_class("album-detail-track-cells");
     row.set_hexpand(true);
@@ -842,7 +877,7 @@ fn album_detail_track_header(fields: &[LibraryField]) -> gtk::Widget {
     }
     row.upcast()
 }
-fn album_detail_track_cells(
+pub(in crate::ui) fn album_detail_track_cells(
     shell: &Rc<Shell>,
     track: &Track,
     index: usize,
@@ -887,7 +922,7 @@ fn album_detail_track_cells(
     row.add_controller(gesture);
     row.upcast()
 }
-fn album_detail_track_cell(
+pub(in crate::ui) fn album_detail_track_cell(
     shell: &Rc<Shell>,
     track: &Track,
     index: usize,
@@ -915,7 +950,11 @@ fn album_detail_track_cell(
             .upcast(),
     }
 }
-fn album_detail_track_label(text: &str, field: LibraryField, ellipsize: bool) -> gtk::Label {
+pub(in crate::ui) fn album_detail_track_label(
+    text: &str,
+    field: LibraryField,
+    ellipsize: bool,
+) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_xalign(if field == LibraryField::Duration {
         1.0
@@ -933,7 +972,7 @@ fn album_detail_track_label(text: &str, field: LibraryField, ellipsize: bool) ->
     }
     label
 }
-fn album_detail_track_field_expands(field: LibraryField) -> bool {
+pub(in crate::ui) fn album_detail_track_field_expands(field: LibraryField) -> bool {
     matches!(
         field,
         LibraryField::Title
@@ -944,7 +983,7 @@ fn album_detail_track_field_expands(field: LibraryField) -> bool {
             | LibraryField::Genre
     )
 }
-fn album_detail_track_trailing_inset(fields: &[LibraryField]) -> i32 {
+pub(in crate::ui) fn album_detail_track_trailing_inset(fields: &[LibraryField]) -> i32 {
     if fields
         .last()
         .is_some_and(|field| !album_detail_track_field_expands(*field))
@@ -954,39 +993,49 @@ fn album_detail_track_trailing_inset(fields: &[LibraryField]) -> i32 {
         0
     }
 }
-fn album_detail_track_text(track: &Track, index: usize, field: LibraryField) -> String {
+pub(in crate::ui) fn album_detail_track_text(
+    track: &Track,
+    index: usize,
+    field: LibraryField,
+) -> String {
     if field == LibraryField::RowIndex {
         (index + 1).to_string()
     } else {
         track_field(track, field)
     }
 }
-fn album_detail_lead_content_height(album: &Album, cover_size: i32, inline_count: usize) -> i32 {
+pub(in crate::ui) fn album_detail_lead_content_height(
+    album: &Album,
+    cover_size: i32,
+    inline_count: usize,
+) -> i32 {
     album_detail_meta_height(album, cover_size).max(album_detail_track_area_height(inline_count))
 }
-fn album_detail_item_total_height(row: &AlbumDetailItem, cover_size: i32) -> i32 {
+pub(in crate::ui) fn album_detail_item_total_height(row: &AlbumDetailItem, cover_size: i32) -> i32 {
     match row {
         AlbumDetailItem::Lead {
             album,
             inline_tracks,
             last_in_album,
-        } => album_detail_lead_content_height(album, cover_size, inline_tracks.len())
-            + 12
-            + if *last_in_album { 16 } else { 0 },
+        } => {
+            album_detail_lead_content_height(album, cover_size, inline_tracks.len())
+                + 12
+                + if *last_in_album { 16 } else { 0 }
+        }
         AlbumDetailItem::Track { last_in_album, .. } => {
             LIBRARY_TABLE_ROW_HEIGHT + if *last_in_album { 16 } else { 0 }
         }
     }
 }
-fn album_detail_meta_height(album: &Album, cover_size: i32) -> i32 {
+pub(in crate::ui) fn album_detail_meta_height(album: &Album, cover_size: i32) -> i32 {
     cover_size
         + album_detail_meta_label_count(album) as i32
             * (ALBUM_DETAIL_META_LABEL_HEIGHT + ALBUM_DETAIL_META_SPACING)
 }
-fn album_detail_meta_label_count(album: &Album) -> usize {
+pub(in crate::ui) fn album_detail_meta_label_count(album: &Album) -> usize {
     3 + usize::from(!album.genres.is_empty())
 }
-fn album_detail_track_area_height(inline_count: usize) -> i32 {
+pub(in crate::ui) fn album_detail_track_area_height(inline_count: usize) -> i32 {
     if inline_count == 0 {
         0
     } else {
@@ -994,23 +1043,31 @@ fn album_detail_track_area_height(inline_count: usize) -> i32 {
             + inline_count.min(ALBUM_DETAIL_INLINE_TRACK_ROWS) as i32 * LIBRARY_TABLE_ROW_HEIGHT
     }
 }
-fn sort_album_detail_tracks(tracks: &mut [Track]) {
+pub(in crate::ui) fn sort_album_detail_tracks(tracks: &mut [Track]) {
     tracks.sort_by(|left, right| compare_track(left, right, LibraryField::TrackNumber));
 }
-fn set_library_table_content_height(scroller: &gtk::ScrolledWindow, row_count: usize) {
+pub(in crate::ui) fn set_library_table_content_height(
+    scroller: &gtk::ScrolledWindow,
+    row_count: usize,
+) {
     let height = library_table_content_height(row_count);
     scroller.set_min_content_height(height);
     scroller.set_max_content_height(height);
 }
-fn library_table_content_height(row_count: usize) -> i32 {
+pub(in crate::ui) fn library_table_content_height(row_count: usize) -> i32 {
     let max_rows = ((i32::MAX - LIBRARY_TABLE_HEADER_HEIGHT) / LIBRARY_TABLE_ROW_HEIGHT) as usize;
     let visible_rows = row_count.max(1).min(max_rows);
     LIBRARY_TABLE_HEADER_HEIGHT + visible_rows as i32 * LIBRARY_TABLE_ROW_HEIGHT
 }
-fn compact_detail_layout(shell: &Shell) -> bool {
+pub(in crate::ui) fn compact_detail_layout(shell: &Shell) -> bool {
     route_content_width(shell) < 760
 }
-fn album_card(shell: &Rc<Shell>, album: &Album, key: LibraryListKey, size: i32) -> gtk::Widget {
+pub(in crate::ui) fn album_card(
+    shell: &Rc<Shell>,
+    album: &Album,
+    key: LibraryListKey,
+    size: i32,
+) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
     card.append(&cards::album_cover_tile(
@@ -1029,7 +1086,12 @@ fn album_card(shell: &Rc<Shell>, album: &Album, key: LibraryListKey, size: i32) 
     install_album_context_menu(&card, shell, album.clone());
     card.upcast()
 }
-fn artist_card(shell: &Rc<Shell>, artist: &Artist, key: LibraryListKey, size: i32) -> gtk::Widget {
+pub(in crate::ui) fn artist_card(
+    shell: &Rc<Shell>,
+    artist: &Artist,
+    key: LibraryListKey,
+    size: i32,
+) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
     card.append(&artist_cover_tile(shell, artist, size));
@@ -1043,7 +1105,7 @@ fn artist_card(shell: &Rc<Shell>, artist: &Artist, key: LibraryListKey, size: i3
     install_artist_context_menu(&card, shell, artist.clone());
     card.upcast()
 }
-fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
+pub(in crate::ui) fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
     card.append(&genre_cover_tile(shell, genre, size));
@@ -1056,7 +1118,11 @@ fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
     }
     card.upcast()
 }
-fn playlist_card(shell: &Rc<Shell>, playlist: &Playlist, size: i32) -> gtk::Widget {
+pub(in crate::ui) fn playlist_card(
+    shell: &Rc<Shell>,
+    playlist: &Playlist,
+    size: i32,
+) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
     card.append(&cards::playlist_cover_tile(shell, playlist, size));
@@ -1072,7 +1138,12 @@ fn playlist_card(shell: &Rc<Shell>, playlist: &Playlist, size: i32) -> gtk::Widg
     }
     card.upcast()
 }
-fn track_card(shell: &Rc<Shell>, track: &Track, key: LibraryListKey, size: i32) -> gtk::Widget {
+pub(in crate::ui) fn track_card(
+    shell: &Rc<Shell>,
+    track: &Track,
+    key: LibraryListKey,
+    size: i32,
+) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
     card.append(&cards::track_cover_tile(shell, track, size));
@@ -1086,7 +1157,11 @@ fn track_card(shell: &Rc<Shell>, track: &Track, key: LibraryListKey, size: i32) 
     install_track_context_menu(&card, shell, track.clone());
     card.upcast()
 }
-fn artist_cover_tile(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widget {
+pub(in crate::ui) fn artist_cover_tile(
+    shell: &Rc<Shell>,
+    artist: &Artist,
+    size: i32,
+) -> gtk::Widget {
     let overlay = cards::cover_overlay(size);
 
     let artist_button = gtk::Button::new();
@@ -1142,6 +1217,9 @@ fn artist_cover_tile(shell: &Rc<Shell>, artist: &Artist, size: i32) -> gtk::Widg
 
     overlay.upcast()
 }
-fn artist_cover_image_ref(_shell: &Rc<Shell>, artist: &Artist) -> Option<ImageRef> {
+pub(in crate::ui) fn artist_cover_image_ref(
+    _shell: &Rc<Shell>,
+    artist: &Artist,
+) -> Option<ImageRef> {
     artist.image_ref.clone()
 }

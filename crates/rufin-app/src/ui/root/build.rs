@@ -1,5 +1,7 @@
+use super::*;
+
 impl UiPerfMonitor {
-    fn new(options: UiPerfOptions) -> Self {
+    pub(in crate::ui) fn new(options: UiPerfOptions) -> Self {
         Self {
             options,
             started_at: Instant::now(),
@@ -7,7 +9,7 @@ impl UiPerfMonitor {
         }
     }
 
-    fn record_tick_gap(&self, gap: Duration) {
+    pub(in crate::ui) fn record_tick_gap(&self, gap: Duration) {
         let gap_ms = duration_ms(gap);
         let now = Instant::now();
         let elapsed_ms = duration_ms(self.started_at.elapsed());
@@ -76,21 +78,19 @@ impl UiPerfMonitor {
         }
     }
 
-    fn record_route_render(&self, route: String, elapsed: Duration) {
+    pub(in crate::ui) fn record_route_render(&self, route: String, elapsed: Duration) {
         let elapsed_ms = duration_ms(elapsed);
         if self.options.terminal_events {
             println!("RUFIN_PERF route_render route={route} elapsed_ms={elapsed_ms}");
         }
-        self.inner
-            .borrow_mut()
-            .last_route_hint = Some(route.clone());
+        self.inner.borrow_mut().last_route_hint = Some(route.clone());
         self.inner
             .borrow_mut()
             .route_renders
             .push(UiPerfRouteRender { route, elapsed_ms });
     }
 
-    fn begin_scroll(&self, route: String, scenario: UiPerfScenario) {
+    pub(in crate::ui) fn begin_scroll(&self, route: String, scenario: UiPerfScenario) {
         let inner = self.inner.borrow();
         let now = Instant::now();
         let active = UiPerfActiveScroll {
@@ -113,7 +113,7 @@ impl UiPerfMonitor {
         inner.active_scroll = Some(active);
     }
 
-    fn record_scroll_step(&self, route: &str, value: f64, max_adjustment: f64) {
+    pub(in crate::ui) fn record_scroll_step(&self, route: &str, value: f64, max_adjustment: f64) {
         let mut inner = self.inner.borrow_mut();
         let Some(active) = &mut inner.active_scroll else {
             return;
@@ -127,13 +127,13 @@ impl UiPerfMonitor {
         active.max_value = active.max_value.max(value);
     }
 
-    fn record_scroll_note(&self, route: &str, note: &str) {
+    pub(in crate::ui) fn record_scroll_note(&self, route: &str, note: &str) {
         if self.options.terminal_events {
             println!("RUFIN_PERF scroll_note route={route} note={note}");
         }
     }
 
-    fn finish_scroll(&self) {
+    pub(in crate::ui) fn finish_scroll(&self) {
         let mut inner = self.inner.borrow_mut();
         let Some(active) = inner.active_scroll.take() else {
             return;
@@ -141,7 +141,11 @@ impl UiPerfMonitor {
         self.finish_scroll_sample(&mut inner, active);
     }
 
-    fn finish_scroll_sample(&self, inner: &mut UiPerfInner, active: UiPerfActiveScroll) {
+    pub(in crate::ui) fn finish_scroll_sample(
+        &self,
+        inner: &mut UiPerfInner,
+        active: UiPerfActiveScroll,
+    ) {
         let elapsed_ms = duration_ms(active.started_at.elapsed());
         let covers_ready = inner
             .cover_ready_events
@@ -185,7 +189,12 @@ impl UiPerfMonitor {
         });
     }
 
-    fn record_manual_scroll_step(&self, route: &str, value: f64, max_adjustment: f64) {
+    pub(in crate::ui) fn record_manual_scroll_step(
+        &self,
+        route: &str,
+        value: f64,
+        max_adjustment: f64,
+    ) {
         if !self.options.observe_scroll {
             return;
         }
@@ -228,7 +237,7 @@ impl UiPerfMonitor {
         active.max_value = active.max_value.max(value);
     }
 
-    fn record_cover_bind_request(&self, key: &str) {
+    pub(in crate::ui) fn record_cover_bind_request(&self, key: &str) {
         let mut inner = self.inner.borrow_mut();
         inner.cover_bind_requests += 1;
         inner
@@ -237,11 +246,11 @@ impl UiPerfMonitor {
             .or_insert_with(Instant::now);
     }
 
-    fn record_coverless_tile(&self) {
+    pub(in crate::ui) fn record_coverless_tile(&self) {
         self.inner.borrow_mut().coverless_tiles += 1;
     }
 
-    fn record_cover_cache_hit(&self, key: &str) {
+    pub(in crate::ui) fn record_cover_cache_hit(&self, key: &str) {
         let mut inner = self.inner.borrow_mut();
         inner.cover_cache_hits += 1;
         inner.cover_pending.remove(key);
@@ -249,11 +258,11 @@ impl UiPerfMonitor {
         inner.cover_decode_started.remove(key);
     }
 
-    fn record_cover_ready(&self, _key: &str) {
+    pub(in crate::ui) fn record_cover_ready(&self, _key: &str) {
         self.inner.borrow_mut().cover_ready_events += 1;
     }
 
-    fn record_cover_path_ready(&self, key: &str) {
+    pub(in crate::ui) fn record_cover_path_ready(&self, key: &str) {
         let mut inner = self.inner.borrow_mut();
         if let Some(started_at) = inner.cover_pending.get(key) {
             let elapsed_ms = duration_ms(started_at.elapsed());
@@ -261,7 +270,7 @@ impl UiPerfMonitor {
         }
     }
 
-    fn record_cover_decode_start(&self, key: &str) {
+    pub(in crate::ui) fn record_cover_decode_start(&self, key: &str) {
         let mut inner = self.inner.borrow_mut();
         if let Some(started_at) = inner.cover_pending.get(key) {
             let elapsed_ms = duration_ms(started_at.elapsed());
@@ -271,7 +280,7 @@ impl UiPerfMonitor {
         }
     }
 
-    fn record_cover_decode_ok(&self, key: &str) {
+    pub(in crate::ui) fn record_cover_decode_ok(&self, key: &str) {
         let mut inner = self.inner.borrow_mut();
         inner.cover_decode_ok += 1;
         if let Some(started_at) = inner.cover_pending.remove(key) {
@@ -284,9 +293,8 @@ impl UiPerfMonitor {
                 }
                 _ => None,
             };
-            let decode_ms = decode_start_ms.map(|decode_start_ms| {
-                elapsed_ms.saturating_sub(decode_start_ms)
-            });
+            let decode_ms =
+                decode_start_ms.map(|decode_start_ms| elapsed_ms.saturating_sub(decode_start_ms));
             inner.max_cover_latency_ms = inner.max_cover_latency_ms.max(elapsed_ms);
             if elapsed_ms > self.options.asset_ms {
                 inner.over_budget_assets = inner.over_budget_assets.saturating_add(1);
@@ -304,7 +312,7 @@ impl UiPerfMonitor {
         }
     }
 
-    fn record_cover_decode_error(&self, key: &str) {
+    pub(in crate::ui) fn record_cover_decode_error(&self, key: &str) {
         let mut inner = self.inner.borrow_mut();
         inner.cover_decode_error += 1;
         inner.cover_pending.remove(key);
@@ -312,23 +320,23 @@ impl UiPerfMonitor {
         inner.cover_decode_started.remove(key);
     }
 
-    fn record_cover_stale_ignored(&self) {
+    pub(in crate::ui) fn record_cover_stale_ignored(&self) {
         self.inner.borrow_mut().cover_stale_ignored += 1;
     }
 
-    fn record_cover_stale_ignored_by(&self, count: usize) {
+    pub(in crate::ui) fn record_cover_stale_ignored_by(&self, count: usize) {
         let mut inner = self.inner.borrow_mut();
         inner.cover_stale_ignored = inner.cover_stale_ignored.saturating_add(count);
     }
 
-    fn record_cover_stale_key(&self, key: &str) {
+    pub(in crate::ui) fn record_cover_stale_key(&self, key: &str) {
         let mut inner = self.inner.borrow_mut();
         inner.cover_pending.remove(key);
         inner.cover_path_ready.remove(key);
         inner.cover_decode_started.remove(key);
     }
 
-    fn record_track_row_bind(&self, column: &'static str, elapsed: Duration) {
+    pub(in crate::ui) fn record_track_row_bind(&self, column: &'static str, elapsed: Duration) {
         let elapsed_us = duration_us(elapsed);
         let mut inner = self.inner.borrow_mut();
         let stats = inner.track_row_binds.entry(column).or_default();
@@ -338,19 +346,16 @@ impl UiPerfMonitor {
         if elapsed_us > UI_PERF_TRACK_ROW_BIND_SLOW_US {
             stats.slow_samples = stats.slow_samples.saturating_add(1);
             if self.options.terminal_events {
-                println!(
-                    "RUFIN_PERF_TRACK_BIND_SLOW column={column} elapsed_us={elapsed_us}"
-                );
+                println!("RUFIN_PERF_TRACK_BIND_SLOW column={column} elapsed_us={elapsed_us}");
             }
         }
     }
 
-    fn record_tracks_row_contract(&self, contract: UiPerfTrackRowContract) {
+    pub(in crate::ui) fn record_tracks_row_contract(&self, contract: UiPerfTrackRowContract) {
         let failed = contract.pending > 0 || contract.missing > 0;
         {
             let mut inner = self.inner.borrow_mut();
-            inner.tracks_row_contract_samples =
-                inner.tracks_row_contract_samples.saturating_add(1);
+            inner.tracks_row_contract_samples = inner.tracks_row_contract_samples.saturating_add(1);
             if failed {
                 inner.tracks_row_contract_failures =
                     inner.tracks_row_contract_failures.saturating_add(1);
@@ -383,11 +388,11 @@ impl UiPerfMonitor {
         }
     }
 
-    fn pending_assets(&self) -> usize {
+    pub(in crate::ui) fn pending_assets(&self) -> usize {
         self.inner.borrow().cover_pending.len()
     }
 
-    fn failed(&self) -> bool {
+    pub(in crate::ui) fn failed(&self) -> bool {
         let inner = self.inner.borrow();
         let route_render_budget_ms = self
             .options
@@ -412,7 +417,7 @@ impl UiPerfMonitor {
             || inner.tracks_row_contract_failures > 0
     }
 
-    fn scroll_sample_failed(&self, sample: &UiPerfRouteScroll) -> bool {
+    pub(in crate::ui) fn scroll_sample_failed(&self, sample: &UiPerfRouteScroll) -> bool {
         let meaningful_scroll = self.options.max_gap_ms.saturating_mul(2) as f64;
         if sample.max_adjustment < meaningful_scroll {
             return false;
@@ -421,7 +426,7 @@ impl UiPerfMonitor {
         sample.max_gap_ms > severe_gap_ms || sample.over_budget_ticks > 1
     }
 
-    fn report(&self) -> String {
+    pub(in crate::ui) fn report(&self) -> String {
         let status = if self.failed() { "FAIL" } else { "PASS" };
         let inner = self.inner.borrow();
         let mut report = String::new();
@@ -482,7 +487,12 @@ impl UiPerfMonitor {
             "RUFIN_ACCEPT_TRACKS_ROW_SUMMARY samples={} failures={}",
             inner.tracks_row_contract_samples, inner.tracks_row_contract_failures
         );
-        for sample in inner.track_row_contracts.iter().filter(|sample| sample.failed).take(30) {
+        for sample in inner
+            .track_row_contracts
+            .iter()
+            .filter(|sample| sample.failed)
+            .take(30)
+        {
             let _ = writeln!(
                 report,
                 "RUFIN_ACCEPT_TRACKS_ROW scenario={} visible_start={} visible_end={} ready={} coverless={} pending={} missing={} result=FAIL",
@@ -501,11 +511,7 @@ impl UiPerfMonitor {
             let _ = writeln!(
                 report,
                 "RUFIN_PERF_GAP phase={} route={} scenario={} elapsed_ms={} gap_ms={}",
-                sample.phase,
-                sample.route,
-                sample.scenario,
-                sample.elapsed_ms,
-                sample.gap_ms
+                sample.phase, sample.route, sample.scenario, sample.elapsed_ms, sample.gap_ms
             );
         }
         let mut bind_stats = inner.track_row_binds.iter().collect::<Vec<_>>();
@@ -519,12 +525,7 @@ impl UiPerfMonitor {
             let _ = writeln!(
                 report,
                 "RUFIN_PERF_TRACK_BIND column={} samples={} total_us={} avg_us={} max_us={} slow_samples={}",
-                column,
-                stats.samples,
-                stats.total_us,
-                avg_us,
-                stats.max_us,
-                stats.slow_samples
+                column, stats.samples, stats.total_us, avg_us, stats.max_us, stats.slow_samples
             );
         }
         let mut slow_assets = inner.cover_latencies.iter().collect::<Vec<_>>();
@@ -546,16 +547,16 @@ impl UiPerfMonitor {
         report
     }
 }
-fn duration_ms(duration: Duration) -> u64 {
+pub(in crate::ui) fn duration_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
-fn duration_us(duration: Duration) -> u64 {
+pub(in crate::ui) fn duration_us(duration: Duration) -> u64 {
     duration.as_micros().min(u128::from(u64::MAX)) as u64
 }
-fn optional_ms(value: Option<u64>) -> String {
+pub(in crate::ui) fn optional_ms(value: Option<u64>) -> String {
     value.map_or_else(|| "none".to_string(), |value| value.to_string())
 }
-fn default_ui_perf_output_path(prefix: &str) -> Option<PathBuf> {
+pub(in crate::ui) fn default_ui_perf_output_path(prefix: &str) -> Option<PathBuf> {
     let directory = PathBuf::from(".local").join("perf");
     if let Err(error) = std::fs::create_dir_all(&directory) {
         eprintln!(
@@ -566,7 +567,7 @@ fn default_ui_perf_output_path(prefix: &str) -> Option<PathBuf> {
     }
     Some(directory.join(format!("{prefix}-{}.log", std::process::id())))
 }
-fn library_has_image_refs(library: &LibrarySnapshot) -> bool {
+pub(in crate::ui) fn library_has_image_refs(library: &LibrarySnapshot) -> bool {
     library.albums.iter().any(|album| album.image_ref.is_some())
         || library
             .artists
@@ -583,22 +584,22 @@ fn library_has_image_refs(library: &LibrarySnapshot) -> bool {
             .any(|playlist| playlist.image_ref.is_some())
         || library.tracks.iter().any(|track| track.image_ref.is_some())
 }
-struct StartupCoverTarget {
+pub(in crate::ui) struct StartupCoverTarget {
     image_ref: ImageRef,
     fetch_size: u32,
     size: i32,
 }
-fn startup_cover_prime_jobs(shell: &Shell) -> Vec<StartupCoverWarmJob> {
+pub(in crate::ui) fn startup_cover_prime_jobs(shell: &Shell) -> Vec<StartupCoverWarmJob> {
     startup_cover_jobs_from_targets(
         shell,
         startup_cover_prime_targets(shell),
         Some(STARTUP_CACHED_COVER_PRIME_LIMIT),
     )
 }
-fn startup_cover_background_jobs(shell: &Shell) -> Vec<StartupCoverWarmJob> {
+pub(in crate::ui) fn startup_cover_background_jobs(shell: &Shell) -> Vec<StartupCoverWarmJob> {
     startup_cover_jobs_from_targets(shell, startup_cover_background_targets(shell), None)
 }
-fn startup_cover_jobs_from_targets(
+pub(in crate::ui) fn startup_cover_jobs_from_targets(
     shell: &Shell,
     targets: Vec<StartupCoverTarget>,
     limit: Option<usize>,
@@ -631,7 +632,7 @@ fn startup_cover_jobs_from_targets(
 
     jobs
 }
-fn startup_artist_cover_source(
+pub(in crate::ui) fn startup_artist_cover_source(
     shell: &Shell,
     album_artist: bool,
     fallback: &[Artist],
@@ -645,14 +646,14 @@ fn startup_artist_cover_source(
         }
     }
 }
-fn sidebar_route_visible(settings: &AppSettings, item: SidebarRouteItem) -> bool {
+pub(in crate::ui) fn sidebar_route_visible(settings: &AppSettings, item: SidebarRouteItem) -> bool {
     settings
         .sidebar
         .route_items
         .iter()
         .any(|entry| entry.item == item && entry.visible)
 }
-fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
+pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     let (
         settings,
         home_sections,
@@ -714,12 +715,7 @@ fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_tracks(&mut tracks, &track_settings, false);
     if let Some((fetch_size, size)) = startup_cover_sizes(&track_settings) {
         for track in &tracks {
-            push_startup_cover_target(
-                &mut targets,
-                track.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, track.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -727,12 +723,7 @@ fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_tracks(&mut favorites, &favorite_settings, false);
     if let Some((fetch_size, size)) = startup_cover_sizes(&favorite_settings) {
         for track in favorites.iter().take(TRACK_ROUTE_PAGE_SIZE) {
-            push_startup_cover_target(
-                &mut targets,
-                track.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, track.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -740,12 +731,7 @@ fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_albums(&mut albums, &album_settings);
     if let Some((fetch_size, size)) = startup_cover_sizes(&album_settings) {
         for album in &albums {
-            push_startup_cover_target(
-                &mut targets,
-                album.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, album.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -755,12 +741,7 @@ fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_artists(&mut startup_artists, &artist_settings);
     if let Some((fetch_size, size)) = startup_cover_sizes(&artist_settings) {
         for artist in startup_artists.iter().take(STARTUP_GRID_COVER_LIMIT) {
-            push_startup_cover_target(
-                &mut targets,
-                artist.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, artist.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -770,10 +751,7 @@ fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
             startup_artist_cover_source(shell, true, &album_artists, STARTUP_GRID_COVER_LIMIT);
         library::sort_artists(&mut startup_album_artists, &album_artist_settings);
         if let Some((fetch_size, size)) = startup_cover_sizes(&album_artist_settings) {
-            for artist in startup_album_artists
-                .iter()
-                .take(STARTUP_GRID_COVER_LIMIT)
-            {
+            for artist in startup_album_artists.iter().take(STARTUP_GRID_COVER_LIMIT) {
                 push_startup_cover_target(
                     &mut targets,
                     artist.image_ref.as_ref(),
@@ -788,16 +766,12 @@ fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_genres(&mut genres, &genre_settings);
     if let Some((fetch_size, size)) = startup_cover_sizes(&genre_settings) {
         for genre in genres.iter().take(STARTUP_GRID_COVER_LIMIT) {
-            for image_ref in genre_grid_cover_refs_from_snapshot(&shell.state.library.borrow(), genre)
+            for image_ref in
+                genre_grid_cover_refs_from_snapshot(&shell.state.library.borrow(), genre)
             {
                 push_startup_cover_target(&mut targets, Some(&image_ref), fetch_size, size);
             }
-            push_startup_cover_target(
-                &mut targets,
-                genre.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, genre.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -805,29 +779,19 @@ fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_playlists(&mut playlists, &playlist_settings);
     if let Some((fetch_size, size)) = startup_cover_sizes(&playlist_settings) {
         for playlist in playlists.iter().take(STARTUP_GRID_COVER_LIMIT) {
-            push_startup_cover_target(
-                &mut targets,
-                playlist.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, playlist.image_ref.as_ref(), fetch_size, size);
         }
     }
 
     if let Some((fetch_size, size)) = startup_cover_sizes(&track_settings) {
         for track in tracks.iter().skip(STARTUP_VISIBLE_TRACK_COVER_LIMIT) {
-            push_startup_cover_target(
-                &mut targets,
-                track.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, track.image_ref.as_ref(), fetch_size, size);
         }
     }
 
     targets
 }
-fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
+pub(in crate::ui) fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     let (
         settings,
         home_sections,
@@ -877,12 +841,7 @@ fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_tracks(&mut tracks, &track_settings, false);
     if let Some((fetch_size, size)) = startup_cover_sizes(&track_settings) {
         for track in tracks.iter().take(STARTUP_VISIBLE_TRACK_COVER_LIMIT) {
-            push_startup_cover_target(
-                &mut targets,
-                track.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, track.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -890,12 +849,7 @@ fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_tracks(&mut favorites, &favorite_settings, false);
     if let Some((fetch_size, size)) = startup_cover_sizes(&favorite_settings) {
         for track in &favorites {
-            push_startup_cover_target(
-                &mut targets,
-                track.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, track.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -903,12 +857,7 @@ fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_albums(&mut albums, &album_settings);
     if let Some((fetch_size, size)) = startup_cover_sizes(&album_settings) {
         for album in albums.iter().take(STARTUP_GRID_COVER_LIMIT) {
-            push_startup_cover_target(
-                &mut targets,
-                album.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, album.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -916,12 +865,7 @@ fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_artists(&mut artists, &artist_settings);
     if let Some((fetch_size, size)) = startup_cover_sizes(&artist_settings) {
         for artist in &artists {
-            push_startup_cover_target(
-                &mut targets,
-                artist.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, artist.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -948,12 +892,7 @@ fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
             for image_ref in genre_grid_cover_refs_from_snapshot(&library, genre) {
                 push_startup_cover_target(&mut targets, Some(&image_ref), fetch_size, size);
             }
-            push_startup_cover_target(
-                &mut targets,
-                genre.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, genre.image_ref.as_ref(), fetch_size, size);
         }
     }
 
@@ -961,18 +900,13 @@ fn startup_cover_background_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
     library::sort_playlists(&mut playlists, &playlist_settings);
     if let Some((fetch_size, size)) = startup_cover_sizes(&playlist_settings) {
         for playlist in &playlists {
-            push_startup_cover_target(
-                &mut targets,
-                playlist.image_ref.as_ref(),
-                fetch_size,
-                size,
-            );
+            push_startup_cover_target(&mut targets, playlist.image_ref.as_ref(), fetch_size, size);
         }
     }
 
     targets
 }
-fn startup_cover_sizes(settings: &LibraryListSettings) -> Option<(u32, i32)> {
+pub(in crate::ui) fn startup_cover_sizes(settings: &LibraryListSettings) -> Option<(u32, i32)> {
     match settings.layout {
         LibraryLayout::Grid | LibraryLayout::Detail => {
             Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32))
@@ -981,13 +915,13 @@ fn startup_cover_sizes(settings: &LibraryListSettings) -> Option<(u32, i32)> {
         LibraryLayout::Row => None,
     }
 }
-fn row_layout_uses_cover(settings: &LibraryListSettings) -> bool {
+pub(in crate::ui) fn row_layout_uses_cover(settings: &LibraryListSettings) -> bool {
     settings
         .row_fields
         .iter()
         .any(|field| matches!(field, LibraryField::Image | LibraryField::TitleMerged))
 }
-fn push_startup_cover_target(
+pub(in crate::ui) fn push_startup_cover_target(
     targets: &mut Vec<StartupCoverTarget>,
     image_ref: Option<&ImageRef>,
     fetch_size: u32,
@@ -1002,7 +936,7 @@ fn push_startup_cover_target(
         size,
     });
 }
-fn unique_cover_refs(image_refs: Vec<ImageRef>) -> Vec<ImageRef> {
+pub(in crate::ui) fn unique_cover_refs(image_refs: Vec<ImageRef>) -> Vec<ImageRef> {
     let mut unique = Vec::new();
     for image_ref in image_refs {
         if unique.len() >= 4 {
@@ -1014,7 +948,7 @@ fn unique_cover_refs(image_refs: Vec<ImageRef>) -> Vec<ImageRef> {
     }
     unique
 }
-fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
+pub(in crate::ui) fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
     let mut sizes = Vec::from([preferred_size]);
     if preferred_size <= THUMB_COVER_SIZE {
         sizes.extend([THUMB_COVER_SIZE, GRID_COVER_SIZE, DETAIL_COVER_SIZE]);
@@ -1027,10 +961,10 @@ fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
     sizes.retain(|size| seen.insert(*size));
     sizes
 }
-fn cover_decode_size(display_size: i32, fetch_size: u32) -> i32 {
+pub(in crate::ui) fn cover_decode_size(display_size: i32, fetch_size: u32) -> i32 {
     display_size.max(fetch_size as i32).max(1)
 }
-fn first_run_cover_prime_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
+pub(in crate::ui) fn first_run_cover_prime_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
     let mut refs = Vec::new();
     let mut seen = HashSet::new();
 
@@ -1079,7 +1013,10 @@ fn first_run_cover_prime_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
 
     refs
 }
-fn genre_grid_cover_refs_from_snapshot(library: &LibrarySnapshot, genre: &Genre) -> Vec<ImageRef> {
+pub(in crate::ui) fn genre_grid_cover_refs_from_snapshot(
+    library: &LibrarySnapshot,
+    genre: &Genre,
+) -> Vec<ImageRef> {
     let mut refs = Vec::new();
     for album in &library.albums {
         if album.genres.iter().any(|name| name == &genre.name) {
@@ -1110,7 +1047,7 @@ fn genre_grid_cover_refs_from_snapshot(library: &LibrarySnapshot, genre: &Genre)
     }
     refs
 }
-fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
+pub(in crate::ui) fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
     if refs.len() >= 4 {
         return;
     }
@@ -1121,7 +1058,7 @@ fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>)
         refs.push(image_ref.clone());
     }
 }
-fn push_first_run_cover_ref(
+pub(in crate::ui) fn push_first_run_cover_ref(
     refs: &mut Vec<ImageRef>,
     seen: &mut HashSet<(String, String)>,
     image_ref: Option<&ImageRef>,
@@ -1140,13 +1077,18 @@ fn push_first_run_cover_ref(
         refs.push(image_ref.clone());
     }
 }
-fn prefetched_explore_from_snapshot(snapshot: &LibrarySnapshot) -> Option<PrefetchedHomeSection> {
+pub(in crate::ui) fn prefetched_explore_from_snapshot(
+    snapshot: &LibrarySnapshot,
+) -> Option<PrefetchedHomeSection> {
     Some(PrefetchedHomeSection {
         server_id: snapshot.server.as_ref()?.id.clone(),
         section: snapshot.prefetched_explore.clone()?,
     })
 }
-fn upsert_snapshot_home_section(sections: &mut Vec<HomeSection>, section: HomeSection) {
+pub(in crate::ui) fn upsert_snapshot_home_section(
+    sections: &mut Vec<HomeSection>,
+    section: HomeSection,
+) {
     if let Some(existing) = sections
         .iter_mut()
         .find(|existing| existing.kind == section.kind)
@@ -1158,6 +1100,8 @@ fn upsert_snapshot_home_section(sections: &mut Vec<HomeSection>, section: HomeSe
         sections.push(section);
     }
 }
-fn reset_home_section_pages(states: &mut HashMap<HomeSectionKind, HomeSectionState>) {
+pub(in crate::ui) fn reset_home_section_pages(
+    states: &mut HashMap<HomeSectionKind, HomeSectionState>,
+) {
     states.clear();
 }

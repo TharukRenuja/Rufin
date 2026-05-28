@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn queue_responsive_route_render(self: &Rc<Self>) {
+    pub(in crate::ui) fn queue_responsive_route_render(self: &Rc<Self>) {
         if !self.state.startup_route_revealed.get() && !self.login_screen_active() {
             return;
         }
@@ -24,7 +26,7 @@ impl Shell {
             },
         );
     }
-    fn queue_post_layout_route_render(self: &Rc<Self>) {
+    pub(in crate::ui) fn queue_post_layout_route_render(self: &Rc<Self>) {
         if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
             return;
         }

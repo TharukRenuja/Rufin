@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     #[cfg(test)]
     pub fn forget_active_server(&self) {
@@ -217,7 +219,10 @@ impl AppController {
     }
 }
 
-fn delete_token_after_forget(secrets: Arc<dyn SecretStore>, server_id: ServerId) {
+pub(in crate::controller) fn delete_token_after_forget(
+    secrets: Arc<dyn SecretStore>,
+    server_id: ServerId,
+) {
     thread::spawn(move || {
         if let Err(error) = secrets.delete_token(&server_id) {
             warn!(%error, server_id = %server_id, "failed to delete forgotten server token");

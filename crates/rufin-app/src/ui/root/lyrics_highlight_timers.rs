@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn cancel_scheduled_lyrics_highlight(&self) {
+    pub(in crate::ui) fn cancel_scheduled_lyrics_highlight(&self) {
         self.state
             .lyrics_timing_generation
             .set(self.state.lyrics_timing_generation.get().saturating_add(1));
@@ -7,7 +9,7 @@ impl Shell {
             source.remove();
         }
     }
-    fn schedule_next_lyrics_highlight(self: &Rc<Self>, position_millis: u64) {
+    pub(in crate::ui) fn schedule_next_lyrics_highlight(self: &Rc<Self>, position_millis: u64) {
         let playing = matches!(self.state.player.borrow().state, PlaybackState::Playing);
         if !playing {
             return;

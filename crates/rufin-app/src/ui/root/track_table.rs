@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn compact_artist_tracks_table(
+    pub(in crate::ui) fn compact_artist_tracks_table(
         self: &Rc<Self>,
         tracks: Vec<Track>,
         context: &str,
@@ -15,7 +17,7 @@ impl Shell {
             },
         )
     }
-    fn tracks_table_with_options(
+    pub(in crate::ui) fn tracks_table_with_options(
         self: &Rc<Self>,
         tracks: Vec<Track>,
         context: &str,

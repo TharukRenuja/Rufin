@@ -1,7 +1,3 @@
-include!("root/types.rs");
-include!("root/provider_impl.rs");
+mod root;
 
-#[cfg(test)]
-mod tests {
-    include!("root/tests.rs");
-}
+pub use root::*;

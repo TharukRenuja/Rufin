@@ -1,12 +1,20 @@
+use super::*;
+
 impl AppController {
-    fn send_playback_command(&self, command: PlaybackCommand) -> Result<(), String> {
+    pub(in crate::controller) fn send_playback_command(
+        &self,
+        command: PlaybackCommand,
+    ) -> Result<(), String> {
         self.playback
             .lock()
             .map_err(|_| "playback lock was poisoned".to_string())?
             .send(command)
             .map_err(|error| error.to_string())
     }
-    fn persist_playback_settings(&self, update: impl FnOnce(&mut PlaybackSettings)) {
+    pub(in crate::controller) fn persist_playback_settings(
+        &self,
+        update: impl FnOnce(&mut PlaybackSettings),
+    ) {
         let mut settings = self.load_settings();
         update(&mut settings.playback);
         settings.playback.sanitize();
@@ -14,7 +22,7 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
         }
     }
-    fn start_current_track(&self) {
+    pub(in crate::controller) fn start_current_track(&self) {
         let Some((server_id, entry, next_entry, position_seconds, playback_settings)) =
             self.current_playback_request()
         else {
@@ -89,7 +97,7 @@ impl AppController {
             }
         });
     }
-    fn current_queue_entry(&self) -> Option<(ServerId, QueueEntry, u32)> {
+    pub(in crate::controller) fn current_queue_entry(&self) -> Option<(ServerId, QueueEntry, u32)> {
         self.queue.lock().ok().and_then(|queue| {
             let queue = queue.as_ref()?;
             let snapshot = queue.snapshot();
@@ -97,7 +105,7 @@ impl AppController {
             Some((snapshot.server_id, entry, snapshot.progress_seconds))
         })
     }
-    fn current_playback_request(
+    pub(in crate::controller) fn current_playback_request(
         &self,
     ) -> Option<(
         ServerId,
@@ -121,7 +129,7 @@ impl AppController {
             ))
         })
     }
-    fn prepare_next_stream(&self) {
+    pub(in crate::controller) fn prepare_next_stream(&self) {
         prepare_next_stream_from_handles(
             self.store.clone(),
             Arc::clone(&self.runtime),

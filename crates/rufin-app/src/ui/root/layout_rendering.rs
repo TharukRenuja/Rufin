@@ -1,5 +1,7 @@
+use super::*;
+
 impl PlaylistEntrySort {
-    fn title(self) -> &'static str {
+    pub(in crate::ui) fn title(self) -> &'static str {
         match self {
             Self::Order => "Playlist order",
             Self::Title => "Title",
@@ -9,7 +11,7 @@ impl PlaylistEntrySort {
         }
     }
 }
-const PLAYLIST_ENTRY_SORTS: [PlaylistEntrySort; 5] = [
+pub(in crate::ui) const PLAYLIST_ENTRY_SORTS: [PlaylistEntrySort; 5] = [
     PlaylistEntrySort::Order,
     PlaylistEntrySort::Title,
     PlaylistEntrySort::Artist,
@@ -17,10 +19,10 @@ const PLAYLIST_ENTRY_SORTS: [PlaylistEntrySort; 5] = [
     PlaylistEntrySort::Duration,
 ];
 #[derive(Clone, Debug)]
-struct PlaylistEntryListState {
-    query: String,
-    sort: PlaylistEntrySort,
-    descending: bool,
+pub(in crate::ui) struct PlaylistEntryListState {
+    pub(in crate::ui) query: String,
+    pub(in crate::ui) sort: PlaylistEntrySort,
+    pub(in crate::ui) descending: bool,
 }
 impl Default for PlaylistEntryListState {
     fn default() -> Self {
@@ -31,7 +33,7 @@ impl Default for PlaylistEntryListState {
         }
     }
 }
-fn rebuild_playlist_entries_list(
+pub(in crate::ui) fn rebuild_playlist_entries_list(
     shell: &Rc<Shell>,
     list: &gtk::ListBox,
     entries: &Rc<Vec<PlaylistEntry>>,
@@ -63,7 +65,7 @@ fn rebuild_playlist_entries_list(
         ));
     }
 }
-fn playlist_entries_for_state(
+pub(in crate::ui) fn playlist_entries_for_state(
     entries: &[PlaylistEntry],
     state: &PlaylistEntryListState,
 ) -> Vec<(usize, PlaylistEntry)> {
@@ -85,12 +87,12 @@ fn playlist_entries_for_state(
     });
     rows
 }
-fn playlist_entry_matches_query(entry: &PlaylistEntry, query: &str) -> bool {
+pub(in crate::ui) fn playlist_entry_matches_query(entry: &PlaylistEntry, query: &str) -> bool {
     entry.track.title.to_lowercase().contains(query)
         || entry.track.artist.to_lowercase().contains(query)
         || entry.track.album.to_lowercase().contains(query)
 }
-fn compare_playlist_entry(
+pub(in crate::ui) fn compare_playlist_entry(
     left: &(usize, PlaylistEntry),
     right: &(usize, PlaylistEntry),
     sort: PlaylistEntrySort,
@@ -108,10 +110,10 @@ fn compare_playlist_entry(
     }
     .then_with(|| left.0.cmp(&right.0))
 }
-fn cmp_text(left: &str, right: &str) -> std::cmp::Ordering {
+pub(in crate::ui) fn cmp_text(left: &str, right: &str) -> std::cmp::Ordering {
     left.to_lowercase().cmp(&right.to_lowercase())
 }
-fn playlist_entries_header_row() -> gtk::Widget {
+pub(in crate::ui) fn playlist_entries_header_row() -> gtk::Widget {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
     row.add_css_class("playlist-entry-header");
     row.set_hexpand(true);
@@ -132,7 +134,12 @@ fn playlist_entries_header_row() -> gtk::Widget {
     row.append(&fixed_spacer(PLAYLIST_ENTRY_REMOVE_WIDTH));
     row.upcast()
 }
-fn playlist_header_label(text: &str, width: i32, expand: bool, xalign: f32) -> gtk::Label {
+pub(in crate::ui) fn playlist_header_label(
+    text: &str,
+    width: i32,
+    expand: bool,
+    xalign: f32,
+) -> gtk::Label {
     let label = gtk::Label::new(Some(&tr(text)));
     label.add_css_class("muted");
     label.set_xalign(xalign);
@@ -145,7 +152,7 @@ fn playlist_header_label(text: &str, width: i32, expand: bool, xalign: f32) -> g
     }
     label
 }
-fn playlist_duration_header_icon() -> gtk::Image {
+pub(in crate::ui) fn playlist_duration_header_icon() -> gtk::Image {
     let image = gtk::Image::from_icon_name("appointment-soon-symbolic");
     let label = tr("Duration");
     image.add_css_class("muted");
@@ -155,7 +162,7 @@ fn playlist_duration_header_icon() -> gtk::Image {
     image.update_property(&[gtk::accessible::Property::Label(&label)]);
     image
 }
-fn playlist_header_text_label(text: &str, max_width_chars: i32) -> gtk::Label {
+pub(in crate::ui) fn playlist_header_text_label(text: &str, max_width_chars: i32) -> gtk::Label {
     let label = gtk::Label::new(Some(&tr(text)));
     label.add_css_class("muted");
     label.set_xalign(0.0);
@@ -166,12 +173,12 @@ fn playlist_header_text_label(text: &str, max_width_chars: i32) -> gtk::Label {
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label
 }
-fn playlist_header_album_label(text: &str, max_width_chars: i32) -> gtk::Label {
+pub(in crate::ui) fn playlist_header_album_label(text: &str, max_width_chars: i32) -> gtk::Label {
     let label = playlist_header_text_label(text, max_width_chars);
     label.set_xalign(0.5);
     label
 }
-fn playlist_text_columns(title: gtk::Widget, album: gtk::Widget) -> gtk::Widget {
+pub(in crate::ui) fn playlist_text_columns(title: gtk::Widget, album: gtk::Widget) -> gtk::Widget {
     let columns = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_TEXT_COLUMN_GAP);
     columns.set_homogeneous(false);
     columns.set_hexpand(true);
@@ -190,7 +197,7 @@ fn playlist_text_columns(title: gtk::Widget, album: gtk::Widget) -> gtk::Widget 
 
     columns.upcast()
 }
-fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget) -> gtk::Widget {
+pub(in crate::ui) fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget) -> gtk::Widget {
     let title = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
     title.set_hexpand(true);
     title.set_halign(gtk::Align::Fill);
@@ -199,7 +206,7 @@ fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget) -> gtk::Widget {
     title.append(&labels);
     title.upcast()
 }
-fn playlist_entry_row(
+pub(in crate::ui) fn playlist_entry_row(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: &PlaylistId,
@@ -329,7 +336,7 @@ fn playlist_entry_row(
 
     row.upcast()
 }
-fn playlist_drop_index(
+pub(in crate::ui) fn playlist_drop_index(
     entries: &[PlaylistEntry],
     dragged_entry_id: &str,
     target_index: usize,
@@ -348,7 +355,11 @@ fn playlist_drop_index(
     }
     (source_index != new_index).then_some(new_index)
 }
-fn playlist_entry_text_label(text: &str, css_class: &str, max_width_chars: i32) -> gtk::Label {
+pub(in crate::ui) fn playlist_entry_text_label(
+    text: &str,
+    css_class: &str,
+    max_width_chars: i32,
+) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     if !css_class.is_empty() {
         label.add_css_class(css_class);
@@ -361,12 +372,12 @@ fn playlist_entry_text_label(text: &str, css_class: &str, max_width_chars: i32) 
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label
 }
-fn fixed_spacer(width: i32) -> gtk::Widget {
+pub(in crate::ui) fn fixed_spacer(width: i32) -> gtk::Widget {
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_width_request(width);
     spacer.upcast()
 }
-fn confirm_remove_playlist_entry(
+pub(in crate::ui) fn confirm_remove_playlist_entry(
     shell: &Rc<Shell>,
     playlist_id: PlaylistId,
     entry_id: String,
@@ -387,20 +398,20 @@ fn confirm_remove_playlist_entry(
     });
     dialog.present(Some(&shell.window));
 }
-fn seekbar_target_seconds(value: f64, duration_seconds: u32) -> u32 {
+pub(in crate::ui) fn seekbar_target_seconds(value: f64, duration_seconds: u32) -> u32 {
     if !value.is_finite() {
         return 0;
     }
     value.round().clamp(0.0, f64::from(duration_seconds)) as u32
 }
-fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
+pub(in crate::ui) fn set_active_class(widget: &impl IsA<gtk::Widget>, active: bool) {
     if active {
         widget.add_css_class("active-toggle");
     } else {
         widget.remove_css_class("active-toggle");
     }
 }
-fn favorite_icon_button(label: &str) -> gtk::Button {
+pub(in crate::ui) fn favorite_icon_button(label: &str) -> gtk::Button {
     let button = gtk::Button::with_label(FAVORITE_EMPTY_GLYPH);
     button.add_css_class("icon-button");
     button.add_css_class("flat");
@@ -409,7 +420,7 @@ fn favorite_icon_button(label: &str) -> gtk::Button {
     button.set_tooltip_text(Some(&tr(label)));
     button
 }
-fn set_favorite_button_active(button: &gtk::Button, active: bool) {
+pub(in crate::ui) fn set_favorite_button_active(button: &gtk::Button, active: bool) {
     set_active_class(button, active);
     button.set_label(if active {
         FAVORITE_FILLED_GLYPH
@@ -417,10 +428,10 @@ fn set_favorite_button_active(button: &gtk::Button, active: bool) {
         FAVORITE_EMPTY_GLYPH
     });
 }
-fn favorite_button_is_active(button: &gtk::Button) -> bool {
+pub(in crate::ui) fn favorite_button_is_active(button: &gtk::Button) -> bool {
     button.label().as_deref() == Some(FAVORITE_FILLED_GLYPH)
 }
-fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
+pub(in crate::ui) fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::from_icon_name(icon_name);
     button.add_css_class("icon-button");
     button.add_css_class("flat");
@@ -428,7 +439,10 @@ fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
     button.set_tooltip_text(Some(&tr(label)));
     button
 }
-fn icon_button_with_image(icon_name: &str, label: &str) -> (gtk::Button, gtk::Image) {
+pub(in crate::ui) fn icon_button_with_image(
+    icon_name: &str,
+    label: &str,
+) -> (gtk::Button, gtk::Image) {
     let button = gtk::Button::new();
     button.add_css_class("icon-button");
     button.add_css_class("flat");
@@ -438,7 +452,7 @@ fn icon_button_with_image(icon_name: &str, label: &str) -> (gtk::Button, gtk::Im
     button.set_child(Some(&image));
     (button, image)
 }
-fn text_button(icon_name: &str, label: &str) -> gtk::Button {
+pub(in crate::ui) fn text_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("pill-button");
     button.add_css_class("pill");
@@ -448,7 +462,7 @@ fn text_button(icon_name: &str, label: &str) -> gtk::Button {
     button.set_child(Some(&content));
     button
 }
-fn install_css() {
+pub(in crate::ui) fn install_css() {
     let Some(display) = gtk::gdk::Display::default() else {
         return;
     };

@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn cover_tile_for(
+    pub(in crate::ui) fn cover_tile_for(
         self: &Rc<Self>,
         image_ref: Option<&ImageRef>,
         seed: u32,
@@ -8,7 +10,7 @@ impl Shell {
     ) -> gtk::Widget {
         self.cover_tile_for_dimensions(image_ref, seed, size, size, fetch_size)
     }
-    fn cover_tile_for_dimensions(
+    pub(in crate::ui) fn cover_tile_for_dimensions(
         self: &Rc<Self>,
         image_ref: Option<&ImageRef>,
         seed: u32,
@@ -22,7 +24,7 @@ impl Shell {
         widget
     }
 
-    fn bind_cover_tile_for(
+    pub(in crate::ui) fn bind_cover_tile_for(
         self: &Rc<Self>,
         tile: &ArtworkTile,
         image_ref: Option<&ImageRef>,
@@ -33,7 +35,7 @@ impl Shell {
         self.bind_cover_tile_for_dimensions(tile, image_ref, seed, size, size, fetch_size);
     }
 
-    fn bind_cover_tile_for_dimensions(
+    pub(in crate::ui) fn bind_cover_tile_for_dimensions(
         self: &Rc<Self>,
         tile: &ArtworkTile,
         image_ref: Option<&ImageRef>,
@@ -100,7 +102,7 @@ impl Shell {
             self.record_perf_coverless_tile();
         }
     }
-    fn prime_cover_ref_from_cache_now(
+    pub(in crate::ui) fn prime_cover_ref_from_cache_now(
         &self,
         image_ref: Option<&ImageRef>,
         fetch_size: u32,
@@ -135,7 +137,7 @@ impl Shell {
             }
         }
     }
-    fn cover_group_tile_for(
+    pub(in crate::ui) fn cover_group_tile_for(
         self: &Rc<Self>,
         image_refs: Vec<ImageRef>,
         fallback_image_ref: Option<&ImageRef>,
@@ -201,7 +203,7 @@ impl Shell {
             }
         }
     }
-    fn request_cover_for_tile(
+    pub(in crate::ui) fn request_cover_for_tile(
         self: &Rc<Self>,
         tile: &ArtworkTile,
         key: String,

@@ -1,7 +1,3 @@
-use std::collections::{HashMap, HashSet};
-use std::fmt;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
@@ -18,7 +14,21 @@ use rufin_provider::{
 };
 use serde::Deserialize;
 use serde::de::{self, DeserializeOwned, Visitor};
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::instrument;
+
+mod client;
+mod provider_impl;
+
+use client::*;
+use provider_impl::*;
+
+#[cfg(test)]
+mod tests;
+
 const CLIENT_NAME: &str = "Rufin";
 const API_VERSION: &str = "1.16.1";
 const SALT_BYTES: usize = 12;

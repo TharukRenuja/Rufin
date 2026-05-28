@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn new_playlist_dialog(self: &Rc<Self>) {
+    pub(in crate::ui) fn new_playlist_dialog(self: &Rc<Self>) {
         let dialog = adw::AlertDialog::builder()
             .heading(tr("New Playlist"))
             .body(tr(

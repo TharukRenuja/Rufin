@@ -1,4 +1,6 @@
-fn resolve_stream(
+use super::*;
+
+pub(in crate::controller) fn resolve_stream(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -48,7 +50,7 @@ fn resolve_stream(
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct LrcLibLyricsDto {
+pub(in crate::controller) struct LrcLibLyricsDto {
     id: u64,
     #[serde(default, alias = "name")]
     track_name: String,
@@ -76,7 +78,10 @@ impl From<LrcLibLyricsDto> for LyricsSearchResult {
         }
     }
 }
-fn lrclib_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearchResult>, String> {
+pub(in crate::controller) fn lrclib_search(
+    artist_name: &str,
+    track_name: &str,
+) -> Result<Vec<LyricsSearchResult>, String> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
         .build()
@@ -104,7 +109,10 @@ fn lrclib_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearch
     order_lrclib_results(&mut results, artist_name, track_name);
     Ok(results)
 }
-fn lrclib_search_urls(artist_name: &str, track_name: &str) -> Result<Vec<reqwest::Url>, String> {
+pub(in crate::controller) fn lrclib_search_urls(
+    artist_name: &str,
+    track_name: &str,
+) -> Result<Vec<reqwest::Url>, String> {
     let artist_name = artist_name.trim();
     let track_name = track_name.trim();
     let mut urls = Vec::new();
@@ -131,10 +139,10 @@ fn lrclib_search_urls(artist_name: &str, track_name: &str) -> Result<Vec<reqwest
     }
     Ok(urls)
 }
-fn lrclib_search_base_url() -> Result<reqwest::Url, String> {
+pub(in crate::controller) fn lrclib_search_base_url() -> Result<reqwest::Url, String> {
     reqwest::Url::parse("https://lrclib.net/api/search").map_err(|error| error.to_string())
 }
-fn lrclib_fetch_search(
+pub(in crate::controller) fn lrclib_fetch_search(
     client: &reqwest::blocking::Client,
     url: reqwest::Url,
 ) -> Result<Vec<LyricsSearchResult>, String> {
@@ -147,7 +155,9 @@ fn lrclib_fetch_search(
         .map_err(|error| format!("Lyric search failed: {error}"))?;
     parse_lrclib_search_body(&body)
 }
-fn parse_lrclib_search_body(body: &str) -> Result<Vec<LyricsSearchResult>, String> {
+pub(in crate::controller) fn parse_lrclib_search_body(
+    body: &str,
+) -> Result<Vec<LyricsSearchResult>, String> {
     let values = serde_json::from_str::<Vec<serde_json::Value>>(body)
         .map_err(|error| format!("Lyric search returned invalid data: {error}"))?;
     let mut results = Vec::new();
@@ -166,7 +176,11 @@ fn parse_lrclib_search_body(body: &str) -> Result<Vec<LyricsSearchResult>, Strin
     }
     Ok(results)
 }
-fn order_lrclib_results(results: &mut [LyricsSearchResult], artist_name: &str, track_name: &str) {
+pub(in crate::controller) fn order_lrclib_results(
+    results: &mut [LyricsSearchResult],
+    artist_name: &str,
+    track_name: &str,
+) {
     results.sort_by(|a, b| {
         lrclib_match_score(a, artist_name, track_name)
             .cmp(&lrclib_match_score(b, artist_name, track_name))
@@ -176,11 +190,15 @@ fn order_lrclib_results(results: &mut [LyricsSearchResult], artist_name: &str, t
             .then_with(|| a.artist_name.cmp(&b.artist_name))
     });
 }
-fn lrclib_match_score(result: &LyricsSearchResult, artist_name: &str, track_name: &str) -> u16 {
+pub(in crate::controller) fn lrclib_match_score(
+    result: &LyricsSearchResult,
+    artist_name: &str,
+    track_name: &str,
+) -> u16 {
     text_match_score(track_name, &result.track_name).saturating_mul(2)
         + text_match_score(artist_name, &result.artist_name)
 }
-fn text_match_score(query: &str, candidate: &str) -> u16 {
+pub(in crate::controller) fn text_match_score(query: &str, candidate: &str) -> u16 {
     let query = normalize_search_text(query);
     if query.is_empty() {
         return 0;
@@ -205,7 +223,7 @@ fn text_match_score(query: &str, candidate: &str) -> u16 {
     }
     (missing as u16 * 30) + (extra.min(6) as u16 * 4)
 }
-fn normalize_search_text(value: &str) -> String {
+pub(in crate::controller) fn normalize_search_text(value: &str) -> String {
     let mut normalized = String::new();
     for character in value.chars() {
         if character.is_alphanumeric() {
@@ -216,19 +234,19 @@ fn normalize_search_text(value: &str) -> String {
     }
     normalized.split_whitespace().collect::<Vec<_>>().join(" ")
 }
-fn lrclib_has_synced_lyrics(result: &LyricsSearchResult) -> bool {
+pub(in crate::controller) fn lrclib_has_synced_lyrics(result: &LyricsSearchResult) -> bool {
     result
         .synced_lyrics
         .as_deref()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
-fn lrclib_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
+pub(in crate::controller) fn lrclib_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
     result
         .plain_lyrics
         .as_deref()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
-fn save_lrclib_result(
+pub(in crate::controller) fn save_lrclib_result(
     server_id: &ServerId,
     entry: &QueueEntry,
     result: &LyricsSearchResult,
@@ -242,7 +260,7 @@ fn save_lrclib_result(
     debug!(server_id = %server_id, path = %path.display(), "saved lyric file");
     Ok((path, lyrics))
 }
-fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
+pub(in crate::controller) fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
     result
         .synced_lyrics
         .as_deref()
@@ -254,7 +272,7 @@ fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
                 .filter(|lyrics| !lyrics.trim().is_empty())
         })
 }
-fn local_sidecar_lyrics(
+pub(in crate::controller) fn local_sidecar_lyrics(
     store: &StoreHandle,
     server_id: &ServerId,
     track_id: &TrackId,
@@ -272,7 +290,7 @@ fn local_sidecar_lyrics(
         lines,
     })
 }
-fn local_audio_path_for_track(
+pub(in crate::controller) fn local_audio_path_for_track(
     store: &StoreHandle,
     server_id: &ServerId,
     track_id: &TrackId,
@@ -317,7 +335,10 @@ fn local_audio_path_for_track(
     let mapped = map_server_path_to_local(&raw, &access)?;
     mapped.is_file().then_some(mapped)
 }
-fn map_server_path_to_local(raw: &str, access: &ServerLocalAccess) -> Option<PathBuf> {
+pub(in crate::controller) fn map_server_path_to_local(
+    raw: &str,
+    access: &ServerLocalAccess,
+) -> Option<PathBuf> {
     let replace_to = access
         .path_replace_to
         .as_deref()
@@ -339,7 +360,7 @@ fn map_server_path_to_local(raw: &str, access: &ServerLocalAccess) -> Option<Pat
     }
     None
 }
-fn path_from_server_suffix(suffix: &str) -> PathBuf {
+pub(in crate::controller) fn path_from_server_suffix(suffix: &str) -> PathBuf {
     suffix
         .split(['/', '\\'])
         .filter(|part| !part.is_empty())

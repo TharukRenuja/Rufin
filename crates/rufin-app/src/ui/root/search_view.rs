@@ -1,5 +1,11 @@
+use super::*;
+
 impl Shell {
-    fn search_view(self: &Rc<Self>, _query: &str, library: LibrarySnapshot) -> gtk::Widget {
+    pub(in crate::ui) fn search_view(
+        self: &Rc<Self>,
+        _query: &str,
+        library: LibrarySnapshot,
+    ) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);

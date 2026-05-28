@@ -1,4 +1,6 @@
-fn ui_perf_next_scroll_value(
+use super::*;
+
+pub(in crate::ui) fn ui_perf_next_scroll_value(
     scenario: UiPerfScenario,
     adjustment: &gtk::Adjustment,
     max_value: f64,
@@ -35,7 +37,12 @@ fn ui_perf_next_scroll_value(
         }
     }
 }
-fn bounce_scroll_value(current: f64, step: f64, max_value: f64, direction: &Cell<f64>) -> f64 {
+pub(in crate::ui) fn bounce_scroll_value(
+    current: f64,
+    step: f64,
+    max_value: f64,
+    direction: &Cell<f64>,
+) -> f64 {
     let mut next = current + direction.get() * step;
     if next >= max_value {
         next = max_value;
@@ -46,12 +53,14 @@ fn bounce_scroll_value(current: f64, step: f64, max_value: f64, direction: &Cell
     }
     next
 }
-fn find_largest_scrolled_window(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+pub(in crate::ui) fn find_largest_scrolled_window(
+    widget: &gtk::Widget,
+) -> Option<gtk::ScrolledWindow> {
     let mut best = None;
     collect_largest_scrolled_window(widget, &mut best);
     best.map(|(scroller, _)| scroller)
 }
-fn restore_scrolled_window_value(widget: &gtk::Widget, value: f64) {
+pub(in crate::ui) fn restore_scrolled_window_value(widget: &gtk::Widget, value: f64) {
     let Some(scroller) = find_largest_scrolled_window(widget) else {
         return;
     };
@@ -59,7 +68,7 @@ fn restore_scrolled_window_value(widget: &gtk::Widget, value: f64) {
     let max_value = (adjustment.upper() - adjustment.page_size()).max(0.0);
     adjustment.set_value(value.clamp(0.0, max_value));
 }
-fn collect_largest_scrolled_window(
+pub(in crate::ui) fn collect_largest_scrolled_window(
     widget: &gtk::Widget,
     best: &mut Option<(gtk::ScrolledWindow, f64)>,
 ) {
@@ -80,37 +89,55 @@ fn collect_largest_scrolled_window(
         child = widget.next_sibling();
     }
 }
-fn replace_albums_in_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
+pub(in crate::ui) fn replace_albums_in_model(
+    model: &gio::ListStore,
+    albums: impl IntoIterator<Item = Album>,
+) {
     let additions = albums
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-fn append_albums_to_model(model: &gio::ListStore, albums: impl IntoIterator<Item = Album>) {
+pub(in crate::ui) fn append_albums_to_model(
+    model: &gio::ListStore,
+    albums: impl IntoIterator<Item = Album>,
+) {
     append_boxed_items_to_model(model, albums);
 }
-fn replace_artists_in_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
+pub(in crate::ui) fn replace_artists_in_model(
+    model: &gio::ListStore,
+    artists: impl IntoIterator<Item = Artist>,
+) {
     let additions = artists
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-fn append_artists_to_model(model: &gio::ListStore, artists: impl IntoIterator<Item = Artist>) {
+pub(in crate::ui) fn append_artists_to_model(
+    model: &gio::ListStore,
+    artists: impl IntoIterator<Item = Artist>,
+) {
     append_boxed_items_to_model(model, artists);
 }
-fn replace_genres_in_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
+pub(in crate::ui) fn replace_genres_in_model(
+    model: &gio::ListStore,
+    genres: impl IntoIterator<Item = Genre>,
+) {
     let additions = genres
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-fn append_genres_to_model(model: &gio::ListStore, genres: impl IntoIterator<Item = Genre>) {
+pub(in crate::ui) fn append_genres_to_model(
+    model: &gio::ListStore,
+    genres: impl IntoIterator<Item = Genre>,
+) {
     append_boxed_items_to_model(model, genres);
 }
-fn replace_playlists_in_model(
+pub(in crate::ui) fn replace_playlists_in_model(
     model: &gio::ListStore,
     playlists: impl IntoIterator<Item = Playlist>,
 ) {
@@ -120,13 +147,16 @@ fn replace_playlists_in_model(
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-fn append_playlists_to_model(
+pub(in crate::ui) fn append_playlists_to_model(
     model: &gio::ListStore,
     playlists: impl IntoIterator<Item = Playlist>,
 ) {
     append_boxed_items_to_model(model, playlists);
 }
-fn set_track_sort_button_content(button: &gtk::Button, settings: &TrackTableSettings) {
+pub(in crate::ui) fn set_track_sort_button_content(
+    button: &gtk::Button,
+    settings: &TrackTableSettings,
+) {
     let sort_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     sort_content.append(&gtk::Label::new(Some(&tr(settings.sort_key.title()))));
     sort_content.append(&gtk::Image::from_icon_name(if settings.descending {
@@ -136,7 +166,7 @@ fn set_track_sort_button_content(button: &gtk::Button, settings: &TrackTableSett
     }));
     button.set_child(Some(&sort_content));
 }
-fn set_track_table_columns(
+pub(in crate::ui) fn set_track_table_columns(
     shell: &Rc<Shell>,
     table: &gtk::ColumnView,
     settings: &TrackTableSettings,
@@ -156,7 +186,10 @@ fn set_track_table_columns(
         table.append_column(&track_table_column(shell, *column));
     }
 }
-fn track_table_column(shell: &Rc<Shell>, column: TrackTableColumn) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn track_table_column(
+    shell: &Rc<Shell>,
+    column: TrackTableColumn,
+) -> gtk::ColumnViewColumn {
     match column {
         TrackTableColumn::TrackNumber => track_row_index_column(),
         TrackTableColumn::Title => track_identity_column(shell),
@@ -176,7 +209,7 @@ fn track_table_column(shell: &Rc<Shell>, column: TrackTableColumn) -> gtk::Colum
         TrackTableColumn::Favorite => track_favorite_column(shell),
     }
 }
-fn populate_track_model_with_options(
+pub(in crate::ui) fn populate_track_model_with_options(
     model: &gio::ListStore,
     tracks: &[Track],
     settings: &TrackTableSettings,
@@ -196,10 +229,13 @@ fn populate_track_model_with_options(
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-fn append_tracks_to_model(model: &gio::ListStore, tracks: impl IntoIterator<Item = Track>) {
+pub(in crate::ui) fn append_tracks_to_model(
+    model: &gio::ListStore,
+    tracks: impl IntoIterator<Item = Track>,
+) {
     append_boxed_items_to_model(model, tracks);
 }
-fn append_boxed_items_to_model<T: 'static>(
+pub(in crate::ui) fn append_boxed_items_to_model<T: 'static>(
     model: &gio::ListStore,
     items: impl IntoIterator<Item = T>,
 ) {
@@ -211,13 +247,13 @@ fn append_boxed_items_to_model<T: 'static>(
         model.splice(model.n_items(), 0, &additions);
     }
 }
-fn track_matches_query(track: &Track, query: &str) -> bool {
+pub(in crate::ui) fn track_matches_query(track: &Track, query: &str) -> bool {
     track.title.to_lowercase().contains(query)
         || track.artist.to_lowercase().contains(query)
         || track.album.to_lowercase().contains(query)
         || track.year.to_string().contains(query)
 }
-fn sort_tracks_with_options(
+pub(in crate::ui) fn sort_tracks_with_options(
     tracks: &mut [Track],
     settings: &TrackTableSettings,
     favorite_first: bool,
@@ -260,25 +296,25 @@ fn sort_tracks_with_options(
         }
     });
 }
-fn track_sort_index(sort_key: TrackSortKey) -> u32 {
+pub(in crate::ui) fn track_sort_index(sort_key: TrackSortKey) -> u32 {
     TrackSortKey::all()
         .iter()
         .position(|candidate| *candidate == sort_key)
         .unwrap_or(0) as u32
 }
-fn track_sort_from_index(index: u32) -> TrackSortKey {
+pub(in crate::ui) fn track_sort_from_index(index: u32) -> TrackSortKey {
     TrackSortKey::all()
         .get(index as usize)
         .copied()
         .unwrap_or(TrackSortKey::TrackNumber)
 }
-fn track_table_column_config_title(column: TrackTableColumn) -> &'static str {
+pub(in crate::ui) fn track_table_column_config_title(column: TrackTableColumn) -> &'static str {
     match column {
         TrackTableColumn::Title => "Title (merged)",
         _ => column.title(),
     }
 }
-fn sync_track_column_checks(
+pub(in crate::ui) fn sync_track_column_checks(
     checks: &Rc<RefCell<Vec<(TrackTableColumn, gtk::CheckButton)>>>,
     settings: &TrackTableSettings,
     syncing: &Cell<bool>,
@@ -289,7 +325,7 @@ fn sync_track_column_checks(
     }
     syncing.set(false);
 }
-fn route_uses_responsive_cards(route: &Route) -> bool {
+pub(in crate::ui) fn route_uses_responsive_cards(route: &Route) -> bool {
     matches!(
         route,
         Route::Home
@@ -306,7 +342,7 @@ fn route_uses_responsive_cards(route: &Route) -> bool {
             | Route::Search { .. }
     )
 }
-fn route_boundary(view: gtk::Widget) -> gtk::Widget {
+pub(in crate::ui) fn route_boundary(view: gtk::Widget) -> gtk::Widget {
     let spec = route_boundary_spec();
     let scroller = gtk::ScrolledWindow::new();
     // this is necessary because route pages can contain tables, grids, and
@@ -323,16 +359,16 @@ fn route_boundary(view: gtk::Widget) -> gtk::Widget {
     scroller.upcast()
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RouteBoundarySpec {
-    horizontal_policy: gtk::PolicyType,
-    vertical_policy: gtk::PolicyType,
-    overflow: gtk::Overflow,
-    min_content_width: i32,
-    propagate_natural_width: bool,
-    hexpand: bool,
-    vexpand: bool,
+pub(in crate::ui) struct RouteBoundarySpec {
+    pub(in crate::ui) horizontal_policy: gtk::PolicyType,
+    pub(in crate::ui) vertical_policy: gtk::PolicyType,
+    pub(in crate::ui) overflow: gtk::Overflow,
+    pub(in crate::ui) min_content_width: i32,
+    pub(in crate::ui) propagate_natural_width: bool,
+    pub(in crate::ui) hexpand: bool,
+    pub(in crate::ui) vexpand: bool,
 }
-fn route_boundary_spec() -> RouteBoundarySpec {
+pub(in crate::ui) fn route_boundary_spec() -> RouteBoundarySpec {
     RouteBoundarySpec {
         horizontal_policy: gtk::PolicyType::Automatic,
         vertical_policy: gtk::PolicyType::Never,
@@ -343,15 +379,15 @@ fn route_boundary_spec() -> RouteBoundarySpec {
         vexpand: true,
     }
 }
-fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
+pub(in crate::ui) fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
     first_run
 }
-fn stable_seed(value: &str) -> u32 {
+pub(in crate::ui) fn stable_seed(value: &str) -> u32 {
     value.bytes().fold(0x811c_9dc5, |hash, byte| {
         hash.wrapping_mul(16_777_619) ^ u32::from(byte)
     })
 }
-fn next_home_showcase_seed() -> u64 {
+pub(in crate::ui) fn next_home_showcase_seed() -> u64 {
     let counter = HOME_SHOWCASE_COUNTER
         .fetch_add(1, Ordering::Relaxed)
         .wrapping_add(1);
@@ -361,7 +397,7 @@ fn next_home_showcase_seed() -> u64 {
         .unwrap_or_else(|_| stable_seed("home-showcase") as u64);
     time_seed.rotate_left(17) ^ counter.wrapping_mul(0x9e37_79b9_7f4a_7c15)
 }
-fn add_album_seed_gradient_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
+pub(in crate::ui) fn add_album_seed_gradient_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
     let class_name = format!("album-seed-gradient-{:08x}", seed);
     widget.add_css_class(&class_name);
 
@@ -388,19 +424,19 @@ fn add_album_seed_gradient_class(widget: &impl IsA<gtk::Widget>, seed: u32) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 }
-fn showcase_seed_rgb(seed: u32) -> (u8, u8, u8) {
+pub(in crate::ui) fn showcase_seed_rgb(seed: u32) -> (u8, u8, u8) {
     (
         showcase_color_component(seed, 0),
         showcase_color_component(seed, 8),
         showcase_color_component(seed, 16),
     )
 }
-fn showcase_color_component(seed: u32, shift: u8) -> u8 {
+pub(in crate::ui) fn showcase_color_component(seed: u32, shift: u8) -> u8 {
     let value = ((seed >> shift) & 0xff) as f64;
     (value * 0.72 + 48.0).round().clamp(0.0, 232.0) as u8
 }
 #[derive(Clone)]
-struct TrackIdentityCell {
+pub(in crate::ui) struct TrackIdentityCell {
     cover: ArtworkTile,
     title: gtk::Label,
     artist_button: gtk::Button,
@@ -412,7 +448,7 @@ struct TrackIdentityCell {
 }
 
 #[derive(Clone)]
-struct TrackLinkCell {
+pub(in crate::ui) struct TrackLinkCell {
     button: gtk::Button,
     button_label: gtk::Label,
     label: gtk::Label,
@@ -426,49 +462,54 @@ thread_local! {
     static TRACK_LINK_CELLS: RefCell<HashMap<usize, TrackLinkCell>> = RefCell::new(HashMap::new());
 }
 
-fn list_item_storage_key(list_item: &gtk::ListItem) -> usize {
+pub(in crate::ui) fn list_item_storage_key(list_item: &gtk::ListItem) -> usize {
     list_item.as_ptr() as usize
 }
 
-fn store_track_identity_cell(list_item: &gtk::ListItem, cell: TrackIdentityCell) {
+pub(in crate::ui) fn store_track_identity_cell(list_item: &gtk::ListItem, cell: TrackIdentityCell) {
     let key = list_item_storage_key(list_item);
     TRACK_IDENTITY_CELLS.with(|cells| {
         cells.borrow_mut().insert(key, cell);
     });
 }
 
-fn track_identity_cell(list_item: &gtk::ListItem) -> Option<TrackIdentityCell> {
+pub(in crate::ui) fn track_identity_cell(list_item: &gtk::ListItem) -> Option<TrackIdentityCell> {
     let key = list_item_storage_key(list_item);
     TRACK_IDENTITY_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn remove_track_identity_cell(list_item: &gtk::ListItem) {
+pub(in crate::ui) fn remove_track_identity_cell(list_item: &gtk::ListItem) {
     let key = list_item_storage_key(list_item);
     TRACK_IDENTITY_CELLS.with(|cells| {
         cells.borrow_mut().remove(&key);
     });
 }
 
-fn store_track_link_cell(list_item: &gtk::ListItem, cell: TrackLinkCell) {
+pub(in crate::ui) fn store_track_link_cell(list_item: &gtk::ListItem, cell: TrackLinkCell) {
     let key = list_item_storage_key(list_item);
     TRACK_LINK_CELLS.with(|cells| {
         cells.borrow_mut().insert(key, cell);
     });
 }
 
-fn track_link_cell(list_item: &gtk::ListItem) -> Option<TrackLinkCell> {
+pub(in crate::ui) fn track_link_cell(list_item: &gtk::ListItem) -> Option<TrackLinkCell> {
     let key = list_item_storage_key(list_item);
     TRACK_LINK_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn remove_track_link_cell(list_item: &gtk::ListItem) {
+pub(in crate::ui) fn remove_track_link_cell(list_item: &gtk::ListItem) {
     let key = list_item_storage_key(list_item);
     TRACK_LINK_CELLS.with(|cells| {
         cells.borrow_mut().remove(&key);
     });
 }
 
-fn track_column<F>(shell: &Rc<Shell>, title: &'static str, width: i32, value: F) -> gtk::ColumnViewColumn
+pub(in crate::ui) fn track_column<F>(
+    shell: &Rc<Shell>,
+    title: &'static str,
+    width: i32,
+    value: F,
+) -> gtk::ColumnViewColumn
 where
     F: Fn(&Track) -> String + 'static,
 {
@@ -515,7 +556,7 @@ where
     column.set_resizable(false);
     column
 }
-fn track_row_index_column() -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn track_row_index_column() -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
 
     factory.connect_setup(|_, list_item| {
@@ -545,7 +586,7 @@ fn track_row_index_column() -> gtk::ColumnViewColumn {
     column.set_resizable(false);
     column
 }
-fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
@@ -721,7 +762,7 @@ fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     column.set_resizable(false);
     column
 }
-fn track_link_column<F>(
+pub(in crate::ui) fn track_link_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
@@ -862,7 +903,7 @@ where
     column.set_resizable(false);
     column
 }
-fn track_artist_route(track: &Track) -> Option<Route> {
+pub(in crate::ui) fn track_artist_route(track: &Track) -> Option<Route> {
     if let Some(artist_id) = track.artist_id.clone() {
         Some(Route::ArtistDetail(artist_id))
     } else if !track.artist.trim().is_empty() {
@@ -874,7 +915,7 @@ fn track_artist_route(track: &Track) -> Option<Route> {
         None
     }
 }
-fn album_artist_route(album: &Album) -> Option<Route> {
+pub(in crate::ui) fn album_artist_route(album: &Album) -> Option<Route> {
     if let Some(artist_id) = album.artist_id.clone() {
         Some(Route::ArtistDetail(artist_id))
     } else if !album.artist.trim().is_empty() {
@@ -886,10 +927,14 @@ fn album_artist_route(album: &Album) -> Option<Route> {
         None
     }
 }
-fn install_track_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>, track: Track) {
+pub(in crate::ui) fn install_track_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    track: Track,
+) {
     install_dynamic_track_context_menu(target, shell, Rc::new(RefCell::new(Some(track))));
 }
-fn install_dynamic_track_context_menu(
+pub(in crate::ui) fn install_dynamic_track_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     track: Rc<RefCell<Option<Track>>>,
@@ -940,10 +985,14 @@ fn install_dynamic_track_context_menu(
     });
     target.add_controller(key);
 }
-fn install_album_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>, album: Album) {
+pub(in crate::ui) fn install_album_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    album: Album,
+) {
     install_dynamic_album_context_menu(target, shell, Rc::new(RefCell::new(Some(album))));
 }
-fn install_dynamic_album_context_menu(
+pub(in crate::ui) fn install_dynamic_album_context_menu(
     target: &impl IsA<gtk::Widget>,
     shell: &Rc<Shell>,
     album: Rc<RefCell<Option<Album>>>,
@@ -994,7 +1043,11 @@ fn install_dynamic_album_context_menu(
     });
     target.add_controller(key);
 }
-fn install_artist_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>, artist: Artist) {
+pub(in crate::ui) fn install_artist_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    artist: Artist,
+) {
     let target = target.as_ref();
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
@@ -1036,7 +1089,10 @@ fn install_artist_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>
     });
     target.add_controller(key);
 }
-fn install_current_track_context_menu(target: &impl IsA<gtk::Widget>, shell: &Rc<Shell>) {
+pub(in crate::ui) fn install_current_track_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+) {
     let target = target.as_ref();
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);

@@ -1,4 +1,6 @@
-pub(super) fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
+use super::*;
+
+pub(in crate::ui) fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) {
     genres.sort_by(|left, right| {
         apply_desc(
             compare_genre(left, right, settings.sort_key),
@@ -6,7 +8,7 @@ pub(super) fn sort_genres(genres: &mut [Genre], settings: &LibraryListSettings) 
         )
     });
 }
-pub(super) fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
+pub(in crate::ui) fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListSettings) {
     playlists.sort_by(|left, right| {
         apply_desc(
             compare_playlist(left, right, settings.sort_key),
@@ -14,7 +16,7 @@ pub(super) fn sort_playlists(playlists: &mut [Playlist], settings: &LibraryListS
         )
     });
 }
-pub(super) fn sort_tracks(
+pub(in crate::ui) fn sort_tracks(
     tracks: &mut [Track],
     settings: &LibraryListSettings,
     favorite_first: bool,
@@ -37,7 +39,7 @@ pub(super) fn sort_tracks(
         )
     });
 }
-fn compare_album(left: &Album, right: &Album, field: LibraryField) -> Ordering {
+pub(in crate::ui) fn compare_album(left: &Album, right: &Album, field: LibraryField) -> Ordering {
     match field {
         LibraryField::AlbumArtist => cmp_string(&left.artist, &right.artist),
         LibraryField::Year => left.year.cmp(&right.year),
@@ -53,7 +55,11 @@ fn compare_album(left: &Album, right: &Album, field: LibraryField) -> Ordering {
     }
     .then_with(|| cmp_string(&left.title, &right.title))
 }
-fn compare_artist(left: &Artist, right: &Artist, field: LibraryField) -> Ordering {
+pub(in crate::ui) fn compare_artist(
+    left: &Artist,
+    right: &Artist,
+    field: LibraryField,
+) -> Ordering {
     match field {
         LibraryField::AlbumCount => left.album_count.cmp(&right.album_count),
         LibraryField::SongCount => left.track_count.cmp(&right.track_count),
@@ -65,7 +71,7 @@ fn compare_artist(left: &Artist, right: &Artist, field: LibraryField) -> Orderin
     }
     .then_with(|| cmp_string(&left.name, &right.name))
 }
-fn compare_genre(left: &Genre, right: &Genre, field: LibraryField) -> Ordering {
+pub(in crate::ui) fn compare_genre(left: &Genre, right: &Genre, field: LibraryField) -> Ordering {
     match field {
         LibraryField::AlbumCount => left.album_count.cmp(&right.album_count),
         LibraryField::SongCount => left.track_count.cmp(&right.track_count),
@@ -73,7 +79,11 @@ fn compare_genre(left: &Genre, right: &Genre, field: LibraryField) -> Ordering {
     }
     .then_with(|| cmp_string(&left.name, &right.name))
 }
-fn compare_playlist(left: &Playlist, right: &Playlist, field: LibraryField) -> Ordering {
+pub(in crate::ui) fn compare_playlist(
+    left: &Playlist,
+    right: &Playlist,
+    field: LibraryField,
+) -> Ordering {
     match field {
         LibraryField::SongCount => left.track_count.cmp(&right.track_count),
         LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
@@ -81,7 +91,7 @@ fn compare_playlist(left: &Playlist, right: &Playlist, field: LibraryField) -> O
     }
     .then_with(|| cmp_string(&left.name, &right.name))
 }
-fn compare_track(left: &Track, right: &Track, field: LibraryField) -> Ordering {
+pub(in crate::ui) fn compare_track(left: &Track, right: &Track, field: LibraryField) -> Ordering {
     match field {
         LibraryField::TrackNumber => left
             .disc_number
@@ -109,7 +119,7 @@ fn compare_track(left: &Track, right: &Track, field: LibraryField) -> Ordering {
     .then(left.track_number.cmp(&right.track_number))
     .then_with(|| cmp_string(&left.title, &right.title))
 }
-fn album_field_missing(album: &Album, field: LibraryField) -> bool {
+pub(in crate::ui) fn album_field_missing(album: &Album, field: LibraryField) -> bool {
     match field {
         LibraryField::ReleaseDate => album.release_date.is_none(),
         LibraryField::DateAdded => album.date_added.is_none(),
@@ -119,7 +129,7 @@ fn album_field_missing(album: &Album, field: LibraryField) -> bool {
         _ => false,
     }
 }
-fn artist_field_missing(artist: &Artist, field: LibraryField) -> bool {
+pub(in crate::ui) fn artist_field_missing(artist: &Artist, field: LibraryField) -> bool {
     match field {
         LibraryField::LastPlayed => artist.last_played.is_none(),
         LibraryField::PlayCount => artist.play_count.is_none(),
@@ -127,7 +137,7 @@ fn artist_field_missing(artist: &Artist, field: LibraryField) -> bool {
         _ => false,
     }
 }
-fn track_field_missing(track: &Track, field: LibraryField) -> bool {
+pub(in crate::ui) fn track_field_missing(track: &Track, field: LibraryField) -> bool {
     match field {
         LibraryField::ReleaseDate => track.release_date.is_none(),
         LibraryField::DateAdded => track.date_added.is_none(),
@@ -137,7 +147,7 @@ fn track_field_missing(track: &Track, field: LibraryField) -> bool {
         _ => false,
     }
 }
-fn album_field(album: &Album, field: LibraryField) -> String {
+pub(in crate::ui) fn album_field(album: &Album, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => album.title.clone(),
         LibraryField::AlbumArtist | LibraryField::Artist => album.artist.clone(),
@@ -154,7 +164,7 @@ fn album_field(album: &Album, field: LibraryField) -> String {
         _ => String::new(),
     }
 }
-fn artist_field(artist: &Artist, field: LibraryField) -> String {
+pub(in crate::ui) fn artist_field(artist: &Artist, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => artist.name.clone(),
         LibraryField::AlbumCount => format!("{} {}", artist.album_count, tr("albums")),
@@ -166,7 +176,7 @@ fn artist_field(artist: &Artist, field: LibraryField) -> String {
         _ => String::new(),
     }
 }
-fn genre_field(genre: &Genre, field: LibraryField) -> String {
+pub(in crate::ui) fn genre_field(genre: &Genre, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => genre.name.clone(),
         LibraryField::AlbumCount => format!("{} {}", genre.album_count, tr("albums")),
@@ -174,7 +184,7 @@ fn genre_field(genre: &Genre, field: LibraryField) -> String {
         _ => String::new(),
     }
 }
-fn playlist_field(playlist: &Playlist, field: LibraryField) -> String {
+pub(in crate::ui) fn playlist_field(playlist: &Playlist, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
         LibraryField::SongCount => format!("{} {}", playlist.track_count, tr("tracks")),
@@ -182,7 +192,7 @@ fn playlist_field(playlist: &Playlist, field: LibraryField) -> String {
         _ => String::new(),
     }
 }
-fn track_field(track: &Track, field: LibraryField) -> String {
+pub(in crate::ui) fn track_field(track: &Track, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => track.title.clone(),
         LibraryField::Artist => track.artist.clone(),
@@ -202,7 +212,7 @@ fn track_field(track: &Track, field: LibraryField) -> String {
         _ => String::new(),
     }
 }
-fn track_matches_query(track: &Track, query: &str) -> bool {
+pub(in crate::ui) fn track_matches_query(track: &Track, query: &str) -> bool {
     track.title.to_lowercase().contains(query)
         || track.artist.to_lowercase().contains(query)
         || joined_credits(&track.album_artist_credits)
@@ -212,59 +222,68 @@ fn track_matches_query(track: &Track, query: &str) -> bool {
         || track.genres.join(" ").to_lowercase().contains(query)
         || track.year.to_string().contains(query)
 }
-fn album_matches_query(album: &Album, query: &str) -> bool {
+pub(in crate::ui) fn album_matches_query(album: &Album, query: &str) -> bool {
     album.title.to_lowercase().contains(query)
         || album.artist.to_lowercase().contains(query)
         || album.genres.join(" ").to_lowercase().contains(query)
         || album.year.to_string().contains(query)
 }
-fn artist_matches_query(artist: &Artist, query: &str) -> bool {
+pub(in crate::ui) fn artist_matches_query(artist: &Artist, query: &str) -> bool {
     artist.name.to_lowercase().contains(query)
 }
-fn genre_matches_query(genre: &Genre, query: &str) -> bool {
+pub(in crate::ui) fn genre_matches_query(genre: &Genre, query: &str) -> bool {
     genre.name.to_lowercase().contains(query)
 }
-fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
+pub(in crate::ui) fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
     playlist.name.to_lowercase().contains(query)
 }
-fn item_at<T: Clone + 'static>(model: &gio::ListStore, position: u32) -> Option<T> {
+pub(in crate::ui) fn item_at<T: Clone + 'static>(
+    model: &gio::ListStore,
+    position: u32,
+) -> Option<T> {
     model
         .item(position)
         .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
         .map(|boxed| boxed.borrow::<T>().clone())
 }
-fn item_at_from_item<T: Clone + 'static>(item: &gtk::ListItem) -> Option<T> {
+pub(in crate::ui) fn item_at_from_item<T: Clone + 'static>(item: &gtk::ListItem) -> Option<T> {
     item.item()
         .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
         .map(|boxed| boxed.borrow::<T>().clone())
 }
-fn clear_list_item_child(_: &gtk::SignalListItemFactory, item: &glib::Object) {
+pub(in crate::ui) fn clear_list_item_child(_: &gtk::SignalListItemFactory, item: &glib::Object) {
     if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
         item.set_child(None::<&gtk::Widget>);
     }
 }
-fn replace_tracks_in_model(model: &gio::ListStore, tracks: Vec<Track>) {
+pub(in crate::ui) fn replace_tracks_in_model(model: &gio::ListStore, tracks: Vec<Track>) {
     let additions = tracks
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-fn replace_album_detail_items_in_model(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
+pub(in crate::ui) fn replace_album_detail_items_in_model(
+    model: &gio::ListStore,
+    rows: Vec<AlbumDetailItem>,
+) {
     let additions = rows
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-fn append_album_detail_items_to_model(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
+pub(in crate::ui) fn append_album_detail_items_to_model(
+    model: &gio::ListStore,
+    rows: Vec<AlbumDetailItem>,
+) {
     let additions = rows
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(model.n_items(), 0, &additions);
 }
-fn center_label(text: &str, css_class: &str) -> gtk::Widget {
+pub(in crate::ui) fn center_label(text: &str, css_class: &str) -> gtk::Widget {
     let label = gtk::Label::new(Some(text));
     if !css_class.is_empty() {
         label.add_css_class(css_class);
@@ -275,17 +294,17 @@ fn center_label(text: &str, css_class: &str) -> gtk::Widget {
     label.upcast()
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct AlbumDetailMetaLabelSpec {
-    width: i32,
-    height: i32,
-    horizontal_policy: gtk::PolicyType,
-    vertical_policy: gtk::PolicyType,
-    overflow: gtk::Overflow,
-    propagate_natural_width: bool,
-    propagate_natural_height: bool,
-    wrap: bool,
+pub(in crate::ui) struct AlbumDetailMetaLabelSpec {
+    pub(in crate::ui) width: i32,
+    pub(in crate::ui) height: i32,
+    pub(in crate::ui) horizontal_policy: gtk::PolicyType,
+    pub(in crate::ui) vertical_policy: gtk::PolicyType,
+    pub(in crate::ui) overflow: gtk::Overflow,
+    pub(in crate::ui) propagate_natural_width: bool,
+    pub(in crate::ui) propagate_natural_height: bool,
+    pub(in crate::ui) wrap: bool,
 }
-fn album_detail_meta_label_spec(width: i32) -> AlbumDetailMetaLabelSpec {
+pub(in crate::ui) fn album_detail_meta_label_spec(width: i32) -> AlbumDetailMetaLabelSpec {
     AlbumDetailMetaLabelSpec {
         width,
         height: ALBUM_DETAIL_META_LABEL_HEIGHT,
@@ -297,7 +316,11 @@ fn album_detail_meta_label_spec(width: i32) -> AlbumDetailMetaLabelSpec {
         wrap: false,
     }
 }
-fn album_detail_meta_label(text: &str, css_class: &str, width: i32) -> gtk::Widget {
+pub(in crate::ui) fn album_detail_meta_label(
+    text: &str,
+    css_class: &str,
+    width: i32,
+) -> gtk::Widget {
     let spec = album_detail_meta_label_spec(width);
     let label = gtk::Label::new(Some(text));
     if !css_class.is_empty() {
@@ -328,7 +351,7 @@ fn album_detail_meta_label(text: &str, css_class: &str, width: i32) -> gtk::Widg
     clip.set_child(Some(&label));
     clip.upcast()
 }
-fn album_fact_text(album: &Album) -> String {
+pub(in crate::ui) fn album_fact_text(album: &Album) -> String {
     format!(
         "{} • {} {} • {}",
         nonzero_year(album.year),
@@ -338,12 +361,12 @@ fn album_fact_text(album: &Album) -> String {
     )
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum LibraryFieldSet {
+pub(in crate::ui) enum LibraryFieldSet {
     Row,
     Grid,
     Detail,
 }
-fn populate_library_field_rows(
+pub(in crate::ui) fn populate_library_field_rows(
     shell: &Rc<Shell>,
     key: LibraryListKey,
     group: &adw::PreferencesGroup,
@@ -370,7 +393,7 @@ fn populate_library_field_rows(
         rows.borrow_mut().push(row);
     }
 }
-fn library_field_config_row(
+pub(in crate::ui) fn library_field_config_row(
     shell: &Rc<Shell>,
     key: LibraryListKey,
     field_set: LibraryFieldSet,
@@ -484,7 +507,7 @@ fn library_field_config_row(
 
     row
 }
-fn layout_button_content(layout: LibraryLayout) -> gtk::Widget {
+pub(in crate::ui) fn layout_button_content(layout: LibraryLayout) -> gtk::Widget {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     content.set_margin_top(6);
     content.set_margin_bottom(6);
@@ -494,7 +517,7 @@ fn layout_button_content(layout: LibraryLayout) -> gtk::Widget {
     content.append(&gtk::Label::new(Some(&tr(layout_title(layout)))));
     content.upcast()
 }
-fn sync_layout_buttons(
+pub(in crate::ui) fn sync_layout_buttons(
     buttons: &Rc<RefCell<Vec<(LibraryLayout, gtk::ToggleButton)>>>,
     active_layout: LibraryLayout,
 ) {
@@ -502,28 +525,28 @@ fn sync_layout_buttons(
         button.set_active(*layout == active_layout);
     }
 }
-fn supported_layouts(key: LibraryListKey) -> Vec<LibraryLayout> {
+pub(in crate::ui) fn supported_layouts(key: LibraryListKey) -> Vec<LibraryLayout> {
     let mut layouts = vec![LibraryLayout::Row, LibraryLayout::Grid];
     if key.supports_layout(LibraryLayout::Detail) {
         layouts.push(LibraryLayout::Detail);
     }
     layouts
 }
-fn field_group_title(field_set: LibraryFieldSet) -> &'static str {
+pub(in crate::ui) fn field_group_title(field_set: LibraryFieldSet) -> &'static str {
     match field_set {
         LibraryFieldSet::Row => "Columns",
         LibraryFieldSet::Grid => "Grid labels",
         LibraryFieldSet::Detail => "Detail track columns",
     }
 }
-fn field_set_for_layout(layout: LibraryLayout) -> LibraryFieldSet {
+pub(in crate::ui) fn field_set_for_layout(layout: LibraryLayout) -> LibraryFieldSet {
     match layout {
         LibraryLayout::Grid => LibraryFieldSet::Grid,
         LibraryLayout::Detail => LibraryFieldSet::Detail,
         LibraryLayout::Row => LibraryFieldSet::Row,
     }
 }
-fn active_fields_for_set(
+pub(in crate::ui) fn active_fields_for_set(
     settings: &LibraryListSettings,
     field_set: LibraryFieldSet,
 ) -> &[LibraryField] {
@@ -533,7 +556,7 @@ fn active_fields_for_set(
         LibraryFieldSet::Row => &settings.row_fields,
     }
 }
-fn active_fields_for_set_mut(
+pub(in crate::ui) fn active_fields_for_set_mut(
     settings: &mut LibraryListSettings,
     field_set: LibraryFieldSet,
 ) -> &mut Vec<LibraryField> {
@@ -543,7 +566,7 @@ fn active_fields_for_set_mut(
         LibraryFieldSet::Row => &mut settings.row_fields,
     }
 }
-fn available_fields_for_set(
+pub(in crate::ui) fn available_fields_for_set(
     key: LibraryListKey,
     field_set: LibraryFieldSet,
 ) -> &'static [LibraryField] {
@@ -553,7 +576,7 @@ fn available_fields_for_set(
         LibraryFieldSet::Row => rufin_core::available_row_fields(key),
     }
 }
-fn set_field_enabled(
+pub(in crate::ui) fn set_field_enabled(
     settings: &mut LibraryListSettings,
     key: LibraryListKey,
     field_set: LibraryFieldSet,
@@ -568,7 +591,7 @@ fn set_field_enabled(
         fields.retain(|candidate| *candidate != field);
     }
 }
-fn insert_field_in_order(
+pub(in crate::ui) fn insert_field_in_order(
     fields: &mut Vec<LibraryField>,
     field: LibraryField,
     order: &[LibraryField],
@@ -592,7 +615,7 @@ fn insert_field_in_order(
         .unwrap_or(fields.len());
     fields.insert(insert_at, field);
 }
-fn move_visible_field(
+pub(in crate::ui) fn move_visible_field(
     settings: &mut LibraryListSettings,
     field_set: LibraryFieldSet,
     field: LibraryField,
@@ -609,7 +632,7 @@ fn move_visible_field(
     };
     fields.swap(index, new_index);
 }
-fn reorder_visible_field(
+pub(in crate::ui) fn reorder_visible_field(
     settings: &mut LibraryListSettings,
     field_set: LibraryFieldSet,
     source: LibraryField,
@@ -630,7 +653,7 @@ fn reorder_visible_field(
     }
     fields.insert(target_index.min(fields.len()), field);
 }
-fn can_toggle_field(
+pub(in crate::ui) fn can_toggle_field(
     active: &[LibraryField],
     field_set: LibraryFieldSet,
     field: LibraryField,
@@ -648,7 +671,7 @@ fn can_toggle_field(
             .count()
             > 1
 }
-fn row_field_is_usable(field: LibraryField) -> bool {
+pub(in crate::ui) fn row_field_is_usable(field: LibraryField) -> bool {
     !matches!(
         field,
         LibraryField::RowIndex
@@ -658,7 +681,7 @@ fn row_field_is_usable(field: LibraryField) -> bool {
             | LibraryField::Favorite
     )
 }
-fn library_field_drag_id(field: LibraryField) -> &'static str {
+pub(in crate::ui) fn library_field_drag_id(field: LibraryField) -> &'static str {
     match field {
         LibraryField::RowIndex => "RowIndex",
         LibraryField::Image => "Image",
@@ -682,7 +705,7 @@ fn library_field_drag_id(field: LibraryField) -> &'static str {
         LibraryField::Favorite => "Favorite",
     }
 }
-fn library_field_from_drag_id(id: &str) -> Option<LibraryField> {
+pub(in crate::ui) fn library_field_from_drag_id(id: &str) -> Option<LibraryField> {
     [
         LibraryField::RowIndex,
         LibraryField::Image,
@@ -708,7 +731,7 @@ fn library_field_from_drag_id(id: &str) -> Option<LibraryField> {
     .into_iter()
     .find(|field| library_field_drag_id(*field) == id)
 }
-fn next_layout(key: LibraryListKey, layout: LibraryLayout) -> LibraryLayout {
+pub(in crate::ui) fn next_layout(key: LibraryListKey, layout: LibraryLayout) -> LibraryLayout {
     if key.supports_layout(LibraryLayout::Detail) {
         match layout {
             LibraryLayout::Grid => LibraryLayout::Detail,
@@ -722,21 +745,21 @@ fn next_layout(key: LibraryListKey, layout: LibraryLayout) -> LibraryLayout {
         }
     }
 }
-fn layout_icon(layout: LibraryLayout) -> &'static str {
+pub(in crate::ui) fn layout_icon(layout: LibraryLayout) -> &'static str {
     match layout {
         LibraryLayout::Grid => "view-grid-symbolic",
         LibraryLayout::Row => "view-list-symbolic",
         LibraryLayout::Detail => "view-list-details-symbolic",
     }
 }
-fn layout_title(layout: LibraryLayout) -> &'static str {
+pub(in crate::ui) fn layout_title(layout: LibraryLayout) -> &'static str {
     match layout {
         LibraryLayout::Grid => "Grid",
         LibraryLayout::Row => "Rows",
         LibraryLayout::Detail => "Detail",
     }
 }
-fn column_width(field: LibraryField) -> i32 {
+pub(in crate::ui) fn column_width(field: LibraryField) -> i32 {
     match field {
         LibraryField::RowIndex => 48,
         LibraryField::Image | LibraryField::Favorite => 56,
@@ -754,17 +777,17 @@ fn column_width(field: LibraryField) -> i32 {
         LibraryField::Duration => 76,
     }
 }
-fn apply_desc(ordering: Ordering, descending: bool) -> Ordering {
+pub(in crate::ui) fn apply_desc(ordering: Ordering, descending: bool) -> Ordering {
     if descending {
         ordering.reverse()
     } else {
         ordering
     }
 }
-fn cmp_string(left: &str, right: &str) -> Ordering {
+pub(in crate::ui) fn cmp_string(left: &str, right: &str) -> Ordering {
     left.to_lowercase().cmp(&right.to_lowercase())
 }
-fn cmp_option_string(left: &Option<String>, right: &Option<String>) -> Ordering {
+pub(in crate::ui) fn cmp_option_string(left: &Option<String>, right: &Option<String>) -> Ordering {
     match (left, right) {
         (Some(left), Some(right)) => cmp_string(left, right),
         (Some(_), None) => Ordering::Less,
@@ -772,7 +795,7 @@ fn cmp_option_string(left: &Option<String>, right: &Option<String>) -> Ordering 
         (None, None) => Ordering::Equal,
     }
 }
-fn cmp_option_u32(left: Option<u32>, right: Option<u32>) -> Ordering {
+pub(in crate::ui) fn cmp_option_u32(left: Option<u32>, right: Option<u32>) -> Ordering {
     match (left, right) {
         (Some(left), Some(right)) => left.cmp(&right),
         (Some(_), None) => Ordering::Less,
@@ -780,26 +803,26 @@ fn cmp_option_u32(left: Option<u32>, right: Option<u32>) -> Ordering {
         (None, None) => Ordering::Equal,
     }
 }
-fn cmp_option_u8(left: Option<u8>, right: Option<u8>) -> Ordering {
+pub(in crate::ui) fn cmp_option_u8(left: Option<u8>, right: Option<u8>) -> Ordering {
     cmp_option_u32(left.map(u32::from), right.map(u32::from))
 }
-fn option_count(value: Option<u32>) -> String {
+pub(in crate::ui) fn option_count(value: Option<u32>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
 }
-fn option_rating(value: Option<u8>) -> String {
+pub(in crate::ui) fn option_rating(value: Option<u8>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
 }
-fn favorite_text(favorite: bool) -> String {
+pub(in crate::ui) fn favorite_text(favorite: bool) -> String {
     if favorite { "♥" } else { "" }.to_string()
 }
-fn nonzero_year(year: u16) -> String {
+pub(in crate::ui) fn nonzero_year(year: u16) -> String {
     if year == 0 {
         String::new()
     } else {
         year.to_string()
     }
 }
-fn joined_credits(credits: &[rufin_core::ArtistCredit]) -> String {
+pub(in crate::ui) fn joined_credits(credits: &[rufin_core::ArtistCredit]) -> String {
     credits
         .iter()
         .map(|credit| credit.name.trim())

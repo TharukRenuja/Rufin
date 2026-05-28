@@ -1,5 +1,10 @@
+use super::*;
+
 impl Shell {
-    fn grouped_detail_view(self: &Rc<Self>, data: GroupedDetailData) -> gtk::Widget {
+    pub(in crate::ui) fn grouped_detail_view(
+        self: &Rc<Self>,
+        data: GroupedDetailData,
+    ) -> gtk::Widget {
         let GroupedDetailData {
             title,
             image_ref,

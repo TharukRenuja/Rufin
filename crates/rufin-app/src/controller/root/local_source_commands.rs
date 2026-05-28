@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn add_local_server(&self, root_path: PathBuf) {
         self.add_local_server_folders(vec![root_path]);
@@ -8,7 +10,7 @@ impl AppController {
     pub fn add_local_library_folder(&self, root_path: PathBuf) {
         self.add_local_library_folders_with_selection(vec![root_path], false);
     }
-    fn add_local_library_folders_with_selection(
+    pub(in crate::controller) fn add_local_library_folders_with_selection(
         &self,
         root_paths: Vec<PathBuf>,
         select_local: bool,

@@ -7,7 +7,7 @@ use rufin_provider::{ProviderError, ProviderResult};
 use serde::Deserialize;
 use tracing::instrument;
 
-use crate::normalize_base_url;
+use crate::root::normalize_base_url;
 
 const JELLYFIN_DISCOVERY_PORT: u16 = 7359;
 const JELLYFIN_DISCOVERY_PACKET_LIMIT: usize = 4096;

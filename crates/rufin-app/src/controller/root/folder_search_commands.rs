@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn set_selected_music_folder(&self, server_id: ServerId, folder_id: Option<MusicFolderId>) {
         let store = self.store.clone();

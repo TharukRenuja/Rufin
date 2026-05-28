@@ -1,4 +1,6 @@
 use serde::{Deserialize, Deserializer, Serialize, de};
+
+use super::sidebar::*;
 use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 2;
@@ -12,23 +14,23 @@ pub const MAX_RESTORED_WINDOW_HEIGHT: i32 = 2_000;
 pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
 pub const MIN_CROSSFADE_SECONDS: u8 = 1;
 pub const MAX_CROSSFADE_SECONDS: u8 = 30;
-const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
-fn default_lyrics_panel_visible() -> bool {
+pub(super) const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
+pub(super) fn default_lyrics_panel_visible() -> bool {
     true
 }
-fn default_discord_client_id() -> String {
+pub(super) fn default_discord_client_id() -> String {
     DEFAULT_DISCORD_CLIENT_ID.to_string()
 }
-fn default_discord_link_type() -> DiscordLinkType {
+pub(super) fn default_discord_link_type() -> DiscordLinkType {
     DiscordLinkType::MusicBrainz
 }
-fn default_true() -> bool {
+pub(super) fn default_true() -> bool {
     true
 }
-fn default_volume() -> f64 {
+pub(super) fn default_volume() -> f64 {
     1.0
 }
-fn default_crossfade_seconds() -> u8 {
+pub(super) fn default_crossfade_seconds() -> u8 {
     5
 }
 fn default_narrow_layout_enabled() -> bool {
@@ -253,14 +255,14 @@ fn default_sidebar_route_items() -> Vec<SidebarRouteItemSettings> {
         })
         .collect()
 }
-const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 5] = [
+pub(super) const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 5] = [
     TrackTableColumn::TrackNumber,
     TrackTableColumn::Title,
     TrackTableColumn::Album,
     TrackTableColumn::Year,
     TrackTableColumn::Favorite,
 ];
-fn default_home_sections() -> Vec<HomeSectionKind> {
+pub(super) fn default_home_sections() -> Vec<HomeSectionKind> {
     vec![
         HomeSectionKind::Explore,
         HomeSectionKind::MostPlayed,
@@ -269,7 +271,7 @@ fn default_home_sections() -> Vec<HomeSectionKind> {
         HomeSectionKind::RecentlyReleased,
     ]
 }
-fn default_home_blocks() -> Vec<HomeBlockKind> {
+pub(super) fn default_home_blocks() -> Vec<HomeBlockKind> {
     vec![
         HomeBlockKind::Showcase,
         HomeBlockKind::Explore,

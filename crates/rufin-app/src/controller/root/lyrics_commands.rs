@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn request_lyrics_for_current(&self) {
         self.request_lyrics_for_current_with_cache(true);
@@ -8,14 +10,14 @@ impl AppController {
     pub fn refresh_lyrics_for_current(&self) {
         self.request_lyrics_for_current_with_cache(false);
     }
-    fn request_lyrics_for_current_with_cache(&self, use_cache: bool) {
+    pub(in crate::controller) fn request_lyrics_for_current_with_cache(&self, use_cache: bool) {
         let settings = load_settings_from_store(&self.store);
         self.request_lyrics_for_current_with_search(
             use_cache,
             lyrics_search_for_settings(&settings),
         );
     }
-    fn request_lyrics_for_current_with_search(
+    pub(in crate::controller) fn request_lyrics_for_current_with_search(
         &self,
         use_cache: bool,
         search: JellyfinLyricsSearch,
@@ -149,8 +151,8 @@ impl AppController {
         }
         let store = self.store.clone();
         let events = self.events.clone();
-        thread::spawn(move || {
-            match save_lrclib_result(&server_id, &entry, &result, output_path) {
+        thread::spawn(
+            move || match save_lrclib_result(&server_id, &entry, &result, output_path) {
                 Ok((path, lyrics)) => {
                     let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
                     let _sent = events.send(ControllerEvent::LyricsSaved { path, lyrics });
@@ -158,7 +160,7 @@ impl AppController {
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
                 }
-            }
-        });
+            },
+        );
     }
 }

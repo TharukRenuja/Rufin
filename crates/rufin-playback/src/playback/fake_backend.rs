@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Default)]
 pub struct FakePlaybackBackend {
     state: PlaybackState,

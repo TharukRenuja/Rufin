@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn bootstrap(
         fake_scale: Option<FakeScale>,
@@ -110,7 +112,7 @@ impl AppController {
         )
     }
     #[cfg(test)]
-    fn bootstrap_memory_for_test() -> (
+    pub(in crate::controller) fn bootstrap_memory_for_test() -> (
         Self,
         Receiver<ControllerEvent>,
         LibrarySnapshot,

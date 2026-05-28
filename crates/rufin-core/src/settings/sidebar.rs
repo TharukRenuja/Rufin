@@ -1,3 +1,9 @@
+use serde::{Deserialize, Serialize};
+
+use crate::domain::{HomeBlockKind, HomeSectionKind};
+
+use super::*;
+
 pub fn available_sort_fields(key: LibraryListKey) -> &'static [LibraryField] {
     match key {
         LibraryListKey::Albums | LibraryListKey::ArtistAlbums => &[
@@ -55,7 +61,7 @@ pub fn available_sort_fields(key: LibraryListKey) -> &'static [LibraryField] {
         ],
     }
 }
-fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
+pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
     match key {
         LibraryListKey::Albums | LibraryListKey::ArtistAlbums => vec![
             LibraryField::TitleMerged,
@@ -100,7 +106,7 @@ fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
         }
     }
 }
-fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
+pub(super) fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
     match key {
         LibraryListKey::Albums | LibraryListKey::ArtistAlbums => {
             vec![LibraryField::AlbumArtist, LibraryField::Year]
@@ -122,14 +128,14 @@ fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
         }
     }
 }
-fn default_detail_track_fields() -> Vec<LibraryField> {
+pub(super) fn default_detail_track_fields() -> Vec<LibraryField> {
     vec![
         LibraryField::TrackNumber,
         LibraryField::Title,
         LibraryField::Duration,
     ]
 }
-fn default_sort_key(key: LibraryListKey) -> LibraryField {
+pub(super) fn default_sort_key(key: LibraryListKey) -> LibraryField {
     match key {
         LibraryListKey::Albums
         | LibraryListKey::Artists
@@ -145,7 +151,7 @@ fn default_sort_key(key: LibraryListKey) -> LibraryField {
         | LibraryListKey::PlaylistTracks => LibraryField::TrackNumber,
     }
 }
-fn sanitize_optional_fields(fields: &mut Vec<LibraryField>, available: &[LibraryField]) {
+pub(super) fn sanitize_optional_fields(fields: &mut Vec<LibraryField>, available: &[LibraryField]) {
     let mut seen = Vec::new();
     fields.retain(|field| {
         if !available.contains(field) || seen.contains(field) {
@@ -155,7 +161,7 @@ fn sanitize_optional_fields(fields: &mut Vec<LibraryField>, available: &[Library
         true
     });
 }
-fn sanitize_required_fields(
+pub(super) fn sanitize_required_fields(
     fields: &mut Vec<LibraryField>,
     available: &[LibraryField],
     fallback: Vec<LibraryField>,
@@ -165,7 +171,7 @@ fn sanitize_required_fields(
         *fields = fallback;
     }
 }
-fn ensure_usable_row_field(fields: &mut Vec<LibraryField>, fallback: Vec<LibraryField>) {
+pub(super) fn ensure_usable_row_field(fields: &mut Vec<LibraryField>, fallback: Vec<LibraryField>) {
     if fields.iter().any(|field| row_field_is_usable(*field)) {
         return;
     }

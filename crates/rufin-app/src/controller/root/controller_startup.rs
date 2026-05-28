@@ -1,4 +1,6 @@
-fn start_sync_thread(context: SyncContext, saved: SavedServer) {
+use super::*;
+
+pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
     let server_id = saved.server.id.clone();
     match context.sync_in_flight.lock() {
         Ok(mut running) => {
@@ -38,12 +40,7 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
         let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
             "Syncing {provider_name} library..."
         )));
-        let sync_result = run_sync_job(
-            &context,
-            &saved,
-            generation,
-            prefetch_initial_covers,
-        );
+        let sync_result = run_sync_job(&context, &saved, generation, prefetch_initial_covers);
         if let Ok(mut running) = context.sync_in_flight.lock() {
             running.remove(&server_id);
         }
@@ -87,7 +84,10 @@ fn start_sync_thread(context: SyncContext, saved: SavedServer) {
     });
 }
 
-fn sync_target_is_current(store: &StoreHandle, server_id: &ServerId) -> bool {
+pub(in crate::controller) fn sync_target_is_current(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> bool {
     store
         .with_store(|store| {
             Ok(store
@@ -97,7 +97,7 @@ fn sync_target_is_current(store: &StoreHandle, server_id: &ServerId) -> bool {
         .unwrap_or(false)
 }
 
-fn start_home_refresh_thread(
+pub(in crate::controller) fn start_home_refresh_thread(
     context: HomeRefreshContext,
     saved: SavedServer,
     target: HomeRefreshTarget,
@@ -156,7 +156,10 @@ fn start_home_refresh_thread(
         }
     });
 }
-fn start_playlist_refresh_thread(context: PlaylistRefreshContext, saved: SavedServer) {
+pub(in crate::controller) fn start_playlist_refresh_thread(
+    context: PlaylistRefreshContext,
+    saved: SavedServer,
+) {
     if saved.server.provider == "fake" || saved.server.provider == LOCAL_PROVIDER_ID {
         return;
     }
@@ -196,7 +199,7 @@ fn start_playlist_refresh_thread(context: PlaylistRefreshContext, saved: SavedSe
         }
     });
 }
-fn home_refresh_completed_event(
+pub(in crate::controller) fn home_refresh_completed_event(
     target: HomeRefreshTarget,
     snapshot: Box<LibrarySnapshot>,
 ) -> ControllerEvent {
@@ -205,7 +208,10 @@ fn home_refresh_completed_event(
         include_explore: matches!(target, HomeRefreshTarget::Section(HomeSectionKind::Explore)),
     }
 }
-fn start_explore_prefetch_thread(context: ExplorePrefetchContext, saved: SavedServer) {
+pub(in crate::controller) fn start_explore_prefetch_thread(
+    context: ExplorePrefetchContext,
+    saved: SavedServer,
+) {
     if saved.server.provider == "fake" {
         return;
     }
@@ -251,7 +257,7 @@ fn start_explore_prefetch_thread(context: ExplorePrefetchContext, saved: SavedSe
         }
     });
 }
-fn start_prefetched_home_section_promotion_thread(
+pub(in crate::controller) fn start_prefetched_home_section_promotion_thread(
     store: StoreHandle,
     events: Sender<ControllerEvent>,
     server_id: ServerId,
@@ -274,7 +280,10 @@ fn start_prefetched_home_section_promotion_thread(
     });
 }
 
-fn initial_cover_cache_required(store: &StoreHandle, server_id: &ServerId) -> bool {
+pub(in crate::controller) fn initial_cover_cache_required(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> bool {
     store
         .with_store(|store| {
             let albums = store.load_albums(server_id, 0, 1)?;
@@ -284,7 +293,7 @@ fn initial_cover_cache_required(store: &StoreHandle, server_id: &ServerId) -> bo
         .unwrap_or(true)
 }
 
-fn run_sync_job(
+pub(in crate::controller) fn run_sync_job(
     context: &SyncContext,
     saved: &SavedServer,
     generation: i64,
@@ -313,7 +322,7 @@ fn run_sync_job(
     }
     Ok(())
 }
-fn refresh_home_sections_without_explore_for_saved(
+pub(in crate::controller) fn refresh_home_sections_without_explore_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -326,7 +335,7 @@ fn refresh_home_sections_without_explore_for_saved(
         provider.as_music_provider(),
     ))
 }
-fn refresh_playlists_for_saved(
+pub(in crate::controller) fn refresh_playlists_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -339,7 +348,7 @@ fn refresh_playlists_for_saved(
         provider.as_music_provider(),
     ))
 }
-fn refresh_home_section_for_saved(
+pub(in crate::controller) fn refresh_home_section_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -354,7 +363,7 @@ fn refresh_home_section_for_saved(
         kind,
     ))
 }
-fn prefetch_home_section_for_saved(
+pub(in crate::controller) fn prefetch_home_section_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -371,7 +380,7 @@ fn prefetch_home_section_for_saved(
 }
 #[cfg(test)]
 #[instrument(skip(store, provider), fields(server_id = %server_id.as_str()))]
-async fn sync_provider(
+pub(in crate::controller) async fn sync_provider(
     store: &StoreHandle,
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
@@ -482,7 +491,7 @@ async fn sync_music_folders(
     }
     Ok(())
 }
-async fn refresh_local_track_matches(
+pub(in crate::controller) async fn refresh_local_track_matches(
     store: &StoreHandle,
     server_id: &ServerId,
 ) -> Result<usize, String> {
@@ -534,7 +543,7 @@ async fn load_all_local_tracks_for_matching(
         }
     }
 }
-fn local_access_status_for_server(
+pub(in crate::controller) fn local_access_status_for_server(
     store: &StoreHandle,
     server: &ServerIdentity,
     access: Option<&ServerLocalAccess>,
@@ -613,7 +622,10 @@ fn local_access_status_for_server(
         total_track_count,
     })
 }
-fn potential_local_path_text(raw: &str, access: &ServerLocalAccess) -> Option<String> {
+pub(in crate::controller) fn potential_local_path_text(
+    raw: &str,
+    access: &ServerLocalAccess,
+) -> Option<String> {
     if raw.trim().is_empty() {
         return None;
     }
@@ -627,14 +639,14 @@ fn potential_local_path_text(raw: &str, access: &ServerLocalAccess) -> Option<St
     None
 }
 #[derive(Hash, Eq, PartialEq)]
-struct LocalMatchKey {
+pub(in crate::controller) struct LocalMatchKey {
     title: String,
     album: String,
     artist: String,
     disc_number: u16,
     track_number: u16,
 }
-fn conservative_local_matches(
+pub(in crate::controller) fn conservative_local_matches(
     remote_tracks: &[Track],
     local_tracks: &[Track],
 ) -> Vec<(TrackId, String, String)> {
@@ -668,7 +680,7 @@ fn conservative_local_matches(
     }
     matches
 }
-fn local_match_key(track: &Track) -> LocalMatchKey {
+pub(in crate::controller) fn local_match_key(track: &Track) -> LocalMatchKey {
     LocalMatchKey {
         title: normalize_match_text(&track.title),
         album: normalize_match_text(&track.album),
@@ -677,10 +689,10 @@ fn local_match_key(track: &Track) -> LocalMatchKey {
         track_number: track.track_number,
     }
 }
-fn durations_close(left: u32, right: u32) -> bool {
+pub(in crate::controller) fn durations_close(left: u32, right: u32) -> bool {
     left == 0 || right == 0 || left.abs_diff(right) <= 3
 }
-fn normalize_match_text(value: &str) -> String {
+pub(in crate::controller) fn normalize_match_text(value: &str) -> String {
     let mut normalized = String::new();
     for character in value.chars() {
         if character.is_alphanumeric() {
@@ -774,7 +786,7 @@ async fn sync_playlist_pages(
         }
     }
 }
-async fn refresh_playlist_pages(
+pub(in crate::controller) async fn refresh_playlist_pages(
     store: &StoreHandle,
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
@@ -829,7 +841,7 @@ async fn sync_home_sections(
     cache_home_sections(store, server_id, &sections, generation)
 }
 #[cfg(test)]
-async fn refresh_home_sections(
+pub(in crate::controller) async fn refresh_home_sections(
     store: &StoreHandle,
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
@@ -842,7 +854,7 @@ async fn refresh_home_sections(
         .map_err(|error| error.to_string())?;
     cache_home_sections(store, server_id, &sections, generation)
 }
-async fn refresh_home_sections_without_explore(
+pub(in crate::controller) async fn refresh_home_sections_without_explore(
     store: &StoreHandle,
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
@@ -855,7 +867,7 @@ async fn refresh_home_sections_without_explore(
     }
     Ok(())
 }
-async fn refresh_home_section(
+pub(in crate::controller) async fn refresh_home_section(
     store: &StoreHandle,
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
@@ -869,7 +881,7 @@ async fn refresh_home_section(
         .map_err(|error| error.to_string())?;
     cache_home_section(store, server_id, &section, generation)
 }
-async fn prefetch_home_section(
+pub(in crate::controller) async fn prefetch_home_section(
     store: &StoreHandle,
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),

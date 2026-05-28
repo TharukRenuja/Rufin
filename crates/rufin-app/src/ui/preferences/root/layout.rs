@@ -1,4 +1,6 @@
-fn populate_home_block_rows(
+use super::*;
+
+pub(in crate::ui) fn populate_home_block_rows(
     shell: &Rc<Shell>,
     group: &adw::PreferencesGroup,
     rows: &Rc<std::cell::RefCell<Vec<adw::ActionRow>>>,
@@ -130,7 +132,7 @@ fn populate_home_block_rows(
         rows.borrow_mut().push(row);
     }
 }
-fn home_block_row_order(visible_blocks: &[HomeBlockKind]) -> Vec<HomeBlockKind> {
+pub(in crate::ui) fn home_block_row_order(visible_blocks: &[HomeBlockKind]) -> Vec<HomeBlockKind> {
     let mut blocks = visible_blocks.to_vec();
     for block in HomeBlockKind::all() {
         if !blocks.contains(&block) {
@@ -139,7 +141,7 @@ fn home_block_row_order(visible_blocks: &[HomeBlockKind]) -> Vec<HomeBlockKind> 
     }
     blocks
 }
-fn insert_home_block_in_order(
+pub(in crate::ui) fn insert_home_block_in_order(
     blocks: &mut Vec<HomeBlockKind>,
     block: HomeBlockKind,
     order: &[HomeBlockKind],
@@ -163,7 +165,11 @@ fn insert_home_block_in_order(
         .unwrap_or(blocks.len());
     blocks.insert(insert_at, block);
 }
-fn home_block_subtitle(block: HomeBlockKind, active: bool, visible_index: Option<usize>) -> String {
+pub(in crate::ui) fn home_block_subtitle(
+    block: HomeBlockKind,
+    active: bool,
+    visible_index: Option<usize>,
+) -> String {
     if let Some(index) = visible_index {
         return format!("{} {}", tr("Position"), index + 1);
     }
@@ -173,7 +179,7 @@ fn home_block_subtitle(block: HomeBlockKind, active: bool, visible_index: Option
         None => tr("Hidden"),
     }
 }
-fn reorder_home_blocks(
+pub(in crate::ui) fn reorder_home_blocks(
     blocks: &mut Vec<HomeBlockKind>,
     source: HomeBlockKind,
     target: HomeBlockKind,
@@ -197,7 +203,7 @@ fn reorder_home_blocks(
     blocks.insert(target_index.min(blocks.len()), block);
     *blocks != before
 }
-fn home_block_drag_id(block: HomeBlockKind) -> &'static str {
+pub(in crate::ui) fn home_block_drag_id(block: HomeBlockKind) -> &'static str {
     match block {
         HomeBlockKind::Showcase => "Showcase",
         HomeBlockKind::Explore => "Explore",
@@ -208,19 +214,19 @@ fn home_block_drag_id(block: HomeBlockKind) -> &'static str {
         HomeBlockKind::Genres => "Genres",
     }
 }
-fn home_block_from_drag_id(id: &str) -> Option<HomeBlockKind> {
+pub(in crate::ui) fn home_block_from_drag_id(id: &str) -> Option<HomeBlockKind> {
     HomeBlockKind::all()
         .into_iter()
         .find(|block| home_block_drag_id(*block) == id)
 }
-fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
+pub(in crate::ui) fn button_row(title: &str, icon_name: &str) -> adw::ButtonRow {
     adw::ButtonRow::builder()
         .title(tr(title))
         .start_icon_name(icon_name)
         .end_icon_name("go-next-symbolic")
         .build()
 }
-fn left_sidebar_row(title: &str, mode: LeftSidebarMode) -> adw::ComboRow {
+pub(in crate::ui) fn left_sidebar_row(title: &str, mode: LeftSidebarMode) -> adw::ComboRow {
     let titles = [tr("Full"), tr("Compact")];
     let refs = titles.iter().map(String::as_str).collect::<Vec<_>>();
     adw::ComboRow::builder()
@@ -229,19 +235,19 @@ fn left_sidebar_row(title: &str, mode: LeftSidebarMode) -> adw::ComboRow {
         .selected(left_sidebar_mode_index(mode))
         .build()
 }
-fn left_sidebar_mode_index(mode: LeftSidebarMode) -> u32 {
+pub(in crate::ui) fn left_sidebar_mode_index(mode: LeftSidebarMode) -> u32 {
     match mode {
         LeftSidebarMode::Full => 0,
         LeftSidebarMode::Compact => 1,
     }
 }
-fn left_sidebar_mode_from_index(index: u32) -> LeftSidebarMode {
+pub(in crate::ui) fn left_sidebar_mode_from_index(index: u32) -> LeftSidebarMode {
     match index {
         1 => LeftSidebarMode::Compact,
         _ => LeftSidebarMode::Full,
     }
 }
-fn right_sidebar_row(title: &str, mode: RightSidebarMode) -> adw::ComboRow {
+pub(in crate::ui) fn right_sidebar_row(title: &str, mode: RightSidebarMode) -> adw::ComboRow {
     let titles = [
         tr("Hidden"),
         tr("Compact"),
@@ -256,7 +262,7 @@ fn right_sidebar_row(title: &str, mode: RightSidebarMode) -> adw::ComboRow {
         .selected(right_sidebar_mode_index(mode))
         .build()
 }
-fn right_sidebar_mode_index(mode: RightSidebarMode) -> u32 {
+pub(in crate::ui) fn right_sidebar_mode_index(mode: RightSidebarMode) -> u32 {
     match mode {
         RightSidebarMode::Hidden => 0,
         RightSidebarMode::Compact => 1,
@@ -265,7 +271,7 @@ fn right_sidebar_mode_index(mode: RightSidebarMode) -> u32 {
         RightSidebarMode::Spacious => 4,
     }
 }
-fn right_sidebar_mode_from_index(index: u32) -> RightSidebarMode {
+pub(in crate::ui) fn right_sidebar_mode_from_index(index: u32) -> RightSidebarMode {
     match index {
         1 => RightSidebarMode::Compact,
         2 => RightSidebarMode::Default,
@@ -274,21 +280,21 @@ fn right_sidebar_mode_from_index(index: u32) -> RightSidebarMode {
         _ => RightSidebarMode::Hidden,
     }
 }
-fn discord_display_index(display_type: DiscordDisplayType) -> u32 {
+pub(in crate::ui) fn discord_display_index(display_type: DiscordDisplayType) -> u32 {
     match display_type {
         DiscordDisplayType::Application => 0,
         DiscordDisplayType::Song => 1,
         DiscordDisplayType::Artist => 2,
     }
 }
-fn discord_display_from_index(index: u32) -> DiscordDisplayType {
+pub(in crate::ui) fn discord_display_from_index(index: u32) -> DiscordDisplayType {
     match index {
         1 => DiscordDisplayType::Song,
         2 => DiscordDisplayType::Artist,
         _ => DiscordDisplayType::Application,
     }
 }
-fn discord_link_index(link_type: DiscordLinkType) -> u32 {
+pub(in crate::ui) fn discord_link_index(link_type: DiscordLinkType) -> u32 {
     match link_type {
         DiscordLinkType::None => 0,
         DiscordLinkType::LastFm => 1,
@@ -296,7 +302,7 @@ fn discord_link_index(link_type: DiscordLinkType) -> u32 {
         DiscordLinkType::MusicBrainzLastFm => 3,
     }
 }
-fn discord_link_from_index(index: u32) -> DiscordLinkType {
+pub(in crate::ui) fn discord_link_from_index(index: u32) -> DiscordLinkType {
     match index {
         1 => DiscordLinkType::LastFm,
         2 => DiscordLinkType::MusicBrainz,

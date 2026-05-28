@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn start_folder_load(self: &Rc<Self>, path: Vec<FolderPathItem>) {
+    pub(in crate::ui) fn start_folder_load(self: &Rc<Self>, path: Vec<FolderPathItem>) {
         let request_id = self.state.folder_request_generation.get().saturating_add(1);
         self.state.folder_request_generation.set(request_id);
         *self.state.folder_state.borrow_mut() = FolderRouteState {
@@ -11,7 +13,7 @@ impl Shell {
         };
         self.controller.load_folder_for_active(request_id, path);
     }
-    fn apply_folder_loaded(
+    pub(in crate::ui) fn apply_folder_loaded(
         self: &Rc<Self>,
         request_id: u64,
         path: Vec<FolderPathItem>,
@@ -34,7 +36,7 @@ impl Shell {
             self.render_current_route();
         }
     }
-    fn apply_folder_load_failed(
+    pub(in crate::ui) fn apply_folder_load_failed(
         self: &Rc<Self>,
         request_id: u64,
         path: Vec<FolderPathItem>,

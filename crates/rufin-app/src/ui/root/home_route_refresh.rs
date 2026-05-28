@@ -1,5 +1,11 @@
+use super::*;
+
 impl Shell {
-    fn handle_home_route_transition(self: &Rc<Self>, previous: &Route, next: &Route) {
+    pub(in crate::ui) fn handle_home_route_transition(
+        self: &Rc<Self>,
+        previous: &Route,
+        next: &Route,
+    ) {
         let was_home = matches!(previous, Route::Home);
         let is_home = matches!(next, Route::Home);
         let was_playlists = matches!(previous, Route::Playlists);
@@ -15,7 +21,7 @@ impl Shell {
             self.state.playlist_refresh_started_for_visit.set(false);
         }
     }
-    fn refresh_home_for_current_visit(self: &Rc<Self>) {
+    pub(in crate::ui) fn refresh_home_for_current_visit(self: &Rc<Self>) {
         if !matches!(self.state.routes.borrow().current(), Route::Home) {
             return;
         }
@@ -26,7 +32,7 @@ impl Shell {
             .refresh_home_sections_without_explore_for_active();
         self.controller.prefetch_explore_for_active();
     }
-    fn refresh_playlists_for_current_visit(self: &Rc<Self>) {
+    pub(in crate::ui) fn refresh_playlists_for_current_visit(self: &Rc<Self>) {
         if !matches!(self.state.routes.borrow().current(), Route::Playlists) {
             return;
         }
@@ -35,7 +41,7 @@ impl Shell {
         }
         self.controller.refresh_playlists_for_active();
     }
-    fn refresh_home_section(self: &Rc<Self>, section_kind: HomeSectionKind) {
+    pub(in crate::ui) fn refresh_home_section(self: &Rc<Self>, section_kind: HomeSectionKind) {
         if let Some(state) = self
             .state
             .home_section_state
@@ -55,7 +61,7 @@ impl Shell {
             self.controller.prefetch_explore_for_active();
         }
     }
-    fn apply_prefetched_explore(self: &Rc<Self>) -> bool {
+    pub(in crate::ui) fn apply_prefetched_explore(self: &Rc<Self>) -> bool {
         let prefetched = self.state.prefetched_explore.borrow().clone();
         let promoted = prefetched
             .map(|prefetched| self.promote_prefetched_explore(prefetched, true))
@@ -65,13 +71,13 @@ impl Shell {
         }
         promoted
     }
-    fn promote_cached_prefetched_explore(self: &Rc<Self>) -> bool {
+    pub(in crate::ui) fn promote_cached_prefetched_explore(self: &Rc<Self>) -> bool {
         let prefetched = self.state.prefetched_explore.borrow().clone();
         prefetched
             .map(|prefetched| self.promote_prefetched_explore(prefetched, false))
             .unwrap_or(false)
     }
-    fn promote_prefetched_explore(
+    pub(in crate::ui) fn promote_prefetched_explore(
         self: &Rc<Self>,
         prefetched: PrefetchedHomeSection,
         render_current_route: bool,
@@ -114,7 +120,7 @@ impl Shell {
         }
         true
     }
-    fn update_prefetched_explore_from_snapshot(
+    pub(in crate::ui) fn update_prefetched_explore_from_snapshot(
         &self,
         server_id: Option<rufin_core::ServerId>,
         prefetched: Option<PrefetchedHomeSection>,

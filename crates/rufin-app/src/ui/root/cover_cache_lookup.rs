@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn cover_cache_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
+    pub(in crate::ui) fn cover_cache_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
         let server = self.state.library.borrow().server.clone()?;
         if server.provider == "fake" {
             return None;
@@ -16,13 +18,17 @@ impl Shell {
             size,
         ))
     }
-    fn cover_cache_candidate_keys(&self, image_ref: &ImageRef, preferred_size: u32) -> Vec<String> {
+    pub(in crate::ui) fn cover_cache_candidate_keys(
+        &self,
+        image_ref: &ImageRef,
+        preferred_size: u32,
+    ) -> Vec<String> {
         decoded_cover_candidate_sizes(preferred_size)
             .into_iter()
             .filter_map(|size| self.cover_cache_key(image_ref, size))
             .collect()
     }
-    fn decoded_cover_for_ref(
+    pub(in crate::ui) fn decoded_cover_for_ref(
         &self,
         image_ref: &ImageRef,
         preferred_size: u32,
@@ -38,7 +44,7 @@ impl Shell {
         }
         None
     }
-    fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
+    pub(in crate::ui) fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
         self.record_perf_cover_ready(key);
         let size = self
             .pending_cover_size(key)
@@ -56,7 +62,7 @@ impl Shell {
             CoverDecodePriority::Visible,
         );
     }
-    fn start_cover_decode_from_path(
+    pub(in crate::ui) fn start_cover_decode_from_path(
         self: &Rc<Self>,
         key: String,
         path: PathBuf,
@@ -117,7 +123,7 @@ impl Shell {
 
         self.drain_cover_decode_queue();
     }
-    fn apply_decoded_cover_if_available(
+    pub(in crate::ui) fn apply_decoded_cover_if_available(
         &self,
         key: &str,
         min_size: i32,

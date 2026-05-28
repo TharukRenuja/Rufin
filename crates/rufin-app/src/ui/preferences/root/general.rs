@@ -1,4 +1,6 @@
-fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+use super::*;
+
+pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Scrobbling"))
         .icon_name(SCROBBLING_ICON_NAME)
@@ -315,14 +317,16 @@ fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     page
 }
-fn audioscrobbler_connection_subtitle(settings: &AudioscrobblerScrobbleSettings) -> String {
+pub(in crate::ui) fn audioscrobbler_connection_subtitle(
+    settings: &AudioscrobblerScrobbleSettings,
+) -> String {
     if settings.session_key.trim().is_empty() {
         tr("Not connected")
     } else {
         audioscrobbler_connected_subtitle(&settings.username)
     }
 }
-fn audioscrobbler_connected_subtitle(username: &str) -> String {
+pub(in crate::ui) fn audioscrobbler_connected_subtitle(username: &str) -> String {
     let username = username.trim();
     if username.is_empty() {
         tr("Connected")
@@ -330,7 +334,12 @@ fn audioscrobbler_connected_subtitle(username: &str) -> String {
         format!("{} {username}", tr("Connected as"))
     }
 }
-fn inline_link_markup(before: &str, url: &str, label: &str, after: &str) -> String {
+pub(in crate::ui) fn inline_link_markup(
+    before: &str,
+    url: &str,
+    label: &str,
+    after: &str,
+) -> String {
     let before = gtk::glib::markup_escape_text(before);
     let url = gtk::glib::markup_escape_text(url);
     let label = gtk::glib::markup_escape_text(label);
@@ -420,7 +429,7 @@ async fn connect_librefm_session(shell: &Rc<Shell>) -> Result<AudioscrobblerSess
 
     Err(tr("Timed out waiting for Libre.fm authorization"))
 }
-fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Playback"))
         .icon_name("audio-x-generic-symbolic")
@@ -635,7 +644,7 @@ fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     page
 }
-fn install_equalizer_vertical_scroll_passthrough(scale: &gtk::Scale) {
+pub(in crate::ui) fn install_equalizer_vertical_scroll_passthrough(scale: &gtk::Scale) {
     let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     let scale_weak = scale.downgrade();
@@ -653,7 +662,11 @@ fn install_equalizer_vertical_scroll_passthrough(scale: &gtk::Scale) {
     });
     scale.add_controller(controller);
 }
-fn scroll_nearest_parent_vertically(widget: &gtk::Widget, dy: f64, unit: gtk::gdk::ScrollUnit) {
+pub(in crate::ui) fn scroll_nearest_parent_vertically(
+    widget: &gtk::Widget,
+    dy: f64,
+    unit: gtk::gdk::ScrollUnit,
+) {
     let Some(scroller) = nearest_parent_scrolled_window(widget) else {
         return;
     };
@@ -667,7 +680,9 @@ fn scroll_nearest_parent_vertically(widget: &gtk::Widget, dy: f64, unit: gtk::gd
     let value = (adjustment.value() + dy * multiplier).clamp(adjustment.lower(), max_value);
     adjustment.set_value(value);
 }
-fn nearest_parent_scrolled_window(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+pub(in crate::ui) fn nearest_parent_scrolled_window(
+    widget: &gtk::Widget,
+) -> Option<gtk::ScrolledWindow> {
     let mut parent = widget.parent();
     while let Some(widget) = parent {
         if let Ok(scroller) = widget.clone().downcast::<gtk::ScrolledWindow>() {
@@ -677,7 +692,7 @@ fn nearest_parent_scrolled_window(widget: &gtk::Widget) -> Option<gtk::ScrolledW
     }
     None
 }
-fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
+pub(in crate::ui) fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
         .title(tr("Layout"))
         .icon_name("preferences-desktop-display-symbolic")
@@ -695,33 +710,33 @@ fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     page
 }
-fn transition_index(mode: PlaybackTransitionMode) -> u32 {
+pub(in crate::ui) fn transition_index(mode: PlaybackTransitionMode) -> u32 {
     match mode {
         PlaybackTransitionMode::Gapless => 0,
         PlaybackTransitionMode::Crossfade => 1,
     }
 }
-fn transition_from_index(index: u32) -> PlaybackTransitionMode {
+pub(in crate::ui) fn transition_from_index(index: u32) -> PlaybackTransitionMode {
     match index {
         1 => PlaybackTransitionMode::Crossfade,
         _ => PlaybackTransitionMode::Gapless,
     }
 }
-fn replay_gain_index(mode: ReplayGainMode) -> u32 {
+pub(in crate::ui) fn replay_gain_index(mode: ReplayGainMode) -> u32 {
     match mode {
         ReplayGainMode::Off => 0,
         ReplayGainMode::Track => 1,
         ReplayGainMode::Album => 2,
     }
 }
-fn replay_gain_from_index(index: u32) -> ReplayGainMode {
+pub(in crate::ui) fn replay_gain_from_index(index: u32) -> ReplayGainMode {
     match index {
         1 => ReplayGainMode::Track,
         2 => ReplayGainMode::Album,
         _ => ReplayGainMode::Off,
     }
 }
-fn stream_quality_index(quality: StreamQuality) -> u32 {
+pub(in crate::ui) fn stream_quality_index(quality: StreamQuality) -> u32 {
     match quality {
         StreamQuality::Original => 0,
         StreamQuality::MaxBitrateKbps(320) => 1,
@@ -731,7 +746,7 @@ fn stream_quality_index(quality: StreamQuality) -> u32 {
         StreamQuality::MaxBitrateKbps(_) => 0,
     }
 }
-fn stream_quality_from_index(index: u32) -> StreamQuality {
+pub(in crate::ui) fn stream_quality_from_index(index: u32) -> StreamQuality {
     match index {
         1 => StreamQuality::MaxBitrateKbps(320),
         2 => StreamQuality::MaxBitrateKbps(256),
@@ -740,7 +755,7 @@ fn stream_quality_from_index(index: u32) -> StreamQuality {
         _ => StreamQuality::Original,
     }
 }
-fn playback_output_options() -> Vec<(Option<String>, String)> {
+pub(in crate::ui) fn playback_output_options() -> Vec<(Option<String>, String)> {
     let mut outputs = vec![(None, tr("System default"))];
     outputs.extend(
         available_audio_outputs()
@@ -750,13 +765,16 @@ fn playback_output_options() -> Vec<(Option<String>, String)> {
     );
     outputs
 }
-fn audio_output_index(outputs: &[(Option<String>, String)], selected: Option<&str>) -> u32 {
+pub(in crate::ui) fn audio_output_index(
+    outputs: &[(Option<String>, String)],
+    selected: Option<&str>,
+) -> u32 {
     outputs
         .iter()
         .position(|(id, _)| id.as_deref() == selected)
         .unwrap_or_default() as u32
 }
-fn equalizer_band_title(index: usize) -> String {
+pub(in crate::ui) fn equalizer_band_title(index: usize) -> String {
     const BANDS: [&str; EQUALIZER_BAND_COUNT] = [
         "31 Hz", "62 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz",
         "16 kHz",

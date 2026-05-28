@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn save_server_local_access(
         &self,

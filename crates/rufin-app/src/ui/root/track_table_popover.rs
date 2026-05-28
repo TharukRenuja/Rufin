@@ -1,6 +1,8 @@
+use super::*;
+
 impl Shell {
     #[allow(clippy::too_many_arguments)]
-    fn track_table_popover(
+    pub(in crate::ui) fn track_table_popover(
         self: &Rc<Self>,
         table: &gtk::ColumnView,
         model: &gio::ListStore,

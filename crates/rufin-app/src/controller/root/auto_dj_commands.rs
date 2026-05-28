@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn toggle_auto_dj(&self) {
         let enabled = self

@@ -1,5 +1,7 @@
+use super::*;
+
 impl AppController {
-    fn advance_after_end_of_stream(&self) {
+    pub(in crate::controller) fn advance_after_end_of_stream(&self) {
         self.report_playback(PlaybackReportKind::Stopped, false);
         self.auto_dj_top_up_or_emit_error();
         let mut has_next = false;
@@ -18,7 +20,7 @@ impl AppController {
             self.stop();
         }
     }
-    fn advance_after_prepared_track_started(&self, track: PlaybackTrack) {
+    pub(in crate::controller) fn advance_after_prepared_track_started(&self, track: PlaybackTrack) {
         self.report_playback(PlaybackReportKind::Stopped, false);
         self.auto_dj_top_up_or_emit_error();
         let mut has_next = false;

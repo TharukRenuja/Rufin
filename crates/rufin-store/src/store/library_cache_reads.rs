@@ -1,3 +1,7 @@
+use super::library_search_helpers::*;
+use super::servers::*;
+use super::*;
+
 impl Store {
     pub fn load_home_sections(&self, server_id: &ServerId) -> StoreResult<Vec<HomeSection>> {
         let sections = home_section_kinds()
@@ -39,14 +43,14 @@ impl Store {
             Ok(Some(section))
         }
     }
-    fn load_home_section_albums(
+    pub(super) fn load_home_section_albums(
         &self,
         server_id: &ServerId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Album>> {
         self.load_home_section_albums_from("home_section_items", server_id, kind)
     }
-    fn load_home_section_albums_from(
+    pub(super) fn load_home_section_albums_from(
         &self,
         table: &str,
         server_id: &ServerId,
@@ -76,14 +80,14 @@ impl Store {
         self.attach_album_metadata(server_id, &mut albums)?;
         Ok(albums)
     }
-    fn load_home_section_tracks(
+    pub(super) fn load_home_section_tracks(
         &self,
         server_id: &ServerId,
         kind: HomeSectionKind,
     ) -> StoreResult<Vec<Track>> {
         self.load_home_section_tracks_from("home_section_items", server_id, kind)
     }
-    fn load_home_section_tracks_from(
+    pub(super) fn load_home_section_tracks_from(
         &self,
         table: &str,
         server_id: &ServerId,
@@ -511,7 +515,7 @@ impl Store {
             tracks,
         }))
     }
-    fn artist_appears_on_albums(
+    pub(super) fn artist_appears_on_albums(
         &self,
         server_id: &ServerId,
         artist_id: &ArtistId,

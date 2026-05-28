@@ -7,7 +7,7 @@ use rufin_core::{
 };
 use serde::Deserialize;
 
-use super::{jellyfin_id, stable_hash};
+use crate::root::{jellyfin_id, stable_hash};
 
 pub(super) const ITEM_FIELDS: &str = "Path,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
 

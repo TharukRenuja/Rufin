@@ -1,3 +1,6 @@
+use super::servers::*;
+use super::*;
+
 struct SortedTrackSearchPage<'a> {
     query: &'a str,
     sort_key: LibraryField,
@@ -8,7 +11,7 @@ struct SortedTrackSearchPage<'a> {
 }
 
 impl Store {
-    fn search_tracks_page(
+    pub(super) fn search_tracks_page(
         &self,
         server_id: &ServerId,
         query: &str,
@@ -179,7 +182,7 @@ impl Store {
         }
         self.load_tracks_like_sorted(server_id, &pattern, sort_key, descending, offset, limit)
     }
-    fn load_tracks_like(
+    pub(super) fn load_tracks_like(
         &self,
         server_id: &ServerId,
         pattern: &str,
@@ -288,7 +291,7 @@ impl Store {
         self.attach_track_metadata(server_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total.max(0) as usize))
     }
-    fn load_tracks_like_sorted(
+    pub(super) fn load_tracks_like_sorted(
         &self,
         server_id: &ServerId,
         pattern: &str,
@@ -402,7 +405,7 @@ impl Store {
         self.attach_track_metadata(server_id, &mut tracks)?;
         Ok(PagedResponse::new(tracks, total.max(0) as usize))
     }
-    fn search_artists(
+    pub(super) fn search_artists(
         &self,
         server_id: &ServerId,
         query: &str,
@@ -412,7 +415,7 @@ impl Store {
             .map(|page| page.items)
     }
 }
-fn track_order_by_sql(alias: &str, field: LibraryField, descending: bool) -> String {
+pub(super) fn track_order_by_sql(alias: &str, field: LibraryField, descending: bool) -> String {
     let direction = if descending { "DESC" } else { "ASC" };
     let expression = match field {
         LibraryField::TrackNumber => {
@@ -452,13 +455,13 @@ fn track_order_by_sql(alias: &str, field: LibraryField, descending: bool) -> Str
         track_tiebreaker_order_sql(alias, direction)
     )
 }
-fn track_tiebreaker_order_sql(alias: &str, direction: &str) -> String {
+pub(super) fn track_tiebreaker_order_sql(alias: &str, direction: &str) -> String {
     format!(
         "{alias}.album COLLATE NOCASE {direction}, {alias}.disc_number {direction}, {alias}.track_number {direction}, {alias}.title COLLATE NOCASE {direction}, {alias}.track_id {direction}"
     )
 }
 impl Store {
-    fn search_artists_page(
+    pub(super) fn search_artists_page(
         &self,
         server_id: &ServerId,
         album_artist: bool,
@@ -507,7 +510,7 @@ impl Store {
         self.attach_artist_fallback_image_refs(server_id, &mut items, album_artist)?;
         Ok(PagedResponse::new(items, total))
     }
-    fn load_artists_like(
+    pub(super) fn load_artists_like(
         &self,
         server_id: &ServerId,
         album_artist: bool,
@@ -555,7 +558,7 @@ impl Store {
         self.attach_artist_fallback_image_refs(server_id, &mut items, album_artist)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
-    fn search_playlists(
+    pub(super) fn search_playlists(
         &self,
         server_id: &ServerId,
         query: &str,
@@ -564,7 +567,7 @@ impl Store {
         self.search_playlists_page(server_id, query, 0, limit, limit)
             .map(|page| page.items)
     }
-    fn search_playlists_page(
+    pub(super) fn search_playlists_page(
         &self,
         server_id: &ServerId,
         query: &str,
@@ -592,7 +595,7 @@ impl Store {
         )?)?;
         Ok(PagedResponse::new(items, total))
     }
-    fn load_playlists_like(
+    pub(super) fn load_playlists_like(
         &self,
         server_id: &ServerId,
         pattern: &str,
@@ -625,7 +628,7 @@ impl Store {
         )?)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
-    fn count_fts_matches(
+    pub(super) fn count_fts_matches(
         &self,
         server_id: &ServerId,
         item_type: &str,
@@ -646,7 +649,11 @@ impl Store {
             .map(|count| count.max(0) as usize)
             .map_err(StoreError::from)
     }
-    fn count_track_fts_matches(&self, server_id: &ServerId, query: &str) -> StoreResult<usize> {
+    pub(super) fn count_track_fts_matches(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+    ) -> StoreResult<usize> {
         let selected_folder = self.selected_music_folder_id(server_id)?;
         if let Some(folder_id) = selected_folder.as_ref() {
             self.connection
@@ -676,7 +683,7 @@ impl Store {
             self.count_fts_matches(server_id, "track", query)
         }
     }
-    fn count_artist_fts_matches(
+    pub(super) fn count_artist_fts_matches(
         &self,
         server_id: &ServerId,
         album_artist: bool,
@@ -708,7 +715,11 @@ impl Store {
             .map(|count| count.max(0) as usize)
             .map_err(StoreError::from)
     }
-    fn attach_album_genres(&self, server_id: &ServerId, albums: &mut [Album]) -> StoreResult<()> {
+    pub(super) fn attach_album_genres(
+        &self,
+        server_id: &ServerId,
+        albums: &mut [Album],
+    ) -> StoreResult<()> {
         if albums.is_empty() {
             return Ok(());
         }
@@ -722,7 +733,11 @@ impl Store {
         }
         Ok(())
     }
-    fn attach_album_metadata(&self, server_id: &ServerId, albums: &mut [Album]) -> StoreResult<()> {
+    pub(super) fn attach_album_metadata(
+        &self,
+        server_id: &ServerId,
+        albums: &mut [Album],
+    ) -> StoreResult<()> {
         self.attach_album_genres(server_id, albums)?;
         self.attach_album_track_fallback_image_refs(server_id, albums)?;
         if albums.is_empty() {
@@ -739,7 +754,7 @@ impl Store {
         }
         Ok(())
     }
-    fn attach_album_track_fallback_image_refs(
+    pub(super) fn attach_album_track_fallback_image_refs(
         &self,
         server_id: &ServerId,
         albums: &mut [Album],
@@ -796,7 +811,11 @@ impl Store {
         }
         Ok(())
     }
-    fn attach_track_genres(&self, server_id: &ServerId, tracks: &mut [Track]) -> StoreResult<()> {
+    pub(super) fn attach_track_genres(
+        &self,
+        server_id: &ServerId,
+        tracks: &mut [Track],
+    ) -> StoreResult<()> {
         if tracks.is_empty() {
             return Ok(());
         }
@@ -810,7 +829,11 @@ impl Store {
         }
         Ok(())
     }
-    fn attach_track_metadata(&self, server_id: &ServerId, tracks: &mut [Track]) -> StoreResult<()> {
+    pub(super) fn attach_track_metadata(
+        &self,
+        server_id: &ServerId,
+        tracks: &mut [Track],
+    ) -> StoreResult<()> {
         self.attach_track_genres(server_id, tracks)?;
         if tracks.is_empty() {
             return Ok(());
@@ -839,7 +862,7 @@ impl Store {
         }
         Ok(())
     }
-    fn attach_artist_fallback_image_refs(
+    pub(super) fn attach_artist_fallback_image_refs(
         &self,
         server_id: &ServerId,
         artists: &mut [Artist],
@@ -915,7 +938,10 @@ impl Store {
 
             let mut statement = self.connection.prepare(&sql)?;
             let rows = statement.query_map(params_from_iter(values), |row| {
-                Ok((ArtistId::new(row.get::<_, String>(16)?), album_from_row(row)?))
+                Ok((
+                    ArtistId::new(row.get::<_, String>(16)?),
+                    album_from_row(row)?,
+                ))
             })?;
             for row in rows {
                 let (artist_id, album) = row?;
@@ -925,7 +951,7 @@ impl Store {
 
         Ok(fallback_by_artist)
     }
-    fn load_genre_links(
+    pub(super) fn load_genre_links(
         &self,
         server_id: &ServerId,
         table: &str,
@@ -960,7 +986,7 @@ impl Store {
         }
         Ok(by_item)
     }
-    fn load_artist_links(
+    pub(super) fn load_artist_links(
         &self,
         server_id: &ServerId,
         table: &str,
@@ -1001,7 +1027,7 @@ impl Store {
         }
         Ok(by_item)
     }
-    fn count(&self, table: &str, server_id: &ServerId) -> StoreResult<usize> {
+    pub(super) fn count(&self, table: &str, server_id: &ServerId) -> StoreResult<usize> {
         let sql = format!("SELECT COUNT(*) FROM {table} WHERE server_id = ?1");
         let count = self
             .connection
@@ -1010,7 +1036,7 @@ impl Store {
             })?;
         Ok(count.max(0) as usize)
     }
-    fn count_tracks_in_music_folder(
+    pub(super) fn count_tracks_in_music_folder(
         &self,
         server_id: &ServerId,
         folder_id: &MusicFolderId,
@@ -1035,7 +1061,7 @@ impl Store {
             .map(|count| count.max(0) as usize)
             .map_err(StoreError::from)
     }
-    fn count_albums_in_music_folder(
+    pub(super) fn count_albums_in_music_folder(
         &self,
         server_id: &ServerId,
         folder_id: &MusicFolderId,
@@ -1062,7 +1088,11 @@ impl Store {
             .map(|count| count.max(0) as usize)
             .map_err(StoreError::from)
     }
-    fn count_artists(&self, server_id: &ServerId, album_artist: bool) -> StoreResult<usize> {
+    pub(super) fn count_artists(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+    ) -> StoreResult<usize> {
         let table = if album_artist {
             "album_artists"
         } else {
@@ -1084,7 +1114,11 @@ impl Store {
             })?;
         Ok(count.max(0) as usize)
     }
-    fn prune_missing_items(&self, server_id: &ServerId, generation: i64) -> StoreResult<()> {
+    pub(super) fn prune_missing_items(
+        &self,
+        server_id: &ServerId,
+        generation: i64,
+    ) -> StoreResult<()> {
         self.write_batch(|connection| {
             for table in [
                 "albums",
@@ -1172,14 +1206,14 @@ impl Store {
             Ok(())
         })
     }
-    fn configure_pragmas(&self, wal: bool) -> StoreResult<()> {
+    pub(super) fn configure_pragmas(&self, wal: bool) -> StoreResult<()> {
         self.connection.pragma_update(None, "foreign_keys", "ON")?;
         if wal {
             self.connection.pragma_update(None, "journal_mode", "WAL")?;
         }
         Ok(())
     }
-    fn write_batch<T>(
+    pub(super) fn write_batch<T>(
         &self,
         operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {

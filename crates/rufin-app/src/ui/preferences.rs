@@ -1,11 +1,10 @@
 #[path = "preferences/library.rs"]
 mod library;
 
-include!("preferences/root/dialog.rs");
-include!("preferences/root/general.rs");
-include!("preferences/root/layout.rs");
+#[path = "preferences/root/mod.rs"]
+mod root;
 
-#[cfg(test)]
-mod tests {
-    include!("preferences/root/reorder_tests.rs");
-}
+use super::Shell;
+pub(super) use root::button_row;
+
+pub(super) use root::*;

@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn play_tracks_now(&self, tracks: Vec<Track>) {
         if tracks.is_empty() {

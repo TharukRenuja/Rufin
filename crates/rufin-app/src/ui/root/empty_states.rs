@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {
+    pub(in crate::ui) fn placeholder_view(&self, title: &str, body: &str) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 12);
         wrapper.add_css_class("empty-state");
         wrapper.set_vexpand(true);
@@ -17,7 +19,7 @@ impl Shell {
         wrapper.append(&label);
         wrapper.upcast()
     }
-    fn route_empty_view(&self, body: &str) -> gtk::Widget {
+    pub(in crate::ui) fn route_empty_view(&self, body: &str) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 12);
         wrapper.add_css_class("empty-state");
         wrapper.set_vexpand(true);

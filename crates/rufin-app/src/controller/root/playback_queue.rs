@@ -1,4 +1,9 @@
-fn lyrics_from_text(track_id: TrackId, result: &LyricsSearchResult) -> Lyrics {
+use super::*;
+
+pub(in crate::controller) fn lyrics_from_text(
+    track_id: TrackId,
+    result: &LyricsSearchResult,
+) -> Lyrics {
     let content = lyrics_result_content(result).unwrap_or_default();
     Lyrics {
         track_id,
@@ -10,7 +15,7 @@ fn lyrics_from_text(track_id: TrackId, result: &LyricsSearchResult) -> Lyrics {
     }
 }
 
-fn lyric_line_from_text(line: &str) -> Option<rufin_provider::LyricLine> {
+pub(in crate::controller) fn lyric_line_from_text(line: &str) -> Option<rufin_provider::LyricLine> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
@@ -30,7 +35,7 @@ fn lyric_line_from_text(line: &str) -> Option<rufin_provider::LyricLine> {
     })
 }
 
-fn parse_lrc_timestamp(line: &str) -> Option<(u64, &str)> {
+pub(in crate::controller) fn parse_lrc_timestamp(line: &str) -> Option<(u64, &str)> {
     let timestamp_end = line.find(']')?;
     let timestamp = line.get(1..timestamp_end)?;
     let (minutes, seconds) = timestamp.split_once(':')?;
@@ -50,7 +55,7 @@ fn parse_lrc_timestamp(line: &str) -> Option<(u64, &str)> {
     ))
 }
 
-fn fraction_to_millis(fraction: &str) -> Option<u64> {
+pub(in crate::controller) fn fraction_to_millis(fraction: &str) -> Option<u64> {
     let mut millis = 0_u64;
     for (index, character) in fraction.chars().take(3).enumerate() {
         let digit = character.to_digit(10)? as u64;
@@ -64,7 +69,9 @@ fn fraction_to_millis(fraction: &str) -> Option<u64> {
     Some(millis)
 }
 
-fn lyrics_search_for_settings(settings: &AppSettings) -> JellyfinLyricsSearch {
+pub(in crate::controller) fn lyrics_search_for_settings(
+    settings: &AppSettings,
+) -> JellyfinLyricsSearch {
     if settings.private_mode || !settings.external_lyrics_enabled {
         JellyfinLyricsSearch::ServerOnly
     } else if settings.prefer_server_lyrics {
@@ -74,7 +81,10 @@ fn lyrics_search_for_settings(settings: &AppSettings) -> JellyfinLyricsSearch {
     }
 }
 
-fn cached_lyrics_allowed(lyrics: &Lyrics, search: JellyfinLyricsSearch) -> bool {
+pub(in crate::controller) fn cached_lyrics_allowed(
+    lyrics: &Lyrics,
+    search: JellyfinLyricsSearch,
+) -> bool {
     match lyrics.source {
         rufin_provider::LyricsSource::Local => true,
         rufin_provider::LyricsSource::Server => true,
@@ -82,7 +92,7 @@ fn cached_lyrics_allowed(lyrics: &Lyrics, search: JellyfinLyricsSearch) -> bool 
     }
 }
 
-fn provider_for_saved(
+pub(in crate::controller) fn provider_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -124,7 +134,7 @@ fn provider_for_saved(
     provider_from_saved(session).map_err(|error| error.to_string())
 }
 
-fn load_folder_detail(
+pub(in crate::controller) fn load_folder_detail(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -149,7 +159,7 @@ fn load_folder_detail(
     Ok(detail)
 }
 
-fn sync_playlist_mutation(
+pub(in crate::controller) fn sync_playlist_mutation(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -230,7 +240,7 @@ fn sync_playlist_mutation(
         .map_err(|error| error.to_string())
 }
 
-fn report_playback_async(
+pub(in crate::controller) fn report_playback_async(
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
@@ -260,7 +270,10 @@ fn report_playback_async(
     });
 }
 
-fn playlist_entries_for_tracks(playlist_id: &PlaylistId, tracks: &[Track]) -> Vec<PlaylistEntry> {
+pub(in crate::controller) fn playlist_entries_for_tracks(
+    playlist_id: &PlaylistId,
+    tracks: &[Track],
+) -> Vec<PlaylistEntry> {
     let prefix = unique_millis().unwrap_or(0);
     tracks
         .iter()
@@ -272,14 +285,14 @@ fn playlist_entries_for_tracks(playlist_id: &PlaylistId, tracks: &[Track]) -> Ve
         .collect()
 }
 
-fn unique_millis() -> Option<u128> {
+pub(in crate::controller) fn unique_millis() -> Option<u128> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_millis())
 }
 
-fn emit_snapshot_result(
+pub(in crate::controller) fn emit_snapshot_result(
     store: &StoreHandle,
     events: &Sender<ControllerEvent>,
     result: Result<(), String>,
@@ -298,7 +311,7 @@ fn emit_snapshot_result(
     }
 }
 
-fn emit_playlist_changed_result(
+pub(in crate::controller) fn emit_playlist_changed_result(
     store: &StoreHandle,
     events: &Sender<ControllerEvent>,
     playlist_id: PlaylistId,
@@ -321,57 +334,57 @@ fn emit_playlist_changed_result(
     }
 }
 
-fn config_dir() -> Option<PathBuf> {
+pub(in crate::controller) fn config_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.config_dir().to_path_buf())
 }
 
-fn cache_dir() -> Option<PathBuf> {
+pub(in crate::controller) fn cache_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.cache_dir().to_path_buf())
 }
 
-fn app_cache_database_path() -> PathBuf {
+pub(in crate::controller) fn app_cache_database_path() -> PathBuf {
     cache_dir()
         .map(|dir| app_cache_database_path_for_cache_dir(&dir))
         .unwrap_or_else(|| PathBuf::from(CACHE_DATABASE_FILE_NAME))
 }
 
-fn app_cache_database_path_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn app_cache_database_path_for_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir
         .join(STORE_DIR_NAME)
         .join(CACHE_DATABASE_FILE_NAME)
 }
 
-fn app_settings_path() -> PathBuf {
+pub(in crate::controller) fn app_settings_path() -> PathBuf {
     config_dir()
         .map(|dir| app_settings_path_for_config_dir(&dir))
         .unwrap_or_else(|| PathBuf::from(SETTINGS_FILE_NAME))
 }
 
-fn app_settings_path_for_config_dir(config_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn app_settings_path_for_config_dir(config_dir: &Path) -> PathBuf {
     config_dir.join(SETTINGS_FILE_NAME)
 }
 
-fn cover_cache_dir() -> Option<PathBuf> {
+pub(in crate::controller) fn cover_cache_dir() -> Option<PathBuf> {
     cache_dir().map(|dir| cover_cache_dir_for_cache_dir(&dir))
 }
 
-fn cover_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn cover_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(COVER_CACHE_DIR_NAME)
 }
 
-fn lyrics_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn lyrics_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(LYRICS_CACHE_DIR_NAME)
 }
 
-fn playback_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn playback_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(PLAYBACK_CACHE_DIR_NAME)
 }
 
-fn tmp_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn tmp_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(TMP_CACHE_DIR_NAME)
 }
 
-fn ensure_app_cache_dirs(cache_dir: &Path) -> Result<(), String> {
+pub(in crate::controller) fn ensure_app_cache_dirs(cache_dir: &Path) -> Result<(), String> {
     for dir in [
         app_cache_database_path_for_cache_dir(cache_dir)
             .parent()
@@ -389,11 +402,11 @@ fn ensure_app_cache_dirs(cache_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn cover_cache_path_for_key(key: &str) -> Option<PathBuf> {
+pub(in crate::controller) fn cover_cache_path_for_key(key: &str) -> Option<PathBuf> {
     cover_cache_dir().map(|dir| dir.join(key))
 }
 
-fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
+pub(in crate::controller) fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -403,7 +416,7 @@ fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
+pub(in crate::controller) fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
     let Some(path) = cover_cache_dir().map(|dir| dir.join(encode_key_part(server_id.as_str())))
     else {
         return Ok(());
@@ -411,7 +424,7 @@ fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
     remove_dir_if_exists(&path)
 }
 
-fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
+pub(in crate::controller) fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
     match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -419,7 +432,7 @@ fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
     }
 }
 
-fn encode_key_part(value: &str) -> String {
+pub(in crate::controller) fn encode_key_part(value: &str) -> String {
     value
         .chars()
         .map(|character| match character {
@@ -429,14 +442,17 @@ fn encode_key_part(value: &str) -> String {
         .collect()
 }
 
-fn sync_is_running(sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>, server_id: &ServerId) -> bool {
+pub(in crate::controller) fn sync_is_running(
+    sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>,
+    server_id: &ServerId,
+) -> bool {
     sync_in_flight
         .lock()
         .map(|running| running.contains(server_id))
         .unwrap_or(true)
 }
 
-fn cancel_sync_if_running(
+pub(in crate::controller) fn cancel_sync_if_running(
     sync_in_flight: &Arc<Mutex<HashSet<ServerId>>>,
     server_id: &ServerId,
 ) -> Result<bool, String> {
@@ -446,7 +462,7 @@ fn cancel_sync_if_running(
         .map_err(|_| "sync guard lock was poisoned".to_string())
 }
 
-fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
+pub(in crate::controller) fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
     let (lock, ready) = &**slots;
     let Ok(mut active) = lock.lock() else {
         return false;
@@ -461,7 +477,7 @@ fn acquire_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) -> bool {
     true
 }
 
-fn release_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) {
+pub(in crate::controller) fn release_cover_slot(slots: &Arc<(Mutex<usize>, Condvar)>) {
     let (lock, ready) = &**slots;
     if let Ok(mut active) = lock.lock() {
         *active = active.saturating_sub(1);

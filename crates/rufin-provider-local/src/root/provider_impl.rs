@@ -1,4 +1,6 @@
-fn build_library(
+use super::*;
+
+pub(super) fn build_library(
     scanned: Vec<ScannedTrack>,
     root_entries: Vec<LocalFolderEntry>,
     folders: HashMap<FolderId, LocalFolderEntry>,
@@ -166,7 +168,7 @@ fn build_library(
         covers,
     }
 }
-fn artist_from_accumulator(id: ArtistId, artist: ArtistAccumulator) -> Artist {
+pub(super) fn artist_from_accumulator(id: ArtistId, artist: ArtistAccumulator) -> Artist {
     Artist {
         id,
         name: artist.name,
@@ -179,12 +181,12 @@ fn artist_from_accumulator(id: ArtistId, artist: ArtistAccumulator) -> Artist {
         image_ref: None,
     }
 }
-fn page<T: Clone>(items: &[T], request: PagedRequest) -> PagedResponse<T> {
+pub(super) fn page<T: Clone>(items: &[T], request: PagedRequest) -> PagedResponse<T> {
     let start = request.offset.min(items.len());
     let end = start.saturating_add(request.limit).min(items.len());
     PagedResponse::new(items[start..end].to_vec(), items.len())
 }
-fn is_audio_file(path: &Path) -> bool {
+pub(super) fn is_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -193,7 +195,7 @@ fn is_audio_file(path: &Path) -> bool {
                 .any(|candidate| extension.eq_ignore_ascii_case(candidate))
         })
 }
-fn folder_cover(dir: &Path) -> Option<PathBuf> {
+pub(super) fn folder_cover(dir: &Path) -> Option<PathBuf> {
     ["cover", "folder", "front", "album"]
         .into_iter()
         .flat_map(|stem| {
@@ -201,7 +203,7 @@ fn folder_cover(dir: &Path) -> Option<PathBuf> {
         })
         .find(|path| path.is_file())
 }
-fn embedded_cover(
+pub(super) fn embedded_cover(
     path: &Path,
     tagged_file: Option<&lofty::file::TaggedFile>,
     tag: Option<&Tag>,
@@ -214,17 +216,17 @@ fn embedded_cover(
         content_type: picture.mime_type().map(ToString::to_string),
     })
 }
-fn select_best_picture(pictures: &[Picture]) -> Option<&Picture> {
+pub(super) fn select_best_picture(pictures: &[Picture]) -> Option<&Picture> {
     pictures
         .iter()
         .find(|picture| picture.pic_type() == PictureType::CoverFront)
         .or_else(|| pictures.first())
 }
-fn select_best_picture_from_tags(tags: &[Tag]) -> Option<&Picture> {
+pub(super) fn select_best_picture_from_tags(tags: &[Tag]) -> Option<&Picture> {
     tags.iter()
         .find_map(|tag| select_best_picture(tag.pictures()))
 }
-fn cover_id(cover: &LocalCover) -> String {
+pub(super) fn cover_id(cover: &LocalCover) -> String {
     let raw = match cover {
         LocalCover::File(path) => format!("file:{}", path.to_string_lossy()),
         LocalCover::Embedded { path, .. } => format!("embedded:{}", path.to_string_lossy()),
@@ -234,7 +236,7 @@ fn cover_id(cover: &LocalCover) -> String {
         utf8_percent_encode(&raw, NON_ALPHANUMERIC)
     )
 }
-fn cover_url(cover: &LocalCover) -> ProviderResult<String> {
+pub(super) fn cover_url(cover: &LocalCover) -> ProviderResult<String> {
     match cover {
         LocalCover::File(path) | LocalCover::Embedded { path, .. } => Url::from_file_path(path)
             .map(|url| url.to_string())
@@ -243,7 +245,7 @@ fn cover_url(cover: &LocalCover) -> ProviderResult<String> {
             }),
     }
 }
-fn content_type_from_path(path: &Path) -> Option<String> {
+pub(super) fn content_type_from_path(path: &Path) -> Option<String> {
     match path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -256,10 +258,13 @@ fn content_type_from_path(path: &Path) -> Option<String> {
         _ => None,
     }
 }
-fn tag_string(tag: Option<&Tag>, read: impl FnOnce(&Tag) -> Option<String>) -> Option<String> {
+pub(super) fn tag_string(
+    tag: Option<&Tag>,
+    read: impl FnOnce(&Tag) -> Option<String>,
+) -> Option<String> {
     tag.and_then(read).filter(|value| !value.trim().is_empty())
 }
-fn artist_names(tag: Option<&Tag>, fallback: &str) -> Vec<String> {
+pub(super) fn artist_names(tag: Option<&Tag>, fallback: &str) -> Vec<String> {
     let tagged = tag
         .map(|tag| {
             tag.get_strings(ItemKey::TrackArtists)
@@ -273,7 +278,7 @@ fn artist_names(tag: Option<&Tag>, fallback: &str) -> Vec<String> {
         tagged
     }
 }
-fn split_credit_names(value: &str) -> Vec<String> {
+pub(super) fn split_credit_names(value: &str) -> Vec<String> {
     let names = value
         .split([';', '/'])
         .map(str::trim)
@@ -282,25 +287,25 @@ fn split_credit_names(value: &str) -> Vec<String> {
         .collect::<Vec<_>>();
     if names.is_empty() { Vec::new() } else { names }
 }
-fn album_grouping_path(path: &Path) -> String {
+pub(super) fn album_grouping_path(path: &Path) -> String {
     path.parent()
         .map(|parent| parent.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
-fn merge_genres(target: &mut Vec<String>, source: &[String]) {
+pub(super) fn merge_genres(target: &mut Vec<String>, source: &[String]) {
     for genre in source {
         if !target.iter().any(|candidate| candidate == genre) {
             target.push(genre.clone());
         }
     }
 }
-fn local_id<T>(kind: &str, value: &str) -> T
+pub(super) fn local_id<T>(kind: &str, value: &str) -> T
 where
     T: From<String>,
 {
     T::from(format!("local:{kind}:{:016x}", stable_hash(value)))
 }
-fn stable_hash(value: &str) -> u64 {
+pub(super) fn stable_hash(value: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in value.as_bytes() {
         hash ^= u64::from(*byte);
@@ -308,7 +313,7 @@ fn stable_hash(value: &str) -> u64 {
     }
     hash
 }
-fn normalize_search(value: &str) -> String {
+pub(super) fn normalize_search(value: &str) -> String {
     value
         .chars()
         .map(|character| {
@@ -323,11 +328,14 @@ fn normalize_search(value: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-fn searchable_matches<'a>(query: &str, mut values: impl Iterator<Item = &'a String>) -> bool {
+pub(super) fn searchable_matches<'a>(
+    query: &str,
+    mut values: impl Iterator<Item = &'a String>,
+) -> bool {
     values.any(|value| normalize_search(value).contains(query))
 }
 #[allow(dead_code)]
-fn decode_cover_id(item_id: &str) -> Option<String> {
+pub(super) fn decode_cover_id(item_id: &str) -> Option<String> {
     item_id
         .strip_prefix("local:cover:")
         .and_then(|encoded| percent_decode_str(encoded).decode_utf8().ok())

@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn create_playlist(&self, name: String, tracks: Vec<Track>) {
         let store = self.store.clone();
@@ -135,7 +137,7 @@ impl AppController {
             detail
         });
     }
-    fn mutate_playlist_entries(
+    pub(in crate::controller) fn mutate_playlist_entries(
         &self,
         playlist_id: PlaylistId,
         mutate: impl FnOnce(rufin_provider::PlaylistDetail) -> rufin_provider::PlaylistDetail

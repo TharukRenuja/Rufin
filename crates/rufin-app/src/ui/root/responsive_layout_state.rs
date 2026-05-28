@@ -1,11 +1,13 @@
+use super::*;
+
 impl Shell {
-    fn update_layout(self: &Rc<Self>) -> bool {
+    pub(in crate::ui) fn update_layout(self: &Rc<Self>) -> bool {
         let width = self.layout_width().max(1);
         let settings = self.state.settings.borrow().layout.clone();
         let resolved = resolve_layout(&settings, width);
         self.apply_resolved_layout(resolved)
     }
-    fn apply_resolved_layout(self: &Rc<Self>, resolved: ResolvedLayout) -> bool {
+    pub(in crate::ui) fn apply_resolved_layout(self: &Rc<Self>, resolved: ResolvedLayout) -> bool {
         let login_active = self.login_screen_active();
         if login_active {
             self.root_stack.set_visible_child(&self.login_host);
@@ -63,7 +65,7 @@ impl Shell {
         self.log_layout_snapshot("apply_resolved_layout");
         changed
     }
-    fn layout_width(&self) -> i32 {
+    pub(in crate::ui) fn layout_width(&self) -> i32 {
         self.window
             .surface()
             .map(|surface| surface.width())
@@ -74,10 +76,10 @@ impl Shell {
             })
             .unwrap_or(1)
     }
-    fn login_screen_active(&self) -> bool {
+    pub(in crate::ui) fn login_screen_active(&self) -> bool {
         self.state.library.borrow().first_run || self.state.first_run_connection_pending.get()
     }
-    fn log_layout_snapshot(&self, stage: &'static str) {
+    pub(in crate::ui) fn log_layout_snapshot(&self, stage: &'static str) {
         if std::env::var_os("RUFIN_DEBUG_LAYOUT").is_none() {
             return;
         }

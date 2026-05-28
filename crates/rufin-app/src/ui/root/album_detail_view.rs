@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn album_detail_view(self: &Rc<Self>, album_id: AlbumId) -> gtk::Widget {
+    pub(in crate::ui) fn album_detail_view(self: &Rc<Self>, album_id: AlbumId) -> gtk::Widget {
         let detail = self
             .controller
             .cached_album_detail(&album_id)
@@ -48,7 +50,11 @@ impl Shell {
         header.add_css_class("album-detail-showcase");
         add_album_seed_gradient_class(&header, album.color_seed);
         header.set_hexpand(true);
-        self.prime_cover_ref_from_cache_now(album.image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
+        self.prime_cover_ref_from_cache_now(
+            album.image_ref.as_ref(),
+            DETAIL_COVER_SIZE,
+            cover_size,
+        );
         let cover = self.cover_tile_for(
             album.image_ref.as_ref(),
             album.color_seed,

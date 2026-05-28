@@ -1,3 +1,5 @@
+use super::*;
+
 use std::time::Duration;
 
 const JELLYFIN_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -632,7 +634,7 @@ impl MusicProvider for JellyfinProvider {
         self.send_unit(self.client.post(url).json(&body)).await
     }
 }
-async fn public_server_name(
+pub(super) async fn public_server_name(
     client: &Client,
     base_url: &Url,
     config: &JellyfinClientConfig,
@@ -647,7 +649,9 @@ async fn public_server_name(
     .ok()?;
     response.server_name.or(response.local_address)
 }
-async fn send_json<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> ProviderResult<T> {
+pub(super) async fn send_json<T: DeserializeOwned>(
+    request: reqwest::RequestBuilder,
+) -> ProviderResult<T> {
     let response = request.send().await.map_err(map_reqwest_error)?;
     let status = response.status();
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -669,7 +673,7 @@ async fn send_json<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Pro
 
     response.json::<T>().await.map_err(map_reqwest_error)
 }
-async fn send_unit(request: reqwest::RequestBuilder) -> ProviderResult<()> {
+pub(super) async fn send_unit(request: reqwest::RequestBuilder) -> ProviderResult<()> {
     let response = request.send().await.map_err(map_reqwest_error)?;
     let status = response.status();
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -690,7 +694,7 @@ async fn send_unit(request: reqwest::RequestBuilder) -> ProviderResult<()> {
     }
     Ok(())
 }
-async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
+pub(super) async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageBytes> {
     let response = request.send().await.map_err(map_reqwest_error)?;
     let status = response.status();
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -721,7 +725,7 @@ async fn send_bytes(request: reqwest::RequestBuilder) -> ProviderResult<ImageByt
         content_type,
     })
 }
-fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
+pub(super) fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
     build_client_with_timeouts(
         trust_invalid_cert,
         JELLYFIN_CONNECT_TIMEOUT,
@@ -729,7 +733,7 @@ fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
     )
 }
 
-fn build_client_with_timeouts(
+pub(super) fn build_client_with_timeouts(
     trust_invalid_cert: bool,
     connect_timeout: Duration,
     request_timeout: Duration,
@@ -759,7 +763,7 @@ pub(crate) fn normalize_base_url(raw: &str) -> ProviderResult<Url> {
     url.set_path(&normalized_path);
     Ok(url)
 }
-fn endpoint(base_url: &Url, path: &str) -> ProviderResult<Url> {
+pub(super) fn endpoint(base_url: &Url, path: &str) -> ProviderResult<Url> {
     let mut url = base_url.clone();
     let base_path = base_url.path().trim_end_matches('/');
     let path = path.trim_start_matches('/');
@@ -772,7 +776,7 @@ fn endpoint(base_url: &Url, path: &str) -> ProviderResult<Url> {
     url.set_query(None);
     Ok(url)
 }
-fn auth_header(config: &JellyfinClientConfig, token: Option<&str>) -> String {
+pub(super) fn auth_header(config: &JellyfinClientConfig, token: Option<&str>) -> String {
     let mut value = format!(
         "MediaBrowser Client=\"{}\", Device=\"{}\", DeviceId=\"{}\", Version=\"{}\"",
         config.client_name, config.device_name, config.device_id, config.client_version
@@ -782,7 +786,7 @@ fn auth_header(config: &JellyfinClientConfig, token: Option<&str>) -> String {
     }
     value
 }
-fn map_reqwest_error(error: reqwest::Error) -> ProviderError {
+pub(super) fn map_reqwest_error(error: reqwest::Error) -> ProviderError {
     let message = error.to_string();
     if message.to_lowercase().contains("certificate") || message.to_lowercase().contains("tls") {
         ProviderError::Tls(message)
@@ -797,16 +801,16 @@ fn map_reqwest_error(error: reqwest::Error) -> ProviderError {
         ProviderError::Other(message)
     }
 }
-fn raw_item_id(id: &str) -> &str {
+pub(super) fn raw_item_id(id: &str) -> &str {
     id.rsplit(':').next().unwrap_or(id)
 }
-fn image_kind_path(kind: ImageKind) -> &'static str {
+pub(super) fn image_kind_path(kind: ImageKind) -> &'static str {
     match kind {
         ImageKind::Primary => "Primary",
         ImageKind::Backdrop => "Backdrop",
     }
 }
-fn jellyfin_year_filter(
+pub(super) fn jellyfin_year_filter(
     min_year: Option<u16>,
     max_year: Option<u16>,
 ) -> ProviderResult<Option<String>> {
@@ -827,7 +831,7 @@ fn jellyfin_year_filter(
             .join(","),
     ))
 }
-fn jellyfin_capabilities() -> ProviderCapabilities {
+pub(super) fn jellyfin_capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
         lyrics: true,
         playback_reporting: true,
@@ -840,23 +844,23 @@ fn jellyfin_capabilities() -> ProviderCapabilities {
         ..ProviderCapabilities::default()
     }
 }
-fn jellyfin_id(kind: &str, id: &str) -> String {
+pub(crate) fn jellyfin_id(kind: &str, id: &str) -> String {
     format!("jellyfin:{kind}:{id}")
 }
-fn raw_track_ids(track_ids: &[TrackId]) -> Vec<String> {
+pub(super) fn raw_track_ids(track_ids: &[TrackId]) -> Vec<String> {
     track_ids
         .iter()
         .map(|id| raw_item_id(id.as_str()).to_string())
         .collect()
 }
-fn stable_server_id(input: &str) -> String {
+pub(super) fn stable_server_id(input: &str) -> String {
     format!("{:016x}", stable_hash(input))
 }
-fn stable_hash(input: &str) -> u64 {
+pub(crate) fn stable_hash(input: &str) -> u64 {
     input.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
-fn ticks_to_millis(ticks: Option<i64>) -> Option<u64> {
+pub(super) fn ticks_to_millis(ticks: Option<i64>) -> Option<u64> {
     ticks.map(|value| (value.max(0) / 10_000) as u64)
 }

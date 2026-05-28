@@ -1,7 +1,9 @@
-const UI_PERF_ROUTE_GATE_POLL_MS: u64 = 33;
-const UI_PERF_ROUTE_GATE_TIMEOUT_MS: u64 = 3_500;
+use super::*;
 
-struct UiPerfRouteScrollRun {
+pub(in crate::ui) const UI_PERF_ROUTE_GATE_POLL_MS: u64 = 33;
+pub(in crate::ui) const UI_PERF_ROUTE_GATE_TIMEOUT_MS: u64 = 3_500;
+
+pub(in crate::ui) struct UiPerfRouteScrollRun {
     shell: Rc<Shell>,
     app: adw::Application,
     perf: Rc<UiPerfMonitor>,
@@ -12,7 +14,7 @@ struct UiPerfRouteScrollRun {
     wait_started_at: Instant,
 }
 
-fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
+pub(in crate::ui) fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let normal_back_shell = Rc::clone(shell);
     shell
         .normal_back_button
@@ -37,7 +39,7 @@ fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     install_main_menu_shortcut(shell, main_menu);
     connect_layout_resize(shell);
 }
-fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
+pub(in crate::ui) fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
     let lyrics_shell = Rc::clone(shell);
     shell.lyrics_pane.connect_search_clicked(move || {
         if current_playback_track_id(&lyrics_shell.state.player.borrow()).is_none() {
@@ -68,7 +70,7 @@ fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
             fullscreen_lyrics_shell.suppress_auto_lyrics_for_current()
         });
 }
-fn submit_lyrics_search(shell: &Rc<Shell>) {
+pub(in crate::ui) fn submit_lyrics_search(shell: &Rc<Shell>) {
     let Some(dialog) = shell.state.lyrics_search_dialog.borrow().clone() else {
         return;
     };
@@ -85,7 +87,7 @@ fn submit_lyrics_search(shell: &Rc<Shell>) {
         .controller
         .search_lyrics_for_current(artist_name, track_name);
 }
-fn auto_lyrics_search_is_suppressed(
+pub(in crate::ui) fn auto_lyrics_search_is_suppressed(
     settings: &AppSettings,
     track_id: &rufin_core::TrackId,
 ) -> bool {
@@ -95,11 +97,11 @@ fn auto_lyrics_search_is_suppressed(
         .any(|stored| stored == track_id.as_str())
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AutoLyricsRequest {
+pub(in crate::ui) enum AutoLyricsRequest {
     Default,
     ServerOnly,
 }
-fn auto_lyrics_request_for_settings(
+pub(in crate::ui) fn auto_lyrics_request_for_settings(
     settings: &AppSettings,
     track_id: &rufin_core::TrackId,
     lyrics_surface_visible: bool,
@@ -116,7 +118,7 @@ fn auto_lyrics_request_for_settings(
         Some(AutoLyricsRequest::Default)
     }
 }
-fn auto_lyrics_skip_action_enabled(
+pub(in crate::ui) fn auto_lyrics_skip_action_enabled(
     settings: &AppSettings,
     track_id: Option<&rufin_core::TrackId>,
     lyrics: Option<&Lyrics>,
@@ -131,12 +133,12 @@ fn auto_lyrics_skip_action_enabled(
         && settings.external_lyrics_enabled
         && !auto_lyrics_search_is_suppressed(settings, track_id)
 }
-fn clear_list_box(list: &gtk::ListBox) {
+pub(in crate::ui) fn clear_list_box(list: &gtk::ListBox) {
     while let Some(child) = list.first_child() {
         list.remove(&child);
     }
 }
-fn lyrics_search_result_has_content(result: &LyricsSearchResult) -> bool {
+pub(in crate::ui) fn lyrics_search_result_has_content(result: &LyricsSearchResult) -> bool {
     result
         .synced_lyrics
         .as_deref()
@@ -146,7 +148,7 @@ fn lyrics_search_result_has_content(result: &LyricsSearchResult) -> bool {
             .as_deref()
             .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
-fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
+pub(in crate::ui) fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
     let mut subtitle = String::new();
     if !result.album_name.trim().is_empty() {
         subtitle.push_str(&result.album_name);
@@ -185,16 +187,16 @@ fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
     }
     subtitle
 }
-fn initial_window_size(width: Option<i32>, height: Option<i32>) -> (i32, i32) {
+pub(in crate::ui) fn initial_window_size(width: Option<i32>, height: Option<i32>) -> (i32, i32) {
     sanitized_window_size(width, height).unwrap_or((DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT))
 }
-fn install_window_state_persistence(shell: &Rc<Shell>) {
+pub(in crate::ui) fn install_window_state_persistence(shell: &Rc<Shell>) {
     let save_shell = Rc::clone(shell);
     shell.application.connect_shutdown(move |_| {
         save_shell.save_window_state();
     });
 }
-fn connect_layout_resize(shell: &Rc<Shell>) {
+pub(in crate::ui) fn connect_layout_resize(shell: &Rc<Shell>) {
     let resize_shell = Rc::clone(shell);
     shell
         .window
@@ -224,7 +226,7 @@ fn connect_layout_resize(shell: &Rc<Shell>) {
             route_shell.queue_responsive_route_render();
         });
 }
-fn install_window_actions(shell: &Rc<Shell>) {
+pub(in crate::ui) fn install_window_actions(shell: &Rc<Shell>) {
     let go_back = gio::SimpleAction::new("go-back", None);
     let go_back_shell = Rc::clone(shell);
     go_back.connect_activate(move |_, _| go_back_shell.go_back());
@@ -277,7 +279,7 @@ fn install_window_actions(shell: &Rc<Shell>) {
         .application
         .set_accels_for_action("win.toggle-fullscreen", &["F11"]);
 }
-fn install_main_menu_shortcut(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
+pub(in crate::ui) fn install_main_menu_shortcut(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let key_controller = gtk::EventControllerKey::new();
     key_controller.connect_key_pressed(move |_, key, _, state| {
         if key == gtk::gdk::Key::F10 && !state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
@@ -289,7 +291,7 @@ fn install_main_menu_shortcut(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     });
     shell.window.add_controller(key_controller);
 }
-fn show_shortcuts_dialog(shell: &Shell) {
+pub(in crate::ui) fn show_shortcuts_dialog(shell: &Shell) {
     let dialog = adw::ShortcutsDialog::builder()
         .title(tr("Keyboard Shortcuts"))
         .build();
@@ -315,7 +317,7 @@ fn show_shortcuts_dialog(shell: &Shell) {
     dialog.add(section);
     dialog.present(Some(&shell.window));
 }
-fn show_about_dialog(shell: &Shell) {
+pub(in crate::ui) fn show_about_dialog(shell: &Shell) {
     let dialog = adw::AboutDialog::builder()
         .application_name("Rufin")
         .application_icon("io.github.screwys.Rufin")
@@ -329,7 +331,7 @@ fn show_about_dialog(shell: &Shell) {
     dialog.add_link(&tr("Issues"), "https://github.com/screwys/Rufin/issues");
     dialog.present(Some(&shell.window));
 }
-fn schedule_startup_sync(shell: &Rc<Shell>) {
+pub(in crate::ui) fn schedule_startup_sync(shell: &Rc<Shell>) {
     let Some(delay_ms) = shell.controller.startup_sync_delay_ms() else {
         return;
     };
@@ -340,7 +342,7 @@ fn schedule_startup_sync(shell: &Rc<Shell>) {
         shell.controller.start_background_sync_for_active();
     });
 }
-fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
+pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local(Duration::from_millis(33), move || {
         shell.controller.poll_playback_events();
@@ -470,7 +472,10 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
                         *shell.state.lyrics.borrow_mut() = None;
                         *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
                         shell.lyrics_pane.clear_follow_scroll_pause();
-                        shell.fullscreen_player.lyrics_pane.clear_follow_scroll_pause();
+                        shell
+                            .fullscreen_player
+                            .lyrics_pane
+                            .clear_follow_scroll_pause();
                         shell.cancel_scheduled_lyrics_highlight();
                         shell.render_queue_panel();
                         shell.render_lyrics_panel();
@@ -575,7 +580,7 @@ fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
         glib::ControlFlow::Continue
     });
 }
-fn start_ui_perf_run(shell: &Rc<Shell>, app: &adw::Application) {
+pub(in crate::ui) fn start_ui_perf_run(shell: &Rc<Shell>, app: &adw::Application) {
     let Some(perf) = shell.state.perf.clone() else {
         return;
     };
@@ -591,18 +596,14 @@ fn start_ui_perf_run(shell: &Rc<Shell>, app: &adw::Application) {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "stdout_only".to_string())
     );
-    let plan = ui_perf_plan(
-        shell,
-        perf.options.duration_ms,
-        perf.options.route_ms,
-    );
+    let plan = ui_perf_plan(shell, perf.options.duration_ms, perf.options.route_ms);
     println!("RUFIN_PERF route_plan {}", ui_perf_plan_summary(&plan));
     let runs = Rc::new(RefCell::new(plan));
     let shell = Rc::clone(shell);
     let app = app.clone();
     wait_for_ui_perf_startup_reveal(shell, app, perf, runs, Instant::now());
 }
-fn start_ui_perf_observe(shell: &Rc<Shell>, app: &adw::Application) {
+pub(in crate::ui) fn start_ui_perf_observe(shell: &Rc<Shell>, app: &adw::Application) {
     let Some(perf) = shell.state.perf.clone() else {
         return;
     };
@@ -639,7 +640,7 @@ fn start_ui_perf_observe(shell: &Rc<Shell>, app: &adw::Application) {
         );
     });
 }
-fn start_ui_perf_heartbeat(perf: Rc<UiPerfMonitor>) -> glib::SourceId {
+pub(in crate::ui) fn start_ui_perf_heartbeat(perf: Rc<UiPerfMonitor>) -> glib::SourceId {
     let last_tick = Rc::new(RefCell::new(Instant::now()));
     glib::timeout_add_local(Duration::from_millis(16), move || {
         let now = Instant::now();
@@ -649,7 +650,7 @@ fn start_ui_perf_heartbeat(perf: Rc<UiPerfMonitor>) -> glib::SourceId {
         glib::ControlFlow::Continue
     })
 }
-fn wait_for_ui_perf_startup_reveal(
+pub(in crate::ui) fn wait_for_ui_perf_startup_reveal(
     shell: Rc<Shell>,
     app: adw::Application,
     perf: Rc<UiPerfMonitor>,
@@ -670,11 +671,14 @@ fn wait_for_ui_perf_startup_reveal(
         return;
     }
 
-    glib::timeout_add_local_once(Duration::from_millis(STARTUP_ROUTE_REVEAL_POLL_MS), move || {
-        wait_for_ui_perf_startup_reveal(shell, app, perf, runs, started_at);
-    });
+    glib::timeout_add_local_once(
+        Duration::from_millis(STARTUP_ROUTE_REVEAL_POLL_MS),
+        move || {
+            wait_for_ui_perf_startup_reveal(shell, app, perf, runs, started_at);
+        },
+    );
 }
-fn run_next_ui_perf_route(
+pub(in crate::ui) fn run_next_ui_perf_route(
     shell: Rc<Shell>,
     app: adw::Application,
     perf: Rc<UiPerfMonitor>,
@@ -727,13 +731,16 @@ fn run_next_ui_perf_route(
         });
     });
 }
-fn begin_ui_perf_route_scroll(run: UiPerfRouteScrollRun) {
+pub(in crate::ui) fn begin_ui_perf_route_scroll(run: UiPerfRouteScrollRun) {
     if route_cover_gate_active_for_current_route(&run.shell)
         && run.wait_started_at.elapsed() < Duration::from_millis(UI_PERF_ROUTE_GATE_TIMEOUT_MS)
     {
-        glib::timeout_add_local_once(Duration::from_millis(UI_PERF_ROUTE_GATE_POLL_MS), move || {
-            begin_ui_perf_route_scroll(run);
-        });
+        glib::timeout_add_local_once(
+            Duration::from_millis(UI_PERF_ROUTE_GATE_POLL_MS),
+            move || {
+                begin_ui_perf_route_scroll(run);
+            },
+        );
         return;
     }
 
@@ -770,15 +777,18 @@ fn begin_ui_perf_route_scroll(run: UiPerfRouteScrollRun) {
             .record_scroll_note(&run.route_name, "no_scrolled_window");
     }
 
-    glib::timeout_add_local_once(Duration::from_millis(run.perf.options.route_ms), move || {
-        if let Some(source) = scroll_source.borrow_mut().take() {
-            source.remove();
-        }
-        run.perf.finish_scroll();
-        run_next_ui_perf_route(run.shell, run.app, run.perf, run.runs, run.heartbeat);
-    });
+    glib::timeout_add_local_once(
+        Duration::from_millis(run.perf.options.route_ms),
+        move || {
+            if let Some(source) = scroll_source.borrow_mut().take() {
+                source.remove();
+            }
+            run.perf.finish_scroll();
+            run_next_ui_perf_route(run.shell, run.app, run.perf, run.runs, run.heartbeat);
+        },
+    );
 }
-fn route_cover_gate_active_for_current_route(shell: &Shell) -> bool {
+pub(in crate::ui) fn route_cover_gate_active_for_current_route(shell: &Shell) -> bool {
     let route_key = match shell.state.routes.borrow().current() {
         Route::Tracks => "tracks",
         Route::Albums => "albums",
@@ -797,19 +807,19 @@ fn route_cover_gate_active_for_current_route(shell: &Shell) -> bool {
             .borrow()
             .contains(route_key)
 }
-fn reset_ui_perf_route_scroll_position(shell: &Shell) {
+pub(in crate::ui) fn reset_ui_perf_route_scroll_position(shell: &Shell) {
     if let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) {
         scroller.vadjustment().set_value(0.0);
     }
 }
-fn finish_ui_perf_run(perf: Rc<UiPerfMonitor>, app: adw::Application) {
+pub(in crate::ui) fn finish_ui_perf_run(perf: Rc<UiPerfMonitor>, app: adw::Application) {
     let failed = write_ui_perf_report(&perf, true);
     app.quit();
     if failed {
         std::process::exit(1);
     }
 }
-fn write_ui_perf_report(perf: &UiPerfMonitor, print_stdout: bool) -> bool {
+pub(in crate::ui) fn write_ui_perf_report(perf: &UiPerfMonitor, print_stdout: bool) -> bool {
     let report = perf.report();
     if print_stdout {
         print!("{report}");
@@ -827,22 +837,17 @@ fn write_ui_perf_report(perf: &UiPerfMonitor, print_stdout: bool) -> bool {
     }
     perf.failed()
 }
-fn ui_perf_plan_summary(plan: &VecDeque<(Route, UiPerfScenario)>) -> String {
+pub(in crate::ui) fn ui_perf_plan_summary(plan: &VecDeque<(Route, UiPerfScenario)>) -> String {
     let mut summary = String::new();
     for (index, (route, scenario)) in plan.iter().enumerate() {
         if index > 0 {
             summary.push_str(" -> ");
         }
-        let _ = write!(
-            summary,
-            "{}:{route:?}:{}",
-            index + 1,
-            scenario.name()
-        );
+        let _ = write!(summary, "{}:{route:?}:{}", index + 1, scenario.name());
     }
     summary
 }
-fn ui_perf_critical_plan(shell: &Shell) -> Vec<(Route, UiPerfScenario)> {
+pub(in crate::ui) fn ui_perf_critical_plan(shell: &Shell) -> Vec<(Route, UiPerfScenario)> {
     let mut runs = vec![
         (Route::Tracks, UiPerfScenario::HumanScroll),
         (Route::Tracks, UiPerfScenario::FastScroll),
@@ -864,14 +869,11 @@ fn ui_perf_critical_plan(shell: &Shell) -> Vec<(Route, UiPerfScenario)> {
             .map(|album| album.id.clone())
     };
     if let Some(album_id) = album_id {
-        runs.push((
-            Route::AlbumDetail(album_id),
-            UiPerfScenario::HumanScroll,
-        ));
+        runs.push((Route::AlbumDetail(album_id), UiPerfScenario::HumanScroll));
     }
     runs
 }
-fn ui_perf_broad_routes(shell: &Shell) -> Vec<Route> {
+pub(in crate::ui) fn ui_perf_broad_routes(shell: &Shell) -> Vec<Route> {
     let library = shell.state.library.borrow();
     let settings = shell.state.settings.borrow().clone();
     let artists_visible = sidebar_route_visible(&settings, SidebarRouteItem::Artists);
@@ -953,7 +955,11 @@ fn ui_perf_broad_routes(shell: &Shell) -> Vec<Route> {
     routes.push(Route::Home);
     routes
 }
-fn ui_perf_plan(shell: &Shell, duration_ms: u64, route_ms: u64) -> VecDeque<(Route, UiPerfScenario)> {
+pub(in crate::ui) fn ui_perf_plan(
+    shell: &Shell,
+    duration_ms: u64,
+    route_ms: u64,
+) -> VecDeque<(Route, UiPerfScenario)> {
     ui_perf_take_plan(
         ui_perf_critical_plan(shell),
         ui_perf_broad_routes(shell),
@@ -961,7 +967,7 @@ fn ui_perf_plan(shell: &Shell, duration_ms: u64, route_ms: u64) -> VecDeque<(Rou
         route_ms,
     )
 }
-fn ui_perf_take_plan(
+pub(in crate::ui) fn ui_perf_take_plan(
     mut critical: Vec<(Route, UiPerfScenario)>,
     broad_routes: Vec<Route>,
     duration_ms: u64,

@@ -1,5 +1,11 @@
+use super::*;
+
 impl Shell {
-    fn rename_playlist_dialog(self: &Rc<Self>, playlist_id: PlaylistId, current_name: String) {
+    pub(in crate::ui) fn rename_playlist_dialog(
+        self: &Rc<Self>,
+        playlist_id: PlaylistId,
+        current_name: String,
+    ) {
         let dialog = adw::AlertDialog::builder()
             .heading(tr("Rename Playlist"))
             .body(tr("Enter a new playlist name."))

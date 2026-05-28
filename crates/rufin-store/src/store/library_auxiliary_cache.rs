@@ -1,3 +1,6 @@
+use super::servers::*;
+use super::*;
+
 impl Store {
     pub fn load_genres(
         &self,
@@ -94,7 +97,7 @@ impl Store {
         )?)?;
         Ok(PagedResponse::new(items, total))
     }
-    fn count_linked_genres(&self, server_id: &ServerId) -> StoreResult<usize> {
+    pub(super) fn count_linked_genres(&self, server_id: &ServerId) -> StoreResult<usize> {
         self.connection
             .query_row(
                 "
@@ -121,7 +124,11 @@ impl Store {
             .map(|count| count as usize)
             .map_err(StoreError::from)
     }
-    fn count_linked_genres_like(&self, server_id: &ServerId, pattern: &str) -> StoreResult<usize> {
+    pub(super) fn count_linked_genres_like(
+        &self,
+        server_id: &ServerId,
+        pattern: &str,
+    ) -> StoreResult<usize> {
         self.connection
             .query_row(
                 "
@@ -710,7 +717,7 @@ impl Store {
         )?;
         Ok(exists == 1)
     }
-    fn search_albums(
+    pub(super) fn search_albums(
         &self,
         server_id: &ServerId,
         query: &str,
@@ -719,7 +726,7 @@ impl Store {
         self.search_albums_page(server_id, query, 0, limit, limit)
             .map(|page| page.items)
     }
-    fn search_albums_page(
+    pub(super) fn search_albums_page(
         &self,
         server_id: &ServerId,
         query: &str,
@@ -750,7 +757,7 @@ impl Store {
         self.attach_album_metadata(server_id, &mut albums)?;
         Ok(PagedResponse::new(albums, total))
     }
-    fn load_albums_like(
+    pub(super) fn load_albums_like(
         &self,
         server_id: &ServerId,
         pattern: &str,
@@ -809,7 +816,7 @@ impl Store {
         self.attach_album_metadata(server_id, &mut albums)?;
         Ok(PagedResponse::new(albums, total.max(0) as usize))
     }
-    fn search_tracks(
+    pub(super) fn search_tracks(
         &self,
         server_id: &ServerId,
         query: &str,

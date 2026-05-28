@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn navigate(self: &Rc<Self>, route: Route) {
+    pub(in crate::ui) fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
         let previous = self.state.routes.borrow().current().clone();
         self.refresh_search_results_for_route(&route);
@@ -13,7 +15,7 @@ impl Shell {
             self.refresh_playlists_for_current_visit();
         }
     }
-    fn go_back(self: &Rc<Self>) {
+    pub(in crate::ui) fn go_back(self: &Rc<Self>) {
         let previous = self.state.routes.borrow().current().clone();
         let route = self.state.routes.borrow_mut().back().cloned();
         if let Some(route) = route {
@@ -29,7 +31,7 @@ impl Shell {
             }
         }
     }
-    fn go_forward(self: &Rc<Self>) {
+    pub(in crate::ui) fn go_forward(self: &Rc<Self>) {
         let previous = self.state.routes.borrow().current().clone();
         let route = self.state.routes.borrow_mut().forward().cloned();
         if let Some(route) = route {
@@ -45,7 +47,7 @@ impl Shell {
             }
         }
     }
-    fn refresh_search_results_for_route(&self, route: &Route) {
+    pub(in crate::ui) fn refresh_search_results_for_route(&self, route: &Route) {
         if let Route::Search { query, .. } = route {
             self.controller.search(query.clone());
         }

@@ -1,3 +1,5 @@
+use super::*;
+
 pub struct LazyGStreamerPlaybackBackend {
     inner: Option<Box<dyn PlaybackBackend>>,
 }
@@ -73,26 +75,26 @@ impl PlaybackBackend for GStreamerPlaybackBackend {
     }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Slot {
+pub(super) enum Slot {
     Primary,
     Secondary,
 }
 #[derive(Clone, Debug)]
-struct CrossfadeState {
-    from: Slot,
-    to: Slot,
-    started_at: Instant,
-    duration: Duration,
-    item: PreparedPlaybackItem,
+pub(super) struct CrossfadeState {
+    pub(super) from: Slot,
+    pub(super) to: Slot,
+    pub(super) started_at: Instant,
+    pub(super) duration: Duration,
+    pub(super) item: PreparedPlaybackItem,
 }
 #[derive(Clone, Debug)]
-struct PendingSeek {
+pub(super) struct PendingSeek {
     target_millis: u64,
     expires_at: Instant,
     logical_state: PlaybackState,
     kind: PendingSeekKind,
-    retry_on_async_done: bool,
-    resume_after_seek: bool,
+    pub(super) retry_on_async_done: bool,
+    pub(super) resume_after_seek: bool,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingSeekKind {
@@ -101,7 +103,11 @@ enum PendingSeekKind {
     TrackStart,
 }
 impl PendingSeek {
-    fn interactive(target_millis: u64, logical_state: PlaybackState, now: Instant) -> Self {
+    pub(super) fn interactive(
+        target_millis: u64,
+        logical_state: PlaybackState,
+        now: Instant,
+    ) -> Self {
         Self {
             target_millis,
             expires_at: now + SEEK_SETTLE_WINDOW,
@@ -112,7 +118,7 @@ impl PendingSeek {
         }
     }
 
-    fn startup(target_millis: u64, logical_state: PlaybackState, now: Instant) -> Self {
+    pub(super) fn startup(target_millis: u64, logical_state: PlaybackState, now: Instant) -> Self {
         Self {
             target_millis,
             expires_at: now + STARTUP_SEEK_SETTLE_WINDOW,
@@ -123,7 +129,7 @@ impl PendingSeek {
         }
     }
 
-    fn track_start(now: Instant) -> Self {
+    pub(super) fn track_start(now: Instant) -> Self {
         Self {
             target_millis: 0,
             expires_at: now + TRACK_START_SETTLE_WINDOW,
@@ -134,11 +140,11 @@ impl PendingSeek {
         }
     }
 
-    fn accepts_position(&self, millis: u64, now: Instant) -> bool {
+    pub(super) fn accepts_position(&self, millis: u64, now: Instant) -> bool {
         now >= self.expires_at || seek_position_matches_target(self.target_millis, millis)
     }
 
-    fn suppresses_state(&self, state: PlaybackState, now: Instant) -> bool {
+    pub(super) fn suppresses_state(&self, state: PlaybackState, now: Instant) -> bool {
         if now >= self.expires_at || state == self.logical_state {
             return false;
         }
@@ -161,7 +167,7 @@ impl PendingSeek {
         }
     }
 
-    fn suppresses_buffering(&self, now: Instant) -> bool {
+    pub(super) fn suppresses_buffering(&self, now: Instant) -> bool {
         now < self.expires_at
             && matches!(
                 self.kind,
@@ -170,18 +176,18 @@ impl PendingSeek {
     }
 }
 #[derive(Debug)]
-struct SharedPlaybackState {
-    settings: PlaybackSettings,
-    current: Option<PreparedPlaybackItem>,
-    next: Option<PreparedPlaybackItem>,
-    gapless_pending: Option<PreparedPlaybackItem>,
-    active: Slot,
-    crossfade: Option<CrossfadeState>,
-    volume: f64,
-    muted: bool,
+pub(super) struct SharedPlaybackState {
+    pub(super) settings: PlaybackSettings,
+    pub(super) current: Option<PreparedPlaybackItem>,
+    pub(super) next: Option<PreparedPlaybackItem>,
+    pub(super) gapless_pending: Option<PreparedPlaybackItem>,
+    pub(super) active: Slot,
+    pub(super) crossfade: Option<CrossfadeState>,
+    pub(super) volume: f64,
+    pub(super) muted: bool,
 }
 impl SharedPlaybackState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let settings = PlaybackSettings::default();
         Self {
             current: None,
@@ -195,13 +201,13 @@ impl SharedPlaybackState {
         }
     }
 }
-struct PlayerPipeline {
-    pipeline: gst::Element,
+pub(super) struct PlayerPipeline {
+    pub(super) pipeline: gst::Element,
     bus: gst::Bus,
     _about_to_finish_id: glib::SignalHandlerId,
 }
 impl PlayerPipeline {
-    fn new(
+    pub(super) fn new(
         slot: Slot,
         name: &str,
         shared: Arc<Mutex<SharedPlaybackState>>,
@@ -297,14 +303,14 @@ impl PlayerPipeline {
         self.pipeline.query_duration::<gst::ClockTime>()
     }
 }
-struct GstEngine {
-    primary: PlayerPipeline,
-    secondary: PlayerPipeline,
-    shared: Arc<Mutex<SharedPlaybackState>>,
-    events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
-    last_position_tick: Instant,
-    state: PlaybackState,
-    pending_seek: Option<PendingSeek>,
+pub(super) struct GstEngine {
+    pub(super) primary: PlayerPipeline,
+    pub(super) secondary: PlayerPipeline,
+    pub(super) shared: Arc<Mutex<SharedPlaybackState>>,
+    pub(super) events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
+    pub(super) last_position_tick: Instant,
+    pub(super) state: PlaybackState,
+    pub(super) pending_seek: Option<PendingSeek>,
 }
 impl GstEngine {
     fn new(events: Arc<Mutex<VecDeque<PlaybackEvent>>>) -> Result<Self, String> {
@@ -529,7 +535,7 @@ impl GstEngine {
         self.handle_stream_started_track(started);
     }
 
-    fn handle_stream_started_track(&mut self, started: Option<PlaybackTrack>) {
+    pub(super) fn handle_stream_started_track(&mut self, started: Option<PlaybackTrack>) {
         let Some(track) = started else {
             return;
         };
@@ -542,7 +548,7 @@ impl GstEngine {
         push_event(&self.events, PlaybackEvent::PreparedTrackStarted(track));
     }
 
-    fn handle_state_changed(&mut self, state: PlaybackState) {
+    pub(super) fn handle_state_changed(&mut self, state: PlaybackState) {
         let now = Instant::now();
         if self
             .pending_seek
@@ -666,7 +672,7 @@ impl GstEngine {
         }
     }
 
-    fn push_position(&mut self, millis: u64) {
+    pub(super) fn push_position(&mut self, millis: u64) {
         let now = Instant::now();
         if let Some(pending) = self.pending_seek.as_ref() {
             if !pending.accepts_position(millis, now) {
@@ -790,7 +796,7 @@ impl GstEngine {
         false
     }
 
-    fn finish_crossfade_for_seek(&mut self) {
+    pub(super) fn finish_crossfade_for_seek(&mut self) {
         let crossfade = self
             .shared
             .lock()
@@ -1050,13 +1056,13 @@ fn push_event(events: &Arc<Mutex<VecDeque<PlaybackEvent>>>, event: PlaybackEvent
         events.push_back(event);
     }
 }
-fn position_event(millis: u64) -> PlaybackEvent {
+pub(super) fn position_event(millis: u64) -> PlaybackEvent {
     PlaybackEvent::PositionChanged {
         seconds: clock_seconds_from_millis(millis),
         millis,
     }
 }
-fn clock_seconds_from_millis(millis: u64) -> u32 {
+pub(super) fn clock_seconds_from_millis(millis: u64) -> u32 {
     (millis / 1_000).min(u64::from(u32::MAX)) as u32
 }
 fn clock_seconds(clock_time: gst::ClockTime) -> u32 {
@@ -1070,7 +1076,7 @@ fn seek_position_matches_target(target_millis: u64, millis: u64) -> bool {
     let upper = target_millis.saturating_add(SEEK_POSITION_TOLERANCE_MILLIS);
     (lower..=upper).contains(&millis)
 }
-fn redact_sensitive_uri(uri: &str) -> String {
+pub(super) fn redact_sensitive_uri(uri: &str) -> String {
     let Some((base, query)) = uri.split_once('?') else {
         return uri.to_string();
     };

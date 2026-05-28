@@ -1,3 +1,6 @@
+use super::servers::*;
+use super::*;
+
 impl Store {
     pub fn complete_sync(&self, server_id: &ServerId, generation: i64) -> StoreResult<()> {
         self.prune_missing_items(server_id, generation)?;
@@ -786,7 +789,7 @@ impl Store {
             Ok(())
         })
     }
-    fn insert_home_section_items(
+    pub(super) fn insert_home_section_items(
         connection: &Connection,
         server_id: &ServerId,
         section: &HomeSection,
@@ -800,7 +803,7 @@ impl Store {
             generation,
         )
     }
-    fn insert_home_section_items_for_table(
+    pub(super) fn insert_home_section_items_for_table(
         connection: &Connection,
         table: &str,
         server_id: &ServerId,

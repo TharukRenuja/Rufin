@@ -49,7 +49,8 @@ fn library_sources_page(
         for server in &library.servers {
             let selected = matches!(
                 &library.selected_source,
-                Some(LibrarySourceSelection::Server(server_id)) if *server_id == server.id
+                Some(LibrarySourceSelection::Server(server_id))
+                    if server_id.as_str() == server.id.as_str()
             );
             let summary = library
                 .server_local_access

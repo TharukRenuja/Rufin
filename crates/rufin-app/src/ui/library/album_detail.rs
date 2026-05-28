@@ -1,4 +1,6 @@
-fn genre_cover_refs(shell: &Rc<Shell>, genre: &Genre) -> Vec<ImageRef> {
+use super::*;
+
+pub(in crate::ui) fn genre_cover_refs(shell: &Rc<Shell>, genre: &Genre) -> Vec<ImageRef> {
     let library = shell.state.library.borrow();
     let mut refs = Vec::new();
     for album in &library.albums {
@@ -30,7 +32,7 @@ fn genre_cover_refs(shell: &Rc<Shell>, genre: &Genre) -> Vec<ImageRef> {
     }
     refs
 }
-fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
+pub(in crate::ui) fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
     if refs.len() >= 4 {
         return;
     }
@@ -41,7 +43,7 @@ fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>)
         refs.push(image_ref.clone());
     }
 }
-fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
+pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
     let overlay = cards::cover_overlay(size);
 
     let genre_button = gtk::Button::new();
@@ -91,29 +93,32 @@ fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget 
 
     overlay.upcast()
 }
-fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => album_image_column(
-            shell,
-            "Image",
-            column_width(LibraryField::Image),
-        ),
-        LibraryField::TitleMerged => album_merged_column(
-            shell,
-            "Title",
-            column_width(LibraryField::TitleMerged),
-        ),
-        LibraryField::Title => album_text_column(shell, "Title", 220, true, |album| {
-            album.title.clone()
-        }),
+        LibraryField::Image => {
+            album_image_column(shell, "Image", column_width(LibraryField::Image))
+        }
+        LibraryField::TitleMerged => {
+            album_merged_column(shell, "Title", column_width(LibraryField::TitleMerged))
+        }
+        LibraryField::Title => {
+            album_text_column(shell, "Title", 220, true, |album| album.title.clone())
+        }
         LibraryField::Favorite => album_favorite_column(shell),
-        _ => album_text_column(shell, field.title(), column_width(field), false, move |album| {
-            album_field(album, field)
-        }),
+        _ => album_text_column(
+            shell,
+            field.title(),
+            column_width(field),
+            false,
+            move |album| album_field(album, field),
+        ),
     }
 }
-fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn artist_column(
+    shell: &Rc<Shell>,
+    field: LibraryField,
+) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Image => artist_image_column(shell),
@@ -130,7 +135,7 @@ fn artist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColum
         ),
     }
 }
-fn genre_column(field: LibraryField) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn genre_column(field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Title | LibraryField::TitleMerged => {
@@ -141,7 +146,10 @@ fn genre_column(field: LibraryField) -> gtk::ColumnViewColumn {
         }),
     }
 }
-fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn playlist_column(
+    shell: &Rc<Shell>,
+    field: LibraryField,
+) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Image => image_column::<Playlist, _, _>(
@@ -159,7 +167,7 @@ fn playlist_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewCol
         }),
     }
 }
-fn track_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn track_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
         LibraryField::Image => {
@@ -187,21 +195,25 @@ fn track_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn
         ),
     }
 }
-fn text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
+pub(in crate::ui) fn text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
 where
     T: Clone + 'static,
     F: Fn(&T) -> String + 'static,
 {
     text_column_with_expand(title, width, false, value)
 }
-fn expanding_text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
+pub(in crate::ui) fn expanding_text_column<T, F>(
+    title: &str,
+    width: i32,
+    value: F,
+) -> gtk::ColumnViewColumn
 where
     T: Clone + 'static,
     F: Fn(&T) -> String + 'static,
 {
     text_column_with_expand(title, width, true, value)
 }
-fn text_column_with_expand<T, F>(
+pub(in crate::ui) fn text_column_with_expand<T, F>(
     title: &str,
     width: i32,
     expand: bool,
@@ -248,7 +260,7 @@ where
     column.set_expand(expand);
     column
 }
-fn row_index_column() -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn row_index_column() -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
@@ -278,23 +290,23 @@ fn row_index_column() -> gtk::ColumnViewColumn {
     column
 }
 #[derive(Clone)]
-struct LibraryAlbumImageCell {
-    cover: ArtworkTile,
-    current_album: Rc<RefCell<Option<Album>>>,
+pub(in crate::ui) struct LibraryAlbumImageCell {
+    pub(in crate::ui) cover: ArtworkTile,
+    pub(in crate::ui) current_album: Rc<RefCell<Option<Album>>>,
 }
 
 #[derive(Clone)]
-struct LibraryAlbumTextCell {
-    label: gtk::Label,
-    current_album: Rc<RefCell<Option<Album>>>,
+pub(in crate::ui) struct LibraryAlbumTextCell {
+    pub(in crate::ui) label: gtk::Label,
+    pub(in crate::ui) current_album: Rc<RefCell<Option<Album>>>,
 }
 
 #[derive(Clone)]
-struct LibraryAlbumMergedCell {
-    cover: ArtworkTile,
-    title: gtk::Label,
-    subtitle: gtk::Label,
-    current_album: Rc<RefCell<Option<Album>>>,
+pub(in crate::ui) struct LibraryAlbumMergedCell {
+    pub(in crate::ui) cover: ArtworkTile,
+    pub(in crate::ui) title: gtk::Label,
+    pub(in crate::ui) subtitle: gtk::Label,
+    pub(in crate::ui) current_album: Rc<RefCell<Option<Album>>>,
 }
 
 thread_local! {
@@ -303,22 +315,22 @@ thread_local! {
     static LIBRARY_ALBUM_MERGED_CELLS: RefCell<HashMap<usize, LibraryAlbumMergedCell>> = RefCell::new(HashMap::new());
 }
 
-fn album_image_cell(item: &gtk::ListItem) -> Option<LibraryAlbumImageCell> {
+pub(in crate::ui) fn album_image_cell(item: &gtk::ListItem) -> Option<LibraryAlbumImageCell> {
     let key = library_list_item_storage_key(item);
     LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn album_text_cell(item: &gtk::ListItem) -> Option<LibraryAlbumTextCell> {
+pub(in crate::ui) fn album_text_cell(item: &gtk::ListItem) -> Option<LibraryAlbumTextCell> {
     let key = library_list_item_storage_key(item);
     LIBRARY_ALBUM_TEXT_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn album_merged_cell(item: &gtk::ListItem) -> Option<LibraryAlbumMergedCell> {
+pub(in crate::ui) fn album_merged_cell(item: &gtk::ListItem) -> Option<LibraryAlbumMergedCell> {
     let key = library_list_item_storage_key(item);
     LIBRARY_ALBUM_MERGED_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn album_image_column(
+pub(in crate::ui) fn album_image_column(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
@@ -391,7 +403,7 @@ fn album_image_column(
     column
 }
 
-fn album_text_column<F>(
+pub(in crate::ui) fn album_text_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
@@ -420,9 +432,13 @@ where
         item.set_child(Some(&label));
         let key = library_list_item_storage_key(item);
         LIBRARY_ALBUM_TEXT_CELLS.with(|cells| {
-            cells
-                .borrow_mut()
-                .insert(key, LibraryAlbumTextCell { label, current_album });
+            cells.borrow_mut().insert(
+                key,
+                LibraryAlbumTextCell {
+                    label,
+                    current_album,
+                },
+            );
         });
     });
 
@@ -465,7 +481,7 @@ where
     column
 }
 
-fn album_merged_column(
+pub(in crate::ui) fn album_merged_column(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
@@ -570,7 +586,7 @@ fn album_merged_column(
     column
 }
 
-fn image_column<T, F, S>(
+pub(in crate::ui) fn image_column<T, F, S>(
     shell: &Rc<Shell>,
     title: &str,
     width: i32,
@@ -609,7 +625,7 @@ where
     column.set_fixed_width(width);
     column
 }
-fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
@@ -634,7 +650,7 @@ fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     column.set_fixed_width(column_width(LibraryField::Image));
     column
 }
-fn artist_text_column<F>(
+pub(in crate::ui) fn artist_text_column<F>(
     shell: &Rc<Shell>,
     title: &str,
     width: i32,
@@ -670,29 +686,29 @@ where
     column
 }
 #[derive(Clone)]
-struct LibraryTrackImageCell {
-    cover: ArtworkTile,
-    current_track: Rc<RefCell<Option<Track>>>,
+pub(in crate::ui) struct LibraryTrackImageCell {
+    pub(in crate::ui) cover: ArtworkTile,
+    pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
 }
 
 #[derive(Clone)]
-struct LibraryTrackTextCell {
-    label: gtk::Label,
-    current_track: Rc<RefCell<Option<Track>>>,
+pub(in crate::ui) struct LibraryTrackTextCell {
+    pub(in crate::ui) label: gtk::Label,
+    pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
 }
 
 #[derive(Clone)]
-struct LibraryTrackMergedCell {
-    cover: ArtworkTile,
-    title: gtk::Label,
-    subtitle: gtk::Label,
-    current_track: Rc<RefCell<Option<Track>>>,
+pub(in crate::ui) struct LibraryTrackMergedCell {
+    pub(in crate::ui) cover: ArtworkTile,
+    pub(in crate::ui) title: gtk::Label,
+    pub(in crate::ui) subtitle: gtk::Label,
+    pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
 }
 
 #[derive(Clone)]
-struct LibraryTrackFavoriteCell {
-    button: gtk::Button,
-    current_track: Rc<RefCell<Option<Track>>>,
+pub(in crate::ui) struct LibraryTrackFavoriteCell {
+    pub(in crate::ui) button: gtk::Button,
+    pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
 }
 
 thread_local! {
@@ -702,31 +718,35 @@ thread_local! {
     static LIBRARY_TRACK_FAVORITE_CELLS: RefCell<HashMap<usize, LibraryTrackFavoriteCell>> = RefCell::new(HashMap::new());
 }
 
-fn library_list_item_storage_key(list_item: &gtk::ListItem) -> usize {
+pub(in crate::ui) fn library_list_item_storage_key(list_item: &gtk::ListItem) -> usize {
     list_item.as_ptr() as usize
 }
 
-fn track_image_cell(item: &gtk::ListItem) -> Option<LibraryTrackImageCell> {
+pub(in crate::ui) fn track_image_cell(item: &gtk::ListItem) -> Option<LibraryTrackImageCell> {
     let key = library_list_item_storage_key(item);
     LIBRARY_TRACK_IMAGE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn track_text_cell(item: &gtk::ListItem) -> Option<LibraryTrackTextCell> {
+pub(in crate::ui) fn track_text_cell(item: &gtk::ListItem) -> Option<LibraryTrackTextCell> {
     let key = library_list_item_storage_key(item);
     LIBRARY_TRACK_TEXT_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn track_merged_cell(item: &gtk::ListItem) -> Option<LibraryTrackMergedCell> {
+pub(in crate::ui) fn track_merged_cell(item: &gtk::ListItem) -> Option<LibraryTrackMergedCell> {
     let key = library_list_item_storage_key(item);
     LIBRARY_TRACK_MERGED_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn track_favorite_cell(item: &gtk::ListItem) -> Option<LibraryTrackFavoriteCell> {
+pub(in crate::ui) fn track_favorite_cell(item: &gtk::ListItem) -> Option<LibraryTrackFavoriteCell> {
     let key = library_list_item_storage_key(item);
     LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn track_image_column(shell: &Rc<Shell>, title: &'static str, width: i32) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn track_image_column(
+    shell: &Rc<Shell>,
+    title: &'static str,
+    width: i32,
+) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
@@ -798,7 +818,7 @@ fn track_image_column(shell: &Rc<Shell>, title: &'static str, width: i32) -> gtk
     column.set_fixed_width(width);
     column
 }
-fn track_text_column<F>(
+pub(in crate::ui) fn track_text_column<F>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
@@ -827,9 +847,13 @@ where
         item.set_child(Some(&label));
         let key = library_list_item_storage_key(item);
         LIBRARY_TRACK_TEXT_CELLS.with(|cells| {
-            cells
-                .borrow_mut()
-                .insert(key, LibraryTrackTextCell { label, current_track });
+            cells.borrow_mut().insert(
+                key,
+                LibraryTrackTextCell {
+                    label,
+                    current_track,
+                },
+            );
         });
     });
 
@@ -875,7 +899,7 @@ where
     column.set_expand(expand);
     column
 }
-fn track_merged_column<Title, Subtitle, Image, Seed>(
+pub(in crate::ui) fn track_merged_column<Title, Subtitle, Image, Seed>(
     shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
@@ -998,7 +1022,7 @@ where
     column.set_expand(true);
     column
 }
-fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
@@ -1022,7 +1046,7 @@ fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     column.set_fixed_width(column_width(LibraryField::Favorite));
     column
 }
-fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
@@ -1046,7 +1070,7 @@ fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     column.set_fixed_width(column_width(LibraryField::Favorite));
     column
 }
-fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
@@ -1118,7 +1142,7 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     column.set_fixed_width(column_width(LibraryField::Favorite));
     column
 }
-fn populate_album_collection_model(
+pub(in crate::ui) fn populate_album_collection_model(
     model: &gio::ListStore,
     albums: &[Album],
     settings: &LibraryListSettings,
@@ -1133,7 +1157,7 @@ fn populate_album_collection_model(
         populate_album_model(model, albums, settings);
     }
 }
-fn append_album_collection_model(
+pub(in crate::ui) fn append_album_collection_model(
     model: &gio::ListStore,
     albums: Vec<Album>,
     settings: &LibraryListSettings,
@@ -1148,7 +1172,7 @@ fn append_album_collection_model(
         append_albums_to_model(model, albums);
     }
 }
-fn album_detail_items_for(
+pub(in crate::ui) fn album_detail_items_for(
     albums: &[Album],
     settings: &LibraryListSettings,
     album_tracks: &HashMap<AlbumId, Vec<Track>>,
@@ -1179,12 +1203,16 @@ fn album_detail_items_for(
 
     rows
 }
-fn populate_album_model(model: &gio::ListStore, albums: &[Album], settings: &LibraryListSettings) {
+pub(in crate::ui) fn populate_album_model(
+    model: &gio::ListStore,
+    albums: &[Album],
+    settings: &LibraryListSettings,
+) {
     let mut values = albums.to_vec();
     sort_albums(&mut values, settings);
     replace_albums_in_model(model, values);
 }
-fn populate_artist_model(
+pub(in crate::ui) fn populate_artist_model(
     model: &gio::ListStore,
     artists: &[Artist],
     settings: &LibraryListSettings,
@@ -1193,12 +1221,16 @@ fn populate_artist_model(
     sort_artists(&mut values, settings);
     replace_artists_in_model(model, values);
 }
-fn populate_genre_model(model: &gio::ListStore, genres: &[Genre], settings: &LibraryListSettings) {
+pub(in crate::ui) fn populate_genre_model(
+    model: &gio::ListStore,
+    genres: &[Genre],
+    settings: &LibraryListSettings,
+) {
     let mut values = genres.to_vec();
     sort_genres(&mut values, settings);
     replace_genres_in_model(model, values);
 }
-fn populate_playlist_model(
+pub(in crate::ui) fn populate_playlist_model(
     model: &gio::ListStore,
     playlists: &[Playlist],
     settings: &LibraryListSettings,
@@ -1207,7 +1239,7 @@ fn populate_playlist_model(
     sort_playlists(&mut values, settings);
     replace_playlists_in_model(model, values);
 }
-fn populate_track_model_for_settings(
+pub(in crate::ui) fn populate_track_model_for_settings(
     model: &gio::ListStore,
     tracks: &[Track],
     settings: &LibraryListSettings,
@@ -1219,7 +1251,7 @@ fn populate_track_model_for_settings(
     replace_tracks_in_model(model, values);
     visible_count
 }
-fn tracks_for_settings(
+pub(in crate::ui) fn tracks_for_settings(
     tracks: &[Track],
     settings: &LibraryListSettings,
     query: &str,
@@ -1234,7 +1266,7 @@ fn tracks_for_settings(
     sort_tracks(&mut values, settings, favorite_first);
     values
 }
-pub(super) fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
+pub(in crate::ui) fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
     albums.sort_by(|left, right| {
         let missing = album_field_missing(left, settings.sort_key)
             .cmp(&album_field_missing(right, settings.sort_key));
@@ -1247,7 +1279,7 @@ pub(super) fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) 
         )
     });
 }
-pub(super) fn sort_artists(artists: &mut [Artist], settings: &LibraryListSettings) {
+pub(in crate::ui) fn sort_artists(artists: &mut [Artist], settings: &LibraryListSettings) {
     artists.sort_by(|left, right| {
         let missing = artist_field_missing(left, settings.sort_key)
             .cmp(&artist_field_missing(right, settings.sort_key));

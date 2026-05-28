@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    pub(super) fn library_albums_view(self: &Rc<Self>) -> gtk::Widget {
+    pub(in crate::ui) fn library_albums_view(self: &Rc<Self>) -> gtk::Widget {
         let view_started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Albums);
         let load_started = Instant::now();
@@ -130,11 +132,7 @@ impl Shell {
                         *albums.borrow_mut() = page.items;
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
-                        warm_album_covers_for_settings(
-                            &shell,
-                            &albums.borrow(),
-                            &settings,
-                        );
+                        warm_album_covers_for_settings(&shell, &albums.borrow(), &settings);
                         populate_album_collection_model(
                             &model,
                             &albums.borrow(),
@@ -177,11 +175,7 @@ impl Shell {
                         albums.borrow_mut().extend(items.iter().cloned());
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
-                        warm_album_covers_for_settings(
-                            &shell,
-                            &albums.borrow(),
-                            &settings,
-                        );
+                        warm_album_covers_for_settings(&shell, &albums.borrow(), &settings);
                         append_album_collection_model(
                             &model,
                             items,
@@ -199,11 +193,14 @@ impl Shell {
         };
 
         let content_started = Instant::now();
-        let detail_virtual = (settings.layout == LibraryLayout::Detail).then(album_detail_virtual_list);
+        let detail_virtual =
+            (settings.layout == LibraryLayout::Detail).then(album_detail_virtual_list);
         let content: gtk::Widget = detail_virtual
             .as_ref()
             .map(|list| list.widget.clone().upcast())
-            .unwrap_or_else(|| album_collection_widget(self, model.clone(), LibraryListKey::Albums));
+            .unwrap_or_else(|| {
+                album_collection_widget(self, model.clone(), LibraryListKey::Albums)
+            });
         let content_ms = content_started.elapsed().as_millis() as u64;
         let configure_scroller = {
             let shell = Rc::clone(self);
@@ -250,7 +247,7 @@ impl Shell {
         }
         view
     }
-    pub(super) fn library_tracks_route_view(self: &Rc<Self>) -> gtk::Widget {
+    pub(in crate::ui) fn library_tracks_route_view(self: &Rc<Self>) -> gtk::Widget {
         let started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Tracks);
         if library_layout_loads_complete_page(LibraryListKey::Tracks, &settings)
@@ -308,7 +305,10 @@ impl Shell {
         }
         self.library_tracks_page(page.items, page.total)
     }
-    pub(super) fn library_artist_list_view(self: &Rc<Self>, album_artist: bool) -> gtk::Widget {
+    pub(in crate::ui) fn library_artist_list_view(
+        self: &Rc<Self>,
+        album_artist: bool,
+    ) -> gtk::Widget {
         let key = if album_artist {
             LibraryListKey::AlbumArtists
         } else {
@@ -460,7 +460,11 @@ impl Shell {
                         let count = page.items.len();
                         let mut items = page.items;
                         sort_artists(&mut items, &shell.library_settings(key));
-                        warm_artist_covers_for_settings(&shell, &items, &shell.library_settings(key));
+                        warm_artist_covers_for_settings(
+                            &shell,
+                            &items,
+                            &shell.library_settings(key),
+                        );
                         artists.borrow_mut().extend(items.iter().cloned());
                         append_artists_to_model(&model, items);
                         finish_grid_page(&cursor, offset, count, page.total);
@@ -483,7 +487,7 @@ impl Shell {
             configure_scroller: None,
         })
     }
-    pub(super) fn library_genre_list_view(self: &Rc<Self>) -> gtk::Widget {
+    pub(in crate::ui) fn library_genre_list_view(self: &Rc<Self>) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::Genres);
         let page = self.complete_genre_snapshot_page().unwrap_or_else(|| {
             self.controller
@@ -644,7 +648,7 @@ impl Shell {
             configure_scroller: None,
         })
     }
-    pub(super) fn library_playlists_view(self: &Rc<Self>) -> gtk::Widget {
+    pub(in crate::ui) fn library_playlists_view(self: &Rc<Self>) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::Playlists);
         let page = self.complete_playlist_snapshot_page().unwrap_or_else(|| {
             self.controller
@@ -814,7 +818,7 @@ impl Shell {
             configure_scroller: None,
         })
     }
-    pub(super) fn library_tracks_panel(
+    pub(in crate::ui) fn library_tracks_panel(
         self: &Rc<Self>,
         tracks: Vec<Track>,
         key: LibraryListKey,
@@ -835,7 +839,7 @@ impl Shell {
         wrapper.append(&scroller);
         wrapper.upcast()
     }
-    pub(super) fn library_tracks_route_panel(
+    pub(in crate::ui) fn library_tracks_route_panel(
         self: &Rc<Self>,
         tracks: Vec<Track>,
         key: LibraryListKey,
@@ -863,7 +867,7 @@ impl Shell {
 
         wrapper.upcast()
     }
-    fn searchable_track_collection(
+    pub(in crate::ui) fn searchable_track_collection(
         self: &Rc<Self>,
         tracks: Vec<Track>,
         key: LibraryListKey,
@@ -873,13 +877,8 @@ impl Shell {
         let source_tracks = Rc::new(tracks);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let settings = self.library_settings(key);
-        let visible_count = populate_track_model_for_settings(
-            &model,
-            source_tracks.as_ref(),
-            &settings,
-            "",
-            false,
-        );
+        let visible_count =
+            populate_track_model_for_settings(&model, source_tracks.as_ref(), &settings, "", false);
         warm_track_covers_for_settings(self, source_tracks.as_ref(), &settings);
         if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
             on_visible_count_changed(visible_count);

@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn play_pause(&self) {
         let state = self

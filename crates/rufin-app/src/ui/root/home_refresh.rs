@@ -1,4 +1,6 @@
-fn present_track_context_menu(
+use super::*;
+
+pub(in crate::ui) fn present_track_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     track: Track,
@@ -132,7 +134,7 @@ fn present_track_context_menu(
     });
     popover.popup();
 }
-fn present_album_context_menu(
+pub(in crate::ui) fn present_album_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     album: Album,
@@ -274,7 +276,7 @@ fn present_album_context_menu(
     });
     popover.popup();
 }
-fn present_artist_context_menu(
+pub(in crate::ui) fn present_artist_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     artist: Artist,
@@ -420,7 +422,7 @@ fn present_artist_context_menu(
     });
     popover.popup();
 }
-fn artist_tracks_for_context(
+pub(in crate::ui) fn artist_tracks_for_context(
     controller: &AppController,
     artist_id: &ArtistId,
 ) -> Option<Vec<Track>> {
@@ -431,19 +433,19 @@ fn artist_tracks_for_context(
         .map(|detail| detail.tracks)
         .filter(|tracks| !tracks.is_empty())
 }
-fn menu_item(label: &str, action: &str, icon_name: &str) -> gio::MenuItem {
+pub(in crate::ui) fn menu_item(label: &str, action: &str, icon_name: &str) -> gio::MenuItem {
     let item = gio::MenuItem::new(Some(&tr(label)), Some(action));
     item.set_icon(&gio::ThemedIcon::new(icon_name));
     item
 }
-fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
+pub(in crate::ui) fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
     shell
         .controller
         .cached_playlists_page(0, CONTEXT_MENU_PLAYLIST_LIMIT)
         .map(|page| page.items)
         .unwrap_or_else(|_| shell.state.library.borrow().playlists.clone())
 }
-fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
+pub(in crate::ui) fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
     shell
         .controller
         .cached_track(&fallback.id)
@@ -455,7 +457,7 @@ fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
         })
         .unwrap_or_else(|| fallback.clone())
 }
-fn library_track(library: &LibrarySnapshot, track_id: &TrackId) -> Option<Track> {
+pub(in crate::ui) fn library_track(library: &LibrarySnapshot, track_id: &TrackId) -> Option<Track> {
     library
         .tracks
         .iter()
@@ -470,21 +472,21 @@ fn library_track(library: &LibrarySnapshot, track_id: &TrackId) -> Option<Track>
         .find(|track| track.id == *track_id)
         .cloned()
 }
-fn context_album(shell: &Rc<Shell>, fallback: &Album) -> Album {
+pub(in crate::ui) fn context_album(shell: &Rc<Shell>, fallback: &Album) -> Album {
     {
         let library = shell.state.library.borrow();
         library_album(&library, &fallback.id)
     }
     .unwrap_or_else(|| fallback.clone())
 }
-fn context_artist(shell: &Rc<Shell>, fallback: &Artist) -> Artist {
+pub(in crate::ui) fn context_artist(shell: &Rc<Shell>, fallback: &Artist) -> Artist {
     {
         let library = shell.state.library.borrow();
         library_artist(&library, &fallback.id)
     }
     .unwrap_or_else(|| fallback.clone())
 }
-fn library_album(library: &LibrarySnapshot, album_id: &AlbumId) -> Option<Album> {
+pub(in crate::ui) fn library_album(library: &LibrarySnapshot, album_id: &AlbumId) -> Option<Album> {
     library
         .albums
         .iter()
@@ -498,7 +500,10 @@ fn library_album(library: &LibrarySnapshot, album_id: &AlbumId) -> Option<Album>
         .find(|album| album.id == *album_id)
         .cloned()
 }
-fn library_artist(library: &LibrarySnapshot, artist_id: &ArtistId) -> Option<Artist> {
+pub(in crate::ui) fn library_artist(
+    library: &LibrarySnapshot,
+    artist_id: &ArtistId,
+) -> Option<Artist> {
     library
         .artists
         .iter()
@@ -507,7 +512,7 @@ fn library_artist(library: &LibrarySnapshot, artist_id: &ArtistId) -> Option<Art
         .find(|artist| artist.id == *artist_id)
         .cloned()
 }
-fn current_player_track(shell: &Rc<Shell>) -> Option<Track> {
+pub(in crate::ui) fn current_player_track(shell: &Rc<Shell>) -> Option<Track> {
     let entry = shell.state.player.borrow().current.clone()?;
     shell
         .controller
@@ -516,7 +521,7 @@ fn current_player_track(shell: &Rc<Shell>) -> Option<Track> {
         .flatten()
         .or_else(|| track_from_queue_entry(&entry))
 }
-fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track> {
+pub(in crate::ui) fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track> {
     Some(Track {
         id: entry.track_id.clone(),
         album_id: entry.album_id.clone()?,
@@ -543,7 +548,7 @@ fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track> {
     })
 }
 #[derive(Clone)]
-struct TrackFavoriteCell {
+pub(in crate::ui) struct TrackFavoriteCell {
     button: gtk::Button,
     current_track: Rc<RefCell<Option<Track>>>,
     current_key: Rc<RefCell<Option<FavoriteControlKey>>>,
@@ -553,26 +558,26 @@ thread_local! {
     static TRACK_FAVORITE_CELLS: RefCell<HashMap<usize, TrackFavoriteCell>> = RefCell::new(HashMap::new());
 }
 
-fn store_track_favorite_cell(list_item: &gtk::ListItem, cell: TrackFavoriteCell) {
+pub(in crate::ui) fn store_track_favorite_cell(list_item: &gtk::ListItem, cell: TrackFavoriteCell) {
     let key = list_item_storage_key(list_item);
     TRACK_FAVORITE_CELLS.with(|cells| {
         cells.borrow_mut().insert(key, cell);
     });
 }
 
-fn track_favorite_cell(list_item: &gtk::ListItem) -> Option<TrackFavoriteCell> {
+pub(in crate::ui) fn track_favorite_cell(list_item: &gtk::ListItem) -> Option<TrackFavoriteCell> {
     let key = list_item_storage_key(list_item);
     TRACK_FAVORITE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
 }
 
-fn remove_track_favorite_cell(list_item: &gtk::ListItem) {
+pub(in crate::ui) fn remove_track_favorite_cell(list_item: &gtk::ListItem) {
     let key = list_item_storage_key(list_item);
     TRACK_FAVORITE_CELLS.with(|cells| {
         cells.borrow_mut().remove(&key);
     });
 }
 
-fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
 
@@ -670,7 +675,7 @@ fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
     column.set_resizable(false);
     column
 }
-fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
+pub(in crate::ui) fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
     let escaped_text = glib::markup_escape_text(text);
     let enter_label = label.clone();
     let enter_markup = format!("<u>{escaped_text}</u>");
@@ -687,7 +692,11 @@ fn add_link_hover(target: &gtk::Widget, label: &gtk::Label, text: &str) {
     });
     target.add_controller(motion);
 }
-fn add_stateful_link_hover(target: &gtk::Widget, label: &gtk::Label, text: Rc<RefCell<String>>) {
+pub(in crate::ui) fn add_stateful_link_hover(
+    target: &gtk::Widget,
+    label: &gtk::Label,
+    text: Rc<RefCell<String>>,
+) {
     let enter_label = label.clone();
     let enter_text = Rc::clone(&text);
     let leave_label = label.clone();
@@ -704,7 +713,7 @@ fn add_stateful_link_hover(target: &gtk::Widget, label: &gtk::Label, text: Rc<Re
     });
     target.add_controller(motion);
 }
-fn add_dynamic_link_hover(target: &gtk::Widget, label: &gtk::Label) {
+pub(in crate::ui) fn add_dynamic_link_hover(target: &gtk::Widget, label: &gtk::Label) {
     let enter_label = label.clone();
     let leave_label = label.clone();
     let motion = gtk::EventControllerMotion::new();
@@ -722,11 +731,11 @@ fn add_dynamic_link_hover(target: &gtk::Widget, label: &gtk::Label) {
     target.add_controller(motion);
 }
 impl ArtworkTile {
-    fn new(size: i32, seed: u32) -> Self {
+    pub(in crate::ui) fn new(size: i32, seed: u32) -> Self {
         Self::new_sized(size, size, seed)
     }
 
-    fn new_sized(width: i32, height: i32, seed: u32) -> Self {
+    pub(in crate::ui) fn new_sized(width: i32, height: i32, seed: u32) -> Self {
         let area = gtk::DrawingArea::new();
         area.add_css_class("cover-tile");
         area.add_css_class("card");
@@ -764,11 +773,11 @@ impl ArtworkTile {
         }
     }
 
-    fn widget(&self) -> gtk::Widget {
+    pub(in crate::ui) fn widget(&self) -> gtk::Widget {
         self.area.clone().upcast()
     }
 
-    fn downgrade(&self) -> ArtworkTileWeak {
+    pub(in crate::ui) fn downgrade(&self) -> ArtworkTileWeak {
         ArtworkTileWeak {
             area: self.area.downgrade(),
             size: Rc::clone(&self.size),
@@ -778,24 +787,24 @@ impl ArtworkTile {
         }
     }
 
-    fn generation(&self) -> u64 {
+    pub(in crate::ui) fn generation(&self) -> u64 {
         self.generation.get()
     }
 
-    fn is_live_generation(&self, generation: u64) -> bool {
+    pub(in crate::ui) fn is_live_generation(&self, generation: u64) -> bool {
         self.generation.get() == generation && self.area.root().is_some()
     }
 
-    fn advance_generation(&self) {
+    pub(in crate::ui) fn advance_generation(&self) {
         self.generation.set(self.generation.get().saturating_add(1));
     }
 
-    fn set_seed(&self, seed: u32) {
+    pub(in crate::ui) fn set_seed(&self, seed: u32) {
         self.seed.set(seed);
         self.area.queue_draw();
     }
 
-    fn set_square_size(&self, size: i32) {
+    pub(in crate::ui) fn set_square_size(&self, size: i32) {
         let size = size.max(1);
         if self.size.replace(size) == size {
             return;
@@ -809,7 +818,7 @@ impl ArtworkTile {
         self.area.queue_draw();
     }
 
-    fn bind_image(&self, seed: u32, pixbuf: Option<Pixbuf>) -> u64 {
+    pub(in crate::ui) fn bind_image(&self, seed: u32, pixbuf: Option<Pixbuf>) -> u64 {
         let generation = self.generation.get().saturating_add(1);
         self.generation.set(generation);
         self.seed.set(seed);
@@ -818,7 +827,7 @@ impl ArtworkTile {
         generation
     }
 
-    fn set_pixbuf_if_current(&self, generation: u64, pixbuf: Pixbuf) -> bool {
+    pub(in crate::ui) fn set_pixbuf_if_current(&self, generation: u64, pixbuf: Pixbuf) -> bool {
         if self.generation.get() != generation {
             return false;
         }
@@ -827,13 +836,13 @@ impl ArtworkTile {
         true
     }
 
-    fn clear_image(&self) {
+    pub(in crate::ui) fn clear_image(&self) {
         self.advance_generation();
         *self.pixbuf.borrow_mut() = None;
         self.area.queue_draw();
     }
 
-    fn clear_image_if_current(&self, generation: u64) -> bool {
+    pub(in crate::ui) fn clear_image_if_current(&self, generation: u64) -> bool {
         if self.generation.get() != generation {
             return false;
         }
@@ -844,7 +853,7 @@ impl ArtworkTile {
     }
 }
 impl ArtworkTileWeak {
-    fn upgrade(&self) -> Option<ArtworkTile> {
+    pub(in crate::ui) fn upgrade(&self) -> Option<ArtworkTile> {
         Some(ArtworkTile {
             area: self.area.upgrade()?,
             size: Rc::clone(&self.size),
@@ -854,16 +863,16 @@ impl ArtworkTileWeak {
         })
     }
 
-    fn size(&self) -> i32 {
+    pub(in crate::ui) fn size(&self) -> i32 {
         self.size.get()
     }
 
-    fn is_live_generation(&self, generation: u64) -> bool {
+    pub(in crate::ui) fn is_live_generation(&self, generation: u64) -> bool {
         self.upgrade()
             .is_some_and(|tile| tile.is_live_generation(generation))
     }
 }
-async fn load_cover_pixbuf(
+pub(in crate::ui) async fn load_cover_pixbuf(
     path: PathBuf,
     size: i32,
     priority: glib::Priority,
@@ -873,7 +882,7 @@ async fn load_cover_pixbuf(
     let decode_size = cover_pixbuf_decode_size(size);
     Pixbuf::from_stream_at_scale_future(&stream, decode_size, decode_size, true).await
 }
-fn cover_pixbuf_decode_size(size: i32) -> i32 {
+pub(in crate::ui) fn cover_pixbuf_decode_size(size: i32) -> i32 {
     let size = size.max(1);
     if size >= GRID_COVER_SIZE as i32 {
         size
@@ -881,14 +890,19 @@ fn cover_pixbuf_decode_size(size: i32) -> i32 {
         size.saturating_mul(2).min(GRID_COVER_SIZE as i32)
     }
 }
-fn apply_pixbuf_to_bindings(bindings: Vec<CoverBinding>, pixbuf: Pixbuf) {
+pub(in crate::ui) fn apply_pixbuf_to_bindings(bindings: Vec<CoverBinding>, pixbuf: Pixbuf) {
     for binding in bindings {
         if let Some(tile) = binding.tile.upgrade() {
             tile.set_pixbuf_if_current(binding.generation, pixbuf.clone());
         }
     }
 }
-fn draw_fallback_cover(context: &gtk::cairo::Context, seed: u32, width: i32, height: i32) {
+pub(in crate::ui) fn draw_fallback_cover(
+    context: &gtk::cairo::Context,
+    seed: u32,
+    width: i32,
+    height: i32,
+) {
     let red = f64::from((seed & 0xff) as u8) / 255.0;
     let green = f64::from(((seed >> 8) & 0xff) as u8) / 255.0;
     let blue = f64::from(((seed >> 16) & 0xff) as u8) / 255.0;
@@ -904,7 +918,12 @@ fn draw_fallback_cover(context: &gtk::cairo::Context, seed: u32, width: i32, hei
     context.close_path();
     let _fill = context.fill();
 }
-fn draw_pixbuf_cover(context: &gtk::cairo::Context, pixbuf: &Pixbuf, width: i32, height: i32) {
+pub(in crate::ui) fn draw_pixbuf_cover(
+    context: &gtk::cairo::Context,
+    pixbuf: &Pixbuf,
+    width: i32,
+    height: i32,
+) {
     let rect = cover_draw_rect(pixbuf.width(), pixbuf.height(), width, height);
     let _save = context.save();
     context.translate(rect.x, rect.y);
@@ -914,12 +933,12 @@ fn draw_pixbuf_cover(context: &gtk::cairo::Context, pixbuf: &Pixbuf, width: i32,
     let _restore = context.restore();
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct CoverDrawRect {
-    x: f64,
-    y: f64,
-    scale: f64,
+pub(in crate::ui) struct CoverDrawRect {
+    pub(in crate::ui) x: f64,
+    pub(in crate::ui) y: f64,
+    pub(in crate::ui) scale: f64,
 }
-fn cover_draw_rect(
+pub(in crate::ui) fn cover_draw_rect(
     image_width: i32,
     image_height: i32,
     target_width: i32,
@@ -939,7 +958,12 @@ fn cover_draw_rect(
         scale,
     }
 }
-fn clip_rounded_rect(context: &gtk::cairo::Context, width: i32, height: i32, radius: f64) {
+pub(in crate::ui) fn clip_rounded_rect(
+    context: &gtk::cairo::Context,
+    width: i32,
+    height: i32,
+    radius: f64,
+) {
     let width = f64::from(width);
     let height = f64::from(height);
     let radius = radius.min(width / 2.0).min(height / 2.0);
@@ -975,10 +999,10 @@ fn clip_rounded_rect(context: &gtk::cairo::Context, width: i32, height: i32, rad
     context.close_path();
     context.clip();
 }
-fn add_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
+pub(in crate::ui) fn add_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
     add_widget_click(label.upcast_ref(), callback);
 }
-fn add_widget_click(target: &gtk::Widget, callback: impl Fn() + 'static) {
+pub(in crate::ui) fn add_widget_click(target: &gtk::Widget, callback: impl Fn() + 'static) {
     let click = gtk::GestureClick::new();
     click.set_button(1);
     click.connect_released(move |gesture, press_count, _, _| {
@@ -989,7 +1013,7 @@ fn add_widget_click(target: &gtk::Widget, callback: impl Fn() + 'static) {
     });
     target.add_controller(click);
 }
-fn add_card_label_link(
+pub(in crate::ui) fn add_card_label_link(
     shell: &Rc<Shell>,
     target: &gtk::Widget,
     label: &gtk::Label,
@@ -1005,14 +1029,16 @@ fn add_card_label_link(
     let shell = Rc::clone(shell);
     add_widget_click(target, move || shell.navigate(route.clone()));
 }
-fn current_playback_track_id(snapshot: &PlaybackSnapshot) -> Option<rufin_core::TrackId> {
+pub(in crate::ui) fn current_playback_track_id(
+    snapshot: &PlaybackSnapshot,
+) -> Option<rufin_core::TrackId> {
     snapshot
         .current
         .as_ref()
         .map(|entry| entry.track_id.clone())
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PlaylistEntrySort {
+pub(in crate::ui) enum PlaylistEntrySort {
     Order,
     Title,
     Artist,

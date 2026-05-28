@@ -1,29 +1,46 @@
-use std::cell::{Cell, RefCell};
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
-use std::time::{Duration, Instant};
+use super::{
+    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE,
+    PRIMARY_ROUTE_MARGIN_START, PagedGridCursor, Route, Shell, THUMB_COVER_SIZE,
+    TRACK_ROUTE_PAGE_SIZE, UiPerfTrackRowContract, album_favorite_key, append_albums_to_model,
+    append_artists_to_model, append_genres_to_model, append_playlists_to_model,
+    append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader,
+    cover_decode_size, favorite_button_is_active, favorite_icon_button, finish_grid_page,
+    icon_button, install_album_context_menu, install_artist_context_menu,
+    install_dynamic_album_context_menu, install_dynamic_track_context_menu,
+    install_track_context_menu,
+    layout::{large_popup_content_height, large_popup_content_width, route_content_width},
+    replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
+    replace_playlists_in_model, set_favorite_button_active, stable_seed, text_button,
+};
+use crate::i18n::tr;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use rufin_core::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
     LibraryListSettings, Playlist, Track, TrackId, available_sort_fields, format_duration,
 };
+use std::cell::{Cell, RefCell};
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
-use super::{
-    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE,
-    PRIMARY_ROUTE_MARGIN_START, Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE,
-    UiPerfTrackRowContract,
-    album_favorite_key, append_albums_to_model, append_artists_to_model, append_genres_to_model,
-    append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
-    connect_paged_grid_loader, cover_decode_size, favorite_button_is_active, favorite_icon_button,
-    finish_grid_page, icon_button, install_album_context_menu, install_artist_context_menu,
-    install_dynamic_album_context_menu, install_dynamic_track_context_menu, install_track_context_menu,
-    layout::{large_popup_content_height, large_popup_content_width, route_content_width},
-    replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
-    replace_playlists_in_model, set_favorite_button_active, stable_seed, text_button,
-};
-use crate::i18n::tr;
+
+mod album_detail;
+mod collections;
+#[path = "cards.rs"]
+mod field_cards;
+mod route_shell;
+mod routes;
+
+pub(super) use album_detail::*;
+pub(super) use collections::*;
+pub(super) use field_cards::*;
+pub(super) use route_shell::*;
+
+#[cfg(test)]
+mod route_tests;
+
 const LIBRARY_CONFIG_DIALOG_WIDTH: i32 = 620;
 const LIBRARY_CONFIG_DIALOG_HEIGHT: i32 = 560;
 const LIBRARY_TABLE_HEADER_HEIGHT: i32 = 92;
@@ -111,11 +128,8 @@ fn warm_track_covers_for_settings_now(
     let Some((fetch_size, size)) = track_cover_warm_sizes(shell, settings) else {
         return;
     };
-    let image_refs = track_cover_refs_for_settings_limited(
-        tracks,
-        settings,
-        Some(TRACK_ROUTE_COVER_GATE_ROWS),
-    );
+    let image_refs =
+        track_cover_refs_for_settings_limited(tracks, settings, Some(TRACK_ROUTE_COVER_GATE_ROWS));
     shell.warm_cover_refs(image_refs, fetch_size, size);
 }
 fn gate_track_route_covers(
@@ -127,7 +141,10 @@ fn gate_track_route_covers(
     false
 }
 #[cfg(test)]
-fn track_cover_refs_for_settings(tracks: &[Track], settings: &LibraryListSettings) -> Vec<ImageRef> {
+fn track_cover_refs_for_settings(
+    tracks: &[Track],
+    settings: &LibraryListSettings,
+) -> Vec<ImageRef> {
     track_cover_refs_for_settings_limited(tracks, settings, None)
 }
 fn track_cover_refs_for_settings_limited(
@@ -276,7 +293,13 @@ impl Shell {
         }
 
         if self.route_cover_gate_should_wait(route_key, pending, requested, decoding) {
-            self.queue_route_cover_gate_poll(route_key, image_refs, fetch_size, size, missing_policy);
+            self.queue_route_cover_gate_poll(
+                route_key,
+                image_refs,
+                fetch_size,
+                size,
+                missing_policy,
+            );
             true
         } else {
             false
@@ -332,10 +355,7 @@ impl Shell {
         if is_new {
             info!(
                 route = route_key,
-                pending,
-                requested,
-                decoding,
-                "started route cover gate"
+                pending, requested, decoding, "started route cover gate"
             );
             if self.state.perf.is_some() {
                 println!(
@@ -353,7 +373,10 @@ impl Shell {
             .borrow_mut()
             .remove(route_key)
             .map(|started| started.elapsed().as_millis() as u64);
-        self.state.route_cover_gate_queued.borrow_mut().remove(route_key);
+        self.state
+            .route_cover_gate_queued
+            .borrow_mut()
+            .remove(route_key);
         self.state
             .route_cover_gate_timed_out
             .borrow_mut()
@@ -386,7 +409,8 @@ impl Shell {
         }
         let shell = Rc::clone(self);
         glib::timeout_add_local_once(Duration::from_millis(ROUTE_COVER_GATE_POLL_MS), move || {
-            shell.state
+            shell
+                .state
                 .route_cover_gate_queued
                 .borrow_mut()
                 .remove(route_key);
@@ -812,7 +836,14 @@ fn track_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> 
 fn album_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(u32, i32)> {
     match settings.layout {
         LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1)),
-        LibraryLayout::Detail => Some((GRID_COVER_SIZE, if compact_detail_layout(shell) { 148 } else { 220 })),
+        LibraryLayout::Detail => Some((
+            GRID_COVER_SIZE,
+            if compact_detail_layout(shell) {
+                148
+            } else {
+                220
+            },
+        )),
         LibraryLayout::Row if album_row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
     }

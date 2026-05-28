@@ -1,5 +1,7 @@
+use super::*;
+
 #[test]
-fn explicit_favorite_updates_can_unfavorite_persistent_controls() {
+pub(in crate::controller) fn explicit_favorite_updates_can_unfavorite_persistent_controls() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap(Some(FakeScale::Small));
     let album = snapshot
@@ -34,7 +36,7 @@ fn explicit_favorite_updates_can_unfavorite_persistent_controls() {
     );
 }
 #[test]
-fn fake_playlist_mutations_create_move_and_remove_entries() {
+pub(in crate::controller) fn fake_playlist_mutations_create_move_and_remove_entries() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap(Some(FakeScale::Small));
     let first = snapshot.tracks[0].clone();
@@ -90,7 +92,7 @@ fn fake_playlist_mutations_create_move_and_remove_entries() {
     );
 }
 #[test]
-fn fake_lyrics_request_emits_empty_lyrics_event() {
+pub(in crate::controller) fn fake_lyrics_request_emits_empty_lyrics_event() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap(Some(FakeScale::Small));
     controller.play_now(snapshot.tracks[0].clone());
@@ -99,7 +101,7 @@ fn fake_lyrics_request_emits_empty_lyrics_event() {
     assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
-fn server_lyrics_request_ignores_cached_remote_lyrics() {
+pub(in crate::controller) fn server_lyrics_request_ignores_cached_remote_lyrics() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap(Some(FakeScale::Small));
     let track = snapshot.tracks[0].clone();
@@ -128,7 +130,7 @@ fn server_lyrics_request_ignores_cached_remote_lyrics() {
     assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
-fn restored_queue_request_lyrics_emits_cached_current_lyrics() {
+pub(in crate::controller) fn restored_queue_request_lyrics_emits_cached_current_lyrics() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = SavedServer {
         server: ServerIdentity {
@@ -167,7 +169,7 @@ fn restored_queue_request_lyrics_emits_cached_current_lyrics() {
     assert_eq!(wait_for_lyrics(&events), Some(lyrics));
 }
 #[test]
-fn lyrics_search_respects_private_mode_and_preference() {
+pub(in crate::controller) fn lyrics_search_respects_private_mode_and_preference() {
     let mut settings = AppSettings {
         external_lyrics_enabled: true,
         ..AppSettings::default()
@@ -194,7 +196,7 @@ fn lyrics_search_respects_private_mode_and_preference() {
     );
 }
 #[test]
-fn saved_lrclib_result_uses_explicit_output_path() {
+pub(in crate::controller) fn saved_lrclib_result_uses_explicit_output_path() {
     let dir = self::unique_test_dir("lyrics-portal-save");
     fs::create_dir_all(&dir).expect("create dir");
     let sidecar = dir.join("Track.lrc");
@@ -241,7 +243,7 @@ fn saved_lrclib_result_uses_explicit_output_path() {
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
-fn local_sidecar_lyrics_use_same_stem_as_audio_file() {
+pub(in crate::controller) fn local_sidecar_lyrics_use_same_stem_as_audio_file() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let dir = self::unique_test_dir("local-sidecar");
@@ -276,7 +278,7 @@ fn local_sidecar_lyrics_use_same_stem_as_audio_file() {
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
-fn mapped_local_audio_path_uses_server_prefix_replacement() {
+pub(in crate::controller) fn mapped_local_audio_path_uses_server_prefix_replacement() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let generation = store
@@ -316,7 +318,7 @@ fn mapped_local_audio_path_uses_server_prefix_replacement() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-fn remote_local_audio_path_requires_configured_access() {
+pub(in crate::controller) fn remote_local_audio_path_requires_configured_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let generation = store
@@ -340,7 +342,7 @@ fn remote_local_audio_path_requires_configured_access() {
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
-fn resolve_stream_prefers_local_file_for_remote_server_with_access() {
+pub(in crate::controller) fn resolve_stream_prefers_local_file_for_remote_server_with_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("local-playback-stream");
@@ -381,7 +383,7 @@ fn resolve_stream_prefers_local_file_for_remote_server_with_access() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-fn resolve_stream_uses_cached_local_match_without_server_path() {
+pub(in crate::controller) fn resolve_stream_uses_cached_local_match_without_server_path() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("cached-local-match-stream");
@@ -431,7 +433,7 @@ fn resolve_stream_uses_cached_local_match_without_server_path() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-fn relative_local_audio_path_uses_configured_local_prefix() {
+pub(in crate::controller) fn relative_local_audio_path_uses_configured_local_prefix() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let scan_root = self::unique_test_dir("relative-scan-root");
@@ -464,7 +466,7 @@ fn relative_local_audio_path_uses_configured_local_prefix() {
     let _cleanup = fs::remove_dir_all(local_root);
 }
 #[test]
-fn snapshot_local_access_status_counts_cached_mapping_candidates() {
+pub(in crate::controller) fn snapshot_local_access_status_counts_cached_mapping_candidates() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("local-access-status");
@@ -531,7 +533,7 @@ fn snapshot_local_access_status_counts_cached_mapping_candidates() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-fn conservative_local_matches_only_accept_unique_duration_matches() {
+pub(in crate::controller) fn conservative_local_matches_only_accept_unique_duration_matches() {
     let album = AlbumId::fake(1);
     let mut remote = restored_track();
     remote.album_id = album.clone();
@@ -559,7 +561,7 @@ fn conservative_local_matches_only_accept_unique_duration_matches() {
     assert!(super::conservative_local_matches(&[remote], &[local_one, duplicate]).is_empty());
 }
 #[test]
-fn snapshot_includes_active_server_local_access() {
+pub(in crate::controller) fn snapshot_includes_active_server_local_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let access = ServerLocalAccess {
@@ -579,7 +581,7 @@ fn snapshot_includes_active_server_local_access() {
     assert_eq!(snapshot.local_access, Some(access));
 }
 #[test]
-fn lrclib_result_text_becomes_timed_lyrics() {
+pub(in crate::controller) fn lrclib_result_text_becomes_timed_lyrics() {
     let result = super::LyricsSearchResult {
         id: 7,
         track_name: "Song".to_string(),
@@ -599,7 +601,7 @@ fn lrclib_result_text_becomes_timed_lyrics() {
     assert_eq!(lyrics.lines[1].start_millis, Some(13_005));
 }
 #[test]
-fn lrclib_duration_accepts_fractional_seconds() {
+pub(in crate::controller) fn lrclib_duration_accepts_fractional_seconds() {
     let json = r#"{
             "id": 7,
             "trackName": "Imagine",
@@ -616,7 +618,7 @@ fn lrclib_duration_accepts_fractional_seconds() {
     assert_eq!(result.artist_name, "John Lennon");
 }
 #[test]
-fn lrclib_manual_search_uses_combined_query_first() {
+pub(in crate::controller) fn lrclib_manual_search_uses_combined_query_first() {
     let urls = super::lrclib_search_urls("joy", "feel my soul").expect("lrclib search urls");
     let query_pairs = urls[0]
         .query_pairs()
@@ -628,7 +630,7 @@ fn lrclib_manual_search_uses_combined_query_first() {
     );
 }
 #[test]
-fn lrclib_search_body_decodes_feel_my_soul_result() {
+pub(in crate::controller) fn lrclib_search_body_decodes_feel_my_soul_result() {
     let json = r#"[{
             "id": 9386114,
             "name": "feel my soul",
@@ -649,7 +651,7 @@ fn lrclib_search_body_decodes_feel_my_soul_result() {
     assert!(results[0].plain_lyrics.is_some());
 }
 #[test]
-fn lrclib_results_prefer_matching_title_over_album_hit() {
+pub(in crate::controller) fn lrclib_results_prefer_matching_title_over_album_hit() {
     let mut results = vec![
         super::LyricsSearchResult {
             id: 1,
@@ -674,12 +676,12 @@ fn lrclib_results_prefer_matching_title_over_album_hit() {
     assert_eq!(results[0].track_name, "Imagine");
 }
 #[test]
-fn controller_events_are_sendable() {
-    fn assert_send<T: Send>() {}
+pub(in crate::controller) fn controller_events_are_sendable() {
+    pub(in crate::controller) fn assert_send<T: Send>() {}
     assert_send::<ControllerEvent>();
 }
 #[test]
-fn provider_not_found_cover_errors_are_classified() {
+pub(in crate::controller) fn provider_not_found_cover_errors_are_classified() {
     assert!(super::covers::is_provider_not_found_error(
         "provider item was not found"
     ));
@@ -687,7 +689,7 @@ fn provider_not_found_cover_errors_are_classified() {
         "provider network failed: offline"
     ));
 }
-fn controller_from_store_for_test(
+pub(in crate::controller) fn controller_from_store_for_test(
     store: StoreHandle,
 ) -> (AppController, Receiver<ControllerEvent>) {
     let test_permit = Some(super::controller_test_permit());
@@ -725,7 +727,7 @@ fn controller_from_store_for_test(
     };
     (controller, receiver)
 }
-fn restored_track() -> Track {
+pub(in crate::controller) fn restored_track() -> Track {
     Track {
         id: TrackId::new("jellyfin:track:lyrics"),
         album_id: AlbumId::fake(1),
@@ -751,7 +753,7 @@ fn restored_track() -> Track {
         source_format: None,
     }
 }
-fn saved_server() -> SavedServer {
+pub(in crate::controller) fn saved_server() -> SavedServer {
     SavedServer {
         server: ServerIdentity {
             id: ServerId::new("jellyfin:server:test"),
@@ -765,7 +767,7 @@ fn saved_server() -> SavedServer {
     }
 }
 #[test]
-fn grouped_cover_refs_keep_one_unique_cover_full_size() {
+pub(in crate::controller) fn grouped_cover_refs_keep_one_unique_cover_full_size() {
     let cover = test_image_ref(1);
     let albums = vec![library_album(
         1,
@@ -777,7 +779,7 @@ fn grouped_cover_refs_keep_one_unique_cover_full_size() {
     assert_eq!(refs, vec![cover]);
 }
 #[test]
-fn grouped_cover_refs_deduplicate_and_limit_to_four() {
+pub(in crate::controller) fn grouped_cover_refs_deduplicate_and_limit_to_four() {
     let first = test_image_ref(1);
     let second = test_image_ref(2);
     let third = test_image_ref(3);
@@ -800,7 +802,8 @@ fn grouped_cover_refs_deduplicate_and_limit_to_four() {
     assert_eq!(refs, vec![first, second, third, fourth]);
 }
 #[test]
-fn artist_detail_fallback_uses_external_album_image_after_normalization() {
+pub(in crate::controller) fn artist_detail_fallback_uses_external_album_image_after_normalization()
+{
     let mut detail = CachedArtistDetail {
         artist: rufin_core::Artist {
             id: ArtistId::fake(1),
@@ -831,7 +834,8 @@ fn artist_detail_fallback_uses_external_album_image_after_normalization() {
     );
 }
 #[test]
-fn artist_collection_fallback_uses_external_album_image_after_normalization() {
+pub(in crate::controller) fn artist_collection_fallback_uses_external_album_image_after_normalization()
+ {
     let artist_id = ArtistId::fake(1);
     let mut artists = vec![rufin_core::Artist {
         id: artist_id.clone(),
@@ -866,20 +870,25 @@ fn artist_collection_fallback_uses_external_album_image_after_normalization() {
             .contains("Example%20Artist:Example%20Album")
     );
 }
-fn unique_test_dir(label: &str) -> PathBuf {
+pub(in crate::controller) fn unique_test_dir(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "rufin-{label}-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ))
 }
-fn test_image_ref(number: u32) -> ImageRef {
+pub(in crate::controller) fn test_image_ref(number: u32) -> ImageRef {
     ImageRef::new(
         format!("jellyfin:album:{number}"),
         Some(format!("tag-{number}")),
     )
 }
-fn library_album(number: u32, artist: &str, title: &str, image_ref: Option<ImageRef>) -> Album {
+pub(in crate::controller) fn library_album(
+    number: u32,
+    artist: &str,
+    title: &str,
+    image_ref: Option<ImageRef>,
+) -> Album {
     Album {
         id: AlbumId::fake(number),
         title: title.to_string(),

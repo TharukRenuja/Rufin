@@ -1,5 +1,10 @@
+use super::*;
+
 impl Shell {
-    fn genre_detail_view(self: &Rc<Self>, genre_id: rufin_core::GenreId) -> gtk::Widget {
+    pub(in crate::ui) fn genre_detail_view(
+        self: &Rc<Self>,
+        genre_id: rufin_core::GenreId,
+    ) -> gtk::Widget {
         let detail = self
             .controller
             .cached_genre_detail(&genre_id)

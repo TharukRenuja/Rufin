@@ -1,4 +1,6 @@
-fn promote_prefetched_home_section(
+use super::*;
+
+pub(in crate::controller) fn promote_prefetched_home_section(
     store: &StoreHandle,
     server_id: &ServerId,
     section: &HomeSection,
@@ -9,7 +11,7 @@ fn promote_prefetched_home_section(
     store.with_store(|store| store.clear_home_section_prefetch(server_id, section.kind))?;
     Ok(())
 }
-fn cache_home_sections(
+pub(in crate::controller) fn cache_home_sections(
     store: &StoreHandle,
     server_id: &ServerId,
     sections: &[HomeSection],
@@ -21,7 +23,7 @@ fn cache_home_sections(
     store.with_store(|store| store.upsert_home_sections(server_id, sections, generation))?;
     Ok(())
 }
-fn cache_home_section(
+pub(in crate::controller) fn cache_home_section(
     store: &StoreHandle,
     server_id: &ServerId,
     section: &HomeSection,
@@ -31,7 +33,7 @@ fn cache_home_section(
     store.with_store(|store| store.upsert_home_section(server_id, section, generation))?;
     Ok(())
 }
-fn cache_home_section_items(
+pub(in crate::controller) fn cache_home_section_items(
     store: &StoreHandle,
     server_id: &ServerId,
     section: &HomeSection,
@@ -45,10 +47,14 @@ fn cache_home_section_items(
     }
     Ok(())
 }
-fn sync_page_finished(item_count: usize, total: usize, offset: usize) -> bool {
+pub(in crate::controller) fn sync_page_finished(
+    item_count: usize,
+    total: usize,
+    offset: usize,
+) -> bool {
     item_count == 0 || (total > 0 && offset >= total) || (total == 0 && item_count < PAGE_SIZE)
 }
-fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
+pub(in crate::controller) fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
     [
         HomeSectionKind::Explore,
         HomeSectionKind::MostPlayed,
@@ -57,7 +63,7 @@ fn home_refresh_section_kinds() -> [HomeSectionKind; 5] {
         HomeSectionKind::RecentlyReleased,
     ]
 }
-fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
+pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     let source_settings = load_settings_from_store(store);
     let saved_servers = store.with_store(|store| store.list_servers())?;
     let remote_saved_servers = saved_servers
@@ -186,13 +192,7 @@ fn load_snapshot(store: &StoreHandle) -> Result<LibrarySnapshot, String> {
     }
     external_metadata::normalize_albums(&mut albums, &metadata_settings);
     external_metadata::normalize_tracks(&mut tracks, &metadata_settings);
-    normalize_artist_collection_image_refs(
-        store,
-        &saved,
-        &mut artists,
-        false,
-        &metadata_settings,
-    )?;
+    normalize_artist_collection_image_refs(store, &saved, &mut artists, false, &metadata_settings)?;
     normalize_artist_collection_image_refs(
         store,
         &saved,
@@ -256,7 +256,10 @@ pub(crate) fn track_cover_refs_for_items(tracks: &[Track]) -> Vec<ImageRef> {
     }
     image_refs
 }
-fn normalize_artist_detail_image_refs(detail: &mut CachedArtistDetail, settings: &AppSettings) {
+pub(in crate::controller) fn normalize_artist_detail_image_refs(
+    detail: &mut CachedArtistDetail,
+    settings: &AppSettings,
+) {
     external_metadata::normalize_artist(&mut detail.artist, settings);
     external_metadata::normalize_albums(&mut detail.albums, settings);
     external_metadata::normalize_albums(&mut detail.appears_on, settings);
@@ -267,7 +270,7 @@ fn normalize_artist_detail_image_refs(detail: &mut CachedArtistDetail, settings:
     }
     external_metadata::normalize_artist(&mut detail.artist, settings);
 }
-fn normalize_artist_collection_image_refs(
+pub(in crate::controller) fn normalize_artist_collection_image_refs(
     store: &StoreHandle,
     saved: &SavedServer,
     artists: &mut [Artist],
@@ -290,7 +293,7 @@ fn normalize_artist_collection_image_refs(
     apply_artist_album_fallback_image_refs(artists, fallback_albums, settings);
     Ok(())
 }
-fn apply_artist_album_fallback_image_refs(
+pub(in crate::controller) fn apply_artist_album_fallback_image_refs(
     artists: &mut [Artist],
     mut fallback_albums: HashMap<ArtistId, Album>,
     settings: &AppSettings,
@@ -307,7 +310,7 @@ fn apply_artist_album_fallback_image_refs(
         external_metadata::normalize_artist(artist, settings);
     }
 }
-fn artist_fallback_image_ref(
+pub(in crate::controller) fn artist_fallback_image_ref(
     albums: &[Album],
     appears_on: &[Album],
     tracks: &[Track],
@@ -319,7 +322,10 @@ fn artist_fallback_image_ref(
         .next()
         .or_else(|| tracks.iter().find_map(|track| track.image_ref.clone()))
 }
-fn push_unique_cover_ref(image_refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
+pub(in crate::controller) fn push_unique_cover_ref(
+    image_refs: &mut Vec<ImageRef>,
+    image_ref: Option<&ImageRef>,
+) {
     if image_refs.len() >= GROUPED_COVER_REF_LIMIT {
         return;
     }
@@ -330,14 +336,17 @@ fn push_unique_cover_ref(image_refs: &mut Vec<ImageRef>, image_ref: Option<&Imag
         image_refs.push(image_ref.clone());
     }
 }
-fn sync_status_text(state: &SyncState) -> String {
+pub(in crate::controller) fn sync_status_text(state: &SyncState) -> String {
     match state.status.as_str() {
         "running" => "Syncing library...".to_string(),
         "error" => "Sync needs attention".to_string(),
         _ => "Cached library ready".to_string(),
     }
 }
-fn seed_fake_cache(store: &StoreHandle, scale: FakeScale) -> Result<(), String> {
+pub(in crate::controller) fn seed_fake_cache(
+    store: &StoreHandle,
+    scale: FakeScale,
+) -> Result<(), String> {
     let provider = FakeProvider::new(scale);
     let server = provider.identity().server.clone();
     let saved = SavedServer {
@@ -407,7 +416,10 @@ fn seed_fake_cache(store: &StoreHandle, scale: FakeScale) -> Result<(), String> 
     })?;
     Ok(())
 }
-fn restore_queue(store: &StoreHandle, server: Option<&ServerIdentity>) -> Option<QueueEngine> {
+pub(in crate::controller) fn restore_queue(
+    store: &StoreHandle,
+    server: Option<&ServerIdentity>,
+) -> Option<QueueEngine> {
     let server = server?;
     let settings = load_settings_for_server(store, server);
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
@@ -423,7 +435,7 @@ fn restore_queue(store: &StoreHandle, server: Option<&ServerIdentity>) -> Option
     }
 }
 #[allow(clippy::too_many_arguments)]
-fn activate_logged_in_server(
+pub(in crate::controller) fn activate_logged_in_server(
     store: &StoreHandle,
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
@@ -475,7 +487,7 @@ fn activate_logged_in_server(
     Ok(saved)
 }
 #[allow(clippy::too_many_arguments)]
-fn save_token_and_activate_logged_in_server(
+pub(in crate::controller) fn save_token_and_activate_logged_in_server(
     store: &StoreHandle,
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
@@ -516,7 +528,7 @@ fn save_token_and_activate_logged_in_server(
         }
     }
 }
-fn activate_queue_for_saved_and_emit(
+pub(in crate::controller) fn activate_queue_for_saved_and_emit(
     store: &StoreHandle,
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
@@ -535,7 +547,7 @@ fn activate_queue_for_saved_and_emit(
     let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
     Ok(())
 }
-fn activate_queue_for_saved(
+pub(in crate::controller) fn activate_queue_for_saved(
     store: &StoreHandle,
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
@@ -571,7 +583,7 @@ fn activate_queue_for_saved(
 
     Ok(Some((queue_snapshot, player)))
 }
-fn stop_playback_backend(
+pub(in crate::controller) fn stop_playback_backend(
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
     events: &Sender<ControllerEvent>,
 ) {
@@ -587,7 +599,7 @@ fn stop_playback_backend(
         let _sent = events.send(ControllerEvent::Error(error));
     }
 }
-fn emit_snapshot(store: &StoreHandle, events: &Sender<ControllerEvent>) {
+pub(in crate::controller) fn emit_snapshot(store: &StoreHandle, events: &Sender<ControllerEvent>) {
     match load_snapshot(store) {
         Ok(snapshot) => {
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
@@ -597,7 +609,7 @@ fn emit_snapshot(store: &StoreHandle, events: &Sender<ControllerEvent>) {
         }
     }
 }
-fn resolve_selected_source(
+pub(in crate::controller) fn resolve_selected_source(
     settings: &AppSettings,
     remote_saved_servers: &[SavedServer],
     active_server: Option<SavedServer>,
@@ -626,25 +638,28 @@ fn resolve_selected_source(
         .first()
         .map(|saved| LibrarySourceSelection::Server(saved.server.id.clone()))
 }
-fn active_server_needs_sync(store: &StoreHandle, server_id: &ServerId) -> bool {
+pub(in crate::controller) fn active_server_needs_sync(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> bool {
     store
         .with_store(|store| store.sync_completed_age_seconds(server_id))
         .ok()
         .flatten()
         .is_none_or(|age| age > STARTUP_CACHE_STALE_SECONDS)
 }
-fn trimmed_optional(value: Option<&str>) -> Option<String> {
+pub(in crate::controller) fn trimmed_optional(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
 }
-fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
+pub(in crate::controller) fn load_settings_from_store(store: &StoreHandle) -> AppSettings {
     let mut settings = store.load_settings().unwrap_or_default();
     settings.migrate_defaults();
     settings
 }
-fn local_folder_paths(settings: &AppSettings) -> Vec<PathBuf> {
+pub(in crate::controller) fn local_folder_paths(settings: &AppSettings) -> Vec<PathBuf> {
     settings
         .sources
         .local_folders
@@ -652,7 +667,7 @@ fn local_folder_paths(settings: &AppSettings) -> Vec<PathBuf> {
         .map(|folder| PathBuf::from(&folder.path))
         .collect()
 }
-fn local_source_server() -> ServerIdentity {
+pub(in crate::controller) fn local_source_server() -> ServerIdentity {
     ServerIdentity {
         id: ServerId::new(LOCAL_SOURCE_SERVER_ID),
         provider: LOCAL_PROVIDER_ID.to_string(),
@@ -660,7 +675,7 @@ fn local_source_server() -> ServerIdentity {
         base_url: String::new(),
     }
 }
-fn local_source_saved() -> SavedServer {
+pub(in crate::controller) fn local_source_saved() -> SavedServer {
     SavedServer {
         server: local_source_server(),
         user_id: "local".to_string(),
@@ -668,31 +683,42 @@ fn local_source_saved() -> SavedServer {
         trust_invalid_cert: false,
     }
 }
-fn ensure_local_source_server(store: &StoreHandle) -> Result<SavedServer, String> {
+pub(in crate::controller) fn ensure_local_source_server(
+    store: &StoreHandle,
+) -> Result<SavedServer, String> {
     let saved = local_source_saved();
     store.with_store(|store| store.save_server(&saved))?;
     Ok(saved)
 }
-fn load_settings_for_active_server(store: &StoreHandle) -> AppSettings {
+pub(in crate::controller) fn load_settings_for_active_server(store: &StoreHandle) -> AppSettings {
     let settings = load_settings_from_store(store);
     match store.with_store(|store| store.active_server()) {
         Ok(Some(saved)) => settings_for_server(settings, &saved.server),
         _ => settings,
     }
 }
-fn load_settings_for_saved(store: &StoreHandle, saved: &SavedServer) -> AppSettings {
+pub(in crate::controller) fn load_settings_for_saved(
+    store: &StoreHandle,
+    saved: &SavedServer,
+) -> AppSettings {
     settings_for_server(load_settings_from_store(store), &saved.server)
 }
-fn load_settings_for_server(store: &StoreHandle, server: &ServerIdentity) -> AppSettings {
+pub(in crate::controller) fn load_settings_for_server(
+    store: &StoreHandle,
+    server: &ServerIdentity,
+) -> AppSettings {
     settings_for_server(load_settings_from_store(store), server)
 }
-fn settings_for_server(mut settings: AppSettings, server: &ServerIdentity) -> AppSettings {
+pub(in crate::controller) fn settings_for_server(
+    mut settings: AppSettings,
+    server: &ServerIdentity,
+) -> AppSettings {
     if server.provider == "fake" {
         settings.external_metadata_enabled = false;
     }
     settings
 }
-fn playback_snapshot_from_queue(
+pub(in crate::controller) fn playback_snapshot_from_queue(
     queue: Option<&QueueEngine>,
     auto_dj_enabled: bool,
     playback_settings: &PlaybackSettings,
@@ -722,11 +748,13 @@ fn playback_snapshot_from_queue(
             ..PlaybackSnapshot::default()
         })
 }
-fn next_queue_entry_after_current(queue: &QueueEngine) -> Option<QueueEntry> {
+pub(in crate::controller) fn next_queue_entry_after_current(
+    queue: &QueueEngine,
+) -> Option<QueueEntry> {
     let mut preview = QueueEngine::restore(queue.snapshot());
     preview.advance_after_end_of_stream().cloned()
 }
-fn queue_current_matches(
+pub(in crate::controller) fn queue_current_matches(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     current_entry_id: &QueueEntryId,
 ) -> bool {
@@ -736,13 +764,13 @@ fn queue_current_matches(
         .and_then(|queue| queue.as_ref().and_then(|queue| queue.current().cloned()))
         .is_some_and(|entry| entry.id == *current_entry_id)
 }
-fn shuffle_seed() -> u64 {
+pub(in crate::controller) fn shuffle_seed() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(1)
 }
-fn auto_dj_candidates(
+pub(in crate::controller) fn auto_dj_candidates(
     tracks: &[Track],
     current: &QueueEntry,
     queued_track_ids: &HashSet<TrackId>,
@@ -774,7 +802,11 @@ fn auto_dj_candidates(
     candidates.truncate(AUTO_DJ_ITEM_COUNT);
     candidates
 }
-fn auto_dj_score(track: &Track, current: &QueueEntry, current_genres: &HashSet<String>) -> u8 {
+pub(in crate::controller) fn auto_dj_score(
+    track: &Track,
+    current: &QueueEntry,
+    current_genres: &HashSet<String>,
+) -> u8 {
     let mut score = 0;
     if !current_genres.is_empty()
         && track
@@ -804,20 +836,20 @@ fn auto_dj_score(track: &Track, current: &QueueEntry, current_genres: &HashSet<S
     }
     score
 }
-fn auto_dj_shuffle_key(seed: u64, value: &str) -> u64 {
+pub(in crate::controller) fn auto_dj_shuffle_key(seed: u64, value: &str) -> u64 {
     value
         .bytes()
         .fold(seed ^ 0xa24b_aed4_963e_e407, |hash, byte| {
             hash.rotate_left(7) ^ u64::from(byte)
         })
 }
-fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
+pub(in crate::controller) fn playback_backend(fake: bool) -> Box<dyn PlaybackBackend> {
     if fake {
         return Box::new(FakePlaybackBackend::new());
     }
     Box::new(LazyGStreamerPlaybackBackend::new())
 }
-fn platform_secret_store() -> Arc<dyn SecretStore> {
+pub(in crate::controller) fn platform_secret_store() -> Arc<dyn SecretStore> {
     #[cfg(unix)]
     {
         Arc::new(SecretServiceStore::new())
@@ -827,7 +859,7 @@ fn platform_secret_store() -> Arc<dyn SecretStore> {
         Arc::new(MemorySecretStore::new())
     }
 }
-fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {
+pub(in crate::controller) fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {
     PlaybackTrack {
         id: entry.track_id.clone(),
         title: entry.title.clone(),
@@ -836,10 +868,13 @@ fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {
         duration_seconds: entry.duration_seconds,
     }
 }
-fn prepared_item_from_entry(entry: &QueueEntry, stream: StreamDescriptor) -> PreparedPlaybackItem {
+pub(in crate::controller) fn prepared_item_from_entry(
+    entry: &QueueEntry,
+    stream: StreamDescriptor,
+) -> PreparedPlaybackItem {
     PreparedPlaybackItem::new(playback_track_from_entry(entry), stream)
 }
-fn resolve_prepared_item(
+pub(in crate::controller) fn resolve_prepared_item(
     store: &StoreHandle,
     runtime: &Runtime,
     secrets: &Arc<dyn SecretStore>,
@@ -857,7 +892,7 @@ fn resolve_prepared_item(
     )?;
     Ok(prepared_item_from_entry(entry, stream))
 }
-fn prepare_next_stream_from_handles(
+pub(in crate::controller) fn prepare_next_stream_from_handles(
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
@@ -914,7 +949,7 @@ fn prepare_next_stream_from_handles(
         }
     });
 }
-fn next_preload_request_from_queue(
+pub(in crate::controller) fn next_preload_request_from_queue(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     playback_settings: PlaybackSettings,
 ) -> Option<(ServerId, QueueEntryId, QueueEntry, PlaybackSettings)> {

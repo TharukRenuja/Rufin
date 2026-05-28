@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn load_settings(&self) -> AppSettings {
         load_settings_from_store(&self.store)

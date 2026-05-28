@@ -1,18 +1,93 @@
-use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::Receiver;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#![allow(unused_imports)]
+
+#[path = "../artist.rs"]
+mod artist;
+#[path = "../cards.rs"]
+mod cards;
+#[path = "../chrome.rs"]
+mod chrome;
+#[path = "../discord.rs"]
+mod discord;
+#[path = "../favorites.rs"]
+mod favorites;
+#[path = "../folders.rs"]
+mod folders;
+#[path = "../fullscreen_player.rs"]
+mod fullscreen_player;
+#[path = "../home.rs"]
+mod home;
+#[path = "../layout.rs"]
+mod layout;
+#[path = "../library/mod.rs"]
+mod library;
+#[path = "../local_access_mapping.rs"]
+mod local_access_mapping;
+#[path = "../login.rs"]
+mod login;
+#[cfg(unix)]
+#[path = "../mpris.rs"]
+mod mpris;
+#[path = "../navigation.rs"]
+mod navigation;
+#[path = "../paging.rs"]
+mod paging;
+#[path = "../player.rs"]
+mod player;
+#[path = "../player_icons.rs"]
+mod player_icons;
+#[path = "../preferences.rs"]
+mod preferences;
+#[path = "../queue.rs"]
+mod queue;
+#[path = "../random_play.rs"]
+mod random_play;
+#[path = "../right_panel.rs"]
+mod right_panel;
+#[path = "../settings_persistence.rs"]
+mod settings_persistence;
+#[path = "../source_selector.rs"]
+mod source_selector;
+
+use crate::controller::{
+    AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,
+    PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
+};
+use crate::external_metadata;
+use crate::i18n::tr;
+use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
 use adw::prelude::*;
+use chrome::{build_content_chrome, build_main_area};
+use discord::DiscordPresence;
+use favorites::{
+    FavoriteControlKey, FavoriteControls, album_favorite_key, artist_favorite_key,
+    clear_favorite_controls, favorite_change_needs_route_render, favorite_control_key,
+    merge_favorite_snapshot, register_favorite_control, track_favorite_key,
+    unregister_favorite_control, update_favorite_controls,
+};
+use fullscreen_player::{
+    FullscreenPlayerParts, build_fullscreen_player, connect_fullscreen_player_controls,
+};
 use gdk_pixbuf::Pixbuf;
 use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
+use layout::{
+    COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
+    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, resolve_layout, route_content_width,
+};
+#[cfg(unix)]
+use mpris::install_mpris;
 #[cfg(unix)]
 use mpris_server::Player as MprisPlayer;
+use navigation::{
+    build_compact_navigation, build_normal_navigation, rebuild_navigation, sidebar_history_button,
+    update_navigation_selection,
+};
+use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
+use player::{PlayerControls, build_bottom_player, connect_player_controls};
+use preferences::{present_library_preferences_dialog, present_preferences_dialog};
+use queue::connect_queue_panel_controls;
+use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH,
     FolderPathItem, Genre, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryField,
@@ -25,91 +100,139 @@ use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
 use rufin_store::{CachedGenreDetail, image_cache_key};
 use rufin_test_support::FakeScale;
-use tracing::{debug, info, warn};
-use crate::controller::{
-    AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,
-    PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
-};
-use crate::external_metadata;
-use crate::i18n::tr;
-use crate::lyrics::{LyricsPane, next_lyrics_line_start_after};
-use chrome::{build_content_chrome, build_main_area};
-use discord::DiscordPresence;
-use favorites::{
-    FavoriteControlKey, FavoriteControls, album_favorite_key, artist_favorite_key,
-    clear_favorite_controls, favorite_change_needs_route_render, favorite_control_key,
-    merge_favorite_snapshot, register_favorite_control, track_favorite_key,
-    unregister_favorite_control,
-    update_favorite_controls,
-};
-use fullscreen_player::{
-    FullscreenPlayerParts, build_fullscreen_player, connect_fullscreen_player_controls,
-};
-use layout::{
-    COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, resolve_layout, route_content_width,
-};
-#[cfg(unix)]
-use mpris::install_mpris;
-use navigation::{
-    build_compact_navigation, build_normal_navigation, rebuild_navigation, sidebar_history_button,
-    update_navigation_selection,
-};
-use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
-use player::{PlayerControls, build_bottom_player, connect_player_controls};
-use preferences::{present_library_preferences_dialog, present_preferences_dialog};
-use queue::connect_queue_panel_controls;
-use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 use source_selector::{ServerSelector, build_server_selector};
-const GRID_ROUTE_PAGE_SIZE: usize = 16;
-const TRACK_ROUTE_PAGE_SIZE: usize = 64;
-const CONTEXT_MENU_PLAYLIST_LIMIT: usize = 100;
-const GRID_COVER_SIZE: u32 = 256;
-const DETAIL_COVER_SIZE: u32 = 512;
-const THUMB_COVER_SIZE: u32 = 96;
-const IMAGE_TAG_UNTAGGED: &str = "untagged";
-const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
-const DECODED_COVER_CACHE_SOFT_BYTES: usize = 128 * 1024 * 1024;
-const COVER_WARM_BATCH_SIZE: usize = 3;
-const COVER_PATH_LOOKUP_MAX_IN_FLIGHT: usize = 3;
-const COVER_WARM_INITIAL_DELAY_MS: u64 = 250;
-const COVER_WARM_INTERVAL_MS: u64 = 32;
-const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
-const COVER_DECODE_MAX_IN_FLIGHT: usize = 3;
-const STARTUP_COVER_WARM_DELAY_MS: u64 = 1_500;
-const STARTUP_COVER_WARM_BATCH_SIZE: usize = 1;
-const STARTUP_COVER_WARM_INTERVAL_MS: u64 = 80;
-const UI_PERF_MANUAL_SCROLL_IDLE_MS: u64 = 750;
-const UI_PERF_TRACK_ROW_BIND_SLOW_US: u64 = 4_000;
-const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
-const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
-const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
-const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
-const STARTUP_GRID_COVER_LIMIT: usize = 48;
-const STARTUP_VISIBLE_TRACK_COVER_LIMIT: usize = TRACK_ROUTE_PAGE_SIZE * 4;
-const STARTUP_CACHED_COVER_PRIME_LIMIT: usize = 3_072;
-const FIRST_RUN_COVER_PRIME_TIMEOUT_MS: u64 = 8_000;
-const FIRST_RUN_COVER_PRIME_POLL_MS: u64 = 33;
-const FIRST_RUN_HOME_SECTION_COVER_LIMIT: usize = 8;
-const FIRST_RUN_GRID_COVER_PRIME_LIMIT: usize = 192;
-const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
-const LIBRARY_PREPARING_STATUS: &str = "Preparing library...";
-const FAVORITE_EMPTY_GLYPH: &str = "♡";
-const FAVORITE_FILLED_GLYPH: &str = "♥";
-const PLAYLIST_ENTRY_DRAG_WIDTH: i32 = 18;
-const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
-const PLAYLIST_ENTRY_COVER_WIDTH: i32 = 36;
-const PLAYLIST_ENTRY_DURATION_WIDTH: i32 = 64;
-const PLAYLIST_ENTRY_REMOVE_WIDTH: i32 = 34;
-const PLAYLIST_ENTRY_COLUMN_GAP: i32 = 8;
-const PLAYLIST_ENTRY_TEXT_COLUMN_GAP: i32 = 16;
-const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 120;
-const PLAYLIST_ENTRY_NUMBER_XALIGN: f32 = 0.35;
-const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;
-const PLAYLIST_ENTRY_ALBUM_MAX_CHARS: i32 = 18;
-pub(super) const PLAY_NEXT_ICON: &str = "view-sort-ascending-symbolic";
-pub(super) const PLAY_LATER_ICON: &str = "view-sort-descending-symbolic";
-const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tracing::{debug, info, warn};
+
+mod album_detail_view;
+mod build;
+mod cover_cache_lookup;
+mod cover_decode_queue;
+mod cover_size_helpers;
+mod cover_startup;
+mod cover_tiles;
+mod cover_warming;
+mod empty_states;
+mod favorite_controls;
+mod folder_route_state;
+mod genre_detail_view;
+mod grouped_detail_view;
+mod home_refresh;
+mod home_route_refresh;
+mod home_visible_sections;
+mod layout_rendering;
+mod lyrics_highlight_timers;
+mod lyrics_panel;
+mod lyrics_playback_state;
+mod new_playlist_dialog;
+mod perf_recording;
+mod playlist_detail_view;
+mod playlist_rename_dialog;
+mod responsive_layout_state;
+mod responsive_route_render;
+mod route_navigation;
+mod route_rendering;
+mod search_view;
+mod shell_navigation;
+mod sidebar_route_controls;
+mod startup_reveal;
+mod track_table;
+mod track_table_popover;
+
+#[cfg(test)]
+mod shell_tests;
+
+pub(in crate::ui) use album_detail_view::*;
+pub(in crate::ui) use build::*;
+pub(in crate::ui) use cover_cache_lookup::*;
+pub(in crate::ui) use cover_decode_queue::*;
+pub(in crate::ui) use cover_size_helpers::*;
+pub(in crate::ui) use cover_startup::*;
+pub(in crate::ui) use cover_tiles::*;
+pub(in crate::ui) use cover_warming::*;
+pub(in crate::ui) use empty_states::*;
+pub(in crate::ui) use favorite_controls::*;
+pub(in crate::ui) use folder_route_state::*;
+pub(in crate::ui) use genre_detail_view::*;
+pub(in crate::ui) use grouped_detail_view::*;
+pub(in crate::ui) use home_refresh::*;
+pub(in crate::ui) use home_route_refresh::*;
+pub(in crate::ui) use home_visible_sections::*;
+pub(in crate::ui) use layout_rendering::*;
+pub(in crate::ui) use lyrics_highlight_timers::*;
+pub(in crate::ui) use lyrics_panel::*;
+pub(in crate::ui) use lyrics_playback_state::*;
+pub(in crate::ui) use new_playlist_dialog::*;
+pub(in crate::ui) use perf_recording::*;
+pub(in crate::ui) use playlist_detail_view::*;
+pub(in crate::ui) use playlist_rename_dialog::*;
+pub(in crate::ui) use responsive_layout_state::*;
+pub(in crate::ui) use responsive_route_render::*;
+pub(in crate::ui) use route_navigation::*;
+pub(in crate::ui) use route_rendering::*;
+pub(in crate::ui) use search_view::*;
+pub(in crate::ui) use shell_navigation::*;
+pub(in crate::ui) use sidebar_route_controls::*;
+pub(in crate::ui) use startup_reveal::*;
+pub(in crate::ui) use track_table::*;
+pub(in crate::ui) use track_table_popover::*;
+
+pub(in crate::ui) const GRID_ROUTE_PAGE_SIZE: usize = 16;
+pub(in crate::ui) const TRACK_ROUTE_PAGE_SIZE: usize = 64;
+pub(in crate::ui) const CONTEXT_MENU_PLAYLIST_LIMIT: usize = 100;
+pub(in crate::ui) const GRID_COVER_SIZE: u32 = 256;
+pub(in crate::ui) const DETAIL_COVER_SIZE: u32 = 512;
+pub(in crate::ui) const THUMB_COVER_SIZE: u32 = 96;
+pub(in crate::ui) const IMAGE_TAG_UNTAGGED: &str = "untagged";
+pub(in crate::ui) const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
+pub(in crate::ui) const DECODED_COVER_CACHE_SOFT_BYTES: usize = 128 * 1024 * 1024;
+pub(in crate::ui) const COVER_WARM_BATCH_SIZE: usize = 3;
+pub(in crate::ui) const COVER_PATH_LOOKUP_MAX_IN_FLIGHT: usize = 3;
+pub(in crate::ui) const COVER_WARM_INITIAL_DELAY_MS: u64 = 250;
+pub(in crate::ui) const COVER_WARM_INTERVAL_MS: u64 = 32;
+pub(in crate::ui) const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
+pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 3;
+pub(in crate::ui) const STARTUP_COVER_WARM_DELAY_MS: u64 = 1_500;
+pub(in crate::ui) const STARTUP_COVER_WARM_BATCH_SIZE: usize = 1;
+pub(in crate::ui) const STARTUP_COVER_WARM_INTERVAL_MS: u64 = 80;
+pub(in crate::ui) const UI_PERF_MANUAL_SCROLL_IDLE_MS: u64 = 750;
+pub(in crate::ui) const UI_PERF_TRACK_ROW_BIND_SLOW_US: u64 = 4_000;
+pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
+pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
+pub(in crate::ui) const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
+pub(in crate::ui) const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
+pub(in crate::ui) const STARTUP_GRID_COVER_LIMIT: usize = 48;
+pub(in crate::ui) const STARTUP_VISIBLE_TRACK_COVER_LIMIT: usize = TRACK_ROUTE_PAGE_SIZE * 4;
+pub(in crate::ui) const STARTUP_CACHED_COVER_PRIME_LIMIT: usize = 3_072;
+pub(in crate::ui) const FIRST_RUN_COVER_PRIME_TIMEOUT_MS: u64 = 8_000;
+pub(in crate::ui) const FIRST_RUN_COVER_PRIME_POLL_MS: u64 = 33;
+pub(in crate::ui) const FIRST_RUN_HOME_SECTION_COVER_LIMIT: usize = 8;
+pub(in crate::ui) const FIRST_RUN_GRID_COVER_PRIME_LIMIT: usize = 192;
+pub(in crate::ui) const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
+pub(in crate::ui) const LIBRARY_PREPARING_STATUS: &str = "Preparing library...";
+pub(in crate::ui) const FAVORITE_EMPTY_GLYPH: &str = "♡";
+pub(in crate::ui) const FAVORITE_FILLED_GLYPH: &str = "♥";
+pub(in crate::ui) const PLAYLIST_ENTRY_DRAG_WIDTH: i32 = 18;
+pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
+pub(in crate::ui) const PLAYLIST_ENTRY_COVER_WIDTH: i32 = 36;
+pub(in crate::ui) const PLAYLIST_ENTRY_DURATION_WIDTH: i32 = 64;
+pub(in crate::ui) const PLAYLIST_ENTRY_REMOVE_WIDTH: i32 = 34;
+pub(in crate::ui) const PLAYLIST_ENTRY_COLUMN_GAP: i32 = 8;
+pub(in crate::ui) const PLAYLIST_ENTRY_TEXT_COLUMN_GAP: i32 = 16;
+pub(in crate::ui) const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 120;
+pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_XALIGN: f32 = 0.35;
+pub(in crate::ui) const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;
+pub(in crate::ui) const PLAYLIST_ENTRY_ALBUM_MAX_CHARS: i32 = 18;
+pub(in crate::ui) const PLAY_NEXT_ICON: &str = "view-sort-ascending-symbolic";
+pub(in crate::ui) const PLAY_LATER_ICON: &str = "view-sort-descending-symbolic";
+pub(in crate::ui) const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Debug)]
 pub struct AppOptions {
@@ -123,7 +246,7 @@ pub struct AppOptions {
     pub ui_perf_asset_ms: u64,
     pub ui_perf_output: Option<PathBuf>,
 }
-struct AppState {
+pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
     settings: RefCell<AppSettings>,
     resolved_left_sidebar: Cell<LeftSidebarMode>,
@@ -188,7 +311,7 @@ struct AppState {
     perf: Option<Rc<UiPerfMonitor>>,
 }
 #[derive(Clone)]
-struct LyricsSearchDialog {
+pub(in crate::ui) struct LyricsSearchDialog {
     dialog: adw::Dialog,
     track_id: rufin_core::TrackId,
     artist_entry: gtk::Entry,
@@ -198,43 +321,43 @@ struct LyricsSearchDialog {
     status: gtk::Label,
 }
 #[derive(Clone)]
-struct CoverBinding {
+pub(in crate::ui) struct CoverBinding {
     tile: ArtworkTileWeak,
     generation: u64,
 }
 #[derive(Clone)]
-struct DecodedCover {
+pub(in crate::ui) struct DecodedCover {
     pixbuf: Pixbuf,
     size: i32,
     bytes: usize,
     last_used: u64,
     priority: CoverDecodePriority,
 }
-struct DecodedCoverOrderEntry {
+pub(in crate::ui) struct DecodedCoverOrderEntry {
     key: String,
     last_used: u64,
 }
-struct CoverDecodeJob {
+pub(in crate::ui) struct CoverDecodeJob {
     key: String,
     path: PathBuf,
     size: i32,
     priority: CoverDecodePriority,
     requires_live_binding: bool,
 }
-struct StartupCoverWarmJob {
+pub(in crate::ui) struct StartupCoverWarmJob {
     key: String,
     image_ref: ImageRef,
     fetch_size: u32,
     size: i32,
 }
-struct FirstRunCoverPrimeJob {
+pub(in crate::ui) struct FirstRunCoverPrimeJob {
     key: String,
     image_ref: ImageRef,
     fetch_size: u32,
     size: i32,
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum CoverDecodePriority {
+pub(in crate::ui) enum CoverDecodePriority {
     Visible,
     Warm,
 }
@@ -247,7 +370,7 @@ impl CoverDecodePriority {
     }
 }
 #[derive(Clone)]
-struct ArtworkTile {
+pub(in crate::ui) struct ArtworkTile {
     area: gtk::DrawingArea,
     size: Rc<Cell<i32>>,
     seed: Rc<Cell<u32>>,
@@ -255,31 +378,31 @@ struct ArtworkTile {
     generation: Rc<Cell<u64>>,
 }
 #[derive(Clone)]
-struct ArtworkTileWeak {
+pub(in crate::ui) struct ArtworkTileWeak {
     area: glib::WeakRef<gtk::DrawingArea>,
     size: Rc<Cell<i32>>,
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
     generation: Rc<Cell<u64>>,
 }
-struct HomeSectionState {
+pub(in crate::ui) struct HomeSectionState {
     page_start: usize,
     page_size: usize,
 }
 #[derive(Clone)]
-struct HomeSectionView {
+pub(in crate::ui) struct HomeSectionView {
     root: gtk::Widget,
     row: gtk::Box,
     previous: gtk::Button,
     next: gtk::Button,
 }
 #[derive(Clone)]
-struct PrefetchedHomeSection {
+pub(in crate::ui) struct PrefetchedHomeSection {
     server_id: rufin_core::ServerId,
     section: HomeSection,
 }
 #[derive(Clone, Default)]
-struct FolderRouteState {
+pub(in crate::ui) struct FolderRouteState {
     request_id: u64,
     path: Vec<FolderPathItem>,
     loading: bool,
@@ -287,13 +410,13 @@ struct FolderRouteState {
     error: Option<String>,
 }
 #[derive(Clone, Copy)]
-struct TrackTableOptions {
+pub(in crate::ui) struct TrackTableOptions {
     paging: Option<(usize, usize)>,
     expand: bool,
     max_visible_rows: Option<usize>,
     favorite_first: bool,
 }
-struct UiPerfOptions {
+pub(in crate::ui) struct UiPerfOptions {
     max_gap_ms: u64,
     route_ms: u64,
     duration_ms: u64,
@@ -303,13 +426,13 @@ struct UiPerfOptions {
     observe_scroll: bool,
     output: Option<PathBuf>,
 }
-struct UiPerfMonitor {
+pub(in crate::ui) struct UiPerfMonitor {
     options: UiPerfOptions,
     started_at: Instant,
     inner: RefCell<UiPerfInner>,
 }
 #[derive(Default)]
-struct UiPerfInner {
+pub(in crate::ui) struct UiPerfInner {
     ticks: usize,
     max_gap_ms: u64,
     max_idle_gap_ms: u64,
@@ -339,13 +462,13 @@ struct UiPerfInner {
     tracks_row_contract_failures: usize,
 }
 #[derive(Default)]
-struct UiPerfBindStats {
+pub(in crate::ui) struct UiPerfBindStats {
     samples: usize,
     total_us: u64,
     max_us: u64,
     slow_samples: usize,
 }
-struct UiPerfTrackRowContract {
+pub(in crate::ui) struct UiPerfTrackRowContract {
     scenario: &'static str,
     visible_start: usize,
     visible_end: usize,
@@ -354,7 +477,7 @@ struct UiPerfTrackRowContract {
     pending: usize,
     missing: usize,
 }
-struct UiPerfTrackRowContractSample {
+pub(in crate::ui) struct UiPerfTrackRowContractSample {
     scenario: &'static str,
     visible_start: usize,
     visible_end: usize,
@@ -364,7 +487,7 @@ struct UiPerfTrackRowContractSample {
     missing: usize,
     failed: bool,
 }
-struct UiPerfActiveScroll {
+pub(in crate::ui) struct UiPerfActiveScroll {
     route: String,
     scenario: &'static str,
     started_at: Instant,
@@ -378,11 +501,11 @@ struct UiPerfActiveScroll {
     covers_ready_at_start: usize,
     decodes_at_start: usize,
 }
-struct UiPerfRouteRender {
+pub(in crate::ui) struct UiPerfRouteRender {
     route: String,
     elapsed_ms: u64,
 }
-struct UiPerfRouteScroll {
+pub(in crate::ui) struct UiPerfRouteScroll {
     route: String,
     scenario: &'static str,
     elapsed_ms: u64,
@@ -395,14 +518,14 @@ struct UiPerfRouteScroll {
     covers_ready: usize,
     decoded_covers: usize,
 }
-struct UiPerfGapSample {
+pub(in crate::ui) struct UiPerfGapSample {
     phase: &'static str,
     route: String,
     scenario: &'static str,
     elapsed_ms: u64,
     gap_ms: u64,
 }
-struct UiPerfAssetLatency {
+pub(in crate::ui) struct UiPerfAssetLatency {
     key: String,
     elapsed_ms: u64,
     path_ready_ms: Option<u64>,
@@ -410,7 +533,7 @@ struct UiPerfAssetLatency {
     decode_ms: Option<u64>,
 }
 #[derive(Clone, Copy)]
-enum UiPerfScenario {
+pub(in crate::ui) enum UiPerfScenario {
     HumanScroll,
     FastScroll,
     FullSweep,
@@ -426,7 +549,7 @@ impl UiPerfScenario {
         }
     }
 }
-struct GroupedDetailData {
+pub(in crate::ui) struct GroupedDetailData {
     title: String,
     image_ref: Option<ImageRef>,
     cover_refs: Vec<ImageRef>,
@@ -435,7 +558,7 @@ struct GroupedDetailData {
     tracks: Vec<Track>,
     table_context: &'static str,
 }
-struct Shell {
+pub(in crate::ui) struct Shell {
     state: AppState,
     controller: AppController,
     application: adw::Application,

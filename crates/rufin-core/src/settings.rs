@@ -1,7 +1,11 @@
-include!("settings/layout.rs");
-include!("settings/sidebar.rs");
+mod layout;
+mod sidebar;
+
+pub use layout::*;
+pub use sidebar::*;
 
 #[cfg(test)]
-mod tests {
-    include!("settings/tests.rs");
-}
+use layout::LEGACY_APPLICATION_DISPLAY_BYTES;
+
+#[cfg(test)]
+mod tests;

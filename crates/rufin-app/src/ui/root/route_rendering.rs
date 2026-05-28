@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn render_current_route(self: &Rc<Self>) {
+    pub(in crate::ui) fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
         self.cancel_cover_warm();
         self.cancel_startup_cover_warm();
@@ -88,7 +90,10 @@ impl Shell {
         self.record_perf_route_render(route_name, render_started.elapsed());
         self.schedule_startup_cover_warm();
     }
-    fn reset_inactive_route_cover_gates(&self, active_route_key: Option<&'static str>) {
+    pub(in crate::ui) fn reset_inactive_route_cover_gates(
+        &self,
+        active_route_key: Option<&'static str>,
+    ) {
         self.state
             .route_cover_gate_started
             .borrow_mut()
@@ -102,18 +107,18 @@ impl Shell {
             .borrow_mut()
             .retain(|route_key| Some(*route_key) == active_route_key);
     }
-    fn render_current_route_preserving_scroll(self: &Rc<Self>) {
+    pub(in crate::ui) fn render_current_route_preserving_scroll(self: &Rc<Self>) {
         let scroll_value = self.current_route_scroll_value();
         self.render_current_route();
         if let Some(value) = scroll_value {
             self.restore_current_route_scroll(value);
         }
     }
-    fn current_route_scroll_value(&self) -> Option<f64> {
+    pub(in crate::ui) fn current_route_scroll_value(&self) -> Option<f64> {
         find_largest_scrolled_window(&self.route_host.clone().upcast())
             .map(|scroller| scroller.vadjustment().value())
     }
-    fn restore_current_route_scroll(&self, value: f64) {
+    pub(in crate::ui) fn restore_current_route_scroll(&self, value: f64) {
         let route_host = self.route_host.clone();
         glib::idle_add_local_once(move || {
             restore_scrolled_window_value(&route_host.clone().upcast(), value);
@@ -122,7 +127,7 @@ impl Shell {
             });
         });
     }
-    fn observe_route_scroll(&self, route: &str) {
+    pub(in crate::ui) fn observe_route_scroll(&self, route: &str) {
         let Some(perf) = self
             .state
             .perf

@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn start_warm_cover_path_lookup(
+    pub(in crate::ui) fn start_warm_cover_path_lookup(
         self: &Rc<Self>,
         key: String,
         image_ref: ImageRef,
@@ -31,7 +33,12 @@ impl Shell {
             });
         }
     }
-    fn warm_cover_refs(self: &Rc<Self>, image_refs: Vec<ImageRef>, fetch_size: u32, size: i32) {
+    pub(in crate::ui) fn warm_cover_refs(
+        self: &Rc<Self>,
+        image_refs: Vec<ImageRef>,
+        fetch_size: u32,
+        size: i32,
+    ) {
         let decode_size = cover_decode_size(size, fetch_size);
         let generation = self.next_cover_warm_generation();
         let mut seen = HashSet::new();
@@ -63,7 +70,12 @@ impl Shell {
             COVER_WARM_INITIAL_DELAY_MS,
         );
     }
-    fn warm_cover_refs_now(self: &Rc<Self>, image_refs: Vec<ImageRef>, fetch_size: u32, size: i32) {
+    pub(in crate::ui) fn warm_cover_refs_now(
+        self: &Rc<Self>,
+        image_refs: Vec<ImageRef>,
+        fetch_size: u32,
+        size: i32,
+    ) {
         let decode_size = cover_decode_size(size, fetch_size);
         let generation = self.next_cover_warm_generation();
         let mut seen = HashSet::new();
@@ -95,7 +107,7 @@ impl Shell {
             0,
         );
     }
-    fn schedule_startup_cover_warm(self: &Rc<Self>) {
+    pub(in crate::ui) fn schedule_startup_cover_warm(self: &Rc<Self>) {
         let generation = self
             .state
             .startup_cover_warm_generation
@@ -120,16 +132,19 @@ impl Shell {
             },
         );
     }
-    fn cancel_startup_cover_warm(&self) {
-        self.state
-            .startup_cover_warm_generation
-            .set(self.state.startup_cover_warm_generation.get().saturating_add(1));
+    pub(in crate::ui) fn cancel_startup_cover_warm(&self) {
+        self.state.startup_cover_warm_generation.set(
+            self.state
+                .startup_cover_warm_generation
+                .get()
+                .saturating_add(1),
+        );
         self.cancel_queued_warm_cover_decodes();
     }
-    fn startup_cover_warm_jobs(&self) -> VecDeque<StartupCoverWarmJob> {
+    pub(in crate::ui) fn startup_cover_warm_jobs(&self) -> VecDeque<StartupCoverWarmJob> {
         startup_cover_background_jobs(self).into_iter().collect()
     }
-    fn start_startup_cover_warm_jobs(
+    pub(in crate::ui) fn start_startup_cover_warm_jobs(
         self: &Rc<Self>,
         jobs: Rc<RefCell<VecDeque<StartupCoverWarmJob>>>,
         generation: u64,
@@ -189,23 +204,23 @@ impl Shell {
             },
         );
     }
-    fn next_cover_warm_generation(&self) -> u64 {
+    pub(in crate::ui) fn next_cover_warm_generation(&self) -> u64 {
         let generation = self.state.cover_warm_generation.get().saturating_add(1);
         self.state.cover_warm_generation.set(generation);
         generation
     }
-    fn cancel_cover_warm(&self) {
+    pub(in crate::ui) fn cancel_cover_warm(&self) {
         self.state
             .cover_warm_generation
             .set(self.state.cover_warm_generation.get().saturating_add(1));
         self.cancel_queued_warm_cover_decodes();
     }
-    fn pause_cover_warm_for_interaction(&self) {
+    pub(in crate::ui) fn pause_cover_warm_for_interaction(&self) {
         self.state.cover_warm_paused_until.set(Some(
             Instant::now() + Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
         ));
     }
-    fn cover_warm_is_paused(&self) -> bool {
+    pub(in crate::ui) fn cover_warm_is_paused(&self) -> bool {
         let Some(until) = self.state.cover_warm_paused_until.get() else {
             return false;
         };
@@ -215,7 +230,7 @@ impl Shell {
         self.state.cover_warm_paused_until.set(None);
         false
     }
-    fn schedule_cover_warm_jobs(
+    pub(in crate::ui) fn schedule_cover_warm_jobs(
         self: &Rc<Self>,
         jobs: Rc<RefCell<VecDeque<(String, ImageRef)>>>,
         fetch_size: u32,
@@ -233,16 +248,13 @@ impl Shell {
             return;
         }
 
-        glib::timeout_add_local_once(
-            Duration::from_millis(initial_delay_ms),
-            move || {
-                if shell.state.cover_warm_generation.get() == generation {
-                    shell.start_cover_warm_jobs(jobs, fetch_size, size, generation);
-                }
-            },
-        );
+        glib::timeout_add_local_once(Duration::from_millis(initial_delay_ms), move || {
+            if shell.state.cover_warm_generation.get() == generation {
+                shell.start_cover_warm_jobs(jobs, fetch_size, size, generation);
+            }
+        });
     }
-    fn start_cover_warm_jobs(
+    pub(in crate::ui) fn start_cover_warm_jobs(
         self: &Rc<Self>,
         jobs: Rc<RefCell<VecDeque<(String, ImageRef)>>>,
         fetch_size: u32,

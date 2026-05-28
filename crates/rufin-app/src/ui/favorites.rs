@@ -14,7 +14,7 @@ use crate::controller::LibrarySnapshot;
 use super::{Shell, set_favorite_button_active};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) enum FavoriteControlKey {
+pub(in crate::ui) enum FavoriteControlKey {
     Album(String),
     Track(String),
     Artist(String),

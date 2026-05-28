@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     #[cfg(test)]
     pub fn clear_active_server_cache(&self) {

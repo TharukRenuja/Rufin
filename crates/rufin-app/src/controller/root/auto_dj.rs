@@ -1,5 +1,7 @@
+use super::*;
+
 impl AppController {
-    fn auto_dj_top_up_or_emit_error(&self) -> bool {
+    pub(in crate::controller) fn auto_dj_top_up_or_emit_error(&self) -> bool {
         match self.auto_dj_top_up() {
             Ok(topped_up) => topped_up,
             Err(error) => {
@@ -8,7 +10,7 @@ impl AppController {
             }
         }
     }
-    fn auto_dj_top_up(&self) -> Result<bool, String> {
+    pub(in crate::controller) fn auto_dj_top_up(&self) -> Result<bool, String> {
         if !self
             .auto_dj_enabled
             .lock()
@@ -42,7 +44,9 @@ impl AppController {
         })?;
         Ok(true)
     }
-    fn auto_dj_queue_state(&self) -> Option<(ServerId, QueueEntry, HashSet<TrackId>, usize)> {
+    pub(in crate::controller) fn auto_dj_queue_state(
+        &self,
+    ) -> Option<(ServerId, QueueEntry, HashSet<TrackId>, usize)> {
         self.queue.lock().ok().and_then(|queue| {
             let queue = queue.as_ref()?;
             let snapshot = queue.snapshot();

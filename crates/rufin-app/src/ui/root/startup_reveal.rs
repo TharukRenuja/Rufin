@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn render_startup_loading_view(&self) {
+    pub(in crate::ui) fn render_startup_loading_view(&self) {
         self.route_title.set_title("Rufin");
         self.set_history_buttons_sensitive(false, false);
         while let Some(child) = self.route_host.first_child() {
@@ -8,7 +10,7 @@ impl Shell {
         self.route_host
             .append(&route_boundary(self.startup_loading_view()));
     }
-    fn startup_loading_view(&self) -> gtk::Widget {
+    pub(in crate::ui) fn startup_loading_view(&self) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
         wrapper.add_css_class("startup-loading-page");
         wrapper.set_hexpand(true);
@@ -21,7 +23,7 @@ impl Shell {
         wrapper.append(&spinner);
         wrapper.upcast()
     }
-    fn schedule_startup_route_reveal(self: &Rc<Self>) {
+    pub(in crate::ui) fn schedule_startup_route_reveal(self: &Rc<Self>) {
         if self.state.startup_route_revealed.get() || self.login_screen_active() {
             return;
         }
@@ -56,10 +58,9 @@ impl Shell {
                     })
                     .map(|_| shell.state.startup_cover_prime_pending.borrow().len())
                     .unwrap_or(usize::from(cover_prime_generation.get().is_none()));
-                let reveal_ready =
-                    width_ready
-                        && pending_covers == 0
-                        && elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MIN_MS);
+                let reveal_ready = width_ready
+                    && pending_covers == 0
+                    && elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MIN_MS);
                 let reveal_expired = elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MAX_MS);
                 if reveal_ready || reveal_expired {
                     if reveal_expired && pending_covers > 0 {
@@ -77,7 +78,7 @@ impl Shell {
             },
         );
     }
-    fn begin_startup_cover_prime(self: &Rc<Self>) -> Option<u64> {
+    pub(in crate::ui) fn begin_startup_cover_prime(self: &Rc<Self>) -> Option<u64> {
         let generation = self
             .state
             .startup_cover_prime_generation
@@ -115,7 +116,7 @@ impl Shell {
             Some(generation)
         }
     }
-    fn cached_cover_path_for_startup_prime(
+    pub(in crate::ui) fn cached_cover_path_for_startup_prime(
         &self,
         image_ref: &ImageRef,
         preferred_size: u32,
@@ -128,7 +129,7 @@ impl Shell {
         }
         None
     }
-    fn reveal_startup_route(self: &Rc<Self>) {
+    pub(in crate::ui) fn reveal_startup_route(self: &Rc<Self>) {
         if self.state.startup_route_revealed.replace(true) || self.login_screen_active() {
             return;
         }
@@ -137,14 +138,14 @@ impl Shell {
         self.prewarm_startup_route_widgets();
         self.render_current_route();
     }
-    fn prewarm_startup_route_widgets(self: &Rc<Self>) {
+    pub(in crate::ui) fn prewarm_startup_route_widgets(self: &Rc<Self>) {
         let settings = self.state.settings.borrow().clone();
         self.prewarm_startup_artist_route(false);
         if sidebar_route_visible(&settings, SidebarRouteItem::AlbumArtists) {
             self.prewarm_startup_artist_route(true);
         }
     }
-    fn prewarm_startup_artist_route(self: &Rc<Self>, album_artist: bool) {
+    pub(in crate::ui) fn prewarm_startup_artist_route(self: &Rc<Self>, album_artist: bool) {
         let route_name = if album_artist {
             "AlbumArtists"
         } else {
@@ -164,7 +165,7 @@ impl Shell {
             );
         }
     }
-    fn schedule_first_run_app_reveal(self: &Rc<Self>) {
+    pub(in crate::ui) fn schedule_first_run_app_reveal(self: &Rc<Self>) {
         self.log_layout_snapshot("first_run_reveal_queued");
         if let Some(generation) = self.begin_first_run_cover_prime() {
             let started_at = Instant::now();
@@ -202,7 +203,7 @@ impl Shell {
 
         self.finish_first_run_app_reveal();
     }
-    fn finish_first_run_app_reveal(self: &Rc<Self>) {
+    pub(in crate::ui) fn finish_first_run_app_reveal(self: &Rc<Self>) {
         if self.state.first_run_connection_pending.get() {
             self.state.library.borrow_mut().sync_status = tr(LIBRARY_SYNC_COMPLETE_STATUS);
             self.render_current_route();
@@ -251,7 +252,7 @@ impl Shell {
             );
         });
     }
-    fn begin_first_run_cover_prime(self: &Rc<Self>) -> Option<u64> {
+    pub(in crate::ui) fn begin_first_run_cover_prime(self: &Rc<Self>) -> Option<u64> {
         let generation = self
             .state
             .first_run_cover_prime_generation
@@ -295,7 +296,7 @@ impl Shell {
         info!(covers = pending_count, "started first-run cover prime");
         Some(generation)
     }
-    fn first_run_cover_prime_jobs(&self) -> Vec<FirstRunCoverPrimeJob> {
+    pub(in crate::ui) fn first_run_cover_prime_jobs(&self) -> Vec<FirstRunCoverPrimeJob> {
         let image_refs = first_run_cover_prime_refs(&self.state.library.borrow());
         let mut seen = HashSet::new();
         let mut jobs = Vec::new();

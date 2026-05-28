@@ -1,5 +1,7 @@
+use super::*;
+
 impl AppController {
-    fn with_queue_mut<T>(
+    pub(in crate::controller) fn with_queue_mut<T>(
         &self,
         operation: impl FnOnce(&mut QueueEngine) -> Result<T, String>,
     ) -> Result<T, String> {

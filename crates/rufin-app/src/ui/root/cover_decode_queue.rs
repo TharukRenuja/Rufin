@@ -1,5 +1,7 @@
+use super::*;
+
 impl Shell {
-    fn drain_cover_decode_queue(self: &Rc<Self>) {
+    pub(in crate::ui) fn drain_cover_decode_queue(self: &Rc<Self>) {
         loop {
             if self.state.cover_decodes.borrow().len() >= COVER_DECODE_MAX_IN_FLIGHT {
                 break;
@@ -18,7 +20,9 @@ impl Shell {
             if self.apply_decoded_cover_if_available(&job.key, job.size, job.priority) {
                 continue;
             }
-            if job.priority == CoverDecodePriority::Warm && !self.decoded_cover_has_warm_capacity(job.size) {
+            if job.priority == CoverDecodePriority::Warm
+                && !self.decoded_cover_has_warm_capacity(job.size)
+            {
                 continue;
             }
             if !self
@@ -32,7 +36,7 @@ impl Shell {
             self.spawn_cover_decode_job(job);
         }
     }
-    fn spawn_cover_decode_job(self: &Rc<Self>, job: CoverDecodeJob) {
+    pub(in crate::ui) fn spawn_cover_decode_job(self: &Rc<Self>, job: CoverDecodeJob) {
         let shell = Rc::clone(self);
         glib::spawn_future_local(async move {
             let CoverDecodeJob {
@@ -56,9 +60,10 @@ impl Shell {
                     shell.record_perf_cover_decode_error(&key);
                     warn!(%error, path = %path.display(), "failed to load cached cover");
                     for binding in shell.take_live_cover_bindings(&key) {
-                        let cleared = binding.tile.upgrade().is_some_and(|tile| {
-                            tile.clear_image_if_current(binding.generation)
-                        });
+                        let cleared = binding
+                            .tile
+                            .upgrade()
+                            .is_some_and(|tile| tile.clear_image_if_current(binding.generation));
                         if !cleared {
                             shell.record_perf_cover_stale_ignored();
                         }
@@ -68,7 +73,7 @@ impl Shell {
             shell.drain_cover_decode_queue();
         });
     }
-    fn finish_cover_decode(&self, key: &str) {
+    pub(in crate::ui) fn finish_cover_decode(&self, key: &str) {
         self.state.cover_decodes.borrow_mut().remove(key);
         self.state
             .startup_cover_prime_pending
@@ -79,13 +84,13 @@ impl Shell {
             .borrow_mut()
             .remove(key);
     }
-    fn cancel_queued_warm_cover_decodes(&self) {
+    pub(in crate::ui) fn cancel_queued_warm_cover_decodes(&self) {
         self.state
             .cover_decode_queue
             .borrow_mut()
             .retain(|job| job.priority != CoverDecodePriority::Warm);
     }
-    fn pending_cover_size(&self, key: &str) -> Option<i32> {
+    pub(in crate::ui) fn pending_cover_size(&self, key: &str) -> Option<i32> {
         self.state
             .cover_bindings
             .borrow()
@@ -94,13 +99,17 @@ impl Shell {
             .map(|binding| binding.tile.size())
             .or_else(|| cover_size_from_cache_key(key))
     }
-    fn take_live_cover_bindings(&self, key: &str) -> Vec<CoverBinding> {
+    pub(in crate::ui) fn take_live_cover_bindings(&self, key: &str) -> Vec<CoverBinding> {
         let Some(bindings) = self.state.cover_bindings.borrow_mut().remove(key) else {
             return Vec::new();
         };
         self.live_cover_bindings(key, bindings)
     }
-    fn live_cover_bindings(&self, key: &str, bindings: Vec<CoverBinding>) -> Vec<CoverBinding> {
+    pub(in crate::ui) fn live_cover_bindings(
+        &self,
+        key: &str,
+        bindings: Vec<CoverBinding>,
+    ) -> Vec<CoverBinding> {
         let mut live = Vec::with_capacity(bindings.len());
         let mut stale = 0_usize;
         for binding in bindings {
@@ -118,7 +127,7 @@ impl Shell {
         }
         live
     }
-    fn cover_binding_has_live(&self, key: &str) -> bool {
+    pub(in crate::ui) fn cover_binding_has_live(&self, key: &str) -> bool {
         let mut all_bindings = self.state.cover_bindings.borrow_mut();
         let live = if let Some(bindings) = all_bindings.get_mut(key) {
             bindings.retain(|binding| binding.tile.is_live_generation(binding.generation));
@@ -131,7 +140,7 @@ impl Shell {
         }
         live
     }
-    fn remember_decoded_cover(
+    pub(in crate::ui) fn remember_decoded_cover(
         &self,
         key: String,
         pixbuf: Pixbuf,
@@ -152,10 +161,7 @@ impl Shell {
             self.state
                 .decoded_cover_order
                 .borrow_mut()
-                .push_back(DecodedCoverOrderEntry {
-                    key,
-                    last_used,
-                });
+                .push_back(DecodedCoverOrderEntry { key, last_used });
             return existing.pixbuf.clone();
         }
 
@@ -163,9 +169,12 @@ impl Shell {
             if existing.priority == CoverDecodePriority::Visible {
                 priority = CoverDecodePriority::Visible;
             }
-            self.state
-                .decoded_cover_bytes
-                .set(self.state.decoded_cover_bytes.get().saturating_sub(existing.bytes));
+            self.state.decoded_cover_bytes.set(
+                self.state
+                    .decoded_cover_bytes
+                    .get()
+                    .saturating_sub(existing.bytes),
+            );
         }
         covers.insert(
             key.clone(),
@@ -177,12 +186,9 @@ impl Shell {
                 priority,
             },
         );
-        self.state.decoded_cover_bytes.set(
-            self.state
-                .decoded_cover_bytes
-                .get()
-                .saturating_add(bytes),
-        );
+        self.state
+            .decoded_cover_bytes
+            .set(self.state.decoded_cover_bytes.get().saturating_add(bytes));
         self.state
             .decoded_cover_order
             .borrow_mut()
@@ -191,12 +197,12 @@ impl Shell {
         self.evict_decoded_covers();
         pixbuf
     }
-    fn next_decoded_cover_touch(&self) -> u64 {
+    pub(in crate::ui) fn next_decoded_cover_touch(&self) -> u64 {
         let next = self.state.decoded_cover_touch.get().saturating_add(1);
         self.state.decoded_cover_touch.set(next);
         next
     }
-    fn touch_decoded_cover(&self, key: &str, priority: CoverDecodePriority) {
+    pub(in crate::ui) fn touch_decoded_cover(&self, key: &str, priority: CoverDecodePriority) {
         let last_used = self.next_decoded_cover_touch();
         let mut covers = self.state.decoded_covers.borrow_mut();
         let Some(cover) = covers.get_mut(key) else {
@@ -214,14 +220,14 @@ impl Shell {
                 last_used,
             });
     }
-    fn decoded_cover_has_warm_capacity(&self, size: i32) -> bool {
+    pub(in crate::ui) fn decoded_cover_has_warm_capacity(&self, size: i32) -> bool {
         self.state
             .decoded_cover_bytes
             .get()
             .saturating_add(estimated_decoded_cover_bytes(size))
             <= DECODED_COVER_CACHE_SOFT_BYTES
     }
-    fn evict_decoded_covers(&self) {
+    pub(in crate::ui) fn evict_decoded_covers(&self) {
         let mut covers = self.state.decoded_covers.borrow_mut();
         let mut order = self.state.decoded_cover_order.borrow_mut();
         let mut bytes = self.state.decoded_cover_bytes.get();
@@ -239,10 +245,14 @@ impl Shell {
         }
         self.state.decoded_cover_bytes.set(bytes);
     }
-    fn decoded_cover_has_min_size(&self, key: &str, min_size: i32) -> bool {
+    pub(in crate::ui) fn decoded_cover_has_min_size(&self, key: &str, min_size: i32) -> bool {
         self.cloned_decoded_cover(key, min_size).is_some()
     }
-    fn cloned_decoded_cover(&self, key: &str, min_size: i32) -> Option<DecodedCover> {
+    pub(in crate::ui) fn cloned_decoded_cover(
+        &self,
+        key: &str,
+        min_size: i32,
+    ) -> Option<DecodedCover> {
         self.state
             .decoded_covers
             .borrow()
@@ -251,7 +261,7 @@ impl Shell {
             .cloned()
     }
 }
-fn decoded_cover_eviction_candidate(
+pub(in crate::ui) fn decoded_cover_eviction_candidate(
     order: &mut VecDeque<DecodedCoverOrderEntry>,
     covers: &HashMap<String, DecodedCover>,
     prefer_warm: bool,
@@ -273,10 +283,10 @@ fn decoded_cover_eviction_candidate(
     }
     None
 }
-fn pixbuf_bytes(pixbuf: &Pixbuf) -> usize {
+pub(in crate::ui) fn pixbuf_bytes(pixbuf: &Pixbuf) -> usize {
     (pixbuf.rowstride().max(0) as usize).saturating_mul(pixbuf.height().max(0) as usize)
 }
-fn estimated_decoded_cover_bytes(size: i32) -> usize {
+pub(in crate::ui) fn estimated_decoded_cover_bytes(size: i32) -> usize {
     let size = cover_pixbuf_decode_size(size).max(1) as usize;
     size.saturating_mul(size).saturating_mul(4)
 }

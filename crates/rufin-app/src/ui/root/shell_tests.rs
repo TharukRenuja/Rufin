@@ -14,7 +14,7 @@ use rufin_core::{
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
 use std::collections::HashMap;
 #[test]
-fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
+pub(in crate::ui) fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
     let candidates = super::decoded_cover_candidate_sizes(super::DETAIL_COVER_SIZE);
 
     assert!(candidates.contains(&super::DETAIL_COVER_SIZE));
@@ -29,7 +29,7 @@ fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
     );
 }
 #[test]
-fn home_section_pages_reset_for_new_home_data() {
+pub(in crate::ui) fn home_section_pages_reset_for_new_home_data() {
     let mut states = HashMap::from([(
         HomeSectionKind::Explore,
         super::HomeSectionState {
@@ -43,7 +43,7 @@ fn home_section_pages_reset_for_new_home_data() {
     assert!(states.is_empty());
 }
 #[test]
-fn manual_ui_perf_observer_records_scrolls_by_route() {
+pub(in crate::ui) fn manual_ui_perf_observer_records_scrolls_by_route() {
     let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
         max_gap_ms: 120,
         route_ms: 650,
@@ -67,7 +67,7 @@ fn manual_ui_perf_observer_records_scrolls_by_route() {
     assert!(report.contains("RUFIN_PERF_SCROLL route=Albums scenario=manual"));
 }
 #[test]
-fn ui_perf_plan_keeps_home_out_of_the_critical_window() {
+pub(in crate::ui) fn ui_perf_plan_keeps_home_out_of_the_critical_window() {
     let plan = super::ui_perf_take_plan(
         vec![
             (Route::Tracks, super::UiPerfScenario::HumanScroll),
@@ -89,7 +89,7 @@ fn ui_perf_plan_keeps_home_out_of_the_critical_window() {
     );
 }
 #[test]
-fn ui_perf_route_render_budget_is_not_the_scroll_gap_budget() {
+pub(in crate::ui) fn ui_perf_route_render_budget_is_not_the_scroll_gap_budget() {
     let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
         max_gap_ms: 120,
         route_ms: 650,
@@ -107,7 +107,7 @@ fn ui_perf_route_render_budget_is_not_the_scroll_gap_budget() {
     assert!(!monitor.failed());
 }
 #[test]
-fn ui_perf_scroll_failure_allows_one_borderline_tick() {
+pub(in crate::ui) fn ui_perf_scroll_failure_allows_one_borderline_tick() {
     let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
         max_gap_ms: 120,
         route_ms: 650,
@@ -159,7 +159,7 @@ fn ui_perf_scroll_failure_allows_one_borderline_tick() {
     assert!(monitor.failed());
 }
 #[test]
-fn ui_perf_scroll_failure_ignores_nearly_static_routes() {
+pub(in crate::ui) fn ui_perf_scroll_failure_ignores_nearly_static_routes() {
     let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
         max_gap_ms: 120,
         route_ms: 650,
@@ -191,7 +191,7 @@ fn ui_perf_scroll_failure_ignores_nearly_static_routes() {
     assert!(monitor.scroll_sample_failed(&meaningful_scroll));
 }
 #[test]
-fn queue_lyrics_position_clamps_to_available_height() {
+pub(in crate::ui) fn queue_lyrics_position_clamps_to_available_height() {
     assert_eq!(clamp_queue_lyrics_position(800, 1701), 500);
     assert_eq!(clamp_queue_lyrics_position(800, 10), 120);
     assert_eq!(clamp_queue_lyrics_position(200, 1701), 120);
@@ -210,7 +210,7 @@ fn queue_lyrics_position_clamps_to_available_height() {
     );
 }
 #[test]
-fn current_playback_track_id_uses_restored_current_entry() {
+pub(in crate::ui) fn current_playback_track_id_uses_restored_current_entry() {
     let track_id = TrackId::fake(7);
     let snapshot = super::PlaybackSnapshot {
         current: Some(QueueEntry {
@@ -238,7 +238,7 @@ fn current_playback_track_id_uses_restored_current_entry() {
     );
 }
 #[test]
-fn playlist_entry_search_and_sort_use_track_fields() {
+pub(in crate::ui) fn playlist_entry_search_and_sort_use_track_fields() {
     let mut first = test_track("Artist B", None);
     first.title = "Alpha".to_string();
     first.album = "Plain Album".to_string();
@@ -282,7 +282,7 @@ fn playlist_entry_search_and_sort_use_track_fields() {
     assert_eq!(sorted[1].1.entry_id, "entry-beta");
 }
 #[test]
-fn playlist_drop_index_accounts_for_removed_source_row() {
+pub(in crate::ui) fn playlist_drop_index_accounts_for_removed_source_row() {
     let entries = ["a", "b", "c"]
         .into_iter()
         .enumerate()
@@ -302,7 +302,7 @@ fn playlist_drop_index_accounts_for_removed_source_row() {
     assert_eq!(playlist_drop_index(&entries, "b", 1, false), None);
 }
 #[test]
-fn track_artist_route_prefers_detail_and_falls_back_to_artist_search() {
+pub(in crate::ui) fn track_artist_route_prefers_detail_and_falls_back_to_artist_search() {
     let track = test_track("Track Artist", Some(ArtistId::fake(3)));
     assert_eq!(
         super::track_artist_route(&track),
@@ -321,7 +321,7 @@ fn track_artist_route_prefers_detail_and_falls_back_to_artist_search() {
     assert_eq!(super::track_artist_route(&test_track("   ", None)), None);
 }
 #[test]
-fn album_artist_route_prefers_detail_and_falls_back_to_artist_search() {
+pub(in crate::ui) fn album_artist_route_prefers_detail_and_falls_back_to_artist_search() {
     let album = test_album("Album Artist", Some(ArtistId::fake(5)));
     assert_eq!(
         super::album_artist_route(&album),
@@ -340,7 +340,7 @@ fn album_artist_route_prefers_detail_and_falls_back_to_artist_search() {
     assert_eq!(super::album_artist_route(&test_album("", None)), None);
 }
 #[test]
-fn compact_artist_track_sort_keeps_favorites_first() {
+pub(in crate::ui) fn compact_artist_track_sort_keeps_favorites_first() {
     let mut favorite_late = test_track("Artist", Some(ArtistId::fake(1)));
     favorite_late.id = TrackId::fake(1);
     favorite_late.title = "Zulu".to_string();
@@ -374,7 +374,7 @@ fn compact_artist_track_sort_keeps_favorites_first() {
     );
 }
 #[test]
-fn full_artist_track_sort_uses_selected_ranking() {
+pub(in crate::ui) fn full_artist_track_sort_uses_selected_ranking() {
     let mut favorite_late = test_track("Artist", Some(ArtistId::fake(1)));
     favorite_late.id = TrackId::fake(1);
     favorite_late.title = "Zulu".to_string();
@@ -404,13 +404,13 @@ fn full_artist_track_sort_uses_selected_ranking() {
     );
 }
 #[test]
-fn artist_discography_uses_responsive_cards() {
+pub(in crate::ui) fn artist_discography_uses_responsive_cards() {
     assert!(super::route_uses_responsive_cards(
         &Route::ArtistDiscography(ArtistId::fake(1))
     ));
 }
 #[test]
-fn route_boundary_keeps_route_items_inside_main_pane() {
+pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
     let spec = super::route_boundary_spec();
 
     assert_eq!(spec.horizontal_policy, gtk::PolicyType::Automatic);
@@ -422,7 +422,7 @@ fn route_boundary_keeps_route_items_inside_main_pane() {
     assert!(spec.vexpand);
 }
 #[test]
-fn seekbar_target_seconds_uses_committed_clamped_value() {
+pub(in crate::ui) fn seekbar_target_seconds_uses_committed_clamped_value() {
     assert_eq!(seekbar_target_seconds(42.4, 180), 42);
     assert_eq!(seekbar_target_seconds(42.5, 180), 43);
     assert_eq!(seekbar_target_seconds(-10.0, 180), 0);
@@ -430,7 +430,7 @@ fn seekbar_target_seconds_uses_committed_clamped_value() {
     assert_eq!(seekbar_target_seconds(f64::NAN, 180), 0);
 }
 #[test]
-fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_external_tracks() {
+pub(in crate::ui) fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_external_tracks() {
     let track_id = TrackId::fake(11);
     let mut settings = AppSettings {
         external_lyrics_enabled: true,
@@ -470,7 +470,7 @@ fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_external_tracks() {
     assert!(!auto_lyrics_skip_action_enabled(&settings, None, None));
 }
 #[test]
-fn auto_lyrics_skip_action_is_hidden_for_server_lyrics() {
+pub(in crate::ui) fn auto_lyrics_skip_action_is_hidden_for_server_lyrics() {
     let track_id = TrackId::fake(13);
     let settings = AppSettings {
         external_lyrics_enabled: true,
@@ -505,7 +505,7 @@ fn auto_lyrics_skip_action_is_hidden_for_server_lyrics() {
     ));
 }
 #[test]
-fn auto_lyrics_request_keeps_server_lookup_when_external_search_is_suppressed() {
+pub(in crate::ui) fn auto_lyrics_request_keeps_server_lookup_when_external_search_is_suppressed() {
     let track_id = TrackId::fake(12);
     let mut settings = AppSettings {
         external_lyrics_enabled: true,
@@ -551,20 +551,20 @@ fn auto_lyrics_request_keeps_server_lookup_when_external_search_is_suppressed() 
     );
 }
 #[test]
-fn cover_draw_rect_crops_portrait_images_to_square_targets() {
+pub(in crate::ui) fn cover_draw_rect_crops_portrait_images_to_square_targets() {
     let rect = super::cover_draw_rect(100, 200, 34, 34);
     assert!((rect.scale - 0.34).abs() < f64::EPSILON);
     assert!((rect.x - 0.0).abs() < f64::EPSILON);
     assert!((rect.y + 17.0).abs() < f64::EPSILON);
 }
 #[test]
-fn cover_draw_rect_crops_landscape_images_to_square_targets() {
+pub(in crate::ui) fn cover_draw_rect_crops_landscape_images_to_square_targets() {
     let rect = super::cover_draw_rect(200, 100, 44, 44);
     assert!((rect.scale - 0.44).abs() < f64::EPSILON);
     assert!((rect.x + 22.0).abs() < f64::EPSILON);
     assert!((rect.y - 0.0).abs() < f64::EPSILON);
 }
-fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Album {
+pub(in crate::ui) fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Album {
     Album {
         id: AlbumId::fake(1),
         title: "Album".to_string(),
@@ -586,7 +586,7 @@ fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Album {
         genres: Vec::new(),
     }
 }
-fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Track {
+pub(in crate::ui) fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Track {
     Track {
         id: TrackId::fake(1),
         album_id: AlbumId::fake(1),

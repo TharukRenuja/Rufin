@@ -21,6 +21,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use url::Url;
 use walkdir::WalkDir;
+
+mod provider_impl;
+
+use provider_impl::*;
+
+#[cfg(test)]
+mod tests;
+
 pub const LOCAL_PROVIDER_ID: &str = "local";
 #[derive(Clone, Debug)]
 pub struct LocalProvider {

@@ -1,5 +1,7 @@
+use super::*;
+
 impl AppController {
-    fn persist_progress_if_needed(&self, seconds: u32) {
+    pub(in crate::controller) fn persist_progress_if_needed(&self, seconds: u32) {
         let Some(snapshot) = self.queue_snapshot() else {
             return;
         };
@@ -21,7 +23,7 @@ impl AppController {
                 .with_store(|store| store.save_queue_snapshot(&snapshot));
         }
     }
-    fn report_playback_progress_if_needed(&self, seconds: u32) {
+    pub(in crate::controller) fn report_playback_progress_if_needed(&self, seconds: u32) {
         let Some(current) = self
             .playback_snapshot
             .lock()
@@ -46,7 +48,7 @@ impl AppController {
             self.report_playback(PlaybackReportKind::Progress, false);
         }
     }
-    fn report_playback(&self, kind: PlaybackReportKind, failed: bool) {
+    pub(in crate::controller) fn report_playback(&self, kind: PlaybackReportKind, failed: bool) {
         let snapshot = self
             .playback_snapshot
             .lock()

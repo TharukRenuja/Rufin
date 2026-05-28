@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn set_album_favorite(&self, album_id: AlbumId, favorite: bool) {
         self.set_favorite(FavoriteItemId::Album(album_id), favorite);
@@ -22,7 +24,7 @@ impl AppController {
         };
         self.set_favorite(FavoriteItemId::Track(entry.track_id), !entry.favorite);
     }
-    fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) {
+    pub(in crate::controller) fn set_favorite(&self, item_id: FavoriteItemId, favorite: bool) {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);

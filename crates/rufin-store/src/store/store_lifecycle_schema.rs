@@ -1,3 +1,6 @@
+use super::servers::*;
+use super::*;
+
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> StoreResult<Self> {
         let path = path.as_ref();
@@ -20,13 +23,13 @@ impl Store {
     pub fn migrate(&self) -> StoreResult<()> {
         self.initialize_schema()
     }
-    fn open_file(path: &Path) -> StoreResult<Self> {
+    pub(super) fn open_file(path: &Path) -> StoreResult<Self> {
         let connection = Connection::open(path)?;
         let store = Self { connection };
         store.configure_pragmas(true)?;
         Ok(store)
     }
-    fn needs_reset(&self) -> StoreResult<bool> {
+    pub(super) fn needs_reset(&self) -> StoreResult<bool> {
         if !self.database_has_objects()? {
             return Ok(false);
         }
@@ -35,7 +38,7 @@ impl Store {
         }
         self.current_schema_is_complete().map(|complete| !complete)
     }
-    fn database_has_objects(&self) -> StoreResult<bool> {
+    pub(super) fn database_has_objects(&self) -> StoreResult<bool> {
         let exists = self.connection.query_row(
             "
             SELECT EXISTS(
@@ -49,7 +52,7 @@ impl Store {
         )?;
         Ok(exists)
     }
-    fn current_schema_is_complete(&self) -> StoreResult<bool> {
+    pub(super) fn current_schema_is_complete(&self) -> StoreResult<bool> {
         for table in [
             "queue_snapshots",
             "servers",
@@ -127,7 +130,7 @@ impl Store {
         }
         Ok(true)
     }
-    fn initialize_schema(&self) -> StoreResult<()> {
+    pub(super) fn initialize_schema(&self) -> StoreResult<()> {
         self.connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS queue_snapshots (
@@ -430,7 +433,7 @@ impl Store {
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
-    fn table_exists(&self, table: &str) -> StoreResult<bool> {
+    pub(super) fn table_exists(&self, table: &str) -> StoreResult<bool> {
         let count = self.connection.query_row(
             "
             SELECT COUNT(*)
@@ -442,14 +445,19 @@ impl Store {
         )?;
         Ok(count > 0)
     }
-    fn table_has_column(&self, table: &str, column: &str) -> StoreResult<bool> {
+    pub(super) fn table_has_column(&self, table: &str, column: &str) -> StoreResult<bool> {
         let mut statement = self
             .connection
             .prepare(&format!("PRAGMA table_info({table})"))?;
         let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
         Ok(collect_rows(columns)?.iter().any(|name| name == column))
     }
-    fn ensure_column(&self, table: &str, column: &str, definition: &str) -> StoreResult<()> {
+    pub(super) fn ensure_column(
+        &self,
+        table: &str,
+        column: &str,
+        definition: &str,
+    ) -> StoreResult<()> {
         if self.table_exists(table)? && !self.table_has_column(table, column)? {
             self.connection.execute(
                 &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),

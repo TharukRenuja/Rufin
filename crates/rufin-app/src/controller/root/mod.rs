@@ -1,14 +1,17 @@
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Condvar, Mutex};
-#[cfg(test)]
-use std::sync::OnceLock;
-use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+#![allow(unused_imports)]
+
+use super::covers;
+pub use super::discovery::DiscoveredServer;
+pub use super::random::{RandomPlayAction, RandomPlayRequest};
+use crate::external_metadata;
+use crate::external_scrobbling::{self, ExternalScrobbleState};
+use crate::providers::{
+    JellyfinLyricsSearch, LoadedProvider, StreamingProvider, login_provider, provider_display_name,
+    provider_from_saved,
+};
 use directories::ProjectDirs;
+#[cfg(test)]
+use rufin_core::ThemePreference;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
     HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, MusicFolder,
@@ -24,32 +27,117 @@ use rufin_provider::{
     PlaybackReportKind, PlaylistEntry, ProviderSession, SavedProviderSession, SearchResults,
     StreamRequest,
 };
+#[cfg(test)]
+use rufin_provider::{LyricLine, LyricsSource, PlayedFilter};
 use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
 #[cfg(unix)]
 use rufin_secrets::SecretServiceStore;
 use rufin_secrets::{MemorySecretStore, SecretStore};
+#[cfg(test)]
+use rufin_store::CoverCacheEntry;
 use rufin_store::{
     CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store, StoreError,
     SyncState,
 };
 use rufin_test_support::{FakeProvider, FakeScale};
 use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::OnceLock;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+#[cfg(test)]
+use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tracing::{debug, info, instrument, warn};
-use crate::external_metadata;
-use crate::external_scrobbling::{self, ExternalScrobbleState};
-use crate::providers::{
-    JellyfinLyricsSearch, LoadedProvider, StreamingProvider, login_provider, provider_display_name,
-    provider_from_saved,
+
+mod app_cache_commands;
+mod auto_dj;
+mod auto_dj_commands;
+mod cached_library_api;
+mod cached_reads;
+mod controller_bootstrap;
+mod controller_settings;
+mod controller_startup;
+mod folder_search_commands;
+mod library_mutations;
+mod local_source_commands;
+mod lyrics_commands;
+mod playback_advance;
+mod playback_commands;
+mod playback_queue;
+mod playback_reporting;
+mod playback_runtime;
+mod playlist_commands;
+mod queue_commands;
+mod queue_mutation;
+mod queue_state;
+mod refresh_commands;
+mod server_cache_commands;
+mod server_lifecycle_commands;
+mod server_local_access_commands;
+mod source_selection;
+mod sync_command;
+mod sync_requests;
+
+#[cfg(test)]
+mod cover_playback_tests;
+#[cfg(test)]
+mod lyrics_local_access_tests;
+#[cfg(test)]
+mod startup_sync_tests;
+#[cfg(test)]
+mod test_support;
+
+pub(in crate::controller) use app_cache_commands::*;
+pub(in crate::controller) use auto_dj::*;
+pub(in crate::controller) use auto_dj_commands::*;
+pub(in crate::controller) use cached_library_api::*;
+pub(in crate::controller) use cached_reads::*;
+pub(crate) use cached_reads::{grouped_cover_refs_for_items, track_cover_refs_for_items};
+pub(in crate::controller) use controller_bootstrap::*;
+pub(in crate::controller) use controller_settings::*;
+pub(in crate::controller) use controller_startup::*;
+pub(in crate::controller) use folder_search_commands::*;
+pub(in crate::controller) use library_mutations::*;
+pub(in crate::controller) use local_source_commands::*;
+pub(in crate::controller) use lyrics_commands::*;
+#[cfg(test)]
+pub(in crate::controller) use lyrics_local_access_tests::{
+    controller_from_store_for_test, saved_server, unique_test_dir,
 };
-pub use discovery::DiscoveredServer;
-pub use random::{RandomPlayAction, RandomPlayRequest};
+pub(in crate::controller) use playback_advance::*;
+pub(in crate::controller) use playback_commands::*;
+pub(in crate::controller) use playback_queue::*;
+pub(in crate::controller) use playback_reporting::*;
+pub(in crate::controller) use playback_runtime::*;
+pub(in crate::controller) use playlist_commands::*;
+pub(in crate::controller) use queue_commands::*;
+pub(in crate::controller) use queue_mutation::*;
+pub(in crate::controller) use queue_state::*;
+pub(in crate::controller) use refresh_commands::*;
+pub(in crate::controller) use server_cache_commands::*;
+pub(in crate::controller) use server_lifecycle_commands::*;
+pub(in crate::controller) use server_local_access_commands::*;
+pub(in crate::controller) use source_selection::*;
+#[cfg(test)]
+pub(in crate::controller) use startup_sync_tests::RecordingPlaybackBackend;
+pub(in crate::controller) use sync_command::*;
+pub(in crate::controller) use sync_requests::*;
+#[cfg(test)]
+pub(in crate::controller) use test_support::*;
+
 const PAGE_SIZE: usize = 500;
 const SNAPSHOT_GRID_LIMIT: usize = 500;
-const SNAPSHOT_TRACK_LIMIT: usize = 25_000;
+pub(in crate::controller) const SNAPSHOT_TRACK_LIMIT: usize = 25_000;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 const GROUPED_COVER_REF_LIMIT: usize = 4;
-const IMAGE_TAG_UNTAGGED: &str = "untagged";
+pub(in crate::controller) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
@@ -250,9 +338,9 @@ pub enum ControllerEvent {
 }
 #[derive(Clone)]
 pub struct AppController {
-    store: StoreHandle,
-    runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
+    pub(in crate::controller) store: StoreHandle,
+    pub(in crate::controller) runtime: Arc<Runtime>,
+    pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     queue: Arc<Mutex<Option<QueueEngine>>>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
@@ -260,14 +348,14 @@ pub struct AppController {
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
     external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
-    events: Sender<ControllerEvent>,
+    pub(in crate::controller) events: Sender<ControllerEvent>,
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     playlist_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     explore_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    cover_in_flight: Arc<Mutex<HashSet<String>>>,
-    external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
-    cover_slots: Arc<(Mutex<usize>, Condvar)>,
+    pub(in crate::controller) cover_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
     #[cfg(test)]
     _test_permit: Option<ControllerTestPermit>,
 }
@@ -302,7 +390,7 @@ impl Drop for ControllerTestPermitInner {
         }
     }
 }
-struct HomeRefreshContext {
+pub(in crate::controller) struct HomeRefreshContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
@@ -310,7 +398,7 @@ struct HomeRefreshContext {
     sync_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     home_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
 }
-struct PlaylistRefreshContext {
+pub(in crate::controller) struct PlaylistRefreshContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
@@ -319,7 +407,7 @@ struct PlaylistRefreshContext {
     playlist_refresh_in_flight: Arc<Mutex<HashSet<ServerId>>>,
 }
 #[derive(Clone)]
-struct SyncContext {
+pub(in crate::controller) struct SyncContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
@@ -329,7 +417,7 @@ struct SyncContext {
     external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
 }
-struct ExplorePrefetchContext {
+pub(in crate::controller) struct ExplorePrefetchContext {
     store: StoreHandle,
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
@@ -338,12 +426,12 @@ struct ExplorePrefetchContext {
     explore_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
 }
 #[derive(Clone, Copy, Debug)]
-enum HomeRefreshTarget {
+pub(in crate::controller) enum HomeRefreshTarget {
     WithoutExplore,
     Section(HomeSectionKind),
 }
 #[derive(Clone)]
-enum StoreHandle {
+pub(in crate::controller) enum StoreHandle {
     Path {
         cache_database_path: PathBuf,
         settings_path: PathBuf,
@@ -354,7 +442,7 @@ enum StoreHandle {
     },
 }
 impl StoreHandle {
-    fn open_for_app() -> Result<Self, String> {
+    pub(in crate::controller) fn open_for_app() -> Result<Self, String> {
         if let Some(cache_root) = cache_dir() {
             ensure_app_cache_dirs(&cache_root)?;
         }
@@ -372,7 +460,7 @@ impl StoreHandle {
         Ok(handle)
     }
 
-    fn open_memory() -> Result<Self, String> {
+    pub(in crate::controller) fn open_memory() -> Result<Self, String> {
         Store::open_memory()
             .map(|store| Self::Memory {
                 store: Arc::new(Mutex::new(store)),
@@ -381,7 +469,7 @@ impl StoreHandle {
             .map_err(|error| error.to_string())
     }
 
-    fn with_store<T>(
+    pub(in crate::controller) fn with_store<T>(
         &self,
         operation: impl FnOnce(&Store) -> Result<T, StoreError>,
     ) -> Result<T, String> {
@@ -402,7 +490,7 @@ impl StoreHandle {
         }
     }
 
-    fn load_settings(&self) -> Result<AppSettings, String> {
+    pub(in crate::controller) fn load_settings(&self) -> Result<AppSettings, String> {
         match self {
             Self::Path { settings_path, .. } => match fs::read_to_string(settings_path) {
                 Ok(value) => serde_json::from_str(&value).map_err(|error| error.to_string()),
@@ -416,7 +504,10 @@ impl StoreHandle {
         }
     }
 
-    fn save_settings(&self, settings: &AppSettings) -> Result<(), String> {
+    pub(in crate::controller) fn save_settings(
+        &self,
+        settings: &AppSettings,
+    ) -> Result<(), String> {
         match self {
             Self::Path { settings_path, .. } => {
                 if let Some(parent) = settings_path.parent() {

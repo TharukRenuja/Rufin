@@ -1,4 +1,6 @@
-fn library_track(
+use super::*;
+
+pub(in crate::controller) fn library_track(
     number: u32,
     artist_id: Option<ArtistId>,
     album_id: AlbumId,
@@ -30,7 +32,9 @@ fn library_track(
         source_format: None,
     }
 }
-fn wait_for_snapshot(events: &Receiver<ControllerEvent>) -> LibrarySnapshot {
+pub(in crate::controller) fn wait_for_snapshot(
+    events: &Receiver<ControllerEvent>,
+) -> LibrarySnapshot {
     loop {
         match events
             .recv_timeout(Duration::from_secs(5))
@@ -55,7 +59,7 @@ fn wait_for_snapshot(events: &Receiver<ControllerEvent>) -> LibrarySnapshot {
         }
     }
 }
-fn wait_for_favorite_changed(
+pub(in crate::controller) fn wait_for_favorite_changed(
     events: &Receiver<ControllerEvent>,
 ) -> (FavoriteItemId, bool, LibrarySnapshot) {
     loop {
@@ -86,7 +90,9 @@ fn wait_for_favorite_changed(
         }
     }
 }
-fn wait_for_playlist_changed(events: &Receiver<ControllerEvent>) -> (PlaylistId, LibrarySnapshot) {
+pub(in crate::controller) fn wait_for_playlist_changed(
+    events: &Receiver<ControllerEvent>,
+) -> (PlaylistId, LibrarySnapshot) {
     loop {
         match events
             .recv_timeout(Duration::from_secs(5))
@@ -114,7 +120,7 @@ fn wait_for_playlist_changed(events: &Receiver<ControllerEvent>) -> (PlaylistId,
         }
     }
 }
-fn wait_for_status(events: &Receiver<ControllerEvent>) -> String {
+pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>) -> String {
     loop {
         match events
             .recv_timeout(Duration::from_secs(5))
@@ -139,7 +145,9 @@ fn wait_for_status(events: &Receiver<ControllerEvent>) -> String {
         }
     }
 }
-fn wait_for_queue(events: &Receiver<ControllerEvent>) -> Option<rufin_core::QueueSnapshot> {
+pub(in crate::controller) fn wait_for_queue(
+    events: &Receiver<ControllerEvent>,
+) -> Option<rufin_core::QueueSnapshot> {
     loop {
         match events
             .recv_timeout(Duration::from_secs(5))
@@ -164,7 +172,10 @@ fn wait_for_queue(events: &Receiver<ControllerEvent>) -> Option<rufin_core::Queu
         }
     }
 }
-fn random_request(action: RandomPlayAction, limit: usize) -> RandomPlayRequest {
+pub(in crate::controller) fn random_request(
+    action: RandomPlayAction,
+    limit: usize,
+) -> RandomPlayRequest {
     RandomPlayRequest {
         action,
         limit,
@@ -175,7 +186,7 @@ fn random_request(action: RandomPlayAction, limit: usize) -> RandomPlayRequest {
         played_filter: PlayedFilter::All,
     }
 }
-fn random_track_ids(tracks: &[Track], limit: usize) -> Vec<TrackId> {
+pub(in crate::controller) fn random_track_ids(tracks: &[Track], limit: usize) -> Vec<TrackId> {
     let mut ids = tracks
         .iter()
         .map(|track| track.id.clone())
@@ -184,7 +195,10 @@ fn random_track_ids(tracks: &[Track], limit: usize) -> Vec<TrackId> {
     ids.truncate(limit);
     ids
 }
-fn wait_for_cover_ready(events: &Receiver<ControllerEvent>, expected_key: &str) -> PathBuf {
+pub(in crate::controller) fn wait_for_cover_ready(
+    events: &Receiver<ControllerEvent>,
+    expected_key: &str,
+) -> PathBuf {
     loop {
         match events
             .recv_timeout(Duration::from_secs(5))
@@ -210,7 +224,9 @@ fn wait_for_cover_ready(events: &Receiver<ControllerEvent>, expected_key: &str) 
         }
     }
 }
-fn wait_for_lyrics(events: &Receiver<ControllerEvent>) -> Option<rufin_provider::Lyrics> {
+pub(in crate::controller) fn wait_for_lyrics(
+    events: &Receiver<ControllerEvent>,
+) -> Option<rufin_provider::Lyrics> {
     loop {
         match events
             .recv_timeout(Duration::from_secs(5))
@@ -235,7 +251,7 @@ fn wait_for_lyrics(events: &Receiver<ControllerEvent>) -> Option<rufin_provider:
         }
     }
 }
-fn wait_for_recorded_command(
+pub(in crate::controller) fn wait_for_recorded_command(
     commands: &Arc<Mutex<Vec<PlaybackCommand>>>,
     predicate: impl Fn(&PlaybackCommand) -> bool,
 ) -> PlaybackCommand {
@@ -253,7 +269,7 @@ fn wait_for_recorded_command(
     }
     panic!("timed out waiting for playback command");
 }
-fn wait_for_playback_state(
+pub(in crate::controller) fn wait_for_playback_state(
     controller: &AppController,
     events: &Receiver<ControllerEvent>,
     state: PlaybackState,
@@ -294,7 +310,7 @@ fn wait_for_playback_state(
         }
     }
 }
-fn wait_for_playback_position(
+pub(in crate::controller) fn wait_for_playback_position(
     events: &Receiver<ControllerEvent>,
     position_millis: u64,
 ) -> super::PlaybackSnapshot {
@@ -325,7 +341,7 @@ fn wait_for_playback_position(
         }
     }
 }
-fn wait_for_playback_auto_dj(
+pub(in crate::controller) fn wait_for_playback_auto_dj(
     events: &Receiver<ControllerEvent>,
     enabled: bool,
 ) -> super::PlaybackSnapshot {
@@ -356,7 +372,7 @@ fn wait_for_playback_auto_dj(
         }
     }
 }
-fn wait_for_playback_current_favorite(
+pub(in crate::controller) fn wait_for_playback_current_favorite(
     controller: &AppController,
     events: &Receiver<ControllerEvent>,
     favorite: bool,
@@ -402,7 +418,11 @@ fn wait_for_playback_current_favorite(
         }
     }
 }
-fn assert_playlist_order(controller: &AppController, playlist_id: &PlaylistId, ids: &[&str]) {
+pub(in crate::controller) fn assert_playlist_order(
+    controller: &AppController,
+    playlist_id: &PlaylistId,
+    ids: &[&str],
+) {
     let detail = controller
         .cached_playlist_detail(playlist_id)
         .expect("playlist detail")

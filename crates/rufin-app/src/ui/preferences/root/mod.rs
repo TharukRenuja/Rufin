@@ -1,34 +1,46 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
+use super::super::{
+    Shell,
+    layout::{large_popup_content_height, large_popup_content_width},
 };
-use adw::prelude::*;
-use rufin_core::{
-    AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
-    EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_NARROW_LAYOUT_THRESHOLD,
-    MAX_CROSSFADE_SECONDS, MIN_CROSSFADE_SECONDS, MIN_NARROW_LAYOUT_THRESHOLD,
-    PlaybackTransitionMode, ReplayGainMode, RightSidebarMode, SidebarRouteItem,
-    SidebarRouteItemSettings, StreamQuality,
-};
-use rufin_playback::available_audio_outputs;
+use super::library;
 use crate::{
     external_scrobbling::{self, AudioscrobblerSession},
     i18n::tr,
 };
-use super::{
-    Shell,
-    layout::{large_popup_content_height, large_popup_content_width},
+use adw::prelude::*;
+use rufin_core::{
+    AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
+    EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_CROSSFADE_SECONDS,
+    MAX_NARROW_LAYOUT_THRESHOLD, MIN_CROSSFADE_SECONDS, MIN_NARROW_LAYOUT_THRESHOLD,
+    PlaybackTransitionMode, ReplayGainMode, RightSidebarMode, SidebarRouteItem,
+    SidebarRouteItemSettings, StreamQuality,
 };
+use rufin_playback::available_audio_outputs;
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+
+mod general;
+mod layout;
+
+use general::*;
+pub(in crate::ui) use layout::button_row;
+use layout::*;
+
+#[cfg(test)]
+mod reorder_tests;
+
 const PREFERENCES_DIALOG_WIDTH: i32 = 700;
 const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
 const SURFACE_SCROLL_FACTOR: f64 = 2.5;
 const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
-pub(super) fn present_preferences_dialog(shell: &Rc<Shell>) {
+pub(in crate::ui) fn present_preferences_dialog(shell: &Rc<Shell>) {
     present_preferences_dialog_with_page(shell, PreferencesInitialPage::General);
 }
-pub(super) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
+pub(in crate::ui) fn present_library_preferences_dialog(shell: &Rc<Shell>) {
     present_preferences_dialog_with_page(shell, PreferencesInitialPage::Library);
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

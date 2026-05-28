@@ -1,3 +1,5 @@
+use super::*;
+
 impl AppController {
     pub fn start_background_sync_for_active(&self) {
         let active = self
@@ -94,7 +96,7 @@ impl AppController {
             section,
         );
     }
-    fn start_explore_prefetch_for_saved(&self, saved: SavedServer) {
+    pub(in crate::controller) fn start_explore_prefetch_for_saved(&self, saved: SavedServer) {
         start_explore_prefetch_thread(
             ExplorePrefetchContext {
                 store: self.store.clone(),
@@ -107,7 +109,11 @@ impl AppController {
             saved,
         );
     }
-    fn start_home_refresh_for_saved(&self, saved: SavedServer, target: HomeRefreshTarget) {
+    pub(in crate::controller) fn start_home_refresh_for_saved(
+        &self,
+        saved: SavedServer,
+        target: HomeRefreshTarget,
+    ) {
         start_home_refresh_thread(
             HomeRefreshContext {
                 store: self.store.clone(),
@@ -121,7 +127,7 @@ impl AppController {
             target,
         );
     }
-    fn start_playlist_refresh_for_saved(&self, saved: SavedServer) {
+    pub(in crate::controller) fn start_playlist_refresh_for_saved(&self, saved: SavedServer) {
         start_playlist_refresh_thread(
             PlaylistRefreshContext {
                 store: self.store.clone(),
@@ -134,7 +140,7 @@ impl AppController {
             saved,
         );
     }
-    fn sync_context(&self) -> SyncContext {
+    pub(in crate::controller) fn sync_context(&self) -> SyncContext {
         SyncContext {
             store: self.store.clone(),
             runtime: Arc::clone(&self.runtime),
