@@ -494,40 +494,20 @@ impl Store {
         Ok(())
     }
     pub fn save_server(&self, saved: &SavedServer) -> StoreResult<()> {
-        self.connection.execute(
-            "
-            INSERT INTO servers (
-                server_id, provider, name, base_url, user_id, username,
-                trust_invalid_cert, updated_at
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
-            ON CONFLICT(server_id) DO UPDATE SET
-                provider = excluded.provider,
-                name = excluded.name,
-                base_url = excluded.base_url,
-                user_id = excluded.user_id,
-                username = excluded.username,
-                trust_invalid_cert = excluded.trust_invalid_cert,
-                updated_at = excluded.updated_at
-            ",
-            params![
-                saved.server.id.as_str(),
-                saved.server.provider,
-                saved.server.name,
-                saved.server.base_url,
-                saved.user_id,
-                saved.username,
-                bool_to_i64(saved.trust_invalid_cert),
-            ],
-        )?;
-        self.connection.execute(
-            "
-            INSERT OR IGNORE INTO sync_state (server_id)
-            VALUES (?1)
-            ",
-            params![saved.server.id.as_str()],
-        )?;
-        Ok(())
+        save_server_on_connection(&self.connection, saved)
+    }
+    pub fn save_server_settings_update(
+        &self,
+        saved: &SavedServer,
+        clear_identity_cache: bool,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            save_server_on_connection(connection, saved)?;
+            if clear_identity_cache {
+                clear_server_identity_cache_on_connection(connection, &saved.server.id)?;
+            }
+            Ok(())
+        })
     }
     pub fn set_active_server(&self, server_id: &ServerId) -> StoreResult<()> {
         self.connection.execute(
@@ -863,4 +843,72 @@ impl Store {
         )?;
         Ok(generation)
     }
+}
+
+pub(super) fn save_server_on_connection(
+    connection: &Connection,
+    saved: &SavedServer,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        INSERT INTO servers (
+            server_id, provider, name, base_url, user_id, username,
+            trust_invalid_cert, updated_at
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
+        ON CONFLICT(server_id) DO UPDATE SET
+            provider = excluded.provider,
+            name = excluded.name,
+            base_url = excluded.base_url,
+            user_id = excluded.user_id,
+            username = excluded.username,
+            trust_invalid_cert = excluded.trust_invalid_cert,
+            updated_at = excluded.updated_at
+        ",
+        params![
+            saved.server.id.as_str(),
+            saved.server.provider,
+            saved.server.name,
+            saved.server.base_url,
+            saved.user_id,
+            saved.username,
+            bool_to_i64(saved.trust_invalid_cert),
+        ],
+    )?;
+    connection.execute(
+        "
+        INSERT OR IGNORE INTO sync_state (server_id)
+        VALUES (?1)
+        ",
+        params![saved.server.id.as_str()],
+    )?;
+    Ok(())
+}
+
+pub(super) fn clear_server_identity_cache_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<()> {
+    clear_library_cache_on_connection(connection, server_id)?;
+    connection.execute(
+        "DELETE FROM queue_snapshots WHERE server_id = ?1",
+        params![server_id.as_str()],
+    )?;
+    connection.execute(
+        "DELETE FROM server_library_preferences WHERE server_id = ?1",
+        params![server_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        UPDATE sync_state
+        SET generation = 0,
+            status = 'idle',
+            last_started_at = NULL,
+            last_completed_at = NULL,
+            last_error = NULL
+        WHERE server_id = ?1
+        ",
+        params![server_id.as_str()],
+    )?;
+    Ok(())
 }

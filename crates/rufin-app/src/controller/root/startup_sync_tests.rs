@@ -415,7 +415,9 @@ pub(in crate::controller) fn update_server_settings_persists_editable_fields() {
     controller.update_server_settings(
         server_id.clone(),
         "Edited server".to_string(),
-        "https://media.example.test".to_string(),
+        "http://old.example.test".to_string(),
+        "listener".to_string(),
+        String::new(),
         true,
     );
     assert_eq!(wait_for_status(&events), "Server settings saved.");
@@ -426,7 +428,7 @@ pub(in crate::controller) fn update_server_settings_persists_editable_fields() {
         .find(|server| server.id == server_id)
         .expect("edited server");
     assert_eq!(edited.name, "Edited server");
-    assert_eq!(edited.base_url, "https://media.example.test");
+    assert_eq!(edited.base_url, "http://old.example.test");
     let saved = controller
         .store
         .with_store(|store| store.list_servers())

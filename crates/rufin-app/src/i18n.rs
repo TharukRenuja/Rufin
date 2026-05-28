@@ -413,6 +413,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Choose a provider, pick a server, or enter the address manually");
     let _ = tr("Choose a provider, pick a discovered server, or enter the address manually");
     let _ = tr("Provider");
+    let _ = tr("Username");
+    let _ = tr("Password");
     let _ = tr("Jellyfin");
     let _ = tr("Navidrome");
     let _ = tr("Subsonic / OpenSubsonic");

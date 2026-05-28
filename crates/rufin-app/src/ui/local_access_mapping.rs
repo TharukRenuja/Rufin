@@ -329,6 +329,20 @@ fn server_settings_group(
     server: &ServerIdentity,
     remote: bool,
 ) -> adw::PreferencesGroup {
+    let (saved_username, saved_trust_invalid_cert) = {
+        let library = shell.state.library.borrow();
+        let summary = library
+            .server_local_access
+            .iter()
+            .find(|summary| summary.server_id == server.id);
+        (
+            summary
+                .and_then(|summary| summary.username.clone())
+                .unwrap_or_default(),
+            summary.is_some_and(|summary| summary.trust_invalid_cert),
+        )
+    };
+
     let group = adw::PreferencesGroup::builder()
         .title(tr("Server Settings"))
         .build();
@@ -351,19 +365,23 @@ fn server_settings_group(
     address.set_visible(remote);
     group.add(&address);
 
+    let username = adw::EntryRow::builder()
+        .title(tr("Username"))
+        .text(&saved_username)
+        .build();
+    username.set_visible(remote);
+    group.add(&username);
+
+    let password = adw::PasswordEntryRow::builder()
+        .title(tr("Password"))
+        .build();
+    password.set_visible(remote);
+    group.add(&password);
+
     let trust_invalid_certificate = adw::SwitchRow::builder()
         .title(tr("Trust invalid certificate"))
         .subtitle(tr("Only use this for a server you control"))
-        .active(
-            shell
-                .state
-                .library
-                .borrow()
-                .server_local_access
-                .iter()
-                .find(|summary| summary.server_id == server.id)
-                .is_some_and(|summary| summary.trust_invalid_cert),
-        )
+        .active(saved_trust_invalid_cert)
         .build();
     trust_invalid_certificate.set_visible(remote);
     group.add(&trust_invalid_certificate);
@@ -376,16 +394,24 @@ fn server_settings_group(
     let server_id = server.id.clone();
     let provider = server.provider.clone();
     let original_address = server.base_url.clone();
+    let original_username = saved_username.clone();
     save.connect_activated(move |_| {
         let base_url = if provider == "local" {
             original_address.clone()
         } else {
             address.text().trim().to_string()
         };
+        let username = if provider == "local" {
+            original_username.clone()
+        } else {
+            username.text().trim().to_string()
+        };
         controller.update_server_settings(
             server_id.clone(),
             name.text().trim().to_string(),
             base_url,
+            username,
+            password.text().to_string(),
             trust_invalid_certificate.is_active(),
         );
     });
