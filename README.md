@@ -36,12 +36,6 @@
   <img src="data/library.png" width="400">
 </p>
 
-# To do
-
-- Try to break things and fix them
-- More packaging alternatives
-- ? (open to feedbacks)
-
 # Installation
 
 ## Flatpak
@@ -82,6 +76,9 @@ git clone https://github.com/screwys/Rufin.git
 cd Rufin
 cargo run -p rufin-app
 ```
+## Contributing
+
+You can contribute to the app by adding a new feature or translating the app. Please refer to [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Development
 
@@ -120,3 +117,7 @@ UI perf reports default to `.local/perf/rufin-ui-perf-<pid>.log` for `--ui-perf-
 [GStreamer](https://gstreamer.freedesktop.org/)
 
 This app is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), both in client design and in how certain parts should work. It aims to bring a similar experience, altought not as feature-rich, to a native desktop app without a web stack.
+
+# License
+
+[LICENSE](LICENSE)

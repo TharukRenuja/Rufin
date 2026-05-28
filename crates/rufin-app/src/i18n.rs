@@ -1,23 +1,309 @@
+use std::{
+    collections::BTreeSet,
+    env, fs,
+    path::{Path, PathBuf},
+};
+
+use directories::ProjectDirs;
 use gettextrs::{
     LocaleCategory, bind_textdomain_codeset, bindtextdomain, gettext, setlocale, textdomain,
 };
+use rufin_core::{
+    AppSettings, SYSTEM_LANGUAGE_PREFERENCE, default_language_preference,
+    sanitize_language_preference,
+};
 
 const DOMAIN: &str = "rufin";
+const SETTINGS_FILE_NAME: &str = "settings.json";
+const ENGLISH_LANGUAGE_PREFERENCE: &str = "en";
 
-pub fn init() {
-    let _locale = setlocale(LocaleCategory::LcAll, "");
-    let localedir = std::env::var("RUFIN_LOCALEDIR").unwrap_or_else(|_| "po".to_string());
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LanguageOption {
+    pub id: String,
+    pub title: String,
+}
+
+pub fn init(language_preference: &str) {
+    apply_language_preference(language_preference);
+    let localedir = locale_dir();
     let _domain_dir = bindtextdomain(DOMAIN, localedir);
     let _codeset = bind_textdomain_codeset(DOMAIN, "UTF-8");
     let _domain = textdomain(DOMAIN);
+}
+
+pub fn startup_language_preference() -> String {
+    if let Ok(value) = env::var("RUFIN_LANGUAGE") {
+        return sanitize_language_preference(&value);
+    }
+
+    let Ok(value) = fs::read_to_string(app_settings_path()) else {
+        return default_language_preference();
+    };
+    let Ok(mut settings) = serde_json::from_str::<AppSettings>(&value) else {
+        return default_language_preference();
+    };
+    settings.migrate_defaults();
+    settings.language
+}
+
+pub fn language_options() -> Vec<LanguageOption> {
+    let mut seen = BTreeSet::new();
+    let mut options = Vec::new();
+    options.push(LanguageOption {
+        id: default_language_preference(),
+        title: tr("System default"),
+    });
+    seen.insert(default_language_preference());
+    options.push(LanguageOption {
+        id: ENGLISH_LANGUAGE_PREFERENCE.to_string(),
+        title: tr("English"),
+    });
+    seen.insert(ENGLISH_LANGUAGE_PREFERENCE.to_string());
+
+    for id in available_translation_language_ids() {
+        let id = sanitize_language_preference(&id);
+        if id == SYSTEM_LANGUAGE_PREFERENCE || is_english_language(&id) || !seen.insert(id.clone())
+        {
+            continue;
+        }
+        options.push(LanguageOption {
+            title: language_display_name(&id),
+            id,
+        });
+    }
+
+    options
+}
+
+pub fn language_option_index(options: &[LanguageOption], language_preference: &str) -> u32 {
+    let language_preference = sanitize_language_preference(language_preference);
+    let language_preference = if is_english_language(&language_preference) {
+        ENGLISH_LANGUAGE_PREFERENCE
+    } else {
+        &language_preference
+    };
+    options
+        .iter()
+        .position(|option| option.id == language_preference)
+        .unwrap_or_default() as u32
 }
 
 pub fn tr(message: &str) -> String {
     gettext(message)
 }
 
+fn apply_language_preference(language_preference: &str) {
+    let _locale = setlocale(LocaleCategory::LcAll, "");
+    let language_preference = sanitize_language_preference(language_preference);
+    if language_preference == SYSTEM_LANGUAGE_PREFERENCE {
+        return;
+    }
+
+    for candidate in locale_candidates(&language_preference) {
+        if setlocale(LocaleCategory::LcMessages, candidate.as_str()).is_some() {
+            return;
+        }
+    }
+}
+
+fn locale_candidates(language_preference: &str) -> Vec<String> {
+    let language_preference = sanitize_language_preference(language_preference);
+    if language_preference == SYSTEM_LANGUAGE_PREFERENCE {
+        return Vec::new();
+    }
+    if is_english_language(&language_preference) {
+        return vec!["C".to_string()];
+    }
+
+    let normalized = language_preference.replace('-', "_");
+    let mut candidates = Vec::new();
+    push_candidate(&mut candidates, language_preference);
+    push_candidate(&mut candidates, normalized.clone());
+    if !normalized.contains('.') {
+        for codeset in ["UTF-8", "utf8"] {
+            if let Some((base, modifier)) = normalized.split_once('@') {
+                push_candidate(&mut candidates, format!("{base}.{codeset}@{modifier}"));
+            } else {
+                push_candidate(&mut candidates, format!("{normalized}.{codeset}"));
+            }
+        }
+    }
+    candidates
+}
+
+fn push_candidate(candidates: &mut Vec<String>, candidate: impl Into<String>) {
+    let candidate = candidate.into();
+    if !candidates.iter().any(|existing| existing == &candidate) {
+        candidates.push(candidate);
+    }
+}
+
+fn is_english_language(language_preference: &str) -> bool {
+    let language_preference = language_preference.replace('-', "_");
+    matches!(language_preference.as_str(), "C" | "POSIX" | "en")
+        || language_preference.starts_with("en_")
+        || language_preference.starts_with("en.")
+}
+
+fn locale_dir() -> PathBuf {
+    if let Some(path) = env::var_os("RUFIN_LOCALEDIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return path;
+    }
+
+    for candidate in locale_dir_candidates() {
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from("po")
+}
+
+fn locale_dir_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
+        candidates.push(PathBuf::from(manifest_dir).join("../../po"));
+    }
+    if let Ok(exe) = env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        candidates.push(exe_dir.join("share/locale"));
+        candidates.push(exe_dir.join("../share/locale"));
+    }
+    candidates.push(PathBuf::from("po"));
+    candidates
+}
+
+fn available_translation_language_ids() -> Vec<String> {
+    let mut ids = BTreeSet::new();
+    let localedir = locale_dir();
+    collect_mo_language_ids(&localedir, &mut ids);
+    collect_po_language_ids(&localedir, &mut ids);
+    ids.into_iter().collect()
+}
+
+fn collect_mo_language_ids(localedir: &Path, ids: &mut BTreeSet<String>) {
+    let Ok(entries) = fs::read_dir(localedir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path
+            .join("LC_MESSAGES")
+            .join(format!("{DOMAIN}.mo"))
+            .is_file()
+        {
+            continue;
+        }
+        let Some(id) = entry.file_name().to_str().map(sanitize_language_preference) else {
+            continue;
+        };
+        if id != SYSTEM_LANGUAGE_PREFERENCE {
+            ids.insert(id);
+        }
+    }
+}
+
+fn collect_po_language_ids(localedir: &Path, ids: &mut BTreeSet<String>) {
+    let Ok(entries) = fs::read_dir(localedir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("po") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if stem == DOMAIN {
+            continue;
+        }
+        let id = sanitize_language_preference(stem);
+        if id != SYSTEM_LANGUAGE_PREFERENCE {
+            ids.insert(id);
+        }
+    }
+}
+
+fn language_display_name(id: &str) -> String {
+    let code = language_code(id);
+    let Some(name) = language_name(code) else {
+        return id.to_string();
+    };
+    if id == code {
+        name.to_string()
+    } else {
+        format!("{name} ({id})")
+    }
+}
+
+fn language_code(id: &str) -> &str {
+    id.split(['_', '-', '.', '@'])
+        .next()
+        .filter(|code| !code.is_empty())
+        .unwrap_or(id)
+}
+
+fn language_name(code: &str) -> Option<&'static str> {
+    match code {
+        "ar" => Some("Arabic"),
+        "bg" => Some("Bulgarian"),
+        "ca" => Some("Catalan"),
+        "cs" => Some("Czech"),
+        "da" => Some("Danish"),
+        "de" => Some("German"),
+        "el" => Some("Greek"),
+        "es" => Some("Spanish"),
+        "eu" => Some("Basque"),
+        "fa" => Some("Persian"),
+        "fi" => Some("Finnish"),
+        "fr" => Some("French"),
+        "gl" => Some("Galician"),
+        "he" => Some("Hebrew"),
+        "hi" => Some("Hindi"),
+        "hr" => Some("Croatian"),
+        "hu" => Some("Hungarian"),
+        "id" => Some("Indonesian"),
+        "it" => Some("Italian"),
+        "ja" => Some("Japanese"),
+        "ko" => Some("Korean"),
+        "lt" => Some("Lithuanian"),
+        "lv" => Some("Latvian"),
+        "ms" => Some("Malay"),
+        "nb" => Some("Norwegian Bokmal"),
+        "nl" => Some("Dutch"),
+        "pl" => Some("Polish"),
+        "pt" => Some("Portuguese"),
+        "ro" => Some("Romanian"),
+        "ru" => Some("Russian"),
+        "sk" => Some("Slovak"),
+        "sl" => Some("Slovenian"),
+        "sr" => Some("Serbian"),
+        "sv" => Some("Swedish"),
+        "tr" => Some("Turkish"),
+        "uk" => Some("Ukrainian"),
+        "vi" => Some("Vietnamese"),
+        "zh" => Some("Chinese"),
+        _ => None,
+    }
+}
+
+fn app_settings_path() -> PathBuf {
+    ProjectDirs::from("io.github", "screwys", "Rufin")
+        .map(|dirs| dirs.config_dir().join(SETTINGS_FILE_NAME))
+        .unwrap_or_else(|| PathBuf::from(SETTINGS_FILE_NAME))
+}
+
 #[allow(dead_code)]
 fn catalog_strings_for_extraction() {
+    let _ = tr("System default");
+    let _ = tr("English");
+    let _ = tr("Language");
+    let _ = tr("Restart Rufin to apply language changes");
     let _ = tr("Home");
     let _ = tr("Favorites");
     let _ = tr("Albums");
@@ -304,4 +590,50 @@ fn catalog_strings_for_extraction() {
     );
     let _ = tr("Website");
     let _ = tr("Issues");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locale_candidates_include_unix_utf8_variants() {
+        assert_eq!(
+            locale_candidates("tr-TR"),
+            vec!["tr-TR", "tr_TR", "tr_TR.UTF-8", "tr_TR.utf8"]
+        );
+    }
+
+    #[test]
+    fn locale_candidates_force_english_to_untranslated_catalog() {
+        assert_eq!(locale_candidates("en_US"), vec!["C"]);
+    }
+
+    #[test]
+    fn language_option_index_defaults_unknown_values_to_system() {
+        let options = vec![
+            LanguageOption {
+                id: SYSTEM_LANGUAGE_PREFERENCE.to_string(),
+                title: "System default".to_string(),
+            },
+            LanguageOption {
+                id: ENGLISH_LANGUAGE_PREFERENCE.to_string(),
+                title: "English".to_string(),
+            },
+            LanguageOption {
+                id: "tr_TR".to_string(),
+                title: "Turkish (tr_TR)".to_string(),
+            },
+        ];
+
+        assert_eq!(language_option_index(&options, "C"), 1);
+        assert_eq!(language_option_index(&options, "tr_TR"), 2);
+        assert_eq!(language_option_index(&options, "missing"), 0);
+    }
+
+    #[test]
+    fn language_display_name_keeps_locale_context() {
+        assert_eq!(language_display_name("pt_BR"), "Portuguese (pt_BR)");
+        assert_eq!(language_display_name("zz_ZZ"), "zz_ZZ");
+    }
 }

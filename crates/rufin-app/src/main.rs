@@ -81,7 +81,7 @@ fn main() {
     }
 
     init_tracing();
-    i18n::init();
+    i18n::init(&i18n::startup_language_preference());
 
     if cli.clear_cache && cli.forget_active_server {
         eprintln!("Use only one maintenance flag at a time.");

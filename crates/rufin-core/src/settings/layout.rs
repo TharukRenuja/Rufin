@@ -282,6 +282,27 @@ pub(super) fn default_home_blocks() -> Vec<HomeBlockKind> {
         HomeBlockKind::Genres,
     ]
 }
+pub const SYSTEM_LANGUAGE_PREFERENCE: &str = "system";
+pub fn default_language_preference() -> String {
+    SYSTEM_LANGUAGE_PREFERENCE.to_string()
+}
+pub fn sanitize_language_preference(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty()
+        || value.eq_ignore_ascii_case("default")
+        || value.eq_ignore_ascii_case(SYSTEM_LANGUAGE_PREFERENCE)
+    {
+        return default_language_preference();
+    }
+    if value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'@'))
+    {
+        return default_language_preference();
+    }
+    value.to_string()
+}
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ThemePreference {
     System,

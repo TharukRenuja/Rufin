@@ -4,8 +4,8 @@ use super::{
     LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey,
     LocalLibraryFolder, MAX_CROSSFADE_SECONDS, MAX_RESTORED_WINDOW_HEIGHT,
     MAX_RESTORED_WINDOW_WIDTH, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode, ReplayGainMode,
-    RightSidebarMode, ScrobblingSettings, SidebarRouteItem, StreamQuality, TrackSortKey,
-    TrackTableColumn, sanitized_window_size,
+    RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings, SidebarRouteItem,
+    StreamQuality, TrackSortKey, TrackTableColumn, sanitized_window_size,
 };
 #[test]
 fn settings_default_to_privacy_preserving_remote_features() {
@@ -13,6 +13,7 @@ fn settings_default_to_privacy_preserving_remote_features() {
 
     assert!(settings.sources.selected.is_none());
     assert!(settings.sources.local_folders.is_empty());
+    assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
     assert!(!settings.notifications_enabled);
     assert!(settings.external_lyrics_enabled);
     assert!(settings.external_metadata_enabled);
@@ -277,6 +278,7 @@ fn settings_restore_without_window_geometry() {
     assert_eq!(restored.window_width, None);
     assert_eq!(restored.window_height, None);
     assert!(restored.auto_dj_enabled);
+    assert_eq!(restored.language, SYSTEM_LANGUAGE_PREFERENCE);
     assert!(!restored.external_lyrics_enabled);
     assert!(restored.external_metadata_enabled);
     assert!(restored.prefer_server_lyrics);
@@ -301,6 +303,23 @@ fn settings_restore_without_window_geometry() {
     assert_eq!(restored.scrobbling.librefm.api_secret, "rufin");
     assert!(!restored.scrobbling.listenbrainz.enabled);
     assert_eq!(restored.track_table.sort_key, TrackSortKey::Title);
+}
+#[test]
+fn app_settings_sanitize_language_preference() {
+    let mut settings = AppSettings {
+        language: " tr_TR.UTF-8 ".to_string(),
+        ..AppSettings::default()
+    };
+    settings.migrate_defaults();
+    assert_eq!(settings.language, "tr_TR.UTF-8");
+
+    settings.language = "tr_TR\0".to_string();
+    settings.migrate_defaults();
+    assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
+
+    settings.language = "default".to_string();
+    settings.migrate_defaults();
+    assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
 }
 #[test]
 fn window_size_restore_rejects_tiny_and_clamps_huge_geometry() {

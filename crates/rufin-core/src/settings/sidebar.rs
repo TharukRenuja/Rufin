@@ -371,6 +371,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub sources: LibrarySourceSettings,
     pub theme_preference: ThemePreference,
+    #[serde(default = "default_language_preference")]
+    pub language: String,
     pub private_mode: bool,
     pub notifications_enabled: bool,
     pub external_lyrics_enabled: bool,
@@ -429,6 +431,7 @@ impl Default for AppSettings {
             sidebar: SidebarSettings::default(),
             sources: LibrarySourceSettings::default(),
             theme_preference: ThemePreference::System,
+            language: default_language_preference(),
             private_mode: false,
             notifications_enabled: false,
             external_lyrics_enabled: true,
@@ -474,6 +477,7 @@ impl AppSettings {
         self.playback.sanitize();
         self.scrobbling.sanitize();
         self.lastfm_api_key = self.lastfm_api_key.trim().to_string();
+        self.language = sanitize_language_preference(&self.language);
         if self.lastfm_api_key.is_empty() && !self.scrobbling.lastfm.api_key.is_empty() {
             self.lastfm_api_key = self.scrobbling.lastfm.api_key.clone();
         } else if self.scrobbling.lastfm.api_key.is_empty() && !self.lastfm_api_key.is_empty() {

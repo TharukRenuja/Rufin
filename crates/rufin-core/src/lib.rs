@@ -17,8 +17,9 @@ pub use settings::{
     LibraryListKey, LibraryListSettings, LibraryListSettingsEntry, LibrarySourceSelection,
     LibrarySourceSettings, ListenBrainzScrobbleSettings, LocalLibraryFolder, MAX_CROSSFADE_SECONDS,
     MAX_NARROW_LAYOUT_THRESHOLD, MIN_CROSSFADE_SECONDS, MIN_NARROW_LAYOUT_THRESHOLD,
-    PlaybackSettings, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode, ScrobblingSettings,
-    SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, StreamQuality, ThemePreference,
-    TrackSortKey, TrackTableColumn, TrackTableSettings, available_grid_fields,
-    available_row_fields, available_sort_fields, sanitized_window_size,
+    PlaybackSettings, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
+    SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings, SidebarRouteItem, SidebarRouteItemSettings,
+    SidebarSettings, StreamQuality, ThemePreference, TrackSortKey, TrackTableColumn,
+    TrackTableSettings, available_grid_fields, available_row_fields, available_sort_fields,
+    default_language_preference, sanitize_language_preference, sanitized_window_size,
 };

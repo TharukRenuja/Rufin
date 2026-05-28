@@ -129,6 +129,16 @@ Copy-DirectoryContents (Join-Path $MsysPrefix "share\icons\Adwaita") (Join-Path 
 Copy-DirectoryContents (Join-Path $MsysPrefix "share\icons\hicolor") (Join-Path $appShare "icons\hicolor")
 Copy-DirectoryContents (Join-Path $RepoRoot "data\icons\hicolor") (Join-Path $appShare "icons\hicolor")
 Copy-DirectoryContents (Join-Path $MsysPrefix "share\locale") (Join-Path $appShare "locale")
+$msgfmt = Join-Path $MsysPrefix "bin\msgfmt.exe"
+$poDir = Join-Path $RepoRoot "po"
+if ((Test-Path $msgfmt) -and (Test-Path $poDir)) {
+    Get-ChildItem -Path $poDir -Filter "*.po" | ForEach-Object {
+        $lang = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+        $targetDir = Join-Path $appShare "locale\$lang\LC_MESSAGES"
+        New-Item -ItemType Directory -Force $targetDir | Out-Null
+        & $msgfmt $_.FullName -o (Join-Path $targetDir "rufin.mo")
+    }
+}
 Copy-DirectoryContents (Join-Path $MsysPrefix "share\mime") (Join-Path $appShare "mime")
 Copy-DirectoryContents (Join-Path $MsysPrefix "share\themes") (Join-Path $appShare "themes")
 Copy-DirectoryContents (Join-Path $MsysPrefix "share\licenses") (Join-Path $appShare "licenses")
