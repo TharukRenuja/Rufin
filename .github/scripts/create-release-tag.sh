@@ -170,10 +170,6 @@ write_notes() {
           printf -- '- %s (%s)\n' "$subject" "$short_commit"
         fi
       done
-    if [[ -n "$repo_url" ]]; then
-      echo
-      printf '[Full changelog](%s/compare/%s...%s)\n' "$repo_url" "$base_tag" "$version"
-    fi
     echo
   } > "$notes_file"
 }
@@ -301,7 +297,9 @@ if [[ "$replace_tag" == "1" ]] && git rev-parse -q --verify "refs/tags/$version"
   git tag -d "$version"
 fi
 
-git tag -s "$version" -F "$notes_file"
+# Keep Markdown headings such as "## Changelog"; git tag's default cleanup
+# treats lines starting with # as comments.
+git tag -s --cleanup=verbatim "$version" -F "$notes_file"
 git show "$version" --no-patch
 
 flathub_manifest="packaging/flatpak/io.github.screwys.Rufin.flathub.json"
