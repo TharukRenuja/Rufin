@@ -116,7 +116,7 @@ UI perf reports default to `.local/perf/rufin-ui-perf-<pid>.log` for `--ui-perf-
 
 [GStreamer](https://gstreamer.freedesktop.org/)
 
-This app is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), both in client design and in how certain parts should work. It aims to bring a similar experience, altought not as feature-rich, to a native desktop app without a web stack.
+This app is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), as in the overall design and in how certain parts should work. It aims to bring a similar experience, altough not as feature-rich, to a native desktop app without a web stack.
 
 # License
 
