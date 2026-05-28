@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::time::Duration;
 
 use reqwest::Url;
@@ -12,6 +13,8 @@ const MUSICBRAINZ_RELEASE_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/relea
 const MUSICBRAINZ_RELEASE_GROUP_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release-group/";
 const COVER_ART_ARCHIVE_RELEASE_URL: &str = "https://coverartarchive.org/release";
 const COVER_ART_ARCHIVE_RELEASE_GROUP_URL: &str = "https://coverartarchive.org/release-group";
+const EXTERNAL_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
+const EXTERNAL_METADATA_JSON_MAX_BYTES: usize = 4 * 1024 * 1024;
 const EXTERNAL_METADATA_USER_AGENT: &str = concat!(
     "Rufin/",
     env!("CARGO_PKG_VERSION"),
@@ -97,11 +100,11 @@ fn download_image(client: &Client, url: &str) -> Result<Vec<u8>, String> {
             response.status()
         ));
     }
-    let bytes = response.bytes().map_err(|error| error.to_string())?;
+    let bytes = read_response_bounded(response, EXTERNAL_IMAGE_MAX_BYTES, "external cover image")?;
     if bytes.is_empty() {
         return Err("external cover response was empty".to_string());
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 fn lastfm_album_cover_url(
@@ -239,7 +242,57 @@ fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Value, String>
             response.status()
         ));
     }
-    response.json::<Value>().map_err(|error| error.to_string())
+    let bytes = read_response_bounded(response, EXTERNAL_METADATA_JSON_MAX_BYTES, context)?;
+    serde_json::from_slice::<Value>(&bytes).map_err(|error| error.to_string())
+}
+
+fn read_response_bounded(
+    response: reqwest::blocking::Response,
+    limit: usize,
+    context: &str,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(format!(
+            "{context} exceeded {} MiB limit",
+            bytes_to_mib(limit)
+        ));
+    }
+    read_bounded(response, limit, context)
+}
+
+pub(super) fn read_bounded<R: Read>(
+    mut reader: R,
+    limit: usize,
+    context: &str,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| error.to_string())?;
+        if read == 0 {
+            return Ok(bytes);
+        }
+        if bytes
+            .len()
+            .checked_add(read)
+            .is_none_or(|length| length > limit)
+        {
+            return Err(format!(
+                "{context} exceeded {} MiB limit",
+                bytes_to_mib(limit)
+            ));
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+}
+
+fn bytes_to_mib(bytes: usize) -> usize {
+    bytes / 1024 / 1024
 }
 
 pub(super) fn json_ids(value: &Value, collection_pointer: &str) -> Vec<String> {

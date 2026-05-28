@@ -4,6 +4,9 @@ use std::time::Duration;
 
 const SUBSONIC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SUBSONIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub(super) const SUBSONIC_JSON_MAX_BYTES: usize = 16 * 1024 * 1024;
+pub(super) const SUBSONIC_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
+const SUBSONIC_ERROR_BODY_MAX_BYTES: usize = 64 * 1024;
 
 #[async_trait(?Send)]
 impl MusicProvider for SubsonicProvider {
@@ -752,17 +755,17 @@ pub(super) async fn subsonic_json<T: DeserializeOwned>(
         return Err(ProviderError::NotFound);
     }
     if status.is_client_error() || status.is_server_error() {
-        let message = response.text().await.unwrap_or_else(|_| status.to_string());
+        let message = response_text_or_status(response, status).await;
         return Err(ProviderError::Server {
             status: status.as_u16(),
             message,
         });
     }
 
-    let envelope = response
-        .json::<SubsonicEnvelope<T>>()
-        .await
-        .map_err(map_reqwest_error)?;
+    let bytes =
+        response_bytes_bounded(response, SUBSONIC_JSON_MAX_BYTES, "Subsonic JSON response").await?;
+    let envelope = serde_json::from_slice::<SubsonicEnvelope<T>>(&bytes)
+        .map_err(|error| ProviderError::Other(error.to_string()))?;
     if envelope.response.status != "ok" {
         let message = envelope
             .response
@@ -792,7 +795,7 @@ pub(super) async fn subsonic_bytes(request: reqwest::RequestBuilder) -> Provider
         return Err(ProviderError::NotFound);
     }
     if status.is_client_error() || status.is_server_error() {
-        let message = response.text().await.unwrap_or_else(|_| status.to_string());
+        let message = response_text_or_status(response, status).await;
         return Err(ProviderError::Server {
             status: status.as_u16(),
             message,
@@ -804,11 +807,67 @@ pub(super) async fn subsonic_bytes(request: reqwest::RequestBuilder) -> Provider
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let bytes = response.bytes().await.map_err(map_reqwest_error)?.to_vec();
+    let bytes = response_bytes_bounded(
+        response,
+        SUBSONIC_IMAGE_MAX_BYTES,
+        "Subsonic image response",
+    )
+    .await?;
     Ok(ImageBytes {
         bytes,
         content_type,
     })
+}
+async fn response_text_or_status(response: reqwest::Response, status: StatusCode) -> String {
+    match response_bytes_bounded(
+        response,
+        SUBSONIC_ERROR_BODY_MAX_BYTES,
+        "Subsonic error response",
+    )
+    .await
+    {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => status.to_string(),
+    }
+}
+async fn response_bytes_bounded(
+    mut response: reqwest::Response,
+    limit: usize,
+    context: &str,
+) -> ProviderResult<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(ProviderError::Other(format!(
+            "{context} exceeded {} MiB limit",
+            bytes_to_mib(limit)
+        )));
+    }
+
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(limit as u64) as usize,
+    );
+    while let Some(chunk) = response.chunk().await.map_err(map_reqwest_error)? {
+        if bytes
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > limit)
+        {
+            return Err(ProviderError::Other(format!(
+                "{context} exceeded {} MiB limit",
+                bytes_to_mib(limit)
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+fn bytes_to_mib(bytes: usize) -> usize {
+    bytes / 1024 / 1024
 }
 pub(super) fn build_client(trust_invalid_cert: bool) -> ProviderResult<Client> {
     build_client_with_timeouts(

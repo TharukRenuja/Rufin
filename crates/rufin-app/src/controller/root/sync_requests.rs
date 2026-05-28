@@ -1,5 +1,12 @@
 use super::*;
 
+use std::io::{self, Read};
+use std::time::Duration;
+
+const LRCLIB_REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+const LRCLIB_RESPONSE_MAX_BYTES: usize = 2 * 1024 * 1024;
+pub(in crate::controller) const LOCAL_LYRICS_MAX_BYTES: usize = 2 * 1024 * 1024;
+
 pub(in crate::controller) fn resolve_stream(
     store: &StoreHandle,
     runtime: &Runtime,
@@ -83,6 +90,7 @@ pub(in crate::controller) fn lrclib_search(
     track_name: &str,
 ) -> Result<Vec<LyricsSearchResult>, String> {
     let client = reqwest::blocking::Client::builder()
+        .timeout(LRCLIB_REQUEST_TIMEOUT)
         .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|error| error.to_string())?;
@@ -146,12 +154,12 @@ pub(in crate::controller) fn lrclib_fetch_search(
     client: &reqwest::blocking::Client,
     url: reqwest::Url,
 ) -> Result<Vec<LyricsSearchResult>, String> {
-    let body = client
+    let response = client
         .get(url)
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("Lyric search failed: {error}"))?
-        .text()
+        .map_err(|error| format!("Lyric search failed: {error}"))?;
+    let body = read_response_text_bounded(response, LRCLIB_RESPONSE_MAX_BYTES, "Lyric search")
         .map_err(|error| format!("Lyric search failed: {error}"))?;
     parse_lrclib_search_body(&body)
 }
@@ -279,7 +287,7 @@ pub(in crate::controller) fn local_sidecar_lyrics(
 ) -> Option<Lyrics> {
     let audio_path = local_audio_path_for_track(store, server_id, track_id)?;
     let path = audio_path.with_extension("lrc");
-    let content = fs::read_to_string(path).ok()?;
+    let content = read_text_file_bounded(&path, LOCAL_LYRICS_MAX_BYTES).ok()?;
     let lines = content
         .lines()
         .filter_map(lyric_line_from_text)
@@ -334,6 +342,58 @@ pub(in crate::controller) fn local_audio_path_for_track(
     }
     let mapped = map_server_path_to_local(&raw, &access)?;
     mapped.is_file().then_some(mapped)
+}
+fn read_response_text_bounded(
+    response: reqwest::blocking::Response,
+    limit: usize,
+    context: &str,
+) -> Result<String, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(format!(
+            "{context} exceeded {} MiB limit",
+            bytes_to_mib(limit)
+        ));
+    }
+    let bytes = read_bytes_bounded(response, limit, context).map_err(|error| error.to_string())?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+fn read_text_file_bounded(path: &Path, limit: usize) -> io::Result<String> {
+    if fs::metadata(path)?.len() > limit as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("lyrics file exceeded {} MiB limit", bytes_to_mib(limit)),
+        ));
+    }
+    let file = fs::File::open(path)?;
+    let bytes = read_bytes_bounded(file, limit, "lyrics file")?;
+    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+fn read_bytes_bounded<R: Read>(mut reader: R, limit: usize, context: &str) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(bytes);
+        }
+        if bytes
+            .len()
+            .checked_add(read)
+            .is_none_or(|length| length > limit)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{context} exceeded {} MiB limit", bytes_to_mib(limit)),
+            ));
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+}
+fn bytes_to_mib(bytes: usize) -> usize {
+    bytes / 1024 / 1024
 }
 pub(in crate::controller) fn map_server_path_to_local(
     raw: &str,

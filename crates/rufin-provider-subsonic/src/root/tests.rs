@@ -277,6 +277,59 @@ async fn image_bytes_fetch_cover_art() {
     assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
 }
 #[tokio::test]
+async fn image_bytes_rejects_oversized_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getCoverArt.view"))
+        .and(query_param("id", "cover-one"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(vec![0_u8; SUBSONIC_IMAGE_MAX_BYTES + 1]),
+        )
+        .mount(&server)
+        .await;
+    let provider = provider(&server);
+
+    let error = provider
+        .image_bytes(ImageRequest {
+            item_id: "subsonic:cover:cover-one".to_string(),
+            kind: ImageKind::Primary,
+            tag: None,
+            size: 256,
+        })
+        .await
+        .expect_err("oversized image");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Subsonic image response exceeded")
+    );
+}
+#[tokio::test]
+async fn json_reads_reject_oversized_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/getAlbumList2.view"))
+        .and(query_param("type", "alphabeticalByName"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(vec![b' '; SUBSONIC_JSON_MAX_BYTES + 1]),
+        )
+        .mount(&server)
+        .await;
+    let provider = provider(&server);
+
+    let error = provider
+        .albums(PagedRequest::new(0, 1))
+        .await
+        .expect_err("oversized JSON");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Subsonic JSON response exceeded")
+    );
+}
+#[tokio::test]
 async fn subsonic_json_maps_delayed_response_timeout_to_network_error() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

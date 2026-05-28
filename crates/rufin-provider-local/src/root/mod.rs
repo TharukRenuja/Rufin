@@ -18,6 +18,7 @@ use rufin_provider::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use url::Url;
 use walkdir::WalkDir;
@@ -30,6 +31,7 @@ use provider_impl::*;
 mod tests;
 
 pub const LOCAL_PROVIDER_ID: &str = "local";
+const LOCAL_COVER_MAX_BYTES: usize = 32 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub struct LocalProvider {
     identity: ProviderIdentity,
@@ -469,7 +471,7 @@ impl MusicProvider for LocalProvider {
             .ok_or(ProviderError::NotFound)?;
         match cover {
             LocalCover::File(path) => Ok(ImageBytes {
-                bytes: fs::read(path).map_err(|error| ProviderError::Other(error.to_string()))?,
+                bytes: read_cover_file_bounded(path)?,
                 content_type: content_type_from_path(path),
             }),
             LocalCover::Embedded { path, content_type } => {
@@ -483,12 +485,62 @@ impl MusicProvider for LocalProvider {
                     .or_else(|| select_best_picture_from_tags(tagged.tags()))
                     .ok_or(ProviderError::NotFound)?;
                 Ok(ImageBytes {
-                    bytes: picture.data().to_vec(),
+                    bytes: picture_data_bounded(picture)?,
                     content_type: content_type.clone(),
                 })
             }
         }
     }
+}
+fn read_cover_file_bounded(path: &Path) -> ProviderResult<Vec<u8>> {
+    if fs::metadata(path)
+        .map_err(|error| ProviderError::Other(error.to_string()))?
+        .len()
+        > LOCAL_COVER_MAX_BYTES as u64
+    {
+        return Err(ProviderError::Other(format!(
+            "local cover exceeded {} MiB limit",
+            bytes_to_mib(LOCAL_COVER_MAX_BYTES)
+        )));
+    }
+    let file = fs::File::open(path).map_err(|error| ProviderError::Other(error.to_string()))?;
+    read_bounded(file, LOCAL_COVER_MAX_BYTES, "local cover")
+}
+fn picture_data_bounded(picture: &Picture) -> ProviderResult<Vec<u8>> {
+    let data = picture.data();
+    if data.len() > LOCAL_COVER_MAX_BYTES {
+        return Err(ProviderError::Other(format!(
+            "embedded cover exceeded {} MiB limit",
+            bytes_to_mib(LOCAL_COVER_MAX_BYTES)
+        )));
+    }
+    Ok(data.to_vec())
+}
+fn read_bounded<R: Read>(mut reader: R, limit: usize, context: &str) -> ProviderResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| ProviderError::Other(error.to_string()))?;
+        if read == 0 {
+            return Ok(bytes);
+        }
+        if bytes
+            .len()
+            .checked_add(read)
+            .is_none_or(|length| length > limit)
+        {
+            return Err(ProviderError::Other(format!(
+                "{context} exceeded {} MiB limit",
+                bytes_to_mib(limit)
+            )));
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+}
+fn bytes_to_mib(bytes: usize) -> usize {
+    bytes / 1024 / 1024
 }
 fn normalize_root(root: PathBuf) -> ProviderResult<PathBuf> {
     let expanded = if root.as_os_str().is_empty() {

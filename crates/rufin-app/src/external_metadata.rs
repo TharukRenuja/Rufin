@@ -272,7 +272,9 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::album_lookup::{cover_art_size_path, json_ids, lastfm_album_image_url};
+    use super::album_lookup::{
+        cover_art_size_path, json_ids, lastfm_album_image_url, read_bounded,
+    };
     use super::{
         album_art_from_image_ref, enabled, is_expected_lookup_miss, is_external_image_ref,
         normalize_album, normalize_album_detail, normalize_artist, normalize_queue_entry,
@@ -283,6 +285,7 @@ mod tests {
         TrackId,
     };
     use serde_json::json;
+    use std::io::Cursor;
 
     #[test]
     fn external_metadata_requires_setting_and_non_private_mode() {
@@ -606,6 +609,15 @@ mod tests {
         assert!(!is_expected_lookup_miss(
             "MusicBrainz release lookup failed with status 503 Service Unavailable"
         ));
+    }
+
+    #[test]
+    fn external_metadata_body_reads_stop_at_limit() {
+        let mut body = Cursor::new(vec![b'a'; 9]);
+
+        let error = read_bounded(&mut body, 8, "metadata body").expect_err("oversized body");
+
+        assert!(error.contains("metadata body exceeded"));
     }
 
     fn album_without_cover(title: &str, artist: &str) -> Album {

@@ -194,6 +194,57 @@ async fn image_bytes_send_auth_header_and_size_params() {
     assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
 }
 #[tokio::test]
+async fn image_bytes_rejects_oversized_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items/album-one/Images/Primary"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(vec![0_u8; JELLYFIN_IMAGE_MAX_BYTES + 1]),
+        )
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "secret-token");
+
+    let error = provider
+        .image_bytes(ImageRequest {
+            item_id: "jellyfin:album:album-one".to_string(),
+            kind: ImageKind::Primary,
+            tag: None,
+            size: 256,
+        })
+        .await
+        .expect_err("oversized image");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Jellyfin image response exceeded")
+    );
+}
+#[tokio::test]
+async fn json_reads_reject_oversized_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(vec![b' '; JELLYFIN_JSON_MAX_BYTES + 1]),
+        )
+        .mount(&server)
+        .await;
+    let provider = provider(&server, "token-one");
+
+    let error = provider
+        .albums(PagedRequest::new(0, 1))
+        .await
+        .expect_err("oversized JSON");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Jellyfin JSON response exceeded")
+    );
+}
+#[tokio::test]
 async fn image_errors_do_not_expose_tokens() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

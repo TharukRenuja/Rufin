@@ -83,6 +83,46 @@ fn local_tracks_share_album_cover_ref() {
     );
 }
 #[tokio::test]
+async fn local_file_cover_rejects_oversized_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cover_path = dir.path().join("folder.jpg");
+    let file = fs::File::create(&cover_path).expect("cover file");
+    file.set_len((LOCAL_COVER_MAX_BYTES + 1) as u64)
+        .expect("cover length");
+    let mut covers = HashMap::new();
+    covers.insert("cover-one".to_string(), LocalCover::File(cover_path));
+    let provider = LocalProvider {
+        identity: ProviderIdentity {
+            server: identity_for_root(dir.path()),
+        },
+        capabilities: local_capabilities(),
+        library: LocalLibrary {
+            covers,
+            ..LocalLibrary::default()
+        },
+    };
+
+    let error = provider
+        .image_bytes(ImageRequest {
+            item_id: "cover-one".to_string(),
+            kind: ImageKind::Primary,
+            tag: None,
+            size: 512,
+        })
+        .await
+        .expect_err("oversized local cover");
+
+    assert!(error.to_string().contains("local cover exceeded"));
+}
+#[test]
+fn embedded_cover_rejects_oversized_picture_data() {
+    let picture = Picture::unchecked(vec![0_u8; LOCAL_COVER_MAX_BYTES + 1]).build();
+
+    let error = picture_data_bounded(&picture).expect_err("oversized embedded cover");
+
+    assert!(error.to_string().contains("embedded cover exceeded"));
+}
+#[tokio::test]
 async fn local_folder_root_lists_configured_roots() {
     let first = tempfile::tempdir().expect("first root");
     let second = tempfile::tempdir().expect("second root");

@@ -278,6 +278,42 @@ pub(in crate::controller) fn local_sidecar_lyrics_use_same_stem_as_audio_file() 
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
+pub(in crate::controller) fn local_sidecar_lyrics_ignore_oversized_files() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = self::saved_server();
+    let dir = self::unique_test_dir("local-sidecar-large");
+    fs::create_dir_all(&dir).expect("create dir");
+    let generation = store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)?;
+            store.save_server_local_access(&ServerLocalAccess {
+                server_id: saved.server.id.clone(),
+                root_path: dir.to_string_lossy().into_owned(),
+                path_replace_from: None,
+                path_replace_to: Some(dir.to_string_lossy().into_owned()),
+            })?;
+            store.begin_sync(&saved.server.id)
+        })
+        .expect("begin sync");
+    let audio = dir.join("Track.flac");
+    let lrc = dir.join("Track.lrc");
+    fs::write(&audio, []).expect("audio");
+    let file = fs::File::create(&lrc).expect("lrc");
+    file.set_len((LOCAL_LYRICS_MAX_BYTES + 1) as u64)
+        .expect("lrc length");
+    let mut track = restored_track();
+    track.local_path = Some(audio.to_string_lossy().into_owned());
+    store
+        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .expect("upsert track");
+
+    let lyrics = super::local_sidecar_lyrics(&store, &saved.server.id, &track.id);
+
+    assert_eq!(lyrics, None);
+    let _cleanup = fs::remove_dir_all(dir);
+}
+#[test]
 pub(in crate::controller) fn mapped_local_audio_path_uses_server_prefix_replacement() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
