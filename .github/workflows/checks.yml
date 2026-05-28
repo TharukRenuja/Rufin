@@ -1,17 +1,18 @@
-name: Rust CI
+name: Checks
 
 on:
   pull_request:
   push:
     branches:
       - main
+      - release/**
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: rust-ci-${{ github.ref }}
+  group: checks-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -42,3 +43,19 @@ jobs:
 
       - name: Run Rust tests
         run: nix --accept-flake-config develop --command cargo test --workspace --locked
+
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Check Rust dependency policy
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          arguments: --locked
+          command: check

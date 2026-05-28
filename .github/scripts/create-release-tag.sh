@@ -7,8 +7,10 @@ Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [
 
 Updates release metadata, commits it, and creates a signed annotated tag whose
 message includes commits since the previous release tag. VERSION may be vX.Y.Z
-or X.Y.Z. With --push, pushes main and the signed tag, then publishes the
-GitHub Release from the tag using the authenticated gh user.
+or X.Y.Z. With --push, pushes release changes to a temporary branch, waits for
+Checks to pass, fast-forwards main, pushes the signed tag, gates the AUR follow-up
+the same way, then publishes the GitHub Release from the tag using the
+authenticated gh user.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
@@ -89,6 +91,14 @@ if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 plain_version="${version#v}"
+release_branch="release/$version"
+checks_workflow="checks.yml"
+checks_timeout_seconds=7200
+
+if ! git check-ref-format "refs/heads/$release_branch"; then
+  echo "release branch name is invalid: $release_branch" >&2
+  exit 1
+fi
 
 if [[ "$dry_run" != "1" && "$replace_tag" != "1" ]] &&
   git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
@@ -309,26 +319,24 @@ MSG
 }
 
 check_github_release_prereqs() {
-  if [[ "$skip_github_release" == "1" ]]; then
-    return
-  fi
-
   if ! command -v gh >/dev/null 2>&1; then
     cat >&2 <<'MSG'
-gh is required to publish the GitHub Release after pushing the signed tag.
-Install GitHub CLI, authenticate it, or pass --skip-github-release to push
-the tag without publishing the release.
+gh is required to wait for release Checks before pushing main.
+Install GitHub CLI and authenticate it before using --push.
 MSG
     exit 1
   fi
 
   if ! gh auth status >/dev/null 2>&1; then
     cat >&2 <<'MSG'
-gh must be authenticated to publish the GitHub Release as the local user.
-Run `gh auth login`, or pass --skip-github-release to push the tag without
-publishing the release.
+gh must be authenticated to wait for release Checks before pushing main.
+Run `gh auth login` before using --push.
 MSG
     exit 1
+  fi
+
+  if [[ "$skip_github_release" == "1" ]]; then
+    return
   fi
 
   if gh release view "$version" >/dev/null 2>&1; then
@@ -339,6 +347,77 @@ publishing from this script.
 MSG
     exit 1
   fi
+}
+
+wait_for_release_checks() {
+  local sha="$1"
+  local phase="$2"
+  local repo_slug run_id run_url deadline
+
+  repo_slug="$(github_repo_from_origin)"
+  if [[ -z "$repo_slug" ]]; then
+    echo "could not determine GitHub repository from origin" >&2
+    exit 1
+  fi
+
+  deadline=$((SECONDS + checks_timeout_seconds))
+  printf '\nWaiting for Checks on %s (%s) via %s...\n' "$sha" "$phase" "$release_branch"
+
+  while true; do
+    run_id="$(
+      gh run list \
+        --repo "$repo_slug" \
+        --workflow "$checks_workflow" \
+        --branch "$release_branch" \
+        --commit "$sha" \
+        --event push \
+        --limit 1 \
+        --json databaseId \
+        --jq '.[0].databaseId // empty'
+    )"
+
+    if [[ -n "$run_id" ]]; then
+      run_url="$(
+        gh run view "$run_id" \
+          --repo "$repo_slug" \
+          --json url \
+          --jq '.url'
+      )"
+      printf 'Watching %s\n' "$run_url"
+      gh run watch "$run_id" --repo "$repo_slug" --interval 15 --exit-status
+      return
+    fi
+
+    if (( SECONDS >= deadline )); then
+      echo "timed out waiting for Checks to start for $sha on $release_branch" >&2
+      exit 1
+    fi
+
+    sleep 10
+  done
+}
+
+push_release_branch_and_wait() {
+  local phase="$1"
+  local sha
+
+  sha="$(git rev-parse HEAD)"
+  printf '\nPushing %s to %s for CI preflight...\n' "$sha" "$release_branch"
+  git push --force-with-lease origin "HEAD:refs/heads/$release_branch"
+  wait_for_release_checks "$sha" "$phase"
+}
+
+push_main_after_checks() {
+  local phase="$1"
+
+  push_release_branch_and_wait "$phase"
+  printf '\nFast-forwarding main to %s after Checks passed...\n' "$(git rev-parse HEAD)"
+  git push origin HEAD:main
+}
+
+delete_release_branch() {
+  printf '\nDeleting temporary release branch %s...\n' "$release_branch"
+  git push origin ":refs/heads/$release_branch" >/dev/null 2>&1 || true
 }
 
 publish_github_release() {
@@ -359,8 +438,10 @@ update_aur_stable_package() {
   if ! git diff --quiet -- packaging/aur/rufin/PKGBUILD packaging/aur/rufin/.SRCINFO; then
     git add packaging/aur/rufin/PKGBUILD packaging/aur/rufin/.SRCINFO
     git commit -m "chore(aur): update stable package for $version"
-    git push origin HEAD:main
+    return 0
   fi
+
+  return 1
 }
 
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
@@ -413,12 +494,15 @@ if [[ "$skip_flathub" != "1" && -f "$flathub_manifest" ]]; then
 fi
 
 if [[ "$push_tag" == "1" ]]; then
-  git push origin HEAD:main
+  push_main_after_checks "release metadata and Flathub manifest"
   if [[ "$replace_tag" == "1" ]]; then
     git push --force origin "$version"
   else
     git push origin "$version"
   fi
-  update_aur_stable_package
+  if update_aur_stable_package; then
+    push_main_after_checks "AUR stable package metadata"
+  fi
   publish_github_release
+  delete_release_branch
 fi
