@@ -76,11 +76,11 @@ git clone https://github.com/screwys/Rufin.git
 cd Rufin
 cargo run -p rufin-app
 ```
-## Contributing
+# Contributing
 
 You can contribute to the app by adding a new feature or translating the app. Please refer to [CONTRIBUTING.md](CONTRIBUTING.md)
 
-## Development
+# Development
 
 Pass app flags after `--`, for example `cargo run -p rufin-app -- --ui-perf-observe`
 
@@ -106,7 +106,7 @@ cargo test --workspace
 
 UI perf reports default to `.local/perf/rufin-ui-perf-<pid>.log` for `--ui-perf-run` and `.local/perf/rufin-ui-observe-<pid>.log` for `--ui-perf-observe`.
 
-## Credits
+# Credits
 
 [GTK 4](https://www.gtk.org/)
 
