@@ -10,13 +10,6 @@ impl AppController {
     pub fn reload_snapshot(&self) {
         let store = self.store.clone();
         let events = self.events.clone();
-        thread::spawn(move || match load_snapshot(&store) {
-            Ok(snapshot) => {
-                let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
-            }
-            Err(error) => {
-                let _sent = events.send(ControllerEvent::Error(error));
-            }
-        });
+        thread::spawn(move || emit_snapshot(&store, &events));
     }
 }

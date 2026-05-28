@@ -324,7 +324,51 @@ pub(in crate::controller) fn local_source_snapshot_loads_configured_folders() {
         LOCAL_SOURCE_SERVER_ID
     );
     assert_eq!(snapshot.local_folders, settings.sources.local_folders);
+    let active = store
+        .with_store(|store| store.active_server())
+        .expect("active server")
+        .expect("active server");
+    assert_eq!(active.server.id.as_str(), LOCAL_SOURCE_SERVER_ID);
     let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn snapshot_load_reconciles_active_server_to_selected_remote_source() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let active_saved = saved_server();
+    let mut selected_saved = saved_server();
+    selected_saved.server.id = ServerId::new("jellyfin:server:selected");
+    selected_saved.server.name = "Selected Server".to_string();
+    selected_saved.server.base_url = "https://selected.example.test".to_string();
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Server(
+        selected_saved.server.id.clone(),
+    ));
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&active_saved)?;
+            store.save_server(&selected_saved)?;
+            store.set_active_server(&active_saved.server.id)
+        })
+        .expect("save servers");
+
+    let snapshot = load_snapshot(&store).expect("load snapshot");
+
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Server(
+            selected_saved.server.id.clone()
+        ))
+    );
+    assert_eq!(
+        snapshot.server.as_ref().map(|server| server.id.clone()),
+        Some(selected_saved.server.id.clone())
+    );
+    let active_after = store
+        .with_store(|store| store.active_server())
+        .expect("active server")
+        .expect("active server");
+    assert_eq!(active_after.server.id, selected_saved.server.id);
 }
 #[test]
 pub(in crate::controller) fn local_folder_preferences_add_preserves_remote_source_selection() {

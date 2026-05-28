@@ -126,27 +126,19 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let selected_source = resolve_selected_source(
-        &source_settings,
-        &remote_saved_servers,
-        store.with_store(|store| store.active_server())?,
-    );
-    let Some(selected_source) = selected_source else {
+    let Some(reconciled_source) =
+        reconcile_snapshot_source(store, &source_settings, &remote_saved_servers)?
+    else {
         let mut snapshot = LibrarySnapshot::first_run();
         snapshot.servers = servers;
         snapshot.local_folders = source_settings.sources.local_folders.clone();
         snapshot.server_local_access = server_local_access;
         return Ok(snapshot);
     };
-    let saved = match &selected_source {
-        LibrarySourceSelection::Local => ensure_local_source_server(store)?,
-        LibrarySourceSelection::Server(server_id) => remote_saved_servers
-            .iter()
-            .find(|saved| &saved.server.id == server_id)
-            .cloned()
-            .ok_or_else(|| "The selected source is no longer saved.".to_string())?,
-    };
-    store.with_store(|store| store.set_active_server(&saved.server.id))?;
+    let SnapshotSourceReconciliation {
+        selected_source,
+        saved,
+    } = reconciled_source;
     let local_access = store.with_store(|store| store.server_local_access(&saved.server.id))?;
     let local_access_status =
         local_access_status_for_server(store, &saved.server, local_access.as_ref())?;
@@ -607,6 +599,48 @@ pub(in crate::controller) fn emit_snapshot(store: &StoreHandle, events: &Sender<
         Err(error) => {
             let _sent = events.send(ControllerEvent::Error(error));
         }
+    }
+}
+#[derive(Clone, Debug)]
+struct SnapshotSourceReconciliation {
+    selected_source: LibrarySourceSelection,
+    saved: SavedServer,
+}
+fn reconcile_snapshot_source(
+    store: &StoreHandle,
+    settings: &AppSettings,
+    remote_saved_servers: &[SavedServer],
+) -> Result<Option<SnapshotSourceReconciliation>, String> {
+    let selected_source = resolve_selected_source(
+        settings,
+        remote_saved_servers,
+        store.with_store(|store| store.active_server())?,
+    );
+    let Some(selected_source) = selected_source else {
+        return Ok(None);
+    };
+
+    let saved = saved_server_for_snapshot_source(store, remote_saved_servers, &selected_source)?;
+
+    // Keep active_server aligned for follow-up cache, sync, and queue work.
+    store.with_store(|store| store.set_active_server(&saved.server.id))?;
+    Ok(Some(SnapshotSourceReconciliation {
+        selected_source,
+        saved,
+    }))
+}
+fn saved_server_for_snapshot_source(
+    store: &StoreHandle,
+    remote_saved_servers: &[SavedServer],
+    selected_source: &LibrarySourceSelection,
+) -> Result<SavedServer, String> {
+    match selected_source {
+        LibrarySourceSelection::Local => ensure_local_source_server(store),
+        LibrarySourceSelection::Server(server_id) => remote_saved_servers
+            .iter()
+            .find(|saved| &saved.server.id == server_id)
+            .cloned()
+            .ok_or_else(|| "The selected source is no longer saved.".to_string()),
     }
 }
 pub(in crate::controller) fn resolve_selected_source(

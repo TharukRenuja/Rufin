@@ -3,13 +3,14 @@ use super::right_panel::{
     queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
 };
 use super::{
-    AutoLyricsRequest, PlaylistEntryListState, PlaylistEntrySort, auto_lyrics_request_for_settings,
-    auto_lyrics_skip_action_enabled, current_playback_track_id, playlist_drop_index,
-    playlist_entries_for_state, seekbar_target_seconds,
+    AutoLyricsRequest, PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision,
+    auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled, current_playback_track_id,
+    playlist_drop_index, playlist_entries_for_state, seekbar_target_seconds,
+    snapshot_event_outcome,
 };
 use rufin_core::{
-    Album, AlbumId, AppSettings, ArtistId, HomeSectionKind, QueueEntry, QueueEntryId, Route,
-    SearchKind, Track, TrackId, TrackSortKey, TrackTableSettings,
+    Album, AlbumId, AppSettings, ArtistId, HomeSectionKind, LibrarySourceSelection, QueueEntry,
+    QueueEntryId, Route, SearchKind, Track, TrackId, TrackSortKey, TrackTableSettings,
 };
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
 use std::collections::HashMap;
@@ -41,6 +42,45 @@ pub(in crate::ui) fn home_section_pages_reset_for_new_home_data() {
     super::reset_home_section_pages(&mut states);
 
     assert!(states.is_empty());
+}
+#[test]
+pub(in crate::ui) fn snapshot_event_outcome_prioritizes_first_run_completion() {
+    let previous_source = None;
+    let next_source = Some(LibrarySourceSelection::Local);
+
+    let outcome = snapshot_event_outcome(true, false, &previous_source, &next_source, true, true);
+
+    assert_eq!(outcome.render, SnapshotRenderDecision::FirstRunFinished);
+    assert!(!outcome.entered_first_run);
+}
+#[test]
+pub(in crate::ui) fn snapshot_event_outcome_navigates_when_source_changes() {
+    let previous_source = None;
+    let next_source = Some(LibrarySourceSelection::Local);
+
+    let outcome =
+        snapshot_event_outcome(false, false, &previous_source, &next_source, false, false);
+
+    assert_eq!(outcome.render, SnapshotRenderDecision::SourceChanged);
+    assert!(!outcome.entered_first_run);
+}
+#[test]
+pub(in crate::ui) fn snapshot_event_outcome_preserves_scroll_for_stable_source() {
+    let source = Some(LibrarySourceSelection::Local);
+
+    let outcome = snapshot_event_outcome(false, false, &source, &source, false, false);
+
+    assert_eq!(outcome.render, SnapshotRenderDecision::PreserveScroll);
+    assert!(!outcome.entered_first_run);
+}
+#[test]
+pub(in crate::ui) fn snapshot_event_outcome_marks_first_run_entry() {
+    let source = None::<LibrarySourceSelection>;
+
+    let outcome = snapshot_event_outcome(false, true, &source, &source, false, false);
+
+    assert_eq!(outcome.render, SnapshotRenderDecision::PreserveScroll);
+    assert!(outcome.entered_first_run);
 }
 #[test]
 pub(in crate::ui) fn manual_ui_perf_observer_records_scrolls_by_route() {

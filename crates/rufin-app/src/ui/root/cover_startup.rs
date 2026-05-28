@@ -101,6 +101,40 @@ pub(in crate::ui) enum AutoLyricsRequest {
     Default,
     ServerOnly,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum SnapshotRenderDecision {
+    SourceChanged,
+    FirstRunFinished,
+    PreserveScroll,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct SnapshotEventOutcome {
+    pub entered_first_run: bool,
+    pub render: SnapshotRenderDecision,
+}
+pub(in crate::ui) fn snapshot_event_outcome(
+    previous_first_run: bool,
+    next_first_run: bool,
+    previous_source: &Option<rufin_core::LibrarySourceSelection>,
+    next_source: &Option<rufin_core::LibrarySourceSelection>,
+    first_run_connection_pending: bool,
+    first_run_connection_ready: bool,
+) -> SnapshotEventOutcome {
+    let first_run_finished =
+        first_run_connection_pending && first_run_connection_ready && !next_first_run;
+    let render = if first_run_finished {
+        SnapshotRenderDecision::FirstRunFinished
+    } else if previous_source != next_source {
+        SnapshotRenderDecision::SourceChanged
+    } else {
+        SnapshotRenderDecision::PreserveScroll
+    };
+
+    SnapshotEventOutcome {
+        entered_first_run: next_first_run && !previous_first_run,
+        render,
+    }
+}
 pub(in crate::ui) fn auto_lyrics_request_for_settings(
     settings: &AppSettings,
     track_id: &rufin_core::TrackId,
@@ -349,19 +383,22 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
         while let Ok(event) = receiver.try_recv() {
             match event {
                 ControllerEvent::Snapshot(snapshot) => {
-                    let entering_first_run =
-                        snapshot.first_run && !shell.state.library.borrow().first_run;
-                    let finishing_first_run_connection =
-                        shell.state.first_run_connection_pending.get()
-                            && shell.state.first_run_connection_ready.get()
-                            && !snapshot.first_run;
-                    let source_changed =
-                        shell.state.library.borrow().selected_source != snapshot.selected_source;
+                    let snapshot_outcome = {
+                        let current = shell.state.library.borrow();
+                        snapshot_event_outcome(
+                            current.first_run,
+                            snapshot.first_run,
+                            &current.selected_source,
+                            &snapshot.selected_source,
+                            shell.state.first_run_connection_pending.get(),
+                            shell.state.first_run_connection_ready.get(),
+                        )
+                    };
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     let sections = snapshot.home_sections.clone();
                     *shell.state.library.borrow_mut() = *snapshot;
-                    if entering_first_run {
+                    if snapshot_outcome.entered_first_run {
                         shell.state.server_discovery_started.set(false);
                         shell.state.server_discovery_running.set(false);
                         *shell.state.discovered_servers.borrow_mut() = Vec::new();
@@ -375,15 +412,16 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     );
                     *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
                     shell.update_server_selector();
-                    if finishing_first_run_connection {
-                        shell.log_layout_snapshot("first_run_final_snapshot");
-                        shell.schedule_first_run_app_reveal();
-                        continue;
-                    }
-                    if source_changed {
-                        shell.navigate(Route::Home);
-                    } else {
-                        shell.render_current_route_preserving_scroll();
+                    match snapshot_outcome.render {
+                        SnapshotRenderDecision::FirstRunFinished => {
+                            shell.log_layout_snapshot("first_run_final_snapshot");
+                            shell.schedule_first_run_app_reveal();
+                            continue;
+                        }
+                        SnapshotRenderDecision::SourceChanged => shell.navigate(Route::Home),
+                        SnapshotRenderDecision::PreserveScroll => {
+                            shell.render_current_route_preserving_scroll();
+                        }
                     }
                     shell.schedule_startup_cover_warm();
                 }

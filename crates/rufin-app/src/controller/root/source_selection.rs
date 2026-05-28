@@ -18,7 +18,7 @@ impl AppController {
                 return;
             }
 
-            let sync_saved = match source {
+            let selected_saved_needing_sync = match source {
                 LibrarySourceSelection::Local => {
                     let saved = match ensure_local_source_server(&store) {
                         Ok(saved) => saved,
@@ -87,7 +87,7 @@ impl AppController {
             };
 
             emit_snapshot(&store, &events);
-            if let Some(saved) = sync_saved {
+            if let Some(saved) = selected_saved_needing_sync {
                 start_sync_thread(sync_context, saved);
             }
         });
