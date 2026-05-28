@@ -3,9 +3,9 @@
         DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, DiscordDisplayType, DiscordLinkType,
         EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode, LibraryField,
         LibraryLayout, LibraryListKey, LocalLibraryFolder, MAX_RESTORED_WINDOW_HEIGHT,
-        MAX_RESTORED_WINDOW_WIDTH, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
-        ScrobblingSettings, SidebarRouteItem, StreamQuality, TrackSortKey, TrackTableColumn,
-        sanitized_window_size,
+        MAX_RESTORED_WINDOW_WIDTH, MAX_CROSSFADE_SECONDS, MIN_CROSSFADE_SECONDS,
+        PlaybackTransitionMode, ReplayGainMode, RightSidebarMode, ScrobblingSettings,
+        SidebarRouteItem, StreamQuality, TrackSortKey, TrackTableColumn, sanitized_window_size,
     };
     #[test]
     fn settings_default_to_privacy_preserving_remote_features() {
@@ -183,6 +183,20 @@
         );
         assert_eq!(settings.track_table.sort_key, TrackSortKey::Title);
         assert!(settings.suppressed_auto_lyrics_track_ids.is_empty());
+    }
+    #[test]
+    fn playback_settings_sanitize_clamps_crossfade_to_supported_range() {
+        let mut settings = super::PlaybackSettings {
+            crossfade_seconds: 0,
+            ..super::PlaybackSettings::default()
+        };
+
+        settings.sanitize();
+        assert_eq!(settings.crossfade_seconds, MIN_CROSSFADE_SECONDS);
+
+        settings.crossfade_seconds = MAX_CROSSFADE_SECONDS + 1;
+        settings.sanitize();
+        assert_eq!(settings.crossfade_seconds, MAX_CROSSFADE_SECONDS);
     }
     #[test]
     fn app_settings_sanitize_local_library_folders() {

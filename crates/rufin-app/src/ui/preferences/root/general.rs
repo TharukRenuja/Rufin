@@ -454,7 +454,11 @@ fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .title(tr("Crossfade duration"))
         .subtitle(tr("Seconds"))
         .build();
-    let crossfade = gtk::SpinButton::with_range(1.0, 12.0, 1.0);
+    let crossfade = gtk::SpinButton::with_range(
+        f64::from(MIN_CROSSFADE_SECONDS),
+        f64::from(MAX_CROSSFADE_SECONDS),
+        1.0,
+    );
     crossfade.set_value(f64::from(settings.crossfade_seconds));
     crossfade.set_valign(gtk::Align::Center);
     let crossfade_shell = Rc::clone(shell);

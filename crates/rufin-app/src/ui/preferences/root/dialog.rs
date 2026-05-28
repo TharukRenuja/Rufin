@@ -6,8 +6,9 @@ use adw::prelude::*;
 use rufin_core::{
     AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
     EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_NARROW_LAYOUT_THRESHOLD,
-    MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
-    SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
+    MAX_CROSSFADE_SECONDS, MIN_CROSSFADE_SECONDS, MIN_NARROW_LAYOUT_THRESHOLD,
+    PlaybackTransitionMode, ReplayGainMode, RightSidebarMode, SidebarRouteItem,
+    SidebarRouteItemSettings, StreamQuality,
 };
 use rufin_playback::available_audio_outputs;
 use crate::{

@@ -10,6 +10,8 @@ pub const MIN_RESTORED_WINDOW_HEIGHT: i32 = 360;
 pub const MAX_RESTORED_WINDOW_WIDTH: i32 = 3_400;
 pub const MAX_RESTORED_WINDOW_HEIGHT: i32 = 2_000;
 pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
+pub const MIN_CROSSFADE_SECONDS: u8 = 1;
+pub const MAX_CROSSFADE_SECONDS: u8 = 30;
 const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
 fn default_lyrics_panel_visible() -> bool {
     true

@@ -457,6 +457,7 @@ impl GstEngine {
     }
 
     fn start_seek(&mut self, millis: u64) -> Result<(), String> {
+        self.finish_crossfade_for_seek();
         self.active_pipeline().seek_millis(millis)?;
         self.pending_seek = Some(PendingSeek::interactive(millis, self.state, Instant::now()));
         Ok(())
@@ -787,6 +788,17 @@ impl GstEngine {
             return true;
         }
         false
+    }
+
+    fn finish_crossfade_for_seek(&mut self) {
+        let crossfade = self
+            .shared
+            .lock()
+            .ok()
+            .and_then(|shared| shared.crossfade.clone());
+        if let Some(crossfade) = crossfade {
+            self.finish_crossfade(crossfade);
+        }
     }
 
     fn finish_crossfade(&mut self, crossfade: CrossfadeState) {

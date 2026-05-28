@@ -1,13 +1,13 @@
     use super::{
-        FakePlaybackBackend, GstEngine, PendingSeek, PlaybackBackend, PlaybackCommand,
-        PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline, PreparedPlaybackItem,
-        SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState, Slot,
-        StreamDescriptor,
+        CrossfadeState, FakePlaybackBackend, GstEngine, PendingSeek, PlaybackBackend,
+        PlaybackCommand, PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline,
+        PreparedPlaybackItem, SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW,
+        SharedPlaybackState, Slot, StreamDescriptor,
     };
     use rufin_core::{PlaybackSettings, PlaybackTransitionMode, TrackId};
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
     #[test]
     fn fake_backend_reports_basic_state_transitions() {
         let mut backend = FakePlaybackBackend::new();
@@ -171,6 +171,35 @@
             seconds: 0,
             millis: 0
         }));
+    }
+    #[test]
+    fn seek_during_crossfade_promotes_incoming_track_before_targeting_active_pipeline() {
+        let mut engine = test_engine_with_pending_seek(0);
+        engine.pending_seek = None;
+        let outgoing = PreparedPlaybackItem::new(track(1), StreamDescriptor::new("fake://track/1"));
+        let incoming = PreparedPlaybackItem::new(track(2), StreamDescriptor::new("fake://track/2"));
+
+        {
+            let mut shared = engine.shared.lock().expect("shared");
+            shared.current = Some(outgoing);
+            shared.gapless_pending = Some(incoming.clone());
+            shared.active = Slot::Primary;
+            shared.crossfade = Some(CrossfadeState {
+                from: Slot::Primary,
+                to: Slot::Secondary,
+                started_at: Instant::now(),
+                duration: Duration::from_secs(5),
+                item: incoming.clone(),
+            });
+        }
+
+        engine.finish_crossfade_for_seek();
+
+        let shared = engine.shared.lock().expect("shared");
+        assert_eq!(shared.active, Slot::Secondary);
+        assert_eq!(shared.current, Some(incoming));
+        assert!(shared.crossfade.is_none());
+        assert!(shared.gapless_pending.is_none());
     }
     fn track(number: u32) -> PlaybackTrack {
         PlaybackTrack {

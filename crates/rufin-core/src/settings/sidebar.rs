@@ -336,7 +336,9 @@ impl Default for PlaybackSettings {
 }
 impl PlaybackSettings {
     pub fn sanitize(&mut self) {
-        self.crossfade_seconds = self.crossfade_seconds.clamp(1, 12);
+        self.crossfade_seconds = self
+            .crossfade_seconds
+            .clamp(MIN_CROSSFADE_SECONDS, MAX_CROSSFADE_SECONDS);
         if !self.volume.is_finite() {
             self.volume = default_volume();
         }
