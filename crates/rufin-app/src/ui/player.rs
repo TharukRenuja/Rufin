@@ -74,6 +74,7 @@ pub(super) struct PlayerControls {
     pub(super) progress: gtk::Scale,
     pub(super) waveform: WaveformSeekBar,
     pub(super) waveform_key: RefCell<Option<String>>,
+    pub(super) waveform_peak_count: Cell<usize>,
     pub(super) duration: gtk::Label,
     pub(super) mute_button: gtk::Button,
     pub(super) mute_icon: gtk::Image,
@@ -195,10 +196,6 @@ impl WaveformSeekBar {
         self.area.queue_draw();
     }
 
-    fn has_peaks(&self) -> bool {
-        !self.peaks.borrow().is_empty()
-    }
-
     fn set_position_fraction(&self, position: f64) {
         let position = position.clamp(0.0, 1.0);
         self.position.set(position);
@@ -216,10 +213,10 @@ impl WaveformSeekBar {
         let commit = Rc::new(commit);
 
         let click = gtk::GestureClick::new();
+        click.set_button(1);
         let click_area = self.area.clone();
         let click_seek = Rc::clone(&seek);
-        click.connect_pressed(move |gesture, _, x, _| {
-            gesture.set_state(gtk::EventSequenceState::Claimed);
+        click.connect_pressed(move |_, _, x, _| {
             click_area.grab_focus();
             click_seek(waveform_fraction_for_x(&click_area, x));
         });
@@ -230,7 +227,7 @@ impl WaveformSeekBar {
         self.area.add_controller(click);
 
         let drag = gtk::GestureDrag::new();
-        drag.set_button(0);
+        drag.set_button(1);
         let drag_area = self.area.clone();
         let drag_seek = Rc::clone(&seek);
         drag.connect_drag_begin(move |gesture, x, _| {
@@ -246,6 +243,10 @@ impl WaveformSeekBar {
             };
             gesture.set_state(gtk::EventSequenceState::Claimed);
             drag_seek(waveform_fraction_for_x(&drag_area, start_x + x_offset));
+        });
+        let drag_commit = Rc::clone(&commit);
+        drag.connect_drag_end(move |_, _, _| {
+            drag_commit();
         });
         self.area.add_controller(drag);
 
@@ -517,24 +518,19 @@ impl Shell {
         controls.waveform.set_position_fraction(position_fraction);
         let waveform_enabled = self.state.settings.borrow().seekbar_waveform_enabled;
         let waveform_key = waveform_enabled
-            .then(|| {
-                player.waveform_peaks.as_ref().and_then(|peaks| {
-                    (!peaks.is_empty())
-                        .then(|| player.waveform_cache_key.clone())
-                        .flatten()
-                })
-            })
+            .then(|| player.waveform_cache_key.clone())
             .flatten();
+        let waveform_peaks = waveform_enabled
+            .then(|| player.waveform_peaks.as_deref().map(Vec::as_slice))
+            .flatten();
+        let waveform_peak_count = waveform_peaks.map_or(0, <[_]>::len);
         let waveform_key_changed = controls.waveform_key.borrow().as_ref() != waveform_key.as_ref();
-        if waveform_key_changed {
-            let peaks = waveform_key
-                .as_ref()
-                .and(player.waveform_peaks.as_deref())
-                .map(Vec::as_slice);
-            controls.waveform.set_peaks(peaks);
+        if waveform_key_changed || controls.waveform_peak_count.get() != waveform_peak_count {
+            controls.waveform.set_peaks(waveform_peaks);
             *controls.waveform_key.borrow_mut() = waveform_key;
+            controls.waveform_peak_count.set(waveform_peak_count);
         }
-        if waveform_enabled && controls.waveform.has_peaks() {
+        if waveform_enabled {
             controls
                 .progress_stack
                 .set_visible_child(controls.waveform.widget());
@@ -684,6 +680,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         progress,
         waveform,
         waveform_key: RefCell::new(None),
+        waveform_peak_count: Cell::new(0),
         duration,
         mute_button,
         mute_icon,
@@ -1009,7 +1006,6 @@ fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
         .player_controls
         .waveform
         .set_position_fraction(position);
-    queue_player_seek_preview_commit(shell);
 }
 
 fn preview_player_seek_fraction(shell: &Rc<Shell>, position: f64) {
@@ -1045,6 +1041,7 @@ fn commit_player_seek_preview(shell: &Rc<Shell>, generation: u64) {
     let Some(seconds) = shell.state.seek_preview_seconds.get() else {
         return;
     };
+    shell.state.seek_preview_seconds.set(None);
     shell.controller.seek(seconds);
 
     let shell = Rc::clone(shell);
@@ -1174,7 +1171,7 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
     shell
         .player_controls
         .progress
-        .connect_change_value(move |scale, _scroll, value| {
+        .connect_change_value(move |scale, scroll, value| {
             if seek_shell.state.updating_player_controls.get() {
                 return glib::Propagation::Proceed;
             }
@@ -1188,6 +1185,11 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
             let seconds = seekbar_target_seconds(value, duration_seconds);
             preview_player_seek(&seek_shell, seconds);
             scale.set_value(f64::from(seconds));
+            if scroll != gtk::ScrollType::Jump {
+                commit_player_seek_preview_now(&seek_shell);
+            } else {
+                queue_player_seek_preview_commit(&seek_shell);
+            }
             glib::Propagation::Stop
         });
 

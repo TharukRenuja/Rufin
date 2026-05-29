@@ -4,7 +4,6 @@ impl Shell {
     pub(in crate::ui) fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
         self.cancel_cover_warm();
-        self.cancel_startup_cover_warm();
         self.update_layout();
         self.state.home_section_views.borrow_mut().clear();
         if !self.state.startup_route_revealed.get() && !self.login_screen_active() {
@@ -95,7 +94,6 @@ impl Shell {
             );
         }
         self.record_perf_route_render(route_name, render_started.elapsed());
-        self.schedule_startup_cover_warm();
     }
     pub(in crate::ui) fn reset_inactive_route_cover_gates(
         &self,

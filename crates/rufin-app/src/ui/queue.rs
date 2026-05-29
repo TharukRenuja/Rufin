@@ -42,6 +42,7 @@ impl Shell {
             "",
             QueuePanelLayout::Fullscreen,
         );
+        self.controller.warm_waveforms_for_queue();
     }
 
     fn render_queue_panel_into(

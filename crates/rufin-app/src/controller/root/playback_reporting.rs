@@ -24,12 +24,11 @@ impl AppController {
         }
     }
     pub(in crate::controller) fn report_playback_progress_if_needed(&self, seconds: u32) {
-        let Some(current) = self
-            .playback_snapshot
-            .lock()
-            .ok()
-            .and_then(|snapshot| snapshot.current.clone())
-        else {
+        let Some(current) = self.playback_snapshot.lock().ok().and_then(|snapshot| {
+            (snapshot.state == PlaybackState::Playing)
+                .then(|| snapshot.current.clone())
+                .flatten()
+        }) else {
             return;
         };
         let bucket = seconds / 10;

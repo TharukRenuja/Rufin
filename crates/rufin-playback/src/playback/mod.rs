@@ -24,7 +24,8 @@ pub use waveform::generate_waveform_peaks;
 
 #[cfg(test)]
 use gstreamer_backend::{
-    CrossfadeState, GstEngine, PendingSeek, PlayerPipeline, SharedPlaybackState, Slot,
+    AboutToFinishAction, CrossfadeState, GstEngine, PendingSeek, PlayerPipeline,
+    SharedPlaybackState, Slot, about_to_finish_action,
 };
 use gstreamer_backend::{clock_seconds_from_millis, position_event, redact_sensitive_uri};
 

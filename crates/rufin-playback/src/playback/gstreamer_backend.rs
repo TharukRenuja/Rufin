@@ -206,6 +206,12 @@ pub(super) struct PlayerPipeline {
     bus: gst::Bus,
     _about_to_finish_id: glib::SignalHandlerId,
 }
+#[derive(Debug, PartialEq)]
+pub(super) enum AboutToFinishAction {
+    Preload(PreparedPlaybackItem),
+    Buffering,
+    Ignore,
+}
 impl PlayerPipeline {
     pub(super) fn new(
         slot: Slot,
@@ -286,10 +292,20 @@ impl PlayerPipeline {
         let _ = self.pipeline.set_state(gst::State::Null);
     }
 
+    fn restart_from_beginning(&self, target_state: gst::State) -> Result<(), String> {
+        self.pipeline
+            .set_state(gst::State::Ready)
+            .map_err(|error| error.to_string())?;
+        self.pipeline
+            .set_state(target_state)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     fn seek_millis(&self, millis: u64) -> Result<(), String> {
         self.pipeline
             .seek_simple(
-                gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
+                gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
                 gst::ClockTime::from_mseconds(millis),
             )
             .map_err(|error| error.to_string())
@@ -441,6 +457,7 @@ impl GstEngine {
         self.secondary.stop();
         let volume = settings.volume;
         let muted = settings.muted;
+        let start_millis = u64::from(start_position_seconds) * 1_000;
         if let Ok(mut shared) = self.shared.lock() {
             shared.settings = settings.clone();
             shared.current = Some(item.clone());
@@ -455,7 +472,7 @@ impl GstEngine {
         self.primary
             .play_item(&item, &settings, volume, muted, start_position_seconds)?;
         if start_position_seconds > 0 {
-            self.start_playback_seek(u64::from(start_position_seconds) * 1_000);
+            self.start_playback_seek(start_millis);
         } else {
             self.pending_seek = Some(PendingSeek::track_start(Instant::now()));
         }
@@ -464,15 +481,38 @@ impl GstEngine {
 
     fn start_seek(&mut self, millis: u64) -> Result<(), String> {
         self.finish_crossfade_for_seek();
-        self.active_pipeline().seek_millis(millis)?;
+        if millis == 0 {
+            let target_state = match self.state {
+                PlaybackState::Paused | PlaybackState::Stopped => gst::State::Paused,
+                PlaybackState::Buffering | PlaybackState::Playing => gst::State::Playing,
+            };
+            self.active_pipeline()
+                .restart_from_beginning(target_state)?;
+            self.pending_seek = Some(PendingSeek::track_start(Instant::now()));
+            push_event(&self.events, position_event(0));
+            return Ok(());
+        }
+        if let Err(error) = self.active_pipeline().seek_millis(millis) {
+            warn!(
+                %error,
+                target_millis = millis,
+                "GStreamer seek request failed"
+            );
+            if let Some(position) = self.active_pipeline().position() {
+                self.push_position(clock_millis(position));
+            }
+            return Ok(());
+        }
         self.pending_seek = Some(PendingSeek::interactive(millis, self.state, Instant::now()));
         Ok(())
     }
 
     fn start_playback_seek(&mut self, millis: u64) {
-        let pending = PendingSeek::startup(millis, self.state, Instant::now());
-        let _ = self.active_pipeline().seek_millis(millis);
-        self.pending_seek = Some(pending);
+        debug!(
+            target_millis = millis,
+            "deferring startup seek until GStreamer preroll completes"
+        );
+        self.pending_seek = Some(PendingSeek::startup(millis, self.state, Instant::now()));
     }
 
     fn poll_bus(&mut self) {
@@ -506,7 +546,9 @@ impl GstEngine {
                 self.handle_stream_start();
             }
             MessageView::DurationChanged(_) if self.is_active_slot(slot) => {
-                if let Some(duration) = self.active_pipeline().duration() {
+                if self.pending_seek.is_none()
+                    && let Some(duration) = self.active_pipeline().duration()
+                {
                     push_event(
                         &self.events,
                         PlaybackEvent::DurationChanged(clock_seconds(duration)),
@@ -518,9 +560,26 @@ impl GstEngine {
             }
             MessageView::Eos(_) => self.handle_eos(slot),
             MessageView::Error(error_message) => {
-                let message = error_message.error().to_string();
-                error!(%message, "GStreamer playback error");
-                push_event(&self.events, PlaybackEvent::Error(message));
+                let error = error_message.error().to_string();
+                let source = message
+                    .src()
+                    .map(|source| source.name().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let active_slot = self.active_slot();
+                let relevant = self.error_is_relevant_slot(slot);
+                error!(
+                    message = %error,
+                    %source,
+                    ?slot,
+                    ?active_slot,
+                    relevant,
+                    "GStreamer playback error"
+                );
+                if relevant {
+                    self.stop_after_playback_error();
+                    push_event(&self.events, PlaybackEvent::Error(error));
+                    self.push_state(PlaybackState::Stopped);
+                }
             }
             _ => {}
         }
@@ -613,19 +672,31 @@ impl GstEngine {
             return false;
         }
         let target_millis = pending.target_millis;
-        let resume_after_seek = pending.resume_after_seek;
         pending.retry_on_async_done = false;
         pending.expires_at = now + STARTUP_SEEK_SETTLE_WINDOW;
+        let resume_after_seek = pending.resume_after_seek;
         let seek_result = self.active_pipeline().seek_millis(target_millis);
-        if let Some(pending) = self.pending_seek.as_mut() {
-            if seek_result.is_err() {
-                pending.retry_on_async_done = true;
-            } else {
+        if let Err(error) = seek_result {
+            warn!(
+                %error,
+                target_millis,
+                "deferred startup seek failed; resuming from current position"
+            );
+            self.pending_seek = None;
+            if resume_after_seek {
+                self.resume_after_startup_seek();
+            }
+            if let Some(position) = self.active_pipeline().position() {
+                self.push_position(clock_millis(position));
+            }
+        } else {
+            if let Some(pending) = self.pending_seek.as_mut() {
                 pending.resume_after_seek = false;
             }
-        }
-        if resume_after_seek {
-            self.resume_after_startup_seek();
+            debug!(target_millis, "deferred startup seek started");
+            if resume_after_seek {
+                self.resume_after_startup_seek();
+            }
         }
         true
     }
@@ -663,7 +734,9 @@ impl GstEngine {
             if let Some(position) = self.active_pipeline().position() {
                 self.push_position(clock_millis(position));
             }
-            if let Some(duration) = self.active_pipeline().duration() {
+            if self.pending_seek.is_none()
+                && let Some(duration) = self.active_pipeline().duration()
+            {
                 push_event(
                     &self.events,
                     PlaybackEvent::DurationChanged(clock_seconds(duration)),
@@ -887,6 +960,29 @@ impl GstEngine {
         self.active_slot() == slot
     }
 
+    fn error_is_relevant_slot(&self, slot: Slot) -> bool {
+        if self.is_active_slot(slot) {
+            return true;
+        }
+        self.shared
+            .lock()
+            .ok()
+            .and_then(|shared| shared.crossfade.clone())
+            .is_some_and(|crossfade| crossfade.from == slot || crossfade.to == slot)
+    }
+
+    fn stop_after_playback_error(&mut self) {
+        self.pending_seek = None;
+        self.primary.stop();
+        self.secondary.stop();
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.next = None;
+            shared.gapless_pending = None;
+            shared.crossfade = None;
+            shared.active = Slot::Primary;
+        }
+    }
+
     fn message_source_is_pipeline(&self, slot: Slot, message: &gst::Message) -> bool {
         message.src().is_some_and(|source| {
             source
@@ -939,30 +1035,60 @@ fn handle_about_to_finish(
     shared: &Arc<Mutex<SharedPlaybackState>>,
     events: &Arc<Mutex<VecDeque<PlaybackEvent>>>,
 ) {
-    let next = shared.lock().ok().and_then(|mut shared| {
-        if shared.settings.transition_mode != PlaybackTransitionMode::Gapless
-            || shared.gapless_pending.is_some()
-        {
-            return None;
-        }
-        let next = shared.next.take()?;
-        shared.gapless_pending = Some(next.clone());
-        Some(next)
-    });
+    let action = shared
+        .lock()
+        .map(|mut shared| about_to_finish_action(&mut shared))
+        .unwrap_or(AboutToFinishAction::Ignore);
 
-    if let Some(next) = next {
+    match action {
+        AboutToFinishAction::Preload(next) => {
+            debug!(
+                track_id = %next.track.id.as_str(),
+                uri = %next.stream.redacted_uri(),
+                "preloading gapless next stream"
+            );
+            pipeline.set_property("uri", next.stream.uri());
+        }
+        AboutToFinishAction::Buffering => {
+            push_event(
+                events,
+                PlaybackEvent::StateChanged(PlaybackState::Buffering),
+            );
+        }
+        AboutToFinishAction::Ignore => {}
+    }
+}
+
+pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutToFinishAction {
+    if shared.settings.transition_mode != PlaybackTransitionMode::Gapless
+        || shared.gapless_pending.is_some()
+    {
+        return AboutToFinishAction::Ignore;
+    }
+
+    let Some(next) = shared.next.as_ref() else {
+        return AboutToFinishAction::Buffering;
+    };
+
+    if !gapless_preload_source_is_supported(next.stream.uri()) {
         debug!(
             track_id = %next.track.id.as_str(),
             uri = %next.stream.redacted_uri(),
-            "preloading gapless next stream"
+            "skipping gapless preload for non-local stream"
         );
-        pipeline.set_property("uri", next.stream.uri());
-    } else {
-        push_event(
-            events,
-            PlaybackEvent::StateChanged(PlaybackState::Buffering),
-        );
+        return AboutToFinishAction::Ignore;
     }
+
+    let next = shared
+        .next
+        .take()
+        .expect("gapless preload checked that next item exists");
+    shared.gapless_pending = Some(next.clone());
+    AboutToFinishAction::Preload(next)
+}
+
+pub(super) fn gapless_preload_source_is_supported(uri: &str) -> bool {
+    uri.starts_with("file://")
 }
 fn make_playbin(name: &str) -> Result<gst::Element, String> {
     gst::ElementFactory::make("playbin3")
@@ -972,15 +1098,19 @@ fn make_playbin(name: &str) -> Result<gst::Element, String> {
         .map_err(|error| error.to_string())
 }
 fn build_audio_sink(settings: &PlaybackSettings) -> Result<gst::Element, String> {
+    let has_replay_gain = settings.replay_gain != ReplayGainMode::Off;
+    let has_equalizer = settings.equalizer.enabled;
+    if !has_replay_gain && !has_equalizer {
+        return make_audio_output(settings.audio_output.as_deref());
+    }
+
     let bin = gst::Bin::new();
     let convert_in = make_element("audioconvert", "rufin-audio-convert-in")?;
     let convert_out = make_element("audioconvert", "rufin-audio-convert-out")?;
     let sink = make_audio_output(settings.audio_output.as_deref())?;
     let mut elements = vec![convert_in.clone()];
 
-    if settings.replay_gain != ReplayGainMode::Off
-        && let Some(rgvolume) = optional_element("rgvolume", "rufin-replaygain")
-    {
+    if has_replay_gain && let Some(rgvolume) = optional_element("rgvolume", "rufin-replaygain") {
         if settings.replay_gain == ReplayGainMode::Album {
             rgvolume.set_property("album-mode", true);
         }
@@ -990,7 +1120,7 @@ fn build_audio_sink(settings: &PlaybackSettings) -> Result<gst::Element, String>
         }
     }
 
-    if settings.equalizer.enabled
+    if has_equalizer
         && let Some(equalizer) = optional_element("equalizer-10bands", "rufin-equalizer")
     {
         for (index, gain) in settings

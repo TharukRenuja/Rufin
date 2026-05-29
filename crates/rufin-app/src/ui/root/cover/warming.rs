@@ -99,12 +99,18 @@ impl Shell {
     }
 
     pub(in crate::ui) fn schedule_startup_cover_warm(self: &Rc<Self>) {
-        let generation = self.next_startup_cover_warm_generation();
+        if self.state.startup_cover_warm_active.get() {
+            self.state.startup_cover_warm_reschedule_requested.set(true);
+            return;
+        }
+
         let jobs = self.startup_cover_warm_jobs();
         if jobs.is_empty() {
             return;
         }
 
+        self.state.startup_cover_warm_active.set(true);
+        let generation = self.next_startup_cover_warm_generation();
         info!(covers = jobs.len(), "scheduled startup cover warm");
         self.schedule_cover_warm_jobs(
             Rc::new(RefCell::new(jobs)),
@@ -114,16 +120,6 @@ impl Shell {
                 STARTUP_COVER_WARM_DELAY_MS,
             ),
         );
-    }
-
-    pub(in crate::ui) fn cancel_startup_cover_warm(&self) {
-        self.state.startup_cover_warm_generation.set(
-            self.state
-                .startup_cover_warm_generation
-                .get()
-                .saturating_add(1),
-        );
-        self.cancel_queued_warm_cover_decodes();
     }
 
     fn startup_cover_warm_jobs(&self) -> VecDeque<CoverWarmJob> {
@@ -212,6 +208,8 @@ impl Shell {
             glib::idle_add_local_once(move || {
                 if schedule.intent.current_generation(&shell) == schedule.generation {
                     shell.start_cover_warm_jobs(jobs, schedule);
+                } else {
+                    shell.finish_startup_cover_warm(schedule);
                 }
             });
             return;
@@ -222,6 +220,8 @@ impl Shell {
             move || {
                 if schedule.intent.current_generation(&shell) == schedule.generation {
                     shell.start_cover_warm_jobs(jobs, schedule);
+                } else {
+                    shell.finish_startup_cover_warm(schedule);
                 }
             },
         );
@@ -237,9 +237,11 @@ impl Shell {
             Duration::from_millis(schedule.intent.interval_ms()),
             move || {
                 if schedule.intent.current_generation(&shell) != schedule.generation {
+                    shell.finish_startup_cover_warm(schedule);
                     return glib::ControlFlow::Break;
                 }
                 if jobs.borrow().is_empty() {
+                    shell.finish_startup_cover_warm(schedule);
                     return glib::ControlFlow::Break;
                 }
                 if shell.cover_warm_is_paused() {
@@ -265,12 +267,30 @@ impl Shell {
                 }
 
                 if jobs.borrow().is_empty() {
+                    shell.finish_startup_cover_warm(schedule);
                     glib::ControlFlow::Break
                 } else {
                     glib::ControlFlow::Continue
                 }
             },
         );
+    }
+
+    fn finish_startup_cover_warm(self: &Rc<Self>, schedule: CoverWarmSchedule) {
+        if !matches!(schedule.intent, CoverWarmIntent::Startup)
+            || schedule.intent.current_generation(self) != schedule.generation
+        {
+            return;
+        }
+
+        self.state.startup_cover_warm_active.set(false);
+        if self
+            .state
+            .startup_cover_warm_reschedule_requested
+            .replace(false)
+        {
+            self.schedule_startup_cover_warm();
+        }
     }
 
     fn cover_pipeline_in_flight(&self) -> usize {
