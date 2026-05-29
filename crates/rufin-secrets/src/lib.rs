@@ -29,15 +29,90 @@ pub enum SecretError {
 
 pub type SecretResult<T> = Result<T, SecretError>;
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum SecretKey {
+    ProviderToken(ServerId),
+    LastFmApiSecret,
+    LastFmSession,
+    LibreFmSession,
+    ListenBrainzToken,
+}
+
+impl SecretKey {
+    fn provider_token(server_id: &ServerId) -> Self {
+        Self::ProviderToken(server_id.clone())
+    }
+}
+
 pub trait SecretStore: Send + Sync {
-    fn save_token(&self, server_id: &ServerId, token: &str) -> SecretResult<()>;
-    fn load_token(&self, server_id: &ServerId) -> SecretResult<Option<String>>;
-    fn delete_token(&self, server_id: &ServerId) -> SecretResult<()>;
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()>;
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>>;
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()>;
+
+    fn save_token(&self, server_id: &ServerId, token: &str) -> SecretResult<()> {
+        self.save_secret(&SecretKey::provider_token(server_id), token)
+    }
+
+    fn load_token(&self, server_id: &ServerId) -> SecretResult<Option<String>> {
+        self.load_secret(&SecretKey::provider_token(server_id))
+    }
+
+    fn delete_token(&self, server_id: &ServerId) -> SecretResult<()> {
+        self.delete_secret(&SecretKey::provider_token(server_id))
+    }
+}
+
+#[derive(Clone)]
+pub struct CachedSecretStore {
+    inner: Arc<dyn SecretStore>,
+    secrets: Arc<Mutex<HashMap<SecretKey, Option<String>>>>,
+}
+
+impl CachedSecretStore {
+    pub fn new(inner: Arc<dyn SecretStore>) -> Self {
+        Self {
+            inner,
+            secrets: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl SecretStore for CachedSecretStore {
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        self.inner.save_secret(key, secret)?;
+        let mut secrets = self.secrets.lock().map_err(|_| SecretError::Locked)?;
+        secrets.insert(key.clone(), Some(secret.to_string()));
+        Ok(())
+    }
+
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        if let Some(secret) = self
+            .secrets
+            .lock()
+            .map_err(|_| SecretError::Locked)?
+            .get(key)
+            .cloned()
+        {
+            return Ok(secret);
+        }
+
+        let secret = self.inner.load_secret(key)?;
+        let mut secrets = self.secrets.lock().map_err(|_| SecretError::Locked)?;
+        secrets.insert(key.clone(), secret.clone());
+        Ok(secret)
+    }
+
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        self.inner.delete_secret(key)?;
+        let mut secrets = self.secrets.lock().map_err(|_| SecretError::Locked)?;
+        secrets.insert(key.clone(), None);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Default)]
 pub struct MemorySecretStore {
-    tokens: Arc<Mutex<HashMap<ServerId, String>>>,
+    secrets: Arc<Mutex<HashMap<SecretKey, String>>>,
 }
 
 impl MemorySecretStore {
@@ -47,20 +122,20 @@ impl MemorySecretStore {
 }
 
 impl SecretStore for MemorySecretStore {
-    fn save_token(&self, server_id: &ServerId, token: &str) -> SecretResult<()> {
-        let mut tokens = self.tokens.lock().map_err(|_| SecretError::Locked)?;
-        tokens.insert(server_id.clone(), token.to_string());
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        let mut secrets = self.secrets.lock().map_err(|_| SecretError::Locked)?;
+        secrets.insert(key.clone(), secret.to_string());
         Ok(())
     }
 
-    fn load_token(&self, server_id: &ServerId) -> SecretResult<Option<String>> {
-        let tokens = self.tokens.lock().map_err(|_| SecretError::Locked)?;
-        Ok(tokens.get(server_id).cloned())
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        let secrets = self.secrets.lock().map_err(|_| SecretError::Locked)?;
+        Ok(secrets.get(key).cloned())
     }
 
-    fn delete_token(&self, server_id: &ServerId) -> SecretResult<()> {
-        let mut tokens = self.tokens.lock().map_err(|_| SecretError::Locked)?;
-        tokens.remove(server_id);
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        let mut secrets = self.secrets.lock().map_err(|_| SecretError::Locked)?;
+        secrets.remove(key);
         Ok(())
     }
 }
@@ -86,12 +161,55 @@ impl SecretServiceStore {
         }
     }
 
-    fn token_attributes(&self, server_id: &ServerId) -> Vec<(String, String)> {
-        vec![
-            ("application".to_string(), self.application.clone()),
-            ("kind".to_string(), "jellyfin-token".to_string()),
-            ("server_id".to_string(), server_id.as_str().to_string()),
-        ]
+    fn secret_attributes(&self, key: &SecretKey) -> Vec<(String, String)> {
+        let mut attributes = vec![("application".to_string(), self.application.clone())];
+        match key {
+            SecretKey::ProviderToken(server_id) => {
+                attributes.push(("namespace".to_string(), "provider".to_string()));
+                attributes.push(("kind".to_string(), "provider-token".to_string()));
+                attributes.push(("server_id".to_string(), server_id.as_str().to_string()));
+            }
+            SecretKey::LastFmApiSecret => {
+                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
+                attributes.push(("kind".to_string(), "lastfm-api-secret".to_string()));
+            }
+            SecretKey::LastFmSession => {
+                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
+                attributes.push(("kind".to_string(), "lastfm-session".to_string()));
+            }
+            SecretKey::LibreFmSession => {
+                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
+                attributes.push(("kind".to_string(), "librefm-session".to_string()));
+            }
+            SecretKey::ListenBrainzToken => {
+                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
+                attributes.push(("kind".to_string(), "listenbrainz-token".to_string()));
+            }
+        }
+        attributes
+    }
+
+    fn legacy_secret_attributes(&self, key: &SecretKey) -> Option<Vec<(String, String)>> {
+        match key {
+            SecretKey::ProviderToken(server_id) => Some(vec![
+                ("application".to_string(), self.application.clone()),
+                ("kind".to_string(), "jellyfin-token".to_string()),
+                ("server_id".to_string(), server_id.as_str().to_string()),
+            ]),
+            _ => None,
+        }
+    }
+
+    fn secret_label(&self, key: &SecretKey) -> String {
+        match key {
+            SecretKey::ProviderToken(server_id) => {
+                format!("Rufin provider token {}", server_id.as_str())
+            }
+            SecretKey::LastFmApiSecret => "Rufin Last.fm API secret".to_string(),
+            SecretKey::LastFmSession => "Rufin Last.fm session".to_string(),
+            SecretKey::LibreFmSession => "Rufin Libre.fm session".to_string(),
+            SecretKey::ListenBrainzToken => "Rufin ListenBrainz token".to_string(),
+        }
     }
 
     fn run<T, Fut>(&self, operation: Fut) -> SecretResult<T>
@@ -166,6 +284,20 @@ impl SecretServiceStore {
 }
 
 #[cfg(unix)]
+async fn load_item_secret(
+    keyring: &oo7::Keyring,
+    attributes: &Vec<(String, String)>,
+) -> oo7::Result<Option<oo7::Secret>> {
+    let Some(item) = keyring.search_items(attributes).await?.into_iter().next() else {
+        return Ok(None);
+    };
+    if item.is_locked().await? {
+        item.unlock().await?;
+    }
+    Ok(Some(item.secret().await?))
+}
+
+#[cfg(unix)]
 fn should_cache_keyring(sandboxed: bool) -> bool {
     // Native DBus keyrings are tied to the runtime that drives their connection.
     // The sandbox file backend needs reuse to avoid per-instance file locks.
@@ -174,28 +306,31 @@ fn should_cache_keyring(sandboxed: bool) -> bool {
 
 #[cfg(unix)]
 impl SecretStore for SecretServiceStore {
-    fn save_token(&self, server_id: &ServerId, token: &str) -> SecretResult<()> {
-        let attributes = self.token_attributes(server_id);
-        let label = format!("Rufin Jellyfin token {}", server_id.as_str());
-        let token = token.to_string();
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        let attributes = self.secret_attributes(key);
+        let label = self.secret_label(key);
+        let secret = secret.to_string();
 
         self.run_with_keyring(move |keyring| async move {
             keyring
-                .create_item(&label, &attributes, oo7::Secret::text(token), true)
+                .create_item(&label, &attributes, oo7::Secret::text(secret), true)
                 .await
         })
     }
 
-    fn load_token(&self, server_id: &ServerId) -> SecretResult<Option<String>> {
-        let attributes = self.token_attributes(server_id);
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        let attributes = self.secret_attributes(key);
+        let legacy_attributes = self.legacy_secret_attributes(key);
         let secret = self.run_with_keyring(move |keyring| async move {
-            let Some(item) = keyring.search_items(&attributes).await?.into_iter().next() else {
-                return Ok(None);
-            };
-            if item.is_locked().await? {
-                item.unlock().await?;
+            if let Some(secret) = load_item_secret(&keyring, &attributes).await? {
+                return Ok(Some(secret));
             }
-            Ok(Some(item.secret().await?))
+            if let Some(legacy_attributes) = legacy_attributes
+                && let Some(secret) = load_item_secret(&keyring, &legacy_attributes).await?
+            {
+                return Ok(Some(secret));
+            }
+            Ok(None)
         })?;
 
         secret
@@ -204,26 +339,36 @@ impl SecretStore for SecretServiceStore {
             .map_err(|_| SecretError::Utf8)
     }
 
-    fn delete_token(&self, server_id: &ServerId) -> SecretResult<()> {
-        let attributes = self.token_attributes(server_id);
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        let attributes = self.secret_attributes(key);
+        let legacy_attributes = self.legacy_secret_attributes(key);
 
-        self.run_with_keyring(move |keyring| async move { keyring.delete(&attributes).await })
+        self.run_with_keyring(move |keyring| async move {
+            keyring.delete(&attributes).await?;
+            if let Some(legacy_attributes) = legacy_attributes {
+                keyring.delete(&legacy_attributes).await?;
+            }
+            Ok(())
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MemorySecretStore, SecretStore};
     #[cfg(unix)]
-    use super::{SecretError, SecretServiceStore};
+    use super::SecretServiceStore;
+    use super::{
+        CachedSecretStore, MemorySecretStore, SecretError, SecretKey, SecretResult, SecretStore,
+    };
     use rufin_core::ServerId;
     #[cfg(unix)]
     use std::future;
+    use std::sync::{Arc, Mutex};
     #[cfg(unix)]
     use std::time::{Duration, Instant};
 
     #[test]
-    fn memory_secret_store_round_trips_tokens() {
+    fn memory_secret_store_round_trips_provider_tokens() {
         let store = MemorySecretStore::new();
         let server_id = ServerId::fake(1);
 
@@ -234,6 +379,136 @@ mod tests {
         );
         store.delete_token(&server_id).expect("delete token");
         assert_eq!(store.load_token(&server_id).expect("load token"), None);
+    }
+
+    #[test]
+    fn memory_secret_store_namespaces_secret_keys() {
+        let store = MemorySecretStore::new();
+        let server_id = ServerId::fake(1);
+
+        store
+            .save_token(&server_id, "provider-token")
+            .expect("save provider token");
+        store
+            .save_secret(&SecretKey::LastFmSession, "lastfm-session")
+            .expect("save scrobbling session");
+
+        assert_eq!(
+            store.load_token(&server_id).expect("load provider token"),
+            Some("provider-token".to_string())
+        );
+        assert_eq!(
+            store
+                .load_secret(&SecretKey::LastFmSession)
+                .expect("load scrobbling session"),
+            Some("lastfm-session".to_string())
+        );
+        assert_eq!(
+            store
+                .load_secret(&SecretKey::ListenBrainzToken)
+                .expect("load listenbrainz token"),
+            None
+        );
+    }
+
+    #[derive(Default)]
+    struct CountingSecretStore {
+        inner: MemorySecretStore,
+        loads: Mutex<usize>,
+    }
+
+    impl CountingSecretStore {
+        fn load_count(&self) -> usize {
+            *self.loads.lock().expect("load count")
+        }
+    }
+
+    impl SecretStore for CountingSecretStore {
+        fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+            self.inner.save_secret(key, secret)
+        }
+
+        fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+            *self.loads.lock().map_err(|_| SecretError::Locked)? += 1;
+            self.inner.load_secret(key)
+        }
+
+        fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+            self.inner.delete_secret(key)
+        }
+    }
+
+    #[test]
+    fn cached_secret_store_reuses_loaded_provider_tokens() {
+        let inner = Arc::new(CountingSecretStore::default());
+        let server_id = ServerId::fake(1);
+        inner
+            .save_token(&server_id, "provider-token")
+            .expect("seed provider token");
+        let store = CachedSecretStore::new(inner.clone());
+
+        assert_eq!(
+            store.load_token(&server_id).expect("load provider token"),
+            Some("provider-token".to_string())
+        );
+        assert_eq!(
+            store
+                .load_token(&server_id)
+                .expect("load cached provider token"),
+            Some("provider-token".to_string())
+        );
+        assert_eq!(inner.load_count(), 1);
+    }
+
+    #[test]
+    fn cached_secret_store_updates_cache_after_save_and_delete() {
+        let inner = Arc::new(CountingSecretStore::default());
+        let store = CachedSecretStore::new(inner.clone());
+        let server_id = ServerId::fake(1);
+
+        store
+            .save_token(&server_id, "first-token")
+            .expect("save provider token");
+        assert_eq!(
+            store.load_token(&server_id).expect("load provider token"),
+            Some("first-token".to_string())
+        );
+        assert_eq!(inner.load_count(), 0);
+
+        store
+            .delete_token(&server_id)
+            .expect("delete provider token");
+        assert_eq!(
+            store.load_token(&server_id).expect("load after delete"),
+            None
+        );
+        assert_eq!(inner.load_count(), 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn secret_service_provider_token_uses_namespaced_attributes_with_legacy_fallback() {
+        let store = SecretServiceStore::new();
+        let server_id = ServerId::fake(1);
+        let key = SecretKey::ProviderToken(server_id.clone());
+
+        let attributes = store.secret_attributes(&key);
+        assert!(attributes.contains(&("namespace".to_string(), "provider".to_string())));
+        assert!(attributes.contains(&("kind".to_string(), "provider-token".to_string())));
+        assert!(attributes.contains(&("server_id".to_string(), server_id.as_str().to_string())));
+
+        let legacy_attributes = store
+            .legacy_secret_attributes(&key)
+            .expect("legacy provider attributes");
+        assert!(legacy_attributes.contains(&("kind".to_string(), "jellyfin-token".to_string())));
+        assert!(
+            legacy_attributes.contains(&("server_id".to_string(), server_id.as_str().to_string()))
+        );
+        assert!(
+            store
+                .legacy_secret_attributes(&SecretKey::LastFmSession)
+                .is_none()
+        );
     }
 
     #[test]
