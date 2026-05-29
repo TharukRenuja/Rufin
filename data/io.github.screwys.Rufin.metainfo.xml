@@ -55,10 +55,12 @@
   <releases>
     <release version="0.4.0" date="2026-05-29">
       <description>
-        <p>This is a big release, workflows of the repository are hardened and automatized further.
-- Fixed a bug where home page refreshes needlessly.
-- Made server connection more robust, added timeouts/size limits to prevent unnecassary hangs
-- Refactored secret storage keys, scrobbling keys are also in secret storage now.</p>
+        <p>This is a big release, workflows of the repository are hardened and automatized further.</p>
+        <ul>
+          <li>Fixed a bug where home page refreshes needlessly.</li>
+          <li>Made server connection more robust, added timeouts/size limits to prevent unnecassary hangs</li>
+          <li>Refactored secret storage keys, scrobbling keys are also in secret storage now.</li>
+        </ul>
       </description>
     </release>
     <release version="0.3.14" date="2026-05-28">
