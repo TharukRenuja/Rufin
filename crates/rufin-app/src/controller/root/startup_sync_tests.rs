@@ -100,7 +100,7 @@ pub(in crate::controller) fn no_server_bootstrap_enters_first_run_state() {
 #[test]
 pub(in crate::controller) fn source_selection_activates_queue_for_selected_source() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.as_ref().expect("server").id.clone();
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
@@ -485,7 +485,7 @@ pub(in crate::controller) fn update_server_settings_persists_editable_fields() {
 #[test]
 pub(in crate::controller) fn fake_bootstrap_routes_data_through_store_cache() {
     let (_controller, _events, snapshot, queue, player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     assert!(!snapshot.first_run);
     assert!(queue.expect("queue").entries.is_empty());
     assert_eq!(player.state, PlaybackState::Stopped);
@@ -510,7 +510,7 @@ pub(in crate::controller) fn sync_pages_continue_when_total_is_unknown() {
 #[test]
 pub(in crate::controller) fn large_fake_bootstrap_seeds_visible_cache_window() {
     let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Large));
+        AppController::bootstrap_with_fake(FakeScale::Large);
     assert!(!snapshot.first_run);
     assert_eq!(snapshot.albums.len(), SNAPSHOT_GRID_LIMIT);
     assert_eq!(snapshot.tracks.len(), 2_000);
@@ -975,7 +975,7 @@ pub(in crate::controller) fn explore_prefetch_promotes_only_when_requested() {
 #[test]
 pub(in crate::controller) fn clear_cache_emits_empty_active_server_snapshot() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let server = snapshot.server.expect("server");
     controller.clear_active_server_cache();
     let snapshot = wait_for_snapshot(&events);

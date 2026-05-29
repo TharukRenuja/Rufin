@@ -97,6 +97,7 @@ use rufin_core::{
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
 use rufin_store::{CachedGenreDetail, image_cache_key};
+#[cfg(feature = "dev-tools")]
 use rufin_test_support::FakeScale;
 use source_selector::{ServerSelector, build_server_selector};
 use std::cell::{Cell, RefCell};
@@ -205,6 +206,7 @@ pub(in crate::ui) const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Debug)]
 pub struct AppOptions {
+    #[cfg(feature = "dev-tools")]
     pub fake_scale: Option<FakeScale>,
     pub smoke_exit_ms: Option<u64>,
     pub ui_perf_run: bool,
@@ -214,6 +216,22 @@ pub struct AppOptions {
     pub ui_perf_duration_ms: u64,
     pub ui_perf_asset_ms: u64,
     pub ui_perf_output: Option<PathBuf>,
+}
+impl Default for AppOptions {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "dev-tools")]
+            fake_scale: None,
+            smoke_exit_ms: None,
+            ui_perf_run: false,
+            ui_perf_observe: false,
+            ui_perf_max_gap_ms: 120,
+            ui_perf_route_ms: 650,
+            ui_perf_duration_ms: 15_000,
+            ui_perf_asset_ms: 300,
+            ui_perf_output: None,
+        }
+    }
 }
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
@@ -512,7 +530,24 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     install_css();
 
     let loaded_at = std::time::Instant::now();
-    let (controller, events, library, queue, player) = AppController::bootstrap(options.fake_scale);
+    #[cfg(feature = "dev-tools")]
+    let using_fake_library = options.fake_scale.is_some();
+    #[cfg(not(feature = "dev-tools"))]
+    let using_fake_library = false;
+    let (controller, events, library, queue, player) = {
+        #[cfg(feature = "dev-tools")]
+        {
+            if let Some(scale) = options.fake_scale {
+                AppController::bootstrap_with_fake(scale)
+            } else {
+                AppController::bootstrap()
+            }
+        }
+        #[cfg(not(feature = "dev-tools"))]
+        {
+            AppController::bootstrap()
+        }
+    };
     let settings = controller.load_settings();
     info!(
         cached_albums = library.cached_album_count,
@@ -530,7 +565,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let language_preference = i18n::effective_language_preference(&settings.language);
     i18n::set_language_preference(&language_preference);
     let perf_requires_assets =
-        perf_enabled && options.fake_scale.is_none() && library_has_image_refs(&library);
+        perf_enabled && !using_fake_library && library_has_image_refs(&library);
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
 
     let state = AppState {
@@ -762,7 +797,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     shell.request_initial_lyrics_if_needed();
     install_event_pump(&shell, events);
 
-    if options.fake_scale.is_none() && !options.ui_perf_run {
+    if !using_fake_library && !options.ui_perf_run {
         schedule_startup_sync(&shell);
     }
 

@@ -40,7 +40,7 @@ pub(in crate::controller) fn wait_for_token_deleted(
 #[test]
 pub(in crate::controller) fn startup_sync_policy_uses_empty_fresh_and_error_cache_states() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.expect("server").id;
     assert_eq!(controller.startup_sync_delay_ms(), None);
     controller
@@ -331,7 +331,7 @@ pub(in crate::controller) fn missing_cached_cover_file_invalidates_cover_index()
 #[test]
 pub(in crate::controller) fn forget_server_emits_first_run_and_deletes_token() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.expect("server").id;
     controller
         .secrets
@@ -345,7 +345,7 @@ pub(in crate::controller) fn forget_server_emits_first_run_and_deletes_token() {
 #[test]
 pub(in crate::controller) fn forget_server_cancels_running_sync_and_emits_first_run() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.expect("server").id;
     controller
         .secrets
@@ -376,7 +376,7 @@ pub(in crate::controller) fn forget_server_cancels_running_sync_and_emits_first_
 #[test]
 pub(in crate::controller) fn forget_server_emits_first_run_when_token_delete_fails() {
     let (mut controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.expect("server").id;
     controller.secrets = Arc::new(DeleteFailingSecretStore);
 
@@ -397,7 +397,7 @@ pub(in crate::controller) fn forget_server_emits_first_run_when_token_delete_fai
 #[test]
 pub(in crate::controller) fn duplicate_resync_requests_do_not_start_another_sync() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.expect("server").id;
     let _permit = controller
         .sync_in_flight
@@ -410,7 +410,7 @@ pub(in crate::controller) fn duplicate_resync_requests_do_not_start_another_sync
 #[test]
 pub(in crate::controller) fn play_now_starts_fake_playback_and_persists_queue() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let queue = wait_for_queue(&events).expect("queue");
@@ -435,7 +435,7 @@ pub(in crate::controller) fn play_now_starts_fake_playback_and_persists_queue() 
 #[test]
 pub(in crate::controller) fn play_tracks_prepares_next_stream_for_backend() {
     let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
@@ -454,7 +454,7 @@ pub(in crate::controller) fn play_tracks_prepares_next_stream_for_backend() {
 #[test]
 pub(in crate::controller) fn local_access_changes_reprepare_next_stream_for_backend() {
     let (controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
@@ -495,7 +495,7 @@ pub(in crate::controller) fn local_access_changes_reprepare_next_stream_for_back
 #[test]
 pub(in crate::controller) fn prepared_next_send_rejects_stale_duplicate_track_entry() {
     let (_controller, _events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.as_ref().expect("server").id.clone();
     let first = snapshot.tracks[0].clone();
     let repeated = snapshot.tracks[1].clone();
@@ -539,7 +539,7 @@ pub(in crate::controller) fn prepared_next_send_rejects_stale_duplicate_track_en
 #[test]
 pub(in crate::controller) fn activate_queue_entry_starts_selected_track() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second.clone()]);
@@ -561,7 +561,7 @@ pub(in crate::controller) fn activate_queue_entry_starts_selected_track() {
 #[test]
 pub(in crate::controller) fn seek_millis_emits_exact_playback_position() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     controller.play_now(snapshot.tracks[0].clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
     controller.seek_millis(12_345);
@@ -571,7 +571,7 @@ pub(in crate::controller) fn seek_millis_emits_exact_playback_position() {
 #[test]
 pub(in crate::controller) fn next_previous_and_clear_keep_queue_and_player_synchronized() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first.clone(), second.clone()]);
@@ -595,7 +595,7 @@ pub(in crate::controller) fn next_previous_and_clear_keep_queue_and_player_synch
 #[test]
 pub(in crate::controller) fn manual_next_at_queue_end_wraps_to_first_track() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.toggle_auto_dj();
@@ -614,7 +614,7 @@ pub(in crate::controller) fn manual_next_at_queue_end_wraps_to_first_track() {
 #[test]
 pub(in crate::controller) fn manual_previous_after_ten_seconds_restarts_current_track() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second.clone()]);
@@ -630,7 +630,7 @@ pub(in crate::controller) fn manual_previous_after_ten_seconds_restarts_current_
 #[test]
 pub(in crate::controller) fn cycle_repeat_uses_all_one_off_order() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     controller.play_now(snapshot.tracks[0].clone());
     let _queue = wait_for_queue(&events).expect("queue");
     controller.cycle_repeat();
@@ -721,7 +721,7 @@ pub(in crate::controller) fn app_cache_layout_creates_expected_subdirs_without_p
 #[test]
 pub(in crate::controller) fn toggle_auto_dj_persists_and_emits_playback_state() {
     let (controller, events, _snapshot, _queue, player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     assert!(player.auto_dj_enabled);
     controller.toggle_auto_dj();
     let playback = wait_for_playback_auto_dj(&events, false);
@@ -731,7 +731,7 @@ pub(in crate::controller) fn toggle_auto_dj_persists_and_emits_playback_state() 
 #[test]
 pub(in crate::controller) fn random_play_now_replaces_queue_and_starts_first_random_track() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let expected = random_track_ids(&snapshot.tracks, 3);
     controller.play_random_tracks(random_request(RandomPlayAction::PlayNow, 3));
     let queue = wait_for_queue(&events).expect("random queue");
@@ -748,7 +748,7 @@ pub(in crate::controller) fn random_play_now_replaces_queue_and_starts_first_ran
 #[test]
 pub(in crate::controller) fn random_play_next_inserts_tracks_after_current() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     let expected_random = random_track_ids(&snapshot.tracks, 2);
@@ -769,7 +769,7 @@ pub(in crate::controller) fn random_play_next_inserts_tracks_after_current() {
 #[test]
 pub(in crate::controller) fn random_add_last_appends_tracks_without_replacing_current() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     let expected_random = random_track_ids(&snapshot.tracks, 2);
@@ -790,7 +790,7 @@ pub(in crate::controller) fn random_add_last_appends_tracks_without_replacing_cu
 #[test]
 pub(in crate::controller) fn play_last_appends_tracks_without_replacing_current() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     let third = snapshot.tracks[2].clone();
@@ -810,7 +810,7 @@ pub(in crate::controller) fn play_last_appends_tracks_without_replacing_current(
 #[test]
 pub(in crate::controller) fn auto_dj_tops_up_low_queue_from_cached_library() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     controller.play_now(first.clone());
     let queue = wait_for_queue(&events).expect("queue");
@@ -829,7 +829,7 @@ pub(in crate::controller) fn auto_dj_tops_up_low_queue_from_cached_library() {
 #[test]
 pub(in crate::controller) fn auto_dj_extends_queue_before_manual_next_at_end() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second.clone()]);
@@ -899,7 +899,7 @@ pub(in crate::controller) fn auto_dj_candidates_prefer_related_tracks() {
 #[test]
 pub(in crate::controller) fn end_of_stream_repeat_one_restarts_current_track() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first.clone(), second]);
@@ -916,7 +916,7 @@ pub(in crate::controller) fn end_of_stream_repeat_one_restarts_current_track() {
 #[test]
 pub(in crate::controller) fn end_of_stream_advances_queue() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second.clone()]);
@@ -931,7 +931,7 @@ pub(in crate::controller) fn end_of_stream_advances_queue() {
 #[test]
 pub(in crate::controller) fn prepared_track_started_advances_queue_without_restarting_playback() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let commands = Arc::new(Mutex::new(Vec::new()));
     *controller.playback.lock().expect("playback") =
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
@@ -969,7 +969,7 @@ pub(in crate::controller) fn prepared_track_started_advances_queue_without_resta
 #[test]
 pub(in crate::controller) fn favorite_toggles_update_fake_cache_and_current_player_snapshot() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let track = snapshot
         .tracks
         .iter()

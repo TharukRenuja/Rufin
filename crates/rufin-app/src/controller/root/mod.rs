@@ -29,15 +29,18 @@ use rufin_provider::{
 #[cfg(test)]
 use rufin_provider::{LyricLine, LyricsSource, PlayedFilter};
 use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
+#[cfg(any(test, feature = "dev-tools"))]
+use rufin_secrets::MemorySecretStore;
 #[cfg(unix)]
 use rufin_secrets::SecretServiceStore;
-use rufin_secrets::{CachedSecretStore, MemorySecretStore, SecretKey, SecretStore};
+use rufin_secrets::{CachedSecretStore, SecretKey, SecretStore};
 #[cfg(test)]
 use rufin_store::CoverCacheEntry;
 use rufin_store::{
     CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store, StoreError,
     SyncState,
 };
+#[cfg(any(test, feature = "dev-tools"))]
 use rufin_test_support::{FakeProvider, FakeScale};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

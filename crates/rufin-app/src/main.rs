@@ -11,7 +11,10 @@ mod ui;
 use std::path::PathBuf;
 
 use adw::prelude::*;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
+#[cfg(feature = "dev-tools")]
+use clap::ValueEnum;
+#[cfg(feature = "dev-tools")]
 use rufin_test_support::FakeScale;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -22,30 +25,39 @@ const APP_ICON_NAME: &str = APP_ID;
 #[derive(Clone, Debug, Parser)]
 #[command(name = "rufin", about = "Native GTK music client shell")]
 struct Cli {
+    #[cfg(feature = "dev-tools")]
     #[arg(long, value_enum)]
     fake_scale: Option<FakeScaleArg>,
 
+    #[cfg(feature = "dev-tools")]
     #[arg(long)]
     smoke_exit_ms: Option<u64>,
 
+    #[cfg(feature = "dev-tools")]
     #[arg(long)]
     ui_perf_run: bool,
 
+    #[cfg(feature = "dev-tools")]
     #[arg(long)]
     ui_perf_observe: bool,
 
+    #[cfg(feature = "dev-tools")]
     #[arg(long, default_value_t = 120)]
     ui_perf_max_gap_ms: u64,
 
+    #[cfg(feature = "dev-tools")]
     #[arg(long, default_value_t = 650)]
     ui_perf_route_ms: u64,
 
+    #[cfg(feature = "dev-tools")]
     #[arg(long, default_value_t = 15_000)]
     ui_perf_duration_ms: u64,
 
+    #[cfg(feature = "dev-tools")]
     #[arg(long, default_value_t = 300)]
     ui_perf_asset_ms: u64,
 
+    #[cfg(feature = "dev-tools")]
     #[arg(long)]
     ui_perf_output: Option<PathBuf>,
 
@@ -59,12 +71,14 @@ struct Cli {
     validate_runtime: bool,
 }
 
+#[cfg(feature = "dev-tools")]
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum FakeScaleArg {
     Small,
     Large,
 }
 
+#[cfg(feature = "dev-tools")]
 impl From<FakeScaleArg> for FakeScale {
     fn from(value: FakeScaleArg) -> Self {
         match value {
@@ -87,6 +101,7 @@ fn main() {
         eprintln!("Use only one maintenance flag at a time.");
         std::process::exit(2);
     }
+    #[cfg(feature = "dev-tools")]
     if cli.ui_perf_run && cli.ui_perf_observe {
         eprintln!("Use only one UI perf mode at a time.");
         std::process::exit(2);
@@ -114,17 +129,22 @@ fn main() {
         return;
     }
 
-    let options = ui::AppOptions {
-        fake_scale: cli.fake_scale.map(Into::into),
-        smoke_exit_ms: cli.smoke_exit_ms,
-        ui_perf_run: cli.ui_perf_run,
-        ui_perf_observe: cli.ui_perf_observe,
-        ui_perf_max_gap_ms: cli.ui_perf_max_gap_ms,
-        ui_perf_route_ms: cli.ui_perf_route_ms,
-        ui_perf_duration_ms: cli.ui_perf_duration_ms,
-        ui_perf_asset_ms: cli.ui_perf_asset_ms,
-        ui_perf_output: cli.ui_perf_output,
-    };
+    #[cfg(feature = "dev-tools")]
+    let mut options = ui::AppOptions::default();
+    #[cfg(not(feature = "dev-tools"))]
+    let options = ui::AppOptions::default();
+    #[cfg(feature = "dev-tools")]
+    {
+        options.fake_scale = cli.fake_scale.map(Into::into);
+        options.smoke_exit_ms = cli.smoke_exit_ms;
+        options.ui_perf_run = cli.ui_perf_run;
+        options.ui_perf_observe = cli.ui_perf_observe;
+        options.ui_perf_max_gap_ms = cli.ui_perf_max_gap_ms;
+        options.ui_perf_route_ms = cli.ui_perf_route_ms;
+        options.ui_perf_duration_ms = cli.ui_perf_duration_ms;
+        options.ui_perf_asset_ms = cli.ui_perf_asset_ms;
+        options.ui_perf_output = cli.ui_perf_output;
+    }
 
     info!(?options, "starting Rufin native shell");
 
