@@ -32,7 +32,7 @@ use rufin_provider::{LyricLine, LyricsSource, PlayedFilter};
 use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
 #[cfg(unix)]
 use rufin_secrets::SecretServiceStore;
-use rufin_secrets::{CachedSecretStore, MemorySecretStore, SecretStore};
+use rufin_secrets::{CachedSecretStore, MemorySecretStore, SecretKey, SecretStore};
 #[cfg(test)]
 use rufin_store::CoverCacheEntry;
 use rufin_store::{

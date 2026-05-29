@@ -360,6 +360,26 @@ fn settings_share_lastfm_api_key_when_only_one_value_exists() {
     from_scrobbling_key.migrate_defaults();
     assert_eq!(from_scrobbling_key.lastfm_api_key, "scrobble-key");
 }
+
+#[test]
+fn settings_use_global_lastfm_api_key_when_values_conflict() {
+    let mut settings = AppSettings {
+        lastfm_api_key: "cover-key".to_string(),
+        scrobbling: ScrobblingSettings {
+            lastfm: AudioscrobblerScrobbleSettings {
+                api_key: "scrobble-key".to_string(),
+                ..AudioscrobblerScrobbleSettings::default()
+            },
+            ..ScrobblingSettings::default()
+        },
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+
+    assert_eq!(settings.lastfm_api_key, "cover-key");
+    assert_eq!(settings.scrobbling.lastfm.api_key, "cover-key");
+}
 #[test]
 fn settings_migrate_legacy_home_sections_to_home_blocks() {
     let json = r#"{
