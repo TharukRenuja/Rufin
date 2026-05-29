@@ -7,10 +7,9 @@ Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [
 
 Updates release metadata, commits it, and creates a signed annotated tag whose
 message includes commits since the previous release tag. VERSION may be vX.Y.Z
-or X.Y.Z. With --push, pushes release changes to a temporary branch, waits for
-Checks to pass, fast-forwards main, pushes the signed tag, gates the AUR follow-up
-the same way, then publishes the GitHub Release from the tag using the
-authenticated gh user.
+or X.Y.Z. With --push, opens empty-body release PRs, waits for Checks to pass,
+merges them, pushes the signed tag, gates the AUR follow-up the same way, then
+publishes the GitHub Release from the tag using the authenticated gh user.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
@@ -92,11 +91,16 @@ if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
 fi
 plain_version="${version#v}"
 release_branch="release/$version"
-checks_workflow="checks.yml"
-checks_timeout_seconds=7200
+aur_branch="$release_branch-aur"
+default_branch="${RUFIN_RELEASE_DEFAULT_BRANCH:-main}"
 
 if ! git check-ref-format "refs/heads/$release_branch"; then
   echo "release branch name is invalid: $release_branch" >&2
+  exit 1
+fi
+
+if ! git check-ref-format "refs/heads/$aur_branch"; then
+  echo "AUR branch name is invalid: $aur_branch" >&2
   exit 1
 fi
 
@@ -218,6 +222,9 @@ write_changelog() {
       "chore(aur): update stable package for v"*)
         continue
         ;;
+      "Merge pull request #"*)
+        continue
+        ;;
     esac
 
     local pr_info=""
@@ -321,7 +328,7 @@ MSG
 check_github_release_prereqs() {
   if ! command -v gh >/dev/null 2>&1; then
     cat >&2 <<'MSG'
-gh is required to wait for release Checks before pushing main.
+gh is required to open, watch, and merge release PRs.
 Install GitHub CLI and authenticate it before using --push.
 MSG
     exit 1
@@ -329,7 +336,7 @@ MSG
 
   if ! gh auth status >/dev/null 2>&1; then
     cat >&2 <<'MSG'
-gh must be authenticated to wait for release Checks before pushing main.
+gh must be authenticated to open, watch, and merge release PRs.
 Run `gh auth login` before using --push.
 MSG
     exit 1
@@ -349,10 +356,39 @@ MSG
   fi
 }
 
-wait_for_release_checks() {
-  local sha="$1"
-  local phase="$2"
-  local repo_slug run_id run_url deadline
+fetch_default_branch() {
+  git fetch origin "refs/heads/$default_branch:refs/remotes/origin/$default_branch"
+}
+
+check_release_push_branch() {
+  local current_branch
+
+  current_branch="$(git branch --show-current)"
+  if [[ "$current_branch" != "$default_branch" ]]; then
+    echo "--push releases must start from $default_branch; current branch is $current_branch" >&2
+    exit 1
+  fi
+
+  fetch_default_branch
+  if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$default_branch")" ]]; then
+    cat >&2 <<MSG
+$default_branch must match origin/$default_branch before publishing a release.
+Merge or discard local-only commits before using --push.
+MSG
+    exit 1
+  fi
+}
+
+fast_forward_default_branch() {
+  fetch_default_branch
+  git switch "$default_branch"
+  git merge --ff-only "origin/$default_branch"
+}
+
+open_release_pr() {
+  local branch="$1"
+  local title="$2"
+  local repo_slug pr_number
 
   repo_slug="$(github_repo_from_origin)"
   if [[ -z "$repo_slug" ]]; then
@@ -360,64 +396,76 @@ wait_for_release_checks() {
     exit 1
   fi
 
-  deadline=$((SECONDS + checks_timeout_seconds))
-  printf '\nWaiting for Checks on %s (%s) via %s...\n' "$sha" "$phase" "$release_branch"
+  pr_number="$(
+    gh pr list \
+      --repo "$repo_slug" \
+      --head "$branch" \
+      --state open \
+      --json number \
+      --jq '.[0].number // empty'
+  )"
 
-  while true; do
-    run_id="$(
-      gh run list \
+  if [[ -z "$pr_number" ]]; then
+    gh pr create \
+      --repo "$repo_slug" \
+      --base "$default_branch" \
+      --head "$branch" \
+      --title "$title" \
+      --body "" >&2
+    pr_number="$(
+      gh pr list \
         --repo "$repo_slug" \
-        --workflow "$checks_workflow" \
-        --branch "$release_branch" \
-        --commit "$sha" \
-        --event push \
-        --limit 1 \
-        --json databaseId \
-        --jq '.[0].databaseId // empty'
+        --head "$branch" \
+        --state open \
+        --json number \
+        --jq '.[0].number // empty'
     )"
+  else
+    gh pr edit "$pr_number" \
+      --repo "$repo_slug" \
+      --title "$title" \
+      --body "" >&2
+  fi
 
-    if [[ -n "$run_id" ]]; then
-      run_url="$(
-        gh run view "$run_id" \
-          --repo "$repo_slug" \
-          --json url \
-          --jq '.url'
-      )"
-      printf 'Watching %s\n' "$run_url"
-      gh run watch "$run_id" --repo "$repo_slug" --interval 15 --exit-status
-      return
-    fi
+  if [[ -z "$pr_number" ]]; then
+    echo "failed to create or find release PR for $branch" >&2
+    exit 1
+  fi
 
-    if (( SECONDS >= deadline )); then
-      echo "timed out waiting for Checks to start for $sha on $release_branch" >&2
-      exit 1
-    fi
-
-    sleep 10
-  done
+  printf '%s\n' "$pr_number"
 }
 
-push_release_branch_and_wait() {
-  local phase="$1"
-  local sha
+merge_release_pr_after_checks() {
+  local pr_number="$1"
+  local phase="$2"
+  local repo_slug
+
+  repo_slug="$(github_repo_from_origin)"
+  if [[ -z "$repo_slug" ]]; then
+    echo "could not determine GitHub repository from origin" >&2
+    exit 1
+  fi
+
+  printf '\nWaiting for PR #%s Checks (%s)...\n' "$pr_number" "$phase"
+  gh pr checks "$pr_number" --repo "$repo_slug" --watch --fail-fast --interval 15
+
+  printf '\nMerging PR #%s after Checks passed...\n' "$pr_number"
+  gh pr merge "$pr_number" --repo "$repo_slug" --merge --delete-branch
+}
+
+push_branch_open_pr_and_merge() {
+  local branch="$1"
+  local title="$2"
+  local phase="$3"
+  local sha pr_number
 
   sha="$(git rev-parse HEAD)"
-  printf '\nPushing %s to %s for CI preflight...\n' "$sha" "$release_branch"
-  git push --force-with-lease origin "HEAD:refs/heads/$release_branch"
-  wait_for_release_checks "$sha" "$phase"
-}
+  printf '\nPushing %s to %s for PR Checks...\n' "$sha" "$branch"
+  git push --force-with-lease origin "HEAD:refs/heads/$branch"
 
-push_main_after_checks() {
-  local phase="$1"
-
-  push_release_branch_and_wait "$phase"
-  printf '\nFast-forwarding main to %s after Checks passed...\n' "$(git rev-parse HEAD)"
-  git push origin HEAD:main
-}
-
-delete_release_branch() {
-  printf '\nDeleting temporary release branch %s...\n' "$release_branch"
-  git push origin ":refs/heads/$release_branch" >/dev/null 2>&1 || true
+  pr_number="$(open_release_pr "$branch" "$title")"
+  merge_release_pr_after_checks "$pr_number" "$phase"
+  fast_forward_default_branch
 }
 
 publish_github_release() {
@@ -460,6 +508,7 @@ fi
 
 if [[ "$push_tag" == "1" ]]; then
   check_github_release_prereqs
+  check_release_push_branch
 fi
 
 bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
@@ -494,15 +543,23 @@ if [[ "$skip_flathub" != "1" && -f "$flathub_manifest" ]]; then
 fi
 
 if [[ "$push_tag" == "1" ]]; then
-  push_main_after_checks "release metadata and Flathub manifest"
+  push_branch_open_pr_and_merge \
+    "$release_branch" \
+    "chore(release): publish $version" \
+    "release metadata and Flathub manifest"
   if [[ "$replace_tag" == "1" ]]; then
     git push --force origin "$version"
   else
     git push origin "$version"
   fi
+  git switch -C "$aur_branch" "origin/$default_branch"
   if update_aur_stable_package; then
-    push_main_after_checks "AUR stable package metadata"
+    push_branch_open_pr_and_merge \
+      "$aur_branch" \
+      "chore(aur): publish stable package for $version" \
+      "AUR stable package metadata"
+  else
+    fast_forward_default_branch
   fi
   publish_github_release
-  delete_release_branch
 fi
