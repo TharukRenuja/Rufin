@@ -107,17 +107,21 @@ jobs:
         uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
         with:
           extra_nix_config: |
+            connect-timeout = 10
+            download-attempts = 5
             extra-substituters = https://screwys-rufin.cachix.org
             extra-trusted-public-keys = screwys-rufin.cachix.org-1:BOMRVJbl30p0hFwsumnUXNjf88hLOysCSAhNpLhljqA=
+            max-substitution-jobs = 4
+            stalled-download-timeout = 90
 
       - name: Check Rust formatting
-        run: nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
 
       - name: Check Rust lints
-        run: nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run Rust tests
-        run: nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo test --workspace --locked
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo test --workspace --locked
 
   cargo-deny:
     name: cargo-deny
