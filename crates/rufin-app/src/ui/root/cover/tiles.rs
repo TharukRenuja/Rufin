@@ -232,36 +232,12 @@ impl Shell {
                 generation,
             });
         }
-        let shell = Rc::clone(self);
-        let controller = self.controller.clone();
-        let candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
-        glib::spawn_future_local(async move {
-            let path = gtk::gio::spawn_blocking(move || {
-                candidate_keys
-                    .iter()
-                    .find_map(|key| controller.cached_cover_path_for_key(key))
-            })
-            .await
-            .ok()
-            .flatten();
-            if let Some(path) = path {
-                if !shell.cover_binding_has_live(&key) {
-                    shell.record_perf_cover_stale_key(&key);
-                    return;
-                }
-                shell.record_perf_cover_path_ready(&key);
-                shell.record_perf_cover_ready(&key);
-                shell.start_cover_decode_from_path(
-                    key,
-                    path,
-                    decode_size,
-                    CoverDecodePriority::Visible,
-                );
-            } else {
-                shell.state.cover_bindings.borrow_mut().remove(&key);
-                shell.record_perf_cover_stale_key(&key);
-                shell.record_perf_coverless_tile();
-            }
+        self.start_cached_cover_path_lookup(CoverPathLookupRequest {
+            key,
+            image_ref,
+            fetch_size,
+            size: decode_size,
+            intent: CoverPathLookupIntent::Visible,
         });
     }
 }

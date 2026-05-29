@@ -44,6 +44,94 @@ impl Shell {
         }
         None
     }
+    pub(in crate::ui) fn start_cached_cover_path_lookup(
+        self: &Rc<Self>,
+        request: CoverPathLookupRequest,
+    ) {
+        let CoverPathLookupRequest {
+            key,
+            image_ref,
+            fetch_size,
+            size,
+            intent,
+        } = request;
+        let should_start = record_cover_path_lookup_request(
+            &mut self.state.cover_path_lookups.borrow_mut(),
+            key.clone(),
+            intent,
+        );
+        if !should_start {
+            return;
+        }
+
+        let shell = Rc::clone(self);
+        let controller = self.controller.clone();
+        let candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
+        glib::spawn_future_local(async move {
+            let path = gtk::gio::spawn_blocking(move || {
+                candidate_keys
+                    .iter()
+                    .find_map(|key| controller.cached_cover_path_for_key(key))
+            })
+            .await
+            .ok()
+            .flatten();
+            let intent = shell
+                .state
+                .cover_path_lookups
+                .borrow_mut()
+                .remove(&key)
+                .unwrap_or(intent);
+            shell.finish_cached_cover_path_lookup(key, size, intent, path);
+        });
+    }
+    pub(in crate::ui) fn finish_cached_cover_path_lookup(
+        self: &Rc<Self>,
+        key: String,
+        size: i32,
+        intent: CoverPathLookupIntent,
+        path: Option<PathBuf>,
+    ) {
+        match intent {
+            CoverPathLookupIntent::Warm => {
+                if let Some(path) = path {
+                    self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Warm);
+                }
+            }
+            CoverPathLookupIntent::Visible => {
+                self.finish_visible_cover_path_lookup(key, size, path);
+            }
+        }
+    }
+    fn finish_visible_cover_path_lookup(
+        self: &Rc<Self>,
+        key: String,
+        size: i32,
+        path: Option<PathBuf>,
+    ) {
+        let Some(path) = path else {
+            self.state.cover_bindings.borrow_mut().remove(&key);
+            self.record_perf_cover_stale_key(&key);
+            self.record_perf_coverless_tile();
+            return;
+        };
+
+        if !self.cover_binding_has_live(&key) {
+            self.record_perf_cover_stale_key(&key);
+            return;
+        }
+
+        let size = self
+            .pending_cover_size(&key)
+            .map(|pending_size| {
+                let fetch_size = cover_size_from_cache_key(&key).unwrap_or(size).max(1) as u32;
+                cover_decode_size(pending_size, fetch_size).max(size)
+            })
+            .unwrap_or(size);
+        self.record_perf_cover_path_ready(&key);
+        self.record_perf_cover_ready(&key);
+        self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
+    }
     pub(in crate::ui) fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
         self.record_perf_cover_ready(key);
         let size = self

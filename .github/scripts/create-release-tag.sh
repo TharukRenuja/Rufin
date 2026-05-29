@@ -175,7 +175,7 @@ release_note_pr_for_commit() {
 
   if output="$(gh api -H 'Accept: application/vnd.github+json' \
     "repos/$repo_slug/commits/$commit/pulls" \
-    --jq 'if length == 0 then empty else ((map(select(.merged_at != null)) | sort_by(.merged_at) | .[-1]) // .[0]) | [.number, .title, .user.login] | @tsv end' \
+    --jq 'map(select(.merged_at != null)) | sort_by(.merged_at) | .[-1] | select(. != null) | [.number, .title, .user.login] | @tsv' \
     2>/dev/null)"; then
     printf '%s\n' "$output"
   fi

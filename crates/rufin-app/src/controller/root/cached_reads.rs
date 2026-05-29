@@ -902,11 +902,11 @@ pub(in crate::controller) fn playback_backend(fake: bool) -> Box<dyn PlaybackBac
 pub(in crate::controller) fn platform_secret_store() -> Arc<dyn SecretStore> {
     #[cfg(unix)]
     {
-        Arc::new(SecretServiceStore::new())
+        Arc::new(CachedSecretStore::new(Arc::new(SecretServiceStore::new())))
     }
     #[cfg(not(unix))]
     {
-        Arc::new(MemorySecretStore::new())
+        Arc::new(CachedSecretStore::new(Arc::new(MemorySecretStore::new())))
     }
 }
 pub(in crate::controller) fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {

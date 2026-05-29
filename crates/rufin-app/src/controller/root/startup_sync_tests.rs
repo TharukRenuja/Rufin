@@ -39,17 +39,24 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 struct SaveFailingSecretStore;
 impl SecretStore for SaveFailingSecretStore {
-    fn save_token(&self, _server_id: &ServerId, _token: &str) -> rufin_secrets::SecretResult<()> {
+    fn save_secret(
+        &self,
+        _key: &rufin_secrets::SecretKey,
+        _secret: &str,
+    ) -> rufin_secrets::SecretResult<()> {
         Err(rufin_secrets::SecretError::Backend(
             "save failed".to_string(),
         ))
     }
 
-    fn load_token(&self, _server_id: &ServerId) -> rufin_secrets::SecretResult<Option<String>> {
+    fn load_secret(
+        &self,
+        _key: &rufin_secrets::SecretKey,
+    ) -> rufin_secrets::SecretResult<Option<String>> {
         Ok(None)
     }
 
-    fn delete_token(&self, _server_id: &ServerId) -> rufin_secrets::SecretResult<()> {
+    fn delete_secret(&self, _key: &rufin_secrets::SecretKey) -> rufin_secrets::SecretResult<()> {
         Ok(())
     }
 }

@@ -30,6 +30,40 @@ pub(in crate::ui) fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
     );
 }
 #[test]
+pub(in crate::ui) fn visible_cover_lookup_reuses_and_upgrades_warm_lookup() {
+    let mut lookups = HashMap::new();
+
+    assert!(super::record_cover_path_lookup_request(
+        &mut lookups,
+        "album-art".to_string(),
+        super::CoverPathLookupIntent::Warm,
+    ));
+    assert!(!super::record_cover_path_lookup_request(
+        &mut lookups,
+        "album-art".to_string(),
+        super::CoverPathLookupIntent::Visible,
+    ));
+    assert_eq!(
+        lookups.get("album-art"),
+        Some(&super::CoverPathLookupIntent::Visible)
+    );
+
+    assert!(super::record_cover_path_lookup_request(
+        &mut lookups,
+        "now-playing".to_string(),
+        super::CoverPathLookupIntent::Visible,
+    ));
+    assert!(!super::record_cover_path_lookup_request(
+        &mut lookups,
+        "now-playing".to_string(),
+        super::CoverPathLookupIntent::Warm,
+    ));
+    assert_eq!(
+        lookups.get("now-playing"),
+        Some(&super::CoverPathLookupIntent::Visible)
+    );
+}
+#[test]
 pub(in crate::ui) fn home_section_pages_reset_for_new_home_data() {
     let mut states = HashMap::from([(
         HomeSectionKind::Explore,

@@ -480,7 +480,8 @@ impl AppSettings {
         self.language = sanitize_language_preference(&self.language);
         if self.lastfm_api_key.is_empty() && !self.scrobbling.lastfm.api_key.is_empty() {
             self.lastfm_api_key = self.scrobbling.lastfm.api_key.clone();
-        } else if self.scrobbling.lastfm.api_key.is_empty() && !self.lastfm_api_key.is_empty() {
+        }
+        if !self.lastfm_api_key.is_empty() {
             self.scrobbling.lastfm.api_key = self.lastfm_api_key.clone();
         }
         self.layout.sanitize();

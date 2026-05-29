@@ -589,21 +589,21 @@ pub(in crate::ui) struct StartupCoverTarget {
     fetch_size: u32,
     size: i32,
 }
-pub(in crate::ui) fn startup_cover_prime_jobs(shell: &Shell) -> Vec<StartupCoverWarmJob> {
+pub(in crate::ui) fn startup_cover_prime_jobs(shell: &Shell) -> Vec<CoverWarmJob> {
     startup_cover_jobs_from_targets(
         shell,
         startup_cover_prime_targets(shell),
         Some(STARTUP_CACHED_COVER_PRIME_LIMIT),
     )
 }
-pub(in crate::ui) fn startup_cover_background_jobs(shell: &Shell) -> Vec<StartupCoverWarmJob> {
+pub(in crate::ui) fn startup_cover_background_jobs(shell: &Shell) -> Vec<CoverWarmJob> {
     startup_cover_jobs_from_targets(shell, startup_cover_background_targets(shell), None)
 }
 pub(in crate::ui) fn startup_cover_jobs_from_targets(
     shell: &Shell,
     targets: Vec<StartupCoverTarget>,
     limit: Option<usize>,
-) -> Vec<StartupCoverWarmJob> {
+) -> Vec<CoverWarmJob> {
     let mut seen = HashSet::new();
     let mut jobs = Vec::new();
 
@@ -619,7 +619,7 @@ pub(in crate::ui) fn startup_cover_jobs_from_targets(
         {
             continue;
         }
-        jobs.push(StartupCoverWarmJob {
+        jobs.push(CoverWarmJob {
             key,
             image_ref: target.image_ref,
             fetch_size: target.fetch_size,
