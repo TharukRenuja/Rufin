@@ -92,7 +92,7 @@ pub fn language_option_index(options: &[LanguageOption], language_preference: &s
 }
 
 pub fn tr(message: &str) -> String {
-    gettext(message)
+    non_empty_translation(message, gettext(message))
 }
 
 pub fn set_language_preference(language_preference: &str) {
@@ -305,6 +305,14 @@ fn app_settings_path() -> PathBuf {
     ProjectDirs::from("io.github", "screwys", "Rufin")
         .map(|dirs| dirs.config_dir().join(SETTINGS_FILE_NAME))
         .unwrap_or_else(|| PathBuf::from(SETTINGS_FILE_NAME))
+}
+
+fn non_empty_translation(message: &str, translated: String) -> String {
+    if translated.is_empty() && !message.is_empty() {
+        message.to_string()
+    } else {
+        translated
+    }
 }
 
 #[allow(dead_code)]
@@ -646,5 +654,12 @@ mod tests {
         assert_eq!(language_display_name("pt_BR"), "Portuguese");
         assert_eq!(language_display_name("tr_TR"), "Turkish");
         assert_eq!(language_display_name("zz_ZZ"), "zz_ZZ");
+    }
+
+    #[test]
+    fn translation_falls_back_when_catalog_entry_is_empty() {
+        assert_eq!(non_empty_translation("Previous", String::new()), "Previous");
+        assert_eq!(non_empty_translation("", String::new()), "");
+        assert_eq!(non_empty_translation("Play", "Oynat".to_string()), "Oynat");
     }
 }

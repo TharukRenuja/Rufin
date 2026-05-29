@@ -3,6 +3,11 @@ window {
   color: @window_fg_color;
 }
 
+tooltip.background,
+tooltip.background label {
+  color: white;
+}
+
 .app-root {
   background: transparent;
 }
