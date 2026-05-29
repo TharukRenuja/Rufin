@@ -38,9 +38,18 @@ impl AppController {
             snapshot.position_millis = u64::from(position_seconds) * 1_000;
             snapshot.duration_seconds = entry.duration_seconds;
             snapshot.last_error = None;
+            set_waveform_cache_key(
+                snapshot,
+                Some(waveform_cache_key(
+                    &server_id,
+                    &entry.track_id,
+                    entry.duration_seconds,
+                )),
+            );
         });
         self.emit_playback_snapshot();
         self.report_playback(PlaybackReportKind::Started, false);
+        let waveform_enabled = self.load_settings().seekbar_waveform_enabled;
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
@@ -62,6 +71,7 @@ impl AppController {
                     return;
                 }
             };
+            let waveform_item = item.clone();
             let next = next_entry.and_then(|entry| {
                 match resolve_prepared_item(
                     &store,
@@ -94,6 +104,16 @@ impl AppController {
                     snapshot.last_error = Some(error.clone());
                 }
                 let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if waveform_enabled {
+                request_waveform_for_prepared_item(
+                    playback_snapshot,
+                    events,
+                    server_id,
+                    entry,
+                    waveform_item,
+                );
             }
         });
     }

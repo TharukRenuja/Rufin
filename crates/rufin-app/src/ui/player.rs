@@ -32,6 +32,7 @@ const BOTTOM_PLAYER_SIDE_BUTTON_SIZE: i32 = 50;
 const BOTTOM_PLAYER_PLAY_BUTTON_SIZE: i32 = 45;
 const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 3.0;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 52.0;
+const BOTTOM_PLAYER_WAVEFORM_HEIGHT: i32 = 32;
 const BOTTOM_PLAYER_ACTION_BUTTON_SIZE: i32 = 34;
 const BOTTOM_PLAYER_ACTION_BUTTON_COUNT: i32 = 4;
 const BOTTOM_PLAYER_ACTION_SPACING: i32 = 5;
@@ -69,7 +70,10 @@ pub(super) struct PlayerControls {
     pub(super) lyrics_icon_open: Rc<Cell<bool>>,
     pub(super) favorite_button: gtk::Button,
     pub(super) elapsed: gtk::Label,
+    pub(super) progress_stack: gtk::Stack,
     pub(super) progress: gtk::Scale,
+    pub(super) waveform: WaveformSeekBar,
+    pub(super) waveform_key: RefCell<Option<String>>,
     pub(super) duration: gtk::Label,
     pub(super) mute_button: gtk::Button,
     pub(super) mute_icon: gtk::Image,
@@ -96,7 +100,9 @@ struct TransportControls {
     repeat_button: gtk::Button,
     dj_button: gtk::Button,
     elapsed: gtk::Label,
+    progress_stack: gtk::Stack,
     progress: gtk::Scale,
+    waveform: WaveformSeekBar,
     duration: gtk::Label,
 }
 
@@ -112,6 +118,263 @@ struct PlayerActionControls {
     mute_button: gtk::Button,
     mute_icon: gtk::Image,
     volume: gtk::Scale,
+}
+
+#[derive(Clone)]
+pub(super) struct WaveformSeekBar {
+    area: gtk::DrawingArea,
+    peaks: Rc<RefCell<Vec<(f64, f64)>>>,
+    position: Rc<Cell<f64>>,
+}
+
+impl WaveformSeekBar {
+    fn new() -> Self {
+        let area = gtk::DrawingArea::new();
+        area.add_css_class("player-waveform");
+        area.set_content_width(BOTTOM_PLAYER_PROGRESS_WIDTH);
+        area.set_content_height(BOTTOM_PLAYER_WAVEFORM_HEIGHT);
+        area.set_width_request(BOTTOM_PLAYER_PROGRESS_WIDTH);
+        area.set_focusable(true);
+        area.set_valign(gtk::Align::Center);
+        let seek_label = crate::i18n::tr("Seek");
+        area.set_tooltip_text(Some(&seek_label));
+        area.update_property(&[
+            gtk::accessible::Property::Label(&seek_label),
+            gtk::accessible::Property::ValueMin(0.0),
+            gtk::accessible::Property::ValueMax(1.0),
+            gtk::accessible::Property::ValueNow(0.0),
+        ]);
+
+        let peaks = Rc::new(RefCell::new(Vec::new()));
+        let position = Rc::new(Cell::new(0.0));
+        let hover_position = Rc::new(Cell::new(None));
+        let draw_peaks = Rc::clone(&peaks);
+        let draw_position = Rc::clone(&position);
+        let draw_hover_position = Rc::clone(&hover_position);
+        area.set_draw_func(move |area, context, width, height| {
+            draw_waveform_seekbar(
+                area,
+                context,
+                width,
+                height,
+                &draw_peaks.borrow(),
+                draw_position.get(),
+                draw_hover_position.get(),
+            );
+        });
+
+        let motion = gtk::EventControllerMotion::new();
+        let motion_area = area.clone();
+        let motion_hover = Rc::clone(&hover_position);
+        motion.connect_motion(move |_, x, _| {
+            motion_hover.set(Some(waveform_fraction_for_x(&motion_area, x)));
+            motion_area.queue_draw();
+        });
+        let leave_area = area.clone();
+        let leave_hover = Rc::clone(&hover_position);
+        motion.connect_leave(move |_| {
+            leave_hover.set(None);
+            leave_area.queue_draw();
+        });
+        area.add_controller(motion);
+
+        Self {
+            area,
+            peaks,
+            position,
+        }
+    }
+
+    fn widget(&self) -> &gtk::DrawingArea {
+        &self.area
+    }
+
+    fn set_peaks(&self, peaks: Option<&[(f64, f64)]>) {
+        let next = peaks.map(normalize_waveform_peaks).unwrap_or_default();
+        *self.peaks.borrow_mut() = next;
+        self.area.queue_draw();
+    }
+
+    fn has_peaks(&self) -> bool {
+        !self.peaks.borrow().is_empty()
+    }
+
+    fn set_position_fraction(&self, position: f64) {
+        let position = position.clamp(0.0, 1.0);
+        self.position.set(position);
+        self.area
+            .update_property(&[gtk::accessible::Property::ValueNow(position)]);
+        self.area.queue_draw();
+    }
+
+    fn connect_seek<F, C>(&self, seek: F, commit: C)
+    where
+        F: Fn(f64) + 'static,
+        C: Fn() + 'static,
+    {
+        let seek = Rc::new(seek);
+        let commit = Rc::new(commit);
+
+        let click = gtk::GestureClick::new();
+        let click_area = self.area.clone();
+        let click_seek = Rc::clone(&seek);
+        click.connect_pressed(move |gesture, _, x, _| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            click_area.grab_focus();
+            click_seek(waveform_fraction_for_x(&click_area, x));
+        });
+        let click_commit = Rc::clone(&commit);
+        click.connect_released(move |_, _, _, _| {
+            click_commit();
+        });
+        self.area.add_controller(click);
+
+        let drag = gtk::GestureDrag::new();
+        drag.set_button(0);
+        let drag_area = self.area.clone();
+        let drag_seek = Rc::clone(&seek);
+        drag.connect_drag_begin(move |gesture, x, _| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            drag_area.grab_focus();
+            drag_seek(waveform_fraction_for_x(&drag_area, x));
+        });
+        let drag_area = self.area.clone();
+        let drag_seek = Rc::clone(&seek);
+        drag.connect_drag_update(move |gesture, x_offset, _| {
+            let Some((start_x, _)) = gesture.start_point() else {
+                return;
+            };
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            drag_seek(waveform_fraction_for_x(&drag_area, start_x + x_offset));
+        });
+        self.area.add_controller(drag);
+
+        let key = gtk::EventControllerKey::new();
+        let key_position = Rc::clone(&self.position);
+        let key_seek = Rc::clone(&seek);
+        let key_commit = Rc::clone(&commit);
+        key.connect_key_pressed(move |_, key, _, _| {
+            let delta = match key {
+                gtk::gdk::Key::Left => -0.02,
+                gtk::gdk::Key::Right => 0.02,
+                _ => return glib::Propagation::Proceed,
+            };
+            key_seek((key_position.get() + delta).clamp(0.0, 1.0));
+            key_commit();
+            glib::Propagation::Stop
+        });
+        self.area.add_controller(key);
+    }
+}
+
+fn waveform_fraction_for_x(area: &gtk::DrawingArea, x: f64) -> f64 {
+    let width = f64::from(area.width()).max(1.0);
+    let fraction = (x / width).clamp(0.0, 1.0);
+    if area.direction() == gtk::TextDirection::Rtl {
+        1.0 - fraction
+    } else {
+        fraction
+    }
+}
+
+fn normalize_waveform_peaks(peaks: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let max = peaks
+        .iter()
+        .flat_map(|(left, right)| [*left, *right])
+        .filter(|value| value.is_finite())
+        .fold(0.0_f64, f64::max);
+    if max <= f64::EPSILON {
+        return Vec::new();
+    }
+    peaks
+        .iter()
+        .filter(|(left, right)| left.is_finite() && right.is_finite())
+        .map(|(left, right)| ((left / max).clamp(0.0, 1.0), (right / max).clamp(0.0, 1.0)))
+        .collect()
+}
+
+fn draw_waveform_seekbar(
+    area: &gtk::DrawingArea,
+    context: &gtk::cairo::Context,
+    width: i32,
+    height: i32,
+    peaks: &[(f64, f64)],
+    position: f64,
+    hover_position: Option<f64>,
+) {
+    let width = f64::from(width.max(0));
+    let height = f64::from(height.max(0));
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+
+    let is_rtl = area.direction() == gtk::TextDirection::Rtl;
+    let position = visual_waveform_fraction(position, is_rtl) * width;
+    let hover_position =
+        hover_position.map(|value| visual_waveform_fraction(value, is_rtl) * width);
+    let color = area.color();
+    let center_y = height / 2.0;
+    let bar_width = 2.0;
+    let gap = 2.0;
+    let block = bar_width + gap;
+    let bar_count = ((width + gap) / block).floor().max(1.0) as usize;
+
+    if peaks.is_empty() {
+        set_waveform_source(context, &color, 0.32);
+        context.rectangle(0.0, center_y - 1.0, width, 2.0);
+        let _ = context.fill();
+        return;
+    }
+
+    for index in 0..bar_count {
+        let start = index * peaks.len() / bar_count;
+        let end = ((index + 1) * peaks.len() / bar_count)
+            .max(start + 1)
+            .min(peaks.len());
+        let samples = &peaks[start..end];
+        let amplitude = samples
+            .iter()
+            .map(|(left, right)| (left + right) / 2.0)
+            .sum::<f64>()
+            / samples.len() as f64;
+        let amplitude = amplitude.powf(0.72);
+        let bar_height = (amplitude * height * 0.86).clamp(2.0, height);
+        let x = index as f64 * block;
+        let center_x = x + bar_width / 2.0;
+        let opacity = waveform_bar_opacity(center_x, position, hover_position, is_rtl);
+        set_waveform_source(context, &color, opacity);
+        context.rectangle(x, center_y - bar_height / 2.0, bar_width, bar_height);
+        let _ = context.fill();
+    }
+}
+
+fn visual_waveform_fraction(value: f64, is_rtl: bool) -> f64 {
+    let value = value.clamp(0.0, 1.0);
+    if is_rtl { 1.0 - value } else { value }
+}
+
+fn waveform_bar_opacity(x: f64, position: f64, hover_position: Option<f64>, is_rtl: bool) -> f64 {
+    if let Some(hover_position) = hover_position {
+        let start = position.min(hover_position);
+        let end = position.max(hover_position);
+        if (start..=end).contains(&x) {
+            return 0.58;
+        }
+    }
+    if (!is_rtl && x <= position) || (is_rtl && x >= position) {
+        1.0
+    } else {
+        0.28
+    }
+}
+
+fn set_waveform_source(context: &gtk::cairo::Context, color: &gtk::gdk::RGBA, opacity: f64) {
+    context.set_source_rgba(
+        f64::from(color.red()),
+        f64::from(color.green()),
+        f64::from(color.blue()),
+        f64::from(color.alpha()) * opacity,
+    );
 }
 
 impl Shell {
@@ -245,6 +508,41 @@ impl Shell {
         controls
             .progress
             .set_value(f64::from(displayed_seconds.min(player.duration_seconds)));
+        let position_fraction = if player.duration_seconds == 0 {
+            0.0
+        } else {
+            f64::from(displayed_seconds.min(player.duration_seconds))
+                / f64::from(player.duration_seconds)
+        };
+        controls.waveform.set_position_fraction(position_fraction);
+        let waveform_enabled = self.state.settings.borrow().seekbar_waveform_enabled;
+        let waveform_key = waveform_enabled
+            .then(|| {
+                player.waveform_peaks.as_ref().and_then(|peaks| {
+                    (!peaks.is_empty())
+                        .then(|| player.waveform_cache_key.clone())
+                        .flatten()
+                })
+            })
+            .flatten();
+        let waveform_key_changed = controls.waveform_key.borrow().as_ref() != waveform_key.as_ref();
+        if waveform_key_changed {
+            let peaks = waveform_key
+                .as_ref()
+                .and(player.waveform_peaks.as_deref())
+                .map(Vec::as_slice);
+            controls.waveform.set_peaks(peaks);
+            *controls.waveform_key.borrow_mut() = waveform_key;
+        }
+        if waveform_enabled && controls.waveform.has_peaks() {
+            controls
+                .progress_stack
+                .set_visible_child(controls.waveform.widget());
+        } else {
+            controls
+                .progress_stack
+                .set_visible_child(&controls.progress);
+        }
         controls
             .duration
             .set_text(&format_duration(player.duration_seconds));
@@ -320,7 +618,9 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         repeat_button,
         dj_button,
         elapsed,
+        progress_stack,
         progress,
+        waveform,
         duration,
     } = build_transport_controls();
 
@@ -380,7 +680,10 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         lyrics_icon_open,
         favorite_button,
         elapsed,
+        progress_stack,
         progress,
+        waveform,
+        waveform_key: RefCell::new(None),
         duration,
         mute_button,
         mute_icon,
@@ -500,11 +803,19 @@ fn build_transport_controls() -> TransportControls {
     progress.add_css_class("player-progress");
     progress.set_draw_value(false);
     progress.set_width_request(BOTTOM_PLAYER_PROGRESS_WIDTH);
+    let waveform = WaveformSeekBar::new();
+    let progress_stack = gtk::Stack::new();
+    progress_stack.set_size_request(BOTTOM_PLAYER_PROGRESS_WIDTH, BOTTOM_PLAYER_WAVEFORM_HEIGHT);
+    progress_stack.set_hhomogeneous(false);
+    progress_stack.set_vhomogeneous(true);
+    progress_stack.add_named(&progress, Some("scale"));
+    progress_stack.add_named(waveform.widget(), Some("waveform"));
+    progress_stack.set_visible_child(&progress);
     let duration = gtk::Label::new(Some("0:00"));
     duration.add_css_class("muted");
     duration.set_width_chars(4);
     progress_row.append(&elapsed);
-    progress_row.append(&progress);
+    progress_row.append(&progress_stack);
     progress_row.append(&duration);
 
     root.append(&buttons);
@@ -522,7 +833,9 @@ fn build_transport_controls() -> TransportControls {
         repeat_button,
         dj_button,
         elapsed,
+        progress_stack,
         progress,
+        waveform,
         duration,
     }
 }
@@ -677,6 +990,37 @@ fn repeat_label(repeat_mode: RepeatMode) -> &'static str {
         RepeatMode::One => "Repeat one",
         RepeatMode::All => "Repeat all",
     }
+}
+
+fn preview_player_seek(shell: &Rc<Shell>, seconds: u32) {
+    shell.state.seek_preview_seconds.set(Some(seconds));
+    shell.player_controls.progress.set_value(f64::from(seconds));
+    shell
+        .player_controls
+        .elapsed
+        .set_text(&format_duration(seconds));
+    let duration_seconds = shell.state.player.borrow().duration_seconds;
+    let position = if duration_seconds == 0 {
+        0.0
+    } else {
+        f64::from(seconds.min(duration_seconds)) / f64::from(duration_seconds)
+    };
+    shell
+        .player_controls
+        .waveform
+        .set_position_fraction(position);
+    queue_player_seek_preview_commit(shell);
+}
+
+fn preview_player_seek_fraction(shell: &Rc<Shell>, position: f64) {
+    let player = shell.state.player.borrow();
+    let duration_seconds = player.duration_seconds;
+    if player.current.is_none() || duration_seconds == 0 {
+        return;
+    }
+    drop(player);
+    let seconds = seekbar_target_seconds(position * f64::from(duration_seconds), duration_seconds);
+    preview_player_seek(shell, seconds);
 }
 
 fn queue_player_seek_preview_commit(shell: &Rc<Shell>) {
@@ -842,13 +1186,8 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
             drop(player);
 
             let seconds = seekbar_target_seconds(value, duration_seconds);
-            seek_shell.state.seek_preview_seconds.set(Some(seconds));
+            preview_player_seek(&seek_shell, seconds);
             scale.set_value(f64::from(seconds));
-            seek_shell
-                .player_controls
-                .elapsed
-                .set_text(&format_duration(seconds));
-            queue_player_seek_preview_commit(&seek_shell);
             glib::Propagation::Stop
         });
 
@@ -858,6 +1197,13 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         commit_player_seek_preview_now(&seek_shell);
     });
     shell.player_controls.progress.add_controller(seek_click);
+
+    let seek_shell = Rc::clone(shell);
+    let commit_shell = Rc::clone(shell);
+    shell.player_controls.waveform.connect_seek(
+        move |position| preview_player_seek_fraction(&seek_shell, position),
+        move || commit_player_seek_preview_now(&commit_shell),
+    );
 
     let volume_shell = Rc::clone(shell);
     shell

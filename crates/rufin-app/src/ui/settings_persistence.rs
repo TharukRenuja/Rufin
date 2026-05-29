@@ -151,6 +151,25 @@ impl Shell {
         });
     }
 
+    pub(super) fn set_seekbar_waveform_enabled(self: &Rc<Self>, enabled: bool) {
+        if self
+            .update_app_settings("seekbar waveform setting", |settings| {
+                if settings.seekbar_waveform_enabled == enabled {
+                    return false;
+                }
+                settings.seekbar_waveform_enabled = enabled;
+                true
+            })
+            .is_none()
+        {
+            return;
+        }
+        self.update_bottom_player();
+        if enabled {
+            self.controller.request_waveform_for_current();
+        }
+    }
+
     pub(super) fn set_language_preference(self: &Rc<Self>, language: String) -> bool {
         let Some(settings) = self.update_app_settings("language setting", |settings| {
             if settings.language == language {

@@ -380,6 +380,10 @@ pub(in crate::controller) fn playback_cache_dir_for_cache_dir(cache_dir: &Path) 
     cache_dir.join(PLAYBACK_CACHE_DIR_NAME)
 }
 
+pub(in crate::controller) fn waveform_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+    playback_cache_dir_for_cache_dir(cache_dir).join(WAVEFORM_CACHE_DIR_NAME)
+}
+
 pub(in crate::controller) fn tmp_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(TMP_CACHE_DIR_NAME)
 }
@@ -406,6 +410,10 @@ pub(in crate::controller) fn cover_cache_path_for_key(key: &str) -> Option<PathB
     cover_cache_dir().map(|dir| dir.join(key))
 }
 
+pub(in crate::controller) fn waveform_cache_path_for_key(key: &str) -> Option<PathBuf> {
+    cache_dir().map(|dir| waveform_cache_dir_for_cache_dir(&dir).join(key))
+}
+
 pub(in crate::controller) fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -419,6 +427,15 @@ pub(in crate::controller) fn restrict_settings_file(path: &Path) -> std::io::Res
 pub(in crate::controller) fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
     let Some(path) = cover_cache_dir().map(|dir| dir.join(encode_key_part(server_id.as_str())))
     else {
+        return Ok(());
+    };
+    remove_dir_if_exists(&path)
+}
+
+pub(in crate::controller) fn clear_disk_waveform_cache(server_id: &ServerId) -> Result<(), String> {
+    let Some(path) = cache_dir().map(|dir| {
+        waveform_cache_dir_for_cache_dir(&dir).join(encode_key_part(server_id.as_str()))
+    }) else {
         return Ok(());
     };
     remove_dir_if_exists(&path)

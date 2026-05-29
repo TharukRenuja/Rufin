@@ -435,7 +435,8 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         .icon_name("audio-x-generic-symbolic")
         .build();
 
-    let settings = shell.state.settings.borrow().playback.clone();
+    let app_settings = shell.state.settings.borrow().clone();
+    let settings = app_settings.playback.clone();
 
     let transition_group = adw::PreferencesGroup::builder()
         .title(tr("Transitions"))
@@ -532,6 +533,21 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     streaming_group.add(&quality_row);
     page.add(&streaming_group);
+
+    let seekbar_group = adw::PreferencesGroup::builder()
+        .title(tr("Seekbar"))
+        .build();
+    let waveform_row = adw::SwitchRow::builder()
+        .title(tr("Waveform seekbar"))
+        .subtitle(tr("Generate and cache waveforms for the current track"))
+        .active(app_settings.seekbar_waveform_enabled)
+        .build();
+    let waveform_shell = Rc::clone(shell);
+    waveform_row.connect_active_notify(move |row| {
+        waveform_shell.set_seekbar_waveform_enabled(row.is_active());
+    });
+    seekbar_group.add(&waveform_row);
+    page.add(&seekbar_group);
 
     let output_group = adw::PreferencesGroup::builder().title(tr("Output")).build();
     let outputs = playback_output_options();

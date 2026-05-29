@@ -19,6 +19,7 @@ use rufin_core::{
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
     PlaybackEvent, PlaybackState, PlaybackTrack, PreparedPlaybackItem, StreamDescriptor,
+    generate_waveform_peaks,
 };
 use rufin_provider::{
     FavoriteItemId, FolderDetail, Lyrics, MusicProvider, PagedRequest, PlaybackReport,
@@ -38,7 +39,7 @@ use rufin_store::{
     SyncState,
 };
 use rufin_test_support::{FakeProvider, FakeScale};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::Hash;
@@ -72,6 +73,7 @@ mod playback_commands;
 mod playback_queue;
 mod playback_reporting;
 mod playback_runtime;
+mod playback_waveforms;
 mod playlist_commands;
 mod queue_commands;
 mod queue_mutation;
@@ -102,6 +104,10 @@ pub(in crate::controller) use lyrics_local_access_tests::{
     controller_from_store_for_test, saved_server, unique_test_dir,
 };
 pub(in crate::controller) use playback_queue::*;
+pub(in crate::controller) use playback_waveforms::{
+    request_waveform_for_prepared_item, set_waveform_cache_key, waveform_cache_key,
+    waveform_cache_key_for_queue,
+};
 #[cfg(test)]
 pub(in crate::controller) use startup_sync_tests::RecordingPlaybackBackend;
 pub(in crate::controller) use sync_requests::*;
@@ -123,6 +129,7 @@ const STORE_DIR_NAME: &str = "store";
 const COVER_CACHE_DIR_NAME: &str = "covers";
 const LYRICS_CACHE_DIR_NAME: &str = "lyrics";
 const PLAYBACK_CACHE_DIR_NAME: &str = "playback";
+const WAVEFORM_CACHE_DIR_NAME: &str = "waveforms";
 const TMP_CACHE_DIR_NAME: &str = "tmp";
 const LOCAL_SOURCE_SERVER_ID: &str = "local:server:library";
 #[derive(Clone, Debug)]
@@ -193,6 +200,8 @@ pub struct PlaybackSnapshot {
     pub auto_dj_enabled: bool,
     pub buffering_percent: Option<u8>,
     pub last_error: Option<String>,
+    pub waveform_cache_key: Option<String>,
+    pub waveform_peaks: Option<Arc<Vec<(f64, f64)>>>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LyricsSearchResult {
@@ -219,6 +228,8 @@ impl Default for PlaybackSnapshot {
             auto_dj_enabled: true,
             buffering_percent: None,
             last_error: None,
+            waveform_cache_key: None,
+            waveform_peaks: None,
         }
     }
 }

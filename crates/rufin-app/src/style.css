@@ -391,7 +391,7 @@ menubutton.server-selector > button:hover {
 }
 
 .player-progress-row {
-  margin-top: -3px;
+  margin-top: -5px;
 }
 
 .player-progress-row label {
@@ -399,6 +399,10 @@ menubutton.server-selector > button:hover {
 }
 
 .player-progress {
+  min-width: 220px;
+}
+
+.player-waveform {
   min-width: 220px;
 }
 

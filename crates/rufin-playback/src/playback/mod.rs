@@ -16,9 +16,11 @@ use tracing::{debug, error, instrument, warn};
 
 mod fake_backend;
 mod gstreamer_backend;
+mod waveform;
 
 pub use fake_backend::FakePlaybackBackend;
 pub use gstreamer_backend::{GStreamerPlaybackBackend, LazyGStreamerPlaybackBackend};
+pub use waveform::generate_waveform_peaks;
 
 #[cfg(test)]
 use gstreamer_backend::{
