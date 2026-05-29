@@ -1,9 +1,6 @@
 name: Bug report
 description: Report a problem in Rufin.
 title: "[Bug]: "
-labels:
-  - bug
-  - triage
 body:
   - type: checkboxes
     id: duplicate-check

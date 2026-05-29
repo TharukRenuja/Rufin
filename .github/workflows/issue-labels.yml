@@ -10,8 +10,8 @@ permissions:
   issues: write
 
 jobs:
-  server-labels:
-    name: Server labels
+  issue-labels:
+    name: Issue labels
     if: ${{ !github.event.issue.pull_request }}
     runs-on: ubuntu-latest
 
@@ -21,6 +21,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
           section_value() {
             local heading="$1"
@@ -41,6 +42,7 @@ jobs:
             ' <<< "$ISSUE_BODY"
           }
 
+          title_text="$(tr '[:upper:]' '[:lower:]' <<< "$ISSUE_TITLE")"
           server_text="$(
             {
               section_value "Server"
@@ -49,6 +51,14 @@ jobs:
           )"
 
           labels=()
+
+          if [[ "$title_text" == "[bug]:"* || "$ISSUE_BODY" == *"### Rufin version"* ]]; then
+            labels+=("bug")
+          fi
+
+          if [[ "$title_text" == "[feature]:"* || "$ISSUE_BODY" == *"### Please describe the feature"* ]]; then
+            labels+=("enhancement")
+          fi
 
           if [[ "$server_text" == *jellyfin* ]]; then
             labels+=("jellyfin")

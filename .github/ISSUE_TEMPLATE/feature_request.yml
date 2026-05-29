@@ -1,9 +1,6 @@
 name: Feature request
 description: Suggest a new feature or improvement for Rufin.
 title: "[Feature]: "
-labels:
-  - enhancement
-  - triage
 body:
   - type: checkboxes
     id: duplicate-check
