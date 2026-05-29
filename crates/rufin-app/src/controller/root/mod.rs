@@ -108,8 +108,8 @@ pub(in crate::controller) use lyrics_local_access_tests::{
 };
 pub(in crate::controller) use playback_queue::*;
 pub(in crate::controller) use playback_waveforms::{
-    request_waveform_for_prepared_item, set_waveform_cache_key, waveform_cache_key,
-    waveform_cache_key_for_queue,
+    cached_waveform_peaks, request_waveform_for_prepared_item, set_waveform_cache_key,
+    waveform_cache_key, waveform_cache_key_for_queue,
 };
 #[cfg(test)]
 pub(in crate::controller) use startup_sync_tests::RecordingPlaybackBackend;

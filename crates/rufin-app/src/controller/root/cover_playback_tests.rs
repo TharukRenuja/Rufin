@@ -24,6 +24,26 @@ impl SecretStore for DeleteFailingSecretStore {
     }
 }
 
+struct QueuedPlaybackEvents {
+    events: Vec<PlaybackEvent>,
+}
+
+impl QueuedPlaybackEvents {
+    fn new(events: Vec<PlaybackEvent>) -> Self {
+        Self { events }
+    }
+}
+
+impl PlaybackBackend for QueuedPlaybackEvents {
+    fn send(&mut self, _command: PlaybackCommand) -> Result<(), rufin_playback::PlaybackError> {
+        Ok(())
+    }
+
+    fn drain_events(&mut self) -> Vec<PlaybackEvent> {
+        std::mem::take(&mut self.events)
+    }
+}
+
 pub(in crate::controller) fn wait_for_token_deleted(
     secrets: &Arc<dyn SecretStore>,
     server_id: &ServerId,
@@ -567,6 +587,40 @@ pub(in crate::controller) fn seek_millis_emits_exact_playback_position() {
     controller.seek_millis(12_345);
     let playback = wait_for_playback_position(&events, 12_345);
     assert_eq!(playback.position_seconds, 12);
+}
+#[test]
+pub(in crate::controller) fn playback_error_ignores_later_stale_positions() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    controller.play_now(snapshot.tracks[0].clone());
+    let playing = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let initial_position = playing.position_millis;
+
+    *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
+        PlaybackEvent::Error("stream failed".to_string()),
+        PlaybackEvent::PositionChanged {
+            seconds: 42,
+            millis: 42_000,
+        },
+    ]));
+
+    controller.poll_playback_events();
+
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.state, PlaybackState::Stopped);
+    assert_eq!(playback.last_error.as_deref(), Some("stream failed"));
+    assert_eq!(playback.position_millis, initial_position);
+    assert_ne!(
+        controller
+            .queue_snapshot()
+            .expect("queue snapshot")
+            .progress_seconds,
+        42
+    );
 }
 #[test]
 pub(in crate::controller) fn next_previous_and_clear_keep_queue_and_player_synchronized() {

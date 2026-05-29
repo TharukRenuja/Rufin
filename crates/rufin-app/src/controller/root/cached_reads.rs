@@ -752,24 +752,32 @@ pub(in crate::controller) fn playback_snapshot_from_queue(
     playback_settings: &PlaybackSettings,
 ) -> PlaybackSnapshot {
     queue
-        .map(|queue| PlaybackSnapshot {
-            current: queue.current().cloned(),
-            state: PlaybackState::Stopped,
-            position_seconds: queue.progress_seconds(),
-            position_millis: u64::from(queue.progress_seconds()) * 1_000,
-            duration_seconds: queue
+        .map(|queue| {
+            let duration_seconds = queue
                 .current()
                 .map(|entry| entry.duration_seconds)
-                .unwrap_or_default(),
-            volume: playback_settings.volume,
-            muted: playback_settings.muted,
-            repeat_mode: queue.repeat_mode(),
-            shuffle_enabled: queue.shuffle().enabled,
-            auto_dj_enabled,
-            buffering_percent: None,
-            last_error: None,
-            waveform_cache_key: waveform_cache_key_for_queue(Some(queue)),
-            waveform_peaks: None,
+                .unwrap_or_default();
+            let waveform_cache_key = waveform_cache_key_for_queue(Some(queue));
+            let waveform_peaks = waveform_cache_key
+                .as_deref()
+                .and_then(|key| cached_waveform_peaks(key, duration_seconds));
+
+            PlaybackSnapshot {
+                current: queue.current().cloned(),
+                state: PlaybackState::Stopped,
+                position_seconds: queue.progress_seconds(),
+                position_millis: u64::from(queue.progress_seconds()) * 1_000,
+                duration_seconds,
+                volume: playback_settings.volume,
+                muted: playback_settings.muted,
+                repeat_mode: queue.repeat_mode(),
+                shuffle_enabled: queue.shuffle().enabled,
+                auto_dj_enabled,
+                buffering_percent: None,
+                last_error: None,
+                waveform_cache_key,
+                waveform_peaks,
+            }
         })
         .unwrap_or_else(|| PlaybackSnapshot {
             auto_dj_enabled,

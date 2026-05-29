@@ -286,6 +286,8 @@ pub(in crate::ui) struct AppState {
     cover_warm_generation: Cell<u64>,
     cover_warm_paused_until: Cell<Option<Instant>>,
     startup_cover_warm_generation: Cell<u64>,
+    startup_cover_warm_active: Cell<bool>,
+    startup_cover_warm_reschedule_requested: Cell<bool>,
     route_cover_gate_started: RefCell<HashMap<&'static str, Instant>>,
     route_cover_gate_queued: RefCell<HashSet<&'static str>>,
     route_cover_gate_timed_out: RefCell<HashSet<&'static str>>,
@@ -621,6 +623,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         cover_warm_generation: Cell::new(0),
         cover_warm_paused_until: Cell::new(None),
         startup_cover_warm_generation: Cell::new(0),
+        startup_cover_warm_active: Cell::new(false),
+        startup_cover_warm_reschedule_requested: Cell::new(false),
         route_cover_gate_started: RefCell::new(HashMap::new()),
         route_cover_gate_queued: RefCell::new(HashSet::new()),
         route_cover_gate_timed_out: RefCell::new(HashSet::new()),
@@ -796,6 +800,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
     shell.request_initial_lyrics_if_needed();
     install_event_pump(&shell, events);
+    if settings.seekbar_waveform_enabled {
+        shell.controller.request_waveform_for_current();
+    }
 
     if !using_fake_library && !options.ui_perf_run {
         schedule_startup_sync(&shell);

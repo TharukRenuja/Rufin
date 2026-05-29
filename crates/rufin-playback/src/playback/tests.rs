@@ -1,7 +1,8 @@
 use super::{
-    CrossfadeState, FakePlaybackBackend, GstEngine, PendingSeek, PlaybackBackend, PlaybackCommand,
-    PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline, PreparedPlaybackItem,
-    SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState, Slot, StreamDescriptor,
+    AboutToFinishAction, CrossfadeState, FakePlaybackBackend, GstEngine, PendingSeek,
+    PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline,
+    PreparedPlaybackItem, SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState,
+    Slot, StreamDescriptor, about_to_finish_action,
 };
 use rufin_core::{PlaybackSettings, PlaybackTransitionMode, TrackId};
 use std::collections::VecDeque;
@@ -90,6 +91,36 @@ fn stream_descriptor_redacts_sensitive_query_values() {
         "https://music.example/Audio/track/stream?UserId=user&api_key=<redacted>&DeviceId=device"
     );
     assert!(!format!("{stream:?}").contains("secret-token"));
+}
+#[test]
+fn gapless_about_to_finish_preloads_local_next_item() {
+    let next =
+        PreparedPlaybackItem::new(track(2), StreamDescriptor::new("file:///music/next.flac"));
+    let mut shared = SharedPlaybackState::new();
+    shared.settings.transition_mode = PlaybackTransitionMode::Gapless;
+    shared.next = Some(next.clone());
+
+    let action = about_to_finish_action(&mut shared);
+
+    assert_eq!(action, AboutToFinishAction::Preload(next.clone()));
+    assert!(shared.next.is_none());
+    assert_eq!(shared.gapless_pending, Some(next));
+}
+#[test]
+fn gapless_about_to_finish_leaves_non_file_streams_for_eos() {
+    let next = PreparedPlaybackItem::new(
+        track(2),
+        StreamDescriptor::new("https://music.example/Audio/track/stream?api_key=secret-token"),
+    );
+    let mut shared = SharedPlaybackState::new();
+    shared.settings.transition_mode = PlaybackTransitionMode::Gapless;
+    shared.next = Some(next.clone());
+
+    let action = about_to_finish_action(&mut shared);
+
+    assert_eq!(action, AboutToFinishAction::Ignore);
+    assert_eq!(shared.next, Some(next));
+    assert!(shared.gapless_pending.is_none());
 }
 #[test]
 fn pending_seek_rejects_stale_positions_until_target_or_timeout() {

@@ -86,7 +86,10 @@ pub struct Store {
 mod library_auxiliary_cache;
 mod library_cache_reads;
 mod library_cache_writes;
+mod library_counts;
+mod library_metadata;
 mod library_search_helpers;
+mod library_track_sort;
 mod servers;
 mod store_lifecycle_schema;
 

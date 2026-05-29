@@ -201,6 +201,14 @@ impl AppController {
                     });
                 }
                 PlaybackEvent::PositionChanged { seconds, millis } => {
+                    let accepting_position = self
+                        .playback_snapshot
+                        .lock()
+                        .map(|snapshot| snapshot.state != PlaybackState::Stopped)
+                        .unwrap_or(false);
+                    if !accepting_position {
+                        continue;
+                    }
                     let _result = self.with_queue_mut(|queue| {
                         queue.set_progress_seconds(seconds);
                         Ok(())
@@ -238,6 +246,7 @@ impl AppController {
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.last_error = Some(error.clone());
                         snapshot.state = PlaybackState::Stopped;
+                        snapshot.buffering_percent = None;
                     });
                     let _sent = self.events.send(ControllerEvent::Error(error));
                 }
