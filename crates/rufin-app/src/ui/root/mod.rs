@@ -113,12 +113,8 @@ use tracing::{debug, info, warn};
 
 mod album_detail_view;
 mod build;
-mod cover_cache_lookup;
-mod cover_decode_queue;
-mod cover_size_helpers;
+mod cover;
 mod cover_startup;
-mod cover_tiles;
-mod cover_warming;
 mod empty_states;
 mod favorite_controls;
 mod folder_route_state;
@@ -151,12 +147,11 @@ mod shell_tests;
 
 pub(in crate::ui) use album_detail_view::*;
 pub(in crate::ui) use build::*;
-pub(in crate::ui) use cover_cache_lookup::*;
-pub(in crate::ui) use cover_decode_queue::*;
-pub(in crate::ui) use cover_size_helpers::*;
+pub(in crate::ui) use cover::{
+    CoverBinding, CoverDecodeJob, CoverDecodePriority, CoverPathLookupIntent, CoverWarmJob,
+    DecodedCover, DecodedCoverOrderEntry, FirstRunCoverPrimeJob, record_cover_path_lookup_request,
+};
 pub(in crate::ui) use cover_startup::*;
-pub(in crate::ui) use cover_tiles::*;
-pub(in crate::ui) use cover_warming::*;
 pub(in crate::ui) use empty_states::*;
 pub(in crate::ui) use favorite_controls::*;
 pub(in crate::ui) use folder_route_state::*;
@@ -293,7 +288,7 @@ pub(in crate::ui) struct AppState {
     server_discovery_running: Cell<bool>,
     server_discovery_started: Cell<bool>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
-    cover_path_lookups: RefCell<HashSet<String>>,
+    cover_path_lookups: RefCell<HashMap<String, CoverPathLookupIntent>>,
     cover_decodes: RefCell<HashSet<String>>,
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
@@ -320,55 +315,6 @@ pub(in crate::ui) struct LyricsSearchDialog {
     search_button: gtk::Button,
     list: gtk::ListBox,
     status: gtk::Label,
-}
-#[derive(Clone)]
-pub(in crate::ui) struct CoverBinding {
-    tile: ArtworkTileWeak,
-    generation: u64,
-}
-#[derive(Clone)]
-pub(in crate::ui) struct DecodedCover {
-    pixbuf: Pixbuf,
-    size: i32,
-    bytes: usize,
-    last_used: u64,
-    priority: CoverDecodePriority,
-}
-pub(in crate::ui) struct DecodedCoverOrderEntry {
-    key: String,
-    last_used: u64,
-}
-pub(in crate::ui) struct CoverDecodeJob {
-    key: String,
-    path: PathBuf,
-    size: i32,
-    priority: CoverDecodePriority,
-    requires_live_binding: bool,
-}
-pub(in crate::ui) struct StartupCoverWarmJob {
-    key: String,
-    image_ref: ImageRef,
-    fetch_size: u32,
-    size: i32,
-}
-pub(in crate::ui) struct FirstRunCoverPrimeJob {
-    key: String,
-    image_ref: ImageRef,
-    fetch_size: u32,
-    size: i32,
-}
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(in crate::ui) enum CoverDecodePriority {
-    Visible,
-    Warm,
-}
-impl CoverDecodePriority {
-    fn glib_priority(self) -> glib::Priority {
-        match self {
-            Self::Visible => glib::Priority::DEFAULT,
-            Self::Warm => glib::Priority::LOW,
-        }
-    }
 }
 #[derive(Clone)]
 pub(in crate::ui) struct ArtworkTile {
@@ -660,7 +606,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         server_discovery_running: Cell::new(false),
         server_discovery_started: Cell::new(false),
         cover_bindings: RefCell::new(HashMap::new()),
-        cover_path_lookups: RefCell::new(HashSet::new()),
+        cover_path_lookups: RefCell::new(HashMap::new()),
         cover_decodes: RefCell::new(HashSet::new()),
         cover_decode_queue: RefCell::new(VecDeque::new()),
         cover_warm_generation: Cell::new(0),
