@@ -3,7 +3,7 @@ use super::*;
 #[test]
 pub(in crate::controller) fn explicit_favorite_updates_can_unfavorite_persistent_controls() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let album = snapshot
         .albums
         .iter()
@@ -38,7 +38,7 @@ pub(in crate::controller) fn explicit_favorite_updates_can_unfavorite_persistent
 #[test]
 pub(in crate::controller) fn fake_playlist_mutations_create_move_and_remove_entries() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     let third = snapshot.tracks[2].clone();
@@ -94,7 +94,7 @@ pub(in crate::controller) fn fake_playlist_mutations_create_move_and_remove_entr
 #[test]
 pub(in crate::controller) fn fake_lyrics_request_emits_empty_lyrics_event() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     controller.play_now(snapshot.tracks[0].clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
     controller.request_lyrics_for_current();
@@ -103,7 +103,7 @@ pub(in crate::controller) fn fake_lyrics_request_emits_empty_lyrics_event() {
 #[test]
 pub(in crate::controller) fn server_lyrics_request_ignores_cached_remote_lyrics() {
     let (controller, events, snapshot, _queue, _player) =
-        AppController::bootstrap(Some(FakeScale::Small));
+        AppController::bootstrap_with_fake(FakeScale::Small);
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);

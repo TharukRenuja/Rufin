@@ -336,6 +336,7 @@ pub(in crate::controller) fn sync_status_text(state: &SyncState) -> String {
         _ => "Cached library ready".to_string(),
     }
 }
+#[cfg(any(test, feature = "dev-tools"))]
 pub(in crate::controller) fn seed_fake_cache(
     store: &StoreHandle,
     scale: FakeScale,

@@ -10,6 +10,10 @@ build = "build.rs"
 name = "rufin"
 path = "src/main.rs"
 
+[features]
+default = []
+dev-tools = ["dep:rufin-test-support"]
+
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
 directories = "6.0.0"
@@ -27,12 +31,15 @@ rufin-provider-local = { path = "../rufin-provider-local" }
 rufin-provider-subsonic = { path = "../rufin-provider-subsonic" }
 rufin-secrets = { path = "../rufin-secrets" }
 rufin-store = { path = "../rufin-store" }
-rufin-test-support = { path = "../rufin-test-support" }
+rufin-test-support = { path = "../rufin-test-support", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+rufin-test-support = { path = "../rufin-test-support" }
 
 [target.'cfg(unix)'.dependencies]
 mpris-server = "0.10.0"

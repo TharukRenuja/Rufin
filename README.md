@@ -82,7 +82,7 @@ You can contribute to the app by adding a new feature or translating the app. Pl
 
 # Development
 
-Pass app flags after `--`, for example `cargo run -p rufin-app -- --ui-perf-observe`
+The default app build exposes the user/admin CLI only:
 
 ```text
 Usage: rufin [OPTIONS]
@@ -90,12 +90,21 @@ Usage: rufin [OPTIONS]
 
 | Option | Usage |
 | --- | --- |
-| `--fake-scale <small\|large>` | Starts with a generated small or large fake library. |
-| `--ui-perf-run` | Runs the automated startup, route, scroll, and artwork performance pass, then exits. |
-| `--ui-perf-observe` | Records manual route reveal, scroll, and artwork performance while you use the app. |
 | `--clear-cache` | Clears the active server cache and exits. |
 | `--forget-active-server` | Removes the active server state and exits. |
 | `-h`, `--help` | Prints command-line help. |
+
+Development fixture and performance flags are available with the `dev-tools` feature. Pass app flags after `--`, for example:
+
+```bash
+cargo run -p rufin-app --features dev-tools -- --ui-perf-observe
+```
+
+| Option | Usage |
+| --- | --- |
+| `--fake-scale <small\|large>` | Starts with a generated small or large fake library. |
+| `--ui-perf-run` | Runs the automated startup, route, scroll, and artwork performance pass, then exits. |
+| `--ui-perf-observe` | Records manual route reveal, scroll, and artwork performance while you use the app. |
 
 For tests:
 
