@@ -64,7 +64,7 @@ jobs:
 
           for path in "${changed_paths[@]}"; do
             case "$path" in
-              *.md|docs/*)
+              *.avif|*.gif|*.jpeg|*.jpg|*.md|*.png|*.po|*.pot|*.svg|*.webp|po/POTFILES.in)
                 ;;
               *)
                 rust_required=true
