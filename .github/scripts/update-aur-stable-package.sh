@@ -3,17 +3,22 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: .github/scripts/update-aur-stable-package.sh [--skip-srcinfo] VERSION
+Usage: .github/scripts/update-aur-stable-package.sh [--check] [--skip-srcinfo] VERSION
 
 Updates the checked-in stable AUR PKGBUILD for a release tag and refreshes
 .SRCINFO when makepkg, or the rufin-arch Distrobox, is available.
 USAGE
 }
 
+check_only=0
 skip_srcinfo=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --check)
+      check_only=1
+      shift
+      ;;
     --skip-srcinfo)
       skip_srcinfo=1
       shift
@@ -51,15 +56,26 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
 fi
 
 repo_root="$(git rev-parse --show-toplevel)"
-pkgdir="$repo_root/packaging/aur/rufin"
-pkgbuild="$pkgdir/PKGBUILD"
-srcinfo="$pkgdir/.SRCINFO"
+pkgdir_rel="packaging/aur/rufin"
+pkgbuild_rel="$pkgdir_rel/PKGBUILD"
+srcinfo_rel="$pkgdir_rel/.SRCINFO"
+pkgdir="$repo_root/$pkgdir_rel"
+pkgbuild="$repo_root/$pkgbuild_rel"
+srcinfo="$repo_root/$srcinfo_rel"
 repo="${GITHUB_REPOSITORY:-screwys/Rufin}"
 archive_url="https://github.com/${repo}/archive/refs/tags/v${version}.tar.gz"
 
 if [[ ! -f "$pkgbuild" ]]; then
   echo "missing stable AUR PKGBUILD: $pkgbuild" >&2
   exit 1
+fi
+
+if [[ "$check_only" == "1" ]]; then
+  original_pkgbuild="$(mktemp)"
+  original_srcinfo="$(mktemp)"
+  cp "$pkgbuild" "$original_pkgbuild"
+  cp "$srcinfo" "$original_srcinfo"
+  trap 'cp "$original_pkgbuild" "$pkgbuild"; cp "$original_srcinfo" "$srcinfo"; rm -f "$original_pkgbuild" "$original_srcinfo"' EXIT
 fi
 
 checksum=""
@@ -136,4 +152,22 @@ if [[ "$skip_srcinfo" != "1" ]]; then
     update_srcinfo_fields
     echo "makepkg unavailable; updated .SRCINFO release fields without regenerating dependencies" >&2
   fi
+fi
+
+if [[ "$check_only" == "1" ]]; then
+  if cmp -s "$original_pkgbuild" "$pkgbuild" &&
+    cmp -s "$original_srcinfo" "$srcinfo"; then
+    exit 0
+  fi
+
+  cat >&2 <<MSG
+Checked-in stable AUR metadata is not in sync with v${version}.
+Run:
+  .github/scripts/update-aur-stable-package.sh v${version}
+MSG
+  diff -u --label "$pkgbuild_rel (current)" "$original_pkgbuild" \
+    --label "$pkgbuild_rel (expected)" "$pkgbuild" >&2 || true
+  diff -u --label "$srcinfo_rel (current)" "$original_srcinfo" \
+    --label "$srcinfo_rel (expected)" "$srcinfo" >&2 || true
+  exit 1
 fi

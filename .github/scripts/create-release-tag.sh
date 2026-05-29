@@ -8,8 +8,9 @@ Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [
 Updates release metadata, commits it, and creates a signed annotated tag whose
 message includes commits since the previous release tag. VERSION may be vX.Y.Z
 or X.Y.Z. With --push, opens empty-body release PRs, waits for Checks to pass,
-merges them, pushes the signed tag, gates the AUR follow-up the same way, then
-publishes the GitHub Release from the tag using the authenticated gh user.
+merges them, pushes the signed tag, gates and verifies the AUR follow-up the
+same way, then publishes the GitHub Release from the tag using the
+authenticated gh user.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
@@ -492,6 +493,10 @@ update_aur_stable_package() {
   return 1
 }
 
+check_aur_stable_package() {
+  bash .github/scripts/update-aur-stable-package.sh --check "$version"
+}
+
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
 if [[ "$commit_count" == "0" ]]; then
   echo "no commits found in range $base_tag..HEAD" >&2
@@ -561,5 +566,6 @@ if [[ "$push_tag" == "1" ]]; then
   else
     fast_forward_default_branch
   fi
+  check_aur_stable_package
   publish_github_release
 fi
