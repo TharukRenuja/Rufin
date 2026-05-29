@@ -204,22 +204,28 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed git openssh
 
+      - name: Validate manual publish target
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REQUESTED_PACKAGE: ${{ inputs.package || 'rufin' }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
+            echo "Manual AUR publishing must be dispatched from $DEFAULT_BRANCH" >&2
+            exit 1
+          fi
+
+          if [[ "$REQUESTED_PACKAGE" != "rufin-git" ]]; then
+            echo "Manual AUR publishing is limited to rufin-git; stable rufin publishes from release events" >&2
+            exit 1
+          fi
+
       - name: Download package metadata
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: aur-package-metadata
           path: .
-
-      - name: Validate manual publish target
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          REQUESTED_PACKAGE: ${{ inputs.package || 'rufin' }}
-        run: |
-          set -euo pipefail
-          if [[ "$REQUESTED_PACKAGE" != "rufin-git" ]]; then
-            echo "Manual AUR publishing is limited to rufin-git; stable rufin publishes from release events" >&2
-            exit 1
-          fi
 
       - name: Configure AUR SSH
         env:
