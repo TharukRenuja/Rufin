@@ -35,6 +35,10 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
+            if let Err(error) = clear_disk_waveform_cache(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
             let _sent = events.send(ControllerEvent::LoginStatus(
                 "Cached library cleared.".to_string(),
             ));
@@ -87,6 +91,10 @@ impl AppController {
                 return;
             }
             if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if let Err(error) = clear_disk_waveform_cache(&saved.server.id) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }

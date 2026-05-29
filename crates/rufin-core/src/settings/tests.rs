@@ -18,6 +18,7 @@ fn settings_default_to_privacy_preserving_remote_features() {
     assert!(settings.external_lyrics_enabled);
     assert!(settings.external_metadata_enabled);
     assert!(settings.prefer_server_lyrics);
+    assert!(!settings.seekbar_waveform_enabled);
     assert!(!settings.discord_presence_enabled);
     assert_eq!(settings.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
     assert_eq!(
@@ -282,6 +283,7 @@ fn settings_restore_without_window_geometry() {
     assert!(!restored.external_lyrics_enabled);
     assert!(restored.external_metadata_enabled);
     assert!(restored.prefer_server_lyrics);
+    assert!(!restored.seekbar_waveform_enabled);
     assert_eq!(
         restored.playback.transition_mode,
         PlaybackTransitionMode::Gapless

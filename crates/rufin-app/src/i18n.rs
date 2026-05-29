@@ -567,6 +567,10 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Remove from queue");
     let _ = tr("Remove from Queue");
     let _ = tr("Mute");
+    let _ = tr("Seek");
+    let _ = tr("Seekbar");
+    let _ = tr("Waveform seekbar");
+    let _ = tr("Generate and cache waveforms for the current track");
     let _ = tr("Play now");
     let _ = tr("Play Now");
     let _ = tr("Play next");

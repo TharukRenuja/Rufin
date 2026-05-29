@@ -11,6 +11,7 @@ impl AppController {
             Ok(())
         })?;
         clear_disk_cover_cache(&saved.server.id)?;
+        clear_disk_waveform_cache(&saved.server.id)?;
         Ok(())
     }
     pub fn forget_active_server_for_app() -> Result<(), String> {
@@ -23,6 +24,7 @@ impl AppController {
             Ok(())
         })?;
         clear_disk_cover_cache(&saved.server.id)?;
+        clear_disk_waveform_cache(&saved.server.id)?;
         if let Err(error) = platform_secret_store().delete_token(&saved.server.id) {
             warn!(%error, server_id = %saved.server.id, "failed to delete forgotten server token");
         }

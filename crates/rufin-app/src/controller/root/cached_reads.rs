@@ -767,6 +767,8 @@ pub(in crate::controller) fn playback_snapshot_from_queue(
             auto_dj_enabled,
             buffering_percent: None,
             last_error: None,
+            waveform_cache_key: waveform_cache_key_for_queue(Some(queue)),
+            waveform_peaks: None,
         })
         .unwrap_or_else(|| PlaybackSnapshot {
             auto_dj_enabled,

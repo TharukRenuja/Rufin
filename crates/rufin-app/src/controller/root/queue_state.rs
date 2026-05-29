@@ -92,6 +92,7 @@ impl AppController {
                 .lock()
                 .map(|enabled| *enabled)
                 .unwrap_or_default();
+            set_waveform_cache_key(snapshot, waveform_cache_key_for_queue(queue));
             if snapshot.current.is_none() {
                 snapshot.state = PlaybackState::Stopped;
                 snapshot.last_error = None;

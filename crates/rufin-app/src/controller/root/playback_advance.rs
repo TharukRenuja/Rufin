@@ -44,6 +44,11 @@ impl AppController {
             return;
         }
         self.persist_and_emit_queue();
+        let waveform_key = self
+            .queue
+            .lock()
+            .ok()
+            .and_then(|queue| waveform_cache_key_for_queue(queue.as_ref()));
         self.update_playback_snapshot(|snapshot| {
             snapshot.state = PlaybackState::Playing;
             snapshot.position_seconds = 0;
@@ -51,8 +56,10 @@ impl AppController {
             snapshot.duration_seconds = track.duration_seconds;
             snapshot.buffering_percent = None;
             snapshot.last_error = None;
+            set_waveform_cache_key(snapshot, waveform_key);
         });
         self.emit_playback_snapshot();
         self.report_playback(PlaybackReportKind::Started, false);
+        self.request_waveform_for_current();
     }
 }
