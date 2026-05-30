@@ -290,6 +290,10 @@ pub enum ControllerEvent {
         playlist_id: PlaylistId,
         snapshot: Box<LibrarySnapshot>,
     },
+    SmartPlaylistChanged {
+        smart_playlist_id: SmartPlaylistId,
+        snapshot: Box<LibrarySnapshot>,
+    },
     FavoriteChanged {
         item_id: FavoriteItemId,
         favorite: bool,

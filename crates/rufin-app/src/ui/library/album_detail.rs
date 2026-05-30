@@ -208,13 +208,18 @@ pub(in crate::ui) fn track_column_for_key(
             |track| track.image_ref.clone(),
             |track| stable_seed(track.id.as_str()),
         ),
-        LibraryField::Title => {
-            track_text_column(shell, "Title", width, true, |track| track.title.clone())
-        }
-        LibraryField::Favorite => track_favorite_column(shell),
-        _ => track_text_column(shell, field.title(), width, false, move |track| {
-            track_field(track, field)
+        LibraryField::Title => track_text_column(shell, "Title", width, true, 0.0, |track| {
+            track.title.clone()
         }),
+        LibraryField::Favorite => track_favorite_column(shell),
+        _ => track_text_column(
+            shell,
+            field.title(),
+            width,
+            false,
+            track_text_xalign(field),
+            move |track| track_field(track, field),
+        ),
     }
 }
 pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField) -> i32 {
@@ -314,7 +319,7 @@ pub(in crate::ui) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewC
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             let label = gtk::Label::new(None);
             label.add_css_class("muted");
-            label.set_xalign(0.0);
+            label.set_xalign(0.5);
             label.set_wrap(false);
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
             label.set_single_line_mode(true);
@@ -871,6 +876,7 @@ pub(in crate::ui) fn track_text_column<F>(
     title: &'static str,
     width: i32,
     expand: bool,
+    xalign: f32,
     value: F,
 ) -> gtk::ColumnViewColumn
 where
@@ -887,7 +893,7 @@ where
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
         let label = gtk::Label::new(None);
-        label.set_xalign(0.0);
+        label.set_xalign(xalign);
         label.set_wrap(false);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_single_line_mode(true);
@@ -946,6 +952,18 @@ where
     column.set_resizable(true);
     column.set_expand(expand);
     column
+}
+
+fn track_text_xalign(field: LibraryField) -> f32 {
+    match field {
+        LibraryField::Album
+        | LibraryField::AlbumArtist
+        | LibraryField::Artist
+        | LibraryField::Genre
+        | LibraryField::Title
+        | LibraryField::TitleMerged => 0.0,
+        _ => 0.5,
+    }
 }
 pub(in crate::ui) fn track_merged_column<Title, Subtitle, Image, Seed>(
     shell: &Rc<Shell>,

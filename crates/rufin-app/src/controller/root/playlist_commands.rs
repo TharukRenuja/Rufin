@@ -192,7 +192,7 @@ impl AppController {
                 store.save_smart_playlist(&saved.server.id, &id, &name, &definition)?;
                 Ok(())
             });
-            emit_snapshot_result(&store, &events, result);
+            emit_smart_playlist_changed_result(&store, &events, id, result);
         });
     }
     pub fn update_smart_playlist(
@@ -222,7 +222,7 @@ impl AppController {
                 )?;
                 Ok(())
             });
-            emit_snapshot_result(&store, &events, result);
+            emit_smart_playlist_changed_result(&store, &events, smart_playlist_id, result);
         });
     }
     pub fn add_tracks_to_playlist(&self, playlist_id: PlaylistId, tracks: Vec<Track>) {

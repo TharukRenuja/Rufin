@@ -44,7 +44,8 @@ pub(in crate::controller) fn wait_for_snapshot(
         {
             ControllerEvent::Snapshot(snapshot)
             | ControllerEvent::HomeSectionsUpdated { snapshot, .. }
-            | ControllerEvent::PlaylistChanged { snapshot, .. } => return *snapshot,
+            | ControllerEvent::PlaylistChanged { snapshot, .. }
+            | ControllerEvent::SmartPlaylistChanged { snapshot, .. } => return *snapshot,
             ControllerEvent::Queue(_)
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::Playback(_)
@@ -78,6 +79,7 @@ pub(in crate::controller) fn wait_for_favorite_changed(
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::Queue(_)
             | ControllerEvent::Playback(_)
             | ControllerEvent::Lyrics(_)
@@ -108,6 +110,7 @@ pub(in crate::controller) fn wait_for_playlist_changed(
             } => return (playlist_id, *snapshot),
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::Queue(_)
             | ControllerEvent::Playback(_)
@@ -135,6 +138,7 @@ pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>)
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::Queue(_)
             | ControllerEvent::Playback(_)
@@ -163,6 +167,7 @@ pub(in crate::controller) fn wait_for_queue(
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::Playback(_)
             | ControllerEvent::LoginStatus(_)
@@ -215,6 +220,7 @@ pub(in crate::controller) fn wait_for_cover_ready(
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::Queue(_)
             | ControllerEvent::Playback(_)
@@ -244,6 +250,7 @@ pub(in crate::controller) fn wait_for_lyrics(
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::Queue(_)
             | ControllerEvent::Playback(_)
@@ -309,6 +316,7 @@ pub(in crate::controller) fn wait_for_playback_state(
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::PlaylistChanged { .. }
+                | ControllerEvent::SmartPlaylistChanged { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -346,6 +354,7 @@ pub(in crate::controller) fn wait_for_playback_position(
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -378,6 +387,7 @@ pub(in crate::controller) fn wait_for_playback_auto_dj(
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
@@ -420,6 +430,7 @@ pub(in crate::controller) fn wait_for_playback_current_favorite(
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::PlaylistChanged { .. }
+                | ControllerEvent::SmartPlaylistChanged { .. }
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),

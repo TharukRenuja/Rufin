@@ -846,6 +846,15 @@ fn compile_date_rule(expression: &str, rule: &SmartPlaylistRule) -> SmartSql {
                 params: vec![Value::from(value)],
             }
         }
+        SmartPlaylistRuleOperator::Between => {
+            let Some((start, end)) = date_range_value(rule) else {
+                return false_sql();
+            };
+            SmartSql {
+                clause: format!("{expression} BETWEEN ? AND ?"),
+                params: vec![Value::from(start), Value::from(end)],
+            }
+        }
         _ => false_sql(),
     }
 }
@@ -887,6 +896,23 @@ fn date_value(rule: &SmartPlaylistRule) -> Option<String> {
         _ => None,
     }
     .filter(|value| !value.is_empty())
+}
+
+fn date_range_value(rule: &SmartPlaylistRule) -> Option<(String, String)> {
+    match rule.value.as_ref()? {
+        SmartPlaylistRuleValue::DateRange { start, end } => {
+            let start = start.trim().to_string();
+            let end = end.trim().to_string();
+            if start.is_empty() || end.is_empty() {
+                None
+            } else if start <= end {
+                Some((start, end))
+            } else {
+                Some((end, start))
+            }
+        }
+        _ => None,
+    }
 }
 
 fn false_sql() -> SmartSql {
@@ -1093,5 +1119,112 @@ mod tests {
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].id, first.id);
         assert_eq!(detail.tracks[0].skip_count, Some(1));
+    }
+
+    #[test]
+    fn smart_playlist_rules_filter_date_ranges() {
+        let store = Store::open_memory().expect("store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let album = album(1);
+        let mut first = track(1, &album);
+        first.date_added = Some("2024-02-14".to_string());
+        let mut second = track(2, &album);
+        second.date_added = Some("2024-05-20".to_string());
+        store
+            .upsert_albums(&saved.server.id, &[album], 1)
+            .expect("album");
+        store
+            .upsert_tracks(&saved.server.id, &[first.clone(), second], 1)
+            .expect("tracks");
+        let definition = SmartPlaylistDefinition {
+            root: SmartPlaylistRuleGroup {
+                mode: SmartPlaylistMatchMode::All,
+                rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
+                    field: SmartPlaylistRuleField::DateAdded,
+                    operator: SmartPlaylistRuleOperator::Between,
+                    value: Some(SmartPlaylistRuleValue::DateRange {
+                        start: "2024-01-01".to_string(),
+                        end: "2024-03-01".to_string(),
+                    }),
+                })],
+            },
+            sort_field: SmartPlaylistSortField::Title,
+            descending: false,
+            limit: None,
+        };
+        let smart_id = SmartPlaylistId::new("custom:date-range");
+        store
+            .save_smart_playlist(&saved.server.id, &smart_id, "Date Range", &definition)
+            .expect("save smart");
+
+        let detail = store
+            .load_smart_playlist_detail(&saved.server.id, &smart_id)
+            .expect("detail")
+            .expect("detail");
+
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].id, first.id);
+    }
+
+    #[test]
+    fn smart_playlist_rules_filter_year_range_and_genre() {
+        let store = Store::open_memory().expect("store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let album = album(1);
+        let mut first = track(1, &album);
+        first.title = "Range Match".to_string();
+        first.year = 2000;
+        first.genres = vec!["Rock".to_string()];
+        let mut second = track(2, &album);
+        second.title = "Wrong Genre".to_string();
+        second.year = 2000;
+        second.genres = vec!["Jazz".to_string()];
+        let mut third = track(3, &album);
+        third.title = "Wrong Year".to_string();
+        third.year = 2005;
+        third.genres = vec!["Rock".to_string()];
+        store
+            .upsert_albums(&saved.server.id, &[album], 1)
+            .expect("album");
+        store
+            .upsert_tracks(&saved.server.id, &[first.clone(), second, third], 1)
+            .expect("tracks");
+        let definition = SmartPlaylistDefinition {
+            root: SmartPlaylistRuleGroup {
+                mode: SmartPlaylistMatchMode::All,
+                rules: vec![
+                    SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
+                        field: SmartPlaylistRuleField::Year,
+                        operator: SmartPlaylistRuleOperator::Between,
+                        value: Some(SmartPlaylistRuleValue::NumberRange {
+                            min: 1999,
+                            max: 2001,
+                        }),
+                    }),
+                    SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
+                        field: SmartPlaylistRuleField::Genre,
+                        operator: SmartPlaylistRuleOperator::Contains,
+                        value: Some(SmartPlaylistRuleValue::Text("rock".to_string())),
+                    }),
+                ],
+            },
+            sort_field: SmartPlaylistSortField::Title,
+            descending: false,
+            limit: None,
+        };
+        let smart_id = SmartPlaylistId::new("custom:year-genre");
+        store
+            .save_smart_playlist(&saved.server.id, &smart_id, "Year Genre", &definition)
+            .expect("save smart");
+
+        let detail = store
+            .load_smart_playlist_detail(&saved.server.id, &smart_id)
+            .expect("detail")
+            .expect("detail");
+
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].id, first.id);
     }
 }

@@ -274,6 +274,7 @@ pub enum SmartPlaylistRuleValue {
     NumberRange { min: i64, max: i64 },
     Bool(bool),
     Date(String),
+    DateRange { start: String, end: String },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -91,10 +91,11 @@ use rufin_core::{
     FolderPathItem, Genre, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryField,
     LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, PlaylistId, QueueEntry,
     QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem,
-    SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode,
-    SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
-    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
-    TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration, sanitized_window_size,
+    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId,
+    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
+    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
+    SmartPlaylistSortField, Track, TrackId, TrackSortKey, TrackTableColumn, TrackTableSettings,
+    format_duration, sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};

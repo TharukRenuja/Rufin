@@ -206,7 +206,7 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             route: Route::Playlists,
         },
         SidebarRouteItem::SmartPlaylists => NavItem {
-            icon_name: "view-filter-symbolic",
+            icon_name: "rufin-smart-playlist-symbolic",
             label: "Smart Playlists",
             route: Route::SmartPlaylists,
         },

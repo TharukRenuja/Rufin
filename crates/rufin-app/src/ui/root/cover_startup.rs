@@ -643,6 +643,22 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.render_current_route_preserving_scroll();
                     }
                 }
+                ControllerEvent::SmartPlaylistChanged {
+                    smart_playlist_id,
+                    snapshot,
+                } => {
+                    *shell.state.library.borrow_mut() = *snapshot;
+                    shell.update_server_selector();
+                    let route = shell.state.routes.borrow().current().clone();
+                    if matches!(route, Route::SmartPlaylists) {
+                        shell.navigate(Route::SmartPlaylistDetail(smart_playlist_id));
+                    } else if matches!(
+                        route,
+                        Route::SmartPlaylistDetail(id) if id == smart_playlist_id
+                    ) {
+                        shell.render_current_route_preserving_scroll();
+                    }
+                }
                 ControllerEvent::FavoriteChanged {
                     item_id,
                     favorite,

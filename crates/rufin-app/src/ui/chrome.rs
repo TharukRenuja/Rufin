@@ -52,9 +52,10 @@ pub(super) fn build_content_chrome(
     right_panel: &gtk::Box,
 ) -> ContentChromeParts {
     let main_well = gtk::ScrolledWindow::new();
-    // automatic horizontal policy gives the main pane a clip/scroll boundary
-    // without letting wide route children become a large toplevel minimum.
-    main_well.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    // Route-level scrollers own horizontal overflow. The main pane only
+    // provides the clip boundary, otherwise child natural widths can surface
+    // as duplicate horizontal scrollbars.
+    main_well.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
     main_well.set_overflow(gtk::Overflow::Hidden);
     main_well.set_min_content_width(0);
     main_well.set_propagate_natural_width(false);
