@@ -110,8 +110,11 @@ For tests:
 
 ```bash
 cargo fmt --check
-cargo test --workspace
+scripts/test-rust.sh
 ```
+
+`scripts/test-rust.sh` uses `cargo-nextest` when it is installed and falls back to
+`cargo test`.
 
 UI perf reports default to `.local/perf/rufin-ui-perf-<pid>.log` for `--ui-perf-run` and `.local/perf/rufin-ui-observe-<pid>.log` for `--ui-perf-observe`.
 

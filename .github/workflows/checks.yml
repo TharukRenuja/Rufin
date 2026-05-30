@@ -114,6 +114,12 @@ jobs:
             max-substitution-jobs = 4
             stalled-download-timeout = 90
 
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-bin: "false"
+          cmd-format: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command {0}
+
       - name: Check Rust formatting
         run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo fmt --all -- --check
 
@@ -121,7 +127,7 @@ jobs:
         run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run Rust tests
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo test --workspace --locked
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command bash scripts/test-rust.sh
 
   cargo-deny:
     name: cargo-deny
