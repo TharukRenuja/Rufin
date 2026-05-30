@@ -41,8 +41,8 @@ attempt=1
 while (( attempt <= attempts )); do
   : > "$log_file"
   set +e
-  "$@" 2>&1 | tee "$log_file"
-  status="${PIPESTATUS[0]}"
+  "$@" > >(tee -a "$log_file") 2> >(tee -a "$log_file" >&2)
+  status="$?"
   set -e
 
   if [[ "$status" -eq 0 ]]; then
