@@ -1007,6 +1007,30 @@ pub(in crate::controller) fn auto_dj_tops_up_low_queue_from_cached_library() {
     );
 }
 #[test]
+pub(in crate::controller) fn auto_dj_refill_threshold_controls_top_up_timing() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let mut settings = controller.load_settings();
+    settings.auto_dj_refill_threshold = 1;
+    controller
+        .save_settings(&settings)
+        .expect("save Auto DJ settings");
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first, second]);
+    let queue = wait_for_queue(&events).expect("queue before threshold refill");
+    assert_eq!(queue.entries.len(), 2);
+
+    let mut settings = controller.load_settings();
+    settings.auto_dj_refill_threshold = 2;
+    controller
+        .save_settings(&settings)
+        .expect("save Auto DJ settings");
+    controller.refill_auto_dj_queue();
+    let queue = wait_for_queue(&events).expect("queue after threshold refill");
+    assert_eq!(queue.entries.len(), 2 + super::AUTO_DJ_ITEM_COUNT);
+}
+#[test]
 pub(in crate::controller) fn auto_dj_extends_queue_before_manual_next_at_end() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
@@ -1232,6 +1256,7 @@ pub(in crate::controller) fn prepared_track_started_advances_queue_without_resta
     commands.lock().expect("commands").clear();
     controller.advance_after_prepared_track_started(PlaybackTrack {
         id: second.id.clone(),
+        album_id: Some(second.album_id.clone()),
         title: second.title.clone(),
         artist: second.artist.clone(),
         album: second.album.clone(),

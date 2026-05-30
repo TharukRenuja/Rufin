@@ -2,7 +2,7 @@ use gst::glib;
 use gst::prelude::*;
 use gstreamer as gst;
 use rufin_core::{
-    EQUALIZER_BAND_COUNT, EqualizerSettings, PlaybackSettings, PlaybackTransitionMode,
+    AlbumId, EQUALIZER_BAND_COUNT, EqualizerSettings, PlaybackSettings, PlaybackTransitionMode,
     ReplayGainMode, TrackId,
 };
 use std::collections::VecDeque;
@@ -26,7 +26,7 @@ pub use waveform::generate_waveform_peaks;
 #[cfg(test)]
 use gstreamer_backend::{
     AboutToFinishAction, CrossfadeState, GstEngine, PendingSeek, PlayerPipeline,
-    SharedPlaybackState, Slot, about_to_finish_action,
+    SharedPlaybackState, Slot, about_to_finish_action, same_album_crossfade_is_skipped,
 };
 use gstreamer_backend::{
     clock_seconds_from_millis, position_event, position_event_for_track, redact_sensitive_uri,
@@ -42,6 +42,7 @@ const SEEK_POSITION_TOLERANCE_MILLIS: u64 = 1_500;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlaybackTrack {
     pub id: TrackId,
+    pub album_id: Option<AlbumId>,
     pub title: String,
     pub artist: String,
     pub album: String,

@@ -2,9 +2,9 @@ use super::{
     AboutToFinishAction, CrossfadeState, FakePlaybackBackend, GstEngine, PendingSeek,
     PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline,
     PreparedPlaybackItem, SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState,
-    Slot, StreamDescriptor, about_to_finish_action,
+    Slot, StreamDescriptor, about_to_finish_action, same_album_crossfade_is_skipped,
 };
-use rufin_core::{PlaybackSettings, PlaybackTransitionMode, TrackId};
+use rufin_core::{AlbumId, PlaybackSettings, PlaybackTransitionMode, TrackId};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -134,6 +134,78 @@ fn gapless_about_to_finish_without_next_waits_for_eos() {
     assert_eq!(action, AboutToFinishAction::Ignore);
     assert!(shared.next.is_none());
     assert!(shared.gapless_pending.is_none());
+}
+#[test]
+fn same_album_crossfade_about_to_finish_preloads_local_next_item() {
+    let current = PreparedPlaybackItem::new(
+        track_on_album(1, 7),
+        StreamDescriptor::new("file:///music/one.flac"),
+    );
+    let next = PreparedPlaybackItem::new(
+        track_on_album(2, 7),
+        StreamDescriptor::new("file:///music/two.flac"),
+    );
+    let mut shared = SharedPlaybackState::new();
+    shared.settings.transition_mode = PlaybackTransitionMode::Crossfade;
+    shared.settings.skip_same_album_crossfade = true;
+    shared.current = Some(current);
+    shared.next = Some(next.clone());
+
+    let action = about_to_finish_action(&mut shared);
+
+    assert_eq!(action, AboutToFinishAction::Preload(next.clone()));
+    assert!(shared.next.is_none());
+    assert_eq!(shared.gapless_pending, Some(next));
+}
+#[test]
+fn same_album_crossfade_exception_ignores_unrelated_next_item() {
+    let current = PreparedPlaybackItem::new(
+        track_on_album(1, 7),
+        StreamDescriptor::new("file:///music/one.flac"),
+    );
+    let next = PreparedPlaybackItem::new(
+        track_on_album(2, 8),
+        StreamDescriptor::new("file:///music/two.flac"),
+    );
+    let mut shared = SharedPlaybackState::new();
+    shared.settings.transition_mode = PlaybackTransitionMode::Crossfade;
+    shared.settings.skip_same_album_crossfade = true;
+    shared.current = Some(current);
+    shared.next = Some(next.clone());
+
+    let action = about_to_finish_action(&mut shared);
+
+    assert_eq!(action, AboutToFinishAction::Ignore);
+    assert_eq!(shared.next, Some(next));
+    assert!(shared.gapless_pending.is_none());
+}
+#[test]
+fn same_album_crossfade_exception_matches_album_id_before_text() {
+    let current = PreparedPlaybackItem::new(
+        PlaybackTrack {
+            album: "Album".to_string(),
+            ..track_on_album(1, 7)
+        },
+        StreamDescriptor::new("file:///music/one.flac"),
+    );
+    let next = PreparedPlaybackItem::new(
+        PlaybackTrack {
+            album: "Different title".to_string(),
+            ..track_on_album(2, 7)
+        },
+        StreamDescriptor::new("file:///music/two.flac"),
+    );
+    let settings = PlaybackSettings {
+        transition_mode: PlaybackTransitionMode::Crossfade,
+        skip_same_album_crossfade: true,
+        ..PlaybackSettings::default()
+    };
+
+    assert!(same_album_crossfade_is_skipped(
+        &settings,
+        Some(&current),
+        &next
+    ));
 }
 #[test]
 fn pending_seek_rejects_stale_positions_until_target_or_timeout() {
@@ -298,11 +370,15 @@ fn seek_during_crossfade_promotes_incoming_track_before_targeting_active_pipelin
     assert!(shared.gapless_pending.is_none());
 }
 fn track(number: u32) -> PlaybackTrack {
+    track_on_album(number, 1)
+}
+fn track_on_album(number: u32, album_number: u32) -> PlaybackTrack {
     PlaybackTrack {
         id: TrackId::fake(number),
+        album_id: Some(AlbumId::fake(album_number)),
         title: format!("Track {number}"),
         artist: "Artist".to_string(),
-        album: "Album".to_string(),
+        album: format!("Album {album_number}"),
         duration_seconds: 180,
     }
 }

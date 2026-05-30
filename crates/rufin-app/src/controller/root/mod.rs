@@ -128,7 +128,6 @@ const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 const GROUPED_COVER_REF_LIMIT: usize = 4;
 pub(in crate::controller) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 const AUTO_DJ_ITEM_COUNT: usize = 5;
-const AUTO_DJ_THRESHOLD: usize = 1;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 const CACHE_DATABASE_FILE_NAME: &str = "rufin-cache.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";

@@ -1,9 +1,10 @@
 use super::{
-    AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DEFAULT_WINDOW_HEIGHT,
-    DEFAULT_WINDOW_WIDTH, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
-    LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey,
-    LocalLibraryFolder, MAX_CROSSFADE_SECONDS, MAX_RESTORED_WINDOW_HEIGHT,
-    MAX_RESTORED_WINDOW_WIDTH, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode, ReplayGainMode,
+    AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_AUTO_DJ_REFILL_THRESHOLD,
+    DEFAULT_DISCORD_CLIENT_ID, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, DiscordDisplayType,
+    DiscordLinkType, EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode,
+    LibraryField, LibraryLayout, LibraryListKey, LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD,
+    MAX_CROSSFADE_SECONDS, MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH,
+    MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode, ReplayGainMode,
     RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings, SidebarRouteItem,
     StreamQuality, TrackSortKey, TrackTableColumn, sanitized_window_size,
 };
@@ -47,10 +48,15 @@ fn settings_default_to_privacy_preserving_remote_features() {
     assert!(settings.scrobbling.listenbrainz.now_playing_enabled);
     assert!(settings.auto_dj_enabled);
     assert_eq!(
+        settings.auto_dj_refill_threshold,
+        DEFAULT_AUTO_DJ_REFILL_THRESHOLD
+    );
+    assert_eq!(
         settings.playback.transition_mode,
         PlaybackTransitionMode::Gapless
     );
     assert_eq!(settings.playback.crossfade_seconds, 5);
+    assert!(!settings.playback.skip_same_album_crossfade);
     assert_eq!(settings.playback.replay_gain, ReplayGainMode::Off);
     assert_eq!(settings.playback.stream_quality, StreamQuality::Original);
     assert_eq!(settings.playback.audio_output, None);
@@ -223,6 +229,26 @@ fn playback_settings_sanitize_clamps_crossfade_to_supported_range() {
     assert_eq!(settings.crossfade_seconds, MAX_CROSSFADE_SECONDS);
 }
 #[test]
+fn app_settings_migrate_defaults_clamps_auto_dj_refill_threshold() {
+    let mut settings = AppSettings {
+        auto_dj_refill_threshold: 0,
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+    assert_eq!(
+        settings.auto_dj_refill_threshold,
+        MIN_AUTO_DJ_REFILL_THRESHOLD
+    );
+
+    settings.auto_dj_refill_threshold = MAX_AUTO_DJ_REFILL_THRESHOLD + 1;
+    settings.migrate_defaults();
+    assert_eq!(
+        settings.auto_dj_refill_threshold,
+        MAX_AUTO_DJ_REFILL_THRESHOLD
+    );
+}
+#[test]
 fn app_settings_sanitize_local_library_folders() {
     let mut settings = AppSettings {
         sources: super::LibrarySourceSettings {
@@ -301,6 +327,10 @@ fn settings_restore_without_window_geometry() {
     assert_eq!(restored.window_width, None);
     assert_eq!(restored.window_height, None);
     assert!(restored.auto_dj_enabled);
+    assert_eq!(
+        restored.auto_dj_refill_threshold,
+        DEFAULT_AUTO_DJ_REFILL_THRESHOLD
+    );
     assert_eq!(restored.language, SYSTEM_LANGUAGE_PREFERENCE);
     assert!(!restored.external_lyrics_enabled);
     assert!(restored.external_metadata_enabled);
@@ -311,6 +341,7 @@ fn settings_restore_without_window_geometry() {
         PlaybackTransitionMode::Gapless
     );
     assert_eq!(restored.playback.volume, 1.0);
+    assert!(!restored.playback.skip_same_album_crossfade);
     assert!(!restored.playback.muted);
     assert_eq!(restored.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
     assert_eq!(
@@ -331,13 +362,13 @@ fn settings_restore_without_window_geometry() {
 #[test]
 fn app_settings_sanitize_language_preference() {
     let mut settings = AppSettings {
-        language: " tr_TR.UTF-8 ".to_string(),
+        language: " de_DE.UTF-8 ".to_string(),
         ..AppSettings::default()
     };
     settings.migrate_defaults();
-    assert_eq!(settings.language, "tr_TR.UTF-8");
+    assert_eq!(settings.language, "de_DE.UTF-8");
 
-    settings.language = "tr_TR\0".to_string();
+    settings.language = "de_DE\0".to_string();
     settings.migrate_defaults();
     assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
 
