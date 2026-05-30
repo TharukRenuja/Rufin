@@ -3,16 +3,12 @@ use super::*;
 impl Shell {
     pub(in crate::ui) fn drain_cover_decode_queue(self: &Rc<Self>) {
         loop {
-            if self.state.cover_decodes.borrow().len() >= COVER_DECODE_MAX_IN_FLIGHT {
+            if self.state.cover_decodes.borrow().len() >= self.cover_decode_in_flight_limit() {
                 break;
             }
-            let Some(job) = self.state.cover_decode_queue.borrow_mut().pop_front() else {
+            let Some(job) = self.next_cover_decode_job() else {
                 break;
             };
-            if job.priority == CoverDecodePriority::Warm && self.cover_warm_is_paused() {
-                self.state.cover_decode_queue.borrow_mut().push_front(job);
-                break;
-            }
             if job.requires_live_binding && !self.cover_binding_has_live(&job.key) {
                 self.record_perf_cover_stale_key(&job.key);
                 continue;
@@ -35,6 +31,16 @@ impl Shell {
             }
             self.spawn_cover_decode_job(job);
         }
+    }
+    fn next_cover_decode_job(&self) -> Option<CoverDecodeJob> {
+        let mut queue = self.state.cover_decode_queue.borrow_mut();
+        if !self.cover_warm_is_paused() {
+            return queue.pop_front();
+        }
+        let visible = queue
+            .iter()
+            .position(|job| job.priority == CoverDecodePriority::Visible)?;
+        queue.remove(visible)
     }
     pub(in crate::ui) fn spawn_cover_decode_job(self: &Rc<Self>, job: CoverDecodeJob) {
         let shell = Rc::clone(self);
@@ -72,6 +78,13 @@ impl Shell {
             }
             shell.drain_cover_decode_queue();
         });
+    }
+    fn cover_decode_in_flight_limit(&self) -> usize {
+        if self.cover_warm_is_paused() {
+            1
+        } else {
+            COVER_DECODE_MAX_IN_FLIGHT
+        }
     }
     pub(in crate::ui) fn finish_cover_decode(&self, key: &str) {
         self.state.cover_decodes.borrow_mut().remove(key);

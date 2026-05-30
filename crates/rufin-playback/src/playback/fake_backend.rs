@@ -55,15 +55,24 @@ impl FakePlaybackBackend {
         self.position_seconds = start_position_seconds.min(self.duration_seconds);
         self.position_millis = u64::from(self.position_seconds) * 1_000;
         self.current = Some(item.track);
+        let track_id = self.current.as_ref().map(|track| track.id.clone());
+        self.events.push_back(PlaybackEvent::DurationChanged {
+            track_id: track_id.clone(),
+            seconds: self.duration_seconds,
+        });
         self.events
-            .push_back(PlaybackEvent::DurationChanged(self.duration_seconds));
-        self.events.push_back(position_event(self.position_millis));
+            .push_back(position_event_for_track(self.position_millis, track_id));
         self.set_state(PlaybackState::Playing);
     }
 }
 impl PlaybackBackend for FakePlaybackBackend {
     fn send(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
         match command {
+            PlaybackCommand::WarmUp(settings) => {
+                self.settings = settings;
+                self.volume = self.settings.volume;
+                self.muted = self.settings.muted;
+            }
             PlaybackCommand::Play {
                 track,
                 stream,
@@ -106,13 +115,19 @@ impl PlaybackBackend for FakePlaybackBackend {
             PlaybackCommand::Seek(seconds) => {
                 self.position_seconds = seconds.min(self.duration_seconds);
                 self.position_millis = u64::from(self.position_seconds) * 1_000;
-                self.events.push_back(position_event(self.position_millis));
+                self.events.push_back(position_event_for_track(
+                    self.position_millis,
+                    self.current.as_ref().map(|track| track.id.clone()),
+                ));
             }
             PlaybackCommand::SeekMillis(millis) => {
                 self.position_millis =
                     millis.min(u64::from(self.duration_seconds).saturating_mul(1_000));
                 self.position_seconds = clock_seconds_from_millis(self.position_millis);
-                self.events.push_back(position_event(self.position_millis));
+                self.events.push_back(position_event_for_track(
+                    self.position_millis,
+                    self.current.as_ref().map(|track| track.id.clone()),
+                ));
             }
             PlaybackCommand::SetVolume(volume) => {
                 self.volume = volume.clamp(0.0, 1.0);

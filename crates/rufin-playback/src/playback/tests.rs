@@ -32,10 +32,12 @@ fn fake_backend_reports_basic_state_transitions() {
     assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Playing)));
     assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Paused)));
     assert!(events.contains(&PlaybackEvent::PositionChanged {
+        track_id: Some(TrackId::fake(1)),
         seconds: 42,
         millis: 42_000,
     }));
     assert!(events.contains(&PlaybackEvent::PositionChanged {
+        track_id: Some(TrackId::fake(1)),
         seconds: 42,
         millis: 42_500,
     }));
@@ -123,6 +125,17 @@ fn gapless_about_to_finish_leaves_non_file_streams_for_eos() {
     assert!(shared.gapless_pending.is_none());
 }
 #[test]
+fn gapless_about_to_finish_without_next_waits_for_eos() {
+    let mut shared = SharedPlaybackState::new();
+    shared.settings.transition_mode = PlaybackTransitionMode::Gapless;
+
+    let action = about_to_finish_action(&mut shared);
+
+    assert_eq!(action, AboutToFinishAction::Ignore);
+    assert!(shared.next.is_none());
+    assert!(shared.gapless_pending.is_none());
+}
+#[test]
 fn pending_seek_rejects_stale_positions_until_target_or_timeout() {
     let now = Instant::now();
     let pending = PendingSeek::interactive(42_000, PlaybackState::Playing, now);
@@ -172,12 +185,60 @@ fn track_start_rejects_previous_position_and_stopped_state() {
     let events = events.lock().expect("events");
     assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Playing)));
     assert!(events.contains(&PlaybackEvent::PositionChanged {
+        track_id: None,
         seconds: 0,
         millis: 0
     }));
     assert!(!events.contains(&PlaybackEvent::PositionChanged {
+        track_id: None,
         seconds: 78,
         millis: 78_000
+    }));
+}
+#[test]
+fn gapless_pending_suppresses_timing_until_stream_start() {
+    let mut engine = test_engine_with_pending_seek(0);
+    engine.pending_seek = None;
+    let next = PreparedPlaybackItem::new(track(2), StreamDescriptor::new("fake://track/2"));
+    {
+        let mut shared = engine.shared.lock().expect("shared");
+        shared.current = Some(PreparedPlaybackItem::new(
+            track(1),
+            StreamDescriptor::new("fake://track/1"),
+        ));
+        shared.gapless_pending = Some(next.clone());
+    }
+
+    engine.push_position(42_000);
+    engine.push_duration(next.track.duration_seconds);
+    assert!(engine.events.lock().expect("events").is_empty());
+
+    {
+        let mut shared = engine.shared.lock().expect("shared");
+        shared.current = Some(next.clone());
+        shared.gapless_pending = None;
+    }
+    engine.handle_stream_started_track(Some(next.track.clone()));
+
+    let events: Vec<_> = engine
+        .events
+        .lock()
+        .expect("events")
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(
+        events.first(),
+        Some(&PlaybackEvent::PreparedTrackStarted(next.track.clone()))
+    );
+    assert!(events.contains(&PlaybackEvent::PositionChanged {
+        track_id: Some(next.track.id.clone()),
+        seconds: 0,
+        millis: 0,
+    }));
+    assert!(events.contains(&PlaybackEvent::DurationChanged {
+        track_id: Some(next.track.id.clone()),
+        seconds: next.track.duration_seconds,
     }));
 }
 #[test]
@@ -196,8 +257,13 @@ fn ordinary_stream_start_preserves_startup_seek() {
         .retry_on_async_done = false;
     engine.handle_stream_started_track(Some(track(2)));
     assert!(engine.pending_seek.is_none());
-    let events = events.lock().expect("events");
+    let events: Vec<_> = events.lock().expect("events").iter().cloned().collect();
+    assert_eq!(
+        events.first(),
+        Some(&PlaybackEvent::PreparedTrackStarted(track(2)))
+    );
     assert!(events.contains(&PlaybackEvent::PositionChanged {
+        track_id: Some(TrackId::fake(2)),
         seconds: 0,
         millis: 0
     }));
@@ -265,14 +331,15 @@ fn test_engine_with_pending_seek(target_millis: u64) -> GstEngine {
             PlaybackState::Buffering,
             Instant::now(),
         )),
+        play_command_started_at: None,
     }
 }
 fn test_pipeline(
     slot: Slot,
     name: &str,
     shared: Arc<Mutex<SharedPlaybackState>>,
-    events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
+    _events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
 ) -> PlayerPipeline {
     gstreamer::init().expect("gst init");
-    PlayerPipeline::new(slot, name, shared, events).expect("test pipeline")
+    PlayerPipeline::new(slot, name, shared).expect("test pipeline")
 }

@@ -51,6 +51,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -331,7 +332,16 @@ pub enum ControllerEvent {
         running: bool,
     },
     LoginStatus(String),
+    PlaybackPerf(PlaybackPerfEvent),
     Error(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaybackPerfEvent {
+    pub phase: &'static str,
+    pub server_id: ServerId,
+    pub track_id: TrackId,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -352,9 +362,11 @@ pub struct AppController {
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     settings: settings_controller::SettingsController,
     queue: Arc<Mutex<Option<QueueEngine>>>,
+    playback_request_generation: Arc<AtomicU64>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     playback_activity: Arc<Mutex<PlaybackActivityState>>,
+    playback_start_probe: Arc<Mutex<Option<PlaybackStartProbe>>>,
     auto_dj_enabled: Arc<Mutex<bool>>,
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
@@ -369,6 +381,11 @@ pub struct AppController {
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
     #[cfg(test)]
     _test_permit: Option<ControllerTestPermit>,
+}
+struct PlaybackStartProbe {
+    server_id: ServerId,
+    track_id: TrackId,
+    started_at: std::time::Instant,
 }
 #[cfg(test)]
 #[derive(Clone)]

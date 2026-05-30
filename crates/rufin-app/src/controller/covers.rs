@@ -22,8 +22,8 @@ use cache::*;
 use fetch::fetch_and_cache_cover;
 pub(super) use fetch::is_provider_not_found_error;
 pub(super) use prefetch::{
-    ExternalCoverPrefetchRequest, prefetch_initial_provider_cover_cache,
-    start_external_metadata_cover_prefetch_thread,
+    ExternalCoverPrefetchRequest, ProviderCoverPrefetchRequest,
+    prefetch_initial_provider_cover_cache, start_external_metadata_cover_prefetch_thread,
 };
 
 const EXTERNAL_PREFETCH_PAGE_SIZE: usize = 500;

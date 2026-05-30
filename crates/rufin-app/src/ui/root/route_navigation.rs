@@ -1,6 +1,12 @@
 use super::*;
 
 impl Shell {
+    pub(in crate::ui) fn prepare_home_route_for_source_change(self: &Rc<Self>) {
+        let previous = self.state.routes.borrow().current().clone();
+        self.state.routes.borrow_mut().navigate(Route::Home);
+        self.handle_home_route_transition(&previous, &Route::Home);
+    }
+
     pub(in crate::ui) fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
         let previous = self.state.routes.borrow().current().clone();

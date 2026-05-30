@@ -21,6 +21,7 @@ use rufin_store::SavedServer;
 use rufin_test_support::{FakeProvider, FakeScale};
 use std::fs;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 struct SaveFailingSecretStore;
 impl SecretStore for SaveFailingSecretStore {
@@ -217,6 +218,7 @@ pub(in crate::controller) fn activate_logged_in_server_selects_server_without_sa
         &LoginActivationContext {
             store: &controller.store,
             queue: &controller.queue,
+            playback_request_generation: &controller.playback_request_generation,
             playback: &controller.playback,
             playback_snapshot: &controller.playback_snapshot,
             auto_dj_enabled: &controller.auto_dj_enabled,
@@ -270,6 +272,7 @@ pub(in crate::controller) fn token_save_failure_does_not_persist_empty_server() 
         &LoginActivationContext {
             store: &controller.store,
             queue: &controller.queue,
+            playback_request_generation: &controller.playback_request_generation,
             playback: &controller.playback,
             playback_snapshot: &controller.playback_snapshot,
             auto_dj_enabled: &controller.auto_dj_enabled,
@@ -371,10 +374,10 @@ pub(in crate::controller) fn snapshot_load_reconciles_active_server_to_selected_
     assert_eq!(active_after.server.id, selected_saved.server.id);
 }
 #[test]
-pub(in crate::controller) fn local_folder_preferences_add_preserves_remote_source_selection() {
+pub(in crate::controller) fn local_folder_preferences_add_selects_local_source_and_syncs() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = saved_server();
-    let root = unique_test_dir("add-local-folder-preserve-source");
+    let root = unique_test_dir("add-local-folder-select-source");
     fs::create_dir_all(&root).expect("create root");
     let mut settings = AppSettings::default();
     settings.sources.selected = Some(LibrarySourceSelection::Server(saved.server.id.clone()));
@@ -387,10 +390,12 @@ pub(in crate::controller) fn local_folder_preferences_add_preserves_remote_sourc
         .expect("save server");
     let (controller, events) = controller_from_store_for_test(store);
     controller.add_local_library_folder(root.clone());
+    let queue = wait_for_queue(&events).expect("local queue");
+    assert_eq!(queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
     let snapshot = wait_for_snapshot(&events);
     assert_eq!(
         snapshot.selected_source,
-        Some(LibrarySourceSelection::Server(saved.server.id.clone()))
+        Some(LibrarySourceSelection::Local)
     );
     assert_eq!(snapshot.local_folders.len(), 1);
     let active = controller
@@ -398,7 +403,66 @@ pub(in crate::controller) fn local_folder_preferences_add_preserves_remote_sourc
         .with_store(|store| store.active_server())
         .expect("active server")
         .expect("active server");
-    assert_eq!(active.server.id, saved.server.id);
+    assert_eq!(active.server.id.as_str(), LOCAL_SOURCE_SERVER_ID);
+    assert_eq!(wait_for_status(&events), "Syncing Local library...");
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn selecting_fresh_local_source_reuses_cached_library() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_server();
+    let local = local_source_saved();
+    let root = unique_test_dir("fresh-local-source-selection");
+    fs::create_dir_all(&root).expect("create root");
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Server(remote.server.id.clone()));
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save settings");
+    let generation = store
+        .with_store(|store| {
+            store.save_server(&remote)?;
+            store.save_server(&local)?;
+            store.set_active_server(&remote.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.complete_sync(&local.server.id, generation)?;
+            Ok(generation)
+        })
+        .expect("seed fresh local sync");
+    let (controller, events) = controller_from_store_for_test(store);
+
+    controller.select_source(LibrarySourceSelection::Local);
+
+    let queue = wait_for_queue(&events).expect("local queue");
+    assert_eq!(queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
+    let snapshot = wait_for_snapshot(&events);
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Local)
+    );
+    assert_eq!(snapshot.sync_status, "Cached library ready");
+    let state = controller
+        .store
+        .with_store(|store| store.sync_state(&local.server.id))
+        .expect("sync state");
+    assert_eq!(state.status, "idle");
+    assert_eq!(state.generation, generation);
+
+    let deadline = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < deadline {
+        match events.recv_timeout(Duration::from_millis(25)) {
+            Ok(ControllerEvent::LoginStatus(status)) => {
+                panic!("unexpected local sync status: {status}");
+            }
+            Ok(ControllerEvent::Snapshot(snapshot)) => {
+                assert_ne!(snapshot.sync_status, "Syncing library...");
+            }
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -544,6 +608,41 @@ pub(in crate::controller) fn provider_sync_caches_all_track_pages() {
     assert_eq!(first_page.total, FakeScale::Small.track_count());
     assert_eq!(final_page.total, FakeScale::Small.track_count());
     assert_eq!(final_page.items.len(), 1);
+}
+#[test]
+pub(in crate::controller) fn local_source_sync_requires_artwork_cache_after_rows_exist() {
+    let runtime = Runtime::new().expect("runtime");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let provider = FakeProvider::new(FakeScale::Small);
+    let local = local_source_saved();
+    store
+        .with_store(|store| store.save_server(&local))
+        .expect("save local server");
+    runtime
+        .block_on(sync_provider(&store, &local.server.id, &provider))
+        .expect("sync local cache");
+
+    assert!(initial_cover_cache_required(&store, &local.server.id));
+}
+#[test]
+pub(in crate::controller) fn cached_remote_sync_skips_initial_artwork_cache() {
+    let runtime = Runtime::new().expect("runtime");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let provider = FakeProvider::new(FakeScale::Small);
+    let saved = SavedServer {
+        server: provider.identity().server.clone(),
+        user_id: "fake-user".to_string(),
+        username: "fake".to_string(),
+        trust_invalid_cert: false,
+    };
+    store
+        .with_store(|store| store.save_server(&saved))
+        .expect("save server");
+    runtime
+        .block_on(sync_provider(&store, &saved.server.id, &provider))
+        .expect("sync remote cache");
+
+    assert!(!initial_cover_cache_required(&store, &saved.server.id));
 }
 #[test]
 pub(in crate::controller) fn home_refresh_replaces_cached_sections_without_full_sync() {

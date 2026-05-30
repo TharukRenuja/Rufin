@@ -10,6 +10,9 @@ impl Shell {
             self.render_startup_loading_view();
             return;
         }
+        if self.state.startup_route_render_pending.get() {
+            return;
+        }
         if self.login_screen_active() {
             clear_favorite_controls(&self.state.favorite_controls);
             while let Some(child) = self.login_host.first_child() {

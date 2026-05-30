@@ -7,6 +7,7 @@ impl AppController {
         let events = self.events.clone();
         let secrets = Arc::clone(&self.secrets);
         let queue = Arc::clone(&self.queue);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
@@ -37,29 +38,14 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Ok(mut queue) = queue.lock() {
-                *queue = None;
-            }
-            if let Ok(mut playback) = playback.lock() {
-                let _result = playback.send(PlaybackCommand::Stop);
-            }
-            if let Ok(mut snapshot) = playback_snapshot.lock() {
-                *snapshot = PlaybackSnapshot {
-                    auto_dj_enabled: auto_dj_enabled
-                        .lock()
-                        .map(|enabled| *enabled)
-                        .unwrap_or_default(),
-                    ..PlaybackSnapshot::default()
-                };
-            }
-            let _sent = events.send(ControllerEvent::Queue(Box::new(None)));
-            let _sent = events.send(ControllerEvent::Playback(Box::new(PlaybackSnapshot {
-                auto_dj_enabled: auto_dj_enabled
-                    .lock()
-                    .map(|enabled| *enabled)
-                    .unwrap_or_default(),
-                ..PlaybackSnapshot::default()
-            })));
+            clear_queue_and_stop_playback(
+                &queue,
+                &playback_request_generation,
+                &playback,
+                &playback_snapshot,
+                &auto_dj_enabled,
+                &events,
+            );
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(
                 LibrarySnapshot::first_run(),
             )));
@@ -71,6 +57,7 @@ impl AppController {
         let events = self.events.clone();
         let secrets = Arc::clone(&self.secrets);
         let queue = Arc::clone(&self.queue);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
@@ -124,29 +111,14 @@ impl AppController {
                 return;
             }
             if active_id.as_ref() == Some(&saved.server.id) {
-                if let Ok(mut queue) = queue.lock() {
-                    *queue = None;
-                }
-                if let Ok(mut playback) = playback.lock() {
-                    let _result = playback.send(PlaybackCommand::Stop);
-                }
-                if let Ok(mut snapshot) = playback_snapshot.lock() {
-                    *snapshot = PlaybackSnapshot {
-                        auto_dj_enabled: auto_dj_enabled
-                            .lock()
-                            .map(|enabled| *enabled)
-                            .unwrap_or_default(),
-                        ..PlaybackSnapshot::default()
-                    };
-                }
-                let _sent = events.send(ControllerEvent::Queue(Box::new(None)));
-                let _sent = events.send(ControllerEvent::Playback(Box::new(PlaybackSnapshot {
-                    auto_dj_enabled: auto_dj_enabled
-                        .lock()
-                        .map(|enabled| *enabled)
-                        .unwrap_or_default(),
-                    ..PlaybackSnapshot::default()
-                })));
+                clear_queue_and_stop_playback(
+                    &queue,
+                    &playback_request_generation,
+                    &playback,
+                    &playback_snapshot,
+                    &auto_dj_enabled,
+                    &events,
+                );
             }
             emit_snapshot(&store, &events);
             delete_token_after_forget(secrets, saved.server.id);
@@ -169,6 +141,7 @@ impl AppController {
         let secrets = Arc::clone(&sync_context.secrets);
         let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
@@ -196,6 +169,7 @@ impl AppController {
             let activation_context = LoginActivationContext {
                 store: &store,
                 queue: &queue,
+                playback_request_generation: &playback_request_generation,
                 playback: &playback,
                 playback_snapshot: &playback_snapshot,
                 auto_dj_enabled: &auto_dj_enabled,

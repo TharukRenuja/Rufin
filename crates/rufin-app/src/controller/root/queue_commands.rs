@@ -91,6 +91,7 @@ impl AppController {
             self.record_current_skip_if_needed();
         }
         if removed_current && !has_current_after_remove {
+            invalidate_playback_requests(&self.playback_request_generation);
             let _result = self.send_playback_command(PlaybackCommand::Stop);
             self.clear_playback_activity();
         }
@@ -156,6 +157,7 @@ impl AppController {
             return;
         }
         if had_current {
+            invalidate_playback_requests(&self.playback_request_generation);
             self.record_current_skip_if_needed();
             self.clear_playback_activity();
         }

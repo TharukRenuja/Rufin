@@ -149,10 +149,11 @@ impl Shell {
         self.cancel_queued_warm_cover_decodes();
     }
 
-    pub(in crate::ui) fn pause_cover_warm_for_interaction(&self) {
+    pub(in crate::ui) fn pause_cover_warm_for_interaction(self: &Rc<Self>) {
         self.state.cover_warm_paused_until.set(Some(
             Instant::now() + Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
         ));
+        self.schedule_cover_decode_resume();
     }
 
     pub(in crate::ui) fn cover_warm_is_paused(&self) -> bool {
@@ -164,6 +165,25 @@ impl Shell {
         }
         self.state.cover_warm_paused_until.set(None);
         false
+    }
+
+    fn schedule_cover_decode_resume(self: &Rc<Self>) {
+        if self.state.cover_decode_resume_queued.replace(true) {
+            return;
+        }
+
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
+            move || {
+                shell.state.cover_decode_resume_queued.set(false);
+                if shell.cover_warm_is_paused() {
+                    shell.schedule_cover_decode_resume();
+                } else {
+                    shell.drain_cover_decode_queue();
+                }
+            },
+        );
     }
 
     fn cover_warm_jobs_from_refs(

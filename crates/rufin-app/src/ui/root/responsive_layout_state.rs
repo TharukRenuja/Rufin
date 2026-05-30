@@ -9,8 +9,15 @@ impl Shell {
     }
     pub(in crate::ui) fn apply_resolved_layout(self: &Rc<Self>, resolved: ResolvedLayout) -> bool {
         let login_active = self.login_screen_active();
+        let startup_loading_active =
+            startup_loading_screen_active(login_active, self.state.startup_route_revealed.get());
         if login_active {
             self.root_stack.set_visible_child(&self.login_host);
+            self.state.fullscreen_player_visible.set(false);
+            self.app_content_stack.set_visible_child_name("main");
+        } else if startup_loading_active {
+            self.root_stack
+                .set_visible_child(&self.startup_loading_host);
             self.state.fullscreen_player_visible.set(false);
             self.app_content_stack.set_visible_child_name("main");
         } else {
@@ -36,21 +43,31 @@ impl Shell {
             .replace(resolved.right_sidebar_width);
         let previous_main_width = self.state.main_content_width.replace(resolved.main_width);
 
-        self.normal_nav
-            .set_visible(!login_active && resolved.left_sidebar == LeftSidebarMode::Full);
-        self.compact_nav
-            .set_visible(!login_active && resolved.left_sidebar == LeftSidebarMode::Compact);
-        self.right_panel_slot
-            .set_visible(!login_active && resolved.right_sidebar.is_visible());
+        self.normal_nav.set_visible(
+            !login_active
+                && !startup_loading_active
+                && resolved.left_sidebar == LeftSidebarMode::Full,
+        );
+        self.compact_nav.set_visible(
+            !login_active
+                && !startup_loading_active
+                && resolved.left_sidebar == LeftSidebarMode::Compact,
+        );
+        self.right_panel_slot.set_visible(
+            !login_active && !startup_loading_active && resolved.right_sidebar.is_visible(),
+        );
         self.right_panel_slot.set_min_content_width(0);
         self.right_panel_slot
             .set_max_content_width(resolved.right_sidebar_width);
         self.right_panel_slot.set_size_request(-1, -1);
         self.right_panel
             .set_width_request(resolved.right_sidebar_width);
-        self.right_panel
-            .set_visible(!login_active && resolved.right_sidebar.is_visible());
-        self.player_controls.root.set_visible(!login_active);
+        self.right_panel.set_visible(
+            !login_active && !startup_loading_active && resolved.right_sidebar.is_visible(),
+        );
+        self.player_controls
+            .root
+            .set_visible(!login_active && !startup_loading_active);
         self.update_right_panel_button();
         self.update_lyrics_panel_button();
 
@@ -89,6 +106,10 @@ impl Shell {
             stage,
             ?route,
             login_active = self.login_screen_active(),
+            startup_loading_active = startup_loading_screen_active(
+                self.login_screen_active(),
+                self.state.startup_route_revealed.get(),
+            ),
             first_run = self.state.library.borrow().first_run,
             first_run_connection_pending = self.state.first_run_connection_pending.get(),
             first_run_connection_ready = self.state.first_run_connection_ready.get(),
@@ -96,6 +117,7 @@ impl Shell {
             root_stack_width = self.root_stack.width(),
             app_root_width = self.app_root.width(),
             login_host_width = self.login_host.width(),
+            startup_loading_host_width = self.startup_loading_host.width(),
             route_host_width = self.route_host.width(),
             resolved_main_width = self.state.main_content_width.get(),
             right_sidebar = ?self.state.resolved_right_sidebar.get(),
@@ -105,4 +127,11 @@ impl Shell {
             "layout snapshot"
         );
     }
+}
+
+pub(in crate::ui) fn startup_loading_screen_active(
+    login_active: bool,
+    startup_route_revealed: bool,
+) -> bool {
+    !login_active && !startup_route_revealed
 }

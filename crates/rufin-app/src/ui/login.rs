@@ -38,7 +38,7 @@ impl Shell {
             ))
             .build();
         let dialog_for_connect = dialog.clone();
-        let child = self.add_server_view_with_success_handler(Some(Rc::new(move || {
+        let child = self.add_server_view_with_connect_handler(Some(Rc::new(move || {
             dialog_for_connect.close();
         })));
         toolbar.set_content(Some(&child));
@@ -51,12 +51,12 @@ impl Shell {
     }
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
-        self.add_server_view_with_success_handler(None)
+        self.add_server_view_with_connect_handler(None)
     }
 
-    fn add_server_view_with_success_handler(
+    fn add_server_view_with_connect_handler(
         self: &Rc<Self>,
-        on_connect_succeeded: Option<Rc<dyn Fn()>>,
+        on_connect_started: Option<Rc<dyn Fn()>>,
     ) -> gtk::Widget {
         if self.state.first_run_connection_pending.get() {
             return self.connection_progress_view();
@@ -196,9 +196,20 @@ impl Shell {
         let shell = Rc::clone(self);
         let connect_attempt_started = Rc::new(Cell::new(false));
         let connect_attempt_started_for_click = Rc::clone(&connect_attempt_started);
+        let on_connect_started_for_click = on_connect_started.clone();
         let login_for_click = login.clone();
         login.connect_clicked(move |_| {
             let provider = StreamingProvider::from_index(provider_input.selected());
+            let accept_connect_attempt = |message: &str| {
+                connect_attempt_started_for_click.set(true);
+                status_input.remove_css_class("error-text");
+                status_input.set_text(message);
+                status_input.set_visible(true);
+                login_for_click.set_sensitive(false);
+                if let Some(on_connect_started) = on_connect_started_for_click.as_ref() {
+                    on_connect_started();
+                }
+            };
             if provider == StreamingProvider::Local {
                 let roots = local_folders_input.borrow().clone();
                 if roots.is_empty() {
@@ -207,11 +218,7 @@ impl Shell {
                     return;
                 }
                 let message = tr("Caching local library...");
-                connect_attempt_started_for_click.set(true);
-                status_input.remove_css_class("error-text");
-                status_input.set_text(&message);
-                status_input.set_visible(true);
-                login_for_click.set_sensitive(false);
+                accept_connect_attempt(&message);
                 shell.begin_first_run_connection(&message);
                 controller.add_local_server_folders(roots);
             } else {
@@ -221,11 +228,7 @@ impl Shell {
                     return;
                 }
                 let message = tr("Connecting to music server...");
-                connect_attempt_started_for_click.set(true);
-                status_input.remove_css_class("error-text");
-                status_input.set_text(&message);
-                status_input.set_visible(true);
-                login_for_click.set_sensitive(false);
+                accept_connect_attempt(&message);
                 shell.begin_first_run_connection(&message);
                 controller.login(LoginRequest {
                     provider,
@@ -248,7 +251,6 @@ impl Shell {
             username: &username,
             password: &password,
             connect_attempt_started,
-            on_connect_succeeded,
         });
         actions.append(&login);
         content.append(&actions);
@@ -549,7 +551,6 @@ struct AddServerStatusWatcher<'a> {
     username: &'a adw::EntryRow,
     password: &'a adw::PasswordEntryRow,
     connect_attempt_started: Rc<Cell<bool>>,
-    on_connect_succeeded: Option<Rc<dyn Fn()>>,
 }
 
 fn connect_add_server_status_watcher(watcher: AddServerStatusWatcher<'_>) {
@@ -563,7 +564,6 @@ fn connect_add_server_status_watcher(watcher: AddServerStatusWatcher<'_>) {
         username,
         password,
         connect_attempt_started,
-        on_connect_succeeded,
     } = watcher;
     let shell = Rc::clone(shell);
     let status = status.clone();
@@ -609,9 +609,6 @@ fn connect_add_server_status_watcher(watcher: AddServerStatusWatcher<'_>) {
         }
 
         if connect_attempt_started.get() {
-            if let Some(on_connect_succeeded) = on_connect_succeeded.as_ref() {
-                on_connect_succeeded();
-            }
             return gtk::glib::ControlFlow::Break;
         }
 

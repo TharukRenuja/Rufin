@@ -56,7 +56,8 @@ pub(in crate::controller) fn wait_for_snapshot(
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
@@ -88,7 +89,8 @@ pub(in crate::controller) fn wait_for_favorite_changed(
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
@@ -119,7 +121,8 @@ pub(in crate::controller) fn wait_for_playlist_changed(
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
@@ -146,7 +149,8 @@ pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>)
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
@@ -174,7 +178,8 @@ pub(in crate::controller) fn wait_for_queue(
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
@@ -227,7 +232,8 @@ pub(in crate::controller) fn wait_for_cover_ready(
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
@@ -255,7 +261,8 @@ pub(in crate::controller) fn wait_for_lyrics(
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
@@ -304,7 +311,8 @@ pub(in crate::controller) fn wait_for_playback_state(
                 | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
-                | ControllerEvent::CoverReady { .. } => {}
+                | ControllerEvent::CoverReady { .. }
+                | ControllerEvent::PlaybackPerf(_) => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::PlaylistChanged { .. }
@@ -341,7 +349,8 @@ pub(in crate::controller) fn wait_for_playback_position(
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
@@ -373,7 +382,8 @@ pub(in crate::controller) fn wait_for_playback_auto_dj(
             | ControllerEvent::FolderLoadFailed { .. }
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. } => {}
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::PlaybackPerf(_) => {}
             ControllerEvent::Snapshot(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
@@ -415,7 +425,8 @@ pub(in crate::controller) fn wait_for_playback_current_favorite(
                 | ControllerEvent::FolderLoadFailed { .. }
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
-                | ControllerEvent::CoverReady { .. } => {}
+                | ControllerEvent::CoverReady { .. }
+                | ControllerEvent::PlaybackPerf(_) => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::PlaylistChanged { .. }

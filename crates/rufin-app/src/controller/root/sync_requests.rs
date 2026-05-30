@@ -25,9 +25,7 @@ pub(in crate::controller) fn resolve_stream(
             track_id.as_str()
         )));
     }
-    if saved.server.provider != "local"
-        && let Some(local_path) = local_audio_path_for_track(store, server_id, track_id)
-    {
+    if let Some(local_path) = local_audio_path_for_track(store, server_id, track_id) {
         let url = reqwest::Url::from_file_path(&local_path).map_err(|()| {
             format!(
                 "Could not turn local track path into a file URI: {}",
@@ -36,9 +34,10 @@ pub(in crate::controller) fn resolve_stream(
         })?;
         debug!(
             server_id = %server_id,
+            provider = %saved.server.provider,
             track_id = %track_id.as_str(),
             path = %local_path.display(),
-            "resolved remote track to local playback file"
+            "resolved track to local playback file"
         );
         return Ok(StreamDescriptor::new(url.to_string()));
     }

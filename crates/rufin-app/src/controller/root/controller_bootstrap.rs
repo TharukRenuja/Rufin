@@ -43,9 +43,11 @@ impl AppController {
             runtime,
             secrets,
             queue: Arc::new(Mutex::new(queue)),
+            playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
             playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
+            playback_start_probe: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -111,9 +113,11 @@ impl AppController {
             runtime,
             secrets,
             queue: Arc::new(Mutex::new(queue)),
+            playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback: Arc::new(Mutex::new(playback_backend(false))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
             playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
+            playback_start_probe: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -129,6 +133,7 @@ impl AppController {
             #[cfg(test)]
             _test_permit: test_permit,
         };
+        controller.warm_playback_backend();
         (
             controller,
             receiver,
@@ -166,6 +171,7 @@ impl AppController {
             runtime,
             secrets,
             queue: Arc::new(Mutex::new(None)),
+            playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
             playback_snapshot: Arc::new(Mutex::new(PlaybackSnapshot {
                 auto_dj_enabled: settings.auto_dj_enabled,
@@ -174,6 +180,7 @@ impl AppController {
                 ..PlaybackSnapshot::default()
             })),
             playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
+            playback_start_probe: Arc::new(Mutex::new(None)),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),

@@ -22,19 +22,27 @@ impl AppController {
         }
     }
     pub(in crate::controller) fn advance_after_prepared_track_started(&self, track: PlaybackTrack) {
+        let expected_next_track_id = self.queue.lock().ok().and_then(|queue| {
+            let queue = queue.as_ref()?;
+            next_queue_entry_after_current(queue).map(|entry| entry.track_id)
+        });
+        if expected_next_track_id.as_ref() != Some(&track.id) {
+            warn!(
+                expected_track_id = %track.id.as_str(),
+                actual_next_track_id = expected_next_track_id
+                    .as_ref()
+                    .map(|id| id.as_str())
+                    .unwrap_or(""),
+                "ignored stale prepared playback start"
+            );
+            return;
+        }
         self.report_playback(PlaybackReportKind::Stopped, false);
         self.record_playback_activity_completed_current();
         self.auto_dj_top_up_or_emit_error();
         let mut has_next = false;
         let result = self.with_queue_mut(|queue| {
             has_next = queue.advance_after_end_of_stream().is_some();
-            if has_next && queue.current().is_some_and(|entry| entry.track_id != track.id) {
-                warn!(
-                    expected_track_id = %track.id.as_str(),
-                    actual_track_id = queue.current().map(|entry| entry.track_id.as_str()).unwrap_or(""),
-                    "prepared playback advanced to a different queue entry"
-                );
-            }
             Ok(())
         });
         if let Err(error) = result {
@@ -46,11 +54,7 @@ impl AppController {
             return;
         }
         self.persist_and_emit_queue();
-        let waveform_key = self
-            .queue
-            .lock()
-            .ok()
-            .and_then(|queue| waveform_cache_key_for_queue(queue.as_ref()));
+        self.sync_playback_snapshot_from_queue();
         self.update_playback_snapshot(|snapshot| {
             snapshot.state = PlaybackState::Playing;
             snapshot.position_seconds = 0;
@@ -58,13 +62,13 @@ impl AppController {
             snapshot.duration_seconds = track.duration_seconds;
             snapshot.buffering_percent = None;
             snapshot.last_error = None;
-            set_waveform_cache_key(snapshot, waveform_key);
         });
         if let Some((server_id, entry, position_seconds)) = self.current_queue_entry() {
             self.start_playback_activity(&server_id, &entry, position_seconds);
         }
         self.emit_playback_snapshot();
         self.report_playback(PlaybackReportKind::Started, false);
+        self.prepare_next_stream();
         self.request_waveform_for_current();
     }
 }
