@@ -882,9 +882,13 @@ impl GstEngine {
             {
                 return None;
             }
+            let next = shared.next.clone()?;
+            if same_album_crossfade_is_skipped(&shared.settings, shared.current.as_ref(), &next) {
+                return None;
+            }
             let crossfade_ms = u64::from(shared.settings.crossfade_seconds) * 1_000;
             Some((
-                shared.next.clone()?,
+                next,
                 shared.settings.clone(),
                 shared.active,
                 inactive_slot(shared.active),
@@ -1183,15 +1187,17 @@ fn handle_about_to_finish(pipeline: &gst::Element, shared: &Arc<Mutex<SharedPlay
 }
 
 pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutToFinishAction {
-    if shared.settings.transition_mode != PlaybackTransitionMode::Gapless
-        || shared.gapless_pending.is_some()
-    {
+    if shared.gapless_pending.is_some() {
         return AboutToFinishAction::Ignore;
     }
 
     let Some(next) = shared.next.as_ref() else {
         return AboutToFinishAction::Ignore;
     };
+
+    if !gapless_preload_should_run(shared, next) {
+        return AboutToFinishAction::Ignore;
+    }
 
     if !gapless_preload_source_is_supported(next.stream.uri()) {
         debug!(
@@ -1208,6 +1214,45 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
         .expect("gapless preload checked that next item exists");
     shared.gapless_pending = Some(next.clone());
     AboutToFinishAction::Preload(next)
+}
+
+fn gapless_preload_should_run(shared: &SharedPlaybackState, next: &PreparedPlaybackItem) -> bool {
+    shared.settings.transition_mode == PlaybackTransitionMode::Gapless
+        || same_album_crossfade_is_skipped(&shared.settings, shared.current.as_ref(), next)
+}
+
+pub(super) fn same_album_crossfade_is_skipped(
+    settings: &PlaybackSettings,
+    current: Option<&PreparedPlaybackItem>,
+    next: &PreparedPlaybackItem,
+) -> bool {
+    if settings.transition_mode != PlaybackTransitionMode::Crossfade
+        || !settings.skip_same_album_crossfade
+    {
+        return false;
+    }
+    let Some(current) = current else {
+        return false;
+    };
+    if let (Some(current_album_id), Some(next_album_id)) =
+        (&current.track.album_id, &next.track.album_id)
+    {
+        return current_album_id == next_album_id;
+    }
+    same_album_text(&current.track, &next.track)
+}
+
+fn same_album_text(current: &PlaybackTrack, next: &PlaybackTrack) -> bool {
+    let current_album = current.album.trim();
+    let next_album = next.album.trim();
+    if current_album.is_empty() || !current_album.eq_ignore_ascii_case(next_album) {
+        return false;
+    }
+    let current_artist = current.artist.trim();
+    let next_artist = next.artist.trim();
+    current_artist.is_empty()
+        || next_artist.is_empty()
+        || current_artist.eq_ignore_ascii_case(next_artist)
 }
 
 pub(super) fn gapless_preload_source_is_supported(uri: &str) -> bool {

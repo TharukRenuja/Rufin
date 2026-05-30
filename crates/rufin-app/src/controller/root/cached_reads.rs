@@ -1015,6 +1015,7 @@ pub(in crate::controller) fn platform_secret_store() -> Arc<dyn SecretStore> {
 pub(in crate::controller) fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {
     PlaybackTrack {
         id: entry.track_id.clone(),
+        album_id: entry.album_id.clone(),
         title: entry.title.clone(),
         artist: entry.artist.clone(),
         album: entry.album.clone(),

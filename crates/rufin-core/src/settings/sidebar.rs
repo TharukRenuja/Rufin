@@ -326,6 +326,8 @@ pub struct PlaybackSettings {
     #[serde(default = "default_crossfade_seconds")]
     pub crossfade_seconds: u8,
     #[serde(default)]
+    pub skip_same_album_crossfade: bool,
+    #[serde(default)]
     pub replay_gain: ReplayGainMode,
     #[serde(default)]
     pub stream_quality: StreamQuality,
@@ -343,6 +345,7 @@ impl Default for PlaybackSettings {
         Self {
             transition_mode: PlaybackTransitionMode::Gapless,
             crossfade_seconds: default_crossfade_seconds(),
+            skip_same_album_crossfade: false,
             replay_gain: ReplayGainMode::Off,
             stream_quality: StreamQuality::Original,
             audio_output: None,
@@ -413,6 +416,8 @@ pub struct AppSettings {
     pub scrobbling: ScrobblingSettings,
     #[serde(default = "default_true")]
     pub auto_dj_enabled: bool,
+    #[serde(default = "default_auto_dj_refill_threshold")]
+    pub auto_dj_refill_threshold: u8,
     #[serde(default)]
     pub playback: PlaybackSettings,
     #[serde(default = "default_home_sections")]
@@ -462,6 +467,7 @@ impl Default for AppSettings {
             lastfm_api_key: String::new(),
             scrobbling: ScrobblingSettings::default(),
             auto_dj_enabled: true,
+            auto_dj_refill_threshold: DEFAULT_AUTO_DJ_REFILL_THRESHOLD,
             playback: PlaybackSettings::default(),
             home_sections: default_home_sections(),
             home_blocks: default_home_blocks(),
@@ -490,6 +496,9 @@ impl AppSettings {
         }
         self.track_table.migrate_defaults();
         self.playback.sanitize();
+        self.auto_dj_refill_threshold = self
+            .auto_dj_refill_threshold
+            .clamp(MIN_AUTO_DJ_REFILL_THRESHOLD, MAX_AUTO_DJ_REFILL_THRESHOLD);
         self.scrobbling.sanitize();
         self.lastfm_api_key = self.lastfm_api_key.trim().to_string();
         self.language = sanitize_language_preference(&self.language);

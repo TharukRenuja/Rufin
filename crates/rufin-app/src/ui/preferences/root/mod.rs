@@ -10,10 +10,10 @@ use crate::{
 use adw::prelude::*;
 use rufin_core::{
     AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
-    EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_CROSSFADE_SECONDS,
-    MAX_NARROW_LAYOUT_THRESHOLD, MIN_CROSSFADE_SECONDS, MIN_NARROW_LAYOUT_THRESHOLD,
-    PlaybackTransitionMode, ReplayGainMode, RightSidebarMode, SidebarRouteItem,
-    SidebarRouteItemSettings, StreamQuality,
+    EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_AUTO_DJ_REFILL_THRESHOLD,
+    MAX_CROSSFADE_SECONDS, MAX_NARROW_LAYOUT_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD,
+    MIN_CROSSFADE_SECONDS, MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode,
+    RightSidebarMode, SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
 };
 use rufin_playback::available_audio_outputs;
 use std::{
@@ -566,8 +566,6 @@ fn sidebar_item_row(
     let visible = gtk::Switch::new();
     visible.set_active(entry.visible);
     visible.set_valign(gtk::Align::Center);
-    row.add_suffix(&visible);
-    row.set_activatable_widget(Some(&visible));
 
     let up = gtk::Button::from_icon_name("go-up-symbolic");
     up.add_css_class("flat");
@@ -580,6 +578,9 @@ fn sidebar_item_row(
     down.set_tooltip_text(Some(&tr("Move down")));
     down.set_valign(gtk::Align::Center);
     row.add_suffix(&down);
+
+    row.add_suffix(&visible);
+    row.set_activatable_widget(Some(&visible));
 
     {
         let shell = Rc::clone(shell);

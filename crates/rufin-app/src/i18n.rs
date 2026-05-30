@@ -293,7 +293,6 @@ fn language_name(code: &str) -> Option<&'static str> {
         "sl" => Some("Slovenian"),
         "sr" => Some("Serbian"),
         "sv" => Some("Swedish"),
-        "tr" => Some("Turkish"),
         "uk" => Some("Ukrainian"),
         "vi" => Some("Vietnamese"),
         "zh" => Some("Chinese"),
@@ -483,6 +482,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Shuffle");
     let _ = tr("Shuffle on");
     let _ = tr("Auto DJ");
+    let _ = tr("Auto DJ refill threshold");
+    let _ = tr("Add tracks when fewer than this many remain");
     let _ = tr("Auto DJ on");
     let _ = tr("Play random");
     let _ = tr("Songs");
@@ -569,6 +570,10 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Mute");
     let _ = tr("Seek");
     let _ = tr("Seekbar");
+    let _ = tr("Queue and transitions");
+    let _ = tr("Audio");
+    let _ = tr("Skip same-album crossfade");
+    let _ = tr("Keep album transitions gapless when possible");
     let _ = tr("Waveform seekbar");
     let _ = tr("Generate and cache waveforms for the current track");
     let _ = tr("Play now");
@@ -621,8 +626,8 @@ mod tests {
     #[test]
     fn locale_candidates_include_unix_utf8_variants() {
         assert_eq!(
-            locale_candidates("tr-TR"),
-            vec!["tr-TR", "tr_TR", "tr_TR.UTF-8", "tr_TR.utf8"]
+            locale_candidates("de-DE"),
+            vec!["de-DE", "de_DE", "de_DE.UTF-8", "de_DE.utf8"]
         );
     }
 
@@ -643,20 +648,20 @@ mod tests {
                 title: "English".to_string(),
             },
             LanguageOption {
-                id: "tr_TR".to_string(),
-                title: "Turkish".to_string(),
+                id: "de_DE".to_string(),
+                title: "German".to_string(),
             },
         ];
 
         assert_eq!(language_option_index(&options, "C"), 1);
-        assert_eq!(language_option_index(&options, "tr_TR"), 2);
+        assert_eq!(language_option_index(&options, "de_DE"), 2);
         assert_eq!(language_option_index(&options, "missing"), 0);
     }
 
     #[test]
     fn language_display_name_uses_clean_language_name() {
         assert_eq!(language_display_name("pt_BR"), "Portuguese");
-        assert_eq!(language_display_name("tr_TR"), "Turkish");
+        assert_eq!(language_display_name("de_DE"), "German");
         assert_eq!(language_display_name("zz_ZZ"), "zz_ZZ");
     }
 
@@ -664,6 +669,9 @@ mod tests {
     fn translation_falls_back_when_catalog_entry_is_empty() {
         assert_eq!(non_empty_translation("Previous", String::new()), "Previous");
         assert_eq!(non_empty_translation("", String::new()), "");
-        assert_eq!(non_empty_translation("Play", "Oynat".to_string()), "Oynat");
+        assert_eq!(
+            non_empty_translation("Play", "Translated Play".to_string()),
+            "Translated Play"
+        );
     }
 }

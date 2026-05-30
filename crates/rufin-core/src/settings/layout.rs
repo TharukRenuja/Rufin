@@ -14,6 +14,9 @@ pub const MAX_RESTORED_WINDOW_HEIGHT: i32 = 2_000;
 pub const DEFAULT_DISCORD_CLIENT_ID: &str = "1505345384686419979";
 pub const MIN_CROSSFADE_SECONDS: u8 = 1;
 pub const MAX_CROSSFADE_SECONDS: u8 = 30;
+pub const DEFAULT_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
+pub const MIN_AUTO_DJ_REFILL_THRESHOLD: u8 = 1;
+pub const MAX_AUTO_DJ_REFILL_THRESHOLD: u8 = 10;
 pub(super) const LEGACY_APPLICATION_DISPLAY_BYTES: &[u8] = &[102, 101, 105, 115, 104, 105, 110];
 pub(super) fn default_lyrics_panel_visible() -> bool {
     true
@@ -32,6 +35,9 @@ pub(super) fn default_volume() -> f64 {
 }
 pub(super) fn default_crossfade_seconds() -> u8 {
     5
+}
+pub(super) fn default_auto_dj_refill_threshold() -> u8 {
+    DEFAULT_AUTO_DJ_REFILL_THRESHOLD
 }
 fn default_narrow_layout_enabled() -> bool {
     true

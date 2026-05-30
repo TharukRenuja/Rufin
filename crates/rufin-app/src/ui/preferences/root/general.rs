@@ -439,7 +439,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let settings = app_settings.playback.clone();
 
     let transition_group = adw::PreferencesGroup::builder()
-        .title(tr("Transitions"))
+        .title(tr("Queue and transitions"))
         .build();
     let transition_titles = [tr("Gapless"), tr("Crossfade")];
     let transition_refs = transition_titles
@@ -480,11 +480,53 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     crossfade_row.add_suffix(&crossfade);
     crossfade_row.set_activatable_widget(Some(&crossfade));
     transition_group.add(&crossfade_row);
+
+    let skip_same_album_crossfade_row = adw::SwitchRow::builder()
+        .title(tr("Skip same-album crossfade"))
+        .subtitle(tr("Keep album transitions gapless when possible"))
+        .active(settings.skip_same_album_crossfade)
+        .build();
+    let skip_same_album_crossfade_shell = Rc::clone(shell);
+    skip_same_album_crossfade_row.connect_active_notify(move |row| {
+        skip_same_album_crossfade_shell.update_playback_settings(|settings| {
+            settings.skip_same_album_crossfade = row.is_active();
+        });
+    });
+    transition_group.add(&skip_same_album_crossfade_row);
+
+    let refill_row = adw::ActionRow::builder()
+        .title(tr("Auto DJ refill threshold"))
+        .subtitle(tr("Add tracks when fewer than this many remain"))
+        .build();
+    let refill = gtk::SpinButton::with_range(
+        f64::from(MIN_AUTO_DJ_REFILL_THRESHOLD),
+        f64::from(MAX_AUTO_DJ_REFILL_THRESHOLD),
+        1.0,
+    );
+    refill.set_value(f64::from(app_settings.auto_dj_refill_threshold));
+    refill.set_valign(gtk::Align::Center);
+    let refill_shell = Rc::clone(shell);
+    refill.connect_value_changed(move |spin| {
+        let threshold = spin.value().round() as u8;
+        let changed = refill_shell
+            .update_app_settings("Auto DJ setting", |settings| {
+                if settings.auto_dj_refill_threshold == threshold {
+                    return false;
+                }
+                settings.auto_dj_refill_threshold = threshold;
+                true
+            })
+            .is_some();
+        if changed {
+            refill_shell.controller.refill_auto_dj_queue();
+        }
+    });
+    refill_row.add_suffix(&refill);
+    refill_row.set_activatable_widget(Some(&refill));
+    transition_group.add(&refill_row);
     page.add(&transition_group);
 
-    let gain_group = adw::PreferencesGroup::builder()
-        .title(tr("Leveling"))
-        .build();
+    let audio_group = adw::PreferencesGroup::builder().title(tr("Audio")).build();
     let replay_gain_titles = [tr("Off"), tr("Track"), tr("Album")];
     let replay_gain_refs = replay_gain_titles
         .iter()
@@ -502,12 +544,8 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
             settings.replay_gain = replay_gain_from_index(row.selected());
         });
     });
-    gain_group.add(&replay_gain_row);
-    page.add(&gain_group);
+    audio_group.add(&replay_gain_row);
 
-    let streaming_group = adw::PreferencesGroup::builder()
-        .title(tr("Streaming"))
-        .build();
     let quality_titles = [
         tr("Original"),
         tr("320 kbps"),
@@ -531,12 +569,8 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
             settings.stream_quality = stream_quality_from_index(row.selected());
         });
     });
-    streaming_group.add(&quality_row);
-    page.add(&streaming_group);
+    audio_group.add(&quality_row);
 
-    let seekbar_group = adw::PreferencesGroup::builder()
-        .title(tr("Seekbar"))
-        .build();
     let waveform_row = adw::SwitchRow::builder()
         .title(tr("Waveform seekbar"))
         .subtitle(tr("Generate and cache waveforms for the current track"))
@@ -546,10 +580,8 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     waveform_row.connect_active_notify(move |row| {
         waveform_shell.set_seekbar_waveform_enabled(row.is_active());
     });
-    seekbar_group.add(&waveform_row);
-    page.add(&seekbar_group);
+    audio_group.add(&waveform_row);
 
-    let output_group = adw::PreferencesGroup::builder().title(tr("Output")).build();
     let outputs = playback_output_options();
     let output_titles = outputs
         .iter()
@@ -573,8 +605,8 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
             settings.audio_output = selected;
         });
     });
-    output_group.add(&output_row);
-    page.add(&output_group);
+    audio_group.add(&output_row);
+    page.add(&audio_group);
 
     let equalizer_group = adw::PreferencesGroup::builder()
         .title(tr("Equalizer"))

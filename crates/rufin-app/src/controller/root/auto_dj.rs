@@ -23,10 +23,10 @@ impl AppController {
         else {
             return Ok(false);
         };
-        if remaining >= AUTO_DJ_THRESHOLD {
+        let settings = load_settings_for_active_server(&self.store);
+        if remaining >= usize::from(settings.auto_dj_refill_threshold) {
             return Ok(false);
         }
-        let settings = load_settings_for_active_server(&self.store);
         let mut tracks = self
             .store
             .with_store(|store| store.load_tracks(&server_id, 0, AUTO_DJ_LIBRARY_LIMIT))

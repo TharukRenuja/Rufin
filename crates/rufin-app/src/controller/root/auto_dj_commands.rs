@@ -1,6 +1,14 @@
 use super::*;
 
 impl AppController {
+    pub fn refill_auto_dj_queue(&self) -> bool {
+        if self.auto_dj_top_up_or_emit_error() {
+            self.persist_and_emit_queue();
+            return true;
+        }
+        false
+    }
+
     pub fn toggle_auto_dj(&self) {
         let enabled = self
             .auto_dj_enabled
@@ -18,9 +26,7 @@ impl AppController {
         self.update_playback_snapshot(|snapshot| {
             snapshot.auto_dj_enabled = enabled;
         });
-        if enabled && self.auto_dj_top_up_or_emit_error() {
-            self.persist_and_emit_queue();
-        } else {
+        if !(enabled && self.refill_auto_dj_queue()) {
             self.emit_playback_snapshot();
         }
     }
