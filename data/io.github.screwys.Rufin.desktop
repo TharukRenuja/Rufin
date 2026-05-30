@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Rufin
-Comment=Play music from anywhere
+Comment=Native music client
 Exec=rufin
 Icon=io.github.screwys.Rufin
 Terminal=false
