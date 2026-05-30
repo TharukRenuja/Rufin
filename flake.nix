@@ -156,6 +156,7 @@
               with pkgs;
               [
                 cargo
+                cargo-nextest
                 clippy
                 desktop-file-utils
                 gettext
