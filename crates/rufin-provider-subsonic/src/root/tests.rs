@@ -126,6 +126,7 @@ async fn album_detail_maps_subsonic_song_metadata() {
                         "duration": 210,
                         "discNumber": 1,
                         "track": 1,
+                        "comment": "Warm note",
                         "created": "2024-03-03T09:10:11Z",
                         "played": "2024-04-03T09:10:11Z",
                         "playCount": 7,
@@ -149,6 +150,7 @@ async fn album_detail_maps_subsonic_song_metadata() {
     assert_eq!(detail.tracks[0].last_played.as_deref(), Some("2024-04-03"));
     assert_eq!(detail.tracks[0].play_count, Some(7));
     assert_eq!(detail.tracks[0].user_rating, Some(4));
+    assert_eq!(detail.tracks[0].comment.as_deref(), Some("Warm note"));
 }
 #[tokio::test]
 async fn random_tracks_use_subsonic_random_song_filters() {
@@ -275,6 +277,28 @@ async fn image_bytes_fetch_cover_art() {
 
     assert_eq!(image.bytes, vec![1, 2, 3]);
     assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
+}
+#[tokio::test]
+async fn delete_playlist_calls_subsonic_delete_playlist() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/rest/deletePlaylist.view"))
+        .and(query_param("id", "playlist-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1"
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let provider = provider(&server);
+
+    provider
+        .delete_playlist(&PlaylistId::new("subsonic:playlist:playlist-one"))
+        .await
+        .expect("delete playlist");
 }
 #[tokio::test]
 async fn image_bytes_rejects_oversized_response() {

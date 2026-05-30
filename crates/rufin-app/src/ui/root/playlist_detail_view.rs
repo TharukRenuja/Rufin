@@ -1,6 +1,96 @@
 use super::*;
 
+const PLAYLIST_DETAIL_ROUTE_MARGIN: i32 = 32;
+
 impl Shell {
+    pub(in crate::ui) fn smart_playlist_detail_view(
+        self: &Rc<Self>,
+        smart_playlist_id: SmartPlaylistId,
+    ) -> gtk::Widget {
+        let detail = self
+            .controller
+            .cached_smart_playlist_detail(&smart_playlist_id)
+            .ok()
+            .flatten();
+        let Some(detail) = detail else {
+            return self.placeholder_view(
+                "Smart Playlist",
+                "The selected smart playlist was not found.",
+            );
+        };
+        let seed = stable_seed(detail.smart_playlist.id.as_str());
+        let cover_refs = track_cover_refs_for_items(&detail.tracks);
+        let summary = format!(
+            "{} {} • {}",
+            detail.smart_playlist.track_count,
+            tr("tracks"),
+            format_duration(detail.smart_playlist.duration_seconds)
+        );
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        wrapper.add_css_class("route-content");
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_vexpand(true);
+        wrapper.set_margin_top(28);
+        wrapper.set_margin_bottom(36);
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
+        header.set_margin_start(PLAYLIST_DETAIL_ROUTE_MARGIN);
+        header.set_margin_end(PLAYLIST_DETAIL_ROUTE_MARGIN);
+        header.append(&self.cover_group_tile_for(
+            cover_refs,
+            detail.smart_playlist.image_ref.as_ref(),
+            seed,
+            160,
+            DETAIL_COVER_SIZE,
+        ));
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        metadata.set_valign(gtk::Align::Center);
+        let title = gtk::Label::new(Some(&detail.smart_playlist.name));
+        title.add_css_class("detail-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        let summary = gtk::Label::new(Some(&summary));
+        summary.add_css_class("muted");
+        summary.set_xalign(0.0);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let play = text_button("media-playback-start-symbolic", "Play");
+        let controller = self.controller.clone();
+        let tracks = detail.tracks.clone();
+        play.connect_clicked(move |_| controller.play_tracks_now(tracks.clone()));
+        actions.append(&play);
+        let edit = text_button("document-edit-symbolic", "Edit");
+        let shell = Rc::clone(self);
+        let playlist_for_edit = detail.smart_playlist.clone();
+        edit.connect_clicked(move |_| shell.edit_smart_playlist_dialog(playlist_for_edit.clone()));
+        actions.append(&edit);
+        let delete = text_button("user-trash-symbolic", "Delete");
+        let controller = self.controller.clone();
+        let delete_id = detail.smart_playlist.id.clone();
+        delete.connect_clicked(move |_| controller.delete_smart_playlist(delete_id.clone()));
+        actions.append(&delete);
+        metadata.append(&title);
+        metadata.append(&summary);
+        metadata.append(&actions);
+        header.append(&metadata);
+        wrapper.append(&header);
+
+        if detail.tracks.is_empty() {
+            let empty = self.placeholder_view("Tracks", "No tracks match this smart playlist.");
+            empty.set_margin_start(PLAYLIST_DETAIL_ROUTE_MARGIN);
+            empty.set_margin_end(PLAYLIST_DETAIL_ROUTE_MARGIN);
+            wrapper.append(&empty);
+        } else {
+            wrapper.append(&self.library_tracks_scrolling_panel(
+                detail.tracks,
+                LibraryListKey::SmartPlaylistTracks,
+                "smart-playlist-detail",
+                PLAYLIST_DETAIL_ROUTE_MARGIN,
+            ));
+        }
+        wrapper.upcast()
+    }
+
     pub(in crate::ui) fn playlist_detail_view(
         self: &Rc<Self>,
         playlist_id: PlaylistId,
@@ -105,6 +195,29 @@ impl Shell {
             }
         });
         actions.append(&add_current);
+        let delete = text_button("user-trash-symbolic", "Delete");
+        let controller = self.controller.clone();
+        let window = self.window.clone();
+        let playlist_id_for_delete = detail.playlist.id.clone();
+        let playlist_name = detail.playlist.name.clone();
+        delete.connect_clicked(move |_| {
+            let dialog = adw::AlertDialog::builder()
+                .heading(tr("Delete Playlist"))
+                .body(format!("Delete \"{playlist_name}\"?"))
+                .build();
+            dialog.add_response("cancel", &tr("Cancel"));
+            dialog.add_response("delete", &tr("Delete"));
+            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+            let controller = controller.clone();
+            let playlist_id = playlist_id_for_delete.clone();
+            dialog.connect_response(None, move |_, response| {
+                if response == "delete" {
+                    controller.delete_playlist(playlist_id.clone());
+                }
+            });
+            dialog.present(Some(&window));
+        });
+        actions.append(&delete);
         metadata.append(&title);
         metadata.append(&summary);
         metadata.append(&actions);

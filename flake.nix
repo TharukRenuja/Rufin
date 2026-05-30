@@ -97,6 +97,8 @@
                 "$out/share/metainfo/io.github.screwys.Rufin.metainfo.xml"
               install -Dm644 data/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg \
                 "$out/share/icons/hicolor/scalable/apps/io.github.screwys.Rufin.svg"
+              install -Dm644 -t "$out/share/icons/hicolor/scalable/actions" \
+                data/icons/hicolor/scalable/actions/*.svg
               install -Dm644 -t "$out/share/icons/hicolor/scalable/status" \
                 data/icons/hicolor/scalable/status/*.svg
               install -Dm644 -t "$out/share/icons/hicolor/512x512/apps" \

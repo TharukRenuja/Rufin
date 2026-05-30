@@ -19,7 +19,8 @@ use rufin_provider::{
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use url::Url;
 use walkdir::WalkDir;
 
@@ -60,6 +61,7 @@ enum LocalCover {
     File(PathBuf),
     Embedded {
         path: PathBuf,
+        bytes: Arc<[u8]>,
         content_type: Option<String>,
     },
 }
@@ -80,6 +82,7 @@ struct ArtistAccumulator {
     name: String,
     albums: BTreeSet<AlbumId>,
     tracks: BTreeSet<TrackId>,
+    image_ref: Option<ImageRef>,
 }
 #[derive(Clone, Debug, Default)]
 struct GenreAccumulator {
@@ -131,6 +134,18 @@ impl LocalProvider {
     pub fn identity_for_root(root: impl AsRef<Path>) -> ProviderResult<ServerIdentity> {
         let root = normalize_root(root.as_ref().to_path_buf())?;
         Ok(identity_for_root(&root))
+    }
+
+    pub fn image_bytes_for_cover_item_id(
+        item_id: &str,
+        roots: impl IntoIterator<Item = PathBuf>,
+    ) -> ProviderResult<ImageBytes> {
+        let cover = local_cover_from_item_id(item_id).ok_or(ProviderError::NotFound)?;
+        let roots = normalize_roots(roots.into_iter().collect())?;
+        if !local_cover_is_in_roots(&cover, &roots) {
+            return Err(ProviderError::NotFound);
+        }
+        image_bytes_for_local_cover(&cover)
     }
 }
 #[async_trait(?Send)]
@@ -469,28 +484,87 @@ impl MusicProvider for LocalProvider {
             .covers
             .get(&request.item_id)
             .ok_or(ProviderError::NotFound)?;
-        match cover {
-            LocalCover::File(path) => Ok(ImageBytes {
-                bytes: read_cover_file_bounded(path)?,
-                content_type: content_type_from_path(path),
-            }),
-            LocalCover::Embedded { path, content_type } => {
-                let tagged = Probe::open(path)
-                    .and_then(|probe| probe.read())
-                    .map_err(|error| ProviderError::Other(error.to_string()))?;
-                let picture = tagged
-                    .primary_tag()
-                    .or_else(|| tagged.first_tag())
-                    .and_then(|tag| select_best_picture(tag.pictures()))
-                    .or_else(|| select_best_picture_from_tags(tagged.tags()))
-                    .ok_or(ProviderError::NotFound)?;
-                Ok(ImageBytes {
-                    bytes: picture_data_bounded(picture)?,
-                    content_type: content_type.clone(),
-                })
+        image_bytes_for_local_cover(cover)
+    }
+}
+fn local_cover_from_item_id(item_id: &str) -> Option<LocalCover> {
+    let decoded = decode_cover_id(item_id)?;
+    if let Some(path) = decoded.strip_prefix("file:") {
+        return Some(LocalCover::File(PathBuf::from(path)));
+    }
+    decoded
+        .strip_prefix("embedded:")
+        .map(|path| LocalCover::Embedded {
+            path: PathBuf::from(path),
+            bytes: Arc::<[u8]>::from([]),
+            content_type: None,
+        })
+}
+fn local_cover_is_in_roots(cover: &LocalCover, roots: &[PathBuf]) -> bool {
+    let path = match cover {
+        LocalCover::File(path) | LocalCover::Embedded { path, .. } => path,
+    };
+    let path = normalize_path_components(path);
+    roots
+        .iter()
+        .map(|root| normalize_path_components(root))
+        .any(|root| path.starts_with(root))
+}
+fn normalize_path_components(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
             }
+            Component::Normal(part) => normalized.push(part),
         }
     }
+    normalized
+}
+fn image_bytes_for_local_cover(cover: &LocalCover) -> ProviderResult<ImageBytes> {
+    match cover {
+        LocalCover::File(path) => Ok(ImageBytes {
+            bytes: read_cover_file_bounded(path)?,
+            content_type: content_type_from_path(path),
+        }),
+        LocalCover::Embedded {
+            path,
+            bytes,
+            content_type,
+        } if bytes.is_empty() => embedded_cover_image_bytes(path).map(|mut image| {
+            if image.content_type.is_none() {
+                image.content_type = content_type.clone();
+            }
+            image
+        }),
+        LocalCover::Embedded {
+            bytes,
+            content_type,
+            ..
+        } => Ok(ImageBytes {
+            bytes: bytes.to_vec(),
+            content_type: content_type.clone(),
+        }),
+    }
+}
+fn embedded_cover_image_bytes(path: &Path) -> ProviderResult<ImageBytes> {
+    let tagged = Probe::open(path)
+        .and_then(|probe| probe.read())
+        .map_err(|error| ProviderError::Other(error.to_string()))?;
+    let picture = tagged
+        .primary_tag()
+        .or_else(|| tagged.first_tag())
+        .and_then(|tag| select_best_picture(tag.pictures()))
+        .or_else(|| select_best_picture_from_tags(tagged.tags()))
+        .ok_or(ProviderError::NotFound)?;
+    Ok(ImageBytes {
+        bytes: picture_data_bounded(picture)?,
+        content_type: picture.mime_type().map(ToString::to_string),
+    })
 }
 fn read_cover_file_bounded(path: &Path) -> ProviderResult<Vec<u8>> {
     if fs::metadata(path)
@@ -740,6 +814,10 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
     let genres = tag
         .and_then(|tag| tag.genre().map(|genre| split_credit_names(&genre)))
         .unwrap_or_default();
+    let comment = tag
+        .and_then(|tag| tag.get_string(ItemKey::Comment))
+        .map(ToString::to_string)
+        .filter(|value| !value.trim().is_empty());
     let cover = embedded_cover(&path, tagged_file.as_ref(), tag)
         .or_else(|| path.parent().and_then(folder_cover).map(LocalCover::File));
     let year = tag
@@ -785,6 +863,8 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string),
+            comment,
+            skip_count: None,
         },
         album_artist,
         cover,

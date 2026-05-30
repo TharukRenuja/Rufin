@@ -54,7 +54,7 @@ impl Shell {
         }
 
         let view_started = Instant::now();
-        let view = match route {
+        let view = match route.clone() {
             Route::Home => self.home_view(),
             Route::Albums => self.library_albums_view(),
             Route::AlbumDetail(album_id) => self.album_detail_view(album_id),
@@ -70,6 +70,10 @@ impl Shell {
             Route::Folders { path } => self.folders_view(path),
             Route::Playlists => self.library_playlists_view(),
             Route::PlaylistDetail(playlist_id) => self.playlist_detail_view(playlist_id),
+            Route::SmartPlaylists => self.library_smart_playlists_view(),
+            Route::SmartPlaylistDetail(smart_playlist_id) => {
+                self.smart_playlist_detail_view(smart_playlist_id)
+            }
             Route::Search { query, .. } => {
                 let library = self.state.library.borrow().clone();
                 self.search_view(&query, library)
@@ -78,7 +82,8 @@ impl Shell {
         let view_ms = view_started.elapsed().as_millis() as u64;
 
         let append_started = Instant::now();
-        self.route_host.append(&route_boundary(view));
+        self.route_host
+            .append(&route_boundary_for_route(&route, view));
         let append_ms = append_started.elapsed().as_millis() as u64;
         let observe_started = Instant::now();
         self.observe_route_scroll(&route_name);

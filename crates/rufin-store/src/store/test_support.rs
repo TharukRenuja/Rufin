@@ -182,5 +182,7 @@ pub(super) fn track(number: u32, album: &Album) -> Track {
         genres: album.genres.clone(),
         local_path: None,
         source_format: None,
+        comment: None,
+        skip_count: None,
     }
 }

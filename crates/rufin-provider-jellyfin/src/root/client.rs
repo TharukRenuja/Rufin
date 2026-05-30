@@ -566,6 +566,14 @@ impl MusicProvider for JellyfinProvider {
         self.send_unit(self.client.post(url).json(&body)).await
     }
 
+    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> ProviderResult<()> {
+        let url = endpoint(
+            &self.base_url,
+            &format!("Items/{}", raw_item_id(playlist_id.as_str())),
+        )?;
+        self.send_unit(self.client.delete(url)).await
+    }
+
     async fn add_playlist_tracks(
         &self,
         playlist_id: &PlaylistId,
@@ -897,6 +905,7 @@ pub(super) fn jellyfin_capabilities() -> ProviderCapabilities {
         lyrics: true,
         playback_reporting: true,
         playlist_mutations: true,
+        playlist_delete: true,
         favorite_mutations: true,
         random_tracks: true,
         random_played_filter: true,

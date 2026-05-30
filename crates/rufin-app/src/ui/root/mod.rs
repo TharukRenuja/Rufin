@@ -90,9 +90,12 @@ use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH,
     FolderPathItem, Genre, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryField,
     LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, PlaylistId, QueueEntry,
-    QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem, Track,
-    TrackId, TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
-    sanitized_window_size,
+    QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem,
+    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId,
+    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
+    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
+    SmartPlaylistSortField, Track, TrackId, TrackSortKey, TrackTableColumn, TrackTableSettings,
+    format_duration, sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -127,6 +130,7 @@ mod lyrics_highlight_timers;
 mod lyrics_panel;
 mod lyrics_playback_state;
 mod new_playlist_dialog;
+mod new_smart_playlist_dialog;
 mod perf_recording;
 mod playlist_detail_view;
 mod playlist_rename_dialog;

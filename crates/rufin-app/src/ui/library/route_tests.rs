@@ -30,6 +30,26 @@ fn library_table_height_tracks_visible_rows() {
     assert_eq!(super::library_table_content_height(3), 266);
 }
 #[test]
+fn smart_playlist_default_track_columns_fit_compact_pane() {
+    let fields = [
+        LibraryField::RowIndex,
+        LibraryField::TitleMerged,
+        LibraryField::Album,
+        LibraryField::PlayCount,
+    ];
+    let smart_width: i32 = fields
+        .iter()
+        .map(|field| super::track_column_width(LibraryListKey::SmartPlaylistTracks, *field))
+        .sum();
+    let regular_width: i32 = fields
+        .iter()
+        .map(|field| super::track_column_width(LibraryListKey::PlaylistTracks, *field))
+        .sum();
+
+    assert!(smart_width + 32 <= 550);
+    assert!(smart_width < regular_width);
+}
+#[test]
 fn complete_page_policy_loads_small_library_layouts_fully() {
     let tracks_row = LibraryListSettings {
         layout: LibraryLayout::Row,
@@ -287,6 +307,8 @@ fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Trac
         genres: Vec::new(),
         local_path: None,
         source_format: None,
+        comment: None,
+        skip_count: None,
     }
 }
 fn test_track_with_image(id: u32, title: &str, image_id: &str) -> Track {

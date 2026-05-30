@@ -82,6 +82,18 @@ pub(in crate::ui) fn playlist_collection_widget(
         LibraryLayout::Grid | LibraryLayout::Detail => playlist_grid(shell, model).upcast(),
     }
 }
+pub(in crate::ui) fn smart_playlist_collection_widget(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+) -> gtk::Widget {
+    match shell
+        .library_settings(LibraryListKey::SmartPlaylists)
+        .layout
+    {
+        LibraryLayout::Row => smart_playlist_table(shell, model).upcast(),
+        LibraryLayout::Grid | LibraryLayout::Detail => smart_playlist_grid(shell, model).upcast(),
+    }
+}
 pub(in crate::ui) fn track_collection_widget(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -252,6 +264,47 @@ pub(in crate::ui) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> 
     });
     grid
 }
+pub(in crate::ui) fn smart_playlist_grid(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+) -> gtk::GridView {
+    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let factory = gtk::SignalListItemFactory::new();
+    let shell_for_factory = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(boxed) = item
+            .item()
+            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
+        else {
+            return;
+        };
+        let playlist = boxed.borrow::<SmartPlaylist>();
+        item.set_child(Some(&smart_playlist_card(
+            &shell_for_factory,
+            &playlist,
+            card_size,
+        )));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let grid = gtk::GridView::new(Some(selection), Some(factory));
+    grid.add_css_class("album-grid");
+    grid.set_min_columns(columns as u32);
+    grid.set_max_columns(columns as u32);
+    grid.set_single_click_activate(true);
+    grid.set_hexpand(true);
+    grid.set_vexpand(true);
+    let shell = Rc::clone(shell);
+    grid.connect_activate(move |_, position| {
+        if let Some(playlist) = item_at::<SmartPlaylist>(&model, position) {
+            shell.navigate(Route::SmartPlaylistDetail(playlist.id));
+        }
+    });
+    grid
+}
 pub(in crate::ui) fn track_grid(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -370,6 +423,31 @@ pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) ->
     });
     table
 }
+pub(in crate::ui) fn smart_playlist_table(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+) -> gtk::ColumnView {
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let table = gtk::ColumnView::new(Some(selection));
+    table.add_css_class("track-table");
+    table.set_single_click_activate(true);
+    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
+    table.set_hexpand(true);
+    table.set_vexpand(true);
+    for field in shell
+        .library_settings(LibraryListKey::SmartPlaylists)
+        .row_fields
+    {
+        table.append_column(&smart_playlist_column(shell, field));
+    }
+    let shell = Rc::clone(shell);
+    table.connect_activate(move |_, position| {
+        if let Some(playlist) = item_at::<SmartPlaylist>(&model, position) {
+            shell.navigate(Route::SmartPlaylistDetail(playlist.id));
+        }
+    });
+    table
+}
 pub(in crate::ui) fn track_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -391,7 +469,7 @@ pub(in crate::ui) fn track_table(
         shell.library_settings(key).row_fields
     };
     for field in fields {
-        table.append_column(&track_column(shell, field));
+        table.append_column(&track_column_for_key(shell, key, field));
     }
     let controller = shell.controller.clone();
     table.connect_activate(move |_, position| {
@@ -1136,6 +1214,28 @@ pub(in crate::ui) fn playlist_card(
             card.append(&center_label(&value, "muted"));
         }
     }
+    install_playlist_context_menu(&card, shell, playlist.clone());
+    card.upcast()
+}
+pub(in crate::ui) fn smart_playlist_card(
+    shell: &Rc<Shell>,
+    playlist: &SmartPlaylist,
+    size: i32,
+) -> gtk::Widget {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    card.set_width_request(size);
+    card.append(&cards::smart_playlist_cover_tile(shell, playlist, size));
+    card.append(&center_label(&playlist.name, "track-title"));
+    for field in shell
+        .library_settings(LibraryListKey::SmartPlaylists)
+        .grid_fields
+    {
+        let value = smart_playlist_field(playlist, field);
+        if !value.is_empty() {
+            card.append(&center_label(&value, "muted"));
+        }
+    }
+    install_smart_playlist_context_menu(&card, shell, playlist.clone());
     card.upcast()
 }
 pub(in crate::ui) fn track_card(

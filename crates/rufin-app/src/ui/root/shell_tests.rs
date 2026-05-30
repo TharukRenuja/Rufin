@@ -510,6 +510,10 @@ pub(in crate::ui) fn artist_discography_uses_responsive_cards() {
     ));
 }
 #[test]
+pub(in crate::ui) fn smart_playlists_use_responsive_cards() {
+    assert!(super::route_uses_responsive_cards(&Route::SmartPlaylists));
+}
+#[test]
 pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
     let spec = super::route_boundary_spec();
 
@@ -520,6 +524,12 @@ pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
     assert!(!spec.propagate_natural_width);
     assert!(spec.hexpand);
     assert!(spec.vexpand);
+}
+#[test]
+pub(in crate::ui) fn playlist_route_boundary_disables_horizontal_scrolling() {
+    let spec = super::route_boundary_spec_for_route(&Route::SmartPlaylists);
+
+    assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
 }
 #[test]
 pub(in crate::ui) fn seekbar_target_seconds_uses_committed_clamped_value() {
@@ -719,5 +729,7 @@ pub(in crate::ui) fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Tr
         genres: Vec::new(),
         local_path: None,
         source_format: None,
+        comment: None,
+        skip_count: None,
     }
 }

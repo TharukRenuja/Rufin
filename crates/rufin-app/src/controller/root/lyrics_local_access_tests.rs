@@ -752,6 +752,7 @@ pub(in crate::controller) fn controller_from_store_for_test(
             rufin_playback::FakePlaybackBackend::new(),
         ))),
         playback_snapshot: Arc::new(Mutex::new(playback_snapshot)),
+        playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
         auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
         last_progress_snapshot: Arc::new(Mutex::new(None)),
         last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -792,6 +793,8 @@ pub(in crate::controller) fn restored_track() -> Track {
         genres: Vec::new(),
         local_path: None,
         source_format: None,
+        comment: None,
+        skip_count: None,
     }
 }
 pub(in crate::controller) fn saved_server() -> SavedServer {

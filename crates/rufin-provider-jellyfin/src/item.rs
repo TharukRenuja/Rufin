@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::root::{jellyfin_id, stable_hash};
 
-pub(super) const ITEM_FIELDS: &str = "Path,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
+pub(super) const ITEM_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -24,6 +24,7 @@ pub(super) struct ItemQueryResult {
 pub(super) struct JellyfinItem {
     pub(super) id: String,
     pub(super) name: Option<String>,
+    overview: Option<String>,
     #[serde(rename = "Type")]
     pub(super) item_type: Option<String>,
     pub(super) collection_type: Option<String>,
@@ -168,6 +169,8 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         genres: item.genres.unwrap_or_default(),
         local_path: item.path,
         source_format,
+        comment: item.overview.filter(|value| !value.trim().is_empty()),
+        skip_count: None,
     }
 }
 

@@ -16,6 +16,17 @@ pub(in crate::ui) fn sort_playlists(playlists: &mut [Playlist], settings: &Libra
         )
     });
 }
+pub(in crate::ui) fn sort_smart_playlists(
+    playlists: &mut [SmartPlaylist],
+    settings: &LibraryListSettings,
+) {
+    playlists.sort_by(|left, right| {
+        apply_desc(
+            compare_smart_playlist(left, right, settings.sort_key),
+            settings.descending,
+        )
+    });
+}
 pub(in crate::ui) fn sort_tracks(
     tracks: &mut [Track],
     settings: &LibraryListSettings,
@@ -82,6 +93,18 @@ pub(in crate::ui) fn compare_genre(left: &Genre, right: &Genre, field: LibraryFi
 pub(in crate::ui) fn compare_playlist(
     left: &Playlist,
     right: &Playlist,
+    field: LibraryField,
+) -> Ordering {
+    match field {
+        LibraryField::SongCount => left.track_count.cmp(&right.track_count),
+        LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
+        _ => cmp_string(&left.name, &right.name),
+    }
+    .then_with(|| cmp_string(&left.name, &right.name))
+}
+pub(in crate::ui) fn compare_smart_playlist(
+    left: &SmartPlaylist,
+    right: &SmartPlaylist,
     field: LibraryField,
 ) -> Ordering {
     match field {
@@ -192,6 +215,14 @@ pub(in crate::ui) fn playlist_field(playlist: &Playlist, field: LibraryField) ->
         _ => String::new(),
     }
 }
+pub(in crate::ui) fn smart_playlist_field(playlist: &SmartPlaylist, field: LibraryField) -> String {
+    match field {
+        LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
+        LibraryField::SongCount => format!("{} {}", playlist.track_count, tr("tracks")),
+        LibraryField::Duration => format_duration(playlist.duration_seconds),
+        _ => String::new(),
+    }
+}
 pub(in crate::ui) fn track_field(track: &Track, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => track.title.clone(),
@@ -235,6 +266,9 @@ pub(in crate::ui) fn genre_matches_query(genre: &Genre, query: &str) -> bool {
     genre.name.to_lowercase().contains(query)
 }
 pub(in crate::ui) fn playlist_matches_query(playlist: &Playlist, query: &str) -> bool {
+    playlist.name.to_lowercase().contains(query)
+}
+pub(in crate::ui) fn smart_playlist_matches_query(playlist: &SmartPlaylist, query: &str) -> bool {
     playlist.name.to_lowercase().contains(query)
 }
 pub(in crate::ui) fn item_at<T: Clone + 'static>(

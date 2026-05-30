@@ -192,7 +192,7 @@ impl Shell {
             empty_body: "Cached tracks will appear here after the background sync finishes.",
             search,
             content: track_collection_widget(self, model, LibraryListKey::Tracks),
-            load_next: Some(load_next),
+            load_next: if complete_page { None } else { Some(load_next) },
             configure_scroller: Some(track_viewport_warm),
         });
         if self.state.perf.is_some() {
@@ -255,11 +255,20 @@ impl Shell {
         toolbar.add_css_class("track-toolbar");
         toolbar.append(&search);
 
-        if key == LibraryListKey::Playlists {
-            let create = text_button("list-add-symbolic", "New Playlist");
-            let shell = Rc::clone(self);
-            create.connect_clicked(move |_| shell.new_playlist_dialog());
-            toolbar.append(&create);
+        match key {
+            LibraryListKey::Playlists => {
+                let create = text_button("list-add-symbolic", "New Playlist");
+                let shell = Rc::clone(self);
+                create.connect_clicked(move |_| shell.new_playlist_dialog());
+                toolbar.append(&create);
+            }
+            LibraryListKey::SmartPlaylists => {
+                let create = text_button("list-add-symbolic", "New Playlist");
+                let shell = Rc::clone(self);
+                create.connect_clicked(move |_| shell.new_smart_playlist_dialog());
+                toolbar.append(&create);
+            }
+            _ => {}
         }
 
         let settings = self.library_settings(key);

@@ -7,7 +7,7 @@ use super::{
     cover_decode_size, favorite_button_is_active, favorite_icon_button, finish_grid_page,
     icon_button, install_album_context_menu, install_artist_context_menu,
     install_dynamic_album_context_menu, install_dynamic_track_context_menu,
-    install_track_context_menu,
+    install_playlist_context_menu, install_smart_playlist_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     replace_playlists_in_model, set_favorite_button_active, stable_seed, text_button,
@@ -17,7 +17,8 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use rufin_core::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, Playlist, Track, TrackId, available_sort_fields, format_duration,
+    LibraryListSettings, Playlist, SmartPlaylist, Track, TrackId, available_sort_fields,
+    format_duration,
 };
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
@@ -134,11 +135,22 @@ fn warm_track_covers_for_settings_now(
 }
 fn gate_track_route_covers(
     shell: &Rc<Shell>,
-    _tracks: &[Track],
-    _settings: &LibraryListSettings,
+    tracks: &[Track],
+    settings: &LibraryListSettings,
 ) -> bool {
-    shell.clear_route_cover_gate("tracks");
-    false
+    let Some((fetch_size, size)) = track_cover_warm_sizes(shell, settings) else {
+        shell.clear_route_cover_gate("tracks");
+        return false;
+    };
+    let image_refs =
+        track_cover_refs_for_settings_limited(tracks, settings, Some(TRACK_ROUTE_COVER_GATE_ROWS));
+    shell.route_cover_gate_needs_loading(
+        "tracks",
+        image_refs,
+        fetch_size,
+        size,
+        RouteCoverMissingPolicy::Any,
+    )
 }
 #[cfg(test)]
 fn track_cover_refs_for_settings(
