@@ -338,12 +338,19 @@ pub(in crate::ui) fn route_uses_responsive_cards(route: &Route) -> bool {
             | Route::Genres
             | Route::GenreDetail(_)
             | Route::Playlists
+            | Route::SmartPlaylists
             | Route::PlaylistDetail(_)
+            | Route::SmartPlaylistDetail(_)
             | Route::Search { .. }
     )
 }
 pub(in crate::ui) fn route_boundary(view: gtk::Widget) -> gtk::Widget {
-    let spec = route_boundary_spec();
+    route_boundary_from_spec(view, route_boundary_spec())
+}
+pub(in crate::ui) fn route_boundary_for_route(route: &Route, view: gtk::Widget) -> gtk::Widget {
+    route_boundary_from_spec(view, route_boundary_spec_for_route(route))
+}
+fn route_boundary_from_spec(view: gtk::Widget, spec: RouteBoundarySpec) -> gtk::Widget {
     let scroller = gtk::ScrolledWindow::new();
     // this is necessary because route pages can contain tables, grids, and
     // toolbars wider than the visible pane. they may scroll inside the pane,
@@ -378,6 +385,19 @@ pub(in crate::ui) fn route_boundary_spec() -> RouteBoundarySpec {
         hexpand: true,
         vexpand: true,
     }
+}
+pub(in crate::ui) fn route_boundary_spec_for_route(route: &Route) -> RouteBoundarySpec {
+    let mut spec = route_boundary_spec();
+    if matches!(
+        route,
+        Route::Playlists
+            | Route::PlaylistDetail(_)
+            | Route::SmartPlaylists
+            | Route::SmartPlaylistDetail(_)
+    ) {
+        spec.horizontal_policy = gtk::PolicyType::Never;
+    }
+    spec
 }
 pub(in crate::ui) fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
     first_run
@@ -1038,6 +1058,84 @@ pub(in crate::ui) fn install_dynamic_album_context_menu(
                 context_album(&key_shell, &album),
                 None,
             );
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(key);
+}
+pub(in crate::ui) fn install_playlist_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    playlist: Playlist,
+) {
+    let target = target.as_ref();
+    let target_weak = target.downgrade();
+    let click_shell = Rc::clone(shell);
+    let click_playlist = playlist.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.connect_pressed(move |_, _, x, y| {
+        if let Some(target) = target_weak.upgrade() {
+            present_playlist_context_menu(
+                &target,
+                &click_shell,
+                click_playlist.clone(),
+                Some((x, y)),
+            );
+        }
+    });
+    target.add_controller(click);
+
+    let target_weak = target.downgrade();
+    let key_shell = Rc::clone(shell);
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !opens_menu {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(target) = target_weak.upgrade() {
+            present_playlist_context_menu(&target, &key_shell, playlist.clone(), None);
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(key);
+}
+pub(in crate::ui) fn install_smart_playlist_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    playlist: SmartPlaylist,
+) {
+    let target = target.as_ref();
+    let target_weak = target.downgrade();
+    let click_shell = Rc::clone(shell);
+    let click_playlist = playlist.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.connect_pressed(move |_, _, x, y| {
+        if let Some(target) = target_weak.upgrade() {
+            present_smart_playlist_context_menu(
+                &target,
+                &click_shell,
+                click_playlist.clone(),
+                Some((x, y)),
+            );
+        }
+    });
+    target.add_controller(click);
+
+    let target_weak = target.downgrade();
+    let key_shell = Rc::clone(shell);
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !opens_menu {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(target) = target_weak.upgrade() {
+            present_smart_playlist_context_menu(&target, &key_shell, playlist.clone(), None);
         }
         glib::Propagation::Stop
     });

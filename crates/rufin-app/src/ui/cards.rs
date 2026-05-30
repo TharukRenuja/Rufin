@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{Album, HomeSectionKind, Playlist, Route, Track};
+use rufin_core::{Album, HomeSectionKind, Playlist, Route, SmartPlaylist, Track};
 
 use super::favorites::{album_favorite_key, track_favorite_key};
 use super::layout::{
@@ -352,6 +352,61 @@ pub(super) fn playlist_cover_tile(
     let playlist_id = playlist.id.clone();
     controls.play_last.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
+            controller.play_last(detail.tracks);
+        }
+    });
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
+
+    overlay.upcast()
+}
+
+pub(super) fn smart_playlist_cover_tile(
+    shell: &Rc<Shell>,
+    playlist: &SmartPlaylist,
+    size: i32,
+) -> gtk::Widget {
+    let overlay = cover_overlay(size);
+
+    let playlist_button = gtk::Button::new();
+    playlist_button.add_css_class("album-cover-button");
+    playlist_button.add_css_class("flat");
+    constrain_cover_widget(&playlist_button, size);
+    playlist_button.set_child(Some(&shell.cover_group_tile_for(
+        Vec::new(),
+        playlist.image_ref.as_ref(),
+        stable_seed(playlist.id.as_str()),
+        size,
+        GRID_COVER_SIZE,
+    )));
+    let open_shell = Rc::clone(shell);
+    let open_playlist_id = playlist.id.clone();
+    playlist_button.connect_clicked(move |_| {
+        open_shell.navigate(Route::SmartPlaylistDetail(open_playlist_id.clone()))
+    });
+    overlay.set_child(Some(&playlist_button));
+
+    let controls = cover_play_hover_controls(size, "Play smart playlist");
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    controls.play.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
+            controller.play_tracks_now(detail.tracks);
+        }
+    });
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    controls.play_next.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
+            for track in detail.tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        }
+    });
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    controls.play_last.connect_clicked(move |_| {
+        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
             controller.play_last(detail.tracks);
         }
     });

@@ -283,6 +283,8 @@ mod tests {
                 genres: Vec::new(),
                 local_path: None,
                 source_format: None,
+                comment: None,
+                skip_count: None,
             }],
             artists: Vec::new(),
             album_artists: Vec::new(),

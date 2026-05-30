@@ -108,6 +108,14 @@ pub(in crate::ui) enum SnapshotRenderDecision {
     PreserveScroll,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum LocalSourceCacheGateAction {
+    None,
+    Enter,
+    Wait,
+    Reveal,
+    Cancel,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct SnapshotEventOutcome {
     pub entered_first_run: bool,
     pub render: SnapshotRenderDecision,
@@ -134,6 +142,87 @@ pub(in crate::ui) fn snapshot_event_outcome(
         entered_first_run: next_first_run && !previous_first_run,
         render,
     }
+}
+pub(in crate::ui) fn local_source_cache_gate_action(
+    local_folders_changed: bool,
+    next_source: &Option<rufin_core::LibrarySourceSelection>,
+    has_local_folders: bool,
+    preparing: bool,
+    sync_seen: bool,
+    sync_status: &str,
+) -> LocalSourceCacheGateAction {
+    if !library_source_is_local(next_source) {
+        return if preparing {
+            LocalSourceCacheGateAction::Cancel
+        } else {
+            LocalSourceCacheGateAction::None
+        };
+    }
+
+    if !preparing
+        && has_local_folders
+        && (local_folders_changed || local_source_snapshot_is_syncing(sync_status))
+    {
+        return LocalSourceCacheGateAction::Enter;
+    }
+
+    if !preparing {
+        return LocalSourceCacheGateAction::None;
+    }
+
+    if local_source_snapshot_is_syncing(sync_status) || !sync_seen {
+        LocalSourceCacheGateAction::Wait
+    } else {
+        LocalSourceCacheGateAction::Reveal
+    }
+}
+pub(in crate::ui) fn snapshot_local_source_cache_gate_action(
+    render: SnapshotRenderDecision,
+    local_folders_changed: bool,
+    next_source: &Option<rufin_core::LibrarySourceSelection>,
+    has_local_folders: bool,
+    preparing: bool,
+    sync_seen: bool,
+    sync_status: &str,
+) -> LocalSourceCacheGateAction {
+    if matches!(render, SnapshotRenderDecision::FirstRunFinished) {
+        return LocalSourceCacheGateAction::None;
+    }
+
+    local_source_cache_gate_action(
+        local_folders_changed,
+        next_source,
+        has_local_folders,
+        preparing,
+        sync_seen,
+        sync_status,
+    )
+}
+pub(in crate::ui) fn library_source_is_local(
+    source: &Option<rufin_core::LibrarySourceSelection>,
+) -> bool {
+    matches!(source, Some(rufin_core::LibrarySourceSelection::Local))
+}
+pub(in crate::ui) fn local_source_snapshot_is_syncing(sync_status: &str) -> bool {
+    sync_status == "Syncing library..."
+}
+pub(in crate::ui) fn queue_source_waits_for_snapshot(
+    queue: Option<&QueueSnapshot>,
+    active_server_id: Option<&rufin_core::ServerId>,
+) -> bool {
+    queue.is_some_and(|queue| active_server_id != Some(&queue.server_id))
+}
+pub(in crate::ui) fn queue_source_matches_library(
+    queue: Option<&QueueSnapshot>,
+    library: &LibrarySnapshot,
+) -> bool {
+    let Some(queue) = queue else {
+        return false;
+    };
+    library
+        .server
+        .as_ref()
+        .is_some_and(|server| server.id == queue.server_id)
 }
 pub(in crate::ui) fn auto_lyrics_request_for_settings(
     settings: &AppSettings,
@@ -383,17 +472,31 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
         while let Ok(event) = receiver.try_recv() {
             match event {
                 ControllerEvent::Snapshot(snapshot) => {
-                    let snapshot_outcome = {
+                    let (snapshot_outcome, local_folders_changed) = {
                         let current = shell.state.library.borrow();
-                        snapshot_event_outcome(
-                            current.first_run,
-                            snapshot.first_run,
-                            &current.selected_source,
-                            &snapshot.selected_source,
-                            shell.state.first_run_connection_pending.get(),
-                            shell.state.first_run_connection_ready.get(),
+                        (
+                            snapshot_event_outcome(
+                                current.first_run,
+                                snapshot.first_run,
+                                &current.selected_source,
+                                &snapshot.selected_source,
+                                shell.state.first_run_connection_pending.get(),
+                                shell.state.first_run_connection_ready.get(),
+                            ),
+                            current.local_folders != snapshot.local_folders,
                         )
                     };
+                    let local_gate_action = snapshot_local_source_cache_gate_action(
+                        snapshot_outcome.render,
+                        local_folders_changed,
+                        &snapshot.selected_source,
+                        !snapshot.local_folders.is_empty(),
+                        shell.state.local_source_preparing.get(),
+                        shell.state.local_source_sync_seen.get(),
+                        &snapshot.sync_status,
+                    );
+                    let local_snapshot_syncing =
+                        local_source_snapshot_is_syncing(&snapshot.sync_status);
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());
                     let prefetched_explore = prefetched_explore_from_snapshot(&snapshot);
                     let sections = snapshot.home_sections.clone();
@@ -412,8 +515,71 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     );
                     *shell.state.folder_state.borrow_mut() = FolderRouteState::default();
                     shell.update_server_selector();
+                    match local_gate_action {
+                        LocalSourceCacheGateAction::Enter => {
+                            shell.state.local_source_preparing.set(true);
+                            shell.state.source_switch_preparing.set(false);
+                            shell
+                                .state
+                                .local_source_sync_seen
+                                .set(local_snapshot_syncing);
+                            shell.state.startup_route_render_pending.set(false);
+                            shell.state.startup_route_revealed.set(false);
+                            shell.prepare_home_route_for_source_change();
+                            shell.render_startup_loading_view();
+                            continue;
+                        }
+                        LocalSourceCacheGateAction::Wait => {
+                            if local_snapshot_syncing {
+                                shell.state.local_source_sync_seen.set(true);
+                            }
+                            shell.render_startup_loading_view();
+                            continue;
+                        }
+                        LocalSourceCacheGateAction::Reveal => {
+                            shell.state.local_source_preparing.set(false);
+                            shell.state.local_source_sync_seen.set(false);
+                            shell.state.source_switch_preparing.set(false);
+                            shell.log_layout_snapshot("local_source_final_snapshot");
+                            shell.schedule_startup_route_reveal();
+                            continue;
+                        }
+                        LocalSourceCacheGateAction::Cancel => {
+                            shell.state.local_source_preparing.set(false);
+                            shell.state.local_source_sync_seen.set(false);
+                            shell.state.source_switch_preparing.set(false);
+                            shell.state.startup_route_render_pending.set(false);
+                            shell.state.startup_route_revealed.set(true);
+                        }
+                        LocalSourceCacheGateAction::None => {}
+                    }
+                    if shell.state.source_switch_preparing.get() {
+                        let queue_matches_library = {
+                            let queue = shell.state.queue.borrow();
+                            let library = shell.state.library.borrow();
+                            queue_source_matches_library(queue.as_ref(), &library)
+                        };
+                        if queue_matches_library {
+                            shell.state.source_switch_preparing.set(false);
+                            shell.prepare_home_route_for_source_change();
+                            shell.render_queue_panel();
+                            shell.render_lyrics_panel();
+                            shell.update_bottom_player();
+                            shell.update_fullscreen_player();
+                            let player = shell.state.player.borrow().clone();
+                            #[cfg(unix)]
+                            shell.update_mpris_player();
+                            shell.update_discord_presence(&player);
+                            shell.schedule_startup_route_reveal();
+                            shell.schedule_startup_cover_warm();
+                            continue;
+                        }
+                    }
                     match snapshot_outcome.render {
                         SnapshotRenderDecision::FirstRunFinished => {
+                            shell.state.local_source_preparing.set(false);
+                            shell.state.local_source_sync_seen.set(false);
+                            shell.state.source_switch_preparing.set(false);
                             shell.log_layout_snapshot("first_run_final_snapshot");
                             shell.schedule_first_run_app_reveal();
                             continue;
@@ -485,7 +651,21 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.apply_favorite_changed(item_id, favorite, *snapshot);
                 }
                 ControllerEvent::Queue(queue) => {
+                    let waits_for_source_snapshot = {
+                        let library = shell.state.library.borrow();
+                        queue_source_waits_for_snapshot(
+                            queue.as_ref().as_ref(),
+                            library.server.as_ref().map(|server| &server.id),
+                        )
+                    };
                     *shell.state.queue.borrow_mut() = *queue;
+                    if waits_for_source_snapshot {
+                        shell.state.source_switch_preparing.set(true);
+                        shell.state.startup_route_render_pending.set(false);
+                        shell.state.startup_route_revealed.set(false);
+                        shell.render_startup_loading_view();
+                        continue;
+                    }
                     shell.render_queue_panel();
                     shell.update_bottom_player();
                     shell.update_fullscreen_player();
@@ -511,6 +691,19 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         previous_track != next_track,
                     );
                     shell.sync_auto_dj_setting_from_playback(auto_dj_enabled);
+                    if shell.state.source_switch_preparing.get() {
+                        if previous_track != next_track {
+                            *shell.state.lyrics.borrow_mut() = None;
+                            *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
+                            shell.lyrics_pane.clear_follow_scroll_pause();
+                            shell
+                                .fullscreen_player
+                                .lyrics_pane
+                                .clear_follow_scroll_pause();
+                            shell.cancel_scheduled_lyrics_highlight();
+                        }
+                        continue;
+                    }
                     if previous_track != next_track {
                         *shell.state.lyrics.borrow_mut() = None;
                         *shell.state.lyrics_track_id.borrow_mut() = next_track.clone();
@@ -588,6 +781,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let sync_complete = status == LIBRARY_SYNC_COMPLETE_STATUS;
                     if sync_complete {
                         shell.state.first_run_connection_ready.set(true);
+                        if shell.state.local_source_preparing.get() {
+                            shell.state.local_source_sync_seen.set(true);
+                        }
                     }
                     let first_run_connection_pending =
                         shell.state.first_run_connection_pending.get();
@@ -603,15 +799,30 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             shell.state.routes.borrow().current(),
                             library.first_run,
                         ) || shell.state.first_run_connection_pending.get()
+                            || shell.state.local_source_preparing.get()
                     };
                     if should_render {
-                        shell.render_current_route();
+                        if shell.state.local_source_preparing.get() {
+                            shell.render_startup_loading_view();
+                        } else {
+                            shell.render_current_route();
+                        }
+                    }
+                }
+                ControllerEvent::PlaybackPerf(event) => {
+                    if let Some(perf) = shell.state.perf.as_ref() {
+                        perf.record_playback_event(&event);
                     }
                 }
                 ControllerEvent::Error(error) => {
                     warn!(%error, "controller error");
                     shell.state.first_run_connection_pending.set(false);
                     shell.state.first_run_connection_ready.set(false);
+                    shell.state.local_source_preparing.set(false);
+                    shell.state.local_source_sync_seen.set(false);
+                    shell.state.source_switch_preparing.set(false);
+                    shell.state.startup_route_render_pending.set(false);
+                    shell.state.startup_route_revealed.set(true);
                     let mut library = shell.state.library.borrow_mut();
                     library.sync_status = "Action failed".to_string();
                     library.last_error = Some(error);
@@ -700,7 +911,9 @@ pub(in crate::ui) fn wait_for_ui_perf_startup_reveal(
     runs: Rc<RefCell<VecDeque<(Route, UiPerfScenario)>>>,
     started_at: Instant,
 ) {
-    if shell.state.startup_route_revealed.get() || shell.login_screen_active() {
+    if (shell.state.startup_route_revealed.get() && !shell.state.startup_route_render_pending.get())
+        || shell.login_screen_active()
+    {
         println!(
             "RUFIN_PERF startup_reveal elapsed_ms={}",
             duration_ms(started_at.elapsed())

@@ -101,6 +101,51 @@ pub(in crate::controller) fn fake_lyrics_request_emits_empty_lyrics_event() {
     assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
+pub(in crate::controller) fn local_lyrics_request_skips_unsupported_provider_lookup() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    let mut track = restored_track();
+    track.id = TrackId::new("local:track:lyrics");
+    track.local_path = None;
+    let mut queue = QueueEngine::new(saved.server.id.clone());
+    queue.play_now(&track);
+    store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)?;
+            store.save_queue_snapshot(&queue.snapshot())?;
+            Ok(())
+        })
+        .expect("seed local queue");
+    let (controller, events) = controller_from_store_for_test(store);
+
+    controller.request_lyrics_for_current();
+
+    assert!(wait_for_lyrics(&events).is_none());
+}
+
+#[test]
+pub(in crate::controller) fn local_loaded_provider_lyrics_respects_capability() {
+    let root = self::unique_test_dir("local-provider-lyrics-capability");
+    fs::create_dir_all(&root).expect("create local root");
+    let provider = LoadedProvider::Local(
+        LocalProvider::from_roots_with_identity(vec![root.clone()], local_source_saved().server)
+            .expect("local provider"),
+    );
+    let runtime = Runtime::new().expect("runtime");
+
+    let lyrics = runtime
+        .block_on(provider.lyrics_with_search(
+            &TrackId::new("local:track:no-lyrics"),
+            JellyfinLyricsSearch::ServerThenRemote,
+        ))
+        .expect("lyrics result");
+
+    assert!(lyrics.is_none());
+    let _cleanup = fs::remove_dir_all(root);
+}
+
+#[test]
 pub(in crate::controller) fn server_lyrics_request_ignores_cached_remote_lyrics() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
@@ -414,6 +459,44 @@ pub(in crate::controller) fn resolve_stream_prefers_local_file_for_remote_server
         &PlaybackSettings::default(),
     )
     .expect("stream");
+    assert!(stream.uri().starts_with("file://"));
+    assert!(stream.uri().contains("Track.flac"));
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn resolve_stream_uses_cached_file_for_local_source() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = local_source_saved();
+    let root = self::unique_test_dir("local-source-stream");
+    let audio = root.join("Album/Track.flac");
+    fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
+    fs::write(&audio, []).expect("audio");
+    let generation = store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)?;
+            store.begin_sync(&saved.server.id)
+        })
+        .expect("begin sync");
+    let mut track = restored_track();
+    track.id = TrackId::new("local:track:stream");
+    track.local_path = Some(audio.to_string_lossy().into_owned());
+    store
+        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .expect("upsert track");
+    let runtime = Arc::new(Runtime::new().expect("runtime"));
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+    let stream = super::resolve_stream(
+        &store,
+        &runtime,
+        &secrets,
+        &saved.server.id,
+        &track.id,
+        &PlaybackSettings::default(),
+    )
+    .expect("stream");
+
     assert!(stream.uri().starts_with("file://"));
     assert!(stream.uri().contains("Track.flac"));
     let _cleanup = fs::remove_dir_all(root);
@@ -748,10 +831,13 @@ pub(in crate::controller) fn controller_from_store_for_test(
         runtime,
         secrets,
         queue: Arc::new(Mutex::new(queue)),
+        playback_request_generation: Arc::new(AtomicU64::new(0)),
         playback: Arc::new(Mutex::new(Box::new(
             rufin_playback::FakePlaybackBackend::new(),
         ))),
         playback_snapshot: Arc::new(Mutex::new(playback_snapshot)),
+        playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
+        playback_start_probe: Arc::new(Mutex::new(None)),
         auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
         last_progress_snapshot: Arc::new(Mutex::new(None)),
         last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -792,6 +878,8 @@ pub(in crate::controller) fn restored_track() -> Track {
         genres: Vec::new(),
         local_path: None,
         source_format: None,
+        comment: None,
+        skip_count: None,
     }
 }
 pub(in crate::controller) fn saved_server() -> SavedServer {

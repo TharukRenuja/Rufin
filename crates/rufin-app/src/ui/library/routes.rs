@@ -815,7 +815,63 @@ impl Shell {
             search,
             content: playlist_collection_widget(self, model),
             load_next: Some(load_next),
-            configure_scroller: None,
+            configure_scroller: Some(Rc::new(|scroller| {
+                scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+                scroller.set_min_content_width(0);
+            })),
+        })
+    }
+    pub(in crate::ui) fn library_smart_playlists_view(self: &Rc<Self>) -> gtk::Widget {
+        let settings = self.library_settings(LibraryListKey::SmartPlaylists);
+        let page = self
+            .controller
+            .cached_smart_playlists_page(0, 1_000)
+            .unwrap_or_else(|error| {
+                warn!(%error, "failed to load cached smart playlists page");
+                rufin_provider::PagedResponse::new(Vec::new(), 0)
+            });
+        let source_playlists = Rc::new(page.items.clone());
+        let playlists = Rc::new(RefCell::new(page.items));
+        let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        populate_smart_playlist_model(&model, &playlists.borrow(), &settings);
+
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(&tr("Search")));
+        search.set_hexpand(true);
+        {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let source_playlists = Rc::clone(&source_playlists);
+            let playlists = Rc::clone(&playlists);
+            search.connect_search_changed(move |entry| {
+                let query = entry.text().trim().to_lowercase();
+                let values = source_playlists
+                    .iter()
+                    .filter(|playlist| {
+                        query.is_empty() || smart_playlist_matches_query(playlist, &query)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                *playlists.borrow_mut() = values;
+                populate_smart_playlist_model(
+                    &model,
+                    &playlists.borrow(),
+                    &shell.library_settings(LibraryListKey::SmartPlaylists),
+                );
+            });
+        }
+
+        self.library_page_shell(LibraryPageShellOptions {
+            key: LibraryListKey::SmartPlaylists,
+            empty: playlists.borrow().is_empty(),
+            empty_body: "Smart playlists will appear here after the default set is seeded.",
+            search,
+            content: smart_playlist_collection_widget(self, model),
+            load_next: None,
+            configure_scroller: Some(Rc::new(|scroller| {
+                scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+                scroller.set_min_content_width(0);
+            })),
         })
     }
     pub(in crate::ui) fn library_tracks_panel(
@@ -835,6 +891,31 @@ impl Shell {
         wrapper.append(&self.library_toolbar(key, search));
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         scroller.set_min_content_width(0);
+        scroller.set_child(Some(&view));
+        wrapper.append(&scroller);
+        wrapper.upcast()
+    }
+    pub(in crate::ui) fn library_tracks_scrolling_panel(
+        self: &Rc<Self>,
+        tracks: Vec<Track>,
+        key: LibraryListKey,
+        context: &str,
+        content_margin_start: i32,
+    ) -> gtk::Widget {
+        let (_empty, search, view) = self.searchable_track_collection(tracks, key, None);
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        wrapper.set_widget_name(context);
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_vexpand(true);
+        let toolbar = self.library_toolbar(key, search);
+        toolbar.set_margin_start(content_margin_start);
+        wrapper.append(&toolbar);
+
+        let scroller = gtk::ScrolledWindow::new();
+        configure_library_route_scroller(self, &scroller);
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        view.set_margin_start(content_margin_start);
         scroller.set_child(Some(&view));
         wrapper.append(&scroller);
         wrapper.upcast()

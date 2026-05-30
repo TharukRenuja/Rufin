@@ -14,7 +14,8 @@ use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
     HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, MusicFolder,
     MusicFolderId, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
-    QueueSnapshot, RepeatMode, ServerId, ServerIdentity, Track, TrackId,
+    QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
+    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -50,6 +51,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -71,6 +73,7 @@ mod folder_search_commands;
 mod library_mutations;
 mod local_source_commands;
 mod lyrics_commands;
+mod playback_activity;
 mod playback_advance;
 mod playback_commands;
 mod playback_queue;
@@ -106,6 +109,7 @@ pub(in crate::controller) use controller_startup::*;
 pub(in crate::controller) use lyrics_local_access_tests::{
     controller_from_store_for_test, saved_server, unique_test_dir,
 };
+use playback_activity::PlaybackActivityState;
 pub(in crate::controller) use playback_queue::*;
 pub(in crate::controller) use playback_waveforms::{
     cached_waveform_peaks, request_waveform_for_prepared_item, set_waveform_cache_key,
@@ -324,7 +328,16 @@ pub enum ControllerEvent {
         running: bool,
     },
     LoginStatus(String),
+    PlaybackPerf(PlaybackPerfEvent),
     Error(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaybackPerfEvent {
+    pub phase: &'static str,
+    pub server_id: ServerId,
+    pub track_id: TrackId,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -345,8 +358,11 @@ pub struct AppController {
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     settings: settings_controller::SettingsController,
     queue: Arc<Mutex<Option<QueueEngine>>>,
+    playback_request_generation: Arc<AtomicU64>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
+    playback_activity: Arc<Mutex<PlaybackActivityState>>,
+    playback_start_probe: Arc<Mutex<Option<PlaybackStartProbe>>>,
     auto_dj_enabled: Arc<Mutex<bool>>,
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
@@ -361,6 +377,11 @@ pub struct AppController {
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
     #[cfg(test)]
     _test_permit: Option<ControllerTestPermit>,
+}
+struct PlaybackStartProbe {
+    server_id: ServerId,
+    track_id: TrackId,
+    started_at: std::time::Instant,
 }
 #[cfg(test)]
 #[derive(Clone)]

@@ -291,4 +291,33 @@ impl AppController {
             store.load_playlists_matching(&saved.server.id, query, offset, limit)
         })
     }
+    pub fn cached_smart_playlists_page(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<rufin_provider::PagedResponse<SmartPlaylist>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
+        };
+        self.store
+            .with_store(|store| store.load_smart_playlists(&saved.server.id, offset, limit))
+    }
+    pub fn cached_smart_playlist_detail(
+        &self,
+        smart_playlist_id: &SmartPlaylistId,
+    ) -> Result<Option<SmartPlaylistDetail>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(None);
+        };
+        self.store.with_store(|store| {
+            store.load_smart_playlist_detail(&saved.server.id, smart_playlist_id)
+        })
+    }
+    pub fn missing_builtin_smart_playlists(&self) -> Result<Vec<SmartPlaylistBuiltin>, String> {
+        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
+            return Ok(Vec::new());
+        };
+        self.store
+            .with_store(|store| store.missing_builtin_smart_playlists(&saved.server.id))
+    }
 }

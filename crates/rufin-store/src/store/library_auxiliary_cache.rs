@@ -487,6 +487,25 @@ impl Store {
         )?;
         Ok(())
     }
+    pub fn delete_playlist(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "DELETE FROM playlist_tracks WHERE server_id = ?1 AND playlist_id = ?2",
+            params![server_id.as_str(), playlist_id.as_str()],
+        )?;
+        self.connection.execute(
+            "DELETE FROM playlists WHERE server_id = ?1 AND playlist_id = ?2",
+            params![server_id.as_str(), playlist_id.as_str()],
+        )?;
+        self.connection.execute(
+            "DELETE FROM library_fts WHERE server_id = ?1 AND item_type = 'playlist' AND item_id = ?2",
+            params![server_id.as_str(), playlist_id.as_str()],
+        )?;
+        Ok(())
+    }
     pub fn save_lyrics(&self, server_id: &ServerId, lyrics: &Lyrics) -> StoreResult<()> {
         let value = serde_json::to_string(lyrics)?;
         let source = match lyrics.source {
@@ -703,6 +722,11 @@ impl Store {
     pub fn journal_mode(&self) -> StoreResult<String> {
         self.connection
             .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+            .map_err(StoreError::from)
+    }
+    pub fn busy_timeout_ms(&self) -> StoreResult<i64> {
+        self.connection
+            .query_row("PRAGMA busy_timeout", [], |row| row.get::<_, i64>(0))
             .map_err(StoreError::from)
     }
     pub fn fts5_available(&self) -> StoreResult<bool> {

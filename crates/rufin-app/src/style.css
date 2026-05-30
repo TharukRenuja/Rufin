@@ -74,12 +74,20 @@ listview.album-detail-list row:selected {
 }
 
 .startup-loading-page {
-  min-height: 240px;
+  border-spacing: 10px;
 }
 
 .startup-loading-page spinner {
   min-width: 32px;
   min-height: 32px;
+}
+
+.startup-loading-root {
+  background: @window_bg_color;
+}
+
+.startup-loading-status {
+  margin-top: 2px;
 }
 
 .first-run-content statuspage {

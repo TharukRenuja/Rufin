@@ -6,6 +6,7 @@ impl AppController {
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
@@ -34,18 +35,23 @@ impl AppController {
                         return;
                     }
                     if let Err(error) = activate_queue_for_saved_and_emit(
-                        &store,
-                        &queue,
-                        &playback,
-                        &playback_snapshot,
-                        &auto_dj_enabled,
-                        &events,
+                        &QueueActivationContext {
+                            store: &store,
+                            queue: &queue,
+                            playback_request_generation: &playback_request_generation,
+                            playback: &playback,
+                            playback_snapshot: &playback_snapshot,
+                            auto_dj_enabled: &auto_dj_enabled,
+                            events: &events,
+                        },
                         &saved,
                     ) {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
-                    (!settings.sources.local_folders.is_empty()).then_some(saved)
+                    (!settings.sources.local_folders.is_empty()
+                        && active_server_needs_sync(&store, &saved.server.id))
+                    .then_some(saved)
                 }
                 LibrarySourceSelection::Server(server_id) => {
                     let saved = match store.with_store(|store| {
@@ -71,12 +77,15 @@ impl AppController {
                         }
                     };
                     if let Err(error) = activate_queue_for_saved_and_emit(
-                        &store,
-                        &queue,
-                        &playback,
-                        &playback_snapshot,
-                        &auto_dj_enabled,
-                        &events,
+                        &QueueActivationContext {
+                            store: &store,
+                            queue: &queue,
+                            playback_request_generation: &playback_request_generation,
+                            playback: &playback,
+                            playback_snapshot: &playback_snapshot,
+                            auto_dj_enabled: &auto_dj_enabled,
+                            events: &events,
+                        },
                         &saved,
                     ) {
                         let _sent = events.send(ControllerEvent::Error(error));

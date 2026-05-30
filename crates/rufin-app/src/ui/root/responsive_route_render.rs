@@ -2,7 +2,9 @@ use super::*;
 
 impl Shell {
     pub(in crate::ui) fn queue_responsive_route_render(self: &Rc<Self>) {
-        if !self.state.startup_route_revealed.get() && !self.login_screen_active() {
+        if (!self.state.startup_route_revealed.get() && !self.login_screen_active())
+            || self.state.startup_route_render_pending.get()
+        {
             return;
         }
         if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
@@ -17,6 +19,9 @@ impl Shell {
             Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
             move || {
                 if !shell.state.responsive_render_queued.replace(false) {
+                    return;
+                }
+                if shell.state.startup_route_render_pending.get() {
                     return;
                 }
                 shell.update_layout();
@@ -46,6 +51,9 @@ impl Shell {
             Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS * 4),
             move || {
                 shell.state.responsive_render_queued.set(false);
+                if shell.state.startup_route_render_pending.get() {
+                    return;
+                }
                 shell.update_layout();
                 if route_uses_responsive_cards(shell.state.routes.borrow().current())
                     && !shell.login_screen_active()

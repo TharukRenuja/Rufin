@@ -388,6 +388,27 @@ impl UiPerfMonitor {
         }
     }
 
+    pub(in crate::ui) fn record_playback_event(&self, event: &PlaybackPerfEvent) {
+        if self.options.terminal_events {
+            println!(
+                "RUFIN_PERF_PLAYBACK phase={} server_id={} track_id={} elapsed_ms={}",
+                event.phase,
+                event.server_id.as_str(),
+                event.track_id.as_str(),
+                event.elapsed_ms
+            );
+        }
+        self.inner
+            .borrow_mut()
+            .playback_events
+            .push(UiPerfPlaybackEvent {
+                phase: event.phase,
+                server_id: event.server_id.as_str().to_string(),
+                track_id: event.track_id.as_str().to_string(),
+                elapsed_ms: event.elapsed_ms,
+            });
+    }
+
     pub(in crate::ui) fn pending_assets(&self) -> usize {
         self.inner.borrow().cover_pending.len()
     }
@@ -487,6 +508,13 @@ impl UiPerfMonitor {
             "RUFIN_ACCEPT_TRACKS_ROW_SUMMARY samples={} failures={}",
             inner.tracks_row_contract_samples, inner.tracks_row_contract_failures
         );
+        for event in &inner.playback_events {
+            let _ = writeln!(
+                report,
+                "RUFIN_PERF_PLAYBACK phase={} server_id={} track_id={} elapsed_ms={}",
+                event.phase, event.server_id, event.track_id, event.elapsed_ms
+            );
+        }
         for sample in inner
             .track_row_contracts
             .iter()
@@ -664,8 +692,16 @@ pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCo
         album_artists,
         mut genres,
         mut playlists,
+        queue_entries,
     ) = {
         let library = shell.state.library.borrow();
+        let queue_entries = shell
+            .state
+            .queue
+            .borrow()
+            .as_ref()
+            .map(|queue| queue.entries.clone())
+            .unwrap_or_default();
         (
             shell.state.settings.borrow().clone(),
             library.home_sections.clone(),
@@ -676,9 +712,19 @@ pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCo
             library.album_artists.clone(),
             library.genres.clone(),
             library.playlists.clone(),
+            queue_entries,
         )
     };
     let mut targets = Vec::new();
+
+    for entry in queue_entries.iter().take(TRACK_ROUTE_PAGE_SIZE) {
+        push_startup_cover_target(
+            &mut targets,
+            entry.image_ref.as_ref(),
+            THUMB_COVER_SIZE,
+            THUMB_COVER_SIZE as i32,
+        );
+    }
 
     if let Some(album) = home::showcase_album(
         &shell.state.library.borrow(),

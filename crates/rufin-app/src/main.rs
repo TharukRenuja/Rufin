@@ -207,7 +207,10 @@ fn app_icon_search_paths() -> Vec<PathBuf> {
 }
 
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("rufin=info,rufin_app=info"));
+    let mut filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("rufin=info,rufin_app=info,rufin_playback=info"));
+    if std::env::var("RUST_LOG").map_or(true, |value| !value.contains("lofty")) {
+        filter = filter.add_directive("lofty=error".parse().expect("valid lofty filter"));
+    }
     fmt().with_env_filter(filter).compact().init();
 }

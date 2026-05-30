@@ -104,6 +104,12 @@ pub(super) fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Resul
         genres: Vec::new(),
         local_path: row.get::<_, Option<String>>(offset + 18).ok().flatten(),
         source_format: row.get::<_, Option<String>>(offset + 19).ok().flatten(),
+        comment: row.get::<_, Option<String>>(offset + 20).ok().flatten(),
+        skip_count: row
+            .get::<_, Option<i64>>(offset + 21)
+            .ok()
+            .flatten()
+            .map(u32_from_i64),
     })
 }
 pub(super) fn artist_from_row(row: &Row<'_>) -> rusqlite::Result<Artist> {

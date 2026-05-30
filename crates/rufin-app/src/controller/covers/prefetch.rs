@@ -12,7 +12,7 @@ use tracing::{debug, info, warn};
 
 use crate::controller::{
     ControllerEvent, IMAGE_TAG_UNTAGGED, StoreHandle, acquire_cover_slot, load_settings_from_store,
-    provider_for_saved, release_cover_slot,
+    release_cover_slot,
 };
 use crate::external_metadata;
 
@@ -82,6 +82,17 @@ struct CoverPrefetchContext<'a> {
     cover_in_flight: &'a Arc<Mutex<HashSet<String>>>,
     cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
     saved: &'a SavedServer,
+}
+
+pub(in crate::controller) struct ProviderCoverPrefetchRequest<'a> {
+    pub(in crate::controller) store: &'a StoreHandle,
+    pub(in crate::controller) runtime: &'a Runtime,
+    pub(in crate::controller) secrets: &'a Arc<dyn SecretStore>,
+    pub(in crate::controller) events: &'a Sender<ControllerEvent>,
+    pub(in crate::controller) cover_in_flight: &'a Arc<Mutex<HashSet<String>>>,
+    pub(in crate::controller) cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
+    pub(in crate::controller) saved: &'a SavedServer,
+    pub(in crate::controller) provider: &'a dyn MusicProvider,
 }
 
 #[derive(Clone, Copy)]
@@ -189,30 +200,24 @@ pub(in crate::controller) fn start_external_metadata_cover_prefetch_thread(
 }
 
 pub(in crate::controller) fn prefetch_initial_provider_cover_cache(
-    store: &StoreHandle,
-    runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    events: &Sender<ControllerEvent>,
-    cover_in_flight: &Arc<Mutex<HashSet<String>>>,
-    cover_slots: &Arc<(Mutex<usize>, Condvar)>,
-    saved: &SavedServer,
+    request: ProviderCoverPrefetchRequest<'_>,
 ) -> Result<(), String> {
+    let saved = request.saved;
     if saved.server.provider == "fake" {
         return Ok(());
     }
 
-    let provider = provider_for_saved(store, runtime, secrets, saved)?;
     let mut provider_stats = ProviderCoverPrefetchStats::default();
     let context = CoverPrefetchContext {
-        store,
-        runtime,
-        events,
-        secrets,
-        cover_in_flight,
-        cover_slots,
+        store: request.store,
+        runtime: request.runtime,
+        events: request.events,
+        secrets: request.secrets,
+        cover_in_flight: request.cover_in_flight,
+        cover_slots: request.cover_slots,
         saved,
     };
-    prefetch_synced_provider_covers(&context, provider.as_music_provider(), &mut provider_stats)?;
+    prefetch_synced_provider_covers(&context, request.provider, &mut provider_stats)?;
     info!(
         server_id = %saved.server.id,
         album_rows = provider_stats.album_rows,

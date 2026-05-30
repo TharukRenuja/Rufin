@@ -10,6 +10,8 @@ struct CachedWaveform {
 const WAVEFORM_CACHE_VERSION: u8 = 1;
 const WAVEFORM_WARM_QUEUE_LIMIT: usize = 4;
 const WAVEFORM_WARM_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
+const CURRENT_WAVEFORM_GENERATION_DELAY: std::time::Duration =
+    std::time::Duration::from_millis(750);
 static WAVEFORM_GENERATION_IN_FLIGHT: std::sync::OnceLock<Mutex<HashSet<String>>> =
     std::sync::OnceLock::new();
 static WAVEFORM_WARM_ACTIVE: std::sync::OnceLock<Mutex<bool>> = std::sync::OnceLock::new();
@@ -152,18 +154,22 @@ pub(in crate::controller) fn request_waveform_for_prepared_item(
     ) {
         return;
     }
-    let Some(_permit) = acquire_waveform_generation_permit(&cache_key) else {
+    let Some(permit) = acquire_waveform_generation_permit(&cache_key) else {
         return;
     };
-    generate_and_publish_waveform(
-        playback_snapshot,
-        events,
-        cache_key,
-        entry.track_id,
-        entry.duration_seconds,
-        item.stream.uri().to_string(),
-        item.stream.redacted_uri().to_string(),
-    );
+    thread::spawn(move || {
+        let _permit = permit;
+        thread::sleep(CURRENT_WAVEFORM_GENERATION_DELAY);
+        generate_and_publish_waveform(
+            playback_snapshot,
+            events,
+            cache_key,
+            entry.track_id,
+            entry.duration_seconds,
+            item.stream.uri().to_string(),
+            item.stream.redacted_uri().to_string(),
+        );
+    });
 }
 
 fn generate_and_publish_waveform(

@@ -51,6 +51,7 @@ opaque_id!(TrackId, "track-");
 opaque_id!(ArtistId, "artist-");
 opaque_id!(GenreId, "genre-");
 opaque_id!(PlaylistId, "playlist-");
+opaque_id!(SmartPlaylistId, "smart-playlist-");
 opaque_id!(ServerId, "server-");
 opaque_id!(MusicFolderId, "music-folder-");
 opaque_id!(FolderId, "folder-");
@@ -165,6 +166,156 @@ pub struct Track {
     pub local_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_count: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SmartPlaylistBuiltin {
+    MostPlayed,
+    NeverPlayed,
+    MostSkipped,
+}
+
+impl SmartPlaylistBuiltin {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::MostPlayed => "most_played",
+            Self::NeverPlayed => "never_played",
+            Self::MostSkipped => "most_skipped",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::MostPlayed => "Most Played",
+            Self::NeverPlayed => "Never Played",
+            Self::MostSkipped => "Most Skipped",
+        }
+    }
+
+    pub fn all() -> [Self; 3] {
+        [Self::MostPlayed, Self::NeverPlayed, Self::MostSkipped]
+    }
+
+    pub fn from_key(value: &str) -> Option<Self> {
+        Self::all()
+            .into_iter()
+            .find(|builtin| builtin.key() == value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SmartPlaylistMatchMode {
+    All,
+    Any,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SmartPlaylistRuleGroup {
+    pub mode: SmartPlaylistMatchMode,
+    pub rules: Vec<SmartPlaylistRuleNode>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SmartPlaylistRuleNode {
+    Group(SmartPlaylistRuleGroup),
+    Rule(SmartPlaylistRule),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SmartPlaylistRule {
+    pub field: SmartPlaylistRuleField,
+    pub operator: SmartPlaylistRuleOperator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<SmartPlaylistRuleValue>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SmartPlaylistRuleField {
+    Title,
+    Artist,
+    Album,
+    Comment,
+    Genre,
+    Rating,
+    Year,
+    Favorite,
+    Played,
+    PlayCount,
+    SkipCount,
+    LastPlayed,
+    DateAdded,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SmartPlaylistRuleOperator {
+    Contains,
+    NotContains,
+    Equals,
+    NotEquals,
+    Above,
+    Below,
+    Between,
+    Is,
+    IsNot,
+    Before,
+    After,
+    IsEmpty,
+    IsNotEmpty,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SmartPlaylistRuleValue {
+    Text(String),
+    Number(i64),
+    NumberRange { min: i64, max: i64 },
+    Bool(bool),
+    Date(String),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SmartPlaylistSortField {
+    Title,
+    Artist,
+    Album,
+    Year,
+    DateAdded,
+    LastPlayed,
+    PlayCount,
+    SkipCount,
+    Rating,
+    Duration,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SmartPlaylistDefinition {
+    pub root: SmartPlaylistRuleGroup,
+    pub sort_field: SmartPlaylistSortField,
+    pub descending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SmartPlaylist {
+    pub id: SmartPlaylistId,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<SmartPlaylistBuiltin>,
+    pub definition: SmartPlaylistDefinition,
+    pub track_count: u32,
+    pub duration_seconds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_ref: Option<ImageRef>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SmartPlaylistDetail {
+    pub smart_playlist: SmartPlaylist,
+    pub tracks: Vec<Track>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

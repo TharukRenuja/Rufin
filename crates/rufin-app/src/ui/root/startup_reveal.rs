@@ -4,11 +4,13 @@ impl Shell {
     pub(in crate::ui) fn render_startup_loading_view(&self) {
         self.route_title.set_title("Rufin");
         self.set_history_buttons_sensitive(false, false);
-        while let Some(child) = self.route_host.first_child() {
-            self.route_host.remove(&child);
+        self.root_stack
+            .set_visible_child(&self.startup_loading_host);
+        while let Some(child) = self.startup_loading_host.first_child() {
+            self.startup_loading_host.remove(&child);
         }
-        self.route_host
-            .append(&route_boundary(self.startup_loading_view()));
+        self.startup_loading_host
+            .append(&self.startup_loading_view());
     }
     pub(in crate::ui) fn startup_loading_view(&self) -> gtk::Widget {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -21,6 +23,18 @@ impl Shell {
         let spinner = gtk::Spinner::new();
         spinner.start();
         wrapper.append(&spinner);
+        let status = if self.state.source_switch_preparing.get() {
+            Some(tr("Switching library..."))
+        } else {
+            startup_loading_status_label(self.state.library.borrow().sync_status.as_str())
+        };
+        if let Some(status) = status {
+            let label = gtk::Label::new(Some(&status));
+            label.add_css_class("dim-label");
+            label.add_css_class("startup-loading-status");
+            label.set_wrap(true);
+            wrapper.append(&label);
+        }
         wrapper.upcast()
     }
     pub(in crate::ui) fn schedule_startup_route_reveal(self: &Rc<Self>) {
@@ -50,7 +64,7 @@ impl Shell {
 
                 shell.update_layout();
                 let elapsed = started_at.elapsed();
-                let width_ready = shell.layout_width() > 1 && shell.route_host.width() > 1;
+                let width_ready = shell.layout_width() > 1 && shell.root_stack.width() > 1;
                 let pending_covers = cover_prime_generation
                     .get()
                     .filter(|generation| {
@@ -130,13 +144,41 @@ impl Shell {
         None
     }
     pub(in crate::ui) fn reveal_startup_route(self: &Rc<Self>) {
-        if self.state.startup_route_revealed.replace(true) || self.login_screen_active() {
+        if self.login_screen_active() || self.state.startup_route_revealed.replace(true) {
             return;
         }
 
+        self.state.startup_route_render_pending.set(true);
+        self.log_layout_snapshot("startup_reveal_before_stack_switch");
         self.update_layout();
-        self.prewarm_startup_route_widgets();
-        self.render_current_route();
+        self.window.queue_resize();
+        self.app_root.queue_resize();
+        self.route_host.queue_resize();
+        self.right_panel_slot.queue_resize();
+        self.log_layout_snapshot("startup_reveal_after_stack_switch");
+
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
+            move || {
+                shell.log_layout_snapshot("startup_reveal_before_render");
+                shell.state.startup_route_render_pending.set(false);
+                if shell.login_screen_active() {
+                    return;
+                }
+                shell.update_layout();
+                shell.prewarm_startup_route_widgets();
+                shell.render_current_route();
+                if matches!(shell.state.routes.borrow().current(), Route::Home) {
+                    shell.refresh_home_for_current_visit();
+                }
+                shell.render_queue_panel();
+                shell.render_lyrics_panel();
+                shell.update_bottom_player();
+                shell.log_layout_snapshot("startup_reveal_after_render");
+                shell.queue_post_layout_route_render();
+            },
+        );
     }
     pub(in crate::ui) fn prewarm_startup_route_widgets(self: &Rc<Self>) {
         let settings = self.state.settings.borrow().clone();
@@ -237,6 +279,7 @@ impl Shell {
                 Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
                 move || {
                     shell.log_layout_snapshot("first_run_reveal_before_render");
+                    shell.state.startup_route_render_pending.set(false);
                     shell.state.startup_route_revealed.set(true);
                     shell.update_layout();
                     shell.render_current_route();
@@ -315,5 +358,18 @@ impl Shell {
             });
         }
         jobs
+    }
+}
+
+pub(in crate::ui) fn startup_loading_status_label(sync_status: &str) -> Option<String> {
+    let status = sync_status.trim();
+    if status.is_empty()
+        || status == LIBRARY_SYNC_COMPLETE_STATUS
+        || status == "Cached library ready"
+        || status == tr(LIBRARY_SYNC_COMPLETE_STATUS)
+    {
+        None
+    } else {
+        Some(status.to_string())
     }
 }

@@ -48,7 +48,7 @@ mod source_selector;
 
 use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,
-    PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
+    PlaybackPerfEvent, PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
 };
 use crate::external_metadata;
 use crate::i18n::{self, tr};
@@ -90,9 +90,11 @@ use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH,
     FolderPathItem, Genre, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryField,
     LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, PlaylistId, QueueEntry,
-    QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem, Track,
-    TrackId, TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
-    sanitized_window_size,
+    QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem,
+    SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode,
+    SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
+    TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration, sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -127,6 +129,7 @@ mod lyrics_highlight_timers;
 mod lyrics_panel;
 mod lyrics_playback_state;
 mod new_playlist_dialog;
+mod new_smart_playlist_dialog;
 mod perf_recording;
 mod playlist_detail_view;
 mod playlist_rename_dialog;
@@ -269,6 +272,10 @@ pub(in crate::ui) struct AppState {
     playlist_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
     startup_route_revealed: Cell<bool>,
+    startup_route_render_pending: Cell<bool>,
+    source_switch_preparing: Cell<bool>,
+    local_source_preparing: Cell<bool>,
+    local_source_sync_seen: Cell<bool>,
     startup_cover_prime_generation: Cell<u64>,
     startup_cover_prime_pending: RefCell<HashSet<String>>,
     first_run_connection_pending: Cell<bool>,
@@ -285,6 +292,7 @@ pub(in crate::ui) struct AppState {
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
     cover_warm_paused_until: Cell<Option<Instant>>,
+    cover_decode_resume_queued: Cell<bool>,
     startup_cover_warm_generation: Cell<u64>,
     startup_cover_warm_active: Cell<bool>,
     startup_cover_warm_reschedule_requested: Cell<bool>,
@@ -401,6 +409,7 @@ pub(in crate::ui) struct UiPerfInner {
     track_row_contracts: Vec<UiPerfTrackRowContractSample>,
     tracks_row_contract_samples: usize,
     tracks_row_contract_failures: usize,
+    playback_events: Vec<UiPerfPlaybackEvent>,
 }
 #[derive(Default)]
 pub(in crate::ui) struct UiPerfBindStats {
@@ -473,6 +482,12 @@ pub(in crate::ui) struct UiPerfAssetLatency {
     queue_wait_ms: Option<u64>,
     decode_ms: Option<u64>,
 }
+pub(in crate::ui) struct UiPerfPlaybackEvent {
+    phase: &'static str,
+    server_id: String,
+    track_id: String,
+    elapsed_ms: u64,
+}
 #[derive(Clone, Copy)]
 pub(in crate::ui) enum UiPerfScenario {
     HumanScroll,
@@ -508,6 +523,7 @@ pub(in crate::ui) struct Shell {
     app_root: gtk::Box,
     app_content_stack: gtk::Stack,
     login_host: gtk::Box,
+    startup_loading_host: gtk::Box,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
     server_selector: ServerSelector,
@@ -606,6 +622,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         playlist_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
         startup_route_revealed: Cell::new(!defer_initial_route),
+        startup_route_render_pending: Cell::new(false),
+        source_switch_preparing: Cell::new(false),
+        local_source_preparing: Cell::new(false),
+        local_source_sync_seen: Cell::new(false),
         startup_cover_prime_generation: Cell::new(0),
         startup_cover_prime_pending: RefCell::new(HashSet::new()),
         first_run_connection_pending: Cell::new(false),
@@ -622,6 +642,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         cover_decode_queue: RefCell::new(VecDeque::new()),
         cover_warm_generation: Cell::new(0),
         cover_warm_paused_until: Cell::new(None),
+        cover_decode_resume_queued: Cell::new(false),
         startup_cover_warm_generation: Cell::new(0),
         startup_cover_warm_active: Cell::new(false),
         startup_cover_warm_reschedule_requested: Cell::new(false),
@@ -687,6 +708,11 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     login_host.set_hexpand(true);
     login_host.set_vexpand(true);
 
+    let startup_loading_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    startup_loading_host.add_css_class("startup-loading-root");
+    startup_loading_host.set_hexpand(true);
+    startup_loading_host.set_vexpand(true);
+
     let upper = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     upper.set_hexpand(true);
     upper.set_vexpand(true);
@@ -736,6 +762,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     app_root.append(&player_controls.root);
 
     root_stack.add_named(&login_host, Some("login"));
+    root_stack.add_named(&startup_loading_host, Some("startup-loading"));
     root_stack.add_named(&app_root, Some("app"));
     window.set_content(Some(&root_stack));
 
@@ -748,6 +775,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         app_root,
         app_content_stack,
         login_host,
+        startup_loading_host,
         normal_nav,
         compact_nav,
         server_selector,

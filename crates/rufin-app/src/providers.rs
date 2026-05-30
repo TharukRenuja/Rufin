@@ -82,6 +82,9 @@ impl LoadedProvider {
         track_id: &rufin_core::TrackId,
         search: JellyfinLyricsSearch,
     ) -> ProviderResult<Option<rufin_provider::Lyrics>> {
+        if !self.as_music_provider().capabilities().lyrics {
+            return Ok(None);
+        }
         match self {
             Self::Jellyfin(provider) => provider.lyrics_with_search(track_id, search).await,
             Self::Local(provider) => {

@@ -2,7 +2,8 @@ use gst::glib;
 use gst::prelude::*;
 use gstreamer as gst;
 use rufin_core::{
-    EQUALIZER_BAND_COUNT, PlaybackSettings, PlaybackTransitionMode, ReplayGainMode, TrackId,
+    EQUALIZER_BAND_COUNT, EqualizerSettings, PlaybackSettings, PlaybackTransitionMode,
+    ReplayGainMode, TrackId,
 };
 use std::collections::VecDeque;
 use std::f64::consts::FRAC_PI_2;
@@ -12,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 mod fake_backend;
 mod gstreamer_backend;
@@ -27,7 +28,9 @@ use gstreamer_backend::{
     AboutToFinishAction, CrossfadeState, GstEngine, PendingSeek, PlayerPipeline,
     SharedPlaybackState, Slot, about_to_finish_action,
 };
-use gstreamer_backend::{clock_seconds_from_millis, position_event, redact_sensitive_uri};
+use gstreamer_backend::{
+    clock_seconds_from_millis, position_event, position_event_for_track, redact_sensitive_uri,
+};
 
 #[cfg(test)]
 mod tests;
@@ -100,6 +103,7 @@ pub enum PlaybackState {
 #[derive(Clone, Debug, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum PlaybackCommand {
+    WarmUp(PlaybackSettings),
     Play {
         track: PlaybackTrack,
         stream: StreamDescriptor,
@@ -124,12 +128,22 @@ pub enum PlaybackCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaybackEvent {
     StateChanged(PlaybackState),
-    PositionChanged { seconds: u32, millis: u64 },
-    DurationChanged(u32),
+    PositionChanged {
+        track_id: Option<TrackId>,
+        seconds: u32,
+        millis: u64,
+    },
+    DurationChanged {
+        track_id: Option<TrackId>,
+        seconds: u32,
+    },
     Buffering(u8),
     EndOfStream,
     PreparedTrackStarted(PlaybackTrack),
-    VolumeChanged { volume: f64, muted: bool },
+    VolumeChanged {
+        volume: f64,
+        muted: bool,
+    },
     Error(String),
 }
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -167,32 +167,77 @@ pub(in crate::ui) fn playlist_column(
         }),
     }
 }
-pub(in crate::ui) fn track_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
+pub(in crate::ui) fn smart_playlist_column(
+    shell: &Rc<Shell>,
+    field: LibraryField,
+) -> gtk::ColumnViewColumn {
     match field {
         LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => {
-            track_image_column(shell, "Image", column_width(LibraryField::Image))
+        LibraryField::Image => image_column::<SmartPlaylist, _, _>(
+            shell,
+            "Image",
+            column_width(LibraryField::Image),
+            |playlist| playlist.image_ref.clone(),
+            |playlist| stable_seed(playlist.id.as_str()),
+        ),
+        LibraryField::Title | LibraryField::TitleMerged => {
+            expanding_text_column::<SmartPlaylist, _>("Title", 220, |playlist| {
+                playlist.name.clone()
+            })
         }
+        _ => text_column::<SmartPlaylist, _>(field.title(), column_width(field), move |playlist| {
+            smart_playlist_field(playlist, field)
+        }),
+    }
+}
+pub(in crate::ui) fn track_column_for_key(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    field: LibraryField,
+) -> gtk::ColumnViewColumn {
+    let width = track_column_width(key, field);
+    match field {
+        LibraryField::RowIndex => row_index_column_with_width(width),
+        LibraryField::Image => track_image_column(shell, "Image", width),
         LibraryField::TitleMerged => track_merged_column(
             shell,
             "Title",
-            column_width(LibraryField::TitleMerged),
+            width,
             |track| track.title.clone(),
             |track| track.artist.clone(),
             |track| track.image_ref.clone(),
             |track| stable_seed(track.id.as_str()),
         ),
         LibraryField::Title => {
-            track_text_column(shell, "Title", 180, true, |track| track.title.clone())
+            track_text_column(shell, "Title", width, true, |track| track.title.clone())
         }
         LibraryField::Favorite => track_favorite_column(shell),
-        _ => track_text_column(
-            shell,
-            field.title(),
-            column_width(field),
-            false,
-            move |track| track_field(track, field),
-        ),
+        _ => track_text_column(shell, field.title(), width, false, move |track| {
+            track_field(track, field)
+        }),
+    }
+}
+pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField) -> i32 {
+    if key != LibraryListKey::SmartPlaylistTracks {
+        return column_width(field);
+    }
+
+    match field {
+        LibraryField::RowIndex => 44,
+        LibraryField::Title | LibraryField::TitleMerged => 212,
+        LibraryField::Album
+        | LibraryField::Artist
+        | LibraryField::AlbumArtist
+        | LibraryField::Genre => 148,
+        LibraryField::PlayCount
+        | LibraryField::UserRating
+        | LibraryField::SongCount
+        | LibraryField::AlbumCount => 82,
+        LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 108,
+        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 62,
+        LibraryField::Duration => 70,
+        LibraryField::Image => column_width(LibraryField::Image),
+        LibraryField::Favorite => 48,
     }
 }
 pub(in crate::ui) fn text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
@@ -261,6 +306,9 @@ where
     column
 }
 pub(in crate::ui) fn row_index_column() -> gtk::ColumnViewColumn {
+    row_index_column_with_width(column_width(LibraryField::RowIndex))
+}
+pub(in crate::ui) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
@@ -286,7 +334,7 @@ pub(in crate::ui) fn row_index_column() -> gtk::ColumnViewColumn {
         label.set_text(&(item.position() + 1).to_string());
     });
     let column = gtk::ColumnViewColumn::new(Some("#"), Some(factory));
-    column.set_fixed_width(column_width(LibraryField::RowIndex));
+    column.set_fixed_width(width);
     column
 }
 #[derive(Clone)]
@@ -1238,6 +1286,19 @@ pub(in crate::ui) fn populate_playlist_model(
     let mut values = playlists.to_vec();
     sort_playlists(&mut values, settings);
     replace_playlists_in_model(model, values);
+}
+pub(in crate::ui) fn populate_smart_playlist_model(
+    model: &gio::ListStore,
+    playlists: &[SmartPlaylist],
+    settings: &LibraryListSettings,
+) {
+    let mut values = playlists.to_vec();
+    sort_smart_playlists(&mut values, settings);
+    let additions = values
+        .into_iter()
+        .map(glib::BoxedAnyObject::new)
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &additions);
 }
 pub(in crate::ui) fn populate_track_model_for_settings(
     model: &gio::ListStore,

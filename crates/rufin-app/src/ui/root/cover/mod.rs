@@ -97,7 +97,7 @@ pub(in crate::ui) enum CoverDecodePriority {
 impl CoverDecodePriority {
     pub(in crate::ui) fn glib_priority(self) -> glib::Priority {
         match self {
-            Self::Visible => glib::Priority::DEFAULT,
+            Self::Visible => glib::Priority::DEFAULT_IDLE,
             Self::Warm => glib::Priority::LOW,
         }
     }

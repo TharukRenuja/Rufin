@@ -9,6 +9,10 @@ impl AppController {
             .unwrap_or(PlaybackState::Stopped);
         match state {
             PlaybackState::Playing | PlaybackState::Buffering => {
+                if state == PlaybackState::Buffering {
+                    invalidate_playback_requests(&self.playback_request_generation);
+                    self.clear_playback_start_probe();
+                }
                 if let Err(error) = self.send_playback_command(PlaybackCommand::Pause) {
                     let _sent = self.events.send(ControllerEvent::Error(error));
                 } else {
@@ -37,6 +41,8 @@ impl AppController {
         }
     }
     pub fn stop(&self) {
+        invalidate_playback_requests(&self.playback_request_generation);
+        self.clear_playback_start_probe();
         self.report_playback(PlaybackReportKind::Stopped, false);
         let _result = self.with_queue_mut(|queue| {
             queue.set_progress_seconds(0);
@@ -52,6 +58,7 @@ impl AppController {
             snapshot.position_millis = 0;
             snapshot.buffering_percent = None;
         });
+        self.clear_playback_activity();
         self.persist_and_emit_queue();
     }
     pub fn next_track(&self) {
@@ -75,6 +82,7 @@ impl AppController {
             }
             return;
         }
+        self.record_current_skip_if_needed();
         self.persist_and_emit_queue();
         self.start_current_track();
     }
@@ -127,6 +135,7 @@ impl AppController {
             snapshot.position_seconds = seconds;
             snapshot.position_millis = millis;
         });
+        self.record_playback_activity_progress(seconds);
         self.emit_playback_snapshot();
     }
     pub fn set_volume(&self, volume: f64) {
@@ -192,19 +201,41 @@ impl AppController {
         if events.is_empty() {
             return;
         }
+        let mut track_boundary_handled = false;
         for event in events {
             match event {
                 PlaybackEvent::StateChanged(state) => {
+                    if track_boundary_handled {
+                        continue;
+                    }
+                    let playback_perf_event = if state == PlaybackState::Playing {
+                        self.playback_started_perf_event()
+                    } else {
+                        None
+                    };
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.state = state;
                         snapshot.buffering_percent = None;
                     });
+                    if let Some(event) = playback_perf_event {
+                        let _sent = self.events.send(ControllerEvent::PlaybackPerf(event));
+                    }
                 }
-                PlaybackEvent::PositionChanged { seconds, millis } => {
+                PlaybackEvent::PositionChanged {
+                    track_id,
+                    seconds,
+                    millis,
+                } => {
+                    if track_boundary_handled {
+                        continue;
+                    }
                     let accepting_position = self
                         .playback_snapshot
                         .lock()
-                        .map(|snapshot| snapshot.state != PlaybackState::Stopped)
+                        .map(|snapshot| {
+                            snapshot.state != PlaybackState::Stopped
+                                && timing_event_matches_current(&snapshot, track_id.as_ref())
+                        })
                         .unwrap_or(false);
                     if !accepting_position {
                         continue;
@@ -217,10 +248,22 @@ impl AppController {
                         snapshot.position_seconds = seconds;
                         snapshot.position_millis = millis;
                     });
+                    self.record_playback_activity_progress(seconds);
                     self.persist_progress_if_needed(seconds);
                     self.report_playback_progress_if_needed(seconds);
                 }
-                PlaybackEvent::DurationChanged(seconds) => {
+                PlaybackEvent::DurationChanged { track_id, seconds } => {
+                    if track_boundary_handled {
+                        continue;
+                    }
+                    let accepting_duration = self
+                        .playback_snapshot
+                        .lock()
+                        .map(|snapshot| timing_event_matches_current(&snapshot, track_id.as_ref()))
+                        .unwrap_or(false);
+                    if !accepting_duration {
+                        continue;
+                    }
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.duration_seconds = seconds;
                     });
@@ -231,9 +274,13 @@ impl AppController {
                         snapshot.buffering_percent = Some(percent);
                     });
                 }
-                PlaybackEvent::EndOfStream => self.advance_after_end_of_stream(),
+                PlaybackEvent::EndOfStream => {
+                    self.advance_after_end_of_stream();
+                    track_boundary_handled = true;
+                }
                 PlaybackEvent::PreparedTrackStarted(track) => {
                     self.advance_after_prepared_track_started(track);
+                    track_boundary_handled = true;
                 }
                 PlaybackEvent::VolumeChanged { volume, muted } => {
                     self.update_playback_snapshot(|snapshot| {
@@ -242,7 +289,11 @@ impl AppController {
                     });
                 }
                 PlaybackEvent::Error(error) => {
+                    if let Ok(mut probe) = self.playback_start_probe.lock() {
+                        *probe = None;
+                    }
                     self.report_playback(PlaybackReportKind::Stopped, true);
+                    self.clear_playback_activity();
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.last_error = Some(error.clone());
                         snapshot.state = PlaybackState::Stopped;
@@ -254,4 +305,50 @@ impl AppController {
         }
         self.emit_playback_snapshot();
     }
+
+    fn playback_started_perf_event(&self) -> Option<PlaybackPerfEvent> {
+        let mut probe = self.playback_start_probe.lock().ok()?;
+        let probe = probe.take()?;
+        let matches_current = self
+            .queue
+            .lock()
+            .ok()
+            .and_then(|queue| {
+                let queue = queue.as_ref()?;
+                let snapshot = queue.snapshot();
+                let current = queue.current()?;
+                Some(snapshot.server_id == probe.server_id && current.track_id == probe.track_id)
+            })
+            .unwrap_or(false);
+        if !matches_current {
+            return None;
+        }
+
+        Some(PlaybackPerfEvent {
+            phase: "playing",
+            server_id: probe.server_id,
+            track_id: probe.track_id,
+            elapsed_ms: probe
+                .started_at
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64,
+        })
+    }
+
+    fn clear_playback_start_probe(&self) {
+        if let Ok(mut probe) = self.playback_start_probe.lock() {
+            *probe = None;
+        }
+    }
+}
+
+fn timing_event_matches_current(snapshot: &PlaybackSnapshot, track_id: Option<&TrackId>) -> bool {
+    let Some(track_id) = track_id else {
+        return true;
+    };
+    snapshot
+        .current
+        .as_ref()
+        .is_some_and(|entry| &entry.track_id == track_id)
 }

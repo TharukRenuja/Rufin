@@ -1,10 +1,11 @@
 use std::fs;
 
+use super::PRE_SMART_PLAYLISTS_SCHEMA_VERSION;
 use super::test_support::*;
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 10);
+    assert_eq!(store.schema_version().expect("schema version"), 11);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -50,7 +51,7 @@ fn unsupported_file_store_resets_cache_database() {
                     version INTEGER PRIMARY KEY,
                     applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
-                INSERT INTO schema_migrations (version) VALUES (10);
+                INSERT INTO schema_migrations (version) VALUES (11);
                 CREATE TABLE stale_cache (value TEXT NOT NULL);
                 INSERT INTO stale_cache VALUES ('old row');
                 CREATE TABLE servers (
@@ -76,7 +77,7 @@ fn unsupported_file_store_resets_cache_database() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 10);
+    assert_eq!(store.schema_version().expect("schema version"), 11);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -128,9 +129,62 @@ fn incomplete_user_version_ten_file_store_resets_cache_database() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 10);
+    assert_eq!(store.schema_version().expect("schema version"), 11);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+#[test]
+fn user_version_ten_file_store_upgrades_without_dropping_servers() {
+    let path = std::env::temp_dir().join(format!(
+        "rufin-store-test-{}-{}.sqlite",
+        std::process::id(),
+        "v10-upgrade"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let saved = saved_server();
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_server(&saved).expect("save server");
+        store
+            .set_active_server(&saved.server.id)
+            .expect("set active server");
+    }
+    let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    connection
+        .execute_batch(
+            "
+                DROP TABLE track_activity;
+                DROP TABLE smart_playlists;
+                DROP TABLE smart_playlist_seed_state;
+                ",
+        )
+        .expect("remove smart playlist schema");
+    connection
+        .pragma_update(None, "user_version", PRE_SMART_PLAYLISTS_SCHEMA_VERSION)
+        .expect("set previous schema version");
+    drop(connection);
+
+    let store = Store::open(&path).expect("open upgraded store");
+    assert_eq!(store.schema_version().expect("schema version"), 11);
+    assert_eq!(
+        store.list_servers().expect("list servers"),
+        vec![saved.clone()]
+    );
+    assert_eq!(
+        store.active_server().expect("active server"),
+        Some(saved.clone())
+    );
+    assert!(store.table_exists("track_activity").expect("table lookup"));
+    assert!(store.table_exists("smart_playlists").expect("table lookup"));
+    assert!(
+        store
+            .table_exists("smart_playlist_seed_state")
+            .expect("table lookup")
+    );
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -148,6 +202,11 @@ fn file_store_uses_wal_journal_mode() {
     assert_eq!(store.journal_mode().expect("journal mode"), "wal");
     drop(store);
     let _cleanup = fs::remove_file(path);
+}
+#[test]
+fn store_configures_busy_timeout() {
+    let store = Store::open_memory().expect("open store");
+    assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 5_000);
 }
 #[test]
 fn queue_snapshot_round_trip_by_server() {

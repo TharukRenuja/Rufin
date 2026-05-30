@@ -6,7 +6,11 @@ pub mod settings;
 pub use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
     HOME_SECTION_ITEM_LIMIT, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef, MusicFolder,
-    MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId, format_duration,
+    MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity, SmartPlaylist,
+    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
+    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
+    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
+    SmartPlaylistSortField, Track, TrackId, format_duration,
 };
 pub use queue::{QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ShuffleState};
 pub use route::{FolderPathItem, Route, RouteStack, SearchKind};

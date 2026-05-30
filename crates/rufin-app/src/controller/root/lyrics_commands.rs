@@ -52,6 +52,18 @@ impl AppController {
                 .send(ControllerEvent::Lyrics(Box::new(Some(cached))));
             return;
         }
+        let provider_is_local = self
+            .store
+            .with_store(|store| store.active_server())
+            .unwrap_or(None)
+            .is_some_and(|saved| {
+                saved.server.id == server_id && saved.server.provider == LOCAL_PROVIDER_ID
+            });
+        if provider_is_local {
+            debug!(track_id = %entry.track_id, "local provider has no server lyrics");
+            let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
+            return;
+        }
         let allow_remote = matches!(
             search,
             JellyfinLyricsSearch::ServerThenRemote | JellyfinLyricsSearch::RemoteThenServer

@@ -569,6 +569,8 @@ mod tests {
                 genres: Vec::new(),
                 local_path: None,
                 source_format: None,
+                comment: None,
+                skip_count: None,
             },
             rufin_core::Track {
                 id: rufin_core::TrackId::new("track-long"),
@@ -594,6 +596,8 @@ mod tests {
                 genres: Vec::new(),
                 local_path: None,
                 source_format: None,
+                comment: None,
+                skip_count: None,
             },
         ];
 

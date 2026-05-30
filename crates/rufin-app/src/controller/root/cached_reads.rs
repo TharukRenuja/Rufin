@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 pub(in crate::controller) fn promote_prefetched_home_section(
     store: &StoreHandle,
@@ -432,6 +433,17 @@ pub(in crate::controller) fn restore_queue(
 pub(in crate::controller) struct LoginActivationContext<'a> {
     pub(in crate::controller) store: &'a StoreHandle,
     pub(in crate::controller) queue: &'a Arc<Mutex<Option<QueueEngine>>>,
+    pub(in crate::controller) playback_request_generation: &'a Arc<AtomicU64>,
+    pub(in crate::controller) playback: &'a Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    pub(in crate::controller) playback_snapshot: &'a Arc<Mutex<PlaybackSnapshot>>,
+    pub(in crate::controller) auto_dj_enabled: &'a Arc<Mutex<bool>>,
+    pub(in crate::controller) events: &'a Sender<ControllerEvent>,
+}
+
+pub(in crate::controller) struct QueueActivationContext<'a> {
+    pub(in crate::controller) store: &'a StoreHandle,
+    pub(in crate::controller) queue: &'a Arc<Mutex<Option<QueueEngine>>>,
+    pub(in crate::controller) playback_request_generation: &'a Arc<AtomicU64>,
     pub(in crate::controller) playback: &'a Arc<Mutex<Box<dyn PlaybackBackend>>>,
     pub(in crate::controller) playback_snapshot: &'a Arc<Mutex<PlaybackSnapshot>>,
     pub(in crate::controller) auto_dj_enabled: &'a Arc<Mutex<bool>>,
@@ -476,12 +488,15 @@ pub(in crate::controller) fn activate_logged_in_server(
     context.store.save_settings(&settings)?;
 
     activate_queue_for_saved_and_emit(
-        context.store,
-        context.queue,
-        context.playback,
-        context.playback_snapshot,
-        context.auto_dj_enabled,
-        context.events,
+        &QueueActivationContext {
+            store: context.store,
+            queue: context.queue,
+            playback_request_generation: context.playback_request_generation,
+            playback: context.playback,
+            playback_snapshot: context.playback_snapshot,
+            auto_dj_enabled: context.auto_dj_enabled,
+            events: context.events,
+        },
         &saved,
     )?;
     let _sent = context.events.send(ControllerEvent::LoginStatus(
@@ -515,22 +530,27 @@ pub(in crate::controller) fn save_token_and_activate_logged_in_server(
     }
 }
 pub(in crate::controller) fn activate_queue_for_saved_and_emit(
-    store: &StoreHandle,
-    queue: &Arc<Mutex<Option<QueueEngine>>>,
-    playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
-    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
-    auto_dj_enabled: &Arc<Mutex<bool>>,
-    events: &Sender<ControllerEvent>,
+    context: &QueueActivationContext<'_>,
     saved: &SavedServer,
 ) -> Result<(), String> {
-    let Some((queue_snapshot, player)) =
-        activate_queue_for_saved(store, queue, playback_snapshot, auto_dj_enabled, saved)?
+    let Some((queue_snapshot, player)) = activate_queue_for_saved(
+        context.store,
+        context.queue,
+        context.playback_snapshot,
+        context.auto_dj_enabled,
+        saved,
+    )?
     else {
         return Ok(());
     };
-    stop_playback_backend(playback, events);
-    let _sent = events.send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
-    let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
+    invalidate_playback_requests(context.playback_request_generation);
+    stop_playback_backend(context.playback, context.events);
+    let _sent = context
+        .events
+        .send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
+    let _sent = context
+        .events
+        .send(ControllerEvent::Playback(Box::new(player)));
     Ok(())
 }
 pub(in crate::controller) fn activate_queue_for_saved(
@@ -584,6 +604,48 @@ pub(in crate::controller) fn stop_playback_backend(
     {
         let _sent = events.send(ControllerEvent::Error(error));
     }
+}
+pub(in crate::controller) fn invalidate_playback_requests(
+    playback_request_generation: &Arc<AtomicU64>,
+) {
+    playback_request_generation.fetch_add(1, Ordering::AcqRel);
+}
+pub(in crate::controller) fn next_playback_request_generation(
+    playback_request_generation: &Arc<AtomicU64>,
+) -> u64 {
+    playback_request_generation.fetch_add(1, Ordering::AcqRel) + 1
+}
+pub(in crate::controller) fn playback_request_generation_matches(
+    playback_request_generation: &Arc<AtomicU64>,
+    request_generation: u64,
+) -> bool {
+    playback_request_generation.load(Ordering::Acquire) == request_generation
+}
+pub(in crate::controller) fn clear_queue_and_stop_playback(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback_request_generation: &Arc<AtomicU64>,
+    playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+    events: &Sender<ControllerEvent>,
+) {
+    invalidate_playback_requests(playback_request_generation);
+    if let Ok(mut queue) = queue.lock() {
+        *queue = None;
+    }
+    stop_playback_backend(playback, events);
+    let player = PlaybackSnapshot {
+        auto_dj_enabled: auto_dj_enabled
+            .lock()
+            .map(|enabled| *enabled)
+            .unwrap_or_default(),
+        ..PlaybackSnapshot::default()
+    };
+    if let Ok(mut snapshot) = playback_snapshot.lock() {
+        *snapshot = player.clone();
+    }
+    let _sent = events.send(ControllerEvent::Queue(Box::new(None)));
+    let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
 }
 pub(in crate::controller) fn emit_snapshot(store: &StoreHandle, events: &Sender<ControllerEvent>) {
     match load_snapshot(store) {
@@ -793,6 +855,41 @@ pub(in crate::controller) fn next_queue_entry_after_current(
     preview.advance_after_end_of_stream().cloned()
 }
 
+pub(in crate::controller) fn queue_state_matches_current_playback_request(
+    queue: Option<&QueueEngine>,
+    server_id: &ServerId,
+    entry: &QueueEntry,
+) -> bool {
+    let Some(queue) = queue else {
+        return false;
+    };
+    if queue.snapshot().server_id != *server_id {
+        return false;
+    }
+    queue
+        .current()
+        .is_some_and(|current| current.id == entry.id && current.track_id == entry.track_id)
+}
+pub(in crate::controller) fn current_playback_request_is_still_current(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    server_id: &ServerId,
+    entry: &QueueEntry,
+) -> bool {
+    queue.lock().ok().is_some_and(|queue| {
+        queue_state_matches_current_playback_request(queue.as_ref(), server_id, entry)
+    })
+}
+pub(in crate::controller) fn current_playback_request_matches_generation(
+    playback_request_generation: &Arc<AtomicU64>,
+    request_generation: u64,
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    server_id: &ServerId,
+    entry: &QueueEntry,
+) -> bool {
+    playback_request_generation_matches(playback_request_generation, request_generation)
+        && current_playback_request_is_still_current(queue, server_id, entry)
+}
+
 #[derive(Clone, Debug)]
 pub(in crate::controller) struct NextPreloadRequest {
     pub(in crate::controller) server_id: ServerId,
@@ -809,6 +906,9 @@ fn queue_state_matches_next_preload_request(
     let Some(queue) = queue else {
         return false;
     };
+    if queue.snapshot().server_id != request.server_id {
+        return false;
+    }
     let Some(current) = queue.current() else {
         return false;
     };
@@ -958,6 +1058,7 @@ pub(in crate::controller) fn send_prepared_next_if_queue_matches(
     if !queue_state_matches_next_preload_request(queue.as_ref(), request) {
         return false;
     }
+    let track_id = prepared.track.id.clone();
     if let Err(error) = playback
         .lock()
         .map_err(|_| "playback lock was poisoned".to_string())
@@ -970,6 +1071,7 @@ pub(in crate::controller) fn send_prepared_next_if_queue_matches(
         let _sent = events.send(ControllerEvent::Error(error));
         return false;
     }
+    info!(track_id = %track_id.as_str(), "sent next playback stream");
     true
 }
 pub(in crate::controller) fn prepare_next_stream_from_handles(
@@ -997,6 +1099,7 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
     };
 
     thread::spawn(move || {
+        let preload_started_at = Instant::now();
         let prepared = match resolve_prepared_item(
             &store,
             &runtime,
@@ -1011,6 +1114,11 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
                 return;
             }
         };
+        info!(
+            track_id = %request.next_entry.track_id.as_str(),
+            elapsed_ms = preload_started_at.elapsed().as_millis(),
+            "resolved next playback stream"
+        );
         let _sent =
             send_prepared_next_if_queue_matches(&playback, &queue, &events, &request, prepared);
     });

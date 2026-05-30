@@ -55,10 +55,12 @@ fn local_tracks_share_album_cover_ref() {
     let album_id = AlbumId::new("local:album:test");
     let first_cover = LocalCover::Embedded {
         path: dir.path().join("first.flac"),
+        bytes: Arc::from([1_u8, 2, 3]),
         content_type: Some("image/jpeg".to_string()),
     };
     let second_cover = LocalCover::Embedded {
         path: dir.path().join("second.flac"),
+        bytes: Arc::from([4_u8, 5, 6]),
         content_type: Some("image/jpeg".to_string()),
     };
 
@@ -81,6 +83,42 @@ fn local_tracks_share_album_cover_ref() {
             .iter()
             .all(|track| track.image_ref.as_ref() == Some(&album_cover))
     );
+}
+#[tokio::test]
+async fn local_embedded_cover_uses_scanned_bytes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut covers = HashMap::new();
+    covers.insert(
+        "cover-one".to_string(),
+        LocalCover::Embedded {
+            path: dir.path().join("track.flac"),
+            bytes: Arc::from([1_u8, 2, 3]),
+            content_type: Some("image/png".to_string()),
+        },
+    );
+    let provider = LocalProvider {
+        identity: ProviderIdentity {
+            server: identity_for_root(dir.path()),
+        },
+        capabilities: local_capabilities(),
+        library: LocalLibrary {
+            covers,
+            ..LocalLibrary::default()
+        },
+    };
+
+    let image = provider
+        .image_bytes(ImageRequest {
+            item_id: "cover-one".to_string(),
+            kind: ImageKind::Primary,
+            tag: None,
+            size: 512,
+        })
+        .await
+        .expect("embedded local cover");
+
+    assert_eq!(image.bytes, vec![1, 2, 3]);
+    assert_eq!(image.content_type.as_deref(), Some("image/png"));
 }
 #[tokio::test]
 async fn local_file_cover_rejects_oversized_file() {
@@ -115,12 +153,128 @@ async fn local_file_cover_rejects_oversized_file() {
     assert!(error.to_string().contains("local cover exceeded"));
 }
 #[test]
+fn local_cover_item_id_reads_file_cover_from_configured_root() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cover_path = dir.path().join("folder.jpg");
+    fs::write(&cover_path, [1_u8, 2, 3]).expect("cover file");
+    let item_id = cover_id(&LocalCover::File(cover_path));
+
+    let image =
+        LocalProvider::image_bytes_for_cover_item_id(&item_id, vec![dir.path().to_path_buf()])
+            .expect("local cover");
+
+    assert_eq!(image.bytes, vec![1, 2, 3]);
+    assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
+}
+#[test]
+fn local_cover_item_id_rejects_paths_outside_configured_roots() {
+    let root = tempfile::tempdir().expect("root");
+    let outside = tempfile::tempdir().expect("outside");
+    let cover_path = outside.path().join("folder.jpg");
+    fs::write(&cover_path, [1_u8, 2, 3]).expect("cover file");
+    let item_id = cover_id(&LocalCover::File(cover_path));
+
+    let error =
+        LocalProvider::image_bytes_for_cover_item_id(&item_id, vec![root.path().to_path_buf()])
+            .expect_err("outside-root cover");
+
+    assert_eq!(error.to_string(), "provider item was not found");
+}
+#[test]
 fn embedded_cover_rejects_oversized_picture_data() {
     let picture = Picture::unchecked(vec![0_u8; LOCAL_COVER_MAX_BYTES + 1]).build();
 
     let error = picture_data_bounded(&picture).expect_err("oversized embedded cover");
 
     assert!(error.to_string().contains("embedded cover exceeded"));
+}
+#[test]
+fn folder_cover_uses_single_supported_image_fallback() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let image = dir.path().join("artwork.png");
+    fs::write(&image, [1_u8]).expect("image file");
+
+    assert_eq!(folder_cover(dir.path()).as_deref(), Some(image.as_path()));
+}
+#[test]
+fn folder_cover_prefers_explicit_name_over_other_images() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let booklet = dir.path().join("booklet.png");
+    let cover = dir.path().join("Cover.JPG");
+    fs::write(&booklet, [1_u8]).expect("booklet image");
+    fs::write(&cover, [2_u8]).expect("cover image");
+
+    assert_eq!(folder_cover(dir.path()).as_deref(), Some(cover.as_path()));
+}
+#[test]
+fn folder_cover_skips_ambiguous_unnamed_images() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("back.jpg"), [1_u8]).expect("back image");
+    fs::write(dir.path().join("booklet.png"), [2_u8]).expect("booklet image");
+
+    assert!(folder_cover(dir.path()).is_none());
+}
+#[test]
+fn local_artist_image_prefers_artist_folder_artwork_over_album_cover() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let album_id = AlbumId::new("local:album:test");
+    let artist_dir = dir.path().join("Example Artist");
+    let album_dir = artist_dir.join("Example Album");
+    fs::create_dir_all(&album_dir).expect("album dir");
+    let artist_image = artist_dir.join("artist.jpg");
+    let album_image = album_dir.join("cover.jpg");
+    let track_path = album_dir.join("track.flac");
+    fs::write(&artist_image, [1_u8]).expect("artist image");
+    fs::write(&album_image, [2_u8]).expect("album image");
+    fs::write(&track_path, []).expect("track file");
+
+    let library = build_library(
+        vec![scanned_test_track_at(
+            1,
+            album_id,
+            Some(LocalCover::File(album_image)),
+            &track_path,
+        )],
+        Vec::new(),
+        HashMap::new(),
+    );
+
+    let artist_ref = ImageRef::new(cover_id(&LocalCover::File(artist_image)), None);
+    assert_eq!(library.covers.len(), 2);
+    assert_eq!(library.artists[0].image_ref.as_ref(), Some(&artist_ref));
+    assert_eq!(
+        library.album_artists[0].image_ref.as_ref(),
+        Some(&artist_ref)
+    );
+}
+#[test]
+fn local_artist_image_falls_back_to_album_cover() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let album_id = AlbumId::new("local:album:test");
+    let album_dir = dir.path().join("Example Artist").join("Example Album");
+    fs::create_dir_all(&album_dir).expect("album dir");
+    let album_image = album_dir.join("cover.jpg");
+    let track_path = album_dir.join("track.flac");
+    fs::write(&album_image, [1_u8]).expect("album image");
+    fs::write(&track_path, []).expect("track file");
+
+    let library = build_library(
+        vec![scanned_test_track_at(
+            1,
+            album_id,
+            Some(LocalCover::File(album_image)),
+            &track_path,
+        )],
+        Vec::new(),
+        HashMap::new(),
+    );
+
+    let album_ref = library.albums[0].image_ref.clone().expect("album cover");
+    assert_eq!(library.artists[0].image_ref.as_ref(), Some(&album_ref));
+    assert_eq!(
+        library.album_artists[0].image_ref.as_ref(),
+        Some(&album_ref)
+    );
 }
 #[tokio::test]
 async fn local_folder_root_lists_configured_roots() {
@@ -228,8 +382,21 @@ fn scanned_test_track(number: u32, album_id: AlbumId, cover: Option<LocalCover>)
             genres: Vec::new(),
             local_path: Some(format!("/tmp/rufin-track-{number}.flac")),
             source_format: Some("flac".to_string()),
+            comment: None,
+            skip_count: None,
         },
         album_artist: "Example Artist".to_string(),
         cover,
     }
+}
+
+fn scanned_test_track_at(
+    number: u32,
+    album_id: AlbumId,
+    cover: Option<LocalCover>,
+    path: &Path,
+) -> ScannedTrack {
+    let mut scanned = scanned_test_track(number, album_id, cover);
+    scanned.track.local_path = Some(path.to_string_lossy().into_owned());
+    scanned
 }

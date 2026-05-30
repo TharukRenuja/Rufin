@@ -74,6 +74,7 @@ impl AppController {
         let secrets = Arc::clone(&sync_context.secrets);
         let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
@@ -118,12 +119,15 @@ impl AppController {
                         return;
                     }
                     if let Err(error) = reset_active_queue_after_server_identity_change(
-                        &store,
-                        &queue,
-                        &playback,
-                        &playback_snapshot,
-                        &auto_dj_enabled,
-                        &events,
+                        &QueueActivationContext {
+                            store: &store,
+                            queue: &queue,
+                            playback_request_generation: &playback_request_generation,
+                            playback: &playback,
+                            playback_snapshot: &playback_snapshot,
+                            auto_dj_enabled: &auto_dj_enabled,
+                            events: &events,
+                        },
                         &saved,
                     ) {
                         let _sent = events.send(ControllerEvent::Error(error));
@@ -412,40 +416,43 @@ fn restore_server_token(
 }
 
 fn reset_active_queue_after_server_identity_change(
-    store: &StoreHandle,
-    queue: &Arc<Mutex<Option<QueueEngine>>>,
-    playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
-    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
-    auto_dj_enabled: &Arc<Mutex<bool>>,
-    events: &Sender<ControllerEvent>,
+    context: &QueueActivationContext<'_>,
     saved: &SavedServer,
 ) -> Result<(), String> {
-    let active_id =
-        store.with_store(|store| Ok(store.active_server()?.map(|saved| saved.server.id)))?;
+    let active_id = context
+        .store
+        .with_store(|store| Ok(store.active_server()?.map(|saved| saved.server.id)))?;
     if active_id.as_ref() != Some(&saved.server.id) {
         return Ok(());
     }
 
     let restored = QueueEngine::new(saved.server.id.clone());
     let queue_snapshot = restored.snapshot();
-    let auto_dj_enabled = auto_dj_enabled
+    let auto_dj_enabled = context
+        .auto_dj_enabled
         .lock()
         .map(|enabled| *enabled)
         .unwrap_or_default();
     let player = playback_snapshot_from_queue(
         Some(&restored),
         auto_dj_enabled,
-        &load_settings_for_saved(store, saved).playback,
+        &load_settings_for_saved(context.store, saved).playback,
     );
-    *queue
+    *context
+        .queue
         .lock()
         .map_err(|_| "queue lock was poisoned".to_string())? = Some(restored);
-    if let Ok(mut snapshot) = playback_snapshot.lock() {
+    if let Ok(mut snapshot) = context.playback_snapshot.lock() {
         *snapshot = player.clone();
     }
-    stop_playback_backend(playback, events);
-    let _sent = events.send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
-    let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
+    invalidate_playback_requests(context.playback_request_generation);
+    stop_playback_backend(context.playback, context.events);
+    let _sent = context
+        .events
+        .send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
+    let _sent = context
+        .events
+        .send(ControllerEvent::Playback(Box::new(player)));
     Ok(())
 }
 

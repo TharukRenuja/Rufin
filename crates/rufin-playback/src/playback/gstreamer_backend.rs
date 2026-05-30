@@ -29,7 +29,9 @@ impl PlaybackBackend for LazyGStreamerPlaybackBackend {
         if self.inner.is_none()
             && !matches!(
                 command,
-                PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. }
+                PlaybackCommand::WarmUp(_)
+                    | PlaybackCommand::Play { .. }
+                    | PlaybackCommand::PlayPrepared { .. }
             )
         {
             return Ok(());
@@ -205,11 +207,26 @@ pub(super) struct PlayerPipeline {
     pub(super) pipeline: gst::Element,
     bus: gst::Bus,
     _about_to_finish_id: glib::SignalHandlerId,
+    audio_sink_config: Option<AudioSinkConfig>,
+}
+#[derive(Clone, Debug, PartialEq)]
+struct AudioSinkConfig {
+    replay_gain: ReplayGainMode,
+    audio_output: Option<String>,
+    equalizer: EqualizerSettings,
+}
+impl From<&PlaybackSettings> for AudioSinkConfig {
+    fn from(settings: &PlaybackSettings) -> Self {
+        Self {
+            replay_gain: settings.replay_gain,
+            audio_output: settings.audio_output.clone(),
+            equalizer: settings.equalizer.clone(),
+        }
+    }
 }
 #[derive(Debug, PartialEq)]
 pub(super) enum AboutToFinishAction {
     Preload(PreparedPlaybackItem),
-    Buffering,
     Ignore,
 }
 impl PlayerPipeline {
@@ -217,7 +234,6 @@ impl PlayerPipeline {
         slot: Slot,
         name: &str,
         shared: Arc<Mutex<SharedPlaybackState>>,
-        events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
     ) -> Result<Self, String> {
         let pipeline = make_playbin(name)?;
         let bus = pipeline
@@ -227,13 +243,13 @@ impl PlayerPipeline {
             .name(format!("{name}-video-sink"))
             .build()
             .map_err(|error| error.to_string())?;
+        configure_playbin_for_audio(&pipeline);
         pipeline.set_property("video-sink", &fakesink);
 
         let pipeline_for_signal = pipeline.clone();
         let shared_for_signal = Arc::clone(&shared);
-        let events_for_signal = Arc::clone(&events);
         let about_to_finish_id = pipeline.connect("about-to-finish", false, move |_| {
-            handle_about_to_finish(&pipeline_for_signal, &shared_for_signal, &events_for_signal);
+            handle_about_to_finish(&pipeline_for_signal, &shared_for_signal);
             None
         });
 
@@ -242,17 +258,23 @@ impl PlayerPipeline {
             pipeline,
             bus,
             _about_to_finish_id: about_to_finish_id,
+            audio_sink_config: None,
         })
     }
 
-    fn configure_audio(&self, settings: &PlaybackSettings) -> Result<(), String> {
+    fn configure_audio(&mut self, settings: &PlaybackSettings) -> Result<(), String> {
+        let config = AudioSinkConfig::from(settings);
+        if self.audio_sink_config.as_ref() == Some(&config) {
+            return Ok(());
+        }
         let sink = build_audio_sink(settings)?;
         self.pipeline.set_property("audio-sink", &sink);
+        self.audio_sink_config = Some(config);
         Ok(())
     }
 
     fn play_item(
-        &self,
+        &mut self,
         item: &PreparedPlaybackItem,
         settings: &PlaybackSettings,
         volume: f64,
@@ -327,21 +349,17 @@ pub(super) struct GstEngine {
     pub(super) last_position_tick: Instant,
     pub(super) state: PlaybackState,
     pub(super) pending_seek: Option<PendingSeek>,
+    pub(super) play_command_started_at: Option<Instant>,
 }
 impl GstEngine {
     fn new(events: Arc<Mutex<VecDeque<PlaybackEvent>>>) -> Result<Self, String> {
         let shared = Arc::new(Mutex::new(SharedPlaybackState::new()));
-        let primary = PlayerPipeline::new(
-            Slot::Primary,
-            "rufin-primary-player",
-            Arc::clone(&shared),
-            Arc::clone(&events),
-        )?;
+        let primary =
+            PlayerPipeline::new(Slot::Primary, "rufin-primary-player", Arc::clone(&shared))?;
         let secondary = PlayerPipeline::new(
             Slot::Secondary,
             "rufin-secondary-player",
             Arc::clone(&shared),
-            Arc::clone(&events),
         )?;
         Ok(Self {
             primary,
@@ -351,11 +369,16 @@ impl GstEngine {
             last_position_tick: Instant::now(),
             state: PlaybackState::Stopped,
             pending_seek: None,
+            play_command_started_at: None,
         })
     }
 
     fn handle_command(&mut self, command: PlaybackCommand) {
         let result = match command {
+            PlaybackCommand::WarmUp(mut settings) => {
+                settings.sanitize();
+                self.warm_up(&settings)
+            }
             PlaybackCommand::Play {
                 track,
                 stream,
@@ -445,6 +468,21 @@ impl GstEngine {
         }
     }
 
+    fn warm_up(&mut self, settings: &PlaybackSettings) -> Result<(), String> {
+        self.primary.configure_audio(settings)?;
+        self.secondary.configure_audio(settings)?;
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.settings = settings.clone();
+            shared.volume = settings.volume;
+            shared.muted = settings.muted;
+        }
+        self.primary
+            .set_output_volume(settings.volume, settings.muted);
+        self.secondary
+            .set_output_volume(settings.volume, settings.muted);
+        Ok(())
+    }
+
     fn play_prepared(
         &mut self,
         item: PreparedPlaybackItem,
@@ -452,6 +490,8 @@ impl GstEngine {
         start_position_seconds: u32,
         mut settings: PlaybackSettings,
     ) -> Result<(), String> {
+        let command_started_at = Instant::now();
+        self.play_command_started_at = Some(command_started_at);
         self.pending_seek = None;
         settings.sanitize();
         self.secondary.stop();
@@ -469,8 +509,15 @@ impl GstEngine {
             shared.muted = muted;
         }
         self.push_state(PlaybackState::Buffering);
+        let pipeline_started_at = Instant::now();
         self.primary
             .play_item(&item, &settings, volume, muted, start_position_seconds)?;
+        info!(
+            track_id = %item.track.id.as_str(),
+            elapsed_ms = command_started_at.elapsed().as_millis(),
+            pipeline_ms = pipeline_started_at.elapsed().as_millis(),
+            "queued GStreamer playback item"
+        );
         if start_position_seconds > 0 {
             self.start_playback_seek(start_millis);
         } else {
@@ -546,13 +593,11 @@ impl GstEngine {
                 self.handle_stream_start();
             }
             MessageView::DurationChanged(_) if self.is_active_slot(slot) => {
-                if self.pending_seek.is_none()
+                if !self.gapless_timing_is_pending()
+                    && self.pending_seek.is_none()
                     && let Some(duration) = self.active_pipeline().duration()
                 {
-                    push_event(
-                        &self.events,
-                        PlaybackEvent::DurationChanged(clock_seconds(duration)),
-                    );
+                    self.push_duration(clock_seconds(duration));
                 }
             }
             MessageView::Buffering(buffering) if self.is_active_slot(slot) => {
@@ -598,13 +643,28 @@ impl GstEngine {
         let Some(track) = started else {
             return;
         };
+        info!(
+            track_id = %track.id.as_str(),
+            "gapless stream started"
+        );
+        let track_id = track.id.clone();
         self.pending_seek = None;
-        push_event(&self.events, position_event(0));
+        self.last_position_tick = Instant::now();
         push_event(
             &self.events,
-            PlaybackEvent::DurationChanged(track.duration_seconds),
+            PlaybackEvent::PreparedTrackStarted(track.clone()),
         );
-        push_event(&self.events, PlaybackEvent::PreparedTrackStarted(track));
+        push_event(
+            &self.events,
+            position_event_for_track(0, Some(track_id.clone())),
+        );
+        push_event(
+            &self.events,
+            PlaybackEvent::DurationChanged {
+                track_id: Some(track_id),
+                seconds: track.duration_seconds,
+            },
+        );
     }
 
     pub(super) fn handle_state_changed(&mut self, state: PlaybackState) {
@@ -712,6 +772,20 @@ impl GstEngine {
     }
 
     fn push_state(&mut self, state: PlaybackState) {
+        if state == PlaybackState::Playing
+            && let Some(started_at) = self.play_command_started_at.take()
+        {
+            let track_id = self
+                .shared
+                .lock()
+                .ok()
+                .and_then(|shared| shared.current.as_ref().map(|item| item.track.id.clone()));
+            info!(
+                track_id = track_id.as_ref().map(|id| id.as_str()).unwrap_or("unknown"),
+                elapsed_ms = started_at.elapsed().as_millis(),
+                "GStreamer playback reached playing"
+            );
+        }
         self.state = state;
         push_event(&self.events, PlaybackEvent::StateChanged(state));
     }
@@ -721,6 +795,11 @@ impl GstEngine {
             return;
         }
         if self.is_active_slot(slot) {
+            let track_id = self.timing_track_id();
+            info!(
+                track_id = track_id.as_ref().map(|id| id.as_str()).unwrap_or("unknown"),
+                "playback reached end of stream"
+            );
             push_event(&self.events, PlaybackEvent::EndOfStream);
         }
     }
@@ -731,21 +810,24 @@ impl GstEngine {
 
         if self.last_position_tick.elapsed() >= Duration::from_millis(500) {
             self.last_position_tick = Instant::now();
+            if self.gapless_timing_is_pending() {
+                return;
+            }
             if let Some(position) = self.active_pipeline().position() {
                 self.push_position(clock_millis(position));
             }
             if self.pending_seek.is_none()
                 && let Some(duration) = self.active_pipeline().duration()
             {
-                push_event(
-                    &self.events,
-                    PlaybackEvent::DurationChanged(clock_seconds(duration)),
-                );
+                self.push_duration(clock_seconds(duration));
             }
         }
     }
 
     pub(super) fn push_position(&mut self, millis: u64) {
+        if self.gapless_timing_is_pending() {
+            return;
+        }
         let now = Instant::now();
         if let Some(pending) = self.pending_seek.as_ref() {
             if !pending.accepts_position(millis, now) {
@@ -757,25 +839,43 @@ impl GstEngine {
                 self.resume_after_startup_seek();
             }
         }
-        push_event(&self.events, position_event(millis));
+        push_event(
+            &self.events,
+            position_event_for_track(millis, self.timing_track_id()),
+        );
+    }
+
+    pub(super) fn push_duration(&self, seconds: u32) {
+        if self.gapless_timing_is_pending() {
+            return;
+        }
+        push_event(
+            &self.events,
+            PlaybackEvent::DurationChanged {
+                track_id: self.timing_track_id(),
+                seconds,
+            },
+        );
+    }
+
+    fn gapless_timing_is_pending(&self) -> bool {
+        self.shared
+            .lock()
+            .map(|shared| shared.gapless_pending.is_some())
+            .unwrap_or(false)
+    }
+
+    fn timing_track_id(&self) -> Option<TrackId> {
+        self.shared
+            .lock()
+            .ok()
+            .and_then(|shared| shared.current.as_ref().map(|item| item.track.id.clone()))
     }
 
     fn maybe_start_crossfade(&mut self) {
         if self.pending_seek.is_some() {
             return;
         }
-        let Some(position) = self.active_pipeline().position() else {
-            return;
-        };
-        let Some(duration) = self.active_pipeline().duration() else {
-            return;
-        };
-        let position_ms = clock_millis(position);
-        let duration_ms = clock_millis(duration);
-        if duration_ms == 0 || position_ms >= duration_ms {
-            return;
-        }
-
         let request = self.shared.lock().ok().and_then(|shared| {
             if shared.settings.transition_mode != PlaybackTransitionMode::Crossfade
                 || shared.crossfade.is_some()
@@ -783,11 +883,6 @@ impl GstEngine {
                 return None;
             }
             let crossfade_ms = u64::from(shared.settings.crossfade_seconds) * 1_000;
-            if duration_ms.saturating_sub(position_ms) > crossfade_ms
-                || duration_ms <= crossfade_ms + 1_000
-            {
-                return None;
-            }
             Some((
                 shared.next.clone()?,
                 shared.settings.clone(),
@@ -802,7 +897,22 @@ impl GstEngine {
         let Some((next, settings, from, to, volume, muted, crossfade_ms)) = request else {
             return;
         };
-        let inactive = self.pipeline_for_slot(to);
+        let Some(position) = self.active_pipeline().position() else {
+            return;
+        };
+        let Some(duration) = self.active_pipeline().duration() else {
+            return;
+        };
+        let position_ms = clock_millis(position);
+        let duration_ms = clock_millis(duration);
+        if duration_ms == 0
+            || position_ms >= duration_ms
+            || duration_ms.saturating_sub(position_ms) > crossfade_ms
+            || duration_ms <= crossfade_ms + 1_000
+        {
+            return;
+        }
+        let inactive = self.pipeline_for_slot_mut(to);
         if let Err(error) = inactive.play_item(&next, &settings, 0.0, muted, 0) {
             push_event(&self.events, PlaybackEvent::Error(error));
             return;
@@ -820,14 +930,20 @@ impl GstEngine {
         }
         self.pipeline_for_slot(from)
             .set_output_volume(volume, muted);
-        push_event(&self.events, position_event(0));
-        push_event(
-            &self.events,
-            PlaybackEvent::DurationChanged(next.track.duration_seconds),
-        );
         push_event(
             &self.events,
             PlaybackEvent::PreparedTrackStarted(next.track.clone()),
+        );
+        push_event(
+            &self.events,
+            position_event_for_track(0, Some(next.track.id.clone())),
+        );
+        push_event(
+            &self.events,
+            PlaybackEvent::DurationChanged {
+                track_id: Some(next.track.id),
+                seconds: next.track.duration_seconds,
+            },
         );
     }
 
@@ -949,6 +1065,13 @@ impl GstEngine {
         }
     }
 
+    fn pipeline_for_slot_mut(&mut self, slot: Slot) -> &mut PlayerPipeline {
+        match slot {
+            Slot::Primary => &mut self.primary,
+            Slot::Secondary => &mut self.secondary,
+        }
+    }
+
     fn active_slot(&self) -> Slot {
         self.shared
             .lock()
@@ -1003,6 +1126,7 @@ fn run_gstreamer_thread(
     receiver: Receiver<PlaybackCommand>,
     events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
 ) {
+    let startup_started_at = Instant::now();
     if let Err(error) = gst::init() {
         push_event(
             &events,
@@ -1018,6 +1142,10 @@ fn run_gstreamer_thread(
             return;
         }
     };
+    info!(
+        elapsed_ms = startup_started_at.elapsed().as_millis(),
+        "GStreamer playback backend is ready"
+    );
 
     loop {
         engine.poll_bus();
@@ -1030,11 +1158,7 @@ fn run_gstreamer_thread(
     }
     engine.shutdown();
 }
-fn handle_about_to_finish(
-    pipeline: &gst::Element,
-    shared: &Arc<Mutex<SharedPlaybackState>>,
-    events: &Arc<Mutex<VecDeque<PlaybackEvent>>>,
-) {
+fn handle_about_to_finish(pipeline: &gst::Element, shared: &Arc<Mutex<SharedPlaybackState>>) {
     let action = shared
         .lock()
         .map(|mut shared| about_to_finish_action(&mut shared))
@@ -1042,18 +1166,17 @@ fn handle_about_to_finish(
 
     match action {
         AboutToFinishAction::Preload(next) => {
+            info!(
+                track_id = %next.track.id.as_str(),
+                uri = %next.stream.redacted_uri(),
+                "preloading gapless next stream"
+            );
             debug!(
                 track_id = %next.track.id.as_str(),
                 uri = %next.stream.redacted_uri(),
                 "preloading gapless next stream"
             );
             pipeline.set_property("uri", next.stream.uri());
-        }
-        AboutToFinishAction::Buffering => {
-            push_event(
-                events,
-                PlaybackEvent::StateChanged(PlaybackState::Buffering),
-            );
         }
         AboutToFinishAction::Ignore => {}
     }
@@ -1067,7 +1190,7 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
     }
 
     let Some(next) = shared.next.as_ref() else {
-        return AboutToFinishAction::Buffering;
+        return AboutToFinishAction::Ignore;
     };
 
     if !gapless_preload_source_is_supported(next.stream.uri()) {
@@ -1096,6 +1219,22 @@ fn make_playbin(name: &str) -> Result<gst::Element, String> {
         .build()
         .or_else(|_| gst::ElementFactory::make("playbin").name(name).build())
         .map_err(|error| error.to_string())
+}
+fn configure_playbin_for_audio(pipeline: &gst::Element) {
+    let current = pipeline.property_value("flags");
+    let Some(flags_class) = glib::FlagsClass::with_type(current.type_()) else {
+        return;
+    };
+    let Some(flags) = flags_class
+        .builder()
+        .set_by_nick("audio")
+        .set_by_nick("soft-volume")
+        .set_by_nick("buffering")
+        .build()
+    else {
+        return;
+    };
+    pipeline.set_property_from_value("flags", &flags);
 }
 fn build_audio_sink(settings: &PlaybackSettings) -> Result<gst::Element, String> {
     let has_replay_gain = settings.replay_gain != ReplayGainMode::Off;
@@ -1187,7 +1326,11 @@ fn push_event(events: &Arc<Mutex<VecDeque<PlaybackEvent>>>, event: PlaybackEvent
     }
 }
 pub(super) fn position_event(millis: u64) -> PlaybackEvent {
+    position_event_for_track(millis, None)
+}
+pub(super) fn position_event_for_track(millis: u64, track_id: Option<TrackId>) -> PlaybackEvent {
     PlaybackEvent::PositionChanged {
+        track_id,
         seconds: clock_seconds_from_millis(millis),
         millis,
     }

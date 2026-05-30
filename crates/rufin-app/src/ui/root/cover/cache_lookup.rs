@@ -82,12 +82,14 @@ impl Shell {
                 .borrow_mut()
                 .remove(&key)
                 .unwrap_or(intent);
-            shell.finish_cached_cover_path_lookup(key, size, intent, path);
+            shell.finish_cached_cover_path_lookup(key, image_ref, fetch_size, size, intent, path);
         });
     }
     pub(in crate::ui) fn finish_cached_cover_path_lookup(
         self: &Rc<Self>,
         key: String,
+        image_ref: ImageRef,
+        fetch_size: u32,
         size: i32,
         intent: CoverPathLookupIntent,
         path: Option<PathBuf>,
@@ -99,17 +101,24 @@ impl Shell {
                 }
             }
             CoverPathLookupIntent::Visible => {
-                self.finish_visible_cover_path_lookup(key, size, path);
+                self.finish_visible_cover_path_lookup(key, image_ref, fetch_size, size, path);
             }
         }
     }
     fn finish_visible_cover_path_lookup(
         self: &Rc<Self>,
         key: String,
+        image_ref: ImageRef,
+        fetch_size: u32,
         size: i32,
         path: Option<PathBuf>,
     ) {
         let Some(path) = path else {
+            if self.visible_cover_cache_miss_should_fetch(&image_ref, fetch_size) {
+                self.controller
+                    .request_cover_for_key(key, image_ref, fetch_size);
+                return;
+            }
             self.state.cover_bindings.borrow_mut().remove(&key);
             self.record_perf_cover_stale_key(&key);
             self.record_perf_coverless_tile();
@@ -131,6 +140,11 @@ impl Shell {
         self.record_perf_cover_path_ready(&key);
         self.record_perf_cover_ready(&key);
         self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
+    }
+    fn visible_cover_cache_miss_should_fetch(&self, image_ref: &ImageRef, fetch_size: u32) -> bool {
+        !self
+            .controller
+            .external_cover_lookup_known_missing(image_ref, fetch_size)
     }
     pub(in crate::ui) fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
         self.record_perf_cover_ready(key);

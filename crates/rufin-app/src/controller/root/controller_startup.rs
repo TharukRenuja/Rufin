@@ -256,6 +256,10 @@ pub(in crate::controller) fn initial_cover_cache_required(
     store: &StoreHandle,
     server_id: &ServerId,
 ) -> bool {
+    if server_id.as_str() == LOCAL_SOURCE_SERVER_ID {
+        return true;
+    }
+
     store
         .with_store(|store| {
             let albums = store.load_albums(server_id, 0, 1)?;
@@ -282,15 +286,16 @@ pub(in crate::controller) fn run_sync_job(
         let _sent = context.events.send(ControllerEvent::LoginStatus(
             "Caching library artwork...".to_string(),
         ));
-        covers::prefetch_initial_provider_cover_cache(
-            &context.store,
-            &context.runtime,
-            &context.secrets,
-            &context.events,
-            &context.cover_in_flight,
-            &context.cover_slots,
+        covers::prefetch_initial_provider_cover_cache(covers::ProviderCoverPrefetchRequest {
+            store: &context.store,
+            runtime: &context.runtime,
+            secrets: &context.secrets,
+            events: &context.events,
+            cover_in_flight: &context.cover_in_flight,
+            cover_slots: &context.cover_slots,
             saved,
-        )?;
+            provider: provider.as_music_provider(),
+        })?;
     }
     Ok(())
 }

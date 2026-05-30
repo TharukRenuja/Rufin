@@ -8,7 +8,7 @@ impl AppController {
         self.add_local_library_folders_with_selection(root_paths, true);
     }
     pub fn add_local_library_folder(&self, root_path: PathBuf) {
-        self.add_local_library_folders_with_selection(vec![root_path], false);
+        self.add_local_library_folders_with_selection(vec![root_path], true);
     }
     pub(in crate::controller) fn add_local_library_folders_with_selection(
         &self,
@@ -19,6 +19,7 @@ impl AppController {
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
@@ -81,12 +82,15 @@ impl AppController {
             }
             if select_local
                 && let Err(error) = activate_queue_for_saved_and_emit(
-                    &store,
-                    &queue,
-                    &playback,
-                    &playback_snapshot,
-                    &auto_dj_enabled,
-                    &events,
+                    &QueueActivationContext {
+                        store: &store,
+                        queue: &queue,
+                        playback_request_generation: &playback_request_generation,
+                        playback: &playback,
+                        playback_snapshot: &playback_snapshot,
+                        auto_dj_enabled: &auto_dj_enabled,
+                        events: &events,
+                    },
                     &saved,
                 )
             {
@@ -103,6 +107,11 @@ impl AppController {
         let sync_context = self.sync_context();
         let store = sync_context.store.clone();
         let events = sync_context.events.clone();
+        let queue = Arc::clone(&self.queue);
+        let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let playback = Arc::clone(&self.playback);
+        let playback_snapshot = Arc::clone(&self.playback_snapshot);
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
         thread::spawn(move || {
             let mut settings = load_settings_from_store(&store);
             let before = settings.sources.local_folders.len();
@@ -142,7 +151,71 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
+            if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if let Err(error) = clear_disk_waveform_cache(&saved.server.id) {
+                let _sent = events.send(ControllerEvent::Error(error));
+                return;
+            }
+            if selected_local && settings.sources.local_folders.is_empty() {
+                clear_queue_and_stop_playback(
+                    &queue,
+                    &playback_request_generation,
+                    &playback,
+                    &playback_snapshot,
+                    &auto_dj_enabled,
+                    &events,
+                );
+            } else if selected_local {
+                let restored = QueueEngine::new(saved.server.id.clone());
+                let queue_snapshot = restored.snapshot();
+                let auto_dj = auto_dj_enabled
+                    .lock()
+                    .map(|enabled| *enabled)
+                    .unwrap_or_default();
+                let player = playback_snapshot_from_queue(
+                    Some(&restored),
+                    auto_dj,
+                    &load_settings_for_saved(&store, &saved).playback,
+                );
+                invalidate_playback_requests(&playback_request_generation);
+                if let Ok(mut queue) = queue.lock() {
+                    *queue = Some(restored);
+                }
+                stop_playback_backend(&playback, &events);
+                if let Ok(mut snapshot) = playback_snapshot.lock() {
+                    *snapshot = player.clone();
+                }
+                let _sent = events.send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
+                let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
+            }
             emit_snapshot(&store, &events);
+            if selected_local && settings.sources.local_folders.is_empty() {
+                match store.with_store(|store| store.active_server()) {
+                    Ok(Some(fallback)) if fallback.server.provider != LOCAL_PROVIDER_ID => {
+                        if let Err(error) = activate_queue_for_saved_and_emit(
+                            &QueueActivationContext {
+                                store: &store,
+                                queue: &queue,
+                                playback_request_generation: &playback_request_generation,
+                                playback: &playback,
+                                playback_snapshot: &playback_snapshot,
+                                auto_dj_enabled: &auto_dj_enabled,
+                                events: &events,
+                            },
+                            &fallback,
+                        ) {
+                            let _sent = events.send(ControllerEvent::Error(error));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                    }
+                }
+            }
             if selected_local && !settings.sources.local_folders.is_empty() {
                 start_sync_thread(sync_context, saved);
             }

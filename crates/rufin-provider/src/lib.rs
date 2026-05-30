@@ -25,6 +25,7 @@ pub struct ProviderCapabilities {
     pub lyrics: bool,
     pub playback_reporting: bool,
     pub playlist_mutations: bool,
+    pub playlist_delete: bool,
     pub favorite_mutations: bool,
     pub auto_dj: bool,
     pub random_tracks: bool,
@@ -48,6 +49,7 @@ impl Default for ProviderCapabilities {
             lyrics: false,
             playback_reporting: false,
             playlist_mutations: false,
+            playlist_delete: false,
             favorite_mutations: false,
             auto_dj: false,
             random_tracks: false,
@@ -373,6 +375,10 @@ pub trait MusicProvider {
     async fn rename_playlist(&self, playlist_id: &PlaylistId, name: &str) -> ProviderResult<()> {
         let _unused = (playlist_id, name);
         Err(ProviderError::Unsupported("playlist mutations"))
+    }
+    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> ProviderResult<()> {
+        let _unused = playlist_id;
+        Err(ProviderError::Unsupported("playlist deletion"))
     }
     async fn add_playlist_tracks(
         &self,

@@ -1,17 +1,23 @@
+use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
     clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_initial_position,
     queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
 };
+use super::startup_reveal::startup_loading_status_label;
 use super::{
-    AutoLyricsRequest, PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision,
-    auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
+    AutoLyricsRequest, LocalSourceCacheGateAction, PlaylistEntryListState, PlaylistEntrySort,
+    SnapshotRenderDecision, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
     cover::record_cover_path_lookup_request, current_playback_track_id,
-    home_visible_sections::changed_visible_home_section_kinds, playlist_drop_index,
-    playlist_entries_for_state, seekbar_target_seconds, snapshot_event_outcome,
+    home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
+    local_source_snapshot_is_syncing, playlist_drop_index, playlist_entries_for_state,
+    queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
+    snapshot_local_source_cache_gate_action,
 };
+use crate::controller::PlaybackPerfEvent;
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, LibrarySourceSelection,
-    QueueEntry, QueueEntryId, Route, SearchKind, Track, TrackId, TrackSortKey, TrackTableSettings,
+    QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, ServerId, Track,
+    TrackId, TrackSortKey, TrackTableSettings,
 };
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
 use std::collections::HashMap;
@@ -143,6 +149,142 @@ pub(in crate::ui) fn snapshot_event_outcome_marks_first_run_entry() {
     assert!(outcome.entered_first_run);
 }
 #[test]
+pub(in crate::ui) fn local_source_cache_gate_ignores_cached_source_change() {
+    let source = Some(LibrarySourceSelection::Local);
+
+    assert_eq!(
+        local_source_cache_gate_action(false, &source, true, false, false, "Cached library ready"),
+        LocalSourceCacheGateAction::None
+    );
+    assert_eq!(
+        local_source_cache_gate_action(true, &source, false, false, false, "Cached library ready"),
+        LocalSourceCacheGateAction::None
+    );
+    assert_eq!(
+        snapshot_local_source_cache_gate_action(
+            SnapshotRenderDecision::SourceChanged,
+            false,
+            &source,
+            true,
+            false,
+            false,
+            "Cached library ready",
+        ),
+        LocalSourceCacheGateAction::None
+    );
+}
+#[test]
+pub(in crate::ui) fn local_source_cache_gate_enters_for_folder_change() {
+    let source = Some(LibrarySourceSelection::Local);
+
+    assert_eq!(
+        local_source_cache_gate_action(false, &source, true, false, false, "Cached library ready"),
+        LocalSourceCacheGateAction::None
+    );
+    assert_eq!(
+        local_source_cache_gate_action(true, &source, true, false, false, "Cached library ready"),
+        LocalSourceCacheGateAction::Enter
+    );
+}
+#[test]
+pub(in crate::ui) fn local_source_cache_gate_enters_for_same_source_local_sync() {
+    let source = Some(LibrarySourceSelection::Local);
+
+    assert_eq!(
+        local_source_cache_gate_action(false, &source, true, false, false, "Syncing library..."),
+        LocalSourceCacheGateAction::Enter
+    );
+    assert_eq!(
+        local_source_cache_gate_action(false, &source, true, false, false, "Cached library ready"),
+        LocalSourceCacheGateAction::None
+    );
+}
+#[test]
+pub(in crate::ui) fn local_source_cache_gate_waits_until_sync_snapshot_finishes() {
+    let source = Some(LibrarySourceSelection::Local);
+
+    assert_eq!(
+        local_source_cache_gate_action(false, &source, true, true, false, "Cached library ready"),
+        LocalSourceCacheGateAction::Wait
+    );
+    assert!(local_source_snapshot_is_syncing("Syncing library..."));
+    assert_eq!(
+        local_source_cache_gate_action(false, &source, true, true, true, "Syncing library..."),
+        LocalSourceCacheGateAction::Wait
+    );
+    assert_eq!(
+        local_source_cache_gate_action(false, &source, true, true, true, "Cached library ready"),
+        LocalSourceCacheGateAction::Reveal
+    );
+}
+#[test]
+pub(in crate::ui) fn local_source_cache_gate_cancels_when_source_leaves_local() {
+    let source = Some(LibrarySourceSelection::Server(rufin_core::ServerId::new(
+        "jellyfin:server:test",
+    )));
+
+    assert_eq!(
+        local_source_cache_gate_action(false, &source, true, true, true, "Cached library ready"),
+        LocalSourceCacheGateAction::Cancel
+    );
+}
+#[test]
+pub(in crate::ui) fn queue_source_waits_until_library_snapshot_matches() {
+    let old_source = ServerId::new("jellyfin:server:old");
+    let next_source = ServerId::new("local:source");
+    let queue = QueueSnapshot {
+        server_id: next_source.clone(),
+        entries: Vec::new(),
+        current_index: None,
+        repeat_mode: RepeatMode::All,
+        shuffle: Default::default(),
+        shuffle_order: Vec::new(),
+        progress_seconds: 0,
+    };
+
+    assert!(queue_source_waits_for_snapshot(
+        Some(&queue),
+        Some(&old_source)
+    ));
+    assert!(!queue_source_waits_for_snapshot(
+        Some(&queue),
+        Some(&next_source)
+    ));
+    assert!(!queue_source_waits_for_snapshot(None, Some(&old_source)));
+}
+#[test]
+pub(in crate::ui) fn first_run_completion_suppresses_local_source_cache_gate() {
+    let source = Some(LibrarySourceSelection::Local);
+
+    assert_eq!(
+        snapshot_local_source_cache_gate_action(
+            SnapshotRenderDecision::FirstRunFinished,
+            false,
+            &source,
+            true,
+            true,
+            true,
+            "Cached library ready",
+        ),
+        LocalSourceCacheGateAction::None
+    );
+}
+#[test]
+pub(in crate::ui) fn startup_loading_uses_root_stack_until_route_reveal() {
+    assert!(startup_loading_screen_active(false, false));
+    assert!(!startup_loading_screen_active(true, false));
+    assert!(!startup_loading_screen_active(false, true));
+}
+#[test]
+pub(in crate::ui) fn startup_loading_status_hides_idle_cache_status() {
+    assert_eq!(startup_loading_status_label(""), None);
+    assert_eq!(startup_loading_status_label("Cached library ready"), None);
+    assert_eq!(
+        startup_loading_status_label("Syncing Local library..."),
+        Some("Syncing Local library...".to_string())
+    );
+}
+#[test]
 pub(in crate::ui) fn manual_ui_perf_observer_records_scrolls_by_route() {
     let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
         max_gap_ms: 120,
@@ -165,6 +307,31 @@ pub(in crate::ui) fn manual_ui_perf_observer_records_scrolls_by_route() {
     assert!(report.contains("steps=2"));
     assert!(report.contains("max_adjustment=100"));
     assert!(report.contains("RUFIN_PERF_SCROLL route=Albums scenario=manual"));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_report_records_playback_startup_phases() {
+    let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
+        max_gap_ms: 120,
+        route_ms: 650,
+        duration_ms: 15_000,
+        asset_ms: 300,
+        require_assets: false,
+        terminal_events: false,
+        observe_scroll: true,
+        output: None,
+    });
+
+    monitor.record_playback_event(&PlaybackPerfEvent {
+        phase: "playing",
+        server_id: ServerId::fake(1),
+        track_id: TrackId::fake(7),
+        elapsed_ms: 1_842,
+    });
+
+    let report = monitor.report();
+    assert!(report.contains(
+        "RUFIN_PERF_PLAYBACK phase=playing server_id=server-1 track_id=track-7 elapsed_ms=1842"
+    ));
 }
 #[test]
 pub(in crate::ui) fn ui_perf_plan_keeps_home_out_of_the_critical_window() {
@@ -510,6 +677,10 @@ pub(in crate::ui) fn artist_discography_uses_responsive_cards() {
     ));
 }
 #[test]
+pub(in crate::ui) fn smart_playlists_use_responsive_cards() {
+    assert!(super::route_uses_responsive_cards(&Route::SmartPlaylists));
+}
+#[test]
 pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
     let spec = super::route_boundary_spec();
 
@@ -520,6 +691,12 @@ pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
     assert!(!spec.propagate_natural_width);
     assert!(spec.hexpand);
     assert!(spec.vexpand);
+}
+#[test]
+pub(in crate::ui) fn playlist_route_boundary_disables_horizontal_scrolling() {
+    let spec = super::route_boundary_spec_for_route(&Route::SmartPlaylists);
+
+    assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
 }
 #[test]
 pub(in crate::ui) fn seekbar_target_seconds_uses_committed_clamped_value() {
@@ -719,5 +896,7 @@ pub(in crate::ui) fn test_track(artist: &str, artist_id: Option<ArtistId>) -> Tr
         genres: Vec::new(),
         local_path: None,
         source_format: None,
+        comment: None,
+        skip_count: None,
     }
 }

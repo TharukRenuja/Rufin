@@ -115,6 +115,69 @@ pub(in crate::controller) fn cached_cover_request_emits_cover_ready_without_fetc
     let _cleanup = fs::remove_file(path);
 }
 #[test]
+pub(in crate::controller) fn local_cover_request_fetches_provider_artwork_when_cache_missing() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let root = unique_test_dir("local-cover-request");
+    let _cleanup = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("local root");
+    fs::write(root.join("track.mp3"), []).expect("track file");
+    let cover_bytes = [0xff_u8, 0xd8, 0xff, 0xd9];
+    fs::write(root.join("cover.jpg"), cover_bytes).expect("cover file");
+
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().to_string(),
+    }];
+    controller
+        .store
+        .save_settings(&settings)
+        .expect("save settings");
+
+    let saved = local_source_saved();
+    let server_id = saved.server.id.clone();
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&server_id)
+        })
+        .expect("seed local server");
+    let provider = provider_for_saved(
+        &controller.store,
+        &controller.runtime,
+        &controller.secrets,
+        &saved,
+    )
+    .expect("local provider");
+    controller
+        .runtime
+        .block_on(sync_provider(
+            &controller.store,
+            &server_id,
+            provider.as_music_provider(),
+        ))
+        .expect("sync local provider");
+    let image_ref = controller
+        .store
+        .with_store(|store| store.load_albums(&server_id, 0, 1))
+        .expect("load albums")
+        .items
+        .into_iter()
+        .next()
+        .and_then(|album| album.image_ref)
+        .expect("album image ref");
+    let key = controller.cover_key(&image_ref, 256).expect("cover key");
+
+    controller.request_cover_for_key(key.clone(), image_ref, 256);
+    let path = wait_for_cover_ready(&events, &key);
+
+    assert_eq!(fs::read(&path).expect("cached cover"), cover_bytes);
+    let _cleanup = fs::remove_file(path);
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
 pub(in crate::controller) fn external_cached_cover_reuses_available_size() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
@@ -453,7 +516,7 @@ pub(in crate::controller) fn play_now_starts_fake_playback_and_persists_queue() 
     );
 }
 #[test]
-pub(in crate::controller) fn play_tracks_prepares_next_stream_for_backend() {
+pub(in crate::controller) fn play_tracks_starts_current_before_preparing_next_stream() {
     let (controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let commands = Arc::new(Mutex::new(Vec::new()));
@@ -469,7 +532,14 @@ pub(in crate::controller) fn play_tracks_prepares_next_stream_for_backend() {
         panic!("expected prepared play command");
     };
     assert_eq!(item.track.id, first.id);
-    assert_eq!(next.expect("next").track.id, second.id);
+    assert!(next.is_none());
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let PlaybackCommand::PrepareNext(Some(item)) = command else {
+        panic!("expected prepared next command");
+    };
+    assert_eq!(item.track.id, second.id);
 }
 #[test]
 pub(in crate::controller) fn local_access_changes_reprepare_next_stream_for_backend() {
@@ -484,6 +554,9 @@ pub(in crate::controller) fn local_access_changes_reprepare_next_stream_for_back
     controller.play_tracks_now(vec![first, second.clone()]);
     let _play = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+    let _initial_prepare = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
     });
     commands.lock().expect("commands").clear();
     let root = unique_test_dir("reprepare-local-access");
@@ -557,6 +630,58 @@ pub(in crate::controller) fn prepared_next_send_rejects_stale_duplicate_track_en
     assert!(commands.lock().expect("commands").is_empty());
 }
 #[test]
+pub(in crate::controller) fn current_playback_request_rejects_stale_source_switch() {
+    let (_controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let track = snapshot.tracks[0].clone();
+    let mut engine = QueueEngine::new(server_id.clone());
+    engine.play_now(&track);
+    let entry = engine.current().expect("current").clone();
+    let queue = Arc::new(Mutex::new(Some(engine)));
+    let playback_request_generation = Arc::new(AtomicU64::new(1));
+
+    assert!(current_playback_request_matches_generation(
+        &playback_request_generation,
+        1,
+        &queue,
+        &server_id,
+        &entry
+    ));
+
+    *queue.lock().expect("queue") = Some(QueueEngine::new(ServerId::new("server:other")));
+    assert!(!current_playback_request_matches_generation(
+        &playback_request_generation,
+        1,
+        &queue,
+        &server_id,
+        &entry
+    ));
+}
+#[test]
+pub(in crate::controller) fn current_playback_request_rejects_replaced_duplicate_track_entry() {
+    let (_controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let track = snapshot.tracks[0].clone();
+    let mut engine = QueueEngine::new(server_id.clone());
+    engine.play_now(&track);
+    let stale_entry = engine.current().expect("current").clone();
+    let mut replacement = QueueEngine::new(server_id.clone());
+    replacement.play_now(&track);
+    let queue = Arc::new(Mutex::new(Some(replacement)));
+    let playback_request_generation = Arc::new(AtomicU64::new(1));
+    invalidate_playback_requests(&playback_request_generation);
+
+    assert!(!current_playback_request_matches_generation(
+        &playback_request_generation,
+        1,
+        &queue,
+        &server_id,
+        &stale_entry
+    ));
+}
+#[test]
 pub(in crate::controller) fn activate_queue_entry_starts_selected_track() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
@@ -599,6 +724,7 @@ pub(in crate::controller) fn playback_error_ignores_later_stale_positions() {
     *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
         PlaybackEvent::Error("stream failed".to_string()),
         PlaybackEvent::PositionChanged {
+            track_id: None,
             seconds: 42,
             millis: 42_000,
         },
@@ -983,6 +1109,105 @@ pub(in crate::controller) fn end_of_stream_advances_queue() {
     );
 }
 #[test]
+pub(in crate::controller) fn end_of_stream_ignores_late_old_track_timing_events() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first.clone(), second.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
+        PlaybackEvent::EndOfStream,
+        PlaybackEvent::StateChanged(PlaybackState::Stopped),
+        PlaybackEvent::PositionChanged {
+            track_id: Some(first.id.clone()),
+            seconds: first.duration_seconds,
+            millis: u64::from(first.duration_seconds) * 1_000,
+        },
+        PlaybackEvent::DurationChanged {
+            track_id: Some(first.id.clone()),
+            seconds: first.duration_seconds,
+        },
+    ]));
+
+    controller.poll_playback_events();
+
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.current.expect("current").track_id, second.id);
+    assert_eq!(playback.state, PlaybackState::Buffering);
+    assert_eq!(playback.position_seconds, 0);
+    assert_eq!(playback.position_millis, 0);
+    assert_eq!(playback.duration_seconds, second.duration_seconds);
+    let queue = controller.queue_snapshot().expect("queue snapshot");
+    assert_eq!(queue.progress_seconds, 0);
+}
+#[test]
+pub(in crate::controller) fn later_old_track_timing_does_not_overwrite_advanced_queue() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first.clone(), second.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    controller.advance_after_end_of_stream();
+    let _queue = wait_for_queue(&events).expect("next queue");
+    *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
+        PlaybackEvent::PositionChanged {
+            track_id: Some(first.id.clone()),
+            seconds: first.duration_seconds,
+            millis: u64::from(first.duration_seconds) * 1_000,
+        },
+        PlaybackEvent::DurationChanged {
+            track_id: Some(first.id.clone()),
+            seconds: first.duration_seconds,
+        },
+    ]));
+
+    controller.poll_playback_events();
+
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.current.expect("current").track_id, second.id);
+    assert_eq!(playback.position_seconds, 0);
+    assert_eq!(playback.position_millis, 0);
+    assert_eq!(playback.duration_seconds, second.duration_seconds);
+}
+#[test]
+pub(in crate::controller) fn next_track_duration_before_prepared_boundary_is_ignored() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first.clone(), second.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
+        PlaybackEvent::DurationChanged {
+            track_id: Some(second.id.clone()),
+            seconds: second.duration_seconds,
+        },
+    ]));
+
+    controller.poll_playback_events();
+
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.current.expect("current").track_id, first.id);
+    assert_eq!(playback.duration_seconds, first.duration_seconds);
+}
+#[test]
 pub(in crate::controller) fn prepared_track_started_advances_queue_without_restarting_playback() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
@@ -991,11 +1216,19 @@ pub(in crate::controller) fn prepared_track_started_advances_queue_without_resta
         Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
-    controller.play_tracks_now(vec![first, second.clone()]);
+    let third = snapshot.tracks[2].clone();
+    controller.play_tracks_now(vec![first, second.clone(), third.clone()]);
     let _initial_queue = wait_for_queue(&events).expect("initial queue");
     let _command = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PlayPrepared { .. })
     });
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let PlaybackCommand::PrepareNext(Some(item)) = command else {
+        panic!("expected prepared next command");
+    };
+    assert_eq!(item.track.id, second.id);
     commands.lock().expect("commands").clear();
     controller.advance_after_prepared_track_started(PlaybackTrack {
         id: second.id.clone(),
@@ -1009,6 +1242,23 @@ pub(in crate::controller) fn prepared_track_started_advances_queue_without_resta
         queue.entries[queue.current_index.expect("current")].track_id,
         second.id
     );
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.state, PlaybackState::Playing);
+    assert_eq!(playback.current.expect("current").track_id, second.id);
+    assert_eq!(playback.position_seconds, 0);
+    assert_eq!(playback.position_millis, 0);
+    assert_eq!(playback.duration_seconds, second.duration_seconds);
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let PlaybackCommand::PrepareNext(Some(item)) = command else {
+        panic!("expected prepared next command");
+    };
+    assert_eq!(item.track.id, third.id);
     assert!(
         commands
             .lock()

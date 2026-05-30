@@ -33,7 +33,7 @@ pub fn available_sort_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
-        LibraryListKey::Playlists => &[
+        LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => &[
             LibraryField::Title,
             LibraryField::SongCount,
             LibraryField::Duration,
@@ -43,7 +43,8 @@ pub fn available_sort_fields(key: LibraryListKey) -> &'static [LibraryField] {
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
-        | LibraryListKey::PlaylistTracks => &[
+        | LibraryListKey::PlaylistTracks
+        | LibraryListKey::SmartPlaylistTracks => &[
             LibraryField::TrackNumber,
             LibraryField::Title,
             LibraryField::Artist,
@@ -80,7 +81,7 @@ pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
-        LibraryListKey::Playlists => vec![
+        LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => vec![
             LibraryField::Image,
             LibraryField::Title,
             LibraryField::SongCount,
@@ -104,6 +105,12 @@ pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
                 LibraryField::Favorite,
             ]
         }
+        LibraryListKey::SmartPlaylistTracks => vec![
+            LibraryField::RowIndex,
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::PlayCount,
+        ],
     }
 }
 pub(super) fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
@@ -113,13 +120,16 @@ pub(super) fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
         }
         LibraryListKey::Artists | LibraryListKey::AlbumArtists => Vec::new(),
         LibraryListKey::Genres => Vec::new(),
-        LibraryListKey::Playlists => vec![LibraryField::SongCount, LibraryField::Duration],
+        LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => {
+            vec![LibraryField::SongCount, LibraryField::Duration]
+        }
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
-        | LibraryListKey::PlaylistTracks => {
+        | LibraryListKey::PlaylistTracks
+        | LibraryListKey::SmartPlaylistTracks => {
             vec![
                 LibraryField::Artist,
                 LibraryField::Album,
@@ -143,12 +153,14 @@ pub(super) fn default_sort_key(key: LibraryListKey) -> LibraryField {
         | LibraryListKey::Genres
         | LibraryListKey::ArtistAlbums
         | LibraryListKey::Playlists
+        | LibraryListKey::SmartPlaylists
         | LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks => LibraryField::Title,
         LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
-        | LibraryListKey::PlaylistTracks => LibraryField::TrackNumber,
+        | LibraryListKey::PlaylistTracks
+        | LibraryListKey::SmartPlaylistTracks => LibraryField::TrackNumber,
     }
 }
 pub(super) fn sanitize_optional_fields(fields: &mut Vec<LibraryField>, available: &[LibraryField]) {

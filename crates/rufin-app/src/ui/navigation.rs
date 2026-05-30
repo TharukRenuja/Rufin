@@ -19,6 +19,7 @@ const NAV_ROUTE_ALBUM_ARTISTS_CLASS: &str = "nav-route-album-artists";
 const NAV_ROUTE_GENRES_CLASS: &str = "nav-route-genres";
 const NAV_ROUTE_FOLDERS_CLASS: &str = "nav-route-folders";
 const NAV_ROUTE_PLAYLISTS_CLASS: &str = "nav-route-playlists";
+const NAV_ROUTE_SMART_PLAYLISTS_CLASS: &str = "nav-route-smart-playlists";
 
 pub(super) fn sidebar_history_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = icon_button(icon_name, label);
@@ -204,6 +205,11 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             label: "Playlists",
             route: Route::Playlists,
         },
+        SidebarRouteItem::SmartPlaylists => NavItem {
+            icon_name: "view-filter-symbolic",
+            label: "Smart Playlists",
+            route: Route::SmartPlaylists,
+        },
     }
 }
 
@@ -304,6 +310,39 @@ fn nav_route_class(route: &Route) -> Option<&'static str> {
         Route::Genres | Route::GenreDetail(_) => Some(NAV_ROUTE_GENRES_CLASS),
         Route::Folders { .. } => Some(NAV_ROUTE_FOLDERS_CLASS),
         Route::Playlists | Route::PlaylistDetail(_) => Some(NAV_ROUTE_PLAYLISTS_CLASS),
+        Route::SmartPlaylists | Route::SmartPlaylistDetail(_) => {
+            Some(NAV_ROUTE_SMART_PLAYLISTS_CLASS)
+        }
         Route::Search { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rufin_core::{PlaylistId, SmartPlaylistId};
+
+    #[test]
+    fn playlist_and_smart_playlist_routes_have_distinct_nav_classes() {
+        assert_eq!(
+            nav_route_class(&Route::Playlists),
+            Some(NAV_ROUTE_PLAYLISTS_CLASS)
+        );
+        assert_eq!(
+            nav_route_class(&Route::PlaylistDetail(PlaylistId::new("playlist"))),
+            Some(NAV_ROUTE_PLAYLISTS_CLASS)
+        );
+        assert_eq!(
+            nav_route_class(&Route::SmartPlaylists),
+            Some(NAV_ROUTE_SMART_PLAYLISTS_CLASS)
+        );
+        assert_eq!(
+            nav_route_class(&Route::SmartPlaylistDetail(SmartPlaylistId::new("smart"))),
+            Some(NAV_ROUTE_SMART_PLAYLISTS_CLASS)
+        );
+        assert_ne!(
+            nav_route_class(&Route::Playlists),
+            nav_route_class(&Route::SmartPlaylists)
+        );
     }
 }
