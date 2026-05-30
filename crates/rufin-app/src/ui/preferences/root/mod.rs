@@ -734,6 +734,7 @@ fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::Genres => "Genres",
         SidebarRouteItem::Folders => "Folders",
         SidebarRouteItem::Playlists => "Playlists",
+        SidebarRouteItem::SmartPlaylists => "SmartPlaylists",
     }
 }
 fn sidebar_route_item_from_drag_id(id: &str) -> Option<SidebarRouteItem> {
@@ -752,5 +753,6 @@ fn sidebar_route_item_title(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::Genres => "Genres",
         SidebarRouteItem::Folders => "Folders",
         SidebarRouteItem::Playlists => "Playlists",
+        SidebarRouteItem::SmartPlaylists => "Smart Playlists",
     }
 }

@@ -1,4 +1,4 @@
-use crate::domain::{AlbumId, ArtistId, FolderId, GenreId, PlaylistId};
+use crate::domain::{AlbumId, ArtistId, FolderId, GenreId, PlaylistId, SmartPlaylistId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -33,6 +33,8 @@ pub enum Route {
     Folders { path: Vec<FolderPathItem> },
     Playlists,
     PlaylistDetail(PlaylistId),
+    SmartPlaylists,
+    SmartPlaylistDetail(SmartPlaylistId),
     Search { query: String, kind: SearchKind },
 }
 
@@ -54,6 +56,8 @@ impl Route {
             Self::Folders { .. } => "Folders",
             Self::Playlists => "Playlists",
             Self::PlaylistDetail(_) => "Playlist",
+            Self::SmartPlaylists => "Smart Playlists",
+            Self::SmartPlaylistDetail(_) => "Smart Playlist",
             Self::Search { .. } => "Search",
         }
     }

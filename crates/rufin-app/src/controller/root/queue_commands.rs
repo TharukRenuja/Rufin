@@ -87,8 +87,12 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
+        if removed_current {
+            self.record_current_skip_if_needed();
+        }
         if removed_current && !has_current_after_remove {
             let _result = self.send_playback_command(PlaybackCommand::Stop);
+            self.clear_playback_activity();
         }
         self.persist_and_emit_queue();
         if removed_current && has_current_after_remove {
@@ -96,6 +100,11 @@ impl AppController {
         }
     }
     pub fn activate_queue_entry(&self, entry_id: QueueEntryId) {
+        let previous_current = self
+            .queue
+            .lock()
+            .ok()
+            .and_then(|queue| queue.as_ref()?.current().map(|entry| entry.id.clone()));
         let result = self.with_queue_mut(|queue| {
             if queue.activate(&entry_id) {
                 Ok(())
@@ -106,6 +115,12 @@ impl AppController {
         if let Err(error) = result {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
+        }
+        if previous_current
+            .as_ref()
+            .is_some_and(|current| current != &entry_id)
+        {
+            self.record_current_skip_if_needed();
         }
         self.auto_dj_top_up_or_emit_error();
         self.persist_and_emit_queue();
@@ -126,6 +141,12 @@ impl AppController {
         self.persist_and_emit_queue();
     }
     pub fn clear_queue(&self) {
+        let had_current = self
+            .queue
+            .lock()
+            .ok()
+            .and_then(|queue| queue.as_ref()?.current().map(|entry| entry.id.clone()))
+            .is_some();
         let result = self.with_queue_mut(|queue| {
             queue.clear();
             Ok(())
@@ -133,6 +154,10 @@ impl AppController {
         if let Err(error) = result {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
+        }
+        if had_current {
+            self.record_current_skip_if_needed();
+            self.clear_playback_activity();
         }
         let _result = self.send_playback_command(PlaybackCommand::Stop);
         self.persist_and_emit_queue();

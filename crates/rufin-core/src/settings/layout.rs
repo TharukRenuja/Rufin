@@ -146,9 +146,10 @@ pub enum SidebarRouteItem {
     Genres,
     Folders,
     Playlists,
+    SmartPlaylists,
 }
 impl SidebarRouteItem {
-    pub fn all() -> [Self; 9] {
+    pub fn all() -> [Self; 10] {
         [
             Self::Home,
             Self::Favorites,
@@ -159,6 +160,7 @@ impl SidebarRouteItem {
             Self::Genres,
             Self::Folders,
             Self::Playlists,
+            Self::SmartPlaylists,
         ]
     }
 
@@ -556,14 +558,16 @@ pub enum LibraryListKey {
     FavoriteTracks,
     Genres,
     Playlists,
+    SmartPlaylists,
     AlbumDetailTracks,
     ArtistAlbums,
     ArtistTracks,
     GenreTracks,
     PlaylistTracks,
+    SmartPlaylistTracks,
 }
 impl LibraryListKey {
-    pub fn all() -> [Self; 12] {
+    pub fn all() -> [Self; 14] {
         [
             Self::Albums,
             Self::Artists,
@@ -572,11 +576,13 @@ impl LibraryListKey {
             Self::FavoriteTracks,
             Self::Genres,
             Self::Playlists,
+            Self::SmartPlaylists,
             Self::AlbumDetailTracks,
             Self::ArtistAlbums,
             Self::ArtistTracks,
             Self::GenreTracks,
             Self::PlaylistTracks,
+            Self::SmartPlaylistTracks,
         ]
     }
 
@@ -589,11 +595,13 @@ impl LibraryListKey {
             Self::FavoriteTracks => "Favorites",
             Self::Genres => "Genres",
             Self::Playlists => "Playlists",
+            Self::SmartPlaylists => "Smart playlists",
             Self::AlbumDetailTracks => "Album tracks",
             Self::ArtistAlbums => "Artist albums",
             Self::ArtistTracks => "Artist tracks",
             Self::GenreTracks => "Genre tracks",
             Self::PlaylistTracks => "Playlist tracks",
+            Self::SmartPlaylistTracks => "Smart playlist tracks",
         }
     }
 
@@ -612,11 +620,13 @@ impl LibraryListKey {
             | Self::AlbumDetailTracks
             | Self::ArtistTracks
             | Self::GenreTracks
-            | Self::PlaylistTracks => LibraryLayout::Row,
+            | Self::PlaylistTracks
+            | Self::SmartPlaylistTracks => LibraryLayout::Row,
             Self::Artists
             | Self::AlbumArtists
             | Self::Genres
             | Self::Playlists
+            | Self::SmartPlaylists
             | Self::ArtistAlbums => LibraryLayout::Grid,
         }
     }
@@ -767,7 +777,7 @@ pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
-        LibraryListKey::Playlists => &[
+        LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => &[
             LibraryField::RowIndex,
             LibraryField::Image,
             LibraryField::Title,
@@ -779,7 +789,8 @@ pub fn available_row_fields(key: LibraryListKey) -> &'static [LibraryField] {
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
-        | LibraryListKey::PlaylistTracks => &[
+        | LibraryListKey::PlaylistTracks
+        | LibraryListKey::SmartPlaylistTracks => &[
             LibraryField::RowIndex,
             LibraryField::Image,
             LibraryField::Title,
@@ -823,13 +834,16 @@ pub fn available_grid_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::UserRating,
         ],
         LibraryListKey::Genres => &[LibraryField::AlbumCount, LibraryField::SongCount],
-        LibraryListKey::Playlists => &[LibraryField::SongCount, LibraryField::Duration],
+        LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => {
+            &[LibraryField::SongCount, LibraryField::Duration]
+        }
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
         | LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks
-        | LibraryListKey::PlaylistTracks => &[
+        | LibraryListKey::PlaylistTracks
+        | LibraryListKey::SmartPlaylistTracks => &[
             LibraryField::Artist,
             LibraryField::AlbumArtist,
             LibraryField::Album,

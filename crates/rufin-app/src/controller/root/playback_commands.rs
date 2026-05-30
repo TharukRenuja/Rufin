@@ -52,6 +52,7 @@ impl AppController {
             snapshot.position_millis = 0;
             snapshot.buffering_percent = None;
         });
+        self.clear_playback_activity();
         self.persist_and_emit_queue();
     }
     pub fn next_track(&self) {
@@ -75,6 +76,7 @@ impl AppController {
             }
             return;
         }
+        self.record_current_skip_if_needed();
         self.persist_and_emit_queue();
         self.start_current_track();
     }
@@ -127,6 +129,7 @@ impl AppController {
             snapshot.position_seconds = seconds;
             snapshot.position_millis = millis;
         });
+        self.record_playback_activity_progress(seconds);
         self.emit_playback_snapshot();
     }
     pub fn set_volume(&self, volume: f64) {
@@ -217,6 +220,7 @@ impl AppController {
                         snapshot.position_seconds = seconds;
                         snapshot.position_millis = millis;
                     });
+                    self.record_playback_activity_progress(seconds);
                     self.persist_progress_if_needed(seconds);
                     self.report_playback_progress_if_needed(seconds);
                 }
@@ -243,6 +247,7 @@ impl AppController {
                 }
                 PlaybackEvent::Error(error) => {
                     self.report_playback(PlaybackReportKind::Stopped, true);
+                    self.clear_playback_activity();
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.last_error = Some(error.clone());
                         snapshot.state = PlaybackState::Stopped;

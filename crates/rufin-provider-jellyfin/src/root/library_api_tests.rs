@@ -296,6 +296,7 @@ async fn album_detail_loads_album_and_matching_tracks() {
                 "AlbumPrimaryImageTag": "album-tag-one",
                 "Album": "Blue Rooms",
                 "Artists": ["Astral Kin"],
+                "Overview": "Warm note",
                 "AlbumArtists": [{ "Id": "album-artist-one", "Name": "Astral Kin" }],
                 "ArtistItems": [{ "Id": "artist-one", "Name": "Astral Kin" }],
                 "ProductionYear": 2024,
@@ -338,6 +339,7 @@ async fn album_detail_loads_album_and_matching_tracks() {
     assert_eq!(detail.tracks[0].last_played.as_deref(), Some("2024-04-03"));
     assert_eq!(detail.tracks[0].play_count, Some(7));
     assert_eq!(detail.tracks[0].user_rating, Some(4));
+    assert_eq!(detail.tracks[0].comment.as_deref(), Some("Warm note"));
     assert_eq!(detail.tracks[0].duration_seconds, 210);
     assert_eq!(
         detail.tracks[0].image_ref,
@@ -856,6 +858,12 @@ async fn playlist_write_mutations_use_jellyfin_playlist_endpoints() {
         .expect(1)
         .mount(&server)
         .await;
+    Mock::given(method("DELETE"))
+        .and(path("/Items/playlist-one"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
     let provider = provider(&server, "token-one");
     let playlist_id = PlaylistId::new("jellyfin:playlist:playlist-one");
 
@@ -891,4 +899,8 @@ async fn playlist_write_mutations_use_jellyfin_playlist_endpoints() {
         .move_playlist_entry(&playlist_id, "entry-three", 0)
         .await
         .expect("move playlist entry");
+    provider
+        .delete_playlist(&playlist_id)
+        .await
+        .expect("delete playlist");
 }

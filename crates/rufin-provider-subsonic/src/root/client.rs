@@ -579,6 +579,14 @@ impl MusicProvider for SubsonicProvider {
         .await
     }
 
+    async fn delete_playlist(&self, playlist_id: &PlaylistId) -> ProviderResult<()> {
+        self.get_unit(
+            "deletePlaylist",
+            &[("id", raw_item_id(playlist_id.as_str()).to_string())],
+        )
+        .await
+    }
+
     async fn add_playlist_tracks(
         &self,
         playlist_id: &PlaylistId,

@@ -45,6 +45,7 @@ impl AppController {
             queue: Arc::new(Mutex::new(queue)),
             playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
+            playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -112,6 +113,7 @@ impl AppController {
             queue: Arc::new(Mutex::new(queue)),
             playback: Arc::new(Mutex::new(playback_backend(false))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
+            playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),
@@ -171,6 +173,7 @@ impl AppController {
                 muted: settings.playback.muted,
                 ..PlaybackSnapshot::default()
             })),
+            playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
             auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
             last_progress_snapshot: Arc::new(Mutex::new(None)),
             last_report_snapshot: Arc::new(Mutex::new(None)),

@@ -492,6 +492,8 @@ fn fake_track(index: usize, album: &Album, track_number: u16) -> Track {
         genres: album.genres.clone(),
         local_path: None,
         source_format: None,
+        comment: None,
+        skip_count: None,
     }
 }
 

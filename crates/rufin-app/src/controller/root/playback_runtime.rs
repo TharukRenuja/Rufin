@@ -47,6 +47,7 @@ impl AppController {
                 )),
             );
         });
+        self.start_playback_activity(&server_id, &entry, position_seconds);
         self.emit_playback_snapshot();
         self.report_playback(PlaybackReportKind::Started, false);
         let waveform_enabled = self.load_settings().seekbar_waveform_enabled;

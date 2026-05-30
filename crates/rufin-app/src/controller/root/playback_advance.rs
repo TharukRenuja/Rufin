@@ -3,6 +3,7 @@ use super::*;
 impl AppController {
     pub(in crate::controller) fn advance_after_end_of_stream(&self) {
         self.report_playback(PlaybackReportKind::Stopped, false);
+        self.record_playback_activity_completed_current();
         self.auto_dj_top_up_or_emit_error();
         let mut has_next = false;
         let result = self.with_queue_mut(|queue| {
@@ -22,6 +23,7 @@ impl AppController {
     }
     pub(in crate::controller) fn advance_after_prepared_track_started(&self, track: PlaybackTrack) {
         self.report_playback(PlaybackReportKind::Stopped, false);
+        self.record_playback_activity_completed_current();
         self.auto_dj_top_up_or_emit_error();
         let mut has_next = false;
         let result = self.with_queue_mut(|queue| {
@@ -58,6 +60,9 @@ impl AppController {
             snapshot.last_error = None;
             set_waveform_cache_key(snapshot, waveform_key);
         });
+        if let Some((server_id, entry, position_seconds)) = self.current_queue_entry() {
+            self.start_playback_activity(&server_id, &entry, position_seconds);
+        }
         self.emit_playback_snapshot();
         self.report_playback(PlaybackReportKind::Started, false);
         self.request_waveform_for_current();

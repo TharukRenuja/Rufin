@@ -99,6 +99,13 @@ fn settings_default_to_privacy_preserving_remote_features() {
             .iter()
             .any(|entry| entry.item == SidebarRouteItem::Folders && entry.visible)
     );
+    assert!(
+        settings
+            .sidebar
+            .route_items
+            .iter()
+            .any(|entry| entry.item == SidebarRouteItem::SmartPlaylists && entry.visible)
+    );
     assert_eq!(settings.queue_lyrics_layout_version, 3);
     assert_eq!(settings.home_sections.len(), 5);
     assert_eq!(settings.home_blocks.len(), 7);
@@ -122,6 +129,21 @@ fn settings_default_to_privacy_preserving_remote_features() {
     assert_eq!(
         settings.library_list(LibraryListKey::Tracks).sort_key,
         LibraryField::Title
+    );
+    assert_eq!(
+        settings.library_list(LibraryListKey::SmartPlaylists).layout,
+        LibraryLayout::Grid
+    );
+    assert_eq!(
+        settings
+            .library_list(LibraryListKey::SmartPlaylistTracks)
+            .row_fields,
+        vec![
+            LibraryField::RowIndex,
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::PlayCount,
+        ]
     );
     assert_eq!(
         settings
@@ -438,6 +460,22 @@ fn default_library_list_settings_include_playlists() {
         vec![LibraryField::SongCount, LibraryField::Duration]
     );
     assert_eq!(playlists.sort_key, LibraryField::Title);
+}
+#[test]
+fn default_smart_playlist_track_rows_include_play_count() {
+    let tracks = AppSettings::default().library_list(LibraryListKey::SmartPlaylistTracks);
+
+    assert_eq!(tracks.layout, LibraryLayout::Row);
+    assert_eq!(
+        tracks.row_fields,
+        vec![
+            LibraryField::RowIndex,
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::PlayCount,
+        ]
+    );
+    assert_eq!(tracks.sort_key, LibraryField::TrackNumber);
 }
 #[test]
 fn library_list_settings_sanitize_fields_and_layouts() {

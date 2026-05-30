@@ -7,13 +7,17 @@ use std::{
 use rufin_core::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, LibraryField, MusicFolder, MusicFolderId, Playlist, PlaylistId, QueueSnapshot,
-    ServerId, ServerIdentity, Track, TrackId,
+    ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
+    SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
 };
 use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults};
-use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
+const PRE_SMART_PLAYLISTS_SCHEMA_VERSION: i64 = 10;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;
 
@@ -95,6 +99,7 @@ mod library_metadata;
 mod library_search_helpers;
 mod library_track_sort;
 mod servers;
+mod smart_playlists;
 mod store_lifecycle_schema;
 
 pub use servers::{image_cache_key, lyrics_cache_key};

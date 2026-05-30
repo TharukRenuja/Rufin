@@ -1,7 +1,10 @@
 use super::servers::*;
 use super::*;
 
-const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[];
+const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[SchemaMigration {
+    from_version: PRE_SMART_PLAYLISTS_SCHEMA_VERSION,
+    run: migrate_to_smart_playlists_schema,
+}];
 const SCHEMA_VERSION_10_TABLES: &[&str] = &[
     "queue_snapshots",
     "servers",
@@ -69,6 +72,85 @@ const SCHEMA_VERSION_10_COLUMNS: &[(&str, &str)] = &[
     ("cover_cache", "path"),
     ("external_image_lookup_misses", "reason"),
 ];
+const SCHEMA_VERSION_11_TABLES: &[&str] = &[
+    "queue_snapshots",
+    "servers",
+    "server_local_access",
+    "server_music_folders",
+    "track_music_folders",
+    "track_local_matches",
+    "track_activity",
+    "server_library_preferences",
+    "active_server",
+    "sync_state",
+    "albums",
+    "tracks",
+    "artists",
+    "album_artists",
+    "genres",
+    "playlists",
+    "smart_playlists",
+    "smart_playlist_seed_state",
+    "album_genres",
+    "track_genres",
+    "album_artist_links",
+    "track_artist_links",
+    "playlist_tracks",
+    "home_section_items",
+    "home_section_prefetch_items",
+    "lyrics_cache",
+    "cover_cache",
+    "external_image_lookup_misses",
+    "library_fts",
+];
+const SCHEMA_VERSION_11_COLUMNS: &[(&str, &str)] = &[
+    ("albums", "image_item_id"),
+    ("albums", "image_tag"),
+    ("albums", "release_date"),
+    ("albums", "date_added"),
+    ("albums", "last_played"),
+    ("albums", "play_count"),
+    ("albums", "user_rating"),
+    ("tracks", "image_item_id"),
+    ("tracks", "image_tag"),
+    ("tracks", "release_date"),
+    ("tracks", "date_added"),
+    ("tracks", "last_played"),
+    ("tracks", "play_count"),
+    ("tracks", "user_rating"),
+    ("tracks", "local_path"),
+    ("tracks", "source_format"),
+    ("tracks", "comment"),
+    ("tracks", "skip_count"),
+    ("track_activity", "play_count"),
+    ("track_activity", "last_played"),
+    ("track_activity", "skip_count"),
+    ("artists", "image_item_id"),
+    ("artists", "image_tag"),
+    ("artists", "last_played"),
+    ("artists", "play_count"),
+    ("artists", "user_rating"),
+    ("album_artists", "image_item_id"),
+    ("album_artists", "image_tag"),
+    ("album_artists", "last_played"),
+    ("album_artists", "play_count"),
+    ("album_artists", "user_rating"),
+    ("genres", "image_item_id"),
+    ("genres", "image_tag"),
+    ("playlists", "image_item_id"),
+    ("playlists", "image_tag"),
+    ("smart_playlists", "builtin_key"),
+    ("smart_playlists", "definition_json"),
+    ("smart_playlists", "position"),
+    ("playlist_tracks", "entry_id"),
+    ("server_music_folders", "folder_id"),
+    ("track_music_folders", "folder_id"),
+    ("track_local_matches", "local_path"),
+    ("server_library_preferences", "selected_music_folder_id"),
+    ("lyrics_cache", "value"),
+    ("cover_cache", "path"),
+    ("external_image_lookup_misses", "reason"),
+];
 
 struct SchemaMigration {
     from_version: i64,
@@ -102,6 +184,52 @@ fn schema_migration_path(
         path.push(migration);
     }
     Some(path)
+}
+
+fn migrate_to_smart_playlists_schema(store: &Store) -> StoreResult<()> {
+    store.connection.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS track_activity (
+            server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+            track_id TEXT NOT NULL,
+            play_count INTEGER NOT NULL DEFAULT 0,
+            last_played TEXT,
+            skip_count INTEGER NOT NULL DEFAULT 0,
+            play_recorded_session TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (server_id, track_id)
+        );
+        CREATE TABLE IF NOT EXISTS smart_playlists (
+            server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+            smart_playlist_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            builtin_key TEXT,
+            definition_json TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (server_id, smart_playlist_id)
+        );
+        CREATE TABLE IF NOT EXISTS smart_playlist_seed_state (
+            server_id TEXT PRIMARY KEY REFERENCES servers(server_id) ON DELETE CASCADE,
+            seeded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        ",
+    )?;
+    store.ensure_column("tracks", "source_format", "TEXT")?;
+    store.ensure_column("tracks", "comment", "TEXT")?;
+    store.ensure_column("tracks", "skip_count", "INTEGER")?;
+    store.connection.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS tracks_server_comment_nocase_idx
+            ON tracks(server_id, comment COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS track_activity_server_skip_idx
+            ON track_activity(server_id, skip_count DESC);
+        CREATE INDEX IF NOT EXISTS smart_playlists_server_position_idx
+            ON smart_playlists(server_id, position, name COLLATE NOCASE);
+        ",
+    )?;
+    Ok(())
 }
 
 impl Store {
@@ -201,6 +329,9 @@ impl Store {
             10 => {
                 self.schema_has_required_parts(SCHEMA_VERSION_10_TABLES, SCHEMA_VERSION_10_COLUMNS)
             }
+            11 => {
+                self.schema_has_required_parts(SCHEMA_VERSION_11_TABLES, SCHEMA_VERSION_11_COLUMNS)
+            }
             _ => Ok(false),
         }
     }
@@ -269,6 +400,16 @@ impl Store {
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (server_id, track_id)
             );
+            CREATE TABLE IF NOT EXISTS track_activity (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                track_id TEXT NOT NULL,
+                play_count INTEGER NOT NULL DEFAULT 0,
+                last_played TEXT,
+                skip_count INTEGER NOT NULL DEFAULT 0,
+                play_recorded_session TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, track_id)
+            );
             CREATE TABLE IF NOT EXISTS server_library_preferences (
                 server_id TEXT PRIMARY KEY REFERENCES servers(server_id) ON DELETE CASCADE,
                 selected_music_folder_id TEXT,
@@ -329,6 +470,8 @@ impl Store {
                 image_tag TEXT,
                 local_path TEXT,
                 source_format TEXT,
+                comment TEXT,
+                skip_count INTEGER,
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, track_id)
             );
@@ -383,6 +526,21 @@ impl Store {
                 image_tag TEXT,
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, playlist_id)
+            );
+            CREATE TABLE IF NOT EXISTS smart_playlists (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                smart_playlist_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                builtin_key TEXT,
+                definition_json TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, smart_playlist_id)
+            );
+            CREATE TABLE IF NOT EXISTS smart_playlist_seed_state (
+                server_id TEXT PRIMARY KEY REFERENCES servers(server_id) ON DELETE CASCADE,
+                seeded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS album_genres (
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
@@ -499,6 +657,12 @@ impl Store {
                 ON tracks(server_id, album_id, disc_number, track_number);
             CREATE INDEX IF NOT EXISTS tracks_server_artist_idx
                 ON tracks(server_id, artist_id, album_id);
+            CREATE INDEX IF NOT EXISTS tracks_server_comment_nocase_idx
+                ON tracks(server_id, comment COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS track_activity_server_skip_idx
+                ON track_activity(server_id, skip_count DESC);
+            CREATE INDEX IF NOT EXISTS smart_playlists_server_position_idx
+                ON smart_playlists(server_id, position, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS home_section_items_order_idx
                 ON home_section_items(server_id, section_kind, position);
             CREATE INDEX IF NOT EXISTS home_section_prefetch_items_order_idx
@@ -520,6 +684,8 @@ impl Store {
             ",
         )?;
         self.ensure_column("tracks", "source_format", "TEXT")?;
+        self.ensure_column("tracks", "comment", "TEXT")?;
+        self.ensure_column("tracks", "skip_count", "INTEGER")?;
         self.connection
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())

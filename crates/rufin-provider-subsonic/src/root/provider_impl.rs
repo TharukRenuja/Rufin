@@ -42,6 +42,7 @@ pub(super) fn subsonic_capabilities() -> ProviderCapabilities {
         lyrics: true,
         playback_reporting: true,
         playlist_mutations: true,
+        playlist_delete: true,
         favorite_mutations: true,
         random_tracks: true,
         music_folders: true,
@@ -259,6 +260,8 @@ pub(super) fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) ->
         genres: genres_from_item(song.genre, song.genres),
         local_path: song.path,
         source_format,
+        comment: song.comment.filter(|value| !value.trim().is_empty()),
+        skip_count: None,
     }
 }
 
@@ -574,6 +577,8 @@ pub(super) struct SubsonicSong {
     pub(super) user_rating: Option<u32>,
     #[serde(default)]
     pub(super) genre: Option<String>,
+    #[serde(default)]
+    pub(super) comment: Option<String>,
     #[serde(default)]
     pub(super) genres: Vec<GenreName>,
     #[serde(default, rename = "discNumber")]

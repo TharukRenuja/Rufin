@@ -10,11 +10,14 @@ pub(super) fn build_library(
     let mut album_artists = BTreeMap::<ArtistId, ArtistAccumulator>::new();
     let mut genres = BTreeMap::<GenreId, GenreAccumulator>::new();
     let mut covers = HashMap::new();
+    let mut attempted_artist_cover_dirs = BTreeSet::<(ArtistId, PathBuf)>::new();
+    let mut attempted_album_artist_cover_dirs = BTreeSet::<(ArtistId, PathBuf)>::new();
     let mut tracks = Vec::with_capacity(scanned.len());
 
     for mut scanned_track in scanned {
         let cover = scanned_track.cover.take();
         let track = &mut scanned_track.track;
+        let track_path = track.local_path.as_deref().map(Path::new);
         let album_entry =
             albums
                 .entry(track.album_id.clone())
@@ -66,35 +69,44 @@ pub(super) fn build_library(
             album_entry
                 .artist_keys
                 .insert(artist.id.as_str().to_string());
-            artists
-                .entry(artist.id.clone())
-                .or_insert_with(|| ArtistAccumulator {
-                    name: artist.name.clone(),
-                    ..ArtistAccumulator::default()
-                })
-                .tracks
-                .insert(track.id.clone());
-            artists
-                .entry(artist.id.clone())
-                .or_insert_with(|| ArtistAccumulator {
-                    name: artist.name.clone(),
-                    ..ArtistAccumulator::default()
-                })
-                .albums
-                .insert(track.album_id.clone());
+            let artist_entry =
+                artists
+                    .entry(artist.id.clone())
+                    .or_insert_with(|| ArtistAccumulator {
+                        name: artist.name.clone(),
+                        ..ArtistAccumulator::default()
+                    });
+            assign_local_artist_image_ref(
+                &artist.id,
+                &artist.name,
+                track_path,
+                artist_entry,
+                &mut covers,
+                &mut attempted_artist_cover_dirs,
+            );
+            artist_entry.tracks.insert(track.id.clone());
+            artist_entry.albums.insert(track.album_id.clone());
         }
         for artist in &track.album_artist_credits {
             album_entry
                 .album_artist_keys
                 .insert(artist.id.as_str().to_string());
-            album_artists
-                .entry(artist.id.clone())
-                .or_insert_with(|| ArtistAccumulator {
-                    name: artist.name.clone(),
-                    ..ArtistAccumulator::default()
-                })
-                .albums
-                .insert(track.album_id.clone());
+            let artist_entry =
+                album_artists
+                    .entry(artist.id.clone())
+                    .or_insert_with(|| ArtistAccumulator {
+                        name: artist.name.clone(),
+                        ..ArtistAccumulator::default()
+                    });
+            assign_local_artist_image_ref(
+                &artist.id,
+                &artist.name,
+                track_path,
+                artist_entry,
+                &mut covers,
+                &mut attempted_album_artist_cover_dirs,
+            );
+            artist_entry.albums.insert(track.album_id.clone());
         }
         for genre_name in &track.genres {
             let genre_id = local_id("genre", genre_name);
@@ -120,6 +132,21 @@ pub(super) fn build_library(
         .collect::<HashMap<_, _>>();
     for track in &mut tracks {
         track.image_ref = album_image_refs.get(&track.album_id).cloned();
+    }
+    let track_image_refs = tracks
+        .iter()
+        .filter_map(|track| {
+            track
+                .image_ref
+                .clone()
+                .map(|image_ref| (track.id.clone(), image_ref))
+        })
+        .collect::<HashMap<_, _>>();
+    for artist in artists.values_mut().chain(album_artists.values_mut()) {
+        if artist.image_ref.is_none() {
+            artist.image_ref =
+                artist_fallback_image_ref(artist, &album_image_refs, &track_image_refs);
+        }
     }
 
     let mut albums = albums
@@ -168,6 +195,53 @@ pub(super) fn build_library(
         covers,
     }
 }
+
+fn assign_local_artist_image_ref(
+    artist_id: &ArtistId,
+    artist_name: &str,
+    track_path: Option<&Path>,
+    artist: &mut ArtistAccumulator,
+    covers: &mut HashMap<String, LocalCover>,
+    attempted_artist_cover_dirs: &mut BTreeSet<(ArtistId, PathBuf)>,
+) {
+    if artist.image_ref.is_some() {
+        return;
+    }
+    let Some(track_path) = track_path else {
+        return;
+    };
+    for (dir, allow_single_fallback) in artist_cover_dirs(track_path, artist_name) {
+        if !attempted_artist_cover_dirs.insert((artist_id.clone(), dir.clone())) {
+            continue;
+        }
+        let Some(path) = artist_cover_in_dir(&dir, artist_name, allow_single_fallback) else {
+            continue;
+        };
+        let cover = LocalCover::File(path);
+        let cover_id = cover_id(&cover);
+        covers.entry(cover_id.clone()).or_insert(cover);
+        artist.image_ref = Some(ImageRef::new(cover_id, None));
+        return;
+    }
+}
+
+fn artist_fallback_image_ref(
+    artist: &ArtistAccumulator,
+    album_image_refs: &HashMap<AlbumId, ImageRef>,
+    track_image_refs: &HashMap<TrackId, ImageRef>,
+) -> Option<ImageRef> {
+    artist
+        .albums
+        .iter()
+        .find_map(|id| album_image_refs.get(id).cloned())
+        .or_else(|| {
+            artist
+                .tracks
+                .iter()
+                .find_map(|id| track_image_refs.get(id).cloned())
+        })
+}
+
 pub(super) fn artist_from_accumulator(id: ArtistId, artist: ArtistAccumulator) -> Artist {
     Artist {
         id,
@@ -178,7 +252,7 @@ pub(super) fn artist_from_accumulator(id: ArtistId, artist: ArtistAccumulator) -
         last_played: None,
         play_count: None,
         user_rating: None,
-        image_ref: None,
+        image_ref: artist.image_ref,
     }
 }
 pub(super) fn page<T: Clone>(items: &[T], request: PagedRequest) -> PagedResponse<T> {
@@ -196,12 +270,131 @@ pub(super) fn is_audio_file(path: &Path) -> bool {
         })
 }
 pub(super) fn folder_cover(dir: &Path) -> Option<PathBuf> {
-    ["cover", "folder", "front", "album"]
-        .into_iter()
-        .flat_map(|stem| {
-            ["jpg", "jpeg", "png", "webp"].map(move |ext| dir.join(format!("{stem}.{ext}")))
+    let image_paths = folder_image_paths(dir);
+    image_paths
+        .iter()
+        .filter_map(|path| explicit_folder_cover_rank(path).map(|rank| (rank, path.clone())))
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, path)| path)
+        .or_else(|| match image_paths.as_slice() {
+            [path] => Some(path.clone()),
+            _ => None,
         })
-        .find(|path| path.is_file())
+}
+
+fn folder_image_paths(dir: &Path) -> Vec<PathBuf> {
+    let mut paths = fs::read_dir(dir)
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && supported_cover_extension(path))
+        .collect::<Vec<_>>();
+    paths.sort_by_key(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default()
+    });
+    paths
+}
+
+fn supported_cover_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["jpg", "jpeg", "png", "webp"]
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
+}
+
+fn explicit_folder_cover_rank(path: &Path) -> Option<(usize, usize)> {
+    let stem = path.file_stem().and_then(|stem| stem.to_str())?;
+    let extension = path.extension().and_then(|extension| extension.to_str())?;
+    let stem_rank = ["cover", "folder", "front", "album"]
+        .iter()
+        .position(|candidate| stem.eq_ignore_ascii_case(candidate))?;
+    let extension_rank = ["jpg", "jpeg", "png", "webp"]
+        .iter()
+        .position(|candidate| extension.eq_ignore_ascii_case(candidate))?;
+    Some((stem_rank, extension_rank))
+}
+
+fn artist_cover_dirs(path: &Path, artist_name: &str) -> Vec<(PathBuf, bool)> {
+    let Some(track_dir) = path.parent() else {
+        return Vec::new();
+    };
+    let mut dirs = vec![(track_dir.to_path_buf(), false)];
+    if let Some(artist_dir) = track_dir
+        .parent()
+        .filter(|dir| directory_name_matches_artist(dir, artist_name))
+        && artist_dir != track_dir
+    {
+        dirs.push((artist_dir.to_path_buf(), true));
+    }
+    dirs
+}
+
+fn artist_cover_in_dir(
+    dir: &Path,
+    artist_name: &str,
+    allow_single_fallback: bool,
+) -> Option<PathBuf> {
+    let image_paths = folder_image_paths(dir);
+    image_paths
+        .iter()
+        .filter_map(|path| {
+            explicit_artist_cover_rank(path, artist_name, allow_single_fallback)
+                .map(|rank| (rank, path.clone()))
+        })
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, path)| path)
+        .or_else(|| match (allow_single_fallback, image_paths.as_slice()) {
+            (true, [path]) => Some(path.clone()),
+            _ => None,
+        })
+}
+
+fn explicit_artist_cover_rank(
+    path: &Path,
+    artist_name: &str,
+    allow_folder_name: bool,
+) -> Option<(usize, usize)> {
+    let stem = path.file_stem().and_then(|stem| stem.to_str())?;
+    let extension = path.extension().and_then(|extension| extension.to_str())?;
+    let normalized_stem = normalized_artwork_key(stem);
+    let normalized_artist = normalized_artwork_key(artist_name);
+    let stem_rank = if normalized_stem == normalized_artist {
+        Some(0)
+    } else if stem.eq_ignore_ascii_case("artist") {
+        Some(1)
+    } else if stem.eq_ignore_ascii_case("portrait") {
+        Some(2)
+    } else if stem.eq_ignore_ascii_case("photo") {
+        Some(3)
+    } else if allow_folder_name && stem.eq_ignore_ascii_case("folder") {
+        Some(4)
+    } else {
+        None
+    }?;
+    let extension_rank = ["jpg", "jpeg", "png", "webp"]
+        .iter()
+        .position(|candidate| extension.eq_ignore_ascii_case(candidate))?;
+    Some((stem_rank, extension_rank))
+}
+
+fn directory_name_matches_artist(dir: &Path, artist_name: &str) -> bool {
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| normalized_artwork_key(name) == normalized_artwork_key(artist_name))
+}
+
+fn normalized_artwork_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 pub(super) fn embedded_cover(
     path: &Path,
@@ -211,8 +404,10 @@ pub(super) fn embedded_cover(
     let picture = tag
         .and_then(|tag| select_best_picture(tag.pictures()))
         .or_else(|| tagged_file.and_then(|file| select_best_picture_from_tags(file.tags())))?;
+    let bytes = picture_data_bounded(picture).ok()?;
     Some(LocalCover::Embedded {
         path: path.to_path_buf(),
+        bytes: Arc::from(bytes),
         content_type: picture.mime_type().map(ToString::to_string),
     })
 }

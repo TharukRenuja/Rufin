@@ -433,6 +433,142 @@ pub(in crate::ui) fn artist_tracks_for_context(
         .map(|detail| detail.tracks)
         .filter(|tracks| !tracks.is_empty())
 }
+pub(in crate::ui) fn present_playlist_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    playlist: Playlist,
+    position: Option<(f64, f64)>,
+) {
+    let menu = gio::Menu::new();
+    menu.append_item(&menu_item(
+        "Play",
+        "playlist.play",
+        "media-playback-start-symbolic",
+    ));
+    menu.append_item(&menu_item(
+        "Delete",
+        "playlist.delete",
+        "user-trash-symbolic",
+    ));
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.add_css_class("playlist-context-menu");
+    popover.set_parent(target);
+    if let Some((x, y)) = position {
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    }
+
+    let actions = gio::SimpleActionGroup::new();
+    let play = gio::SimpleAction::new("play", None);
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    let action_popover = popover.downgrade();
+    play.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
+            controller.play_tracks_now(detail.tracks);
+        }
+    });
+    actions.add_action(&play);
+
+    let delete = gio::SimpleAction::new("delete", None);
+    let controller = shell.controller.clone();
+    let window = shell.window.clone();
+    let playlist_id = playlist.id.clone();
+    let playlist_name = playlist.name.clone();
+    let action_popover = popover.downgrade();
+    delete.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr("Delete Playlist"))
+            .body(format!("Delete \"{playlist_name}\"?"))
+            .build();
+        dialog.add_response("cancel", &tr("Cancel"));
+        dialog.add_response("delete", &tr("Delete"));
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        let controller = controller.clone();
+        let playlist_id = playlist_id.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "delete" {
+                controller.delete_playlist(playlist_id.clone());
+            }
+        });
+        dialog.present(Some(&window));
+    });
+    actions.add_action(&delete);
+    target.insert_action_group("playlist", Some(&actions));
+    popover.connect_closed(move |popover| {
+        let popover = popover.clone();
+        glib::idle_add_local_once(move || {
+            popover.unparent();
+        });
+    });
+    popover.popup();
+}
+pub(in crate::ui) fn present_smart_playlist_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    playlist: SmartPlaylist,
+    position: Option<(f64, f64)>,
+) {
+    let menu = gio::Menu::new();
+    menu.append_item(&menu_item(
+        "Play",
+        "smart-playlist.play",
+        "media-playback-start-symbolic",
+    ));
+    menu.append_item(&menu_item(
+        "Delete",
+        "smart-playlist.delete",
+        "user-trash-symbolic",
+    ));
+
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    popover.add_css_class("playlist-context-menu");
+    popover.set_parent(target);
+    if let Some((x, y)) = position {
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    }
+
+    let actions = gio::SimpleActionGroup::new();
+    let play = gio::SimpleAction::new("play", None);
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    let action_popover = popover.downgrade();
+    play.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
+            controller.play_tracks_now(detail.tracks);
+        }
+    });
+    actions.add_action(&play);
+
+    let delete = gio::SimpleAction::new("delete", None);
+    let controller = shell.controller.clone();
+    let playlist_id = playlist.id.clone();
+    let action_popover = popover.downgrade();
+    delete.connect_activate(move |_, _| {
+        if let Some(popover) = action_popover.upgrade() {
+            popover.popdown();
+        }
+        controller.delete_smart_playlist(playlist_id.clone());
+    });
+    actions.add_action(&delete);
+    target.insert_action_group("smart-playlist", Some(&actions));
+    popover.connect_closed(move |popover| {
+        let popover = popover.clone();
+        glib::idle_add_local_once(move || {
+            popover.unparent();
+        });
+    });
+    popover.popup();
+}
 pub(in crate::ui) fn menu_item(label: &str, action: &str, icon_name: &str) -> gio::MenuItem {
     let item = gio::MenuItem::new(Some(&tr(label)), Some(action));
     item.set_icon(&gio::ThemedIcon::new(icon_name));
@@ -545,6 +681,8 @@ pub(in crate::ui) fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track>
         genres: Vec::new(),
         local_path: entry.local_path.clone(),
         source_format: entry.source_format.clone(),
+        comment: None,
+        skip_count: None,
     })
 }
 #[derive(Clone)]
@@ -875,12 +1013,43 @@ impl ArtworkTileWeak {
 pub(in crate::ui) async fn load_cover_pixbuf(
     path: PathBuf,
     size: i32,
-    priority: glib::Priority,
+    _priority: glib::Priority,
 ) -> Result<Pixbuf, glib::Error> {
-    let file = gio::File::for_path(path);
-    let stream = file.read_future(priority).await?;
     let decode_size = cover_pixbuf_decode_size(size);
-    Pixbuf::from_stream_at_scale_future(&stream, decode_size, decode_size, true).await
+    let pixels = gio::spawn_blocking(move || decode_cover_pixels(path, decode_size))
+        .await
+        .map_err(|_| glib::Error::new(glib::FileError::Failed, "cover decode task failed"))??;
+    let bytes = glib::Bytes::from_owned(pixels.data);
+    Ok(Pixbuf::from_bytes(
+        &bytes,
+        pixels.colorspace,
+        pixels.has_alpha,
+        pixels.bits_per_sample,
+        pixels.width,
+        pixels.height,
+        pixels.rowstride,
+    ))
+}
+struct CoverPixelData {
+    data: Vec<u8>,
+    colorspace: gdk_pixbuf::Colorspace,
+    has_alpha: bool,
+    bits_per_sample: i32,
+    width: i32,
+    height: i32,
+    rowstride: i32,
+}
+fn decode_cover_pixels(path: PathBuf, decode_size: i32) -> Result<CoverPixelData, glib::Error> {
+    let pixbuf = Pixbuf::from_file_at_scale(&path, decode_size, decode_size, true)?;
+    Ok(CoverPixelData {
+        data: pixbuf.read_pixel_bytes().as_ref().to_vec(),
+        colorspace: pixbuf.colorspace(),
+        has_alpha: pixbuf.has_alpha(),
+        bits_per_sample: pixbuf.bits_per_sample(),
+        width: pixbuf.width(),
+        height: pixbuf.height(),
+        rowstride: pixbuf.rowstride(),
+    })
 }
 pub(in crate::ui) fn cover_pixbuf_decode_size(size: i32) -> i32 {
     let size = size.max(1);

@@ -334,6 +334,29 @@ pub(in crate::controller) fn emit_playlist_changed_result(
     }
 }
 
+pub(in crate::controller) fn emit_smart_playlist_changed_result(
+    store: &StoreHandle,
+    events: &Sender<ControllerEvent>,
+    smart_playlist_id: SmartPlaylistId,
+    result: Result<(), String>,
+) {
+    if let Err(error) = result {
+        let _sent = events.send(ControllerEvent::Error(error));
+        return;
+    }
+    match load_snapshot(store) {
+        Ok(snapshot) => {
+            let _sent = events.send(ControllerEvent::SmartPlaylistChanged {
+                smart_playlist_id,
+                snapshot: Box::new(snapshot),
+            });
+        }
+        Err(error) => {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+    }
+}
+
 pub(in crate::controller) fn config_dir() -> Option<PathBuf> {
     ProjectDirs::from("io.github", "screwys", "Rufin").map(|dirs| dirs.config_dir().to_path_buf())
 }

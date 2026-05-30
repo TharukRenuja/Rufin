@@ -97,6 +97,134 @@ impl AppController {
             emit_snapshot_result(&store, &events, result);
         });
     }
+    pub fn delete_playlist(&self, playlist_id: PlaylistId) {
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let Some(saved) = store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "No active music server is saved.".to_string(),
+                ));
+                return;
+            };
+            if saved.server.provider != "fake" && saved.server.provider != "local" {
+                let result =
+                    provider_for_saved(&store, &runtime, &secrets, &saved).and_then(|provider| {
+                        runtime
+                            .block_on(provider.as_music_provider().delete_playlist(&playlist_id))
+                            .map_err(|error| error.to_string())
+                    });
+                if let Err(error) = result {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+            }
+            let result = store.with_store(|store| {
+                store.delete_playlist(&saved.server.id, &playlist_id)?;
+                Ok(())
+            });
+            emit_snapshot_result(&store, &events, result);
+        });
+    }
+    pub fn delete_smart_playlist(&self, smart_playlist_id: SmartPlaylistId) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let Some(saved) = store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "No active music server is saved.".to_string(),
+                ));
+                return;
+            };
+            let result = store.with_store(|store| {
+                store.delete_smart_playlist(&saved.server.id, &smart_playlist_id)?;
+                Ok(())
+            });
+            emit_snapshot_result(&store, &events, result);
+        });
+    }
+    pub fn restore_builtin_smart_playlist(&self, builtin: SmartPlaylistBuiltin) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let Some(saved) = store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "No active music server is saved.".to_string(),
+                ));
+                return;
+            };
+            let result = store.with_store(|store| {
+                store.restore_builtin_smart_playlist(&saved.server.id, builtin)?;
+                Ok(())
+            });
+            emit_snapshot_result(&store, &events, result);
+        });
+    }
+    pub fn save_smart_playlist(&self, name: String, definition: SmartPlaylistDefinition) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let Some(saved) = store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "No active music server is saved.".to_string(),
+                ));
+                return;
+            };
+            let id = SmartPlaylistId::new(format!(
+                "custom:{}",
+                unique_millis().unwrap_or(name.len() as u128)
+            ));
+            let result = store.with_store(|store| {
+                store.save_smart_playlist(&saved.server.id, &id, &name, &definition)?;
+                Ok(())
+            });
+            emit_smart_playlist_changed_result(&store, &events, id, result);
+        });
+    }
+    pub fn update_smart_playlist(
+        &self,
+        smart_playlist_id: SmartPlaylistId,
+        name: String,
+        definition: SmartPlaylistDefinition,
+    ) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let Some(saved) = store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "No active music server is saved.".to_string(),
+                ));
+                return;
+            };
+            let result = store.with_store(|store| {
+                store.save_smart_playlist(
+                    &saved.server.id,
+                    &smart_playlist_id,
+                    &name,
+                    &definition,
+                )?;
+                Ok(())
+            });
+            emit_smart_playlist_changed_result(&store, &events, smart_playlist_id, result);
+        });
+    }
     pub fn add_tracks_to_playlist(&self, playlist_id: PlaylistId, tracks: Vec<Track>) {
         self.mutate_playlist_entries(playlist_id, move |mut detail| {
             let mut entries = detail.entries;
