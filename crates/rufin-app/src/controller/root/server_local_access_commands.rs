@@ -110,6 +110,7 @@ impl AppController {
             });
             match result {
                 Ok(outcome) if outcome.changed && outcome.identity_changed => {
+                    let status = server_settings_status_for_outcome(&outcome);
                     let Some(saved) = outcome.saved else {
                         emit_snapshot(&store, &events);
                         return;
@@ -134,17 +135,35 @@ impl AppController {
                         return;
                     }
                     let _sent = events.send(ControllerEvent::LoginStatus(
-                        "Server settings saved. Resyncing library...".to_string(),
+                        server_settings_status_message(status).to_string(),
                     ));
                     start_sync_thread(sync_context, saved);
                 }
                 Ok(outcome) if outcome.changed => {
+                    if server_settings_status_for_outcome(&outcome)
+                        == ServerSettingsStatus::Resyncing
+                    {
+                        let Some(saved) = outcome.saved else {
+                            emit_snapshot(&store, &events);
+                            return;
+                        };
+                        let _sent = events.send(ControllerEvent::LoginStatus(
+                            server_settings_status_message(ServerSettingsStatus::Resyncing)
+                                .to_string(),
+                        ));
+                        start_sync_thread(sync_context, saved);
+                        return;
+                    }
                     let _sent = events.send(ControllerEvent::LoginStatus(
-                        "Server settings saved.".to_string(),
+                        server_settings_status_message(ServerSettingsStatus::Saved).to_string(),
                     ));
                     emit_snapshot(&store, &events);
                 }
-                Ok(_) => {}
+                Ok(_) => {
+                    let _sent = events.send(ControllerEvent::LoginStatus(
+                        server_settings_status_message(ServerSettingsStatus::Unchanged).to_string(),
+                    ));
+                }
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
                 }
@@ -219,7 +238,35 @@ struct PreparedServerSettingsUpdate {
 struct ServerSettingsUpdateOutcome {
     changed: bool,
     identity_changed: bool,
+    reauthenticated: bool,
     saved: Option<SavedServer>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ServerSettingsStatus {
+    Saved,
+    Resyncing,
+    Unchanged,
+}
+
+fn server_settings_status_for_outcome(
+    outcome: &ServerSettingsUpdateOutcome,
+) -> ServerSettingsStatus {
+    if !outcome.changed {
+        ServerSettingsStatus::Unchanged
+    } else if outcome.identity_changed || outcome.reauthenticated {
+        ServerSettingsStatus::Resyncing
+    } else {
+        ServerSettingsStatus::Saved
+    }
+}
+
+fn server_settings_status_message(status: ServerSettingsStatus) -> &'static str {
+    match status {
+        ServerSettingsStatus::Saved => "Server settings saved.",
+        ServerSettingsStatus::Resyncing => "Server settings saved. Resyncing library...",
+        ServerSettingsStatus::Unchanged => "No changes to save.",
+    }
 }
 
 fn update_server_settings_with_login(
@@ -238,6 +285,7 @@ fn update_server_settings_with_login(
         return Ok(ServerSettingsUpdateOutcome {
             changed: false,
             identity_changed: false,
+            reauthenticated: false,
             saved: None,
         });
     };
@@ -245,6 +293,7 @@ fn update_server_settings_with_login(
         return Ok(ServerSettingsUpdateOutcome {
             changed: false,
             identity_changed: false,
+            reauthenticated: false,
             saved: None,
         });
     };
@@ -374,6 +423,7 @@ fn persist_prepared_server_settings_update(
     Ok(ServerSettingsUpdateOutcome {
         changed: true,
         identity_changed,
+        reauthenticated: session.is_some(),
         saved: Some(next_saved),
     })
 }
@@ -636,6 +686,11 @@ mod tests {
 
         assert!(outcome.changed);
         assert!(!outcome.identity_changed);
+        assert!(outcome.reauthenticated);
+        assert_eq!(
+            server_settings_status_for_outcome(&outcome),
+            ServerSettingsStatus::Resyncing
+        );
         let edited = saved_server(&store, &saved.server.id);
         assert_eq!(edited.server.base_url, "https://music-lan.example.test");
         assert_eq!(edited.user_id, saved.user_id);

@@ -13,8 +13,8 @@ use super::{
     cover::record_cover_path_lookup_request, current_playback_track_id,
     home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
     local_source_snapshot_is_syncing, playlist_drop_index, playlist_entries_for_state,
-    queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
-    snapshot_local_source_cache_gate_action,
+    preferences_login_status_toast_message, queue_source_waits_for_snapshot,
+    seekbar_target_seconds, snapshot_event_outcome, snapshot_local_source_cache_gate_action,
 };
 use crate::controller::PlaybackPerfEvent;
 use rufin_core::{
@@ -1612,6 +1612,29 @@ pub(in crate::ui) fn auto_lyrics_request_keeps_server_lookup_when_external_searc
     assert_eq!(
         auto_lyrics_request_for_settings(&settings, &track_id, true),
         Some(AutoLyricsRequest::Default)
+    );
+}
+#[test]
+pub(in crate::ui) fn preferences_toast_only_uses_server_settings_statuses() {
+    assert_eq!(
+        preferences_login_status_toast_message("Checking Jellyfin server..."),
+        Some("Checking Jellyfin server...")
+    );
+    assert_eq!(
+        preferences_login_status_toast_message("Server settings saved."),
+        Some("Server settings saved.")
+    );
+    assert_eq!(
+        preferences_login_status_toast_message("Server settings saved. Resyncing library..."),
+        Some("Server settings saved. Resyncing library...")
+    );
+    assert_eq!(
+        preferences_login_status_toast_message("No changes to save."),
+        Some("No changes to save.")
+    );
+    assert_eq!(
+        preferences_login_status_toast_message("Library sync complete"),
+        None
     );
 }
 #[test]

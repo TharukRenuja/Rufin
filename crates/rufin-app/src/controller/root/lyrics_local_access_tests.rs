@@ -749,6 +749,69 @@ pub(in crate::controller) fn lrclib_manual_search_uses_combined_query_first() {
     );
 }
 #[test]
+pub(in crate::controller) fn lrclib_exact_lookup_url_uses_track_artist_and_duration() {
+    let url = super::lrclib_get_url("The Cure", "Lovesong", 210)
+        .expect("lrclib get url")
+        .expect("url");
+
+    assert_eq!(
+        url.as_str(),
+        "https://lrclib.net/api/get?track_name=Lovesong&artist_name=The+Cure&duration=210"
+    );
+    let url = super::lrclib_get_url("The Cure", "Lovesong", 0)
+        .expect("lrclib get url")
+        .expect("url");
+    assert_eq!(
+        url.as_str(),
+        "https://lrclib.net/api/get?track_name=Lovesong&artist_name=The+Cure"
+    );
+}
+#[test]
+pub(in crate::controller) fn automatic_lrclib_fallback_skips_empty_hits() {
+    let entry = QueueEntry {
+        id: QueueEntryId::new("queue-entry:lyrics-fallback"),
+        track_id: TrackId::new("jellyfin:track:lovesong"),
+        album_id: Some(AlbumId::fake(1)),
+        title: "Lovesong".to_string(),
+        artist: "The Cure".to_string(),
+        artist_id: Some(ArtistId::fake(1)),
+        album: "Disintegration".to_string(),
+        year: 1989,
+        duration_seconds: 210,
+        favorite: false,
+        image_ref: None,
+        local_path: None,
+        source_format: None,
+    };
+    let results = vec![
+        super::LyricsSearchResult {
+            id: 1,
+            track_name: "Lovesong".to_string(),
+            artist_name: "The Cure".to_string(),
+            album_name: "Disintegration".to_string(),
+            duration_seconds: 210,
+            synced_lyrics: None,
+            plain_lyrics: None,
+        },
+        super::LyricsSearchResult {
+            id: 2,
+            track_name: "Lovesong".to_string(),
+            artist_name: "The Cure".to_string(),
+            album_name: "Disintegration".to_string(),
+            duration_seconds: 210,
+            synced_lyrics: Some("[00:01.00]first line".to_string()),
+            plain_lyrics: Some("first line".to_string()),
+        },
+    ];
+
+    let lyrics = super::lyrics_from_lrclib_results(&entry, results).expect("lyrics");
+
+    assert_eq!(lyrics.track_id, entry.track_id);
+    assert_eq!(lyrics.source, LyricsSource::Remote);
+    assert_eq!(lyrics.lines[0].text, "first line");
+    assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
+}
+#[test]
 pub(in crate::controller) fn lrclib_search_body_decodes_feel_my_soul_result() {
     let json = r#"[{
             "id": 9386114,

@@ -456,7 +456,7 @@ impl Default for AppSettings {
             external_lyrics_enabled: true,
             external_metadata_enabled: true,
             prefer_server_lyrics: true,
-            seekbar_waveform_enabled: false,
+            seekbar_waveform_enabled: true,
             discord_presence_enabled: false,
             discord_client_id: default_discord_client_id(),
             discord_display_type: DiscordDisplayType::Application,
