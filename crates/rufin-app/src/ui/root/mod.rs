@@ -45,6 +45,9 @@ mod right_panel;
 mod settings_persistence;
 #[path = "../source_selector.rs"]
 mod source_selector;
+#[cfg(test)]
+#[path = "../style_contract.rs"]
+mod style_contract;
 
 use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,

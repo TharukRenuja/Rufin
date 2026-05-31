@@ -191,7 +191,7 @@ fn nav_item(item: SidebarRouteItem) -> NavItem {
             route: Route::AlbumArtists,
         },
         SidebarRouteItem::Genres => NavItem {
-            icon_name: "flag-symbolic",
+            icon_name: "rufin-genres-symbolic",
             label: "Genres",
             route: Route::Genres,
         },
@@ -321,6 +321,7 @@ fn nav_route_class(route: &Route) -> Option<&'static str> {
 mod tests {
     use super::*;
     use rufin_core::{PlaylistId, SmartPlaylistId};
+    use std::path::PathBuf;
 
     #[test]
     fn playlist_and_smart_playlist_routes_have_distinct_nav_classes() {
@@ -344,5 +345,38 @@ mod tests {
             nav_route_class(&Route::Playlists),
             nav_route_class(&Route::SmartPlaylists)
         );
+    }
+
+    #[test]
+    fn bundled_sidebar_icons_have_installed_assets() {
+        for item in SidebarRouteItem::all() {
+            let nav = nav_item(item);
+            if !nav.icon_name.starts_with("rufin-") {
+                continue;
+            }
+
+            let path = bundled_sidebar_icon_path(nav.icon_name);
+            assert!(
+                path.is_file(),
+                "{} should be bundled at {}",
+                nav.icon_name,
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn genres_route_uses_bundled_sidebar_icon() {
+        let nav = nav_item(SidebarRouteItem::Genres);
+        assert!(
+            nav.icon_name.starts_with("rufin-"),
+            "Genres should not depend on a system-theme-only icon"
+        );
+    }
+
+    fn bundled_sidebar_icon_path(icon_name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../data/icons/hicolor/scalable/actions")
+            .join(format!("{icon_name}.svg"))
     }
 }
