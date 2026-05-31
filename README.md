@@ -1,6 +1,12 @@
 # Rufin
 
-<img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="96"> Rufin is a native GTK4/libadwaita music client written in Rust. It is created to be a fast, lightweight and customizable music client. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike. [Now available in Flathub!](https://flathub.org/apps/io.github.screwys.Rufin)
+[![Checks](https://github.com/screwys/Rufin/actions/workflows/checks.yml/badge.svg)](https://github.com/screwys/Rufin/actions/workflows/checks.yml)
+[![Rust 1.92+](https://img.shields.io/badge/rust-1.92%2B-f74c00?logo=rust)](Cargo.toml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Flathub](https://img.shields.io/badge/Flathub-available-4A86CF?logo=flathub)](https://flathub.org/apps/io.github.screwys.Rufin)
+[![Nix flake](https://img.shields.io/badge/Nix-flake-5277C3?logo=nixos)](flake.nix)
+
+<img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="96"> Rufin is a native GTK4/libadwaita music client written in Rust. It is created to be a fast, lightweight and customizable music client. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike.
 <br clear="left">
 
 
@@ -12,10 +18,11 @@
 - Supports playing Jellyfin, Subsonic, Navidrome servers and local folders
 - Built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz
 - Discord Rich Presence support
-- Automatic metadata caching for missing lyrics/cover arts 
-- Music player basics like Gapless/Crossfade/ReplayGain/Equalizer 
+- Automatic metadata caching for missing lyrics/cover arts
+- Music player basics like Gapless/Crossfade/ReplayGain/Equalizer
 - Best-effort path matching with your music server and local folders if enabled, you can play from your local files while keeping server reporting
 - Rich customization while preserving GTK menus
+- Smart playlists that support nested rules
 
 # Screenshots
 
@@ -69,64 +76,15 @@ nix profile install github:screwys/Rufin
 
 ## Building locally
 
-To build it from source:
+Refer to [CONTRIBUTING.md](CONTRIBUTING.md)
 
-```bash
-git clone https://github.com/screwys/Rufin.git
-cd Rufin
-cargo run -p rufin-app
-```
 # Contributing
 
-You can contribute to the app by adding a new feature or translating the app. Please refer to [CONTRIBUTING.md](CONTRIBUTING.md)
-
-# Development
-
-The default app build exposes the user/admin CLI only:
-
-```text
-Usage: rufin [OPTIONS]
-```
-
-| Option | Usage |
-| --- | --- |
-| `--clear-cache` | Clears the active server cache and exits. |
-| `--forget-active-server` | Removes the active server state and exits. |
-| `-h`, `--help` | Prints command-line help. |
-
-Development fixture and performance flags are available with the `dev-tools` feature. Pass app flags after `--`, for example:
-
-```bash
-cargo run -p rufin-app --features dev-tools -- --ui-perf-observe
-```
-
-| Option | Usage |
-| --- | --- |
-| `--fake-scale <small\|large>` | Starts with a generated small or large fake library. |
-| `--ui-perf-run` | Runs the automated startup, route, scroll, and artwork performance pass, then exits. |
-| `--ui-perf-observe` | Records manual route reveal, scroll, and artwork performance while you use the app. |
-
-For tests:
-
-```bash
-cargo fmt --check
-scripts/test-rust.sh
-```
-
-`scripts/test-rust.sh` uses `cargo-nextest` when it is installed and falls back to
-`cargo test`.
-
-UI perf reports default to `.local/perf/rufin-ui-perf-<pid>.log` for `--ui-perf-run` and `.local/perf/rufin-ui-observe-<pid>.log` for `--ui-perf-observe`.
+To contribute code, docs, or translations, please see [CONTRIBUTING.md](CONTRIBUTING.md)
 
 # Credits
 
-[GTK 4](https://www.gtk.org/)
-
-[libadwaita](https://gitlab.gnome.org/GNOME/libadwaita/)
-
-[gtk-rs](https://gtk-rs.org/) 
-
-[GStreamer](https://gstreamer.freedesktop.org/)
+Built with [GTK 4](https://www.gtk.org/), [libadwaita](https://gitlab.gnome.org/GNOME/libadwaita/), [gtk-rs](https://gtk-rs.org/), [GStreamer](https://gstreamer.freedesktop.org/)
 
 This app is greatly influenced by [Feishin](https://github.com/jeffvli/feishin), as in the overall design and in how certain parts should work. It aims to bring a similar experience, altough not as feature-rich, to a native desktop app without a web stack.
 
