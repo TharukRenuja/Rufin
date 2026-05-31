@@ -3,7 +3,11 @@ window {
   color: @window_fg_color;
 }
 
-tooltip.background,
+tooltip.background {
+  background: rgba(0, 0, 0, 0.88);
+  color: white;
+}
+
 tooltip.background label {
   color: white;
 }
@@ -247,7 +251,7 @@ menubutton.server-selector > button:hover {
 }
 
 .server-section-label {
-  color: @dim_label_color;
+  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
   font-size: 0.9em;
 }
 
@@ -283,7 +287,7 @@ menubutton.server-selector > button:hover {
 }
 
 .home-showcase .muted {
-  color: color-mix(in srgb, @window_fg_color 72%, transparent);
+  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
 }
 
 .home-showcase-cover {
@@ -480,7 +484,7 @@ scale.volume-slider trough {
 }
 
 .muted {
-  color: @dim_label_color;
+  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
 }
 
 .error-text {
@@ -554,11 +558,11 @@ scale.volume-slider trough {
 }
 
 .table-link:hover .table-link-label {
-  color: @accent_color;
+  color: color-mix(in srgb, @accent_color 72%, @window_fg_color);
 }
 
 .hovered-link {
-  color: @accent_color;
+  color: color-mix(in srgb, @accent_color 72%, @window_fg_color);
 }
 
 .cached-row {
@@ -624,9 +628,12 @@ scale.volume-slider trough {
   font-size: 40px;
 }
 
-.album-detail-showcase .eyebrow,
 .album-detail-showcase .muted {
-  color: color-mix(in srgb, @window_fg_color 72%, transparent);
+  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
+}
+
+.album-detail-showcase .eyebrow {
+  color: color-mix(in srgb, @accent_color 72%, @window_fg_color);
 }
 
 .album-detail-cover {
