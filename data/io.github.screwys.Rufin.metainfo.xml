@@ -23,36 +23,44 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.4.0/data/Rufin.png</image>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse artists</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.4.0/data/artists.png</image>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/artists.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse albums</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.4.0/data/albums.png</image>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/albums.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.4.0/data/tracks.png</image>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Configure app layout</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.4.0/data/general.png</image>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/general.png</image>
     </screenshot>
     <screenshot>
       <caption>Customize the library layout</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.4.0/data/customize_display.png</image>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/customize_display.png</image>
     </screenshot>
     <screenshot>
       <caption>Configure library sources</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.4.0/data/library.png</image>
+      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/library.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.0" date="2026-05-31">
+      <description>
+        <p>This is another big release, with wide range of bug fixes and performance improvements, specifically for local folders. I'm thankful to all the people who submitted issues.
+We now have smart playlists. You can combine different rules as well. Currently this is WIP, there can be more work to do on this.
+You can change the regular seekbar with waveform one. Waveforms are calculated lazily based on the queue to not throttle the performance.
+Implemented a wider range of Auto DJ features.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-05-29">
       <description>
         <p>This is a big release, workflows of the repository are hardened and automatized further.</p>
