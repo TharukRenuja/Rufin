@@ -493,18 +493,9 @@ fn append_rule_row(
         let path = path.clone();
         let rerender = Rc::clone(&rerender);
         operator.connect_selected_notify(move |dropdown| {
-            let mut group = root.borrow_mut();
-            let Some(rule) = rule_at_mut(&mut group, &path) else {
-                return;
-            };
-            let operators = operator_specs(rule.field);
-            let spec = operators
-                .get(dropdown.selected() as usize)
-                .copied()
-                .unwrap_or_else(|| operators[0]);
-            rule.operator = spec.operator;
-            rule.value = default_value(rule.field, spec.operator);
-            rerender();
+            change_rule_operator(&root, &path, dropdown.selected(), || {
+                rerender();
+            });
         });
     }
     row.append(&operator);
@@ -917,6 +908,31 @@ fn remove_node_at(group: &mut SmartPlaylistRuleGroup, path: &[usize]) -> Option<
     }
 }
 
+fn change_rule_operator(
+    root: &Rc<RefCell<SmartPlaylistRuleGroup>>,
+    path: &[usize],
+    selected: u32,
+    after_change: impl FnOnce(),
+) {
+    {
+        let mut group = root.borrow_mut();
+        let Some(rule) = rule_at_mut(&mut group, path) else {
+            return;
+        };
+        let operators = operator_specs(rule.field);
+        let Some(spec) = operators
+            .get(selected as usize)
+            .copied()
+            .or_else(|| operators.first().copied())
+        else {
+            return;
+        };
+        rule.operator = spec.operator;
+        rule.value = default_value(rule.field, spec.operator);
+    }
+    after_change();
+}
+
 fn match_mode_dropdown(mode: SmartPlaylistMatchMode) -> gtk::DropDown {
     dropdown_from_titles(
         &["All", "Any"],
@@ -1192,5 +1208,34 @@ mod tests {
             panic!("remaining node should be a rule");
         };
         assert_eq!(rule.field, SmartPlaylistRuleField::Genre);
+    }
+
+    #[test]
+    fn changing_rule_operator_allows_rerender_to_read_editor_state() {
+        let root = Rc::new(RefCell::new(SmartPlaylistRuleGroup {
+            mode: SmartPlaylistMatchMode::All,
+            rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
+                field: SmartPlaylistRuleField::Title,
+                operator: SmartPlaylistRuleOperator::Contains,
+                value: Some(SmartPlaylistRuleValue::Text("needle".to_string())),
+            })],
+        }));
+        let rerendered = std::cell::Cell::new(false);
+
+        change_rule_operator(&root, &[0], 4, || {
+            rerendered.set(true);
+            assert!(
+                root.try_borrow().is_ok(),
+                "rerender needs to read the editor state after the operator changes"
+            );
+        });
+
+        assert!(rerendered.get());
+        let group = root.borrow();
+        let SmartPlaylistRuleNode::Rule(rule) = &group.rules[0] else {
+            panic!("node should be a rule");
+        };
+        assert_eq!(rule.operator, SmartPlaylistRuleOperator::IsEmpty);
+        assert_eq!(rule.value, None);
     }
 }
