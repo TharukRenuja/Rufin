@@ -15,9 +15,12 @@ use crate::i18n::tr;
 const COMPACT_RAIL_ICON_SIZE: i32 = 22;
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
+const COMPACT_SELECTOR_BUTTON_WIDTH: i32 = COMPACT_RAIL_WIDTH - 2;
 const NORMAL_SELECTOR_NON_LABEL_WIDTH: i32 = 100;
 const NORMAL_SELECTOR_LABEL_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - NORMAL_SELECTOR_NON_LABEL_WIDTH;
 const NORMAL_SELECTOR_LABEL_WIDTH_CHARS: i32 = 12;
+const NORMAL_SELECTOR_BUTTON_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - 16;
+const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 304;
 
 pub(super) struct ServerSelector {
     pub normal_button: gtk::MenuButton,
@@ -48,7 +51,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
     normal_button.set_margin_start(8);
     normal_button.set_margin_end(8);
     normal_button.set_margin_bottom(4);
-    normal_button.set_size_request(NORMAL_SIDEBAR_WIDTH - 16, -1);
+    normal_button.set_size_request(NORMAL_SELECTOR_BUTTON_WIDTH, -1);
 
     let normal_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     normal_content.set_halign(gtk::Align::Fill);
@@ -82,7 +85,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
     compact_button.add_css_class("server-selector");
     compact_button.set_always_show_arrow(false);
     compact_button.set_can_shrink(true);
-    compact_button.set_size_request(COMPACT_RAIL_WIDTH - 2, -1);
+    compact_button.set_size_request(COMPACT_SELECTOR_BUTTON_WIDTH, -1);
     let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 4);
     compact_content.set_halign(gtk::Align::Center);
     compact_content.set_size_request(COMPACT_RAIL_LABEL_WIDTH, -1);
@@ -121,7 +124,11 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     selector
         .normal_button
-        .set_popover(Some(&server_selection_popover(shell, &content)));
+        .set_popover(Some(&server_selection_popover(
+            shell,
+            &content,
+            NORMAL_SELECTOR_BUTTON_WIDTH,
+        )));
 
     selector.compact_icon.set_icon_name(Some(icon_name));
     selector
@@ -132,7 +139,11 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
         .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
     selector
         .compact_button
-        .set_popover(Some(&server_selection_popover(shell, &content)));
+        .set_popover(Some(&server_selection_popover(
+            shell,
+            &content,
+            COMPACT_SELECTOR_BUTTON_WIDTH,
+        )));
 }
 
 fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
@@ -206,8 +217,16 @@ fn provider_icon_name(provider: &str) -> &'static str {
     }
 }
 
-fn server_selection_popover(shell: &Rc<Shell>, content: &ServerSelectorContent) -> gtk::Popover {
+fn server_selection_popover(
+    shell: &Rc<Shell>,
+    content: &ServerSelectorContent,
+    anchor_width: i32,
+) -> gtk::Popover {
     let popover = gtk::Popover::new();
+    popover.set_offset(
+        selector_popover_x_offset(anchor_width, SERVER_SELECTOR_POPOVER_WIDTH),
+        0,
+    );
     let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 4);
     wrapper.add_css_class("server-selector-popover");
 
@@ -468,4 +487,27 @@ fn configure_rail_label(label: &gtk::Label) {
     label.set_size_request(COMPACT_RAIL_LABEL_WIDTH, -1);
     label.set_lines(1);
     label.set_max_width_chars(COMPACT_RAIL_LABEL_WIDTH_CHARS);
+}
+
+fn selector_popover_x_offset(anchor_width: i32, popover_width: i32) -> i32 {
+    ((popover_width - anchor_width) / 2).max(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn popover_offset_aligns_wider_selector_with_left_sidebar_anchor() {
+        let offset = selector_popover_x_offset(160, 304);
+
+        assert_eq!(80 + offset - 152, 0);
+    }
+
+    #[test]
+    fn popover_offset_handles_compact_selector_anchor() {
+        let offset = selector_popover_x_offset(62, 304);
+
+        assert_eq!(31 + offset - 152, 0);
+    }
 }
