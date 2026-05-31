@@ -56,10 +56,12 @@ impl Shell {
         Some(settings)
     }
 
-    pub(super) fn retry_external_cover_lookups(&self, warning_action: &'static str) {
+    pub(super) fn retry_external_cover_lookups(self: &Rc<Self>, warning_action: &'static str) {
         if let Err(error) = self.controller.retry_external_cover_lookups() {
             warn!(%error, action = warning_action, "failed to retry external cover lookups");
+            return;
         }
+        self.refresh_cover_surfaces_after_metadata_change();
     }
 
     pub(super) fn set_external_lyrics_enabled(self: &Rc<Self>, enabled: bool) {
@@ -92,10 +94,16 @@ impl Shell {
                 settings.external_metadata_enabled = enabled;
                 true
             })
-            .is_some()
+            .is_none()
         {
-            self.controller.reload_snapshot();
+            return;
         }
+        if enabled {
+            self.retry_external_cover_lookups("metadata setting");
+        } else {
+            self.refresh_cover_surfaces_after_metadata_change();
+        }
+        self.controller.reload_snapshot();
     }
 
     pub(super) fn set_prefer_server_lyrics(self: &Rc<Self>, enabled: bool) {
@@ -196,6 +204,15 @@ impl Shell {
         self.update_fullscreen_player();
         self.update_right_panel_button();
         self.update_lyrics_panel_button();
+    }
+
+    fn refresh_cover_surfaces_after_metadata_change(self: &Rc<Self>) {
+        self.prepare_cover_retry_for_current_source();
+        self.render_current_route_preserving_scroll();
+        self.update_bottom_player();
+        self.update_fullscreen_player();
+        #[cfg(unix)]
+        self.update_mpris_player();
     }
 
     fn relocalize_static_controls(&self) {

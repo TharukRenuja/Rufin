@@ -466,6 +466,50 @@ pub(in crate::controller) fn selecting_fresh_local_source_reuses_cached_library(
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
+pub(in crate::controller) fn selecting_local_source_with_missing_artwork_reuses_cached_rows() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_server();
+    let local = local_source_saved();
+    let root = unique_test_dir("stale-local-source-selection");
+    fs::create_dir_all(&root).expect("create root");
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Server(remote.server.id.clone()));
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&remote)?;
+            store.save_server(&local)?;
+            store.set_active_server(&remote.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(
+                &local.server.id,
+                &[local_album_with_image_ref(ImageRef::new(
+                    "local:cover:file%3A%2F%2Fmissing-cover",
+                    None,
+                ))],
+                generation,
+            )?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+    let (controller, events) = controller_from_store_for_test(store);
+
+    controller.select_source(LibrarySourceSelection::Local);
+
+    let queue = wait_for_queue(&events).expect("local queue");
+    assert_eq!(queue.server_id.as_str(), LOCAL_SOURCE_SERVER_ID);
+    let snapshot = wait_for_snapshot(&events);
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Local)
+    );
+    assert_eq!(snapshot.sync_status, "Cached library ready");
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
 pub(in crate::controller) fn local_folder_preferences_remove_preserves_remote_source_selection() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = saved_server();
@@ -610,19 +654,495 @@ pub(in crate::controller) fn provider_sync_caches_all_track_pages() {
     assert_eq!(final_page.items.len(), 1);
 }
 #[test]
-pub(in crate::controller) fn local_source_sync_requires_artwork_cache_after_rows_exist() {
-    let runtime = Runtime::new().expect("runtime");
+pub(in crate::controller) fn local_source_with_missing_artwork_does_not_resync_cached_rows() {
     let store = StoreHandle::open_memory().expect("memory store");
-    let provider = FakeProvider::new(FakeScale::Small);
     let local = local_source_saved();
+    let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fexample-cover", None);
     store
-        .with_store(|store| store.save_server(&local))
-        .expect("save local server");
-    runtime
-        .block_on(sync_provider(&store, &local.server.id, &provider))
-        .expect("sync local cache");
+        .with_store(|store| {
+            store.save_server(&local)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(
+                &local.server.id,
+                &[local_album_with_image_ref(image_ref.clone())],
+                generation,
+            )?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
 
     assert!(initial_cover_cache_required(&store, &local.server.id));
+    assert!(!active_server_needs_sync(&store, &local.server.id));
+    let readiness = active_source_readiness(&store, &local.server.id).expect("readiness");
+    assert!(!readiness.artwork_fresh);
+    assert_eq!(
+        readiness.prefetch_required_reason,
+        Some(SyncRequiredReason::LocalArtworkMissing)
+    );
+}
+#[test]
+pub(in crate::controller) fn startup_readiness_does_not_scan_local_artwork_cache() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fmissing-startup-cover", None);
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(
+                &local.server.id,
+                &[local_album_with_image_ref(image_ref)],
+                generation,
+            )?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+
+    let readiness = active_source_startup_readiness(&store, &local.server.id).expect("readiness");
+
+    assert!(readiness.metadata_fresh);
+    assert!(readiness.artwork_fresh);
+    assert_eq!(readiness.prefetch_required_reason, None);
+    assert_eq!(readiness.startup_delay_ms, None);
+}
+#[test]
+pub(in crate::controller) fn local_source_sync_skips_artwork_cache_when_cover_file_exists() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fcached-cover", None);
+    let album = local_album_with_image_ref(image_ref.clone());
+    let stale_track = local_track_with_image_ref(
+        1,
+        &album,
+        ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fstale.flac", None),
+    );
+    let root = unique_test_dir("local-cover-cache-ready");
+    fs::create_dir_all(&root).expect("create cache dir");
+    let cover_path = root.join("cover.jpg");
+    fs::write(&cover_path, [0xff_u8, 0xd8, 0xff, 0xd9]).expect("write cover file");
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
+            store.upsert_tracks(&local.server.id, &[stale_track], generation)?;
+            store.save_cover_cache_entry(&CoverCacheEntry {
+                server_id: local.server.id.clone(),
+                item_id: image_ref.item_id.clone(),
+                image_tag: IMAGE_TAG_UNTAGGED.to_string(),
+                size: 256,
+                path: cover_path.to_string_lossy().to_string(),
+            })?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("save local server");
+
+    assert!(!initial_cover_cache_required(&store, &local.server.id));
+    assert!(!active_server_needs_sync(&store, &local.server.id));
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn local_source_thumbnail_only_cache_still_needs_grid_artwork() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fthumbnail-only-cover", None);
+    let album = local_album_with_image_ref(image_ref.clone());
+    let root = unique_test_dir("local-thumbnail-only-cover-cache");
+    fs::create_dir_all(&root).expect("create cache dir");
+    let cover_path = root.join("cover.jpg");
+    fs::write(&cover_path, [0xff_u8, 0xd8, 0xff, 0xd9]).expect("write cover file");
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
+            store.save_cover_cache_entry(&CoverCacheEntry {
+                server_id: local.server.id.clone(),
+                item_id: image_ref.item_id.clone(),
+                image_tag: IMAGE_TAG_UNTAGGED.to_string(),
+                size: 96,
+                path: cover_path.to_string_lossy().to_string(),
+            })?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("save local server");
+
+    assert!(initial_cover_cache_required(&store, &local.server.id));
+    assert!(!active_server_needs_sync(&store, &local.server.id));
+    let readiness = active_source_readiness(&store, &local.server.id).expect("readiness");
+    assert!(!readiness.artwork_fresh);
+    assert_eq!(
+        readiness.prefetch_required_reason,
+        Some(SyncRequiredReason::LocalArtworkMissing)
+    );
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn local_startup_sync_policy_ignores_remote_age_when_artwork_is_ready() {
+    let stale_age = Some(STARTUP_CACHE_STALE_SECONDS + 60);
+
+    let local_ready = source_sync_readiness(SourceSyncReadinessInput {
+        provider: LOCAL_PROVIDER_ID,
+        cached_item_count: 42,
+        sync_status: Some("idle"),
+        sync_completed_age_seconds: stale_age,
+        local_artwork_missing: false,
+    });
+    assert_eq!(local_ready.sync_required_reason, None);
+    assert_eq!(local_ready.startup_delay_ms, None);
+    assert!(local_ready.metadata_fresh);
+    assert!(local_ready.artwork_fresh);
+
+    let remote_stale = source_sync_readiness(SourceSyncReadinessInput {
+        provider: "jellyfin",
+        cached_item_count: 42,
+        sync_status: Some("idle"),
+        sync_completed_age_seconds: stale_age,
+        local_artwork_missing: false,
+    });
+    assert_eq!(
+        remote_stale.sync_required_reason,
+        Some(SyncRequiredReason::RemoteCacheStale)
+    );
+    assert_eq!(remote_stale.startup_delay_ms, Some(8_000));
+
+    let local_missing_artwork = source_sync_readiness(SourceSyncReadinessInput {
+        provider: LOCAL_PROVIDER_ID,
+        cached_item_count: 42,
+        sync_status: Some("idle"),
+        sync_completed_age_seconds: stale_age,
+        local_artwork_missing: true,
+    });
+    assert_eq!(local_missing_artwork.sync_required_reason, None);
+    assert_eq!(
+        local_missing_artwork.prefetch_required_reason,
+        Some(SyncRequiredReason::LocalArtworkMissing)
+    );
+    assert_eq!(local_missing_artwork.startup_delay_ms, None);
+    assert!(local_missing_artwork.metadata_fresh);
+    assert!(!local_missing_artwork.artwork_fresh);
+}
+#[test]
+pub(in crate::controller) fn local_home_section_cache_discards_cross_source_items() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let local_image_ref = ImageRef::new("local:cover:file%3A%2F%2Fsection-cover", None);
+    let remote_image_ref = ImageRef::new("jellyfin:album:remote", None);
+    let local_album = local_album_with_image_ref(local_image_ref.clone());
+    let mut remote_album = local_album_with_image_ref(remote_image_ref);
+    remote_album.id = AlbumId::new("jellyfin:album:remote");
+    let generation = store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.begin_sync(&local.server.id)
+        })
+        .expect("begin sync");
+
+    cache_home_section(
+        &store,
+        &local.server.id,
+        &HomeSection {
+            kind: HomeSectionKind::Explore,
+            albums: vec![remote_album, local_album],
+            tracks: Vec::new(),
+        },
+        generation,
+    )
+    .expect("cache home section");
+
+    let sections = store
+        .with_store(|store| store.load_home_sections(&local.server.id))
+        .expect("load home sections");
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0].albums.len(), 1);
+    assert_eq!(sections[0].albums[0].id.as_str(), "local:album:one");
+    assert_eq!(
+        sections[0].albums[0]
+            .image_ref
+            .as_ref()
+            .map(|image_ref| image_ref.item_id.as_str()),
+        Some(local_image_ref.item_id.as_str())
+    );
+}
+#[test]
+pub(in crate::controller) fn local_snapshot_reuses_album_image_for_stale_track_image_refs() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let album_image_ref = ImageRef::new("local:cover:file%3A%2F%2Falbum-cover", None);
+    let album = local_album_with_image_ref(album_image_ref.clone());
+    let tracks = [
+        local_track_with_image_ref(
+            1,
+            &album,
+            ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fone.flac", None),
+        ),
+        local_track_with_image_ref(
+            2,
+            &album,
+            ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftwo.flac", None),
+        ),
+    ];
+    let mut favorite_track = tracks[0].clone();
+    favorite_track.favorite = true;
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
+            store.upsert_tracks(
+                &local.server.id,
+                &[favorite_track.clone(), tracks[1].clone()],
+                generation,
+            )?;
+            store.upsert_home_sections(
+                &local.server.id,
+                &[HomeSection {
+                    kind: HomeSectionKind::MostPlayed,
+                    albums: Vec::new(),
+                    tracks: vec![favorite_track.clone()],
+                }],
+                generation,
+            )?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+
+    let snapshot = load_snapshot(&store).expect("load snapshot");
+
+    assert!(
+        snapshot
+            .tracks
+            .iter()
+            .all(|track| track.image_ref.as_ref() == Some(&album_image_ref))
+    );
+    assert_eq!(
+        snapshot.home_sections[0].tracks[0].image_ref.as_ref(),
+        Some(&album_image_ref)
+    );
+    assert_eq!(
+        snapshot.favorites[0].image_ref.as_ref(),
+        Some(&album_image_ref)
+    );
+}
+#[test]
+pub(in crate::controller) fn local_cached_tracks_page_reuses_album_image_for_stale_track_image_refs()
+ {
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let local = local_source_saved();
+    let album_image_ref = ImageRef::new("local:cover:file%3A%2F%2Falbum-cover", None);
+    let album = local_album_with_image_ref(album_image_ref.clone());
+    let tracks = vec![
+        local_track_with_image_ref(
+            1,
+            &album,
+            ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fone.flac", None),
+        ),
+        local_track_with_image_ref(
+            2,
+            &album,
+            ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftwo.flac", None),
+        ),
+    ];
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
+            store.upsert_tracks(&local.server.id, &tracks, generation)?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+
+    let page = controller
+        .cached_tracks_page(0, 10)
+        .expect("cached tracks page");
+
+    assert!(
+        page.items
+            .iter()
+            .all(|track| track.image_ref.as_ref() == Some(&album_image_ref))
+    );
+}
+#[test]
+pub(in crate::controller) fn remote_snapshot_discards_local_provider_image_refs() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_server();
+    let local_image_ref = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftrack.flac", None);
+    let remote_album = remote_album_with_image_ref(local_image_ref);
+    store
+        .with_store(|store| {
+            store.save_server(&remote)?;
+            store.set_active_server(&remote.server.id)?;
+            let generation = store.begin_sync(&remote.server.id)?;
+            store.upsert_albums(
+                &remote.server.id,
+                std::slice::from_ref(&remote_album),
+                generation,
+            )?;
+            store.upsert_home_sections(
+                &remote.server.id,
+                &[HomeSection {
+                    kind: HomeSectionKind::Explore,
+                    albums: vec![remote_album],
+                    tracks: Vec::new(),
+                }],
+                generation,
+            )?;
+            store.complete_sync(&remote.server.id, generation)
+        })
+        .expect("seed remote cache");
+
+    let snapshot = load_snapshot(&store).expect("load snapshot");
+
+    assert_eq!(snapshot.albums.len(), 1);
+    assert_not_local_provider_image_ref(snapshot.albums[0].image_ref.as_ref());
+    assert_eq!(snapshot.home_sections.len(), 1);
+    assert_not_local_provider_image_ref(snapshot.home_sections[0].albums[0].image_ref.as_ref());
+}
+#[test]
+pub(in crate::controller) fn local_snapshot_discards_external_metadata_image_refs() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let external_image_ref = ImageRef::new("external:album:Example%20Artist:Example%20Album", None);
+    let local_album = local_album_with_image_ref(external_image_ref);
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(
+                &local.server.id,
+                std::slice::from_ref(&local_album),
+                generation,
+            )?;
+            store.upsert_home_sections(
+                &local.server.id,
+                &[HomeSection {
+                    kind: HomeSectionKind::Explore,
+                    albums: vec![local_album],
+                    tracks: Vec::new(),
+                }],
+                generation,
+            )?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+
+    let snapshot = load_snapshot(&store).expect("load snapshot");
+
+    assert_eq!(snapshot.albums.len(), 1);
+    assert!(snapshot.albums[0].image_ref.is_none());
+    assert_eq!(snapshot.home_sections.len(), 1);
+    assert!(snapshot.home_sections[0].albums[0].image_ref.is_none());
+}
+#[test]
+pub(in crate::controller) fn local_snapshot_does_not_reuse_external_album_image_for_tracks() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let external_image_ref = ImageRef::new("external:album:Example%20Artist:Example%20Album", None);
+    let album = local_album_with_image_ref(external_image_ref);
+    let mut track = library_track(
+        1,
+        Some(ArtistId::new("local:artist:one")),
+        album.id.clone(),
+        "Example Artist",
+        &[],
+    );
+    track.id = TrackId::new("local:track:one");
+    track.album = album.title.clone();
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
+            store.upsert_tracks(&local.server.id, std::slice::from_ref(&track), generation)?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+
+    let snapshot = load_snapshot(&store).expect("load snapshot");
+
+    assert_eq!(snapshot.tracks.len(), 1);
+    assert!(snapshot.tracks[0].image_ref.is_none());
+}
+#[test]
+pub(in crate::controller) fn remote_cached_album_page_discards_local_provider_image_refs() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_server();
+    let local_image_ref = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftrack.flac", None);
+    let remote_album = remote_album_with_image_ref(local_image_ref);
+    store
+        .with_store(|store| {
+            store.save_server(&remote)?;
+            store.set_active_server(&remote.server.id)?;
+            let generation = store.begin_sync(&remote.server.id)?;
+            store.upsert_albums(
+                &remote.server.id,
+                std::slice::from_ref(&remote_album),
+                generation,
+            )?;
+            store.complete_sync(&remote.server.id, generation)?;
+            Ok(())
+        })
+        .expect("seed remote cache");
+    let (controller, _events) = controller_from_store_for_test(store);
+
+    let page = controller
+        .cached_albums_page(0, 10)
+        .expect("load cached albums");
+
+    assert_eq!(page.items.len(), 1);
+    assert_not_local_provider_image_ref(page.items[0].image_ref.as_ref());
+}
+#[test]
+pub(in crate::controller) fn local_cached_tracks_page_discards_external_album_fallback_image_refs()
+{
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let local = local_source_saved();
+    let external_image_ref = ImageRef::new("external:album:Example%20Artist:Example%20Album", None);
+    let album = local_album_with_image_ref(external_image_ref);
+    let mut track = library_track(
+        1,
+        Some(ArtistId::new("local:artist:one")),
+        album.id.clone(),
+        "Example Artist",
+        &[],
+    );
+    track.id = TrackId::new("local:track:one");
+    track.album = album.title.clone();
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
+            store.upsert_tracks(&local.server.id, std::slice::from_ref(&track), generation)?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+
+    let page = controller
+        .cached_tracks_page(0, 10)
+        .expect("cached tracks page");
+
+    assert_eq!(page.items.len(), 1);
+    assert!(page.items[0].image_ref.is_none());
 }
 #[test]
 pub(in crate::controller) fn cached_remote_sync_skips_initial_artwork_cache() {
@@ -643,6 +1163,53 @@ pub(in crate::controller) fn cached_remote_sync_skips_initial_artwork_cache() {
         .expect("sync remote cache");
 
     assert!(!initial_cover_cache_required(&store, &saved.server.id));
+}
+fn local_album_with_image_ref(image_ref: ImageRef) -> Album {
+    Album {
+        id: AlbumId::new("local:album:one"),
+        title: "Example Album".to_string(),
+        artist: "Example Artist".to_string(),
+        artist_id: Some(ArtistId::new("local:artist:one")),
+        album_artist_credits: Vec::new(),
+        artist_credits: Vec::new(),
+        year: 2026,
+        release_date: None,
+        date_added: None,
+        last_played: None,
+        play_count: None,
+        user_rating: None,
+        track_count: 1,
+        duration_seconds: 180,
+        favorite: false,
+        color_seed: 1,
+        image_ref: Some(image_ref),
+        genres: Vec::new(),
+    }
+}
+fn local_track_with_image_ref(number: u32, album: &Album, image_ref: ImageRef) -> Track {
+    let mut track = library_track(
+        number,
+        Some(ArtistId::new("local:artist:one")),
+        album.id.clone(),
+        "Example Artist",
+        &[],
+    );
+    track.id = TrackId::new(format!("local:track:{number}"));
+    track.album = album.title.clone();
+    track.image_ref = Some(image_ref);
+    track
+}
+fn remote_album_with_image_ref(image_ref: ImageRef) -> Album {
+    let mut album = local_album_with_image_ref(image_ref);
+    album.id = AlbumId::new("jellyfin:album:one");
+    album.artist_id = Some(ArtistId::new("jellyfin:artist:one"));
+    album
+}
+fn assert_not_local_provider_image_ref(image_ref: Option<&ImageRef>) {
+    assert!(
+        !image_ref.is_some_and(|image_ref| image_ref.item_id.starts_with("local:cover:")),
+        "remote cached reads must not expose local provider image refs"
+    );
 }
 #[test]
 pub(in crate::controller) fn home_refresh_replaces_cached_sections_without_full_sync() {
@@ -738,6 +1305,7 @@ pub(in crate::controller) fn playlist_refresh_replaces_cached_list_without_full_
         name: "Old Playlist".to_string(),
         track_count: 1,
         duration_seconds: stale_track.duration_seconds,
+        image_refs: Vec::new(),
         image_ref: stale_track.image_ref.clone(),
     };
     let stale_entry = PlaylistEntry {

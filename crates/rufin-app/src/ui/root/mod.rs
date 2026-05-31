@@ -88,9 +88,9 @@ use queue::connect_queue_panel_controls;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH,
-    FolderPathItem, Genre, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryField,
-    LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, PlaylistId, QueueEntry,
-    QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem,
+    FolderPathItem, Genre, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode,
+    LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, PlaylistId,
+    QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem,
     SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId,
     SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
     SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
@@ -150,12 +150,15 @@ mod shell_tests;
 
 pub(in crate::ui) use build::*;
 pub(in crate::ui) use cover::{
-    CoverBinding, CoverDecodeJob, CoverDecodePriority, CoverPathLookupIntent, CoverWarmJob,
-    DecodedCover, DecodedCoverOrderEntry, FirstRunCoverPrimeJob,
+    CoverBinding, CoverDecodeJob, CoverDecodePriority, CoverPathLookupIntent,
+    CoverPathLookupRequest, CoverWarmJob, DecodedCover, DecodedCoverOrderEntry,
+    FirstRunCoverPrimeJob,
 };
 pub(in crate::ui) use cover_startup::*;
 pub(in crate::ui) use home_refresh::*;
 pub(in crate::ui) use layout_rendering::*;
+#[cfg(test)]
+pub(in crate::ui) use route_rendering::post_route_visible_warm_targets;
 pub(in crate::ui) use shell_navigation::*;
 
 pub(in crate::ui) const GRID_ROUTE_PAGE_SIZE: usize = 16;
@@ -166,28 +169,27 @@ pub(in crate::ui) const DETAIL_COVER_SIZE: u32 = 512;
 pub(in crate::ui) const THUMB_COVER_SIZE: u32 = 96;
 pub(in crate::ui) const IMAGE_TAG_UNTAGGED: &str = "untagged";
 pub(in crate::ui) const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
-pub(in crate::ui) const DECODED_COVER_CACHE_SOFT_BYTES: usize = 128 * 1024 * 1024;
+pub(in crate::ui) const DECODED_COVER_CACHE_SOFT_BYTES: usize = 256 * 1024 * 1024;
 pub(in crate::ui) const COVER_WARM_BATCH_SIZE: usize = 3;
-pub(in crate::ui) const COVER_PATH_LOOKUP_MAX_IN_FLIGHT: usize = 3;
-pub(in crate::ui) const COVER_WARM_INITIAL_DELAY_MS: u64 = 250;
+pub(in crate::ui) const COVER_PATH_LOOKUP_MAX_IN_FLIGHT: usize = 12;
 pub(in crate::ui) const COVER_WARM_INTERVAL_MS: u64 = 32;
 pub(in crate::ui) const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
-pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 3;
-pub(in crate::ui) const STARTUP_COVER_WARM_DELAY_MS: u64 = 1_500;
-pub(in crate::ui) const STARTUP_COVER_WARM_BATCH_SIZE: usize = 1;
-pub(in crate::ui) const STARTUP_COVER_WARM_INTERVAL_MS: u64 = 80;
+pub(in crate::ui) const COVER_VISIBLE_REQUEST_DELAY_MS: u64 = 48;
+pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
+pub(in crate::ui) const COVER_VISIBLE_DECODE_MAX_IN_FLIGHT: usize = 16;
 pub(in crate::ui) const UI_PERF_MANUAL_SCROLL_IDLE_MS: u64 = 750;
 pub(in crate::ui) const UI_PERF_TRACK_ROW_BIND_SLOW_US: u64 = 4_000;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
+pub(in crate::ui) const UI_PERF_STARTUP_REVEAL_BUDGET_MS: u64 = STARTUP_ROUTE_REVEAL_MAX_MS;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
+pub(in crate::ui) const STARTUP_HOME_SECTION_LIMIT: usize = 3;
 pub(in crate::ui) const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
-pub(in crate::ui) const STARTUP_GRID_COVER_LIMIT: usize = 48;
-pub(in crate::ui) const STARTUP_VISIBLE_TRACK_COVER_LIMIT: usize = TRACK_ROUTE_PAGE_SIZE * 4;
 pub(in crate::ui) const STARTUP_CACHED_COVER_PRIME_LIMIT: usize = 3_072;
-pub(in crate::ui) const FIRST_RUN_COVER_PRIME_TIMEOUT_MS: u64 = 8_000;
+pub(in crate::ui) const FIRST_RUN_COVER_PRIME_TIMEOUT_MS: u64 = 3_000;
 pub(in crate::ui) const FIRST_RUN_COVER_PRIME_POLL_MS: u64 = 33;
-pub(in crate::ui) const FIRST_RUN_HOME_SECTION_COVER_LIMIT: usize = 8;
+pub(in crate::ui) const FIRST_RUN_HOME_SECTION_LIMIT: usize = 3;
+pub(in crate::ui) const FIRST_RUN_HOME_SECTION_COVER_LIMIT: usize = 4;
 pub(in crate::ui) const FIRST_RUN_GRID_COVER_PRIME_LIMIT: usize = 192;
 pub(in crate::ui) const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
 pub(in crate::ui) const LIBRARY_PREPARING_STATUS: &str = "Preparing library...";
@@ -215,11 +217,15 @@ pub struct AppOptions {
     pub smoke_exit_ms: Option<u64>,
     pub ui_perf_run: bool,
     pub ui_perf_observe: bool,
+    pub ui_perf_route_probe: bool,
     pub ui_perf_max_gap_ms: u64,
     pub ui_perf_route_ms: u64,
+    pub ui_perf_route_ready_ms: u64,
+    pub ui_perf_drag_ms: u64,
     pub ui_perf_duration_ms: u64,
     pub ui_perf_asset_ms: u64,
     pub ui_perf_output: Option<PathBuf>,
+    pub launch_started_at: Instant,
 }
 impl Default for AppOptions {
     fn default() -> Self {
@@ -229,11 +235,15 @@ impl Default for AppOptions {
             smoke_exit_ms: None,
             ui_perf_run: false,
             ui_perf_observe: false,
+            ui_perf_route_probe: false,
             ui_perf_max_gap_ms: 120,
             ui_perf_route_ms: 650,
+            ui_perf_route_ready_ms: 250,
+            ui_perf_drag_ms: 900,
             ui_perf_duration_ms: 15_000,
             ui_perf_asset_ms: 300,
             ui_perf_output: None,
+            launch_started_at: Instant::now(),
         }
     }
 }
@@ -270,6 +280,8 @@ pub(in crate::ui) struct AppState {
     home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
     home_refresh_started_for_visit: Cell<bool>,
+    route_tracks: RefCell<Vec<Track>>,
+    smart_playlists: RefCell<Vec<SmartPlaylist>>,
     playlist_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
     startup_route_revealed: Cell<bool>,
@@ -288,18 +300,15 @@ pub(in crate::ui) struct AppState {
     server_discovery_running: Cell<bool>,
     server_discovery_started: Cell<bool>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
+    cover_unavailable: RefCell<HashSet<String>>,
+    cover_path_cache: RefCell<HashMap<String, PathBuf>>,
     cover_path_lookups: RefCell<HashMap<String, CoverPathLookupIntent>>,
-    cover_decodes: RefCell<HashSet<String>>,
+    cover_fetches: RefCell<HashSet<String>>,
+    cover_decodes: RefCell<HashMap<String, CoverDecodePriority>>,
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
     cover_warm_paused_until: Cell<Option<Instant>>,
     cover_decode_resume_queued: Cell<bool>,
-    startup_cover_warm_generation: Cell<u64>,
-    startup_cover_warm_active: Cell<bool>,
-    startup_cover_warm_reschedule_requested: Cell<bool>,
-    route_cover_gate_started: RefCell<HashMap<&'static str, Instant>>,
-    route_cover_gate_queued: RefCell<HashSet<&'static str>>,
-    route_cover_gate_timed_out: RefCell<HashSet<&'static str>>,
     decoded_covers: RefCell<HashMap<String, DecodedCover>>,
     decoded_cover_order: RefCell<VecDeque<DecodedCoverOrderEntry>>,
     decoded_cover_bytes: Cell<usize>,
@@ -325,6 +334,7 @@ pub(in crate::ui) struct ArtworkTile {
     size: Rc<Cell<i32>>,
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
+    expects_image: Rc<Cell<bool>>,
     generation: Rc<Cell<u64>>,
 }
 #[derive(Clone)]
@@ -333,6 +343,7 @@ pub(in crate::ui) struct ArtworkTileWeak {
     size: Rc<Cell<i32>>,
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
+    expects_image: Rc<Cell<bool>>,
     generation: Rc<Cell<u64>>,
 }
 pub(in crate::ui) struct HomeSectionState {
@@ -369,11 +380,15 @@ pub(in crate::ui) struct TrackTableOptions {
 pub(in crate::ui) struct UiPerfOptions {
     max_gap_ms: u64,
     route_ms: u64,
+    route_ready_ms: u64,
+    drag_ms: u64,
     duration_ms: u64,
     asset_ms: u64,
     require_assets: bool,
     terminal_events: bool,
     observe_scroll: bool,
+    strict_contracts: bool,
+    launch_started_at: Instant,
     output: Option<PathBuf>,
 }
 pub(in crate::ui) struct UiPerfMonitor {
@@ -388,6 +403,8 @@ pub(in crate::ui) struct UiPerfInner {
     max_idle_gap_ms: u64,
     over_budget_ticks: usize,
     over_budget_idle_ticks: usize,
+    startup_reveal_ms: Option<u64>,
+    route_ready_samples: Vec<UiPerfRouteReadySample>,
     route_renders: Vec<UiPerfRouteRender>,
     route_scrolls: Vec<UiPerfRouteScroll>,
     active_scroll: Option<UiPerfActiveScroll>,
@@ -407,9 +424,15 @@ pub(in crate::ui) struct UiPerfInner {
     cover_decode_error: usize,
     cover_stale_ignored: usize,
     track_row_binds: HashMap<&'static str, UiPerfBindStats>,
+    route_model_contracts: Vec<UiPerfRouteModelContractSample>,
+    route_model_contract_samples: usize,
+    route_model_contract_failures: usize,
     track_row_contracts: Vec<UiPerfTrackRowContractSample>,
     tracks_row_contract_samples: usize,
     tracks_row_contract_failures: usize,
+    route_visible_contracts: Vec<UiPerfRouteVisibleContractSample>,
+    route_visible_contract_samples: usize,
+    route_visible_contract_failures: usize,
     playback_events: Vec<UiPerfPlaybackEvent>,
 }
 #[derive(Default)]
@@ -427,6 +450,80 @@ pub(in crate::ui) struct UiPerfTrackRowContract {
     coverless: usize,
     pending: usize,
     missing: usize,
+}
+pub(in crate::ui) struct UiPerfRouteModelContract {
+    route: &'static str,
+    layout: &'static str,
+    loaded: usize,
+    total: usize,
+    complete: bool,
+    paginated: bool,
+}
+pub(in crate::ui) struct UiPerfRouteModelContractSample {
+    route: &'static str,
+    layout: &'static str,
+    loaded: usize,
+    total: usize,
+    complete: bool,
+    paginated: bool,
+    failed: bool,
+}
+pub(in crate::ui) struct UiPerfRouteVisibleContract {
+    phase: &'static str,
+    route: String,
+    layout: &'static str,
+    visible_start: usize,
+    visible_end: usize,
+    expected_visible: usize,
+    ready: usize,
+    final_missing: usize,
+    pending: usize,
+    rendered_expected: usize,
+    rendered_ready: usize,
+    rendered_final_missing: usize,
+    rendered_fallback: usize,
+    fallback_after_reveal: usize,
+    pending_assets: usize,
+    active_decodes: usize,
+    queued_decodes: usize,
+    path_lookups: usize,
+    pending_samples: Vec<UiPerfRouteVisiblePendingSample>,
+}
+#[derive(Clone)]
+pub(in crate::ui) struct UiPerfRouteVisiblePendingSample {
+    key_hash: u64,
+    kind: &'static str,
+    state: &'static str,
+    fetch_size: u32,
+    decode_size: i32,
+}
+pub(in crate::ui) struct UiPerfRouteVisibleContractSample {
+    phase: &'static str,
+    route: String,
+    layout: &'static str,
+    visible_start: usize,
+    visible_end: usize,
+    expected_visible: usize,
+    ready: usize,
+    final_missing: usize,
+    pending: usize,
+    rendered_expected: usize,
+    rendered_ready: usize,
+    rendered_final_missing: usize,
+    rendered_fallback: usize,
+    fallback_after_reveal: usize,
+    pending_assets: usize,
+    active_decodes: usize,
+    queued_decodes: usize,
+    path_lookups: usize,
+    pending_samples: Vec<UiPerfRouteVisiblePendingSample>,
+    failed: bool,
+}
+pub(in crate::ui) struct UiPerfRouteReadySample {
+    route: String,
+    elapsed_ms: u64,
+    gate_wait_ms: u64,
+    failed: bool,
 }
 pub(in crate::ui) struct UiPerfTrackRowContractSample {
     scenario: &'static str,
@@ -578,8 +675,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         "loaded cached music library snapshot"
     );
     let first_run = library.first_run;
-    let perf_observe = options.ui_perf_observe && !options.ui_perf_run;
-    let perf_enabled = options.ui_perf_run || perf_observe;
+    let perf_observe =
+        options.ui_perf_observe && !options.ui_perf_run && !options.ui_perf_route_probe;
+    let perf_enabled = options.ui_perf_run || perf_observe || options.ui_perf_route_probe;
     let defer_initial_route = !first_run;
     let language_preference = i18n::effective_language_preference(&settings.language);
     i18n::set_language_preference(&language_preference);
@@ -620,6 +718,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         home_section_views: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
         home_refresh_started_for_visit: Cell::new(false),
+        route_tracks: RefCell::new(Vec::new()),
+        smart_playlists: RefCell::new(Vec::new()),
         playlist_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
         startup_route_revealed: Cell::new(!defer_initial_route),
@@ -638,18 +738,15 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         server_discovery_running: Cell::new(false),
         server_discovery_started: Cell::new(false),
         cover_bindings: RefCell::new(HashMap::new()),
+        cover_unavailable: RefCell::new(HashSet::new()),
+        cover_path_cache: RefCell::new(HashMap::new()),
         cover_path_lookups: RefCell::new(HashMap::new()),
-        cover_decodes: RefCell::new(HashSet::new()),
+        cover_fetches: RefCell::new(HashSet::new()),
+        cover_decodes: RefCell::new(HashMap::new()),
         cover_decode_queue: RefCell::new(VecDeque::new()),
         cover_warm_generation: Cell::new(0),
         cover_warm_paused_until: Cell::new(None),
         cover_decode_resume_queued: Cell::new(false),
-        startup_cover_warm_generation: Cell::new(0),
-        startup_cover_warm_active: Cell::new(false),
-        startup_cover_warm_reschedule_requested: Cell::new(false),
-        route_cover_gate_started: RefCell::new(HashMap::new()),
-        route_cover_gate_queued: RefCell::new(HashSet::new()),
-        route_cover_gate_timed_out: RefCell::new(HashSet::new()),
         decoded_covers: RefCell::new(HashMap::new()),
         decoded_cover_order: RefCell::new(VecDeque::new()),
         decoded_cover_bytes: Cell::new(0),
@@ -661,14 +758,20 @@ pub fn build(app: &adw::Application, options: AppOptions) {
             Rc::new(UiPerfMonitor::new(UiPerfOptions {
                 max_gap_ms: options.ui_perf_max_gap_ms,
                 route_ms: options.ui_perf_route_ms,
+                route_ready_ms: options.ui_perf_route_ready_ms,
+                drag_ms: options.ui_perf_drag_ms,
                 duration_ms: options.ui_perf_duration_ms.max(1_000),
                 asset_ms: options.ui_perf_asset_ms,
                 require_assets: perf_requires_assets,
-                terminal_events: options.ui_perf_run,
+                terminal_events: options.ui_perf_run || options.ui_perf_route_probe,
                 observe_scroll: perf_observe,
+                strict_contracts: options.ui_perf_route_probe,
+                launch_started_at: options.launch_started_at,
                 output: options.ui_perf_output.clone().or_else(|| {
                     if perf_observe {
                         default_ui_perf_output_path("rufin-ui-observe")
+                    } else if options.ui_perf_route_probe {
+                        default_ui_perf_output_path("rufin-ui-route-probe")
                     } else {
                         default_ui_perf_output_path("rufin-ui-perf")
                     }
@@ -833,7 +936,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         shell.controller.request_waveform_for_current();
     }
 
-    if !using_fake_library && !options.ui_perf_run {
+    if !using_fake_library && !options.ui_perf_run && !options.ui_perf_route_probe {
         schedule_startup_sync(&shell);
     }
 
@@ -857,6 +960,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     if options.ui_perf_run {
         start_ui_perf_run(&shell, app);
+    } else if options.ui_perf_route_probe {
+        start_ui_perf_route_probe(&shell, app);
     } else if perf_observe {
         start_ui_perf_observe(&shell, app);
     }

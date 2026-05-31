@@ -48,6 +48,12 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
                         secrets: Arc::clone(&context.secrets),
                         events: context.events.clone(),
                         cover_in_flight: Arc::clone(&context.cover_in_flight),
+                        external_cover_retry_generation: Arc::clone(
+                            &context.external_cover_retry_generation,
+                        ),
+                        retry_generation: context
+                            .external_cover_retry_generation
+                            .load(Ordering::SeqCst),
                         external_cover_prefetch_in_flight: Arc::clone(
                             &context.external_cover_prefetch_in_flight,
                         ),
@@ -257,7 +263,7 @@ pub(in crate::controller) fn initial_cover_cache_required(
     server_id: &ServerId,
 ) -> bool {
     if server_id.as_str() == LOCAL_SOURCE_SERVER_ID {
-        return true;
+        return local_initial_cover_cache_required(store, server_id);
     }
 
     store
@@ -292,6 +298,10 @@ pub(in crate::controller) fn run_sync_job(
             secrets: &context.secrets,
             events: &context.events,
             cover_in_flight: &context.cover_in_flight,
+            external_cover_retry_generation: &context.external_cover_retry_generation,
+            retry_generation: context
+                .external_cover_retry_generation
+                .load(Ordering::SeqCst),
             cover_slots: &context.cover_slots,
             saved,
             provider: provider.as_music_provider(),

@@ -179,6 +179,7 @@ pub(super) fn build_library(
             name: genre.name,
             album_count: genre.albums.len().min(u32::MAX as usize) as u32,
             track_count: genre.tracks.len().min(u32::MAX as usize) as u32,
+            image_refs: Vec::new(),
             image_ref: None,
         })
         .collect::<Vec<_>>();

@@ -890,6 +890,7 @@ impl ArtworkTile {
         let seed = Rc::new(Cell::new(seed));
         let size = Rc::new(Cell::new(width.max(height)));
         let pixbuf = Rc::new(RefCell::new(None::<Pixbuf>));
+        let expects_image = Rc::new(Cell::new(false));
         let generation = Rc::new(Cell::new(0));
         let draw_seed = Rc::clone(&seed);
         let draw_pixbuf = Rc::clone(&pixbuf);
@@ -907,6 +908,7 @@ impl ArtworkTile {
             size,
             seed,
             pixbuf,
+            expects_image,
             generation,
         }
     }
@@ -921,6 +923,7 @@ impl ArtworkTile {
             size: Rc::clone(&self.size),
             seed: Rc::clone(&self.seed),
             pixbuf: Rc::clone(&self.pixbuf),
+            expects_image: Rc::clone(&self.expects_image),
             generation: Rc::clone(&self.generation),
         }
     }
@@ -931,6 +934,10 @@ impl ArtworkTile {
 
     pub(in crate::ui) fn is_live_generation(&self, generation: u64) -> bool {
         self.generation.get() == generation && self.area.root().is_some()
+    }
+
+    pub(in crate::ui) fn is_current_generation(&self, generation: u64) -> bool {
+        self.generation.get() == generation
     }
 
     pub(in crate::ui) fn advance_generation(&self) {
@@ -957,10 +964,21 @@ impl ArtworkTile {
     }
 
     pub(in crate::ui) fn bind_image(&self, seed: u32, pixbuf: Option<Pixbuf>) -> u64 {
+        self.bind_image_state(seed, pixbuf, false)
+    }
+
+    pub(in crate::ui) fn bind_cover_image(&self, seed: u32, pixbuf: Option<Pixbuf>) -> u64 {
+        self.bind_image_state(seed, pixbuf, true)
+    }
+
+    fn bind_image_state(&self, seed: u32, pixbuf: Option<Pixbuf>, expects_image: bool) -> u64 {
         let generation = self.generation.get().saturating_add(1);
         self.generation.set(generation);
         self.seed.set(seed);
+        let has_pixbuf = pixbuf.is_some();
         *self.pixbuf.borrow_mut() = pixbuf;
+        self.expects_image.set(expects_image);
+        self.sync_cover_state_classes(expects_image, has_pixbuf);
         self.area.queue_draw();
         generation
     }
@@ -970,6 +988,7 @@ impl ArtworkTile {
             return false;
         }
         *self.pixbuf.borrow_mut() = Some(pixbuf);
+        self.sync_cover_state_classes(self.expects_image.get(), true);
         self.area.queue_draw();
         true
     }
@@ -977,6 +996,8 @@ impl ArtworkTile {
     pub(in crate::ui) fn clear_image(&self) {
         self.advance_generation();
         *self.pixbuf.borrow_mut() = None;
+        self.expects_image.set(false);
+        self.sync_cover_state_classes(false, false);
         self.area.queue_draw();
     }
 
@@ -986,8 +1007,33 @@ impl ArtworkTile {
         }
         self.generation.set(self.generation.get().saturating_add(1));
         *self.pixbuf.borrow_mut() = None;
+        self.expects_image.set(false);
+        self.sync_cover_state_classes(false, false);
         self.area.queue_draw();
         true
+    }
+
+    fn sync_cover_state_classes(&self, expects_image: bool, has_pixbuf: bool) {
+        if expects_image {
+            self.area.add_css_class("cover-tile-expected");
+        } else {
+            self.area.remove_css_class("cover-tile-expected");
+        }
+
+        if has_pixbuf {
+            self.area.add_css_class("cover-tile-resolved");
+            self.area.remove_css_class("cover-tile-final-missing");
+            self.area.remove_css_class("cover-tile-fallback");
+        } else {
+            self.area.remove_css_class("cover-tile-resolved");
+            if expects_image {
+                self.area.remove_css_class("cover-tile-final-missing");
+                self.area.add_css_class("cover-tile-fallback");
+            } else {
+                self.area.add_css_class("cover-tile-final-missing");
+                self.area.remove_css_class("cover-tile-fallback");
+            }
+        }
     }
 }
 impl ArtworkTileWeak {
@@ -997,6 +1043,7 @@ impl ArtworkTileWeak {
             size: Rc::clone(&self.size),
             seed: Rc::clone(&self.seed),
             pixbuf: Rc::clone(&self.pixbuf),
+            expects_image: Rc::clone(&self.expects_image),
             generation: Rc::clone(&self.generation),
         })
     }
@@ -1005,9 +1052,9 @@ impl ArtworkTileWeak {
         self.size.get()
     }
 
-    pub(in crate::ui) fn is_live_generation(&self, generation: u64) -> bool {
+    pub(in crate::ui) fn is_current_generation(&self, generation: u64) -> bool {
         self.upgrade()
-            .is_some_and(|tile| tile.is_live_generation(generation))
+            .is_some_and(|tile| tile.is_current_generation(generation))
     }
 }
 pub(in crate::ui) async fn load_cover_pixbuf(

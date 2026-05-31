@@ -18,10 +18,11 @@ pub(in crate::controller) fn cache_home_sections(
     sections: &[HomeSection],
     generation: i64,
 ) -> Result<(), String> {
-    for section in sections {
+    let sections = source_scoped_home_sections(server_id, sections);
+    for section in &sections {
         cache_home_section_items(store, server_id, section, generation)?;
     }
-    store.with_store(|store| store.upsert_home_sections(server_id, sections, generation))?;
+    store.with_store(|store| store.upsert_home_sections(server_id, &sections, generation))?;
     Ok(())
 }
 pub(in crate::controller) fn cache_home_section(
@@ -30,8 +31,9 @@ pub(in crate::controller) fn cache_home_section(
     section: &HomeSection,
     generation: i64,
 ) -> Result<(), String> {
-    cache_home_section_items(store, server_id, section, generation)?;
-    store.with_store(|store| store.upsert_home_section(server_id, section, generation))?;
+    let section = source_scoped_home_section(server_id, section);
+    cache_home_section_items(store, server_id, &section, generation)?;
+    store.with_store(|store| store.upsert_home_section(server_id, &section, generation))?;
     Ok(())
 }
 pub(in crate::controller) fn cache_home_section_items(
@@ -47,6 +49,23 @@ pub(in crate::controller) fn cache_home_section_items(
         store.with_store(|store| store.upsert_tracks(server_id, &section.tracks, generation))?;
     }
     Ok(())
+}
+fn source_scoped_home_sections(server_id: &ServerId, sections: &[HomeSection]) -> Vec<HomeSection> {
+    sections
+        .iter()
+        .map(|section| source_scoped_home_section(server_id, section))
+        .collect()
+}
+fn source_scoped_home_section(server_id: &ServerId, section: &HomeSection) -> HomeSection {
+    if server_id.as_str() != LOCAL_SOURCE_SERVER_ID {
+        return section.clone();
+    }
+    let mut section = section.clone();
+    section.albums.retain(|album| is_local_album_id(&album.id));
+    section.tracks.retain(|track| is_local_track_id(&track.id));
+    let saved = local_source_saved();
+    scrub_source_home_section_image_refs(&saved, &mut section);
+    section
 }
 pub(in crate::controller) fn sync_page_finished(
     item_count: usize,
@@ -151,6 +170,7 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.server.id))
         .ok();
+    store.with_store(|store| store.ensure_collection_cover_refs(&saved.server.id))?;
     let mut home_sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
     let mut prefetched_explore = store.with_store(|store| {
         store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
@@ -177,9 +197,21 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
     let cached_playlist_count = playlist_page.total;
     let mut artists = artist_page.items;
     let mut album_artists = album_artist_page.items;
-    let genres = genre_page.items;
-    let playlists = playlist_page.items;
+    let mut genres = genre_page.items;
+    let mut playlists = playlist_page.items;
     let mut favorites = store.with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
+    scrub_snapshot_image_refs(
+        &saved,
+        &mut home_sections,
+        prefetched_explore.as_mut(),
+        &mut albums,
+        &mut tracks,
+        &mut artists,
+        &mut album_artists,
+        &mut genres,
+        &mut playlists,
+        &mut favorites,
+    );
     external_metadata::normalize_home_sections(&mut home_sections, &metadata_settings);
     if let Some(section) = &mut prefetched_explore {
         external_metadata::normalize_home_section(section, &metadata_settings);
@@ -195,6 +227,28 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         &metadata_settings,
     )?;
     external_metadata::normalize_tracks(&mut favorites, &metadata_settings);
+    scrub_snapshot_image_refs(
+        &saved,
+        &mut home_sections,
+        prefetched_explore.as_mut(),
+        &mut albums,
+        &mut tracks,
+        &mut artists,
+        &mut album_artists,
+        &mut genres,
+        &mut playlists,
+        &mut favorites,
+    );
+    normalize_local_track_image_refs_from_albums(store, &saved, &mut tracks, &albums)?;
+    for section in &mut home_sections {
+        let albums = section.albums.clone();
+        normalize_local_track_image_refs_from_albums(store, &saved, &mut section.tracks, &albums)?;
+    }
+    if let Some(section) = &mut prefetched_explore {
+        let albums = section.albums.clone();
+        normalize_local_track_image_refs_from_albums(store, &saved, &mut section.tracks, &albums)?;
+    }
+    normalize_local_track_image_refs_from_albums(store, &saved, &mut favorites, &albums)?;
     let status = sync_state
         .as_ref()
         .map(sync_status_text)
@@ -281,9 +335,12 @@ pub(in crate::controller) fn normalize_artist_collection_image_refs(
         return Ok(());
     }
 
-    let fallback_albums = store.with_store(|store| {
+    let mut fallback_albums = store.with_store(|store| {
         store.load_artist_fallback_albums(&saved.server.id, album_artist, &missing_artist_ids)
     })?;
+    for album in fallback_albums.values_mut() {
+        scrub_source_image_ref(saved, &mut album.image_ref);
+    }
     apply_artist_album_fallback_image_refs(artists, fallback_albums, settings);
     Ok(())
 }
@@ -315,6 +372,47 @@ pub(in crate::controller) fn artist_fallback_image_ref(
         .filter_map(|album| album.image_ref.clone())
         .next()
         .or_else(|| tracks.iter().find_map(|track| track.image_ref.clone()))
+}
+pub(in crate::controller) fn normalize_local_track_image_refs_from_albums(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    tracks: &mut [Track],
+    albums: &[Album],
+) -> Result<(), String> {
+    if saved.server.provider != LOCAL_PROVIDER_ID || tracks.is_empty() {
+        return Ok(());
+    }
+    let mut image_refs = albums
+        .iter()
+        .filter_map(|album| {
+            let mut image_ref = album.image_ref.clone();
+            scrub_source_image_ref(saved, &mut image_ref);
+            image_ref.map(|image_ref| (album.id.clone(), image_ref))
+        })
+        .collect::<HashMap<_, _>>();
+    let missing_album_ids = tracks
+        .iter()
+        .map(|track| track.album_id.clone())
+        .filter(|album_id| !image_refs.contains_key(album_id))
+        .fold(Vec::<AlbumId>::new(), |mut ids, album_id| {
+            if !ids.iter().any(|existing| existing == &album_id) {
+                ids.push(album_id);
+            }
+            ids
+        });
+    if !missing_album_ids.is_empty() {
+        let mut loaded = store.with_store(|store| {
+            store.load_album_image_refs(&saved.server.id, &missing_album_ids)
+        })?;
+        loaded.retain(|_, image_ref| source_image_ref_allowed(saved, image_ref));
+        image_refs.extend(loaded);
+    }
+    for track in tracks {
+        if let Some(image_ref) = image_refs.get(&track.album_id) {
+            track.image_ref = Some(image_ref.clone());
+        }
+    }
+    Ok(())
 }
 pub(in crate::controller) fn push_unique_cover_ref(
     image_refs: &mut Vec<ImageRef>,
@@ -732,11 +830,126 @@ pub(in crate::controller) fn active_server_needs_sync(
     store: &StoreHandle,
     server_id: &ServerId,
 ) -> bool {
-    store
-        .with_store(|store| store.sync_completed_age_seconds(server_id))
-        .ok()
-        .flatten()
-        .is_none_or(|age| age > STARTUP_CACHE_STALE_SECONDS)
+    active_source_readiness_inner(store, server_id, false)
+        .map(|readiness| readiness.sync_required_reason.is_some())
+        .unwrap_or(true)
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::controller) enum SyncRequiredReason {
+    EmptyCache,
+    PreviousSyncError,
+    RemoteCacheStale,
+    LocalArtworkMissing,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::controller) struct SourceSyncReadiness {
+    pub(in crate::controller) metadata_fresh: bool,
+    pub(in crate::controller) artwork_fresh: bool,
+    pub(in crate::controller) sync_required_reason: Option<SyncRequiredReason>,
+    pub(in crate::controller) prefetch_required_reason: Option<SyncRequiredReason>,
+    pub(in crate::controller) startup_delay_ms: Option<u64>,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::controller) struct SourceSyncReadinessInput<'a> {
+    pub(in crate::controller) provider: &'a str,
+    pub(in crate::controller) cached_item_count: usize,
+    pub(in crate::controller) sync_status: Option<&'a str>,
+    pub(in crate::controller) sync_completed_age_seconds: Option<i64>,
+    pub(in crate::controller) local_artwork_missing: bool,
+}
+pub(in crate::controller) fn source_sync_readiness(
+    input: SourceSyncReadinessInput<'_>,
+) -> SourceSyncReadiness {
+    let sync_required_reason = if input.sync_status == Some("error") {
+        Some(SyncRequiredReason::PreviousSyncError)
+    } else if input.cached_item_count == 0 && input.sync_completed_age_seconds.is_none() {
+        Some(SyncRequiredReason::EmptyCache)
+    } else if input
+        .sync_completed_age_seconds
+        .is_none_or(|age| age >= STARTUP_CACHE_STALE_SECONDS)
+        && input.provider != LOCAL_PROVIDER_ID
+    {
+        Some(SyncRequiredReason::RemoteCacheStale)
+    } else {
+        None
+    };
+    let prefetch_required_reason = (input.provider == LOCAL_PROVIDER_ID
+        && input.cached_item_count > 0
+        && input.local_artwork_missing)
+        .then_some(SyncRequiredReason::LocalArtworkMissing);
+    let startup_delay_ms = match sync_required_reason {
+        Some(SyncRequiredReason::EmptyCache) => Some(500),
+        Some(_) => Some(8_000),
+        None => None,
+    };
+    SourceSyncReadiness {
+        metadata_fresh: !matches!(
+            sync_required_reason,
+            Some(
+                SyncRequiredReason::EmptyCache
+                    | SyncRequiredReason::PreviousSyncError
+                    | SyncRequiredReason::RemoteCacheStale
+            )
+        ),
+        artwork_fresh: prefetch_required_reason.is_none(),
+        sync_required_reason,
+        prefetch_required_reason,
+        startup_delay_ms,
+    }
+}
+#[cfg(test)]
+pub(in crate::controller) fn active_source_readiness(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<SourceSyncReadiness, String> {
+    active_source_readiness_inner(store, server_id, true)
+}
+pub(in crate::controller) fn active_source_startup_readiness(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<SourceSyncReadiness, String> {
+    active_source_readiness_inner(store, server_id, false)
+}
+fn active_source_readiness_inner(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    include_local_artwork: bool,
+) -> Result<SourceSyncReadiness, String> {
+    let (provider, cached_item_count, sync_status, sync_completed_age_seconds) =
+        store.with_store(|store| {
+            let provider = store
+                .list_servers()?
+                .into_iter()
+                .find(|saved| saved.server.id == *server_id)
+                .map(|saved| saved.server.provider)
+                .unwrap_or_else(|| {
+                    if server_id.as_str() == LOCAL_SOURCE_SERVER_ID {
+                        LOCAL_PROVIDER_ID.to_string()
+                    } else {
+                        String::new()
+                    }
+                });
+            let albums = store.load_albums(server_id, 0, 1)?.total;
+            let tracks = store.load_tracks(server_id, 0, 1)?.total;
+            let sync_status = store.sync_state(server_id).ok().map(|state| state.status);
+            let sync_completed_age_seconds = store.sync_completed_age_seconds(server_id)?;
+            Ok((
+                provider,
+                albums.saturating_add(tracks),
+                sync_status,
+                sync_completed_age_seconds,
+            ))
+        })?;
+    let local_artwork_missing = include_local_artwork
+        && provider == LOCAL_PROVIDER_ID
+        && local_cover_cache_missing(store, server_id, false);
+    Ok(source_sync_readiness(SourceSyncReadinessInput {
+        provider: &provider,
+        cached_item_count,
+        sync_status: sync_status.as_deref(),
+        sync_completed_age_seconds,
+        local_artwork_missing,
+    }))
 }
 pub(in crate::controller) fn trimmed_optional(value: Option<&str>) -> Option<String> {
     value
@@ -803,10 +1016,290 @@ pub(in crate::controller) fn settings_for_server(
     mut settings: AppSettings,
     server: &ServerIdentity,
 ) -> AppSettings {
-    if server.provider == "fake" {
+    if server.provider == "fake" || server.provider == LOCAL_PROVIDER_ID {
         settings.external_metadata_enabled = false;
     }
     settings
+}
+pub(in crate::controller) fn local_initial_cover_cache_required(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> bool {
+    local_cover_cache_missing(store, server_id, true)
+}
+fn local_cover_cache_missing(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    missing_library_requires_prefetch: bool,
+) -> bool {
+    if server_id.as_str() != LOCAL_SOURCE_SERVER_ID {
+        return false;
+    }
+    store
+        .with_store(|store| {
+            let album_count = store.load_albums(server_id, 0, 1)?.total;
+            let track_count = store.load_tracks(server_id, 0, 1)?.total;
+            if album_count == 0 && track_count == 0 {
+                return Ok(missing_library_requires_prefetch);
+            }
+            local_provider_cover_refs_missing_in_store(store, server_id)
+        })
+        .unwrap_or(true)
+}
+fn local_provider_cover_refs_missing_in_store(
+    store: &Store,
+    server_id: &ServerId,
+) -> Result<bool, StoreError> {
+    let mut seen = HashSet::new();
+    if local_album_cover_refs_missing(store, server_id, &mut seen)? {
+        return Ok(true);
+    }
+    if local_track_cover_refs_missing(store, server_id, &mut seen)? {
+        return Ok(true);
+    }
+    if local_artist_cover_refs_missing(store, server_id, false, &mut seen)? {
+        return Ok(true);
+    }
+    local_artist_cover_refs_missing(store, server_id, true, &mut seen)
+}
+fn local_album_cover_refs_missing(
+    store: &Store,
+    server_id: &ServerId,
+    seen: &mut HashSet<(String, String)>,
+) -> Result<bool, StoreError> {
+    let mut offset = 0;
+    loop {
+        let page = store.load_albums(server_id, offset, PAGE_SIZE)?;
+        for album in &page.items {
+            if !is_local_album_id(&album.id) {
+                return Ok(true);
+            }
+            if local_image_ref_cache_missing(store, server_id, album.image_ref.as_ref(), seen)? {
+                return Ok(true);
+            }
+        }
+        if sync_page_finished(page.items.len(), page.total, offset + page.items.len()) {
+            return Ok(false);
+        }
+        offset += page.items.len();
+    }
+}
+fn local_track_cover_refs_missing(
+    store: &Store,
+    server_id: &ServerId,
+    seen: &mut HashSet<(String, String)>,
+) -> Result<bool, StoreError> {
+    let mut offset = 0;
+    loop {
+        let page = store.load_tracks(server_id, offset, PAGE_SIZE)?;
+        let album_ids = page
+            .items
+            .iter()
+            .map(|track| track.album_id.clone())
+            .collect::<Vec<_>>();
+        let album_image_refs = store.load_album_image_refs(server_id, &album_ids)?;
+        for track in &page.items {
+            if !is_local_track_id(&track.id) || !is_local_album_id(&track.album_id) {
+                return Ok(true);
+            }
+            let image_ref = album_image_refs
+                .get(&track.album_id)
+                .or(track.image_ref.as_ref());
+            if local_image_ref_cache_missing(store, server_id, image_ref, seen)? {
+                return Ok(true);
+            }
+        }
+        if sync_page_finished(page.items.len(), page.total, offset + page.items.len()) {
+            return Ok(false);
+        }
+        offset += page.items.len();
+    }
+}
+fn local_artist_cover_refs_missing(
+    store: &Store,
+    server_id: &ServerId,
+    album_artist: bool,
+    seen: &mut HashSet<(String, String)>,
+) -> Result<bool, StoreError> {
+    let mut offset = 0;
+    loop {
+        let page = store.load_artists(server_id, album_artist, offset, PAGE_SIZE)?;
+        for artist in &page.items {
+            if !is_local_artist_id(&artist.id) {
+                return Ok(true);
+            }
+            if local_image_ref_cache_missing(store, server_id, artist.image_ref.as_ref(), seen)? {
+                return Ok(true);
+            }
+        }
+        if sync_page_finished(page.items.len(), page.total, offset + page.items.len()) {
+            return Ok(false);
+        }
+        offset += page.items.len();
+    }
+}
+fn local_image_ref_cache_missing(
+    store: &Store,
+    server_id: &ServerId,
+    image_ref: Option<&ImageRef>,
+    seen: &mut HashSet<(String, String)>,
+) -> Result<bool, StoreError> {
+    let Some(image_ref) = image_ref else {
+        return Ok(false);
+    };
+    if !is_local_provider_image_ref(image_ref) {
+        return Ok(false);
+    }
+    let tag = image_ref
+        .tag
+        .as_deref()
+        .unwrap_or(IMAGE_TAG_UNTAGGED)
+        .to_string();
+    if !seen.insert((image_ref.item_id.clone(), tag.clone())) {
+        return Ok(false);
+    }
+    for size in [256, 512] {
+        if local_cover_cache_entry_exists(store, server_id, image_ref, &tag, size)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+fn local_cover_cache_entry_exists(
+    store: &Store,
+    server_id: &ServerId,
+    image_ref: &ImageRef,
+    tag: &str,
+    size: u32,
+) -> Result<bool, StoreError> {
+    let key = rufin_store::image_cache_key(server_id, &image_ref.item_id, tag, size);
+    if cover_cache_path_for_key(&key).is_some_and(|path| path.exists()) {
+        return Ok(true);
+    }
+    let Some(entry) = store.load_cover_cache_entry(server_id, &image_ref.item_id, tag, size)?
+    else {
+        return Ok(false);
+    };
+    Ok(Path::new(&entry.path).exists())
+}
+pub(in crate::controller) fn scrub_source_album_image_refs(
+    saved: &SavedServer,
+    albums: &mut [Album],
+) {
+    for album in albums {
+        scrub_source_image_ref(saved, &mut album.image_ref);
+    }
+}
+pub(in crate::controller) fn scrub_source_track_image_refs(
+    saved: &SavedServer,
+    tracks: &mut [Track],
+) {
+    for track in tracks {
+        scrub_source_image_ref(saved, &mut track.image_ref);
+    }
+}
+pub(in crate::controller) fn scrub_source_artist_image_refs(
+    saved: &SavedServer,
+    artists: &mut [Artist],
+) {
+    for artist in artists {
+        scrub_source_image_ref(saved, &mut artist.image_ref);
+    }
+}
+pub(in crate::controller) fn scrub_source_genre_image_refs(
+    saved: &SavedServer,
+    genres: &mut [Genre],
+) {
+    for genre in genres {
+        scrub_source_image_ref(saved, &mut genre.image_ref);
+        scrub_source_image_ref_vec(saved, &mut genre.image_refs);
+    }
+}
+pub(in crate::controller) fn scrub_source_playlist_image_refs(
+    saved: &SavedServer,
+    playlists: &mut [Playlist],
+) {
+    for playlist in playlists {
+        scrub_source_image_ref(saved, &mut playlist.image_ref);
+        scrub_source_image_ref_vec(saved, &mut playlist.image_refs);
+    }
+}
+pub(in crate::controller) fn scrub_source_smart_playlist_image_refs(
+    saved: &SavedServer,
+    playlists: &mut [SmartPlaylist],
+) {
+    for playlist in playlists {
+        scrub_source_image_ref(saved, &mut playlist.image_ref);
+        scrub_source_image_ref_vec(saved, &mut playlist.image_refs);
+    }
+}
+pub(in crate::controller) fn scrub_source_home_section_image_refs(
+    saved: &SavedServer,
+    section: &mut HomeSection,
+) {
+    if saved.server.provider == LOCAL_PROVIDER_ID {
+        section.albums.retain(|album| is_local_album_id(&album.id));
+        section.tracks.retain(|track| is_local_track_id(&track.id));
+    }
+    scrub_source_album_image_refs(saved, &mut section.albums);
+    scrub_source_track_image_refs(saved, &mut section.tracks);
+}
+#[allow(clippy::too_many_arguments)]
+fn scrub_snapshot_image_refs(
+    saved: &SavedServer,
+    home_sections: &mut [HomeSection],
+    prefetched_explore: Option<&mut HomeSection>,
+    albums: &mut [Album],
+    tracks: &mut [Track],
+    artists: &mut [Artist],
+    album_artists: &mut [Artist],
+    genres: &mut [Genre],
+    playlists: &mut [Playlist],
+    favorites: &mut [Track],
+) {
+    for section in home_sections {
+        scrub_source_home_section_image_refs(saved, section);
+    }
+    if let Some(section) = prefetched_explore {
+        scrub_source_home_section_image_refs(saved, section);
+    }
+    scrub_source_album_image_refs(saved, albums);
+    scrub_source_track_image_refs(saved, tracks);
+    scrub_source_artist_image_refs(saved, artists);
+    scrub_source_artist_image_refs(saved, album_artists);
+    scrub_source_genre_image_refs(saved, genres);
+    scrub_source_playlist_image_refs(saved, playlists);
+    scrub_source_track_image_refs(saved, favorites);
+}
+fn scrub_source_image_ref(saved: &SavedServer, image_ref: &mut Option<ImageRef>) {
+    let Some(ref_value) = image_ref else {
+        return;
+    };
+    if source_image_ref_allowed(saved, ref_value) {
+        return;
+    }
+    *image_ref = None;
+}
+fn scrub_source_image_ref_vec(saved: &SavedServer, image_refs: &mut Vec<ImageRef>) {
+    image_refs.retain(|image_ref| source_image_ref_allowed(saved, image_ref));
+}
+fn source_image_ref_allowed(saved: &SavedServer, image_ref: &ImageRef) -> bool {
+    if saved.server.provider == LOCAL_PROVIDER_ID {
+        return is_local_provider_image_ref(image_ref);
+    }
+    !is_local_provider_image_ref(image_ref)
+}
+fn is_local_provider_image_ref(image_ref: &ImageRef) -> bool {
+    image_ref.item_id.starts_with("local:cover:")
+}
+fn is_local_album_id(album_id: &AlbumId) -> bool {
+    album_id.as_str().starts_with("local:album:")
+}
+fn is_local_track_id(track_id: &TrackId) -> bool {
+    track_id.as_str().starts_with("local:track:")
+}
+fn is_local_artist_id(artist_id: &ArtistId) -> bool {
+    artist_id.as_str().starts_with("local:artist:")
 }
 pub(in crate::controller) fn playback_snapshot_from_queue(
     queue: Option<&QueueEngine>,

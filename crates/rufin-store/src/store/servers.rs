@@ -34,6 +34,9 @@ pub fn lyrics_cache_key(server_id: &ServerId, track_id: &str) -> String {
         encode_key_part(track_id)
     )
 }
+pub(super) const COLLECTION_COVER_GENRE: &str = "genre";
+pub(super) const COLLECTION_COVER_PLAYLIST: &str = "playlist";
+pub(super) const COLLECTION_COVER_SMART_PLAYLIST: &str = "smart_playlist";
 pub(super) fn saved_server_from_row(row: &Row<'_>) -> rusqlite::Result<SavedServer> {
     Ok(SavedServer {
         server: ServerIdentity {
@@ -151,6 +154,58 @@ pub(super) fn image_ref_parts(image_ref: Option<&ImageRef>) -> (Option<&str>, Op
         Some(image_ref) => (Some(image_ref.item_id.as_str()), image_ref.tag.as_deref()),
         None => (None, None),
     }
+}
+pub(super) fn collection_cover_ref_from_row(
+    row: &Row<'_>,
+    item_index: usize,
+    tag_index: usize,
+) -> rusqlite::Result<ImageRef> {
+    Ok(ImageRef {
+        item_id: row.get(item_index)?,
+        tag: row.get(tag_index)?,
+    })
+}
+pub(super) fn replace_collection_cover_refs_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+    collection_type: &str,
+    collection_id: &str,
+    image_refs: &[ImageRef],
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        DELETE FROM collection_cover_refs
+        WHERE server_id = ?1
+          AND collection_type = ?2
+          AND collection_id = ?3
+        ",
+        params![server_id.as_str(), collection_type, collection_id],
+    )?;
+    let mut insert = connection.prepare(
+        "
+        INSERT INTO collection_cover_refs (
+            server_id, collection_type, collection_id, position,
+            image_item_id, image_tag, updated_at
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
+        ON CONFLICT(server_id, collection_type, collection_id, position) DO UPDATE SET
+            image_item_id = excluded.image_item_id,
+            image_tag = excluded.image_tag,
+            updated_at = excluded.updated_at
+        ",
+    )?;
+    for (position, image_ref) in image_refs.iter().take(4).enumerate() {
+        let (image_item_id, image_tag) = image_ref_parts(Some(image_ref));
+        insert.execute(params![
+            server_id.as_str(),
+            collection_type,
+            collection_id,
+            position as i64,
+            image_item_id,
+            image_tag,
+        ])?;
+    }
+    Ok(())
 }
 pub(super) fn artist_fallback_image_refs_sql(
     album_artist: bool,
@@ -537,6 +592,7 @@ pub(super) fn genre_from_row(row: &Row<'_>) -> rusqlite::Result<Genre> {
         name: row.get(1)?,
         album_count: u32_from_i64(row.get(2)?),
         track_count: u32_from_i64(row.get(3)?),
+        image_refs: Vec::new(),
         image_ref: image_ref_from_row(row, 4, 5)?,
     })
 }
@@ -546,6 +602,7 @@ pub(super) fn playlist_from_row(row: &Row<'_>) -> rusqlite::Result<Playlist> {
         name: row.get(1)?,
         track_count: u32_from_i64(row.get(2)?),
         duration_seconds: u32_from_i64(row.get(3)?),
+        image_refs: Vec::new(),
         image_ref: image_ref_from_row(row, 4, 5)?,
     })
 }
@@ -739,6 +796,7 @@ pub(super) fn clear_library_cache_on_connection(
     server_id: &ServerId,
 ) -> StoreResult<()> {
     for table in [
+        "collection_cover_refs",
         "home_section_prefetch_items",
         "home_section_items",
         "playlist_tracks",

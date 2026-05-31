@@ -1,9 +1,30 @@
 use super::*;
 
+const POST_ROUTE_VISIBLE_WARM_DELAY_MS: u64 = 64;
+const POST_HOME_TRACK_WARM_ROWS: usize = TRACK_ROUTE_PAGE_SIZE;
+
+#[derive(Clone)]
+pub(in crate::ui) struct PostRouteVisibleWarmTarget {
+    pub(in crate::ui) route: Route,
+    pub(in crate::ui) leading_rows: usize,
+}
+
+pub(in crate::ui) fn post_route_visible_warm_targets(
+    route: &Route,
+) -> Vec<PostRouteVisibleWarmTarget> {
+    match route {
+        Route::Home => vec![PostRouteVisibleWarmTarget {
+            route: Route::Tracks,
+            leading_rows: POST_HOME_TRACK_WARM_ROWS,
+        }],
+        _ => Vec::new(),
+    }
+}
+
 impl Shell {
     pub(in crate::ui) fn render_current_route(self: &Rc<Self>) {
         let render_started = Instant::now();
-        self.cancel_cover_warm();
+        self.reset_queued_cover_work_for_route_render();
         self.update_layout();
         self.state.home_section_views.borrow_mut().clear();
         if !self.state.startup_route_revealed.get() && !self.login_screen_active() {
@@ -35,13 +56,6 @@ impl Shell {
 
         let route = self.state.routes.borrow().current().clone();
         let route_name = format!("{route:?}");
-        self.reset_inactive_route_cover_gates(match route {
-            Route::Tracks => Some("tracks"),
-            Route::Albums => Some("albums"),
-            Route::Artists => Some("artists"),
-            Route::AlbumArtists => Some("album_artists"),
-            _ => None,
-        });
         self.route_title.set_title(&tr(route.title()));
         self.set_history_buttons_sensitive(
             self.state.routes.borrow().can_back(),
@@ -91,6 +105,15 @@ impl Shell {
         let observe_started = Instant::now();
         self.observe_route_scroll(&route_name);
         let observe_ms = observe_started.elapsed().as_millis() as u64;
+        self.prime_route_visible_cover_window(&route);
+        {
+            let shell = Rc::clone(self);
+            let route = route.clone();
+            glib::idle_add_local_once(move || {
+                shell.prime_route_visible_cover_window(&route);
+            });
+        }
+        self.schedule_post_route_visible_cover_warm(&route);
         if self.state.perf.is_some() {
             println!(
                 "RUFIN_PERF_ROUTE_PHASE route={} view_ms={} append_ms={} observe_ms={} total_ms={}",
@@ -103,22 +126,33 @@ impl Shell {
         }
         self.record_perf_route_render(route_name, render_started.elapsed());
     }
-    pub(in crate::ui) fn reset_inactive_route_cover_gates(
-        &self,
-        active_route_key: Option<&'static str>,
-    ) {
-        self.state
-            .route_cover_gate_started
-            .borrow_mut()
-            .retain(|route_key, _| Some(*route_key) == active_route_key);
-        self.state
-            .route_cover_gate_queued
-            .borrow_mut()
-            .retain(|route_key| Some(*route_key) == active_route_key);
-        self.state
-            .route_cover_gate_timed_out
-            .borrow_mut()
-            .retain(|route_key| Some(*route_key) == active_route_key);
+    fn schedule_post_route_visible_cover_warm(self: &Rc<Self>, route: &Route) {
+        let targets = post_route_visible_warm_targets(route);
+        if targets.is_empty() {
+            return;
+        }
+        let shell = Rc::clone(self);
+        let source_route = route.clone();
+        glib::timeout_add_local_once(
+            Duration::from_millis(POST_ROUTE_VISIBLE_WARM_DELAY_MS),
+            move || {
+                if shell.state.routes.borrow().current() != &source_route {
+                    return;
+                }
+                for target in targets {
+                    let refs = shell.prime_route_leading_and_warm_anchor_cover_windows(
+                        &target.route,
+                        target.leading_rows,
+                    );
+                    if shell.state.perf.is_some() {
+                        println!(
+                            "RUFIN_ROUTE_POST_WARM source={source_route:?} target={:?} refs={refs}",
+                            target.route
+                        );
+                    }
+                }
+            },
+        );
     }
     pub(in crate::ui) fn render_current_route_preserving_scroll(self: &Rc<Self>) {
         let scroll_value = self.current_route_scroll_value();

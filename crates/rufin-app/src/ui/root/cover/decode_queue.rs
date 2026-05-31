@@ -1,14 +1,17 @@
 use super::*;
 
 impl Shell {
+    pub(in crate::ui) fn reset_queued_cover_work_for_route_render(&self) {
+        self.cancel_route_cover_warm();
+        self.state.cover_bindings.borrow_mut().clear();
+        clear_queued_route_cover_work(
+            &mut self.state.cover_path_lookups.borrow_mut(),
+            &mut self.state.cover_decode_queue.borrow_mut(),
+        );
+    }
+
     pub(in crate::ui) fn drain_cover_decode_queue(self: &Rc<Self>) {
-        loop {
-            if self.state.cover_decodes.borrow().len() >= self.cover_decode_in_flight_limit() {
-                break;
-            }
-            let Some(job) = self.next_cover_decode_job() else {
-                break;
-            };
+        while let Some(job) = self.next_cover_decode_job() {
             if job.requires_live_binding && !self.cover_binding_has_live(&job.key) {
                 self.record_perf_cover_stale_key(&job.key);
                 continue;
@@ -21,11 +24,12 @@ impl Shell {
             {
                 continue;
             }
-            if !self
+            if self
                 .state
                 .cover_decodes
                 .borrow_mut()
-                .insert(job.key.clone())
+                .insert(job.key.clone(), job.priority)
+                .is_some()
             {
                 continue;
             }
@@ -34,13 +38,23 @@ impl Shell {
     }
     fn next_cover_decode_job(&self) -> Option<CoverDecodeJob> {
         let mut queue = self.state.cover_decode_queue.borrow_mut();
-        if !self.cover_warm_is_paused() {
-            return queue.pop_front();
+        let active = self.state.cover_decodes.borrow();
+        if cover_decode_has_capacity(&active, CoverDecodePriority::Visible)
+            && let Some(visible) = queue
+                .iter()
+                .position(|job| job.priority == CoverDecodePriority::Visible)
+        {
+            return queue.remove(visible);
         }
-        let visible = queue
+        if self.cover_warm_is_paused()
+            || !cover_decode_has_capacity(&active, CoverDecodePriority::Warm)
+        {
+            return None;
+        }
+        let warm = queue
             .iter()
-            .position(|job| job.priority == CoverDecodePriority::Visible)?;
-        queue.remove(visible)
+            .position(|job| job.priority == CoverDecodePriority::Warm)?;
+        queue.remove(warm)
     }
     pub(in crate::ui) fn spawn_cover_decode_job(self: &Rc<Self>, job: CoverDecodeJob) {
         let shell = Rc::clone(self);
@@ -66,6 +80,9 @@ impl Shell {
                     shell.record_perf_cover_decode_error(&key);
                     warn!(%error, path = %path.display(), "failed to load cached cover");
                     for binding in shell.take_live_cover_bindings(&key) {
+                        if !binding.clear_on_failure {
+                            continue;
+                        }
                         let cleared = binding
                             .tile
                             .upgrade()
@@ -78,13 +95,6 @@ impl Shell {
             }
             shell.drain_cover_decode_queue();
         });
-    }
-    fn cover_decode_in_flight_limit(&self) -> usize {
-        if self.cover_warm_is_paused() {
-            1
-        } else {
-            COVER_DECODE_MAX_IN_FLIGHT
-        }
     }
     pub(in crate::ui) fn finish_cover_decode(&self, key: &str) {
         self.state.cover_decodes.borrow_mut().remove(key);
@@ -126,7 +136,7 @@ impl Shell {
         let mut live = Vec::with_capacity(bindings.len());
         let mut stale = 0_usize;
         for binding in bindings {
-            if binding.tile.is_live_generation(binding.generation) {
+            if binding.tile.is_current_generation(binding.generation) {
                 live.push(binding);
             } else {
                 stale = stale.saturating_add(1);
@@ -143,7 +153,7 @@ impl Shell {
     pub(in crate::ui) fn cover_binding_has_live(&self, key: &str) -> bool {
         let mut all_bindings = self.state.cover_bindings.borrow_mut();
         let live = if let Some(bindings) = all_bindings.get_mut(key) {
-            bindings.retain(|binding| binding.tile.is_live_generation(binding.generation));
+            bindings.retain(|binding| binding.tile.is_current_generation(binding.generation));
             !bindings.is_empty()
         } else {
             false
@@ -270,9 +280,17 @@ impl Shell {
             .decoded_covers
             .borrow()
             .get(key)
-            .filter(|cover| cover.size >= min_size)
+            .filter(|cover| decoded_cover_satisfies_request(key, cover.size, min_size))
             .cloned()
     }
+}
+pub(in crate::ui) fn decoded_cover_satisfies_request(
+    key: &str,
+    cover_size: i32,
+    min_size: i32,
+) -> bool {
+    cover_size >= min_size
+        || cover_size_from_cache_key(key).is_some_and(|requested_size| requested_size >= min_size)
 }
 pub(in crate::ui) fn decoded_cover_eviction_candidate(
     order: &mut VecDeque<DecodedCoverOrderEntry>,
@@ -296,10 +314,34 @@ pub(in crate::ui) fn decoded_cover_eviction_candidate(
     }
     None
 }
+
 pub(in crate::ui) fn pixbuf_bytes(pixbuf: &Pixbuf) -> usize {
     (pixbuf.rowstride().max(0) as usize).saturating_mul(pixbuf.height().max(0) as usize)
 }
 pub(in crate::ui) fn estimated_decoded_cover_bytes(size: i32) -> usize {
     let size = cover_pixbuf_decode_size(size).max(1) as usize;
     size.saturating_mul(size).saturating_mul(4)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoded_cover_accepts_source_limited_image_for_requested_size_key() {
+        assert!(decoded_cover_satisfies_request(
+            "library/local_cover_example/untagged/256",
+            180,
+            256
+        ));
+    }
+
+    #[test]
+    fn decoded_cover_rejects_smaller_thumbnail_key_for_larger_request() {
+        assert!(!decoded_cover_satisfies_request(
+            "library/local_cover_example/untagged/96",
+            96,
+            256
+        ));
+    }
 }

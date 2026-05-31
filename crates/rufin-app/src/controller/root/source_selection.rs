@@ -95,9 +95,10 @@ impl AppController {
                 }
             };
 
-            emit_snapshot(&store, &events);
             if let Some(saved) = selected_saved_needing_sync {
                 start_sync_thread(sync_context, saved);
+            } else {
+                emit_snapshot(&store, &events);
             }
         });
     }

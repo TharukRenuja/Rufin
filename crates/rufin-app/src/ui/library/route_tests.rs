@@ -50,96 +50,224 @@ fn smart_playlist_default_track_columns_fit_compact_pane() {
     assert!(smart_width < regular_width);
 }
 #[test]
-fn complete_page_policy_loads_small_library_layouts_fully() {
-    let tracks_row = LibraryListSettings {
-        layout: LibraryLayout::Row,
-        ..LibraryListSettings::for_key(LibraryListKey::Tracks)
-    };
-    let tracks_grid = LibraryListSettings {
-        layout: LibraryLayout::Grid,
-        ..LibraryListSettings::for_key(LibraryListKey::Tracks)
-    };
-    let albums_grid = LibraryListSettings {
-        layout: LibraryLayout::Grid,
-        ..LibraryListSettings::for_key(LibraryListKey::Albums)
-    };
-    let albums_detail = LibraryListSettings {
-        layout: LibraryLayout::Detail,
-        ..LibraryListSettings::for_key(LibraryListKey::Albums)
-    };
-    let playlists_grid = LibraryListSettings {
-        layout: LibraryLayout::Grid,
-        ..LibraryListSettings::for_key(LibraryListKey::Playlists)
-    };
-    let artists_grid = LibraryListSettings {
-        layout: LibraryLayout::Grid,
-        ..LibraryListSettings::for_key(LibraryListKey::Artists)
-    };
+fn complete_page_policy_loads_every_supported_library_layout_fully() {
+    for key in LibraryListKey::all() {
+        for layout in [
+            LibraryLayout::Row,
+            LibraryLayout::Grid,
+            LibraryLayout::Detail,
+        ] {
+            if !key.supports_layout(layout) {
+                continue;
+            }
+            let settings = LibraryListSettings {
+                layout,
+                ..LibraryListSettings::for_key(key)
+            };
 
-    assert!(super::library_layout_loads_complete_page(
-        LibraryListKey::Tracks,
-        &tracks_row
-    ));
-    assert!(!super::library_layout_loads_complete_page(
-        LibraryListKey::Tracks,
-        &tracks_grid
-    ));
-    assert!(super::library_layout_loads_complete_page(
-        LibraryListKey::Albums,
-        &albums_grid
-    ));
-    assert!(super::library_layout_loads_complete_page(
-        LibraryListKey::Albums,
-        &albums_detail
-    ));
-    assert!(super::library_layout_loads_complete_page(
-        LibraryListKey::Playlists,
-        &playlists_grid
-    ));
-    assert!(super::library_layout_loads_complete_page(
-        LibraryListKey::Artists,
-        &artists_grid
-    ));
+            assert!(
+                super::library_layout_loads_complete_page(key, &settings),
+                "{key:?} {layout:?} should not use route pagination"
+            );
+        }
+    }
 }
 #[test]
-fn album_route_cover_gate_is_detail_only() {
-    let albums_row = LibraryListSettings {
-        layout: LibraryLayout::Row,
-        row_fields: vec![LibraryField::Image, LibraryField::Title],
-        ..LibraryListSettings::for_key(LibraryListKey::Albums)
-    };
-    let albums_grid = LibraryListSettings {
-        layout: LibraryLayout::Grid,
-        ..LibraryListSettings::for_key(LibraryListKey::Albums)
-    };
-    let albums_detail = LibraryListSettings {
-        layout: LibraryLayout::Detail,
-        ..LibraryListSettings::for_key(LibraryListKey::Albums)
-    };
+fn track_viewport_cover_ranges_prioritize_visible_rows_over_warm_overscan() {
+    let ranges =
+        super::track_viewport_cover_ranges(2_000, 1_000, 13).expect("track viewport ranges");
 
-    assert!(!super::album_route_cover_gate_enabled(&albums_row));
-    assert!(!super::album_route_cover_gate_enabled(&albums_grid));
-    assert!(super::album_route_cover_gate_enabled(&albums_detail));
+    assert_eq!(ranges.priority_start, 1_000);
+    assert_eq!(ranges.priority_end, 1_013);
+    assert_eq!(ranges.warm_before_start, 984);
+    assert_eq!(ranges.warm_before_end, 1_000);
+    assert_eq!(ranges.warm_after_start, 1_013);
+    assert_eq!(ranges.warm_after_end, 1_045);
+}
+
+#[test]
+fn track_interaction_viewport_cover_ranges_prime_ahead_of_fast_drag() {
+    let ranges = super::track_interaction_viewport_cover_ranges(2_000, 1_000, 13)
+        .expect("track interaction viewport ranges");
+
+    assert_eq!(ranges.priority_start, 952);
+    assert_eq!(ranges.priority_end, 1_109);
+    assert_eq!(ranges.warm_before_start, 936);
+    assert_eq!(ranges.warm_before_end, 952);
+    assert_eq!(ranges.warm_after_start, 1_109);
+    assert_eq!(ranges.warm_after_end, 1_141);
+}
+
+#[test]
+fn album_interaction_viewport_cover_ranges_prime_ahead_of_fast_drag() {
+    let ranges = super::album_interaction_viewport_cover_ranges(265, 143, 18)
+        .expect("album interaction viewport ranges");
+
+    assert_eq!(ranges.priority_start, 119);
+    assert_eq!(ranges.priority_end, 209);
+    assert_eq!(ranges.warm_before_start, 103);
+    assert_eq!(ranges.warm_before_end, 119);
+    assert_eq!(ranges.warm_after_start, 209);
+    assert_eq!(ranges.warm_after_end, 241);
+}
+
+#[test]
+fn grid_interaction_cover_ranges_prime_far_enough_for_drag_settle() {
+    let ranges = super::viewport_cover_ranges(
+        129,
+        45,
+        15,
+        3 * super::GRID_INTERACTION_VIEWPORT_COVER_PRIORITY_BEHIND_ROWS,
+        3 * super::GRID_INTERACTION_VIEWPORT_COVER_PRIORITY_AHEAD_ROWS,
+        6,
+        18,
+    )
+    .expect("grid interaction viewport ranges");
+
+    assert_eq!(ranges.priority_start, 21);
+    assert_eq!(ranges.priority_end, 129);
+    assert_eq!(ranges.warm_before_start, 15);
+    assert_eq!(ranges.warm_before_end, 21);
+    assert_eq!(ranges.warm_after_start, 129);
+    assert_eq!(ranges.warm_after_end, 129);
 }
 #[test]
-fn artist_route_cover_gate_is_disabled() {
-    let artists_row = LibraryListSettings {
-        layout: LibraryLayout::Row,
-        row_fields: vec![LibraryField::Image, LibraryField::Title],
-        ..LibraryListSettings::for_key(LibraryListKey::Artists)
-    };
-    let artists_grid = LibraryListSettings {
-        layout: LibraryLayout::Grid,
-        ..LibraryListSettings::for_key(LibraryListKey::Artists)
-    };
-    let album_artists_grid = LibraryListSettings {
-        layout: LibraryLayout::Grid,
-        ..LibraryListSettings::for_key(LibraryListKey::AlbumArtists)
+fn track_viewport_cover_ranges_clip_to_model_bounds() {
+    let ranges = super::track_viewport_cover_ranges(50, 45, 20).expect("bounded track ranges");
+
+    assert_eq!(ranges.priority_start, 30);
+    assert_eq!(ranges.priority_end, 50);
+    assert_eq!(ranges.warm_before_start, 14);
+    assert_eq!(ranges.warm_before_end, 30);
+    assert_eq!(ranges.warm_after_start, 50);
+    assert_eq!(ranges.warm_after_end, 50);
+    assert!(super::track_viewport_cover_ranges(0, 0, 20).is_none());
+}
+#[test]
+fn viewport_page_size_uses_allocated_route_height_when_adjustment_is_stale() {
+    assert_eq!(
+        super::route_viewport_page_size_from_metrics(1.0, 1_044, 900),
+        1_044.0
+    );
+    assert_eq!(
+        super::route_viewport_page_size_from_metrics(760.0, 200, 600),
+        760.0
+    );
+}
+#[test]
+fn album_viewport_cover_ranges_prioritize_visible_rows() {
+    let ranges = super::album_viewport_cover_ranges(300, 252, 13).expect("album viewport ranges");
+
+    assert_eq!(ranges.priority_start, 252);
+    assert_eq!(ranges.priority_end, 265);
+    assert_eq!(ranges.warm_before_start, 236);
+    assert_eq!(ranges.warm_before_end, 252);
+    assert_eq!(ranges.warm_after_start, 265);
+    assert_eq!(ranges.warm_after_end, 297);
+}
+#[test]
+fn viewport_cover_ref_batches_prioritize_visible_range_before_overscan() {
+    let ranges = super::TrackViewportCoverRanges {
+        visible_start: 11,
+        visible_end: 12,
+        priority_start: 10,
+        priority_end: 13,
+        warm_before_start: 8,
+        warm_before_end: 10,
+        warm_after_start: 13,
+        warm_after_end: 15,
     };
 
-    assert!(!super::artist_route_cover_gate_enabled(&artists_row));
-    assert!(!super::artist_route_cover_gate_enabled(&artists_grid));
-    assert!(!super::artist_route_cover_gate_enabled(&album_artists_grid));
+    let batches = super::viewport_cover_ref_batches_for_ranges(ranges, |start, end| {
+        (start..end)
+            .map(|index| ImageRef::new(format!("cover-{index}"), None))
+            .collect::<Vec<_>>()
+    });
+    let priority_ids = batches
+        .priority_refs
+        .iter()
+        .map(|image_ref| image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+    let warm_ids = batches
+        .warm_refs
+        .iter()
+        .map(|image_ref| image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(batches.visible_priority_len, 1);
+    assert_eq!(priority_ids, vec!["cover-11", "cover-10", "cover-12"]);
+    assert_eq!(warm_ids, vec!["cover-8", "cover-9", "cover-13", "cover-14"]);
+}
+
+#[test]
+fn viewport_priority_refs_over_limit_continue_in_warm_lane() {
+    let batches = super::ViewportCoverRefBatches {
+        visible_priority_len: 3,
+        priority_refs: (0..5)
+            .map(|index| ImageRef::new(format!("priority-{index}"), None))
+            .collect(),
+        warm_refs: (0..2)
+            .map(|index| ImageRef::new(format!("warm-{index}"), None))
+            .collect(),
+    };
+
+    let (batches, overflowed) = super::cap_viewport_priority_cover_refs(batches, 3);
+    let priority_ids = batches
+        .priority_refs
+        .iter()
+        .map(|image_ref| image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+    let warm_ids = batches
+        .warm_refs
+        .iter()
+        .map(|image_ref| image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(overflowed);
+    assert_eq!(priority_ids, vec!["priority-0", "priority-1", "priority-2"]);
+    assert_eq!(
+        warm_ids,
+        vec!["priority-3", "priority-4", "warm-0", "warm-1"]
+    );
+}
+
+#[test]
+fn viewport_priority_cap_keeps_visible_refs_priority() {
+    let batches = super::ViewportCoverRefBatches {
+        visible_priority_len: 5,
+        priority_refs: (0..8)
+            .map(|index| ImageRef::new(format!("priority-{index}"), None))
+            .collect(),
+        warm_refs: vec![ImageRef::new("warm-0", None)],
+    };
+
+    let (batches, overflowed) = super::cap_viewport_priority_cover_refs(batches, 3);
+    let priority_ids = batches
+        .priority_refs
+        .iter()
+        .map(|image_ref| image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+    let warm_ids = batches
+        .warm_refs
+        .iter()
+        .map(|image_ref| image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(overflowed);
+    assert_eq!(
+        priority_ids,
+        vec![
+            "priority-0",
+            "priority-1",
+            "priority-2",
+            "priority-3",
+            "priority-4"
+        ]
+    );
+    assert_eq!(
+        warm_ids,
+        vec!["priority-5", "priority-6", "priority-7", "warm-0"]
+    );
 }
 #[test]
 fn track_cover_refs_for_settings_include_full_sorted_track_set_once() {

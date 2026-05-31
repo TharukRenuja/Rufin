@@ -11,18 +11,7 @@ impl Store {
         let total = self.count_linked_genres(server_id)?;
         let mut statement = self.connection.prepare(
             "
-            SELECT genre_id, name,
-                   (
-                       SELECT COUNT(DISTINCT album_id)
-                       FROM album_genres ag
-                       WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
-                   ) AS album_count,
-                   (
-                       SELECT COUNT(DISTINCT track_id)
-                       FROM track_genres tg
-                       WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
-                   ) AS track_count,
-                   image_item_id, image_tag
+            SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
             FROM genres g
             WHERE g.server_id = ?1
               AND (
@@ -41,10 +30,11 @@ impl Store {
             LIMIT ?2 OFFSET ?3
             ",
         )?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![server_id.as_str(), limit as i64, offset as i64],
             genre_from_row,
         )?)?;
+        self.attach_genre_cover_image_refs(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_genres_matching(
@@ -60,18 +50,7 @@ impl Store {
         let total = self.count_linked_genres_like(server_id, &pattern)?;
         let mut statement = self.connection.prepare(
             "
-            SELECT genre_id, name,
-                   (
-                       SELECT COUNT(DISTINCT album_id)
-                       FROM album_genres ag
-                       WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
-                   ) AS album_count,
-                   (
-                       SELECT COUNT(DISTINCT track_id)
-                       FROM track_genres tg
-                       WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
-                   ) AS track_count,
-                   image_item_id, image_tag
+            SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
             FROM genres g
             WHERE g.server_id = ?1
               AND LOWER(g.name) LIKE ?2 ESCAPE '\\'
@@ -91,10 +70,11 @@ impl Store {
             LIMIT ?3 OFFSET ?4
             ",
         )?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![server_id.as_str(), pattern, limit as i64, offset as i64],
             genre_from_row,
         )?)?;
+        self.attach_genre_cover_image_refs(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub(super) fn count_linked_genres(&self, server_id: &ServerId) -> StoreResult<usize> {
@@ -171,10 +151,11 @@ impl Store {
             LIMIT ?2 OFFSET ?3
             ",
         )?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![server_id.as_str(), limit as i64, offset as i64],
             playlist_from_row,
         )?)?;
+        self.attach_playlist_cover_image_refs(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_playlists_matching(
@@ -246,6 +227,7 @@ impl Store {
                     generation,
                 ])?;
             }
+            refresh_playlist_cover_refs_on_connection(connection, server_id, playlist_id)?;
             Ok(())
         })
     }
@@ -266,7 +248,7 @@ impl Store {
                 playlist_from_row,
             )
             .optional()?;
-        let Some(playlist) = playlist else {
+        let Some(mut playlist) = playlist else {
             return Ok(None);
         };
         let mut statement = self.connection.prepare(
@@ -295,6 +277,14 @@ impl Store {
         for (entry, track) in entries.iter_mut().zip(tracks.iter().cloned()) {
             entry.track = track;
         }
+        playlist.image_refs = self.load_collection_cover_refs(
+            server_id,
+            COLLECTION_COVER_PLAYLIST,
+            playlist.id.as_str(),
+        )?;
+        if playlist.image_ref.is_none() {
+            playlist.image_ref = playlist.image_refs.first().cloned();
+        }
         Ok(Some(PlaylistDetail {
             playlist,
             tracks,
@@ -311,16 +301,7 @@ impl Store {
             .query_row(
                 "
                 SELECT genre_id, name,
-                       (
-                           SELECT COUNT(DISTINCT album_id)
-                           FROM album_genres ag
-                           WHERE ag.server_id = genres.server_id AND ag.genre_name = genres.name
-                       ) AS album_count,
-                       (
-                           SELECT COUNT(DISTINCT track_id)
-                           FROM track_genres tg
-                           WHERE tg.server_id = genres.server_id AND tg.genre_name = genres.name
-                       ) AS track_count,
+                       album_count, track_count,
                        image_item_id, image_tag
                 FROM genres
                 WHERE server_id = ?1 AND genre_id = ?2
@@ -329,7 +310,7 @@ impl Store {
                 genre_from_row,
             )
             .optional()?;
-        let Some(genre) = genre else {
+        let Some(mut genre) = genre else {
             return Ok(None);
         };
         let mut albums_statement = self.connection.prepare(
@@ -338,10 +319,26 @@ impl Store {
                    a.release_date, a.date_added, a.last_played, a.play_count, a.user_rating,
                    a.track_count, a.duration_seconds, a.favorite, a.color_seed,
                    a.image_item_id, a.image_tag
-            FROM album_genres ag
-            JOIN albums a
-                ON a.server_id = ag.server_id AND a.album_id = ag.album_id
-            WHERE ag.server_id = ?1 AND ag.genre_name = ?2
+            FROM albums a
+            WHERE a.server_id = ?1
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM album_genres ag
+                      WHERE ag.server_id = a.server_id
+                        AND ag.album_id = a.album_id
+                        AND ag.genre_name = ?2
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM track_genres tg
+                      JOIN tracks t
+                          ON t.server_id = tg.server_id AND t.track_id = tg.track_id
+                      WHERE tg.server_id = a.server_id
+                        AND t.album_id = a.album_id
+                        AND tg.genre_name = ?2
+                  )
+              )
             ORDER BY a.title COLLATE NOCASE
             ",
         )?;
@@ -369,6 +366,11 @@ impl Store {
             track_from_row,
         )?)?;
         self.attach_track_metadata(server_id, &mut tracks)?;
+        genre.image_refs =
+            self.load_collection_cover_refs(server_id, COLLECTION_COVER_GENRE, genre.id.as_str())?;
+        if genre.image_ref.is_none() {
+            genre.image_ref = genre.image_refs.first().cloned();
+        }
         Ok(Some(CachedGenreDetail {
             genre,
             albums,
@@ -840,6 +842,125 @@ impl Store {
         self.attach_album_metadata(server_id, &mut albums)?;
         Ok(PagedResponse::new(albums, total.max(0) as usize))
     }
+    pub(super) fn attach_genre_cover_image_refs(
+        &self,
+        server_id: &ServerId,
+        genres: &mut [Genre],
+    ) -> StoreResult<()> {
+        let ids = genres
+            .iter()
+            .map(|genre| genre.id.as_str().to_string())
+            .collect::<Vec<_>>();
+        let refs_by_id =
+            self.load_collection_cover_refs_map(server_id, COLLECTION_COVER_GENRE, &ids)?;
+        for genre in genres {
+            genre.image_refs = refs_by_id
+                .get(genre.id.as_str())
+                .cloned()
+                .unwrap_or_default();
+            if genre.image_ref.is_none() {
+                genre.image_ref = genre.image_refs.first().cloned();
+            }
+        }
+        Ok(())
+    }
+    pub(super) fn attach_playlist_cover_image_refs(
+        &self,
+        server_id: &ServerId,
+        playlists: &mut [Playlist],
+    ) -> StoreResult<()> {
+        let ids = playlists
+            .iter()
+            .map(|playlist| playlist.id.as_str().to_string())
+            .collect::<Vec<_>>();
+        let refs_by_id =
+            self.load_collection_cover_refs_map(server_id, COLLECTION_COVER_PLAYLIST, &ids)?;
+        for playlist in playlists {
+            playlist.image_refs = refs_by_id
+                .get(playlist.id.as_str())
+                .cloned()
+                .unwrap_or_default();
+            if playlist.image_ref.is_none() {
+                playlist.image_ref = playlist.image_refs.first().cloned();
+            }
+        }
+        Ok(())
+    }
+    pub(super) fn load_collection_cover_refs(
+        &self,
+        server_id: &ServerId,
+        collection_type: &str,
+        collection_id: &str,
+    ) -> StoreResult<Vec<ImageRef>> {
+        self.load_collection_cover_refs_map(
+            server_id,
+            collection_type,
+            &[collection_id.to_string()],
+        )
+        .map(|mut refs_by_id| refs_by_id.remove(collection_id).unwrap_or_default())
+    }
+    fn load_collection_cover_refs_map(
+        &self,
+        server_id: &ServerId,
+        collection_type: &str,
+        collection_ids: &[String],
+    ) -> StoreResult<HashMap<String, Vec<ImageRef>>> {
+        if collection_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let placeholders = std::iter::repeat_n("?", collection_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "
+            SELECT collection_id, image_item_id, image_tag
+            FROM collection_cover_refs
+            WHERE server_id = ?
+              AND collection_type = ?
+              AND collection_id IN ({placeholders})
+            ORDER BY collection_id, position
+            "
+        );
+        let mut values = Vec::with_capacity(collection_ids.len() + 2);
+        values.push(Value::Text(server_id.as_str().to_string()));
+        values.push(Value::Text(collection_type.to_string()));
+        values.extend(collection_ids.iter().cloned().map(Value::Text));
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = collect_rows(statement.query_map(params_from_iter(values), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                collection_cover_ref_from_row(row, 1, 2)?,
+            ))
+        })?)?;
+        let mut refs_by_id: HashMap<String, Vec<ImageRef>> = HashMap::new();
+        for (collection_id, image_ref) in rows {
+            refs_by_id.entry(collection_id).or_default().push(image_ref);
+        }
+        Ok(refs_by_id)
+    }
+    pub(super) fn refresh_collection_cover_refs(&self, server_id: &ServerId) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            refresh_collection_cover_refs_on_connection(connection, server_id)
+        })
+    }
+    pub fn ensure_collection_cover_refs(&self, server_id: &ServerId) -> StoreResult<()> {
+        let genre_refs_complete =
+            collection_cover_refs_complete(&self.connection, server_id, COLLECTION_COVER_GENRE)?;
+        let playlist_refs_complete =
+            collection_cover_refs_complete(&self.connection, server_id, COLLECTION_COVER_PLAYLIST)?;
+        if !genre_refs_complete || !playlist_refs_complete {
+            self.refresh_collection_cover_refs(server_id)?;
+        }
+
+        if !collection_cover_refs_cached(
+            &self.connection,
+            server_id,
+            COLLECTION_COVER_SMART_PLAYLIST,
+        )? {
+            self.refresh_smart_playlist_cover_refs(server_id)?;
+        }
+        Ok(())
+    }
     pub(super) fn search_tracks(
         &self,
         server_id: &ServerId,
@@ -849,4 +970,362 @@ impl Store {
         self.search_tracks_page(server_id, query, 0, limit, limit)
             .map(|page| page.items)
     }
+}
+
+fn collection_cover_refs_complete(
+    connection: &Connection,
+    server_id: &ServerId,
+    collection_type: &str,
+) -> StoreResult<bool> {
+    match collection_type {
+        COLLECTION_COVER_GENRE => genre_cover_refs_complete(connection, server_id),
+        COLLECTION_COVER_PLAYLIST => playlist_cover_refs_complete(connection, server_id),
+        _ => collection_cover_refs_cached(connection, server_id, collection_type),
+    }
+}
+
+fn collection_cover_refs_cached(
+    connection: &Connection,
+    server_id: &ServerId,
+    collection_type: &str,
+) -> StoreResult<bool> {
+    connection
+        .query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1
+                FROM collection_cover_refs
+                WHERE server_id = ?1
+                  AND collection_type = ?2
+            )
+            ",
+            params![server_id.as_str(), collection_type],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(Into::into)
+}
+
+fn genre_cover_refs_complete(connection: &Connection, server_id: &ServerId) -> StoreResult<bool> {
+    connection
+        .query_row(
+            "
+            SELECT NOT EXISTS(
+                SELECT 1
+                FROM genres g
+                WHERE g.server_id = ?1
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM album_genres ag
+                          WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM track_genres tg
+                          WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+                      )
+                  )
+                  AND (
+                      g.image_item_id IS NOT NULL
+                      OR EXISTS (
+                          SELECT 1
+                          FROM album_genres ag
+                          JOIN albums a
+                              ON a.server_id = ag.server_id AND a.album_id = ag.album_id
+                          WHERE ag.server_id = g.server_id
+                            AND ag.genre_name = g.name
+                            AND a.image_item_id IS NOT NULL
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM track_genres tg
+                          JOIN tracks t
+                              ON t.server_id = tg.server_id AND t.track_id = tg.track_id
+                          LEFT JOIN albums a
+                              ON a.server_id = t.server_id AND a.album_id = t.album_id
+                          WHERE tg.server_id = g.server_id
+                            AND tg.genre_name = g.name
+                            AND COALESCE(t.image_item_id, a.image_item_id) IS NOT NULL
+                      )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM collection_cover_refs ccr
+                      WHERE ccr.server_id = g.server_id
+                        AND ccr.collection_type = ?2
+                        AND ccr.collection_id = g.genre_id
+                  )
+            )
+            ",
+            params![server_id.as_str(), COLLECTION_COVER_GENRE],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(Into::into)
+}
+
+fn playlist_cover_refs_complete(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<bool> {
+    connection
+        .query_row(
+            "
+            SELECT NOT EXISTS(
+                SELECT 1
+                FROM playlists p
+                WHERE p.server_id = ?1
+                  AND (
+                      p.image_item_id IS NOT NULL
+                      OR EXISTS (
+                          SELECT 1
+                          FROM playlist_tracks pt
+                          JOIN tracks t
+                              ON t.server_id = pt.server_id AND t.track_id = pt.track_id
+                          LEFT JOIN albums a
+                              ON a.server_id = t.server_id AND a.album_id = t.album_id
+                          WHERE pt.server_id = p.server_id
+                            AND pt.playlist_id = p.playlist_id
+                            AND COALESCE(t.image_item_id, a.image_item_id) IS NOT NULL
+                      )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM collection_cover_refs ccr
+                      WHERE ccr.server_id = p.server_id
+                        AND ccr.collection_type = ?2
+                        AND ccr.collection_id = p.playlist_id
+                  )
+            )
+            ",
+            params![server_id.as_str(), COLLECTION_COVER_PLAYLIST],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(Into::into)
+}
+
+pub(super) fn refresh_collection_cover_refs_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        DELETE FROM collection_cover_refs
+        WHERE server_id = ?1
+          AND collection_type IN (?2, ?3)
+        ",
+        params![
+            server_id.as_str(),
+            COLLECTION_COVER_GENRE,
+            COLLECTION_COVER_PLAYLIST,
+        ],
+    )?;
+    let genres = genre_cover_cache_sources_on_connection(connection, server_id)?;
+    for (genre_id, genre_name) in genres {
+        let image_refs =
+            genre_cover_image_refs_on_connection(connection, server_id, &genre_id, &genre_name)?;
+        replace_collection_cover_refs_on_connection(
+            connection,
+            server_id,
+            COLLECTION_COVER_GENRE,
+            &genre_id,
+            &image_refs,
+        )?;
+    }
+    let playlist_ids = playlist_cover_cache_sources_on_connection(connection, server_id)?;
+    for playlist_id in playlist_ids {
+        refresh_playlist_cover_refs_on_connection(
+            connection,
+            server_id,
+            &PlaylistId::new(playlist_id),
+        )?;
+    }
+    Ok(())
+}
+
+fn genre_cover_cache_sources_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<Vec<(String, String)>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT genre_id, name
+        FROM genres g
+        WHERE g.server_id = ?1
+          AND (
+              EXISTS (
+                  SELECT 1
+                  FROM album_genres ag
+                  WHERE ag.server_id = g.server_id AND ag.genre_name = g.name
+              )
+              OR EXISTS (
+                  SELECT 1
+                  FROM track_genres tg
+                  WHERE tg.server_id = g.server_id AND tg.genre_name = g.name
+              )
+          )
+        ORDER BY name COLLATE NOCASE
+        ",
+    )?;
+    collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?)
+}
+
+fn genre_cover_image_refs_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+    genre_id: &str,
+    genre_name: &str,
+) -> StoreResult<Vec<ImageRef>> {
+    let mut image_refs = Vec::new();
+    let mut album_statement = connection.prepare(
+        "
+        SELECT a.image_item_id, a.image_tag
+        FROM album_genres ag
+        JOIN albums a
+            ON a.server_id = ag.server_id AND a.album_id = ag.album_id
+        WHERE ag.server_id = ?1
+          AND ag.genre_name = ?2
+          AND a.image_item_id IS NOT NULL
+        ORDER BY a.title COLLATE NOCASE
+        LIMIT 4
+        ",
+    )?;
+    let album_refs = collect_rows(
+        album_statement.query_map(params![server_id.as_str(), genre_name], |row| {
+            collection_cover_ref_from_row(row, 0, 1)
+        })?,
+    )?;
+    image_refs.extend(album_refs.into_iter().take(4));
+    if image_refs.len() >= 4 {
+        return Ok(image_refs);
+    }
+
+    let mut track_statement = connection.prepare(
+        "
+        SELECT COALESCE(t.image_item_id, a.image_item_id) AS image_item_id,
+               CASE
+                   WHEN t.image_item_id IS NOT NULL THEN t.image_tag
+                   ELSE a.image_tag
+               END AS image_tag
+        FROM track_genres tg
+        JOIN tracks t
+            ON t.server_id = tg.server_id AND t.track_id = tg.track_id
+        LEFT JOIN albums a
+            ON a.server_id = t.server_id AND a.album_id = t.album_id
+        WHERE tg.server_id = ?1
+          AND tg.genre_name = ?2
+          AND COALESCE(t.image_item_id, a.image_item_id) IS NOT NULL
+        ORDER BY t.album COLLATE NOCASE, t.disc_number, t.track_number,
+                 t.title COLLATE NOCASE
+        LIMIT ?3
+        ",
+    )?;
+    let track_refs = collect_rows(track_statement.query_map(
+        params![
+            server_id.as_str(),
+            genre_name,
+            (4usize.saturating_sub(image_refs.len())) as i64,
+        ],
+        |row| collection_cover_ref_from_row(row, 0, 1),
+    )?)?;
+    image_refs.extend(track_refs);
+    if image_refs.is_empty()
+        && let Some(image_ref) =
+            collection_direct_image_ref(connection, "genres", "genre_id", server_id, genre_id)?
+    {
+        image_refs.push(image_ref);
+    }
+    Ok(image_refs)
+}
+
+fn playlist_cover_cache_sources_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<Vec<String>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT playlist_id
+        FROM playlists
+        WHERE server_id = ?1
+        ORDER BY name COLLATE NOCASE
+        ",
+    )?;
+    collect_rows(statement.query_map(params![server_id.as_str()], |row| row.get::<_, String>(0))?)
+}
+
+pub(super) fn refresh_playlist_cover_refs_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+    playlist_id: &PlaylistId,
+) -> StoreResult<()> {
+    let mut statement = connection.prepare(
+        "
+        SELECT COALESCE(t.image_item_id, a.image_item_id) AS image_item_id,
+               CASE
+                   WHEN t.image_item_id IS NOT NULL THEN t.image_tag
+                   ELSE a.image_tag
+               END AS image_tag
+        FROM playlist_tracks pt
+        JOIN tracks t
+            ON t.server_id = pt.server_id AND t.track_id = pt.track_id
+        LEFT JOIN albums a
+            ON a.server_id = t.server_id AND a.album_id = t.album_id
+        WHERE pt.server_id = ?1
+          AND pt.playlist_id = ?2
+          AND COALESCE(t.image_item_id, a.image_item_id) IS NOT NULL
+        ORDER BY pt.position
+        LIMIT 4
+        ",
+    )?;
+    let image_refs = collect_rows(
+        statement.query_map(params![server_id.as_str(), playlist_id.as_str()], |row| {
+            collection_cover_ref_from_row(row, 0, 1)
+        })?,
+    )?;
+    let image_refs = if image_refs.is_empty() {
+        collection_direct_image_ref(
+            connection,
+            "playlists",
+            "playlist_id",
+            server_id,
+            playlist_id.as_str(),
+        )?
+        .into_iter()
+        .collect()
+    } else {
+        image_refs
+    };
+    replace_collection_cover_refs_on_connection(
+        connection,
+        server_id,
+        COLLECTION_COVER_PLAYLIST,
+        playlist_id.as_str(),
+        &image_refs,
+    )
+}
+
+fn collection_direct_image_ref(
+    connection: &Connection,
+    table: &str,
+    id_column: &str,
+    server_id: &ServerId,
+    collection_id: &str,
+) -> StoreResult<Option<ImageRef>> {
+    let sql = format!(
+        "
+        SELECT image_item_id, image_tag
+        FROM {table}
+        WHERE server_id = ?1
+          AND {id_column} = ?2
+          AND image_item_id IS NOT NULL
+        LIMIT 1
+        "
+    );
+    connection
+        .query_row(&sql, params![server_id.as_str(), collection_id], |row| {
+            collection_cover_ref_from_row(row, 0, 1)
+        })
+        .optional()
+        .map_err(Into::into)
 }

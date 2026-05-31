@@ -1,10 +1,16 @@
 use super::servers::*;
 use super::*;
 
-const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[SchemaMigration {
-    from_version: PRE_SMART_PLAYLISTS_SCHEMA_VERSION,
-    run: migrate_to_smart_playlists_schema,
-}];
+const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
+    SchemaMigration {
+        from_version: PRE_SMART_PLAYLISTS_SCHEMA_VERSION,
+        run: migrate_to_smart_playlists_schema,
+    },
+    SchemaMigration {
+        from_version: 11,
+        run: migrate_to_collection_cover_refs_schema,
+    },
+];
 const SCHEMA_VERSION_10_TABLES: &[&str] = &[
     "queue_snapshots",
     "servers",
@@ -151,6 +157,14 @@ const SCHEMA_VERSION_11_COLUMNS: &[(&str, &str)] = &[
     ("cover_cache", "path"),
     ("external_image_lookup_misses", "reason"),
 ];
+const COLLECTION_COVER_REF_TABLES: &[&str] = &["collection_cover_refs"];
+const COLLECTION_COVER_REF_COLUMNS: &[(&str, &str)] = &[
+    ("collection_cover_refs", "collection_type"),
+    ("collection_cover_refs", "collection_id"),
+    ("collection_cover_refs", "position"),
+    ("collection_cover_refs", "image_item_id"),
+    ("collection_cover_refs", "image_tag"),
+];
 
 struct SchemaMigration {
     from_version: i64,
@@ -227,6 +241,25 @@ fn migrate_to_smart_playlists_schema(store: &Store) -> StoreResult<()> {
             ON track_activity(server_id, skip_count DESC);
         CREATE INDEX IF NOT EXISTS smart_playlists_server_position_idx
             ON smart_playlists(server_id, position, name COLLATE NOCASE);
+        ",
+    )?;
+    Ok(())
+}
+fn migrate_to_collection_cover_refs_schema(store: &Store) -> StoreResult<()> {
+    store.connection.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS collection_cover_refs (
+            server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+            collection_type TEXT NOT NULL,
+            collection_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            image_item_id TEXT NOT NULL,
+            image_tag TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (server_id, collection_type, collection_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS collection_cover_refs_lookup_idx
+            ON collection_cover_refs(server_id, collection_type, collection_id, position);
         ",
     )?;
     Ok(())
@@ -332,6 +365,12 @@ impl Store {
             11 => {
                 self.schema_has_required_parts(SCHEMA_VERSION_11_TABLES, SCHEMA_VERSION_11_COLUMNS)
             }
+            12 => Ok(self
+                .schema_has_required_parts(SCHEMA_VERSION_11_TABLES, SCHEMA_VERSION_11_COLUMNS)?
+                && self.schema_has_required_parts(
+                    COLLECTION_COVER_REF_TABLES,
+                    COLLECTION_COVER_REF_COLUMNS,
+                )?),
             _ => Ok(false),
         }
     }
@@ -584,6 +623,16 @@ impl Store {
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, playlist_id, entry_id)
             );
+            CREATE TABLE IF NOT EXISTS collection_cover_refs (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                collection_type TEXT NOT NULL,
+                collection_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                image_item_id TEXT NOT NULL,
+                image_tag TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, collection_type, collection_id, position)
+            );
             CREATE TABLE IF NOT EXISTS home_section_items (
                 server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
                 section_kind TEXT NOT NULL,
@@ -671,6 +720,8 @@ impl Store {
                 ON album_genres(server_id, genre_name, album_id);
             CREATE INDEX IF NOT EXISTS track_genres_server_genre_idx
                 ON track_genres(server_id, genre_name, track_id);
+            CREATE INDEX IF NOT EXISTS collection_cover_refs_lookup_idx
+                ON collection_cover_refs(server_id, collection_type, collection_id, position);
             CREATE INDEX IF NOT EXISTS album_artist_links_server_artist_idx
                 ON album_artist_links(server_id, artist_id, album_id);
             CREATE INDEX IF NOT EXISTS track_artist_links_server_artist_idx

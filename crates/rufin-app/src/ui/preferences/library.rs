@@ -88,8 +88,9 @@ fn library_sources_page(
 
     let add_server = button_row("Add Server", "list-add-symbolic");
     let add_shell = Rc::clone(shell);
+    let add_dialog = dialog.clone();
     add_server.connect_activated(move |_| {
-        add_shell.present_add_server_dialog();
+        add_shell.present_add_server_dialog_closing(&add_dialog);
     });
     servers_group.add(&add_server);
     page.add(&servers_group);

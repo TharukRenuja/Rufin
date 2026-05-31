@@ -440,6 +440,7 @@ impl MusicProvider for SubsonicProvider {
             name: genre_name,
             album_count: albums.len() as u32,
             track_count: tracks.len() as u32,
+            image_refs: Vec::new(),
             image_ref: None,
         };
         Ok(GenreDetail {

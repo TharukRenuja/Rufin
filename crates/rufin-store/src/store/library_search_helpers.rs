@@ -545,10 +545,11 @@ impl Store {
             LIMIT ?3 OFFSET ?4
             ",
         )?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![server_id.as_str(), query, limit as i64, offset as i64],
             playlist_from_row,
         )?)?;
+        self.attach_playlist_cover_image_refs(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
     pub(super) fn load_playlists_like(
@@ -578,10 +579,11 @@ impl Store {
             LIMIT ?3 OFFSET ?4
             ",
         )?;
-        let items = collect_rows(statement.query_map(
+        let mut items = collect_rows(statement.query_map(
             params![server_id.as_str(), pattern, limit as i64, offset as i64],
             playlist_from_row,
         )?)?;
+        self.attach_playlist_cover_image_refs(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
     pub(super) fn prune_missing_items(

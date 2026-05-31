@@ -157,6 +157,7 @@ fn genre_detail_returns_linked_albums_and_tracks() {
         name: "Dream Pop".to_string(),
         album_count: 0,
         track_count: 0,
+        image_refs: Vec::new(),
         image_ref: Some(image_ref("genre-dream-pop", "tag")),
     };
     store
@@ -223,6 +224,7 @@ fn genre_counts_use_linked_music_items_instead_of_provider_counts() {
         name: "Anime".to_string(),
         album_count: 167,
         track_count: 1_561,
+        image_refs: Vec::new(),
         image_ref: None,
     };
     store
@@ -250,6 +252,98 @@ fn genre_counts_use_linked_music_items_instead_of_provider_counts() {
     assert_eq!(detail.genre.album_count, 1);
     assert_eq!(detail.genre.track_count, 1);
 }
+
+#[test]
+fn genre_counts_derive_albums_from_track_only_links() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut track = track(1, &album);
+    track.genres = vec!["Instrumental".to_string()];
+    let provider_genre = Genre {
+        id: GenreId::new("jellyfin:genre:instrumental"),
+        name: "Instrumental".to_string(),
+        album_count: 12,
+        track_count: 99,
+        image_refs: Vec::new(),
+        image_ref: None,
+    };
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .upsert_genres(
+            &saved.server.id,
+            std::slice::from_ref(&provider_genre),
+            generation,
+        )
+        .expect("upsert genre");
+
+    let genres = store
+        .load_genres(&saved.server.id, 0, 20)
+        .expect("load genres");
+    let detail = store
+        .load_genre_detail(&saved.server.id, &provider_genre.id)
+        .expect("load genre detail")
+        .expect("genre detail");
+
+    assert_eq!(genres.items[0].album_count, 1);
+    assert_eq!(genres.items[0].track_count, 1);
+    assert_eq!(detail.genre.album_count, 1);
+    assert_eq!(detail.genre.track_count, 1);
+    assert_eq!(detail.albums, vec![album]);
+    assert_eq!(detail.tracks, vec![track]);
+}
+
+#[test]
+fn genre_counts_exclude_missing_album_rows_for_track_only_links() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut track = track(1, &album);
+    track.genres = vec!["Instrumental".to_string()];
+    let provider_genre = Genre {
+        id: GenreId::new("jellyfin:genre:instrumental"),
+        name: "Instrumental".to_string(),
+        album_count: 12,
+        track_count: 99,
+        image_refs: Vec::new(),
+        image_ref: None,
+    };
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .upsert_genres(
+            &saved.server.id,
+            std::slice::from_ref(&provider_genre),
+            generation,
+        )
+        .expect("upsert genre");
+
+    let genres = store
+        .load_genres(&saved.server.id, 0, 20)
+        .expect("load genres");
+    let detail = store
+        .load_genre_detail(&saved.server.id, &provider_genre.id)
+        .expect("load genre detail")
+        .expect("genre detail");
+
+    assert_eq!(genres.items[0].album_count, 0);
+    assert_eq!(genres.items[0].track_count, 1);
+    assert_eq!(detail.genre.album_count, 0);
+    assert_eq!(detail.genre.track_count, 1);
+    assert!(detail.albums.is_empty());
+    assert_eq!(detail.tracks, vec![track]);
+}
+
 #[test]
 fn refresh_library_counts_repairs_missing_linked_genre_rows() {
     let store = Store::open_memory().expect("open store");

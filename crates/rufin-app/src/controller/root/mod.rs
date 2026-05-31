@@ -325,6 +325,10 @@ pub enum ControllerEvent {
         key: String,
         path: PathBuf,
     },
+    CoverUnavailable {
+        key: String,
+        external_retry_generation: Option<u64>,
+    },
     ServerDiscovery {
         servers: Vec<DiscoveredServer>,
         status: String,
@@ -370,13 +374,14 @@ pub struct AppController {
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
     external_scrobble_state: Arc<Mutex<ExternalScrobbleState>>,
+    pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
     pub(in crate::controller) events: Sender<ControllerEvent>,
     sync_in_flight: InFlightGuards<ServerId>,
     home_refresh_in_flight: InFlightGuards<ServerId>,
     playlist_refresh_in_flight: InFlightGuards<ServerId>,
     explore_prefetch_in_flight: InFlightGuards<ServerId>,
-    pub(in crate::controller) cover_in_flight: Arc<Mutex<HashSet<String>>>,
-    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
+    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<ServerId, u64>>>,
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
     #[cfg(test)]
     _test_permit: Option<ControllerTestPermit>,
@@ -520,8 +525,9 @@ pub(in crate::controller) struct SyncContext {
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
     sync_in_flight: InFlightGuards<ServerId>,
-    cover_in_flight: Arc<Mutex<HashSet<String>>>,
-    external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
+    external_cover_retry_generation: Arc<AtomicU64>,
+    external_cover_prefetch_in_flight: Arc<Mutex<HashMap<ServerId, u64>>>,
     cover_slots: Arc<(Mutex<usize>, Condvar)>,
 }
 pub(in crate::controller) struct ExplorePrefetchContext {

@@ -19,7 +19,11 @@ impl Shell {
             );
         };
         let seed = stable_seed(detail.smart_playlist.id.as_str());
-        let cover_refs = track_cover_refs_for_items(&detail.tracks);
+        let cover_refs = if detail.smart_playlist.image_refs.is_empty() {
+            track_cover_refs_for_items(&detail.tracks)
+        } else {
+            detail.smart_playlist.image_refs.clone()
+        };
         let summary = format!(
             "{} {} • {}",
             detail.smart_playlist.track_count,
@@ -118,7 +122,11 @@ impl Shell {
                 .placeholder_view("Playlist", "The selected cached playlist was not found.");
         };
         let seed = stable_seed(detail.playlist.id.as_str());
-        let cover_refs = track_cover_refs_for_items(&detail.tracks);
+        let cover_refs = if detail.playlist.image_refs.is_empty() {
+            track_cover_refs_for_items(&detail.tracks)
+        } else {
+            detail.playlist.image_refs.clone()
+        };
         let summary = format!(
             "{} {} • {}",
             detail.playlist.track_count,

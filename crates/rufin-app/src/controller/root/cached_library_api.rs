@@ -9,14 +9,22 @@ impl AppController {
             return Ok(None);
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_album_detail(&saved.server.id, album_id))
-            .map(|detail| {
-                detail.map(|(mut album, mut tracks)| {
-                    external_metadata::normalize_album_detail(&mut album, &mut tracks, &settings);
-                    (album, tracks)
-                })
-            })
+        let Some((mut album, mut tracks)) = self
+            .store
+            .with_store(|store| store.load_album_detail(&saved.server.id, album_id))?
+        else {
+            return Ok(None);
+        };
+        scrub_source_album_image_refs(&saved, std::slice::from_mut(&mut album));
+        scrub_source_track_image_refs(&saved, &mut tracks);
+        external_metadata::normalize_album_detail(&mut album, &mut tracks, &settings);
+        normalize_local_track_image_refs_from_albums(
+            &self.store,
+            &saved,
+            &mut tracks,
+            std::slice::from_ref(&album),
+        )?;
+        Ok(Some((album, tracks)))
     }
     pub fn cached_album_tracks(
         &self,
@@ -26,14 +34,15 @@ impl AppController {
             return Ok(std::collections::HashMap::new());
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_tracks_for_albums(&saved.server.id, album_ids))
-            .map(|mut tracks_by_album| {
-                for tracks in tracks_by_album.values_mut() {
-                    external_metadata::normalize_tracks(tracks, &settings);
-                }
-                tracks_by_album
-            })
+        let mut tracks_by_album = self
+            .store
+            .with_store(|store| store.load_tracks_for_albums(&saved.server.id, album_ids))?;
+        for tracks in tracks_by_album.values_mut() {
+            scrub_source_track_image_refs(&saved, tracks);
+            external_metadata::normalize_tracks(tracks, &settings);
+            normalize_local_track_image_refs_from_albums(&self.store, &saved, tracks, &[])?;
+        }
+        Ok(tracks_by_album)
     }
     pub fn cached_artist_detail(
         &self,
@@ -43,24 +52,24 @@ impl AppController {
             return Ok(None);
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_artist_detail(&saved.server.id, artist_id))
-            .map(|detail| {
-                detail.map(|mut detail| {
-                    normalize_artist_detail_image_refs(&mut detail, &settings);
-                    detail
-                })
-            })
-    }
-    pub fn cached_playlist_cover_refs(
-        &self,
-        playlist_id: &PlaylistId,
-    ) -> Result<Vec<ImageRef>, String> {
-        self.cached_playlist_detail(playlist_id).map(|detail| {
-            detail
-                .map(|detail| track_cover_refs_for_items(&detail.tracks))
-                .unwrap_or_default()
-        })
+        let Some(mut detail) = self
+            .store
+            .with_store(|store| store.load_artist_detail(&saved.server.id, artist_id))?
+        else {
+            return Ok(None);
+        };
+        scrub_source_artist_image_refs(&saved, std::slice::from_mut(&mut detail.artist));
+        scrub_source_album_image_refs(&saved, &mut detail.albums);
+        scrub_source_album_image_refs(&saved, &mut detail.appears_on);
+        scrub_source_track_image_refs(&saved, &mut detail.tracks);
+        normalize_artist_detail_image_refs(&mut detail, &settings);
+        normalize_local_track_image_refs_from_albums(
+            &self.store,
+            &saved,
+            &mut detail.tracks,
+            &detail.albums,
+        )?;
+        Ok(Some(detail))
     }
     pub fn cached_playlist_detail(
         &self,
@@ -70,17 +79,27 @@ impl AppController {
             return Ok(None);
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_playlist_detail(&saved.server.id, playlist_id))
-            .map(|detail| {
-                detail.map(|mut detail| {
-                    external_metadata::normalize_tracks(&mut detail.tracks, &settings);
-                    for entry in &mut detail.entries {
-                        external_metadata::normalize_track(&mut entry.track, &settings);
-                    }
-                    detail
-                })
-            })
+        let Some(mut detail) = self
+            .store
+            .with_store(|store| store.load_playlist_detail(&saved.server.id, playlist_id))?
+        else {
+            return Ok(None);
+        };
+        scrub_source_track_image_refs(&saved, &mut detail.tracks);
+        external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+        normalize_local_track_image_refs_from_albums(&self.store, &saved, &mut detail.tracks, &[])?;
+        let mut entry_tracks = detail
+            .entries
+            .iter()
+            .map(|entry| entry.track.clone())
+            .collect::<Vec<_>>();
+        scrub_source_track_image_refs(&saved, &mut entry_tracks);
+        external_metadata::normalize_tracks(&mut entry_tracks, &settings);
+        normalize_local_track_image_refs_from_albums(&self.store, &saved, &mut entry_tracks, &[])?;
+        for (entry, track) in detail.entries.iter_mut().zip(entry_tracks) {
+            entry.track = track;
+        }
+        Ok(Some(detail))
     }
     pub fn cached_genre_detail(
         &self,
@@ -90,15 +109,23 @@ impl AppController {
             return Ok(None);
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_genre_detail(&saved.server.id, genre_id))
-            .map(|detail| {
-                detail.map(|mut detail| {
-                    external_metadata::normalize_albums(&mut detail.albums, &settings);
-                    external_metadata::normalize_tracks(&mut detail.tracks, &settings);
-                    detail
-                })
-            })
+        let Some(mut detail) = self
+            .store
+            .with_store(|store| store.load_genre_detail(&saved.server.id, genre_id))?
+        else {
+            return Ok(None);
+        };
+        scrub_source_album_image_refs(&saved, &mut detail.albums);
+        scrub_source_track_image_refs(&saved, &mut detail.tracks);
+        external_metadata::normalize_albums(&mut detail.albums, &settings);
+        external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+        normalize_local_track_image_refs_from_albums(
+            &self.store,
+            &saved,
+            &mut detail.tracks,
+            &detail.albums,
+        )?;
+        Ok(Some(detail))
     }
     pub fn cached_albums_page(
         &self,
@@ -112,6 +139,7 @@ impl AppController {
         self.store
             .with_store(|store| store.load_albums(&saved.server.id, offset, limit))
             .map(|mut page| {
+                scrub_source_album_image_refs(&saved, &mut page.items);
                 external_metadata::normalize_albums(&mut page.items, &settings);
                 page
             })
@@ -129,6 +157,7 @@ impl AppController {
         self.store
             .with_store(|store| store.load_albums_matching(&saved.server.id, query, offset, limit))
             .map(|mut page| {
+                scrub_source_album_image_refs(&saved, &mut page.items);
                 external_metadata::normalize_albums(&mut page.items, &settings);
                 page
             })
@@ -142,35 +171,41 @@ impl AppController {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| {
-                let sort = settings.library_list(rufin_core::LibraryListKey::Tracks);
-                store.load_tracks_sorted(
-                    &saved.server.id,
-                    sort.sort_key,
-                    sort.descending,
-                    offset,
-                    limit,
-                )
-            })
-            .map(|mut page| {
-                external_metadata::normalize_tracks(&mut page.items, &settings);
-                page
-            })
+        let mut page = self.store.with_store(|store| {
+            let sort = settings.library_list(rufin_core::LibraryListKey::Tracks);
+            store.load_tracks_sorted(
+                &saved.server.id,
+                sort.sort_key,
+                sort.descending,
+                offset,
+                limit,
+            )
+        })?;
+        scrub_source_track_image_refs(&saved, &mut page.items);
+        external_metadata::normalize_tracks(&mut page.items, &settings);
+        normalize_local_track_image_refs_from_albums(&self.store, &saved, &mut page.items, &[])?;
+        Ok(page)
     }
     pub fn cached_track(&self, track_id: &TrackId) -> Result<Option<Track>, String> {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(None);
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_track(&saved.server.id, track_id))
-            .map(|track| {
-                track.map(|mut track| {
-                    external_metadata::normalize_track(&mut track, &settings);
-                    track
-                })
-            })
+        let Some(mut track) = self
+            .store
+            .with_store(|store| store.load_track(&saved.server.id, track_id))?
+        else {
+            return Ok(None);
+        };
+        scrub_source_track_image_refs(&saved, std::slice::from_mut(&mut track));
+        external_metadata::normalize_track(&mut track, &settings);
+        normalize_local_track_image_refs_from_albums(
+            &self.store,
+            &saved,
+            std::slice::from_mut(&mut track),
+            &[],
+        )?;
+        Ok(Some(track))
     }
     pub fn cached_tracks_page_matching(
         &self,
@@ -182,22 +217,21 @@ impl AppController {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| {
-                let sort = settings.library_list(rufin_core::LibraryListKey::Tracks);
-                store.load_tracks_matching_sorted(
-                    &saved.server.id,
-                    query,
-                    sort.sort_key,
-                    sort.descending,
-                    offset,
-                    limit,
-                )
-            })
-            .map(|mut page| {
-                external_metadata::normalize_tracks(&mut page.items, &settings);
-                page
-            })
+        let mut page = self.store.with_store(|store| {
+            let sort = settings.library_list(rufin_core::LibraryListKey::Tracks);
+            store.load_tracks_matching_sorted(
+                &saved.server.id,
+                query,
+                sort.sort_key,
+                sort.descending,
+                offset,
+                limit,
+            )
+        })?;
+        scrub_source_track_image_refs(&saved, &mut page.items);
+        external_metadata::normalize_tracks(&mut page.items, &settings);
+        normalize_local_track_image_refs_from_albums(&self.store, &saved, &mut page.items, &[])?;
+        Ok(page)
     }
     pub fn cached_artists_page(
         &self,
@@ -212,6 +246,7 @@ impl AppController {
         let mut page = self.store.with_store(|store| {
             store.load_artists(&saved.server.id, album_artist, offset, limit)
         })?;
+        scrub_source_artist_image_refs(&saved, &mut page.items);
         normalize_artist_collection_image_refs(
             &self.store,
             &saved,
@@ -235,6 +270,7 @@ impl AppController {
         let mut page = self.store.with_store(|store| {
             store.load_artists_matching(&saved.server.id, album_artist, query, offset, limit)
         })?;
+        scrub_source_artist_image_refs(&saved, &mut page.items);
         normalize_artist_collection_image_refs(
             &self.store,
             &saved,
@@ -254,6 +290,10 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.load_genres(&saved.server.id, offset, limit))
+            .map(|mut page| {
+                scrub_source_genre_image_refs(&saved, &mut page.items);
+                page
+            })
     }
     pub fn cached_genres_page_matching(
         &self,
@@ -266,6 +306,10 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.load_genres_matching(&saved.server.id, query, offset, limit))
+            .map(|mut page| {
+                scrub_source_genre_image_refs(&saved, &mut page.items);
+                page
+            })
     }
     pub fn cached_playlists_page(
         &self,
@@ -277,6 +321,10 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.load_playlists(&saved.server.id, offset, limit))
+            .map(|mut page| {
+                scrub_source_playlist_image_refs(&saved, &mut page.items);
+                page
+            })
     }
     pub fn cached_playlists_page_matching(
         &self,
@@ -287,9 +335,14 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
-        self.store.with_store(|store| {
-            store.load_playlists_matching(&saved.server.id, query, offset, limit)
-        })
+        self.store
+            .with_store(|store| {
+                store.load_playlists_matching(&saved.server.id, query, offset, limit)
+            })
+            .map(|mut page| {
+                scrub_source_playlist_image_refs(&saved, &mut page.items);
+                page
+            })
     }
     pub fn cached_smart_playlists_page(
         &self,
@@ -301,6 +354,10 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.load_smart_playlists(&saved.server.id, offset, limit))
+            .map(|mut page| {
+                scrub_source_smart_playlist_image_refs(&saved, &mut page.items);
+                page
+            })
     }
     pub fn cached_smart_playlist_detail(
         &self,
@@ -309,9 +366,20 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(None);
         };
-        self.store.with_store(|store| {
-            store.load_smart_playlist_detail(&saved.server.id, smart_playlist_id)
-        })
+        self.store
+            .with_store(|store| {
+                store.load_smart_playlist_detail(&saved.server.id, smart_playlist_id)
+            })
+            .map(|mut detail| {
+                if let Some(detail) = detail.as_mut() {
+                    scrub_source_smart_playlist_image_refs(
+                        &saved,
+                        std::slice::from_mut(&mut detail.smart_playlist),
+                    );
+                    scrub_source_track_image_refs(&saved, &mut detail.tracks);
+                }
+                detail
+            })
     }
     pub fn missing_builtin_smart_playlists(&self) -> Result<Vec<SmartPlaylistBuiltin>, String> {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {

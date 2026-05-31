@@ -420,11 +420,8 @@ impl Shell {
                     *controls.cover_key.borrow_mut() = Some(key);
                 }
             } else {
-                let mut current_key = controls.cover_key.borrow_mut();
-                if current_key.is_some() {
-                    controls.cover.clear_image();
-                    *current_key = None;
-                }
+                controls.cover.clear_image();
+                *controls.cover_key.borrow_mut() = None;
             }
         } else {
             controls.cover.clear_image();

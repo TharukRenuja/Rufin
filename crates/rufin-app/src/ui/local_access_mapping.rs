@@ -293,6 +293,7 @@ fn manage_server_toolbar(
     let provider = server.provider.clone();
     let status_for_save = status.clone();
     let exit_for_save = exit.clone();
+    let preferences_dialog_for_save = preferences_dialog.clone();
     save.connect_clicked(move |_| {
         let Some(root) = folder.borrow().clone() else {
             status_for_save.set_text(&tr("Choose a local music folder"));
@@ -300,6 +301,7 @@ fn manage_server_toolbar(
         };
         if provider == "local" {
             controller.add_local_server(root);
+            preferences_dialog_for_save.close();
         } else {
             let local_prefix_text = local_prefix.text().to_string();
             if local_prefix_text.trim().is_empty() {
@@ -435,9 +437,11 @@ fn server_actions_group(
         let controller = shell.controller.clone();
         let server_id = server.id.clone();
         let exit = exit.clone();
+        let preferences_dialog = preferences_dialog.clone();
         select.connect_activated(move |_| {
             controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
             close_manage_server(&exit);
+            preferences_dialog.close();
         });
         group.add(&select);
     }

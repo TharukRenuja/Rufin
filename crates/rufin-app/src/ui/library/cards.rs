@@ -218,8 +218,12 @@ pub(in crate::ui) fn playlist_field(playlist: &Playlist, field: LibraryField) ->
 pub(in crate::ui) fn smart_playlist_field(playlist: &SmartPlaylist, field: LibraryField) -> String {
     match field {
         LibraryField::Title | LibraryField::TitleMerged => playlist.name.clone(),
-        LibraryField::SongCount => format!("{} {}", playlist.track_count, tr("tracks")),
-        LibraryField::Duration => format_duration(playlist.duration_seconds),
+        LibraryField::SongCount if playlist.track_count > 0 => {
+            format!("{} {}", playlist.track_count, tr("tracks"))
+        }
+        LibraryField::Duration if playlist.duration_seconds > 0 => {
+            format_duration(playlist.duration_seconds)
+        }
         _ => String::new(),
     }
 }
@@ -863,4 +867,47 @@ pub(in crate::ui) fn joined_credits(credits: &[rufin_core::ArtistCredit]) -> Str
         .filter(|name| !name.is_empty())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn smart_playlist_with_stats(track_count: u32, duration_seconds: u32) -> SmartPlaylist {
+        SmartPlaylist {
+            id: rufin_core::SmartPlaylistId::new("smart:test"),
+            name: "Smart Mix".to_string(),
+            builtin: None,
+            definition: rufin_core::SmartPlaylistDefinition {
+                root: rufin_core::SmartPlaylistRuleGroup {
+                    mode: rufin_core::SmartPlaylistMatchMode::All,
+                    rules: Vec::new(),
+                },
+                sort_field: rufin_core::SmartPlaylistSortField::Title,
+                descending: false,
+                limit: None,
+            },
+            track_count,
+            duration_seconds,
+            image_refs: Vec::new(),
+            image_ref: None,
+        }
+    }
+
+    #[test]
+    fn smart_playlist_unknown_stats_are_not_rendered_as_zeroes() {
+        let unresolved = smart_playlist_with_stats(0, 0);
+        assert!(smart_playlist_field(&unresolved, LibraryField::SongCount).is_empty());
+        assert!(smart_playlist_field(&unresolved, LibraryField::Duration).is_empty());
+
+        let resolved = smart_playlist_with_stats(2, 120);
+        assert_eq!(
+            smart_playlist_field(&resolved, LibraryField::SongCount),
+            "2 tracks"
+        );
+        assert_eq!(
+            smart_playlist_field(&resolved, LibraryField::Duration),
+            "2:00"
+        );
+    }
 }

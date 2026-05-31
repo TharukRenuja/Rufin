@@ -26,9 +26,6 @@ impl Shell {
                 })
         });
         let initial_load_ms = load_started.elapsed().as_millis() as u64;
-        if gate_album_route_covers(self, &page.items, &settings) {
-            return self.startup_loading_view();
-        }
         let complete_started = Instant::now();
         let page = complete_cached_page(
             page,
@@ -39,6 +36,14 @@ impl Shell {
         let complete_load_ms = complete_started.elapsed().as_millis() as u64;
         let page_total = page.total;
         let complete_page = page.items.len() >= page.total;
+        record_library_route_model_contract(
+            self,
+            "Albums",
+            &settings,
+            page.items.len(),
+            page.total,
+            !complete_page,
+        );
         let source_albums = Rc::new(page.items.clone());
         let albums = Rc::new(RefCell::new(page.items));
         let album_count = albums.borrow().len();
@@ -227,7 +232,7 @@ impl Shell {
             empty_body: "Cached albums will appear here after the background sync finishes.",
             search,
             content,
-            load_next: Some(load_next),
+            load_next: if complete_page { None } else { Some(load_next) },
             configure_scroller: Some(configure_scroller),
         });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
@@ -261,9 +266,6 @@ impl Shell {
                     started.elapsed().as_millis()
                 );
             }
-            if gate_track_route_covers(self, &page.items, &settings) {
-                return self.startup_loading_view();
-            }
             return self.library_tracks_page(page.items, page.total);
         }
 
@@ -286,9 +288,6 @@ impl Shell {
                     self.state.library.borrow().cached_track_count,
                 )
             });
-        if gate_track_route_covers(self, &page.items, &settings) {
-            return self.startup_loading_view();
-        }
         let page = complete_cached_page(
             page,
             library_layout_loads_complete_page(LibraryListKey::Tracks, &settings),
@@ -349,10 +348,19 @@ impl Shell {
             |limit| self.controller.cached_artists_page(album_artist, 0, limit),
             "artists",
         );
-        if gate_artist_route_covers(self, &page.items, &settings, album_artist) {
-            return self.startup_loading_view();
-        }
         let complete_page = page.items.len() >= page.total;
+        record_library_route_model_contract(
+            self,
+            if album_artist {
+                "AlbumArtists"
+            } else {
+                "Artists"
+            },
+            &settings,
+            page.items.len(),
+            page.total,
+            !complete_page,
+        );
         let source_artists = Rc::new(page.items.clone());
         let artists = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -476,6 +484,14 @@ impl Shell {
                 }
             }) as Rc<dyn Fn()>
         };
+        let configure_scroller = {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let settings = settings.clone();
+            Rc::new(move |scroller: &gtk::ScrolledWindow| {
+                connect_artist_viewport_cover_warm(&shell, scroller, &model, &settings);
+            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
+        };
 
         self.library_page_shell(LibraryPageShellOptions {
             key,
@@ -483,8 +499,8 @@ impl Shell {
             empty_body: "Cached rows will appear here after the background sync finishes.",
             search,
             content: artist_collection_widget(self, model, key),
-            load_next: Some(load_next),
-            configure_scroller: None,
+            load_next: if complete_page { None } else { Some(load_next) },
+            configure_scroller: Some(configure_scroller),
         })
     }
     pub(in crate::ui) fn library_genre_list_view(self: &Rc<Self>) -> gtk::Widget {
@@ -516,6 +532,14 @@ impl Shell {
             "genres",
         );
         let complete_page = page.items.len() >= page.total;
+        record_library_route_model_contract(
+            self,
+            "Genres",
+            &settings,
+            page.items.len(),
+            page.total,
+            !complete_page,
+        );
         let source_genres = Rc::new(page.items.clone());
         let genres = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -637,6 +661,14 @@ impl Shell {
                 }
             }) as Rc<dyn Fn()>
         };
+        let configure_scroller = {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let settings = settings.clone();
+            Rc::new(move |scroller: &gtk::ScrolledWindow| {
+                connect_genre_viewport_cover_warm(&shell, scroller, &model, &settings);
+            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
+        };
 
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Genres,
@@ -644,8 +676,8 @@ impl Shell {
             empty_body: "Cached rows will appear here after the background sync finishes.",
             search,
             content: genre_collection_widget(self, model),
-            load_next: Some(load_next),
-            configure_scroller: None,
+            load_next: if complete_page { None } else { Some(load_next) },
+            configure_scroller: Some(configure_scroller),
         })
     }
     pub(in crate::ui) fn library_playlists_view(self: &Rc<Self>) -> gtk::Widget {
@@ -677,6 +709,14 @@ impl Shell {
             "playlists",
         );
         let complete_page = page.items.len() >= page.total;
+        record_library_route_model_contract(
+            self,
+            "Playlists",
+            &settings,
+            page.items.len(),
+            page.total,
+            !complete_page,
+        );
         let source_playlists = Rc::new(page.items.clone());
         let playlists = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -814,7 +854,7 @@ impl Shell {
             empty_body: "Cached playlists will appear here after the background sync finishes.",
             search,
             content: playlist_collection_widget(self, model),
-            load_next: Some(load_next),
+            load_next: if complete_page { None } else { Some(load_next) },
             configure_scroller: Some(Rc::new(|scroller| {
                 scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
                 scroller.set_min_content_width(0);
@@ -830,8 +870,20 @@ impl Shell {
                 warn!(%error, "failed to load cached smart playlists page");
                 rufin_provider::PagedResponse::new(Vec::new(), 0)
             });
-        let source_playlists = Rc::new(page.items.clone());
-        let playlists = Rc::new(RefCell::new(page.items));
+        let page_total = page.total;
+        let items = page.items;
+        let complete_page = items.len() >= page_total;
+        record_library_route_model_contract(
+            self,
+            "SmartPlaylists",
+            &settings,
+            items.len(),
+            page_total,
+            !complete_page,
+        );
+        self.state.smart_playlists.replace(items.clone());
+        let source_playlists = Rc::new(items.clone());
+        let playlists = Rc::new(RefCell::new(items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         populate_smart_playlist_model(&model, &playlists.borrow(), &settings);
 
@@ -852,6 +904,7 @@ impl Shell {
                     })
                     .cloned()
                     .collect::<Vec<_>>();
+                shell.state.smart_playlists.replace(values.clone());
                 *playlists.borrow_mut() = values;
                 populate_smart_playlist_model(
                     &model,
@@ -885,7 +938,8 @@ impl Shell {
         let resize: Rc<dyn Fn(usize)> = Rc::new(move |row_count| {
             set_library_table_content_height(&resize_scroller, row_count);
         });
-        let (_empty, search, view) = self.searchable_track_collection(tracks, key, Some(resize));
+        let (_empty, search, view, _model, _settings) =
+            self.searchable_track_collection(tracks, key, Some(resize));
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
         wrapper.append(&self.library_toolbar(key, search));
@@ -902,7 +956,8 @@ impl Shell {
         context: &str,
         content_margin_start: i32,
     ) -> gtk::Widget {
-        let (_empty, search, view) = self.searchable_track_collection(tracks, key, None);
+        let (_empty, search, view, model, settings) =
+            self.searchable_track_collection(tracks, key, None);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
         wrapper.set_hexpand(true);
@@ -914,6 +969,7 @@ impl Shell {
 
         let scroller = gtk::ScrolledWindow::new();
         configure_library_route_scroller(self, &scroller);
+        connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         view.set_margin_start(content_margin_start);
         scroller.set_child(Some(&view));
@@ -927,7 +983,8 @@ impl Shell {
         context: &str,
         empty_body: &str,
     ) -> gtk::Widget {
-        let (empty, search, view) = self.searchable_track_collection(tracks, key, None);
+        let (empty, search, view, model, settings) =
+            self.searchable_track_collection(tracks, key, None);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -942,6 +999,7 @@ impl Shell {
         } else {
             let scroller = gtk::ScrolledWindow::new();
             configure_library_route_scroller(self, &scroller);
+            connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
             scroller.set_child(Some(&library_route_inset(view)));
             wrapper.append(&scroller);
         }
@@ -953,7 +1011,13 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
-    ) -> (bool, gtk::SearchEntry, gtk::Widget) {
+    ) -> (
+        bool,
+        gtk::SearchEntry,
+        gtk::Widget,
+        gio::ListStore,
+        LibraryListSettings,
+    ) {
         let empty = tracks.is_empty();
         let source_tracks = Rc::new(tracks);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -987,7 +1051,7 @@ impl Shell {
                 }
             });
         }
-        let view = track_collection_widget(self, model, key);
-        (empty, search, view)
+        let view = track_collection_widget(self, model.clone(), key);
+        (empty, search, view, model, settings)
     }
 }
