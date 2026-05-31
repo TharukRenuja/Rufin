@@ -115,6 +115,16 @@ pub(in crate::ui) enum AutoLyricsRequest {
     Default,
     ServerOnly,
 }
+pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Option<&str> {
+    let status = status.trim();
+    let server_check = status.starts_with("Checking ") && status.ends_with(" server...");
+    let server_saved = status.starts_with("Server settings saved.");
+    if server_check || server_saved || status == "No changes to save." {
+        Some(status)
+    } else {
+        None
+    }
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum SnapshotRenderDecision {
     SourceChanged,
@@ -821,6 +831,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     }
                 }
                 ControllerEvent::LoginStatus(status) => {
+                    if let Some(message) = preferences_login_status_toast_message(&status) {
+                        shell.show_preferences_toast(message);
+                    }
                     let sync_complete = status == LIBRARY_SYNC_COMPLETE_STATUS;
                     if sync_complete {
                         shell.state.first_run_connection_ready.set(true);
@@ -859,6 +872,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 }
                 ControllerEvent::Error(error) => {
                     warn!(%error, "controller error");
+                    shell.show_preferences_toast(&error);
                     shell.state.first_run_connection_pending.set(false);
                     shell.state.first_run_connection_ready.set(false);
                     shell.state.local_source_preparing.set(false);
@@ -1280,6 +1294,12 @@ struct UiPerfVisibleCoverWindow {
 }
 
 impl Shell {
+    fn show_preferences_toast(&self, message: &str) {
+        if let Some(overlay) = self.state.preferences_toast_overlay.borrow().as_ref() {
+            overlay.add_toast(adw::Toast::new(message));
+        }
+    }
+
     pub(in crate::ui) fn prime_route_visible_cover_window(self: &Rc<Self>, route: &Route) -> usize {
         let window = ui_perf_visible_cover_window(self, route);
         self.prime_visible_cover_window(window)

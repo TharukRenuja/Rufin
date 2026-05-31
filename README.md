@@ -1,10 +1,13 @@
 # Rufin
 
-[![Checks](https://github.com/screwys/Rufin/actions/workflows/checks.yml/badge.svg)](https://github.com/screwys/Rufin/actions/workflows/checks.yml)
-[![Rust 1.92+](https://img.shields.io/badge/rust-1.92%2B-f74c00?logo=rust)](Cargo.toml)
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
-[![Flathub](https://img.shields.io/badge/Flathub-available-4A86CF?logo=flathub)](https://flathub.org/apps/io.github.screwys.Rufin)
-[![Nix flake](https://img.shields.io/badge/Nix-flake-5277C3?logo=nixos)](flake.nix)
+<p align="center">
+  <a href="https://github.com/screwys/Rufin/actions/workflows/checks.yml"><img alt="Checks" src="https://github.com/screwys/Rufin/actions/workflows/checks.yml/badge.svg"></a>
+  <a href="Cargo.toml"><img alt="Rust 1.92+" src="https://img.shields.io/badge/rust-1.92%2B-f74c00?logo=rust"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg"></a>
+  <a href="https://gitlab.gnome.org/GNOME/libadwaita/"><img alt="GTK 4 libadwaita" src="https://img.shields.io/badge/GTK%204-libadwaita-3584E4?logo=gnome&amp;logoColor=white&amp;labelColor=2E3436"></a>
+  <a href="https://flathub.org/apps/io.github.screwys.Rufin"><img alt="Flathub" src="https://img.shields.io/flathub/v/io.github.screwys.Rufin?logo=flathub&amp;color=4A86CF"></a>
+  <a href="flake.nix"><img alt="Nix flake" src="https://img.shields.io/badge/Nix-flake-5277C3?logo=nixos"></a>
+</p>
 
 <img align="left" alt="Rufin" src="data/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png" width="96"> Rufin is a native GTK4/libadwaita music client written in Rust. It is created to be a fast, lightweight and customizable music client. It supports playback from your music server(s) or your local folder(s), with built-in playback reporting to Last.fm and alike.
 <br clear="left">

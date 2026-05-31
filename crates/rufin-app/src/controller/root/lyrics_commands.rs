@@ -100,12 +100,40 @@ impl AppController {
                 }
                 Ok(None) => {
                     debug!(track_id = %entry.track_id, allow_remote, "provider returned no lyrics");
-                    let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                    match allow_remote.then(|| lrclib_best_lyrics(&entry)) {
+                        Some(Ok(Some(lyrics))) => {
+                            debug!(track_id = %entry.track_id, "loaded lyrics from LRCLIB fallback");
+                            let _saved =
+                                store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
+                            let _sent =
+                                events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                        }
+                        Some(Err(error)) => {
+                            debug!(track_id = %entry.track_id, %error, "LRCLIB fallback failed");
+                            let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                        }
+                        Some(Ok(None)) | None => {
+                            let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                        }
+                    }
                 }
-                Err(error) => {
-                    let _sent = events.send(ControllerEvent::Error(error));
-                    let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
-                }
+                Err(error) => match allow_remote.then(|| lrclib_best_lyrics(&entry)) {
+                    Some(Ok(Some(lyrics))) => {
+                        debug!(track_id = %entry.track_id, "loaded lyrics from LRCLIB fallback after provider error");
+                        let _saved =
+                            store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
+                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                    }
+                    Some(Err(fallback_error)) => {
+                        debug!(track_id = %entry.track_id, %fallback_error, "LRCLIB fallback failed");
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                    }
+                    Some(Ok(None)) | None => {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                    }
+                },
             }
         });
     }

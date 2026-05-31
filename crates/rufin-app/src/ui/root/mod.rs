@@ -264,6 +264,7 @@ pub(in crate::ui) struct AppState {
     lyrics_track_id: RefCell<Option<rufin_core::TrackId>>,
     lyrics_auto_search_attempted: RefCell<HashSet<rufin_core::TrackId>>,
     lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
+    preferences_toast_overlay: RefCell<Option<adw::ToastOverlay>>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     #[cfg(unix)]
@@ -702,6 +703,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         lyrics_track_id: RefCell::new(None),
         lyrics_auto_search_attempted: RefCell::new(HashSet::new()),
         lyrics_search_dialog: RefCell::new(None),
+        preferences_toast_overlay: RefCell::new(None),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
         #[cfg(unix)]

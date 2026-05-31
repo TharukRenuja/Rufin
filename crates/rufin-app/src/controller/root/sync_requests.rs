@@ -116,6 +116,96 @@ pub(in crate::controller) fn lrclib_search(
     order_lrclib_results(&mut results, artist_name, track_name);
     Ok(results)
 }
+pub(in crate::controller) fn lrclib_best_lyrics(
+    entry: &QueueEntry,
+) -> Result<Option<Lyrics>, String> {
+    let mut errors = Vec::new();
+    if let Some(url) = lrclib_get_url(&entry.artist, &entry.title, entry.duration_seconds)? {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(LRCLIB_REQUEST_TIMEOUT)
+            .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|error| error.to_string())?;
+        match lrclib_fetch_get(&client, url) {
+            Ok(Some(result)) => {
+                if let Some(lyrics) = lyrics_from_lrclib_result(entry, result) {
+                    return Ok(Some(lyrics));
+                }
+            }
+            Ok(None) => {}
+            Err(error) => errors.push(error),
+        }
+    }
+
+    match lrclib_search(&entry.artist, &entry.title) {
+        Ok(results) => Ok(lyrics_from_lrclib_results(entry, results)),
+        Err(error) if errors.is_empty() => Err(error),
+        Err(error) => {
+            errors.push(error);
+            Err(errors.join("; "))
+        }
+    }
+}
+pub(in crate::controller) fn lrclib_get_url(
+    artist_name: &str,
+    track_name: &str,
+    duration_seconds: u32,
+) -> Result<Option<reqwest::Url>, String> {
+    let artist_name = artist_name.trim();
+    let track_name = track_name.trim();
+    if artist_name.is_empty() || track_name.is_empty() {
+        return Ok(None);
+    }
+    let mut url =
+        reqwest::Url::parse("https://lrclib.net/api/get").map_err(|error| error.to_string())?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("track_name", track_name);
+        query.append_pair("artist_name", artist_name);
+        if duration_seconds > 0 {
+            query.append_pair("duration", &duration_seconds.to_string());
+        }
+    }
+    Ok(Some(url))
+}
+pub(in crate::controller) fn lrclib_fetch_get(
+    client: &reqwest::blocking::Client,
+    url: reqwest::Url,
+) -> Result<Option<LyricsSearchResult>, String> {
+    let response = match client.get(url).send() {
+        Ok(response) => response,
+        Err(error) => return Err(format!("Lyric lookup failed: {error}")),
+    };
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response
+        .error_for_status()
+        .map_err(|error| format!("Lyric lookup failed: {error}"))?;
+    let body = read_response_text_bounded(response, LRCLIB_RESPONSE_MAX_BYTES, "Lyric lookup")
+        .map_err(|error| format!("Lyric lookup failed: {error}"))?;
+    parse_lrclib_get_body(&body).map(Some)
+}
+pub(in crate::controller) fn parse_lrclib_get_body(
+    body: &str,
+) -> Result<LyricsSearchResult, String> {
+    serde_json::from_str::<LrcLibLyricsDto>(body)
+        .map(LyricsSearchResult::from)
+        .map_err(|error| format!("Lyric lookup returned invalid data: {error}"))
+}
+pub(in crate::controller) fn lyrics_from_lrclib_results(
+    entry: &QueueEntry,
+    results: Vec<LyricsSearchResult>,
+) -> Option<Lyrics> {
+    results
+        .into_iter()
+        .find_map(|result| lyrics_from_lrclib_result(entry, result))
+}
+fn lyrics_from_lrclib_result(entry: &QueueEntry, result: LyricsSearchResult) -> Option<Lyrics> {
+    lyrics_result_content(&result)?;
+    let lyrics = lyrics_from_text(entry.track_id.clone(), &result);
+    (!lyrics.lines.is_empty()).then_some(lyrics)
+}
 pub(in crate::controller) fn lrclib_search_urls(
     artist_name: &str,
     track_name: &str,

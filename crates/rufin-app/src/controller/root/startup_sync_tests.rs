@@ -591,6 +591,40 @@ pub(in crate::controller) fn update_server_settings_persists_editable_fields() {
     assert!(saved.trust_invalid_cert);
 }
 #[test]
+pub(in crate::controller) fn unchanged_server_settings_emit_visible_status() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let server_id = ServerId::new("server:unchanged");
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&SavedServer {
+                server: ServerIdentity {
+                    id: server_id.clone(),
+                    provider: "jellyfin".to_string(),
+                    name: "Saved server".to_string(),
+                    base_url: "http://server.example.test".to_string(),
+                },
+                user_id: "user-id".to_string(),
+                username: "listener".to_string(),
+                trust_invalid_cert: false,
+            })?;
+            store.set_active_server(&server_id)
+        })
+        .expect("save server");
+
+    controller.update_server_settings(
+        server_id,
+        "Saved server".to_string(),
+        "http://server.example.test".to_string(),
+        "listener".to_string(),
+        String::new(),
+        false,
+    );
+
+    assert_eq!(wait_for_status(&events), "No changes to save.");
+}
+#[test]
 pub(in crate::controller) fn fake_bootstrap_routes_data_through_store_cache() {
     let (_controller, _events, snapshot, queue, player) =
         AppController::bootstrap_with_fake(FakeScale::Small);

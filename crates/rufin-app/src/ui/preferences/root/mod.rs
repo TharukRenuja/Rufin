@@ -69,6 +69,9 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
     toolbar.add_top_bar(&switcher_bar);
     toolbar.set_content(Some(&stack));
 
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&toolbar));
+
     let dialog = adw::Dialog::builder()
         .title(tr("Preferences"))
         .content_width(large_popup_content_width(PREFERENCES_DIALOG_WIDTH))
@@ -76,9 +79,17 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
             shell.window.height(),
             PREFERENCES_DIALOG_HEIGHT,
         ))
-        .child(&toolbar)
+        .child(&toast_overlay)
         .build();
     dialog.add_css_class("preferences");
+    *shell.state.preferences_toast_overlay.borrow_mut() = Some(toast_overlay.clone());
+    let shell_for_close = Rc::clone(shell);
+    dialog.connect_closed(move |_| {
+        let mut overlay = shell_for_close.state.preferences_toast_overlay.borrow_mut();
+        if overlay.as_ref() == Some(&toast_overlay) {
+            *overlay = None;
+        }
+    });
 
     let general_page = general_page(shell, &dialog);
     let layout_page = layout_page(shell);
