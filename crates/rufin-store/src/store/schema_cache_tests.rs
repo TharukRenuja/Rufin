@@ -1,11 +1,12 @@
 use std::fs;
 
 use super::PRE_SMART_PLAYLISTS_SCHEMA_VERSION;
+use super::servers::COLLECTION_COVER_GENRE;
 use super::test_support::*;
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 11);
+    assert_eq!(store.schema_version().expect("schema version"), 12);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -26,6 +27,7 @@ fn current_schema_creates_library_route_indexes() {
         ("playlists", "playlists_server_name_nocase_idx"),
         ("album_genres", "album_genres_server_genre_idx"),
         ("track_genres", "track_genres_server_genre_idx"),
+        ("collection_cover_refs", "collection_cover_refs_lookup_idx"),
         ("album_artist_links", "album_artist_links_server_artist_idx"),
         ("track_artist_links", "track_artist_links_server_artist_idx"),
         ("track_music_folders", "track_music_folders_folder_idx"),
@@ -51,7 +53,7 @@ fn unsupported_file_store_resets_cache_database() {
                     version INTEGER PRIMARY KEY,
                     applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
-                INSERT INTO schema_migrations (version) VALUES (11);
+                INSERT INTO schema_migrations (version) VALUES (12);
                 CREATE TABLE stale_cache (value TEXT NOT NULL);
                 INSERT INTO stale_cache VALUES ('old row');
                 CREATE TABLE servers (
@@ -77,7 +79,7 @@ fn unsupported_file_store_resets_cache_database() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 11);
+    assert_eq!(store.schema_version().expect("schema version"), 12);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -129,7 +131,7 @@ fn incomplete_user_version_ten_file_store_resets_cache_database() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 11);
+    assert_eq!(store.schema_version().expect("schema version"), 12);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -155,7 +157,7 @@ fn current_file_store_reopens_without_dropping_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 11);
+    assert_eq!(store.schema_version().expect("schema version"), 12);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -198,7 +200,7 @@ fn user_version_ten_file_store_upgrades_without_dropping_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 11);
+    assert_eq!(store.schema_version().expect("schema version"), 12);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -212,6 +214,11 @@ fn user_version_ten_file_store_upgrades_without_dropping_servers() {
     assert!(
         store
             .table_exists("smart_playlist_seed_state")
+            .expect("table lookup")
+    );
+    assert!(
+        store
+            .table_exists("collection_cover_refs")
             .expect("table lookup")
     );
     drop(store);
@@ -234,12 +241,12 @@ fn future_user_version_file_store_resets_cache_database() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 12)
+        .pragma_update(None, "user_version", 13)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 11);
+    assert_eq!(store.schema_version().expect("schema version"), 12);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -786,6 +793,256 @@ fn image_refs_round_trip_for_cached_library_models() {
             .image_ref,
         playlist.image_ref
     );
+}
+
+#[test]
+fn collection_cover_refs_are_cached_for_genres_and_playlists() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut albums = (1..=5).map(album_with_image).collect::<Vec<_>>();
+    let genre = genre(1, None);
+    for album in &mut albums {
+        album.genres = vec![genre.name.clone()];
+    }
+    let tracks = albums
+        .iter()
+        .enumerate()
+        .map(|(index, album)| track(index as u32 + 1, album))
+        .collect::<Vec<_>>();
+    let playlist = playlist(1, None);
+    let entries = playlist_entries_for_tracks_for_test(
+        &playlist.id,
+        &[
+            tracks[0].clone(),
+            tracks[0].clone(),
+            tracks[1].clone(),
+            tracks[2].clone(),
+            tracks[3].clone(),
+        ],
+    );
+    store
+        .upsert_albums(&saved.server.id, &albums, generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, &tracks, generation)
+        .expect("upsert tracks");
+    store
+        .upsert_genres(&saved.server.id, std::slice::from_ref(&genre), generation)
+        .expect("upsert genre");
+    store
+        .upsert_playlists(
+            &saved.server.id,
+            std::slice::from_ref(&playlist),
+            generation,
+        )
+        .expect("upsert playlist");
+    store
+        .upsert_playlist_entries(&saved.server.id, &playlist.id, &entries, generation)
+        .expect("upsert playlist entries");
+    store
+        .refresh_library_counts(&saved.server.id)
+        .expect("refresh counts");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let genre_page = store
+        .load_genres(&saved.server.id, 0, 20)
+        .expect("load genres");
+    let playlist_page = store
+        .load_playlists(&saved.server.id, 0, 20)
+        .expect("load playlists");
+    assert_eq!(
+        genre_page.items[0].image_refs,
+        albums
+            .iter()
+            .take(4)
+            .filter_map(|album| album.image_ref.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        playlist_page.items[0].image_refs,
+        vec![
+            tracks[0].image_ref.clone().expect("first cover"),
+            tracks[0].image_ref.clone().expect("repeated cover"),
+            tracks[1].image_ref.clone().expect("second cover"),
+            tracks[2].image_ref.clone().expect("third cover"),
+        ]
+    );
+
+    let mut changed_album = albums[0].clone();
+    changed_album.image_ref = Some(image_ref("changed-cover", "changed-tag"));
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&changed_album),
+            generation,
+        )
+        .expect("change album");
+    let cached_again = store
+        .load_genres(&saved.server.id, 0, 20)
+        .expect("load cached genres");
+    assert_eq!(
+        cached_again.items[0].image_refs,
+        genre_page.items[0].image_refs
+    );
+}
+
+#[test]
+fn ensure_collection_cover_refs_repairs_missing_genres_when_playlists_are_cached() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut albums = (1..=4).map(album_with_image).collect::<Vec<_>>();
+    let mut genre = genre(1, None);
+    for album in &mut albums {
+        album.genres = vec![genre.name.clone()];
+    }
+    let tracks = albums
+        .iter()
+        .enumerate()
+        .map(|(index, album)| track(index as u32 + 1, album))
+        .collect::<Vec<_>>();
+    let playlist = playlist(1, Some(image_ref("playlist-cover", "playlist-tag")));
+
+    store
+        .upsert_albums(&saved.server.id, &albums, generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, &tracks, generation)
+        .expect("upsert tracks");
+    store
+        .upsert_genres(&saved.server.id, std::slice::from_ref(&genre), generation)
+        .expect("upsert genre");
+    store
+        .upsert_playlists(
+            &saved.server.id,
+            std::slice::from_ref(&playlist),
+            generation,
+        )
+        .expect("upsert playlist");
+
+    genre.image_refs.clear();
+    assert_eq!(
+        store
+            .load_genres(&saved.server.id, 0, 20)
+            .expect("load stale genres")
+            .items[0]
+            .image_refs,
+        genre.image_refs
+    );
+
+    store
+        .ensure_collection_cover_refs(&saved.server.id)
+        .expect("ensure cover refs");
+    assert_eq!(
+        store
+            .load_genres(&saved.server.id, 0, 20)
+            .expect("load repaired genres")
+            .items[0]
+            .image_refs,
+        albums
+            .iter()
+            .take(4)
+            .filter_map(|album| album.image_ref.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ensure_collection_cover_refs_repairs_partially_cached_genres() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut albums = (1..=8).map(album_with_image).collect::<Vec<_>>();
+    let first_genre = genre(1, None);
+    let second_genre = genre(2, None);
+    for album in &mut albums[..4] {
+        album.genres = vec![first_genre.name.clone()];
+    }
+    for album in &mut albums[4..] {
+        album.genres = vec![second_genre.name.clone()];
+    }
+    let tracks = albums
+        .iter()
+        .enumerate()
+        .map(|(index, album)| track(index as u32 + 1, album))
+        .collect::<Vec<_>>();
+
+    store
+        .upsert_albums(&saved.server.id, &albums, generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, &tracks, generation)
+        .expect("upsert tracks");
+    store
+        .upsert_genres(
+            &saved.server.id,
+            &[first_genre.clone(), second_genre.clone()],
+            generation,
+        )
+        .expect("upsert genres");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+    store
+        .connection
+        .execute(
+            "
+            DELETE FROM collection_cover_refs
+            WHERE server_id = ?1
+              AND collection_type = ?2
+              AND collection_id = ?3
+            ",
+            rusqlite::params![
+                saved.server.id.as_str(),
+                COLLECTION_COVER_GENRE,
+                second_genre.id.as_str()
+            ],
+        )
+        .expect("drop one genre cover cache row");
+
+    let partial = store
+        .load_genres(&saved.server.id, 0, 20)
+        .expect("load partially cached genres");
+    assert!(partial.items[0].image_refs.len() >= 4);
+    assert!(
+        partial.items[1].image_refs.is_empty(),
+        "second genre should simulate an interrupted cover-ref cache"
+    );
+
+    store
+        .ensure_collection_cover_refs(&saved.server.id)
+        .expect("ensure cover refs");
+    let repaired = store
+        .load_genres(&saved.server.id, 0, 20)
+        .expect("load repaired genres");
+    assert_eq!(
+        repaired.items[1].image_refs,
+        albums[4..]
+            .iter()
+            .take(4)
+            .filter_map(|album| album.image_ref.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+fn playlist_entries_for_tracks_for_test(
+    playlist_id: &PlaylistId,
+    tracks: &[Track],
+) -> Vec<PlaylistEntry> {
+    tracks
+        .iter()
+        .enumerate()
+        .map(|(position, track)| PlaylistEntry {
+            entry_id: format!("{}:{position}", playlist_id.as_str()),
+            track: track.clone(),
+        })
+        .collect()
 }
 #[test]
 fn album_reads_use_track_cover_when_album_cover_is_missing() {

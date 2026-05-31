@@ -1,5 +1,42 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum StartupRevealAction {
+    Wait,
+    RevealReady,
+    RevealExpired,
+}
+
+pub(in crate::ui) fn startup_route_reveal_action(
+    width_ready: bool,
+    pending_covers: usize,
+    elapsed: Duration,
+) -> StartupRevealAction {
+    if elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MAX_MS) {
+        return StartupRevealAction::RevealExpired;
+    }
+    if width_ready
+        && pending_covers == 0
+        && elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MIN_MS)
+    {
+        return StartupRevealAction::RevealReady;
+    }
+    StartupRevealAction::Wait
+}
+
+pub(in crate::ui) fn first_run_cover_prime_reveal_action(
+    pending_covers: usize,
+    elapsed: Duration,
+) -> StartupRevealAction {
+    if pending_covers == 0 {
+        StartupRevealAction::RevealReady
+    } else if elapsed >= Duration::from_millis(FIRST_RUN_COVER_PRIME_TIMEOUT_MS) {
+        StartupRevealAction::RevealExpired
+    } else {
+        StartupRevealAction::Wait
+    }
+}
+
 impl Shell {
     pub(in crate::ui) fn render_startup_loading_view(&self) {
         self.route_title.set_title("Rufin");
@@ -50,10 +87,11 @@ impl Shell {
                 if shell.state.startup_route_revealed.get() || shell.login_screen_active() {
                     return;
                 }
-                cover_prime_generation.set(shell.begin_startup_cover_prime());
+                cover_prime_generation.set(Some(shell.begin_startup_cover_prime()));
             });
         }
         let started_at = Instant::now();
+        let timeout_logged = Rc::new(Cell::new(false));
         let shell = Rc::clone(self);
         glib::timeout_add_local(
             Duration::from_millis(STARTUP_ROUTE_REVEAL_POLL_MS),
@@ -65,6 +103,7 @@ impl Shell {
                 shell.update_layout();
                 let elapsed = started_at.elapsed();
                 let width_ready = shell.layout_width() > 1 && shell.root_stack.width() > 1;
+                shell.reconcile_startup_cover_prime_pending();
                 let pending_covers = cover_prime_generation
                     .get()
                     .filter(|generation| {
@@ -72,27 +111,30 @@ impl Shell {
                     })
                     .map(|_| shell.state.startup_cover_prime_pending.borrow().len())
                     .unwrap_or(usize::from(cover_prime_generation.get().is_none()));
-                let reveal_ready = width_ready
-                    && pending_covers == 0
-                    && elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MIN_MS);
-                let reveal_expired = elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MAX_MS);
-                if reveal_ready || reveal_expired {
-                    if reveal_expired && pending_covers > 0 {
-                        warn!(
-                            pending_covers,
-                            elapsed_ms = elapsed.as_millis() as u64,
-                            "revealing startup route with cached cover prime still pending"
-                        );
+                match startup_route_reveal_action(width_ready, pending_covers, elapsed) {
+                    StartupRevealAction::RevealReady => {
+                        shell.finish_startup_cover_prime_gate();
+                        shell.reveal_startup_route();
+                        glib::ControlFlow::Break
                     }
-                    shell.reveal_startup_route();
-                    glib::ControlFlow::Break
-                } else {
-                    glib::ControlFlow::Continue
+                    StartupRevealAction::RevealExpired => {
+                        if pending_covers > 0 && !timeout_logged.replace(true) {
+                            warn!(
+                                pending_covers,
+                                elapsed_ms = elapsed.as_millis() as u64,
+                                "startup route cover prime expired"
+                            );
+                        }
+                        shell.finish_startup_cover_prime_gate();
+                        shell.reveal_startup_route();
+                        glib::ControlFlow::Break
+                    }
+                    StartupRevealAction::Wait => glib::ControlFlow::Continue,
                 }
             },
         );
     }
-    pub(in crate::ui) fn begin_startup_cover_prime(self: &Rc<Self>) -> Option<u64> {
+    pub(in crate::ui) fn begin_startup_cover_prime(self: &Rc<Self>) -> u64 {
         let generation = self
             .state
             .startup_cover_prime_generation
@@ -102,46 +144,40 @@ impl Shell {
         self.state.startup_cover_prime_pending.borrow_mut().clear();
 
         let jobs = startup_cover_prime_jobs(self);
-        let mut pending_count = 0_usize;
+        let mut pending = HashSet::new();
         for job in jobs {
             if self
                 .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
                 .is_some()
+                || self.state.cover_unavailable.borrow().contains(&job.key)
             {
                 continue;
             }
-            let Some((key, path)) =
-                self.cached_cover_path_for_startup_prime(&job.image_ref, job.fetch_size)
-            else {
-                continue;
-            };
-            self.state
-                .startup_cover_prime_pending
-                .borrow_mut()
-                .insert(key.clone());
-            pending_count = pending_count.saturating_add(1);
-            self.start_cover_decode_from_path(key, path, job.size, CoverDecodePriority::Warm);
+            pending.insert(job.key.clone());
+            self.start_cached_cover_path_lookup(CoverPathLookupRequest {
+                key: job.key,
+                image_ref: job.image_ref,
+                fetch_size: job.fetch_size,
+                size: job.size,
+                intent: CoverPathLookupIntent::StartupPrime,
+            });
         }
 
-        if pending_count == 0 {
-            None
-        } else {
-            info!(covers = pending_count, "started startup cached cover prime");
-            Some(generation)
+        let pending_count = pending.len();
+        *self.state.startup_cover_prime_pending.borrow_mut() = pending;
+        if pending_count > 0 {
+            info!(covers = pending_count, "started startup cover prime");
         }
+        generation
     }
-    pub(in crate::ui) fn cached_cover_path_for_startup_prime(
-        &self,
-        image_ref: &ImageRef,
-        preferred_size: u32,
-    ) -> Option<(String, PathBuf)> {
-        for size in decoded_cover_candidate_sizes(preferred_size) {
-            let key = self.cover_cache_key(image_ref, size)?;
-            if let Some(path) = self.controller.cached_cover_path_for_key(&key) {
-                return Some((key, path));
-            }
-        }
-        None
+    fn finish_startup_cover_prime_gate(&self) {
+        self.state.startup_cover_prime_generation.set(
+            self.state
+                .startup_cover_prime_generation
+                .get()
+                .saturating_add(1),
+        );
+        self.state.startup_cover_prime_pending.borrow_mut().clear();
     }
     pub(in crate::ui) fn reveal_startup_route(self: &Rc<Self>) {
         if self.login_screen_active() || self.state.startup_route_revealed.replace(true) {
@@ -167,7 +203,6 @@ impl Shell {
                     return;
                 }
                 shell.update_layout();
-                shell.prewarm_startup_route_widgets();
                 shell.render_current_route();
                 if matches!(shell.state.routes.borrow().current(), Route::Home) {
                     shell.refresh_home_for_current_visit();
@@ -177,40 +212,18 @@ impl Shell {
                 shell.update_bottom_player();
                 shell.log_layout_snapshot("startup_reveal_after_render");
                 shell.queue_post_layout_route_render();
+                let shell_for_tracks = Rc::clone(&shell);
+                glib::idle_add_local_once(move || {
+                    shell_for_tracks.prime_route_visible_cover_window(&Route::Tracks);
+                });
             },
         );
-    }
-    pub(in crate::ui) fn prewarm_startup_route_widgets(self: &Rc<Self>) {
-        let settings = self.state.settings.borrow().clone();
-        self.prewarm_startup_artist_route(false);
-        if sidebar_route_visible(&settings, SidebarRouteItem::AlbumArtists) {
-            self.prewarm_startup_artist_route(true);
-        }
-    }
-    pub(in crate::ui) fn prewarm_startup_artist_route(self: &Rc<Self>, album_artist: bool) {
-        let route_name = if album_artist {
-            "AlbumArtists"
-        } else {
-            "Artists"
-        };
-        let started = Instant::now();
-        let view = route_boundary(self.library_artist_list_view(album_artist));
-        view.set_visible(false);
-        view.set_can_target(false);
-        self.route_host.append(&view);
-        self.route_host.remove(&view);
-        if self.state.perf.is_some() {
-            println!(
-                "RUFIN_PERF_ROUTE_PREWARM route={} elapsed_ms={}",
-                route_name,
-                started.elapsed().as_millis() as u64
-            );
-        }
     }
     pub(in crate::ui) fn schedule_first_run_app_reveal(self: &Rc<Self>) {
         self.log_layout_snapshot("first_run_reveal_queued");
         if let Some(generation) = self.begin_first_run_cover_prime() {
             let started_at = Instant::now();
+            let timeout_logged = Rc::new(Cell::new(false));
             let shell = Rc::clone(self);
             glib::timeout_add_local(
                 Duration::from_millis(FIRST_RUN_COVER_PRIME_POLL_MS),
@@ -218,25 +231,22 @@ impl Shell {
                     if shell.state.first_run_cover_prime_generation.get() != generation {
                         return glib::ControlFlow::Break;
                     }
-                    let pending = shell.state.first_run_cover_prime_pending.borrow().len();
-                    let expired = started_at.elapsed()
-                        >= Duration::from_millis(FIRST_RUN_COVER_PRIME_TIMEOUT_MS);
-                    if pending == 0 || expired {
-                        if expired && pending > 0 {
-                            debug!(
-                                pending,
-                                "revealing first-run route with cover prime still pending"
-                            );
+                    shell.reconcile_first_run_cover_prime_pending();
+                    let pending_covers = shell.state.first_run_cover_prime_pending.borrow().len();
+                    match first_run_cover_prime_reveal_action(pending_covers, started_at.elapsed())
+                    {
+                        StartupRevealAction::RevealReady => {
+                            shell.finish_first_run_app_reveal();
+                            glib::ControlFlow::Break
                         }
-                        shell
-                            .state
-                            .first_run_cover_prime_pending
-                            .borrow_mut()
-                            .clear();
-                        shell.finish_first_run_app_reveal();
-                        glib::ControlFlow::Break
-                    } else {
-                        glib::ControlFlow::Continue
+                        StartupRevealAction::RevealExpired => {
+                            if pending_covers > 0 && !timeout_logged.replace(true) {
+                                debug!(pending = pending_covers, "first-run cover prime expired");
+                            }
+                            shell.finish_first_run_app_reveal();
+                            glib::ControlFlow::Break
+                        }
+                        StartupRevealAction::Wait => glib::ControlFlow::Continue,
                     }
                 },
             );
@@ -314,21 +324,21 @@ impl Shell {
 
         let mut pending = HashSet::new();
         for job in jobs {
-            if self.decoded_cover_has_min_size(&job.key, job.size) {
+            if self
+                .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
+                .is_some()
+                || self.state.cover_unavailable.borrow().contains(&job.key)
+            {
                 continue;
             }
             pending.insert(job.key.clone());
-            if let Some(path) = self.controller.cached_cover_path_for_key(&job.key) {
-                self.start_cover_decode_from_path(
-                    job.key,
-                    path,
-                    job.size,
-                    CoverDecodePriority::Visible,
-                );
-            } else {
-                self.controller
-                    .request_cover_for_key(job.key, job.image_ref, job.fetch_size);
-            }
+            self.start_cached_cover_path_lookup(CoverPathLookupRequest {
+                key: job.key,
+                image_ref: job.image_ref,
+                fetch_size: job.fetch_size,
+                size: job.size,
+                intent: CoverPathLookupIntent::StartupPrime,
+            });
         }
 
         if pending.is_empty() {

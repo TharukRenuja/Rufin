@@ -68,7 +68,9 @@ impl Shell {
         let tracks = Rc::new(RefCell::new(tracks));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let populate_started = Instant::now();
-        populate_track_model_for_settings(&model, &tracks.borrow(), &settings, "", false);
+        let visible_tracks = tracks_for_settings(&tracks.borrow(), &settings, "", false);
+        self.state.route_tracks.replace(visible_tracks.clone());
+        replace_tracks_in_model(&model, visible_tracks);
         let populate_ms = populate_started.elapsed().as_millis();
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
@@ -90,13 +92,11 @@ impl Shell {
                 *query.borrow_mut() = text.clone();
                 if complete_page {
                     let settings = shell.library_settings(LibraryListKey::Tracks);
-                    let visible_count = populate_track_model_for_settings(
-                        &model,
-                        &tracks.borrow(),
-                        &settings,
-                        &text,
-                        false,
-                    );
+                    let visible_tracks =
+                        tracks_for_settings(&tracks.borrow(), &settings, &text, false);
+                    let visible_count = visible_tracks.len();
+                    shell.state.route_tracks.replace(visible_tracks.clone());
+                    replace_tracks_in_model(&model, visible_tracks);
                     warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                     cursor.offset.set(visible_count);
                     cursor.total.set(visible_count);
@@ -125,13 +125,10 @@ impl Shell {
                         );
                         let count = page.items.len();
                         *tracks.borrow_mut() = page.items;
-                        populate_track_model_for_settings(
-                            &model,
-                            &tracks.borrow(),
-                            &settings,
-                            "",
-                            false,
-                        );
+                        let visible_tracks =
+                            tracks_for_settings(&tracks.borrow(), &settings, "", false);
+                        shell.state.route_tracks.replace(visible_tracks.clone());
+                        replace_tracks_in_model(&model, visible_tracks);
                         warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, page.total);
                     }
@@ -185,6 +182,14 @@ impl Shell {
                 connect_track_row_contract_observer(&shell, scroller, &model, &settings);
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
+        record_library_route_model_contract(
+            self,
+            "Tracks",
+            &settings,
+            tracks.borrow().len(),
+            total,
+            !complete_page,
+        );
         let shell_started = Instant::now();
         let view = self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Tracks,

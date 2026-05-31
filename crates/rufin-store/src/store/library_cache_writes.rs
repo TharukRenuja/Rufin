@@ -4,6 +4,8 @@ use super::*;
 impl Store {
     pub fn complete_sync(&self, server_id: &ServerId, generation: i64) -> StoreResult<()> {
         self.prune_missing_items(server_id, generation)?;
+        self.refresh_collection_cover_refs(server_id)?;
+        self.refresh_smart_playlist_cover_refs(server_id)?;
         self.connection.execute(
             "
             UPDATE sync_state
@@ -470,25 +472,7 @@ impl Store {
                 ",
                 params![server_id.as_str()],
             )?;
-            connection.execute(
-                "
-                UPDATE genres
-                SET album_count = MAX(album_count, (
-                    SELECT COUNT(DISTINCT album_id)
-                    FROM album_genres
-                    WHERE album_genres.server_id = genres.server_id
-                      AND album_genres.genre_name = genres.name
-                )),
-                    track_count = MAX(track_count, (
-                    SELECT COUNT(DISTINCT track_id)
-                    FROM track_genres
-                    WHERE track_genres.server_id = genres.server_id
-                      AND track_genres.genre_name = genres.name
-                ))
-                WHERE server_id = ?1
-                ",
-                params![server_id.as_str()],
-            )?;
+            refresh_genre_counts_on_connection(connection, server_id)?;
             Ok(())
         })
     }
@@ -603,7 +587,20 @@ impl Store {
                     image_tag,
                     generation,
                 ])?;
+                let cover_refs = if genre.image_refs.is_empty() {
+                    genre.image_ref.iter().cloned().collect::<Vec<_>>()
+                } else {
+                    genre.image_refs.clone()
+                };
+                replace_collection_cover_refs_on_connection(
+                    connection,
+                    server_id,
+                    COLLECTION_COVER_GENRE,
+                    genre.id.as_str(),
+                    &cover_refs,
+                )?;
             }
+            refresh_genre_counts_on_connection(connection, server_id)?;
             Ok(())
         })
     }
@@ -652,6 +649,18 @@ impl Store {
                     image_tag,
                     generation,
                 ])?;
+                let cover_refs = if playlist.image_refs.is_empty() {
+                    playlist.image_ref.iter().cloned().collect::<Vec<_>>()
+                } else {
+                    playlist.image_refs.clone()
+                };
+                replace_collection_cover_refs_on_connection(
+                    connection,
+                    server_id,
+                    COLLECTION_COVER_PLAYLIST,
+                    playlist.id.as_str(),
+                    &cover_refs,
+                )?;
                 delete_fts.execute(params![server_id.as_str(), playlist.id.as_str()])?;
                 insert_fts.execute(params![
                     server_id.as_str(),
@@ -703,6 +712,19 @@ impl Store {
                     WHERE server_id = ?1 AND playlist_id = ?2
                     ",
                     params![server_id.as_str(), playlist_id.as_str()],
+                )?;
+                connection.execute(
+                    "
+                    DELETE FROM collection_cover_refs
+                    WHERE server_id = ?1
+                      AND collection_type = ?2
+                      AND collection_id = ?3
+                    ",
+                    params![
+                        server_id.as_str(),
+                        COLLECTION_COVER_PLAYLIST,
+                        playlist_id.as_str(),
+                    ],
                 )?;
                 connection.execute(
                     "
@@ -850,4 +872,77 @@ impl Store {
         }
         Ok(())
     }
+}
+
+fn refresh_genre_counts_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        UPDATE genres
+        SET album_count = CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM album_genres
+                    WHERE album_genres.server_id = genres.server_id
+                      AND album_genres.genre_name = genres.name
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM track_genres
+                    WHERE track_genres.server_id = genres.server_id
+                      AND track_genres.genre_name = genres.name
+                )
+                THEN (
+                    SELECT COUNT(DISTINCT album_id)
+                    FROM (
+                        SELECT albums.album_id
+                        FROM album_genres
+                        JOIN albums
+                            ON albums.server_id = album_genres.server_id
+                           AND albums.album_id = album_genres.album_id
+                        WHERE album_genres.server_id = genres.server_id
+                          AND album_genres.genre_name = genres.name
+                        UNION
+                        SELECT albums.album_id
+                        FROM track_genres
+                        JOIN tracks
+                            ON tracks.server_id = track_genres.server_id
+                           AND tracks.track_id = track_genres.track_id
+                        JOIN albums
+                            ON albums.server_id = tracks.server_id
+                           AND albums.album_id = tracks.album_id
+                        WHERE track_genres.server_id = genres.server_id
+                          AND track_genres.genre_name = genres.name
+                    ) linked_albums
+                )
+                ELSE album_count
+            END,
+            track_count = CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM album_genres
+                    WHERE album_genres.server_id = genres.server_id
+                      AND album_genres.genre_name = genres.name
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM track_genres
+                    WHERE track_genres.server_id = genres.server_id
+                      AND track_genres.genre_name = genres.name
+                )
+                THEN (
+                    SELECT COUNT(DISTINCT track_id)
+                    FROM track_genres
+                    WHERE track_genres.server_id = genres.server_id
+                      AND track_genres.genre_name = genres.name
+                )
+                ELSE track_count
+            END
+        WHERE server_id = ?1
+        ",
+        params![server_id.as_str()],
+    )?;
+    Ok(())
 }

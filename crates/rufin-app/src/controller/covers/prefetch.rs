@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -29,7 +30,10 @@ use super::candidates::{
 use super::fetch::{
     fetch_and_cache_cover, fetch_and_cache_provider_cover, is_provider_not_found_error,
 };
-use super::{EXTERNAL_PREFETCH_COVER_SIZE, EXTERNAL_PREFETCH_DELAY, EXTERNAL_PREFETCH_PAGE_SIZE};
+use super::{
+    EXTERNAL_PREFETCH_COVER_SIZE, EXTERNAL_PREFETCH_DELAY, EXTERNAL_PREFETCH_PAGE_SIZE,
+    mark_cover_in_flight, unmark_cover_in_flight_generation,
+};
 
 #[derive(Default)]
 struct SyncedImagePrefetchStats {
@@ -68,8 +72,10 @@ pub(in crate::controller) struct ExternalCoverPrefetchRequest {
     pub(in crate::controller) runtime: Arc<Runtime>,
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     pub(in crate::controller) events: Sender<ControllerEvent>,
-    pub(in crate::controller) cover_in_flight: Arc<Mutex<HashSet<String>>>,
-    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashSet<ServerId>>>,
+    pub(in crate::controller) cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
+    pub(in crate::controller) external_cover_retry_generation: Arc<AtomicU64>,
+    pub(in crate::controller) retry_generation: u64,
+    pub(in crate::controller) external_cover_prefetch_in_flight: Arc<Mutex<HashMap<ServerId, u64>>>,
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
     pub(in crate::controller) saved: SavedServer,
 }
@@ -79,7 +85,9 @@ struct CoverPrefetchContext<'a> {
     runtime: &'a Runtime,
     secrets: &'a Arc<dyn SecretStore>,
     events: &'a Sender<ControllerEvent>,
-    cover_in_flight: &'a Arc<Mutex<HashSet<String>>>,
+    cover_in_flight: &'a Arc<Mutex<HashMap<String, u64>>>,
+    external_cover_retry_generation: &'a Arc<AtomicU64>,
+    retry_generation: u64,
     cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
     saved: &'a SavedServer,
 }
@@ -89,10 +97,44 @@ pub(in crate::controller) struct ProviderCoverPrefetchRequest<'a> {
     pub(in crate::controller) runtime: &'a Runtime,
     pub(in crate::controller) secrets: &'a Arc<dyn SecretStore>,
     pub(in crate::controller) events: &'a Sender<ControllerEvent>,
-    pub(in crate::controller) cover_in_flight: &'a Arc<Mutex<HashSet<String>>>,
+    pub(in crate::controller) cover_in_flight: &'a Arc<Mutex<HashMap<String, u64>>>,
+    pub(in crate::controller) external_cover_retry_generation: &'a Arc<AtomicU64>,
+    pub(in crate::controller) retry_generation: u64,
     pub(in crate::controller) cover_slots: &'a Arc<(Mutex<usize>, Condvar)>,
     pub(in crate::controller) saved: &'a SavedServer,
     pub(in crate::controller) provider: &'a dyn MusicProvider,
+}
+
+fn mark_external_cover_prefetch_in_flight(
+    external_cover_prefetch_in_flight: &Arc<Mutex<HashMap<ServerId, u64>>>,
+    server_id: &ServerId,
+    generation: u64,
+) -> bool {
+    external_cover_prefetch_in_flight
+        .lock()
+        .map(|mut running| {
+            if running
+                .get(server_id)
+                .is_some_and(|existing_generation| *existing_generation >= generation)
+            {
+                return false;
+            }
+            running.insert(server_id.clone(), generation);
+            true
+        })
+        .unwrap_or(false)
+}
+
+fn unmark_external_cover_prefetch_in_flight_generation(
+    external_cover_prefetch_in_flight: &Arc<Mutex<HashMap<ServerId, u64>>>,
+    server_id: &ServerId,
+    generation: u64,
+) {
+    if let Ok(mut running) = external_cover_prefetch_in_flight.lock()
+        && running.get(server_id).copied() == Some(generation)
+    {
+        running.remove(server_id);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -120,6 +162,8 @@ pub(in crate::controller) fn start_external_metadata_cover_prefetch_thread(
         secrets,
         events,
         cover_in_flight,
+        external_cover_retry_generation,
+        retry_generation,
         external_cover_prefetch_in_flight,
         cover_slots,
         saved,
@@ -129,13 +173,12 @@ pub(in crate::controller) fn start_external_metadata_cover_prefetch_thread(
     }
 
     let server_id = saved.server.id.clone();
-    match external_cover_prefetch_in_flight.lock() {
-        Ok(mut running) => {
-            if !running.insert(server_id.clone()) {
-                return;
-            }
-        }
-        Err(_) => return,
+    if !mark_external_cover_prefetch_in_flight(
+        &external_cover_prefetch_in_flight,
+        &server_id,
+        retry_generation,
+    ) {
+        return;
     }
 
     thread::spawn(move || {
@@ -150,6 +193,8 @@ pub(in crate::controller) fn start_external_metadata_cover_prefetch_thread(
             secrets: &secrets,
             events: &events,
             cover_in_flight: &cover_in_flight,
+            external_cover_retry_generation: &external_cover_retry_generation,
+            retry_generation,
             cover_slots: &cover_slots,
             saved: &saved,
         };
@@ -193,9 +238,11 @@ pub(in crate::controller) fn start_external_metadata_cover_prefetch_thread(
                 );
             }
         }
-        if let Ok(mut running) = external_cover_prefetch_in_flight.lock() {
-            running.remove(&server_id);
-        }
+        unmark_external_cover_prefetch_in_flight_generation(
+            &external_cover_prefetch_in_flight,
+            &server_id,
+            retry_generation,
+        );
     });
 }
 
@@ -214,6 +261,8 @@ pub(in crate::controller) fn prefetch_initial_provider_cover_cache(
         events: request.events,
         secrets: request.secrets,
         cover_in_flight: request.cover_in_flight,
+        external_cover_retry_generation: request.external_cover_retry_generation,
+        retry_generation: request.retry_generation,
         cover_slots: request.cover_slots,
         saved,
     };
@@ -382,19 +431,12 @@ fn prefetch_provider_image_ref(
     {
         return Ok(SyncedImagePrefetchOutcome::CacheHit);
     }
-    match context.cover_in_flight.lock() {
-        Ok(mut in_flight) => {
-            if !in_flight.insert(key.clone()) {
-                return Ok(SyncedImagePrefetchOutcome::Skipped);
-            }
-        }
-        Err(_) => return Ok(SyncedImagePrefetchOutcome::Skipped),
+    if !mark_cover_in_flight(context.cover_in_flight, &key, context.retry_generation) {
+        return Ok(SyncedImagePrefetchOutcome::Skipped);
     }
 
     if !acquire_cover_slot(context.cover_slots) {
-        if let Ok(mut in_flight) = context.cover_in_flight.lock() {
-            in_flight.remove(&key);
-        }
+        unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
         return Ok(SyncedImagePrefetchOutcome::Skipped);
     }
     let result = fetch_and_cache_provider_cover(
@@ -406,9 +448,7 @@ fn prefetch_provider_image_ref(
         EXTERNAL_PREFETCH_COVER_SIZE,
     );
     release_cover_slot(context.cover_slots);
-    if let Ok(mut in_flight) = context.cover_in_flight.lock() {
-        in_flight.remove(&key);
-    }
+    unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
 
     match result {
         Ok(path) => {
@@ -565,19 +605,12 @@ fn prefetch_image_ref(
     {
         return Ok(SyncedImagePrefetchOutcome::KnownMiss);
     }
-    match context.cover_in_flight.lock() {
-        Ok(mut in_flight) => {
-            if !in_flight.insert(key.clone()) {
-                return Ok(SyncedImagePrefetchOutcome::Skipped);
-            }
-        }
-        Err(_) => return Ok(SyncedImagePrefetchOutcome::Skipped),
+    if !mark_cover_in_flight(context.cover_in_flight, &key, context.retry_generation) {
+        return Ok(SyncedImagePrefetchOutcome::Skipped);
     }
 
     if !acquire_cover_slot(context.cover_slots) {
-        if let Ok(mut in_flight) = context.cover_in_flight.lock() {
-            in_flight.remove(&key);
-        }
+        unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
         return Ok(SyncedImagePrefetchOutcome::Skipped);
     }
     let result = fetch_and_cache_cover(
@@ -589,9 +622,7 @@ fn prefetch_image_ref(
         EXTERNAL_PREFETCH_COVER_SIZE,
     );
     release_cover_slot(context.cover_slots);
-    if let Ok(mut in_flight) = context.cover_in_flight.lock() {
-        in_flight.remove(&key);
-    }
+    unmark_cover_in_flight_generation(context.cover_in_flight, &key, context.retry_generation);
 
     match result {
         Ok(path) => {
@@ -602,6 +633,17 @@ fn prefetch_image_ref(
         }
         Err(error) => {
             if is_external_image && external_metadata::is_expected_lookup_miss(&error) {
+                let _in_flight = context
+                    .cover_in_flight
+                    .lock()
+                    .map_err(|_| "cover in-flight lock was poisoned.".to_string())?;
+                if context
+                    .external_cover_retry_generation
+                    .load(Ordering::SeqCst)
+                    != context.retry_generation
+                {
+                    return Ok(SyncedImagePrefetchOutcome::Skipped);
+                }
                 save_external_lookup_miss(
                     context.store,
                     context.saved,
@@ -654,4 +696,51 @@ fn active_server_changed(store: &StoreHandle, saved: &SavedServer) -> Result<boo
     Ok(store
         .with_store(|store| store.active_server())?
         .is_none_or(|active| active.server.id != saved.server.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        mark_external_cover_prefetch_in_flight, unmark_external_cover_prefetch_in_flight_generation,
+    };
+    use rufin_core::ServerId;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn external_prefetch_retry_generation_replaces_running_generation() {
+        let in_flight = Arc::new(Mutex::new(HashMap::new()));
+        let server_id = ServerId::new("jellyfin:server:test");
+
+        assert!(mark_external_cover_prefetch_in_flight(
+            &in_flight, &server_id, 1
+        ));
+        assert!(!mark_external_cover_prefetch_in_flight(
+            &in_flight, &server_id, 1
+        ));
+        assert!(mark_external_cover_prefetch_in_flight(
+            &in_flight, &server_id, 2
+        ));
+        assert!(!mark_external_cover_prefetch_in_flight(
+            &in_flight, &server_id, 1
+        ));
+
+        unmark_external_cover_prefetch_in_flight_generation(&in_flight, &server_id, 1);
+        assert_eq!(
+            in_flight
+                .lock()
+                .expect("external prefetch in-flight lock")
+                .get(&server_id)
+                .copied(),
+            Some(2)
+        );
+
+        unmark_external_cover_prefetch_in_flight_generation(&in_flight, &server_id, 2);
+        assert!(
+            in_flight
+                .lock()
+                .expect("external prefetch in-flight lock")
+                .is_empty()
+        );
+    }
 }

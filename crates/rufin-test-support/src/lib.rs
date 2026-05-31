@@ -410,6 +410,7 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
             name: (*name).to_string(),
             album_count: (album_count / GENRES.len()) as u32,
             track_count: (track_count / GENRES.len()) as u32,
+            image_refs: Vec::new(),
             image_ref: Some(fake_image_ref("genre", index + 1)),
         })
         .collect::<Vec<_>>();
@@ -422,6 +423,7 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
             name: (*name).to_string(),
             track_count: 25 + index as u32,
             duration_seconds: 4_500 + index as u32 * 300,
+            image_refs: Vec::new(),
             image_ref: Some(fake_image_ref("playlist", index + 1)),
         })
         .collect();

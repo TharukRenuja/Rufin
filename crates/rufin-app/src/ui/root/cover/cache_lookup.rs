@@ -55,6 +55,46 @@ impl Shell {
             size,
             intent,
         } = request;
+        if self.state.cover_unavailable.borrow().contains(&key) {
+            self.apply_cover_unavailable(&key);
+            return;
+        }
+        let candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
+        let fast_path = if matches!(
+            intent,
+            CoverPathLookupIntent::Priority | CoverPathLookupIntent::StartupPrime
+        ) {
+            cached_cover_candidate_path_from_memory_or_disk(
+                &candidate_keys,
+                |candidate_key| {
+                    self.state
+                        .cover_path_cache
+                        .borrow()
+                        .get(candidate_key)
+                        .cloned()
+                },
+                |candidate_key| self.controller.cached_cover_path_for_key(candidate_key),
+            )
+        } else {
+            cached_cover_candidate_path(&candidate_keys, |candidate_key| {
+                self.state
+                    .cover_path_cache
+                    .borrow()
+                    .get(candidate_key)
+                    .cloned()
+            })
+        };
+        if let Some(path) = fast_path {
+            self.finish_cached_cover_path_lookup(
+                key,
+                image_ref,
+                fetch_size,
+                size,
+                intent,
+                Some(path),
+            );
+            return;
+        }
         let should_start = record_cover_path_lookup_request(
             &mut self.state.cover_path_lookups.borrow_mut(),
             key.clone(),
@@ -66,22 +106,21 @@ impl Shell {
 
         let shell = Rc::clone(self);
         let controller = self.controller.clone();
-        let candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
+        let image_ref_for_lookup = image_ref.clone();
         glib::spawn_future_local(async move {
             let path = gtk::gio::spawn_blocking(move || {
-                candidate_keys
-                    .iter()
-                    .find_map(|key| controller.cached_cover_path_for_key(key))
+                cached_cover_path_for_lookup(
+                    &candidate_keys,
+                    |key| controller.cached_cover_path_for_key(key),
+                    || controller.cached_cover_path(&image_ref_for_lookup, fetch_size),
+                )
             })
             .await
             .ok()
             .flatten();
-            let intent = shell
-                .state
-                .cover_path_lookups
-                .borrow_mut()
-                .remove(&key)
-                .unwrap_or(intent);
+            let Some(intent) = shell.state.cover_path_lookups.borrow_mut().remove(&key) else {
+                return;
+            };
             shell.finish_cached_cover_path_lookup(key, image_ref, fetch_size, size, intent, path);
         });
     }
@@ -94,10 +133,58 @@ impl Shell {
         intent: CoverPathLookupIntent,
         path: Option<PathBuf>,
     ) {
+        if let Some(path) = path.as_ref() {
+            self.state
+                .cover_path_cache
+                .borrow_mut()
+                .insert(key.clone(), path.clone());
+        }
         match intent {
             CoverPathLookupIntent::Warm => {
                 if let Some(path) = path {
                     self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Warm);
+                }
+            }
+            CoverPathLookupIntent::Priority => {
+                if let Some(path) = path {
+                    self.state.cover_unavailable.borrow_mut().remove(&key);
+                    self.start_cover_decode_from_path(
+                        key,
+                        path,
+                        size,
+                        CoverDecodePriority::Visible,
+                    );
+                } else if self.visible_cover_cache_miss_should_fetch(&key, &image_ref, fetch_size) {
+                    self.request_cover_for_key(key, image_ref, fetch_size);
+                } else {
+                    self.apply_cover_unavailable(&key);
+                }
+            }
+            CoverPathLookupIntent::StartupPrime => {
+                if let Some(path) = path {
+                    self.state.cover_unavailable.borrow_mut().remove(&key);
+                    self.start_cover_decode_from_path(
+                        key.clone(),
+                        path,
+                        size,
+                        CoverDecodePriority::Visible,
+                    );
+                } else if self.visible_cover_cache_miss_should_fetch(&key, &image_ref, fetch_size) {
+                    self.request_cover_for_key(key, image_ref, fetch_size);
+                } else {
+                    self.state
+                        .cover_unavailable
+                        .borrow_mut()
+                        .insert(key.clone());
+                    self.record_perf_cover_stale_key(&key);
+                    self.state
+                        .startup_cover_prime_pending
+                        .borrow_mut()
+                        .remove(&key);
+                    self.state
+                        .first_run_cover_prime_pending
+                        .borrow_mut()
+                        .remove(&key);
                 }
             }
             CoverPathLookupIntent::Visible => {
@@ -114,16 +201,14 @@ impl Shell {
         path: Option<PathBuf>,
     ) {
         let Some(path) = path else {
-            if self.visible_cover_cache_miss_should_fetch(&image_ref, fetch_size) {
-                self.controller
-                    .request_cover_for_key(key, image_ref, fetch_size);
+            if self.visible_cover_cache_miss_should_fetch(&key, &image_ref, fetch_size) {
+                self.request_cover_for_key(key, image_ref, fetch_size);
                 return;
             }
-            self.state.cover_bindings.borrow_mut().remove(&key);
-            self.record_perf_cover_stale_key(&key);
-            self.record_perf_coverless_tile();
+            self.apply_cover_unavailable(&key);
             return;
         };
+        self.state.cover_unavailable.borrow_mut().remove(&key);
 
         if !self.cover_binding_has_live(&key) {
             self.record_perf_cover_stale_key(&key);
@@ -141,12 +226,42 @@ impl Shell {
         self.record_perf_cover_ready(&key);
         self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
     }
-    fn visible_cover_cache_miss_should_fetch(&self, image_ref: &ImageRef, fetch_size: u32) -> bool {
-        !self
+    fn visible_cover_cache_miss_should_fetch(
+        &self,
+        key: &str,
+        image_ref: &ImageRef,
+        fetch_size: u32,
+    ) -> bool {
+        let provider = self
+            .state
+            .library
+            .borrow()
+            .server
+            .as_ref()
+            .map(|server| server.provider.clone());
+        let unavailable = self.state.cover_unavailable.borrow().contains(key);
+        let external_known_missing = self
             .controller
-            .external_cover_lookup_known_missing(image_ref, fetch_size)
+            .external_cover_lookup_known_missing(image_ref, fetch_size);
+        visible_cover_cache_miss_action(
+            provider.as_deref(),
+            image_ref,
+            unavailable,
+            external_known_missing,
+        ) == VisibleCoverCacheMissAction::Fetch
+    }
+    fn request_cover_for_key(&self, key: String, image_ref: ImageRef, fetch_size: u32) {
+        self.state.cover_fetches.borrow_mut().insert(key.clone());
+        self.controller
+            .request_cover_for_key(key, image_ref, fetch_size);
     }
     pub(in crate::ui) fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
+        self.state.cover_fetches.borrow_mut().remove(key);
+        self.state.cover_unavailable.borrow_mut().remove(key);
+        self.state
+            .cover_path_cache
+            .borrow_mut()
+            .insert(key.to_string(), path.to_path_buf());
         self.record_perf_cover_ready(key);
         let size = self
             .pending_cover_size(key)
@@ -164,6 +279,101 @@ impl Shell {
             CoverDecodePriority::Visible,
         );
     }
+    pub(in crate::ui) fn apply_cover_unavailable(self: &Rc<Self>, key: &str) {
+        self.state.cover_fetches.borrow_mut().remove(key);
+        self.state
+            .cover_unavailable
+            .borrow_mut()
+            .insert(key.to_string());
+        self.state.cover_path_cache.borrow_mut().remove(key);
+        self.state
+            .startup_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
+        self.state
+            .first_run_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
+
+        let bindings = self.take_live_cover_bindings(key);
+        let mut cleared = 0_usize;
+        for binding in bindings {
+            if !binding.clear_on_failure {
+                continue;
+            }
+            if binding
+                .tile
+                .upgrade()
+                .is_some_and(|tile| tile.clear_image_if_current(binding.generation))
+            {
+                cleared = cleared.saturating_add(1);
+            } else {
+                self.record_perf_cover_stale_ignored();
+            }
+        }
+        self.record_perf_cover_stale_key(key);
+        if cleared > 0 {
+            self.record_perf_coverless_tile();
+        }
+    }
+    pub(in crate::ui) fn reconcile_startup_cover_prime_pending(&self) {
+        let stale = self.stale_cover_prime_pending_keys(
+            &self
+                .state
+                .startup_cover_prime_pending
+                .borrow()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        self.remove_stale_cover_prime_pending(stale);
+    }
+    pub(in crate::ui) fn reconcile_first_run_cover_prime_pending(&self) {
+        let stale = self.stale_cover_prime_pending_keys(
+            &self
+                .state
+                .first_run_cover_prime_pending
+                .borrow()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        self.remove_stale_cover_prime_pending(stale);
+    }
+    fn stale_cover_prime_pending_keys(&self, keys: &[String]) -> Vec<String> {
+        keys.iter()
+            .filter(|key| !self.cover_prime_pending_key_should_wait(key))
+            .cloned()
+            .collect()
+    }
+    fn cover_prime_pending_key_should_wait(&self, key: &str) -> bool {
+        startup_prime_pending_key_should_wait(
+            self.decoded_cover_has_min_size(key, cover_size_from_cache_key(key).unwrap_or(1)),
+            self.state.cover_unavailable.borrow().contains(key),
+            self.state.cover_path_lookups.borrow().contains_key(key),
+            self.state.cover_fetches.borrow().contains(key),
+            self.state.cover_decodes.borrow().contains_key(key),
+            self.state
+                .cover_decode_queue
+                .borrow()
+                .iter()
+                .any(|job| job.key == key),
+        )
+    }
+    fn remove_stale_cover_prime_pending(&self, keys: Vec<String>) {
+        if keys.is_empty() {
+            return;
+        }
+        let mut startup_pending = self.state.startup_cover_prime_pending.borrow_mut();
+        let mut first_run_pending = self.state.first_run_cover_prime_pending.borrow_mut();
+        let mut unavailable = self.state.cover_unavailable.borrow_mut();
+        for key in keys {
+            startup_pending.remove(&key);
+            first_run_pending.remove(&key);
+            unavailable.insert(key.clone());
+            self.record_perf_cover_stale_key(&key);
+        }
+    }
     pub(in crate::ui) fn start_cover_decode_from_path(
         self: &Rc<Self>,
         key: String,
@@ -178,7 +388,7 @@ impl Shell {
             return;
         }
 
-        if self.state.cover_decodes.borrow().contains(&key) {
+        if self.state.cover_decodes.borrow().contains_key(&key) {
             return;
         }
 
@@ -199,11 +409,7 @@ impl Shell {
                 } else {
                     CoverDecodePriority::Warm
                 };
-                if job.priority == CoverDecodePriority::Visible {
-                    queue.push_front(job);
-                } else {
-                    queue.push_back(job);
-                }
+                queue_cover_decode_job(&mut queue, job);
                 drop(queue);
                 self.drain_cover_decode_queue();
                 return;
@@ -216,11 +422,7 @@ impl Shell {
                 priority,
                 requires_live_binding,
             };
-            if priority == CoverDecodePriority::Visible {
-                queue.push_front(job);
-            } else {
-                queue.push_back(job);
-            }
+            queue_cover_decode_job(&mut queue, job);
         }
 
         self.drain_cover_decode_queue();
@@ -246,5 +448,183 @@ impl Shell {
         let bindings = self.take_live_cover_bindings(key);
         apply_pixbuf_to_bindings(bindings, cover.pixbuf);
         true
+    }
+}
+
+pub(in crate::ui) fn startup_prime_pending_key_should_wait(
+    decoded: bool,
+    unavailable: bool,
+    path_lookup: bool,
+    fetch: bool,
+    active_decode: bool,
+    queued_decode: bool,
+) -> bool {
+    !decoded && !unavailable && (path_lookup || fetch || active_decode || queued_decode)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum VisibleCoverCacheMissAction {
+    Fetch,
+    FinalMissing,
+}
+
+pub(in crate::ui) fn visible_cover_cache_miss_action(
+    provider: Option<&str>,
+    image_ref: &ImageRef,
+    unavailable: bool,
+    external_known_missing: bool,
+) -> VisibleCoverCacheMissAction {
+    if unavailable || external_known_missing {
+        return VisibleCoverCacheMissAction::FinalMissing;
+    }
+    if image_ref.item_id.starts_with("local:cover:") {
+        return if provider == Some(rufin_provider_local::LOCAL_PROVIDER_ID) {
+            VisibleCoverCacheMissAction::Fetch
+        } else {
+            VisibleCoverCacheMissAction::FinalMissing
+        };
+    }
+    VisibleCoverCacheMissAction::Fetch
+}
+
+pub(in crate::ui) fn cached_cover_candidate_path(
+    candidate_keys: &[String],
+    mut key_lookup: impl FnMut(&str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    candidate_keys.iter().find_map(|key| key_lookup(key))
+}
+
+pub(in crate::ui) fn cached_cover_candidate_path_from_memory_or_disk(
+    candidate_keys: &[String],
+    mut memory_lookup: impl FnMut(&str) -> Option<PathBuf>,
+    mut disk_lookup: impl FnMut(&str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    candidate_keys
+        .iter()
+        .find_map(|key| memory_lookup(key).or_else(|| disk_lookup(key)))
+}
+
+pub(in crate::ui) fn cached_cover_path_for_lookup(
+    candidate_keys: &[String],
+    key_lookup: impl FnMut(&str) -> Option<PathBuf>,
+    fallback_lookup: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    cached_cover_candidate_path(candidate_keys, key_lookup).or_else(fallback_lookup)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cover_path_lookup_uses_size_fallback_when_candidate_key_files_miss() {
+        let fallback = PathBuf::from("/tmp/rufin-cached-cover.jpg");
+        let keys = vec!["cover-96".to_string(), "cover-256".to_string()];
+
+        assert_eq!(
+            cached_cover_path_for_lookup(&keys, |_| None, || Some(fallback.clone())),
+            Some(fallback)
+        );
+    }
+
+    #[test]
+    fn cover_path_lookup_prefers_candidate_key_files() {
+        let key_path = PathBuf::from("/tmp/rufin-key-cover.jpg");
+        let fallback = PathBuf::from("/tmp/rufin-cached-cover.jpg");
+        let keys = vec!["cover-96".to_string(), "cover-256".to_string()];
+
+        assert_eq!(
+            cached_cover_path_for_lookup(
+                &keys,
+                |key| (key == "cover-256").then(|| key_path.clone()),
+                || Some(fallback)
+            ),
+            Some(key_path)
+        );
+    }
+
+    #[test]
+    fn priority_cover_path_lookup_uses_disk_candidate_before_async_fallback() {
+        let disk_path = PathBuf::from("/tmp/rufin-disk-candidate.jpg");
+        let keys = vec!["cover-96".to_string(), "cover-256".to_string()];
+
+        assert_eq!(
+            cached_cover_candidate_path_from_memory_or_disk(
+                &keys,
+                |_| None,
+                |key| (key == "cover-96").then(|| disk_path.clone())
+            ),
+            Some(disk_path)
+        );
+    }
+
+    #[test]
+    fn startup_prime_pending_key_waits_only_for_live_work() {
+        assert!(startup_prime_pending_key_should_wait(
+            false, false, true, false, false, false
+        ));
+        assert!(startup_prime_pending_key_should_wait(
+            false, false, false, true, false, false
+        ));
+        assert!(startup_prime_pending_key_should_wait(
+            false, false, false, false, true, false
+        ));
+        assert!(startup_prime_pending_key_should_wait(
+            false, false, false, false, false, true
+        ));
+        assert!(!startup_prime_pending_key_should_wait(
+            true, false, true, true, false, false
+        ));
+        assert!(!startup_prime_pending_key_should_wait(
+            false, true, true, true, false, false
+        ));
+        assert!(!startup_prime_pending_key_should_wait(
+            false, false, false, false, false, false
+        ));
+    }
+
+    #[test]
+    fn local_visible_cache_miss_fetches_from_local_provider() {
+        let local_cover = ImageRef::new("local:cover:file%3A%2F%2Fcover.jpg", None);
+
+        assert_eq!(
+            visible_cover_cache_miss_action(
+                Some(rufin_provider_local::LOCAL_PROVIDER_ID),
+                &local_cover,
+                false,
+                false
+            ),
+            VisibleCoverCacheMissAction::Fetch
+        );
+    }
+
+    #[test]
+    fn remote_visible_cache_miss_can_fetch_when_not_known_missing() {
+        let provider_cover = ImageRef::new("album-1", None);
+
+        assert_eq!(
+            visible_cover_cache_miss_action(Some("jellyfin"), &provider_cover, false, false),
+            VisibleCoverCacheMissAction::Fetch
+        );
+    }
+
+    #[test]
+    fn stale_local_cover_cache_miss_is_final_on_remote_source() {
+        let local_cover = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftrack.flac", None);
+
+        assert_eq!(
+            visible_cover_cache_miss_action(Some("jellyfin"), &local_cover, false, false),
+            VisibleCoverCacheMissAction::FinalMissing
+        );
+    }
+
+    #[test]
+    fn known_missing_visible_cache_miss_is_final() {
+        let external_cover = ImageRef::new("external:album:artist:album", None);
+
+        assert_eq!(
+            visible_cover_cache_miss_action(Some("jellyfin"), &external_cover, false, true),
+            VisibleCoverCacheMissAction::FinalMissing
+        );
     }
 }

@@ -344,9 +344,6 @@ pub(in crate::ui) fn route_uses_responsive_cards(route: &Route) -> bool {
             | Route::Search { .. }
     )
 }
-pub(in crate::ui) fn route_boundary(view: gtk::Widget) -> gtk::Widget {
-    route_boundary_from_spec(view, route_boundary_spec())
-}
 pub(in crate::ui) fn route_boundary_for_route(route: &Route, view: gtk::Widget) -> gtk::Widget {
     route_boundary_from_spec(view, route_boundary_spec_for_route(route))
 }

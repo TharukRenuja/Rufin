@@ -3,7 +3,10 @@ use super::right_panel::{
     clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_initial_position,
     queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
 };
-use super::startup_reveal::startup_loading_status_label;
+use super::startup_reveal::{
+    StartupRevealAction, first_run_cover_prime_reveal_action, startup_loading_status_label,
+    startup_route_reveal_action,
+};
 use super::{
     AutoLyricsRequest, LocalSourceCacheGateAction, PlaylistEntryListState, PlaylistEntrySort,
     SnapshotRenderDecision, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
@@ -15,12 +18,55 @@ use super::{
 };
 use crate::controller::PlaybackPerfEvent;
 use rufin_core::{
-    Album, AlbumId, AppSettings, ArtistId, HomeSection, HomeSectionKind, LibrarySourceSelection,
-    QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, ServerId, Track,
-    TrackId, TrackSortKey, TrackTableSettings,
+    Album, AlbumId, AppSettings, ArtistId, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,
+    LibraryLayout, LibrarySourceSelection, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode,
+    Route, SearchKind, ServerId, Track, TrackId, TrackSortKey, TrackTableSettings,
 };
-use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry};
+use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+fn ui_perf_test_options(strict_contracts: bool) -> super::UiPerfOptions {
+    super::UiPerfOptions {
+        max_gap_ms: 120,
+        route_ms: 650,
+        route_ready_ms: 250,
+        drag_ms: 900,
+        duration_ms: 15_000,
+        asset_ms: 300,
+        require_assets: false,
+        terminal_events: false,
+        observe_scroll: false,
+        strict_contracts,
+        launch_started_at: Instant::now(),
+        output: None,
+    }
+}
+
+fn route_visible_contract(phase: &'static str, route: &str) -> super::UiPerfRouteVisibleContract {
+    super::UiPerfRouteVisibleContract {
+        phase,
+        route: route.to_string(),
+        layout: "row",
+        visible_start: 0,
+        visible_end: 12,
+        expected_visible: 12,
+        ready: 12,
+        final_missing: 0,
+        pending: 0,
+        rendered_expected: 12,
+        rendered_ready: 12,
+        rendered_final_missing: 0,
+        rendered_fallback: 0,
+        fallback_after_reveal: 0,
+        pending_assets: 0,
+        active_decodes: 0,
+        queued_decodes: 0,
+        path_lookups: 0,
+        pending_samples: Vec::new(),
+    }
+}
+
 #[test]
 pub(in crate::ui) fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
     let candidates = super::decoded_cover_candidate_sizes(super::DETAIL_COVER_SIZE);
@@ -276,6 +322,35 @@ pub(in crate::ui) fn startup_loading_uses_root_stack_until_route_reveal() {
     assert!(!startup_loading_screen_active(false, true));
 }
 #[test]
+pub(in crate::ui) fn startup_route_reveal_expires_pending_cover_prime() {
+    assert_eq!(
+        startup_route_reveal_action(
+            true,
+            4,
+            Duration::from_millis(super::STARTUP_ROUTE_REVEAL_MAX_MS)
+        ),
+        StartupRevealAction::RevealExpired
+    );
+    assert_eq!(
+        startup_route_reveal_action(
+            false,
+            4,
+            Duration::from_millis(super::STARTUP_ROUTE_REVEAL_MAX_MS)
+        ),
+        StartupRevealAction::RevealExpired
+    );
+}
+#[test]
+pub(in crate::ui) fn first_run_cover_prime_expires_pending_cover_prime() {
+    assert_eq!(
+        first_run_cover_prime_reveal_action(
+            3,
+            Duration::from_millis(super::FIRST_RUN_COVER_PRIME_TIMEOUT_MS)
+        ),
+        StartupRevealAction::RevealExpired
+    );
+}
+#[test]
 pub(in crate::ui) fn startup_loading_status_hides_idle_cache_status() {
     assert_eq!(startup_loading_status_label(""), None);
     assert_eq!(startup_loading_status_label("Cached library ready"), None);
@@ -285,17 +360,139 @@ pub(in crate::ui) fn startup_loading_status_hides_idle_cache_status() {
     );
 }
 #[test]
+pub(in crate::ui) fn startup_prime_targets_stay_to_home_visible_covers() {
+    let mut library = test_library_snapshot();
+    let home_ref = test_image_ref("home");
+    let mut home_album = test_album("Home Artist", Some(ArtistId::fake(90)));
+    home_album.image_ref = Some(home_ref.clone());
+    library.home_sections = vec![HomeSection {
+        kind: HomeSectionKind::Explore,
+        albums: vec![home_album],
+        tracks: Vec::new(),
+    }];
+
+    let first_track_ref = test_image_ref("track-a");
+    let mut first_track = test_track("Route Artist", Some(ArtistId::fake(1)));
+    first_track.title = "A route track".to_string();
+    first_track.image_ref = Some(first_track_ref.clone());
+    let mut second_track = test_track("Route Artist", Some(ArtistId::fake(1)));
+    second_track.id = TrackId::fake(2);
+    second_track.title = "B route track".to_string();
+    second_track.image_ref = Some(test_image_ref("track-b"));
+    library.tracks = vec![second_track, first_track];
+
+    let first_album_ref = test_image_ref("album-a");
+    let mut first_album = test_album("Route Artist", Some(ArtistId::fake(2)));
+    first_album.title = "A route album".to_string();
+    first_album.image_ref = Some(first_album_ref.clone());
+    let mut second_album = test_album("Route Artist", Some(ArtistId::fake(2)));
+    second_album.id = AlbumId::fake(2);
+    second_album.title = "B route album".to_string();
+    second_album.image_ref = Some(test_image_ref("album-b"));
+    library.albums = vec![second_album, first_album];
+
+    let settings = AppSettings {
+        home_blocks: vec![HomeBlockKind::Explore],
+        ..Default::default()
+    };
+    let targets = super::startup_cover_prime_targets_from_snapshot(&library, &settings, 0);
+    let target_refs = targets
+        .iter()
+        .map(|target| target.image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(target_refs.contains(&home_ref.item_id.as_str()));
+    assert!(!target_refs.contains(&first_track_ref.item_id.as_str()));
+    assert!(!target_refs.contains(&first_album_ref.item_id.as_str()));
+
+    let home_targets =
+        super::startup_home_cover_prime_targets_from_snapshot(&library, &settings, 0);
+    let home_target_refs = home_targets
+        .iter()
+        .map(|target| target.image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+    assert!(home_target_refs.contains(&home_ref.item_id.as_str()));
+    assert!(!home_target_refs.contains(&first_track_ref.item_id.as_str()));
+    assert!(!home_target_refs.contains(&first_album_ref.item_id.as_str()));
+}
+
+#[test]
+pub(in crate::ui) fn library_route_prime_targets_include_full_visible_image_routes() {
+    let mut library = test_library_snapshot();
+    let first_track_ref = test_image_ref("track-a");
+    let mut first_track = test_track("Route Artist", Some(ArtistId::fake(1)));
+    first_track.title = "A route track".to_string();
+    first_track.image_ref = Some(first_track_ref.clone());
+    let mut second_track = test_track("Route Artist", Some(ArtistId::fake(1)));
+    second_track.id = TrackId::fake(2);
+    second_track.title = "B route track".to_string();
+    second_track.image_ref = Some(test_image_ref("track-b"));
+    library.tracks = vec![second_track, first_track];
+
+    let first_album_ref = test_image_ref("album-a");
+    let mut first_album = test_album("Route Artist", Some(ArtistId::fake(2)));
+    first_album.title = "A route album".to_string();
+    first_album.image_ref = Some(first_album_ref.clone());
+    let mut second_album = test_album("Route Artist", Some(ArtistId::fake(2)));
+    second_album.id = AlbumId::fake(2);
+    second_album.title = "B route album".to_string();
+    second_album.image_ref = Some(test_image_ref("album-b"));
+    library.albums = vec![second_album, first_album];
+
+    let settings = AppSettings::default();
+    let targets = super::library_route_cover_prime_targets_from_snapshot(&library, &settings);
+    let target_refs = targets
+        .iter()
+        .map(|target| target.image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(target_refs.contains(&first_track_ref.item_id.as_str()));
+    assert!(target_refs.contains(&first_album_ref.item_id.as_str()));
+    assert_eq!(
+        target_refs
+            .iter()
+            .filter(|item_id| **item_id == first_track_ref.item_id)
+            .count(),
+        1
+    );
+    assert!(
+        target_refs
+            .iter()
+            .position(|item_id| *item_id == first_track_ref.item_id)
+            < target_refs
+                .iter()
+                .position(|item_id| *item_id == first_album_ref.item_id)
+    );
+}
+
+#[test]
+pub(in crate::ui) fn cover_group_slots_repeat_ordered_refs_without_unique_collage_rules() {
+    let first = test_image_ref("first");
+    let second = test_image_ref("second");
+    let duplicate = first.clone();
+
+    let slots = super::cover_group_slots(&[first.clone(), second.clone(), duplicate]);
+    let slot_refs = slots
+        .iter()
+        .map(|image_ref| image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        slot_refs,
+        vec![
+            first.item_id.as_str(),
+            second.item_id.as_str(),
+            first.item_id.as_str(),
+            first.item_id.as_str(),
+        ]
+    );
+}
+
+#[test]
 pub(in crate::ui) fn manual_ui_perf_observer_records_scrolls_by_route() {
-    let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
-        max_gap_ms: 120,
-        route_ms: 650,
-        duration_ms: 15_000,
-        asset_ms: 300,
-        require_assets: false,
-        terminal_events: false,
-        observe_scroll: true,
-        output: None,
-    });
+    let mut options = ui_perf_test_options(false);
+    options.observe_scroll = true;
+    let monitor = super::UiPerfMonitor::new(options);
 
     monitor.record_manual_scroll_step("Tracks", 10.0, 100.0);
     monitor.record_manual_scroll_step("Tracks", 40.0, 100.0);
@@ -310,16 +507,9 @@ pub(in crate::ui) fn manual_ui_perf_observer_records_scrolls_by_route() {
 }
 #[test]
 pub(in crate::ui) fn ui_perf_report_records_playback_startup_phases() {
-    let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
-        max_gap_ms: 120,
-        route_ms: 650,
-        duration_ms: 15_000,
-        asset_ms: 300,
-        require_assets: false,
-        terminal_events: false,
-        observe_scroll: true,
-        output: None,
-    });
+    let mut options = ui_perf_test_options(false);
+    options.observe_scroll = true;
+    let monitor = super::UiPerfMonitor::new(options);
 
     monitor.record_playback_event(&PlaybackPerfEvent {
         phase: "playing",
@@ -332,6 +522,21 @@ pub(in crate::ui) fn ui_perf_report_records_playback_startup_phases() {
     assert!(report.contains(
         "RUFIN_PERF_PLAYBACK phase=playing server_id=server-1 track_id=track-7 elapsed_ms=1842"
     ));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_report_hashes_asset_labels() {
+    let monitor = super::UiPerfMonitor::new(ui_perf_test_options(false));
+
+    monitor.record_cover_bind_request("/private/library/album/track.flac");
+    monitor.record_cover_path_ready("/private/library/album/track.flac");
+    monitor.record_cover_decode_start("/private/library/album/track.flac");
+    monitor.record_cover_decode_ok("/private/library/album/track.flac");
+    monitor.record_cover_bind_request("/private/library/album/pending.flac");
+
+    let report = monitor.report();
+    assert!(!report.contains("/private/library"));
+    assert!(report.contains("RUFIN_PERF_ASSET key_hash="));
+    assert!(report.contains("RUFIN_PERF_PENDING_ASSET key_hash="));
 }
 #[test]
 pub(in crate::ui) fn ui_perf_plan_keeps_home_out_of_the_critical_window() {
@@ -357,16 +562,9 @@ pub(in crate::ui) fn ui_perf_plan_keeps_home_out_of_the_critical_window() {
 }
 #[test]
 pub(in crate::ui) fn ui_perf_route_render_budget_is_not_the_scroll_gap_budget() {
-    let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
-        max_gap_ms: 120,
-        route_ms: 650,
-        duration_ms: 15_000,
-        asset_ms: 300,
-        require_assets: true,
-        terminal_events: false,
-        observe_scroll: false,
-        output: None,
-    });
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
 
     monitor.record_route_render("Albums".to_string(), std::time::Duration::from_millis(300));
     monitor.record_cover_cache_hit("cached-cover");
@@ -374,17 +572,632 @@ pub(in crate::ui) fn ui_perf_route_render_budget_is_not_the_scroll_gap_budget() 
     assert!(!monitor.failed());
 }
 #[test]
-pub(in crate::ui) fn ui_perf_scroll_failure_allows_one_borderline_tick() {
-    let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
-        max_gap_ms: 120,
-        route_ms: 650,
-        duration_ms: 15_000,
-        asset_ms: 300,
-        require_assets: true,
-        terminal_events: false,
-        observe_scroll: false,
-        output: None,
+pub(in crate::ui) fn ui_perf_route_visible_contract_fails_pending_route_ready_work() {
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+
+    monitor.record_route_visible_contract(super::UiPerfRouteVisibleContract {
+        phase: "route_ready",
+        route: "Albums".to_string(),
+        layout: "grid",
+        visible_start: 0,
+        visible_end: 6,
+        expected_visible: 6,
+        ready: 5,
+        final_missing: 0,
+        pending: 1,
+        rendered_expected: 6,
+        rendered_ready: 5,
+        rendered_final_missing: 0,
+        rendered_fallback: 1,
+        fallback_after_reveal: 1,
+        pending_assets: 1,
+        active_decodes: 0,
+        queued_decodes: 0,
+        path_lookups: 0,
+        pending_samples: Vec::new(),
     });
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_visible_contract_fails_strict_drag_mid_pending_on_image_route() {
+    let mut options = ui_perf_test_options(true);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+
+    monitor.record_route_visible_contract(super::UiPerfRouteVisibleContract {
+        phase: "drag_mid",
+        route: "Tracks".to_string(),
+        layout: "row",
+        visible_start: 100,
+        visible_end: 113,
+        expected_visible: 13,
+        ready: 8,
+        final_missing: 0,
+        pending: 5,
+        rendered_expected: 13,
+        rendered_ready: 8,
+        rendered_final_missing: 0,
+        rendered_fallback: 5,
+        fallback_after_reveal: 5,
+        pending_assets: 5,
+        active_decodes: 5,
+        queued_decodes: 0,
+        path_lookups: 0,
+        pending_samples: Vec::new(),
+    });
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_visible_contract_rejects_background_work_when_ready() {
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+
+    monitor.record_route_visible_contract(super::UiPerfRouteVisibleContract {
+        phase: "route_ready",
+        route: "Albums".to_string(),
+        layout: "grid",
+        visible_start: 0,
+        visible_end: 6,
+        expected_visible: 6,
+        ready: 6,
+        final_missing: 0,
+        pending: 0,
+        rendered_expected: 6,
+        rendered_ready: 6,
+        rendered_final_missing: 0,
+        rendered_fallback: 0,
+        fallback_after_reveal: 0,
+        pending_assets: 42,
+        active_decodes: 2,
+        queued_decodes: 7,
+        path_lookups: 9,
+        pending_samples: Vec::new(),
+    });
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_visible_contract_fails_unaccounted_visible_artwork() {
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+
+    monitor.record_route_visible_contract(super::UiPerfRouteVisibleContract {
+        phase: "route_ready",
+        route: "Home".to_string(),
+        layout: "home",
+        visible_start: 0,
+        visible_end: 6,
+        expected_visible: 6,
+        ready: 4,
+        final_missing: 0,
+        pending: 0,
+        rendered_expected: 4,
+        rendered_ready: 4,
+        rendered_final_missing: 0,
+        rendered_fallback: 0,
+        fallback_after_reveal: 0,
+        pending_assets: 0,
+        active_decodes: 0,
+        queued_decodes: 0,
+        path_lookups: 0,
+        pending_samples: Vec::new(),
+    });
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_visible_contract_fails_rendered_expected_fallback_tiles() {
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+    let mut contract = route_visible_contract("route_ready", "Home");
+    contract.rendered_ready = 11;
+    contract.rendered_fallback = 1;
+
+    monitor.record_route_visible_contract(contract);
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+    assert!(monitor.report().contains("rendered_fallback=1"));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_visible_contract_fails_unaccounted_rendered_tiles() {
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+    let mut contract = route_visible_contract("route_ready", "Home");
+    contract.rendered_expected = 12;
+    contract.rendered_ready = 10;
+    contract.rendered_final_missing = 1;
+    contract.rendered_fallback = 0;
+
+    monitor.record_route_visible_contract(contract);
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+    assert!(monitor.report().contains("rendered_expected=12"));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_visible_contract_fails_when_expected_tiles_have_not_rendered() {
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+    let mut contract = route_visible_contract("route_ready", "SmartPlaylists");
+    contract.expected_visible = 4;
+    contract.ready = 4;
+    contract.rendered_expected = 0;
+    contract.rendered_ready = 0;
+
+    monitor.record_route_visible_contract(contract);
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+    assert!(monitor.report().contains("rendered_expected=0"));
+}
+
+#[test]
+pub(in crate::ui) fn ui_perf_route_visible_contract_accepts_rendered_final_missing_tiles() {
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+    let mut contract = route_visible_contract("route_ready", "Genres");
+    contract.expected_visible = 4;
+    contract.ready = 0;
+    contract.final_missing = 4;
+    contract.rendered_expected = 4;
+    contract.rendered_ready = 0;
+    contract.rendered_final_missing = 4;
+
+    monitor.record_route_visible_contract(contract);
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(!monitor.failed());
+    assert!(monitor.report().contains("rendered_final_missing=4"));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_strict_full_launch_budget_starts_at_process_entry() {
+    let mut options = ui_perf_test_options(true);
+    options.launch_started_at = Instant::now() - Duration::from_millis(3_100);
+    let monitor = super::UiPerfMonitor::new(options);
+
+    monitor.record_startup_reveal();
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+    assert!(monitor.report().contains("RUFIN_ACCEPT_STARTUP"));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_strict_route_ready_budget_fails_slow_ready() {
+    let monitor = super::UiPerfMonitor::new(ui_perf_test_options(true));
+
+    monitor.record_route_ready(
+        "Albums".to_string(),
+        Duration::from_millis(251),
+        Duration::ZERO,
+    );
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+    assert!(
+        monitor
+            .report()
+            .contains("RUFIN_ACCEPT_ROUTE_READY route=Albums")
+    );
+}
+#[test]
+pub(in crate::ui) fn ui_perf_strict_idle_gap_uses_frame_gap_budget() {
+    let mut options = ui_perf_test_options(true);
+    options.max_gap_ms = 120;
+    options.route_ready_ms = 250;
+    let monitor = super::UiPerfMonitor::new(options);
+
+    monitor.record_tick_gap(Duration::from_millis(180));
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+    assert!(monitor.report().contains("max_idle_gap_ms=180"));
+    assert!(monitor.report().contains("over_budget_idle_ticks=1"));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_strict_idle_gap_fails_when_route_transition_budget_is_missed() {
+    let mut options = ui_perf_test_options(true);
+    options.asset_ms = 120;
+    options.route_ready_ms = 250;
+    let monitor = super::UiPerfMonitor::new(options);
+
+    monitor.record_tick_gap(Duration::from_millis(251));
+    monitor.record_cover_cache_hit("cached-cover");
+
+    assert!(monitor.failed());
+}
+#[test]
+pub(in crate::ui) fn ui_perf_initial_tracks_row_sample_is_diagnostic() {
+    let mut options = ui_perf_test_options(true);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
+
+    monitor.record_cover_cache_hit("cached-cover");
+    monitor.record_tracks_row_contract(super::UiPerfTrackRowContract {
+        scenario: "initial",
+        visible_start: 0,
+        visible_end: 12,
+        ready: 0,
+        coverless: 0,
+        pending: 12,
+        missing: 0,
+    });
+
+    assert!(!monitor.failed());
+}
+#[test]
+pub(in crate::ui) fn ui_perf_image_route_drag_requires_all_checkpoint_samples() {
+    let monitor = super::UiPerfMonitor::new(ui_perf_test_options(true));
+    monitor.record_cover_cache_hit("cached-cover");
+    monitor
+        .inner
+        .borrow_mut()
+        .route_scrolls
+        .push(super::UiPerfRouteScroll {
+            route: "Tracks".to_string(),
+            scenario: "drag_sweep",
+            elapsed_ms: 900,
+            steps: 24,
+            max_gap_ms: 40,
+            over_budget_ticks: 0,
+            max_adjustment: 1_000.0,
+            min_value: 0.0,
+            max_value: 1_000.0,
+            covers_ready: 0,
+            decoded_covers: 0,
+        });
+    monitor.record_route_visible_contract(route_visible_contract("route_ready", "Tracks"));
+    monitor.record_route_visible_contract(route_visible_contract("drag_done", "Tracks"));
+
+    assert!(monitor.failed());
+
+    for phase in ["ready_before_drag", "drag_25", "drag_50", "drag_75"] {
+        monitor.record_route_visible_contract(route_visible_contract(phase, "Tracks"));
+    }
+
+    assert!(!monitor.failed());
+    assert!(
+        monitor
+            .report()
+            .contains("RUFIN_ACCEPT_IMAGE_ROUTE_DRAG_SUMMARY routes=1 failures=0")
+    );
+}
+
+#[test]
+pub(in crate::ui) fn ui_perf_image_route_drag_requires_clean_checkpoint_sample() {
+    let monitor = super::UiPerfMonitor::new(ui_perf_test_options(true));
+    monitor.record_cover_cache_hit("cached-cover");
+    monitor
+        .inner
+        .borrow_mut()
+        .route_scrolls
+        .push(super::UiPerfRouteScroll {
+            route: "Tracks".to_string(),
+            scenario: "drag_sweep",
+            elapsed_ms: 900,
+            steps: 24,
+            max_gap_ms: 40,
+            over_budget_ticks: 0,
+            max_adjustment: 1_000.0,
+            min_value: 0.0,
+            max_value: 1_000.0,
+            covers_ready: 0,
+            decoded_covers: 0,
+        });
+
+    monitor.record_route_visible_contract(route_visible_contract("route_ready", "Tracks"));
+    monitor.record_route_visible_contract(route_visible_contract("ready_before_drag", "Tracks"));
+    monitor.record_route_visible_contract(route_visible_contract("drag_25", "Tracks"));
+    monitor.record_route_visible_contract(route_visible_contract("drag_75", "Tracks"));
+    monitor.record_route_visible_contract(route_visible_contract("drag_done", "Tracks"));
+
+    let mut pending_checkpoint = route_visible_contract("drag_50", "Tracks");
+    pending_checkpoint.pending = 1;
+    pending_checkpoint.fallback_after_reveal = 1;
+    pending_checkpoint.pending_assets = 1;
+    monitor.record_route_visible_contract(pending_checkpoint);
+
+    assert!(monitor.failed());
+    assert!(
+        monitor
+            .report()
+            .contains("RUFIN_ACCEPT_IMAGE_ROUTE_DRAG_SUMMARY routes=1 failures=1")
+    );
+}
+
+#[test]
+pub(in crate::ui) fn ui_perf_image_route_drag_allows_background_decode_when_visible_samples_clean()
+{
+    let monitor = super::UiPerfMonitor::new(ui_perf_test_options(true));
+    monitor.record_cover_cache_hit("cached-cover");
+    monitor
+        .inner
+        .borrow_mut()
+        .route_scrolls
+        .push(super::UiPerfRouteScroll {
+            route: "Tracks".to_string(),
+            scenario: "drag_sweep",
+            elapsed_ms: 900,
+            steps: 24,
+            max_gap_ms: 40,
+            over_budget_ticks: 0,
+            max_adjustment: 1_000.0,
+            min_value: 0.0,
+            max_value: 1_000.0,
+            covers_ready: 1,
+            decoded_covers: 1,
+        });
+
+    monitor.record_route_visible_contract(route_visible_contract("route_ready", "Tracks"));
+    for phase in [
+        "ready_before_drag",
+        "drag_25",
+        "drag_50",
+        "drag_75",
+        "drag_done",
+    ] {
+        monitor.record_route_visible_contract(route_visible_contract(phase, "Tracks"));
+    }
+
+    assert!(!monitor.failed());
+    assert!(
+        monitor
+            .report()
+            .contains("RUFIN_ACCEPT_IMAGE_ROUTE_DRAG_SUMMARY routes=1 failures=0")
+    );
+}
+
+#[test]
+pub(in crate::ui) fn ui_perf_image_route_drag_counts_favorites() {
+    let monitor = super::UiPerfMonitor::new(ui_perf_test_options(true));
+    monitor.record_cover_cache_hit("cached-cover");
+    monitor
+        .inner
+        .borrow_mut()
+        .route_scrolls
+        .push(super::UiPerfRouteScroll {
+            route: "Favorites".to_string(),
+            scenario: "drag_sweep",
+            elapsed_ms: 900,
+            steps: 24,
+            max_gap_ms: 40,
+            over_budget_ticks: 0,
+            max_adjustment: 1_000.0,
+            min_value: 0.0,
+            max_value: 1_000.0,
+            covers_ready: 0,
+            decoded_covers: 0,
+        });
+
+    monitor.record_route_visible_contract(route_visible_contract("route_ready", "Favorites"));
+    let mut pending_done = route_visible_contract("drag_done", "Favorites");
+    pending_done.pending = 1;
+    for phase in ["ready_before_drag", "drag_25", "drag_50", "drag_75"] {
+        monitor.record_route_visible_contract(route_visible_contract(phase, "Favorites"));
+    }
+    monitor.record_route_visible_contract(pending_done);
+
+    assert!(monitor.failed());
+    assert!(
+        monitor
+            .report()
+            .contains("RUFIN_ACCEPT_IMAGE_ROUTE_DRAG_SUMMARY routes=1 failures=1")
+    );
+}
+
+#[test]
+pub(in crate::ui) fn ui_perf_image_routes_include_collection_cover_pages() {
+    assert!(super::ui_perf_image_route("Home"));
+    assert!(super::ui_perf_image_route("Playlists"));
+    assert!(super::ui_perf_image_route("SmartPlaylists"));
+}
+
+#[test]
+pub(in crate::ui) fn ui_perf_image_route_drag_rejects_in_flight_cover_work() {
+    let monitor = super::UiPerfMonitor::new(ui_perf_test_options(true));
+    monitor.record_cover_cache_hit("cached-cover");
+    monitor
+        .inner
+        .borrow_mut()
+        .route_scrolls
+        .push(super::UiPerfRouteScroll {
+            route: "Tracks".to_string(),
+            scenario: "drag_sweep",
+            elapsed_ms: 900,
+            steps: 24,
+            max_gap_ms: 40,
+            over_budget_ticks: 0,
+            max_adjustment: 1_000.0,
+            min_value: 0.0,
+            max_value: 1_000.0,
+            covers_ready: 0,
+            decoded_covers: 0,
+        });
+
+    monitor.record_route_visible_contract(route_visible_contract("route_ready", "Tracks"));
+    monitor.record_route_visible_contract(route_visible_contract("ready_before_drag", "Tracks"));
+    monitor.record_route_visible_contract(route_visible_contract("drag_25", "Tracks"));
+    let mut in_flight_checkpoint = route_visible_contract("drag_50", "Tracks");
+    in_flight_checkpoint.pending_assets = 1;
+    in_flight_checkpoint.active_decodes = 1;
+    in_flight_checkpoint.queued_decodes = 1;
+    in_flight_checkpoint.path_lookups = 1;
+    monitor.record_route_visible_contract(in_flight_checkpoint);
+    monitor.record_route_visible_contract(route_visible_contract("drag_75", "Tracks"));
+    monitor.record_route_visible_contract(route_visible_contract("drag_done", "Tracks"));
+
+    assert!(monitor.failed());
+    assert!(
+        monitor
+            .report()
+            .contains("RUFIN_ACCEPT_IMAGE_ROUTE_DRAG_SUMMARY routes=1 failures=1")
+    );
+}
+#[test]
+pub(in crate::ui) fn ui_perf_visible_range_clamps_exact_bottom_to_last_row_window() {
+    let (visible_start, visible_end) = super::ui_perf_visible_index_range_from_metrics(
+        100,
+        LibraryLayout::Row,
+        5_000.0,
+        500.0,
+        50,
+        4,
+        160,
+    );
+
+    assert_eq!((visible_start, visible_end), (90, 100));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_initial_visible_count_uses_viewport_geometry() {
+    assert_eq!(
+        super::ui_perf_initial_visible_count_from_metrics(LibraryLayout::Row, 900, 720, 4, 160,),
+        17
+    );
+    assert_eq!(
+        super::ui_perf_initial_visible_count_from_metrics(LibraryLayout::Grid, 900, 720, 4, 160,),
+        20
+    );
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_probe_waits_for_real_scroll_geometry() {
+    assert!(super::ui_perf_route_probe_waits_for_scroll_geometry(
+        true,
+        1,
+        0.0,
+        Duration::from_millis(100),
+    ));
+    assert!(super::ui_perf_route_probe_waits_for_scroll_geometry(
+        true,
+        12,
+        0.0,
+        Duration::from_millis(100),
+    ));
+    assert!(!super::ui_perf_route_probe_waits_for_scroll_geometry(
+        true,
+        12,
+        500.0,
+        Duration::from_millis(100),
+    ));
+    assert!(!super::ui_perf_route_probe_waits_for_scroll_geometry(
+        false,
+        1,
+        0.0,
+        Duration::from_millis(100),
+    ));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_ready_wait_ignores_pending_scroll_geometry() {
+    assert!(!super::ui_perf_route_probe_waits_for_route_ready(
+        true,
+        12,
+        0.0,
+        Duration::from_millis(100),
+        false,
+    ));
+    assert!(super::ui_perf_route_probe_waits_for_route_ready(
+        true,
+        12,
+        500.0,
+        Duration::from_millis(100),
+        true,
+    ));
+}
+#[test]
+pub(in crate::ui) fn post_route_visible_warm_targets_tracks_after_home() {
+    let targets = super::post_route_visible_warm_targets(&Route::Home);
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].route, Route::Tracks);
+    assert_eq!(targets[0].leading_rows, super::TRACK_ROUTE_PAGE_SIZE);
+    assert!(super::post_route_visible_warm_targets(&Route::Tracks).is_empty());
+}
+#[test]
+pub(in crate::ui) fn route_probe_reuses_already_rendered_home_route() {
+    assert!(!super::ui_perf_route_probe_should_rerender_current_route(
+        &Route::Home
+    ));
+    assert!(super::ui_perf_route_probe_should_rerender_current_route(
+        &Route::Tracks
+    ));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_rendered_wait_tracks_rendered_work_separately() {
+    assert!(super::ui_perf_route_probe_waits_for_rendered_ready(
+        true,
+        12,
+        0.0,
+        Duration::from_millis(100),
+        true,
+    ));
+    assert!(!super::ui_perf_route_probe_waits_for_rendered_ready(
+        true,
+        12,
+        0.0,
+        Duration::from_millis(100),
+        false,
+    ));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_ready_probe_polls_at_frame_sized_interval() {
+    const { assert!(super::UI_PERF_ROUTE_READY_POLL_MS <= 16) };
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_probe_mid_drag_sample_uses_short_settle() {
+    assert_eq!(super::ui_perf_route_probe_mid_drag_sample_delay_ms(900), 64);
+    assert_eq!(super::ui_perf_route_probe_mid_drag_sample_delay_ms(120), 30);
+    assert_eq!(super::ui_perf_route_probe_mid_drag_sample_delay_ms(1), 1);
+}
+#[test]
+pub(in crate::ui) fn ui_perf_route_probe_drag_checkpoints_use_spec_phases() {
+    assert_eq!(
+        super::ui_perf_route_probe_drag_checkpoint_phase(0.24, 0),
+        None
+    );
+    assert_eq!(
+        super::ui_perf_route_probe_drag_checkpoint_phase(0.25, 0),
+        Some(("drag_25", 1, 0.25))
+    );
+    assert_eq!(
+        super::ui_perf_route_probe_drag_checkpoint_phase(0.51, 1),
+        Some(("drag_50", 2, 0.50))
+    );
+    assert_eq!(
+        super::ui_perf_route_probe_drag_checkpoint_phase(0.99, 2),
+        Some(("drag_75", 3, 0.75))
+    );
+}
+#[test]
+pub(in crate::ui) fn ui_perf_visible_range_clamps_exact_bottom_to_last_grid_window() {
+    let (visible_start, visible_end) = super::ui_perf_visible_index_range_from_metrics(
+        100,
+        LibraryLayout::Grid,
+        6_000.0,
+        744.0,
+        50,
+        4,
+        160,
+    );
+
+    assert_eq!((visible_start, visible_end), (84, 100));
+}
+#[test]
+pub(in crate::ui) fn ui_perf_strict_scroll_failure_has_no_grace_tick() {
+    let mut options = ui_perf_test_options(true);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
 
     monitor.record_cover_cache_hit("cached-cover");
     monitor
@@ -404,39 +1217,13 @@ pub(in crate::ui) fn ui_perf_scroll_failure_allows_one_borderline_tick() {
             covers_ready: 0,
             decoded_covers: 0,
         });
-    assert!(!monitor.failed());
-
-    monitor
-        .inner
-        .borrow_mut()
-        .route_scrolls
-        .push(super::UiPerfRouteScroll {
-            route: "Tracks".to_string(),
-            scenario: "drag_sweep",
-            elapsed_ms: 500,
-            steps: 12,
-            max_gap_ms: 300,
-            over_budget_ticks: 1,
-            max_adjustment: 1_000.0,
-            min_value: 0.0,
-            max_value: 50.0,
-            covers_ready: 0,
-            decoded_covers: 0,
-        });
     assert!(monitor.failed());
 }
 #[test]
 pub(in crate::ui) fn ui_perf_scroll_failure_ignores_nearly_static_routes() {
-    let monitor = super::UiPerfMonitor::new(super::UiPerfOptions {
-        max_gap_ms: 120,
-        route_ms: 650,
-        duration_ms: 15_000,
-        asset_ms: 300,
-        require_assets: true,
-        terminal_events: false,
-        observe_scroll: false,
-        output: None,
-    });
+    let mut options = ui_perf_test_options(false);
+    options.require_assets = true;
+    let monitor = super::UiPerfMonitor::new(options);
     let tiny_scroll = super::UiPerfRouteScroll {
         route: "Playlists".to_string(),
         scenario: "human_scroll",
@@ -840,6 +1627,42 @@ pub(in crate::ui) fn cover_draw_rect_crops_landscape_images_to_square_targets() 
     assert!((rect.scale - 0.44).abs() < f64::EPSILON);
     assert!((rect.x + 22.0).abs() < f64::EPSILON);
     assert!((rect.y - 0.0).abs() < f64::EPSILON);
+}
+pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapshot {
+    crate::controller::LibrarySnapshot {
+        server: None,
+        servers: Vec::new(),
+        selected_source: None,
+        local_folders: Vec::new(),
+        server_local_access: Vec::new(),
+        local_access: None,
+        local_access_status: crate::controller::LocalAccessStatus::default(),
+        music_folders: Vec::new(),
+        selected_music_folder_id: None,
+        username: None,
+        first_run: false,
+        sync_status: String::new(),
+        last_error: None,
+        cached_album_count: 0,
+        cached_track_count: 0,
+        cached_artist_count: 0,
+        cached_album_artist_count: 0,
+        cached_genre_count: 0,
+        cached_playlist_count: 0,
+        home_sections: Vec::new(),
+        prefetched_explore: None,
+        albums: Vec::new(),
+        tracks: Vec::new(),
+        artists: Vec::new(),
+        album_artists: Vec::new(),
+        genres: Vec::new(),
+        playlists: Vec::new(),
+        favorites: Vec::new(),
+        search: SearchResults::default(),
+    }
+}
+pub(in crate::ui) fn test_image_ref(suffix: &str) -> ImageRef {
+    ImageRef::new(format!("local:cover:file%3A%2F%2F{suffix}"), None)
 }
 pub(in crate::ui) fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Album {
     Album {

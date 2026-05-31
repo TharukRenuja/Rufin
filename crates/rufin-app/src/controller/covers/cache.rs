@@ -50,9 +50,6 @@ fn cached_cover_path_for_saved_size(
     if let Some(path) = cached_cover_path_for_key(&key) {
         return Ok(Some(path));
     }
-    store.with_store(|store| {
-        store.delete_cover_cache_entry(&saved.server.id, &image_ref.item_id, tag, size)
-    })?;
     Ok(None)
 }
 

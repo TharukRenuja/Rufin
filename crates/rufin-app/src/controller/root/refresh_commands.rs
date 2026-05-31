@@ -139,6 +139,7 @@ impl AppController {
             events: self.events.clone(),
             sync_in_flight: self.sync_in_flight.clone(),
             cover_in_flight: Arc::clone(&self.cover_in_flight),
+            external_cover_retry_generation: Arc::clone(&self.external_cover_retry_generation),
             external_cover_prefetch_in_flight: Arc::clone(&self.external_cover_prefetch_in_flight),
             cover_slots: Arc::clone(&self.cover_slots),
         }
@@ -149,43 +150,17 @@ impl AppController {
             .with_store(|store| store.active_server())
             .ok()
             .flatten()?;
-        let albums = self
-            .store
-            .with_store(|store| {
-                store
-                    .load_albums(&saved.server.id, 0, 1)
-                    .map(|page| page.total)
-            })
-            .unwrap_or(0);
-        let tracks = self
-            .store
-            .with_store(|store| {
-                store
-                    .load_tracks(&saved.server.id, 0, 1)
-                    .map(|page| page.total)
-            })
-            .unwrap_or(0);
-        if albums == 0 && tracks == 0 {
-            return Some(500);
-        }
-        let sync_state = self
-            .store
-            .with_store(|store| store.sync_state(&saved.server.id))
-            .ok();
-        if sync_state
-            .as_ref()
-            .is_some_and(|state| state.status == "error")
-        {
-            return Some(8_000);
-        }
-        let age = self
-            .store
-            .with_store(|store| store.sync_completed_age_seconds(&saved.server.id))
-            .ok()
-            .flatten();
-        match age {
-            Some(seconds) if seconds < STARTUP_CACHE_STALE_SECONDS => None,
-            _ => Some(8_000),
-        }
+        let readiness = active_source_startup_readiness(&self.store, &saved.server.id).ok()?;
+        debug!(
+            server_id = %saved.server.id,
+            provider = %saved.server.provider,
+            metadata_fresh = readiness.metadata_fresh,
+            artwork_fresh = readiness.artwork_fresh,
+            sync_required_reason = ?readiness.sync_required_reason,
+            prefetch_required_reason = ?readiness.prefetch_required_reason,
+            startup_delay_ms = ?readiness.startup_delay_ms,
+            "evaluated active source readiness"
+        );
+        readiness.startup_delay_ms
     }
 }

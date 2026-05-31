@@ -101,6 +101,94 @@ impl Store {
         Ok(())
     }
 
+    pub fn load_album_image_refs(
+        &self,
+        server_id: &ServerId,
+        album_ids: &[AlbumId],
+    ) -> StoreResult<HashMap<AlbumId, ImageRef>> {
+        let mut unique_ids = Vec::<AlbumId>::new();
+        for album_id in album_ids {
+            if !unique_ids.iter().any(|existing| existing == album_id) {
+                unique_ids.push(album_id.clone());
+            }
+        }
+        if unique_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut image_refs = HashMap::<AlbumId, ImageRef>::new();
+        for chunk in unique_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "
+                SELECT album_id, image_item_id, image_tag
+                FROM albums
+                WHERE server_id = ?
+                  AND album_id IN ({placeholders})
+                  AND image_item_id IS NOT NULL
+                "
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(server_id.as_str());
+            values.extend(chunk.iter().map(AlbumId::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                Ok((
+                    AlbumId::new(row.get::<_, String>(0)?),
+                    ImageRef {
+                        item_id: row.get(1)?,
+                        tag: row.get(2)?,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (album_id, image_ref) = row?;
+                image_refs.entry(album_id).or_insert(image_ref);
+            }
+        }
+
+        let missing_ids = unique_ids
+            .iter()
+            .filter(|album_id| !image_refs.contains_key(*album_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for chunk in missing_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "
+                SELECT album_id, image_item_id, image_tag
+                FROM tracks
+                WHERE server_id = ?
+                  AND album_id IN ({placeholders})
+                  AND image_item_id IS NOT NULL
+                ORDER BY album_id, disc_number, track_number, title COLLATE NOCASE
+                "
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(server_id.as_str());
+            values.extend(chunk.iter().map(AlbumId::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                Ok((
+                    AlbumId::new(row.get::<_, String>(0)?),
+                    ImageRef {
+                        item_id: row.get(1)?,
+                        tag: row.get(2)?,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (album_id, image_ref) = row?;
+                image_refs.entry(album_id).or_insert(image_ref);
+            }
+        }
+        Ok(image_refs)
+    }
+
     pub(super) fn attach_track_genres(
         &self,
         server_id: &ServerId,

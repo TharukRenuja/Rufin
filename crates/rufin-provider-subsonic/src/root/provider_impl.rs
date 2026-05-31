@@ -316,6 +316,7 @@ pub(super) fn genre_from_dto(provider: &SubsonicProvider, genre: SubsonicGenre) 
         name: genre.value,
         album_count: genre.album_count.unwrap_or_default(),
         track_count: genre.song_count.unwrap_or_default(),
+        image_refs: Vec::new(),
         image_ref: None,
     }
 }
@@ -344,6 +345,7 @@ pub(super) fn playlist_from_dto(
             .unwrap_or_else(|| "Untitled Playlist".to_string()),
         track_count: playlist.song_count.unwrap_or_default(),
         duration_seconds: playlist.duration.unwrap_or_default(),
+        image_refs: Vec::new(),
         image_ref: image_ref(provider, playlist.cover_art),
     }
 }

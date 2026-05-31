@@ -1,48 +1,5 @@
 use super::*;
 
-pub(in crate::ui) fn genre_cover_refs(shell: &Rc<Shell>, genre: &Genre) -> Vec<ImageRef> {
-    let library = shell.state.library.borrow();
-    let mut refs = Vec::new();
-    for album in &library.albums {
-        if album.genres.iter().any(|name| name == &genre.name) {
-            push_unique_image_ref(&mut refs, album.image_ref.as_ref());
-            if refs.len() >= 4 {
-                return refs;
-            }
-        }
-    }
-    if !refs.is_empty() {
-        return refs;
-    }
-
-    let mut seen_albums = HashSet::new();
-    for track in &library.tracks {
-        if track.genres.iter().any(|name| name == &genre.name)
-            && !seen_albums.contains(&track.album_id)
-        {
-            let before = refs.len();
-            push_unique_image_ref(&mut refs, track.image_ref.as_ref());
-            if refs.len() > before {
-                seen_albums.insert(track.album_id.clone());
-            }
-            if refs.len() >= 4 {
-                return refs;
-            }
-        }
-    }
-    refs
-}
-pub(in crate::ui) fn push_unique_image_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
-    if refs.len() >= 4 {
-        return;
-    }
-    let Some(image_ref) = image_ref else {
-        return;
-    };
-    if !refs.iter().any(|existing| existing == image_ref) {
-        refs.push(image_ref.clone());
-    }
-}
 pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
     let overlay = cards::cover_overlay(size);
 
@@ -50,9 +7,8 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
     genre_button.add_css_class("album-cover-button");
     genre_button.add_css_class("flat");
     cards::constrain_cover_widget(&genre_button, size);
-    let cover_refs = genre_cover_refs(shell, genre);
     genre_button.set_child(Some(&shell.cover_group_tile_for(
-        cover_refs,
+        genre.image_refs.clone(),
         genre.image_ref.as_ref(),
         stable_seed(genre.id.as_str()),
         size,

@@ -313,12 +313,8 @@ pub(super) fn playlist_cover_tile(
     playlist_button.add_css_class("album-cover-button");
     playlist_button.add_css_class("flat");
     constrain_cover_widget(&playlist_button, size);
-    let cover_refs = shell
-        .controller
-        .cached_playlist_cover_refs(&playlist.id)
-        .unwrap_or_default();
     playlist_button.set_child(Some(&shell.cover_group_tile_for(
-        cover_refs,
+        playlist.image_refs.clone(),
         playlist.image_ref.as_ref(),
         stable_seed(playlist.id.as_str()),
         size,
@@ -373,7 +369,7 @@ pub(super) fn smart_playlist_cover_tile(
     playlist_button.add_css_class("flat");
     constrain_cover_widget(&playlist_button, size);
     playlist_button.set_child(Some(&shell.cover_group_tile_for(
-        Vec::new(),
+        playlist.image_refs.clone(),
         playlist.image_ref.as_ref(),
         stable_seed(playlist.id.as_str()),
         size,

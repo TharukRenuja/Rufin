@@ -1,7 +1,9 @@
 use super::*;
 
-pub(in crate::ui) const UI_PERF_ROUTE_GATE_POLL_MS: u64 = 33;
-pub(in crate::ui) const UI_PERF_ROUTE_GATE_TIMEOUT_MS: u64 = 3_500;
+pub(in crate::ui) const UI_PERF_ROUTE_READY_POLL_MS: u64 = 8;
+pub(in crate::ui) const UI_PERF_ROUTE_READY_TIMEOUT_MS: u64 = 3_500;
+pub(in crate::ui) const UI_PERF_ROUTE_PROBE_MID_DRAG_SETTLE_MS: u64 = 64;
+pub(in crate::ui) const UI_PERF_ROUTE_PROBE_SCROLL_SETTLE_MS: u64 = 300;
 
 pub(in crate::ui) struct UiPerfRouteScrollRun {
     shell: Rc<Shell>,
@@ -11,7 +13,19 @@ pub(in crate::ui) struct UiPerfRouteScrollRun {
     heartbeat: Rc<RefCell<Option<glib::SourceId>>>,
     route_name: String,
     scenario: UiPerfScenario,
+}
+
+pub(in crate::ui) struct UiPerfRouteProbeRun {
+    shell: Rc<Shell>,
+    app: adw::Application,
+    perf: Rc<UiPerfMonitor>,
+    routes: Rc<RefCell<VecDeque<Route>>>,
+    heartbeat: Rc<RefCell<Option<glib::SourceId>>>,
+    route: Route,
+    route_name: String,
+    route_started_at: Instant,
     wait_started_at: Instant,
+    route_ready_recorded: bool,
 }
 
 pub(in crate::ui) fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
@@ -571,7 +585,6 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             shell.update_mpris_player();
                             shell.update_discord_presence(&player);
                             shell.schedule_startup_route_reveal();
-                            shell.schedule_startup_cover_warm();
                             continue;
                         }
                     }
@@ -584,12 +597,14 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             shell.schedule_first_run_app_reveal();
                             continue;
                         }
-                        SnapshotRenderDecision::SourceChanged => shell.navigate(Route::Home),
+                        SnapshotRenderDecision::SourceChanged => {
+                            shell.reset_cover_pipeline_for_source_change();
+                            shell.navigate(Route::Home);
+                        }
                         SnapshotRenderDecision::PreserveScroll => {
                             shell.render_current_route_preserving_scroll();
                         }
                     }
-                    shell.schedule_startup_cover_warm();
                 }
                 ControllerEvent::HomeSectionsUpdated {
                     snapshot,
@@ -615,7 +630,6 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         &sections,
                         include_explore,
                     );
-                    shell.schedule_startup_cover_warm();
                 }
                 ControllerEvent::HomeSectionPrefetched { server_id, section } => {
                     let active_server_id = shell
@@ -781,6 +795,19 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.update_mpris_player();
                     }
                 }
+                ControllerEvent::CoverUnavailable {
+                    key,
+                    external_retry_generation,
+                } => {
+                    if external_retry_generation.is_some_and(|generation| {
+                        !shell
+                            .controller
+                            .external_cover_retry_generation_is_current(generation)
+                    }) {
+                        continue;
+                    }
+                    shell.apply_cover_unavailable(&key);
+                }
                 ControllerEvent::ServerDiscovery {
                     servers,
                     status,
@@ -910,6 +937,1473 @@ pub(in crate::ui) fn start_ui_perf_observe(shell: &Rc<Shell>, app: &adw::Applica
         );
     });
 }
+pub(in crate::ui) fn start_ui_perf_route_probe(shell: &Rc<Shell>, app: &adw::Application) {
+    let Some(perf) = shell.state.perf.clone() else {
+        return;
+    };
+    println!(
+        "RUFIN_ROUTE_PROBE start max_gap_ms={} route_ready_ms={} drag_ms={} route_ms={} asset_ms={} launch_elapsed_ms={} output={}",
+        perf.options.max_gap_ms,
+        perf.options.route_ready_ms,
+        perf.options.drag_ms,
+        perf.options.route_ms,
+        perf.options.asset_ms,
+        duration_ms(perf.started_at().elapsed()),
+        perf.options
+            .output
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "stdout_only".to_string())
+    );
+    let routes = ui_perf_route_probe_plan(shell);
+    println!(
+        "RUFIN_ROUTE_PROBE route_plan {}",
+        ui_perf_route_probe_plan_summary(&routes)
+    );
+    wait_for_ui_perf_route_probe_startup_reveal(
+        Rc::clone(shell),
+        app.clone(),
+        Rc::clone(&perf),
+        Rc::new(RefCell::new(routes)),
+        perf.started_at(),
+    );
+}
+pub(in crate::ui) fn wait_for_ui_perf_route_probe_startup_reveal(
+    shell: Rc<Shell>,
+    app: adw::Application,
+    perf: Rc<UiPerfMonitor>,
+    routes: Rc<RefCell<VecDeque<Route>>>,
+    started_at: Instant,
+) {
+    if (shell.state.startup_route_revealed.get() && !shell.state.startup_route_render_pending.get())
+        || shell.login_screen_active()
+    {
+        perf.record_startup_reveal();
+        println!(
+            "RUFIN_ROUTE_PROBE startup_reveal elapsed_ms={}",
+            duration_ms(started_at.elapsed())
+        );
+        let heartbeat = Rc::new(RefCell::new(Some(start_ui_perf_heartbeat(Rc::clone(
+            &perf,
+        )))));
+        glib::timeout_add_local_once(Duration::from_millis(250), move || {
+            run_next_ui_perf_route_probe(shell, app, perf, routes, heartbeat);
+        });
+        return;
+    }
+    if startup_reveal_wait_timed_out(started_at) {
+        perf.record_startup_reveal();
+        println!(
+            "RUFIN_ROUTE_PROBE startup_reveal_timeout elapsed_ms={}",
+            duration_ms(started_at.elapsed())
+        );
+        finish_ui_perf_run(perf, app);
+        return;
+    }
+
+    glib::timeout_add_local_once(
+        Duration::from_millis(STARTUP_ROUTE_REVEAL_POLL_MS),
+        move || {
+            wait_for_ui_perf_route_probe_startup_reveal(shell, app, perf, routes, started_at);
+        },
+    );
+}
+pub(in crate::ui) fn run_next_ui_perf_route_probe(
+    shell: Rc<Shell>,
+    app: adw::Application,
+    perf: Rc<UiPerfMonitor>,
+    routes: Rc<RefCell<VecDeque<Route>>>,
+    heartbeat: Rc<RefCell<Option<glib::SourceId>>>,
+) {
+    let Some(route) = routes.borrow_mut().pop_front() else {
+        if let Some(source) = heartbeat.borrow_mut().take() {
+            source.remove();
+        }
+        if perf.pending_assets() > 0 {
+            glib::timeout_add_local_once(
+                Duration::from_millis(perf.options.asset_ms.saturating_mul(2)),
+                move || finish_ui_perf_run(perf, app),
+            );
+            return;
+        }
+        finish_ui_perf_run(perf, app);
+        return;
+    };
+
+    let route_name = format!("{route:?}");
+    println!("RUFIN_ROUTE_PROBE route_begin route={route_name}");
+    let route_started_at = Instant::now();
+    if shell.state.routes.borrow().current() == &route {
+        reset_ui_perf_route_scroll_position(&shell);
+        if ui_perf_route_probe_should_rerender_current_route(&route) {
+            shell.render_current_route_preserving_scroll();
+        } else {
+            shell.prime_route_visible_cover_window(&route);
+        }
+    } else {
+        shell.navigate(route.clone());
+    }
+
+    let shell_for_probe = Rc::clone(&shell);
+    let app_for_probe = app.clone();
+    let perf_for_probe = Rc::clone(&perf);
+    let routes_for_probe = Rc::clone(&routes);
+    let heartbeat_for_probe = Rc::clone(&heartbeat);
+    wait_for_ui_perf_route_probe_ready(UiPerfRouteProbeRun {
+        shell: shell_for_probe,
+        app: app_for_probe,
+        perf: perf_for_probe,
+        routes: routes_for_probe,
+        heartbeat: heartbeat_for_probe,
+        route,
+        route_name,
+        route_started_at,
+        wait_started_at: Instant::now(),
+        route_ready_recorded: false,
+    });
+}
+pub(in crate::ui) fn wait_for_ui_perf_route_probe_ready(mut run: UiPerfRouteProbeRun) {
+    let scroll_max = route_scroll_max(&run.shell);
+    let visible_contract = ui_perf_route_visible_contract(
+        &run.shell,
+        run.route_name.clone(),
+        &run.route,
+        "route_ready",
+    );
+    let has_pending_counters = route_visible_contract_has_pending_work(
+        visible_contract.pending,
+        visible_contract.fallback_after_reveal,
+        visible_contract.pending_assets,
+        visible_contract.active_decodes,
+        visible_contract.queued_decodes,
+        visible_contract.path_lookups,
+    );
+    let has_rendered_work = route_visible_contract_has_rendered_work(
+        visible_contract.expected_visible,
+        visible_contract.rendered_expected,
+        visible_contract.rendered_fallback,
+        visible_contract.rendered_ready,
+        visible_contract.rendered_final_missing,
+    );
+    let has_unaccounted_visible_work = route_visible_contract_has_unaccounted_visible_work(
+        visible_contract.expected_visible,
+        visible_contract.ready,
+        visible_contract.final_missing,
+        visible_contract.pending,
+    );
+    let has_route_ready_work =
+        has_pending_counters || has_unaccounted_visible_work || has_rendered_work;
+    let wait_elapsed = run.wait_started_at.elapsed();
+    if run.perf.options.terminal_events
+        && duration_ms(wait_elapsed) % 128 < UI_PERF_ROUTE_READY_POLL_MS
+        && has_route_ready_work
+    {
+        println!(
+            "RUFIN_ROUTE_PROBE route_wait route={} gate_wait_ms={} pending={} fallback_after_reveal={} pending_assets={} active_decodes={} queued_decodes={} path_lookups={} expected_visible={} ready={} final_missing={} rendered_expected={} rendered_ready={} rendered_final_missing={} rendered_fallback={} scroll_max={:.0}",
+            run.route_name,
+            duration_ms(wait_elapsed),
+            visible_contract.pending,
+            visible_contract.fallback_after_reveal,
+            visible_contract.pending_assets,
+            visible_contract.active_decodes,
+            visible_contract.queued_decodes,
+            visible_contract.path_lookups,
+            visible_contract.expected_visible,
+            visible_contract.ready,
+            visible_contract.final_missing,
+            visible_contract.rendered_expected,
+            visible_contract.rendered_ready,
+            visible_contract.rendered_final_missing,
+            visible_contract.rendered_fallback,
+            scroll_max,
+        );
+    }
+    if !run.route_ready_recorded
+        && ui_perf_route_probe_waits_for_route_ready(
+            ui_perf_route_probe_expects_scroll(&run.shell, &run.route),
+            visible_contract
+                .visible_end
+                .saturating_sub(visible_contract.visible_start),
+            scroll_max,
+            wait_elapsed,
+            has_route_ready_work,
+        )
+    {
+        glib::timeout_add_local_once(
+            Duration::from_millis(UI_PERF_ROUTE_READY_POLL_MS),
+            move || wait_for_ui_perf_route_probe_ready(run),
+        );
+        return;
+    }
+
+    if !run.route_ready_recorded {
+        println!(
+            "RUFIN_ROUTE_PROBE route_ready route={} elapsed_ms={} gate_wait_ms={} layout={} visible_start={} visible_end={} expected_visible={} ready={} final_missing={} pending={} rendered_expected={} rendered_ready={} rendered_final_missing={} rendered_fallback={} fallback_after_reveal={} pending_assets={} active_decodes={} queued_decodes={} path_lookups={} scroll_max={:.0}",
+            run.route_name,
+            duration_ms(run.route_started_at.elapsed()),
+            duration_ms(wait_elapsed),
+            visible_contract.layout,
+            visible_contract.visible_start,
+            visible_contract.visible_end,
+            visible_contract.expected_visible,
+            visible_contract.ready,
+            visible_contract.final_missing,
+            visible_contract.pending,
+            visible_contract.rendered_expected,
+            visible_contract.rendered_ready,
+            visible_contract.rendered_final_missing,
+            visible_contract.rendered_fallback,
+            visible_contract.fallback_after_reveal,
+            visible_contract.pending_assets,
+            visible_contract.active_decodes,
+            visible_contract.queued_decodes,
+            visible_contract.path_lookups,
+            scroll_max,
+        );
+        run.perf.record_route_ready(
+            run.route_name.clone(),
+            run.route_started_at.elapsed(),
+            wait_elapsed,
+        );
+        run.route_ready_recorded = true;
+    }
+
+    if ui_perf_route_probe_waits_for_rendered_ready(
+        ui_perf_route_probe_expects_scroll(&run.shell, &run.route),
+        visible_contract
+            .visible_end
+            .saturating_sub(visible_contract.visible_start),
+        scroll_max,
+        wait_elapsed,
+        has_rendered_work,
+    ) {
+        glib::timeout_add_local_once(
+            Duration::from_millis(UI_PERF_ROUTE_READY_POLL_MS),
+            move || wait_for_ui_perf_route_probe_ready(run),
+        );
+        return;
+    }
+
+    println!(
+        "RUFIN_ROUTE_PROBE route_visible_ready route={} elapsed_ms={} gate_wait_ms={} layout={} visible_start={} visible_end={} expected_visible={} ready={} final_missing={} pending={} rendered_expected={} rendered_ready={} rendered_final_missing={} rendered_fallback={} fallback_after_reveal={} pending_assets={} active_decodes={} queued_decodes={} path_lookups={} scroll_max={:.0}",
+        run.route_name,
+        duration_ms(run.route_started_at.elapsed()),
+        duration_ms(run.wait_started_at.elapsed()),
+        visible_contract.layout,
+        visible_contract.visible_start,
+        visible_contract.visible_end,
+        visible_contract.expected_visible,
+        visible_contract.ready,
+        visible_contract.final_missing,
+        visible_contract.pending,
+        visible_contract.rendered_expected,
+        visible_contract.rendered_ready,
+        visible_contract.rendered_final_missing,
+        visible_contract.rendered_fallback,
+        visible_contract.fallback_after_reveal,
+        visible_contract.pending_assets,
+        visible_contract.active_decodes,
+        visible_contract.queued_decodes,
+        visible_contract.path_lookups,
+        scroll_max,
+    );
+    run.perf.record_route_visible_contract(visible_contract);
+    begin_ui_perf_route_probe_drag(run);
+}
+
+pub(in crate::ui) fn ui_perf_route_probe_waits_for_scroll_geometry(
+    expects_scroll: bool,
+    visible_count: usize,
+    scroll_max: f64,
+    elapsed: Duration,
+) -> bool {
+    expects_scroll
+        && elapsed < Duration::from_millis(UI_PERF_ROUTE_READY_TIMEOUT_MS)
+        && (visible_count <= 1 || scroll_max <= 1.0)
+}
+
+pub(in crate::ui) fn ui_perf_route_probe_waits_for_route_ready(
+    _expects_scroll: bool,
+    _visible_count: usize,
+    _scroll_max: f64,
+    elapsed: Duration,
+    has_route_ready_work: bool,
+) -> bool {
+    has_route_ready_work && elapsed < Duration::from_millis(UI_PERF_ROUTE_READY_TIMEOUT_MS)
+}
+
+pub(in crate::ui) fn ui_perf_route_probe_waits_for_rendered_ready(
+    _expects_scroll: bool,
+    _visible_count: usize,
+    _scroll_max: f64,
+    elapsed: Duration,
+    has_rendered_work: bool,
+) -> bool {
+    has_rendered_work && elapsed < Duration::from_millis(UI_PERF_ROUTE_READY_TIMEOUT_MS)
+}
+
+pub(in crate::ui) fn ui_perf_route_probe_should_rerender_current_route(route: &Route) -> bool {
+    !matches!(route, Route::Home)
+}
+
+pub(in crate::ui) fn ui_perf_route_probe_mid_drag_sample_delay_ms(drag_ms: u64) -> u64 {
+    UI_PERF_ROUTE_PROBE_MID_DRAG_SETTLE_MS.min(drag_ms.saturating_div(4).max(1))
+}
+
+pub(in crate::ui) fn ui_perf_route_probe_drag_checkpoint_phase(
+    progress: f64,
+    next_checkpoint: usize,
+) -> Option<(&'static str, usize, f64)> {
+    let (threshold, phase) = UI_PERF_ROUTE_DRAG_CHECKPOINTS.get(next_checkpoint)?;
+    if progress >= *threshold {
+        Some((*phase, next_checkpoint.saturating_add(1), *threshold))
+    } else {
+        None
+    }
+}
+
+const UI_PERF_ROUTE_DRAG_CHECKPOINTS: [(f64, &str); 3] =
+    [(0.25, "drag_25"), (0.50, "drag_50"), (0.75, "drag_75")];
+
+struct UiPerfVisibleCoverRef {
+    image_ref: ImageRef,
+    fetch_size: u32,
+    size: i32,
+}
+
+struct UiPerfVisibleCoverWindow {
+    layout: &'static str,
+    visible_start: usize,
+    visible_end: usize,
+    coverless: usize,
+    refs: Vec<UiPerfVisibleCoverRef>,
+}
+
+impl Shell {
+    pub(in crate::ui) fn prime_route_visible_cover_window(self: &Rc<Self>, route: &Route) -> usize {
+        let window = ui_perf_visible_cover_window(self, route);
+        self.prime_visible_cover_window(window)
+    }
+
+    pub(in crate::ui) fn prime_route_leading_and_warm_anchor_cover_windows(
+        self: &Rc<Self>,
+        route: &Route,
+        leading_rows: usize,
+    ) -> usize {
+        let window = match route {
+            Route::Tracks => ui_perf_track_leading_cover_window(self, leading_rows),
+            _ => ui_perf_visible_cover_window(self, route),
+        };
+        let mut refs = self.prime_visible_cover_window(window);
+        if matches!(route, Route::Tracks) {
+            let anchors = ui_perf_track_anchor_cover_window(self);
+            refs = refs.saturating_add(self.warm_visible_cover_window(anchors));
+        }
+        refs
+    }
+
+    fn prime_visible_cover_window(self: &Rc<Self>, window: UiPerfVisibleCoverWindow) -> usize {
+        let mut groups = HashMap::<(u32, i32), Vec<ImageRef>>::new();
+        for cover_ref in window.refs {
+            groups
+                .entry((cover_ref.fetch_size, cover_ref.size))
+                .or_default()
+                .push(cover_ref.image_ref);
+        }
+        let mut refs = 0_usize;
+        for ((fetch_size, size), image_refs) in groups {
+            refs = refs.saturating_add(image_refs.len());
+            self.prime_cover_refs_now(image_refs, fetch_size, size);
+        }
+        refs
+    }
+
+    fn warm_visible_cover_window(self: &Rc<Self>, window: UiPerfVisibleCoverWindow) -> usize {
+        let mut groups = HashMap::<(u32, i32), Vec<ImageRef>>::new();
+        for cover_ref in window.refs {
+            groups
+                .entry((cover_ref.fetch_size, cover_ref.size))
+                .or_default()
+                .push(cover_ref.image_ref);
+        }
+        let mut refs = 0_usize;
+        for ((fetch_size, size), image_refs) in groups {
+            refs = refs.saturating_add(image_refs.len());
+            self.warm_cover_refs_now(image_refs, fetch_size, size);
+        }
+        refs
+    }
+}
+
+pub(in crate::ui) fn ui_perf_route_visible_contract(
+    shell: &Shell,
+    route_name: String,
+    route: &Route,
+    phase: &'static str,
+) -> UiPerfRouteVisibleContract {
+    let window = ui_perf_visible_cover_window(shell, route);
+    let mut seen = HashSet::new();
+    let mut expected_visible = window.coverless;
+    let mut ready = 0_usize;
+    let mut final_missing = window.coverless;
+    let mut pending = 0_usize;
+    let mut pending_samples = Vec::new();
+    let mut visible_candidate_keys = HashSet::new();
+    let rendered = ui_perf_rendered_cover_tile_snapshot(shell);
+    let provider = shell
+        .state
+        .library
+        .borrow()
+        .server
+        .as_ref()
+        .map(|server| server.provider.clone());
+
+    for cover_ref in &window.refs {
+        let Some(key) = shell.cover_cache_key(&cover_ref.image_ref, cover_ref.fetch_size) else {
+            expected_visible = expected_visible.saturating_add(1);
+            final_missing = final_missing.saturating_add(1);
+            continue;
+        };
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        expected_visible = expected_visible.saturating_add(1);
+        let candidate_keys =
+            shell.cover_cache_candidate_keys(&cover_ref.image_ref, cover_ref.fetch_size);
+        visible_candidate_keys.extend(candidate_keys.iter().cloned());
+        let decode_size = cover_decode_size(cover_ref.size, cover_ref.fetch_size);
+        if shell
+            .decoded_cover_for_ref(&cover_ref.image_ref, cover_ref.fetch_size, decode_size)
+            .is_some()
+        {
+            ready = ready.saturating_add(1);
+        } else if ui_perf_cover_has_active_work(shell, &candidate_keys) {
+            pending = pending.saturating_add(1);
+            if pending_samples.len() < 12 {
+                pending_samples.push(UiPerfRouteVisiblePendingSample {
+                    key_hash: super::ui_perf_hash_label(&key),
+                    kind: ui_perf_image_ref_kind(&cover_ref.image_ref),
+                    state: ui_perf_pending_cover_state(shell, &candidate_keys),
+                    fetch_size: cover_ref.fetch_size,
+                    decode_size,
+                });
+            }
+        } else if cover::visible_cover_cache_miss_action(
+            provider.as_deref(),
+            &cover_ref.image_ref,
+            candidate_keys.iter().all(|candidate_key| {
+                shell
+                    .state
+                    .cover_unavailable
+                    .borrow()
+                    .contains(candidate_key)
+            }),
+            shell
+                .controller
+                .external_cover_lookup_known_missing(&cover_ref.image_ref, cover_ref.fetch_size),
+        ) == cover::VisibleCoverCacheMissAction::FinalMissing
+        {
+            final_missing = final_missing.saturating_add(1);
+        } else {
+            pending = pending.saturating_add(1);
+            if pending_samples.len() < 12 {
+                pending_samples.push(UiPerfRouteVisiblePendingSample {
+                    key_hash: super::ui_perf_hash_label(&key),
+                    kind: ui_perf_image_ref_kind(&cover_ref.image_ref),
+                    state: ui_perf_pending_cover_state(shell, &candidate_keys),
+                    fetch_size: cover_ref.fetch_size,
+                    decode_size,
+                });
+            }
+        }
+    }
+    let active_decodes = shell
+        .state
+        .cover_decodes
+        .borrow()
+        .keys()
+        .filter(|key| visible_candidate_keys.contains(*key))
+        .count();
+    let queued_decodes = shell
+        .state
+        .cover_decode_queue
+        .borrow()
+        .iter()
+        .filter(|job| visible_candidate_keys.contains(&job.key))
+        .count();
+    let path_lookups = shell
+        .state
+        .cover_path_lookups
+        .borrow()
+        .keys()
+        .filter(|key| visible_candidate_keys.contains(*key))
+        .count();
+    let pending_assets = shell.state.perf.as_ref().map_or(0, |perf| {
+        perf.pending_assets_for_keys(&visible_candidate_keys)
+    });
+
+    UiPerfRouteVisibleContract {
+        phase,
+        route: route_name,
+        layout: window.layout,
+        visible_start: window.visible_start,
+        visible_end: window.visible_end,
+        expected_visible,
+        ready,
+        final_missing,
+        pending,
+        rendered_expected: rendered.expected,
+        rendered_ready: rendered.ready,
+        rendered_final_missing: rendered.final_missing,
+        rendered_fallback: rendered.fallback,
+        fallback_after_reveal: pending,
+        pending_assets,
+        active_decodes,
+        queued_decodes,
+        path_lookups,
+        pending_samples,
+    }
+}
+
+#[derive(Default)]
+struct UiPerfRenderedCoverTileSnapshot {
+    expected: usize,
+    ready: usize,
+    final_missing: usize,
+    fallback: usize,
+}
+
+fn ui_perf_rendered_cover_tile_snapshot(shell: &Shell) -> UiPerfRenderedCoverTileSnapshot {
+    let root = shell.route_host.clone().upcast::<gtk::Widget>();
+    let scroller = find_largest_scrolled_window(&root);
+    let mut snapshot = UiPerfRenderedCoverTileSnapshot::default();
+    collect_ui_perf_rendered_cover_tiles(&root, scroller.as_ref(), &mut snapshot);
+    snapshot
+}
+
+fn collect_ui_perf_rendered_cover_tiles(
+    widget: &gtk::Widget,
+    scroller: Option<&gtk::ScrolledWindow>,
+    snapshot: &mut UiPerfRenderedCoverTileSnapshot,
+) {
+    if !widget.is_visible() || !widget.is_mapped() {
+        return;
+    }
+    let viewport_intersection = ui_perf_widget_viewport_intersection(widget, scroller);
+    if viewport_intersection == Some(false) {
+        return;
+    }
+
+    let expected = widget.has_css_class("cover-tile-expected");
+    let final_missing = widget.has_css_class("cover-tile-final-missing");
+    let intersects_viewport = matches!(
+        (scroller, viewport_intersection),
+        (None, _) | (Some(_), Some(true))
+    );
+    if (expected || final_missing) && intersects_viewport {
+        snapshot.expected = snapshot.expected.saturating_add(1);
+        if widget.has_css_class("cover-tile-resolved") {
+            snapshot.ready = snapshot.ready.saturating_add(1);
+        } else if final_missing {
+            snapshot.final_missing = snapshot.final_missing.saturating_add(1);
+        } else if widget.has_css_class("cover-tile-fallback") {
+            snapshot.fallback = snapshot.fallback.saturating_add(1);
+        }
+    }
+
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        collect_ui_perf_rendered_cover_tiles(&widget, scroller, snapshot);
+        child = widget.next_sibling();
+    }
+}
+
+fn ui_perf_widget_viewport_intersection(
+    widget: &gtk::Widget,
+    scroller: Option<&gtk::ScrolledWindow>,
+) -> Option<bool> {
+    let scroller = scroller?;
+    let bounds = widget.compute_bounds(scroller)?;
+    let viewport_width = scroller.width().max(1) as f32;
+    let viewport_height = scroller.height().max(1) as f32;
+    Some(
+        bounds.x() < viewport_width
+            && bounds.x() + bounds.width() > 0.0
+            && bounds.y() < viewport_height
+            && bounds.y() + bounds.height() > 0.0,
+    )
+}
+
+fn ui_perf_image_ref_kind(image_ref: &ImageRef) -> &'static str {
+    let item_id = image_ref.item_id.as_str();
+    if item_id.starts_with("local:cover:") {
+        "local_cover"
+    } else if item_id.starts_with("local:track:") {
+        "local_track"
+    } else if item_id.starts_with("local:album:") {
+        "local_album"
+    } else if item_id.starts_with("local:artist:") {
+        "local_artist"
+    } else if item_id.starts_with("local:") {
+        "local_other"
+    } else if item_id.starts_with("external:album:") {
+        "external_album"
+    } else if item_id.starts_with("external:artist:") {
+        "external_artist"
+    } else if item_id.starts_with("external:") {
+        "external_other"
+    } else {
+        "provider"
+    }
+}
+
+fn ui_perf_cover_has_active_work(shell: &Shell, candidate_keys: &[String]) -> bool {
+    candidate_keys
+        .iter()
+        .any(|key| shell.state.cover_decodes.borrow().contains_key(key))
+        || candidate_keys.iter().any(|key| {
+            shell
+                .state
+                .cover_decode_queue
+                .borrow()
+                .iter()
+                .any(|job| &job.key == key)
+        })
+        || candidate_keys
+            .iter()
+            .any(|key| shell.state.cover_path_lookups.borrow().contains_key(key))
+        || candidate_keys
+            .iter()
+            .any(|key| shell.state.cover_fetches.borrow().contains(key))
+        || candidate_keys.iter().any(|key| {
+            shell
+                .state
+                .startup_cover_prime_pending
+                .borrow()
+                .contains(key)
+        })
+        || candidate_keys.iter().any(|key| {
+            shell
+                .state
+                .first_run_cover_prime_pending
+                .borrow()
+                .contains(key)
+        })
+}
+
+fn ui_perf_pending_cover_state(shell: &Shell, candidate_keys: &[String]) -> &'static str {
+    if candidate_keys
+        .iter()
+        .any(|key| shell.state.cover_decodes.borrow().contains_key(key))
+    {
+        return "decoding";
+    }
+    if candidate_keys.iter().any(|key| {
+        shell
+            .state
+            .cover_decode_queue
+            .borrow()
+            .iter()
+            .any(|job| &job.key == key)
+    }) {
+        return "queued_decode";
+    }
+    if candidate_keys
+        .iter()
+        .any(|key| shell.state.cover_path_lookups.borrow().contains_key(key))
+    {
+        return "path_lookup";
+    }
+    if candidate_keys
+        .iter()
+        .any(|key| shell.state.cover_fetches.borrow().contains(key))
+    {
+        return "fetching";
+    }
+    if candidate_keys.iter().any(|key| {
+        shell
+            .state
+            .startup_cover_prime_pending
+            .borrow()
+            .contains(key)
+    }) {
+        return "startup_prime";
+    }
+    if candidate_keys.iter().any(|key| {
+        shell
+            .state
+            .first_run_cover_prime_pending
+            .borrow()
+            .contains(key)
+    }) {
+        return "first_run_prime";
+    }
+    "idle_unresolved"
+}
+
+fn ui_perf_visible_cover_window(shell: &Shell, route: &Route) -> UiPerfVisibleCoverWindow {
+    match route {
+        Route::Home => ui_perf_home_visible_cover_window(shell),
+        Route::Favorites => ui_perf_track_visible_cover_window(
+            shell,
+            LibraryListKey::FavoriteTracks,
+            shell.state.library.borrow().favorites.clone(),
+            true,
+        ),
+        Route::Tracks => ui_perf_track_visible_cover_window(
+            shell,
+            LibraryListKey::Tracks,
+            shell.state.library.borrow().tracks.clone(),
+            false,
+        ),
+        Route::Albums => ui_perf_album_visible_cover_window(shell),
+        Route::Artists => ui_perf_artist_visible_cover_window(shell, false),
+        Route::AlbumArtists => ui_perf_artist_visible_cover_window(shell, true),
+        Route::Genres => ui_perf_genre_visible_cover_window(shell),
+        Route::Playlists => ui_perf_playlist_visible_cover_window(shell),
+        Route::SmartPlaylists => ui_perf_smart_playlist_visible_cover_window(shell),
+        _ => UiPerfVisibleCoverWindow {
+            layout: "none",
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        },
+    }
+}
+
+fn ui_perf_home_visible_cover_window(shell: &Shell) -> UiPerfVisibleCoverWindow {
+    let refs = startup_home_cover_prime_targets(shell)
+        .into_iter()
+        .map(|target| UiPerfVisibleCoverRef {
+            image_ref: target.image_ref,
+            fetch_size: target.fetch_size,
+            size: target.size,
+        })
+        .collect::<Vec<_>>();
+    UiPerfVisibleCoverWindow {
+        layout: "home",
+        visible_start: 0,
+        visible_end: refs.len(),
+        coverless: 0,
+        refs,
+    }
+}
+
+fn ui_perf_track_visible_cover_window(
+    shell: &Shell,
+    key: LibraryListKey,
+    mut tracks: Vec<Track>,
+    favorite_first: bool,
+) -> UiPerfVisibleCoverWindow {
+    let settings = shell.library_settings(key);
+    let layout = ui_perf_library_layout_name(settings.layout);
+    let Some((fetch_size, size)) = ui_perf_cover_sizes(shell, &settings) else {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    };
+    let tracks = if key == LibraryListKey::Tracks {
+        let route_tracks = shell.state.route_tracks.borrow();
+        if route_tracks.is_empty() {
+            library::sort_tracks(&mut tracks, &settings, favorite_first);
+            tracks
+        } else {
+            route_tracks.clone()
+        }
+    } else {
+        library::sort_tracks(&mut tracks, &settings, favorite_first);
+        tracks
+    };
+    let (visible_start, visible_end) =
+        ui_perf_visible_index_range(shell, tracks.len(), settings.layout);
+    let visible_tracks = &tracks[visible_start..visible_end];
+    let coverless = visible_tracks
+        .iter()
+        .filter(|track| track.image_ref.is_none())
+        .count();
+    let refs = visible_tracks
+        .iter()
+        .filter_map(|track| track.image_ref.clone())
+        .map(|image_ref| UiPerfVisibleCoverRef {
+            image_ref,
+            fetch_size,
+            size,
+        })
+        .collect::<Vec<_>>();
+    UiPerfVisibleCoverWindow {
+        layout,
+        visible_start,
+        visible_end,
+        coverless,
+        refs,
+    }
+}
+
+fn ui_perf_track_leading_cover_window(
+    shell: &Shell,
+    leading_rows: usize,
+) -> UiPerfVisibleCoverWindow {
+    let key = LibraryListKey::Tracks;
+    let settings = shell.library_settings(key);
+    let layout = ui_perf_library_layout_name(settings.layout);
+    let Some((fetch_size, size)) = ui_perf_cover_sizes(shell, &settings) else {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    };
+    let mut tracks = shell.state.library.borrow().tracks.clone();
+    library::sort_tracks(&mut tracks, &settings, false);
+    let visible_end = leading_rows.min(tracks.len());
+    let visible_tracks = &tracks[..visible_end];
+    let coverless = visible_tracks
+        .iter()
+        .filter(|track| track.image_ref.is_none())
+        .count();
+    let refs = visible_tracks
+        .iter()
+        .filter_map(|track| track.image_ref.clone())
+        .map(|image_ref| UiPerfVisibleCoverRef {
+            image_ref,
+            fetch_size,
+            size,
+        })
+        .collect::<Vec<_>>();
+    UiPerfVisibleCoverWindow {
+        layout,
+        visible_start: 0,
+        visible_end,
+        coverless,
+        refs,
+    }
+}
+
+fn ui_perf_track_anchor_cover_window(shell: &Shell) -> UiPerfVisibleCoverWindow {
+    let key = LibraryListKey::Tracks;
+    let settings = shell.library_settings(key);
+    let layout = ui_perf_library_layout_name(settings.layout);
+    let Some((fetch_size, size)) = ui_perf_cover_sizes(shell, &settings) else {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    };
+    let mut tracks = shell.state.library.borrow().tracks.clone();
+    library::sort_tracks(&mut tracks, &settings, false);
+    let total = tracks.len();
+    if total == 0 {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    }
+
+    let visible_rows = ui_perf_initial_visible_count(shell, settings.layout)
+        .max(1)
+        .min(total);
+    let mut refs = Vec::new();
+    let mut coverless = 0_usize;
+    for numerator in [1_usize, 2, 3, 4] {
+        let start = total.saturating_sub(visible_rows).saturating_mul(numerator) / 4;
+        let end = start.saturating_add(visible_rows).min(total);
+        for track in &tracks[start..end] {
+            if let Some(image_ref) = track.image_ref.clone() {
+                refs.push(UiPerfVisibleCoverRef {
+                    image_ref,
+                    fetch_size,
+                    size,
+                });
+            } else {
+                coverless = coverless.saturating_add(1);
+            }
+        }
+    }
+
+    UiPerfVisibleCoverWindow {
+        layout,
+        visible_start: 0,
+        visible_end: total,
+        coverless,
+        refs,
+    }
+}
+
+fn ui_perf_album_visible_cover_window(shell: &Shell) -> UiPerfVisibleCoverWindow {
+    let settings = shell.library_settings(LibraryListKey::Albums);
+    let layout = ui_perf_library_layout_name(settings.layout);
+    let Some((fetch_size, size)) = ui_perf_cover_sizes(shell, &settings) else {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    };
+    let mut albums = shell.state.library.borrow().albums.clone();
+    library::sort_albums(&mut albums, &settings);
+    let (visible_start, visible_end) =
+        ui_perf_visible_index_range(shell, albums.len(), settings.layout);
+    let visible_albums = &albums[visible_start..visible_end];
+    let coverless = visible_albums
+        .iter()
+        .filter(|album| album.image_ref.is_none())
+        .count();
+    let refs = visible_albums
+        .iter()
+        .filter_map(|album| album.image_ref.clone())
+        .map(|image_ref| UiPerfVisibleCoverRef {
+            image_ref,
+            fetch_size,
+            size,
+        })
+        .collect::<Vec<_>>();
+    UiPerfVisibleCoverWindow {
+        layout,
+        visible_start,
+        visible_end,
+        coverless,
+        refs,
+    }
+}
+
+fn ui_perf_artist_visible_cover_window(
+    shell: &Shell,
+    album_artist: bool,
+) -> UiPerfVisibleCoverWindow {
+    let key = if album_artist {
+        LibraryListKey::AlbumArtists
+    } else {
+        LibraryListKey::Artists
+    };
+    let settings = shell.library_settings(key);
+    let layout = ui_perf_library_layout_name(settings.layout);
+    let Some((fetch_size, size)) = ui_perf_cover_sizes(shell, &settings) else {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    };
+    let mut artists = if album_artist {
+        shell.state.library.borrow().album_artists.clone()
+    } else {
+        shell.state.library.borrow().artists.clone()
+    };
+    library::sort_artists(&mut artists, &settings);
+    let (visible_start, visible_end) =
+        ui_perf_visible_index_range(shell, artists.len(), settings.layout);
+    let visible_artists = &artists[visible_start..visible_end];
+    let coverless = visible_artists
+        .iter()
+        .filter(|artist| artist.image_ref.is_none())
+        .count();
+    let refs = visible_artists
+        .iter()
+        .filter_map(|artist| artist.image_ref.clone())
+        .map(|image_ref| UiPerfVisibleCoverRef {
+            image_ref,
+            fetch_size,
+            size,
+        })
+        .collect::<Vec<_>>();
+    UiPerfVisibleCoverWindow {
+        layout,
+        visible_start,
+        visible_end,
+        coverless,
+        refs,
+    }
+}
+
+fn ui_perf_genre_visible_cover_window(shell: &Shell) -> UiPerfVisibleCoverWindow {
+    let settings = shell.library_settings(LibraryListKey::Genres);
+    let layout = ui_perf_library_layout_name(settings.layout);
+    let Some((fetch_size, size)) = ui_perf_cover_sizes(shell, &settings) else {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    };
+    let library = shell.state.library.borrow();
+    let mut genres = library.genres.clone();
+    library::sort_genres(&mut genres, &settings);
+    let (visible_start, visible_end) =
+        ui_perf_visible_index_range(shell, genres.len(), settings.layout);
+    let mut coverless = 0_usize;
+    let mut image_refs = Vec::new();
+    for genre in &genres[visible_start..visible_end] {
+        let mut refs = genre.image_refs.clone();
+        refs.extend(genre.image_ref.iter().cloned());
+        if refs.is_empty() {
+            coverless = coverless.saturating_add(1);
+        } else {
+            image_refs.extend(refs);
+        }
+    }
+    let refs = image_refs
+        .into_iter()
+        .map(|image_ref| UiPerfVisibleCoverRef {
+            image_ref,
+            fetch_size,
+            size,
+        })
+        .collect::<Vec<_>>();
+    UiPerfVisibleCoverWindow {
+        layout,
+        visible_start,
+        visible_end,
+        coverless,
+        refs,
+    }
+}
+
+fn ui_perf_playlist_visible_cover_window(shell: &Shell) -> UiPerfVisibleCoverWindow {
+    let settings = shell.library_settings(LibraryListKey::Playlists);
+    let layout = ui_perf_library_layout_name(settings.layout);
+    let Some((fetch_size, size)) = ui_perf_cover_sizes(shell, &settings) else {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    };
+    let mut playlists = shell.state.library.borrow().playlists.clone();
+    library::sort_playlists(&mut playlists, &settings);
+    let (visible_start, visible_end) =
+        ui_perf_visible_index_range(shell, playlists.len(), settings.layout);
+    let visible_playlists = &playlists[visible_start..visible_end];
+    let mut coverless = 0_usize;
+    let mut image_refs = Vec::new();
+    for playlist in visible_playlists {
+        let mut refs = playlist.image_refs.clone();
+        refs.extend(playlist.image_ref.iter().cloned());
+        if refs.is_empty() {
+            coverless = coverless.saturating_add(1);
+        } else {
+            image_refs.extend(refs);
+        }
+    }
+    let refs = image_refs
+        .into_iter()
+        .map(|image_ref| UiPerfVisibleCoverRef {
+            image_ref,
+            fetch_size,
+            size,
+        })
+        .collect::<Vec<_>>();
+    UiPerfVisibleCoverWindow {
+        layout,
+        visible_start,
+        visible_end,
+        coverless,
+        refs,
+    }
+}
+
+fn ui_perf_smart_playlist_visible_cover_window(shell: &Shell) -> UiPerfVisibleCoverWindow {
+    let settings = shell.library_settings(LibraryListKey::SmartPlaylists);
+    let layout = ui_perf_library_layout_name(settings.layout);
+    let Some((fetch_size, size)) = ui_perf_cover_sizes(shell, &settings) else {
+        return UiPerfVisibleCoverWindow {
+            layout,
+            visible_start: 0,
+            visible_end: 0,
+            coverless: 0,
+            refs: Vec::new(),
+        };
+    };
+    let mut playlists = shell.state.smart_playlists.borrow().clone();
+    library::sort_smart_playlists(&mut playlists, &settings);
+    let (visible_start, visible_end) =
+        ui_perf_visible_index_range(shell, playlists.len(), settings.layout);
+    let visible_playlists = &playlists[visible_start..visible_end];
+    let mut coverless = 0_usize;
+    let mut image_refs = Vec::new();
+    for playlist in visible_playlists {
+        let mut refs = playlist.image_refs.clone();
+        refs.extend(playlist.image_ref.iter().cloned());
+        if refs.is_empty() {
+            coverless = coverless.saturating_add(1);
+        } else {
+            image_refs.extend(refs);
+        }
+    }
+    let refs = image_refs
+        .into_iter()
+        .map(|image_ref| UiPerfVisibleCoverRef {
+            image_ref,
+            fetch_size,
+            size,
+        })
+        .collect::<Vec<_>>();
+    UiPerfVisibleCoverWindow {
+        layout,
+        visible_start,
+        visible_end,
+        coverless,
+        refs,
+    }
+}
+
+fn ui_perf_cover_sizes(shell: &Shell, settings: &LibraryListSettings) -> Option<(u32, i32)> {
+    match settings.layout {
+        LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1)),
+        LibraryLayout::Detail => Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32)),
+        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row => None,
+    }
+}
+
+fn ui_perf_visible_index_range(
+    shell: &Shell,
+    total: usize,
+    layout: LibraryLayout,
+) -> (usize, usize) {
+    if total == 0 {
+        return (0, 0);
+    }
+    let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) else {
+        return (0, ui_perf_initial_visible_count(shell, layout).min(total));
+    };
+    let adjustment = scroller.vadjustment();
+    let offset = adjustment.value().max(0.0);
+    let page_size = ui_perf_effective_page_size(shell, &scroller, &adjustment);
+    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    ui_perf_visible_index_range_from_metrics(
+        total,
+        layout,
+        offset,
+        page_size,
+        library::LIBRARY_TABLE_ROW_HEIGHT.max(1),
+        columns,
+        card_size,
+    )
+}
+
+fn ui_perf_effective_page_size(
+    shell: &Shell,
+    scroller: &gtk::ScrolledWindow,
+    adjustment: &gtk::Adjustment,
+) -> f64 {
+    let fallback_height = scroller
+        .height()
+        .max(shell.route_host.height())
+        .max(shell.app_root.height())
+        .max(1);
+    adjustment.page_size().max(f64::from(fallback_height))
+}
+
+pub(in crate::ui) fn ui_perf_visible_index_range_from_metrics(
+    total: usize,
+    layout: LibraryLayout,
+    offset: f64,
+    page_size: f64,
+    row_height: i32,
+    grid_columns: usize,
+    grid_card_size: i32,
+) -> (usize, usize) {
+    if total == 0 {
+        return (0, 0);
+    }
+    match layout {
+        LibraryLayout::Row => {
+            let row_height = f64::from(row_height.max(1));
+            let raw_start = (offset.max(0.0) / row_height).floor() as usize;
+            let count = (page_size.max(1.0) / row_height).ceil().max(1.0) as usize;
+            let count = count.min(total);
+            let start = raw_start.min(total.saturating_sub(count));
+            (start, start.saturating_add(count).min(total))
+        }
+        LibraryLayout::Grid | LibraryLayout::Detail => {
+            let columns = grid_columns.max(1);
+            let item_extent = f64::from(grid_card_size.saturating_add(88).max(1));
+            let first_row = (offset.max(0.0) / item_extent).floor() as usize;
+            let rows = (page_size.max(1.0) / item_extent).ceil().max(1.0) as usize + 1;
+            let count = rows.saturating_mul(columns).max(columns).min(total);
+            let raw_start = first_row.saturating_mul(columns);
+            let start = raw_start.min(total.saturating_sub(count));
+            (start, start.saturating_add(count).min(total))
+        }
+    }
+}
+
+fn ui_perf_initial_visible_count(shell: &Shell, layout: LibraryLayout) -> usize {
+    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    ui_perf_initial_visible_count_from_metrics(
+        layout,
+        shell.route_host.height(),
+        shell.app_root.height(),
+        columns,
+        card_size,
+    )
+}
+
+pub(in crate::ui) fn ui_perf_initial_visible_count_from_metrics(
+    layout: LibraryLayout,
+    route_height: i32,
+    app_height: i32,
+    grid_columns: usize,
+    grid_card_size: i32,
+) -> usize {
+    let viewport_height = route_height.max(app_height).max(1);
+    match layout {
+        LibraryLayout::Row => {
+            let row_height = library::LIBRARY_TABLE_ROW_HEIGHT.max(1);
+            (viewport_height / row_height).saturating_add(2).max(1) as usize
+        }
+        LibraryLayout::Grid | LibraryLayout::Detail => {
+            let columns = grid_columns.max(1);
+            let item_extent = grid_card_size.saturating_add(88).max(1);
+            let rows = (viewport_height / item_extent).saturating_add(2).max(1) as usize;
+            rows.saturating_mul(columns)
+        }
+    }
+}
+
+fn ui_perf_library_layout_name(layout: LibraryLayout) -> &'static str {
+    match layout {
+        LibraryLayout::Row => "row",
+        LibraryLayout::Grid => "grid",
+        LibraryLayout::Detail => "detail",
+    }
+}
+pub(in crate::ui) fn ui_perf_route_probe_expects_scroll(shell: &Shell, route: &Route) -> bool {
+    let library = shell.state.library.borrow();
+    match route {
+        Route::Home => !library.home_sections.is_empty(),
+        Route::Albums => library.albums.len() > 12,
+        Route::Tracks => library.tracks.len() > 20,
+        Route::Artists => library.artists.len() > 12,
+        Route::AlbumArtists => library.album_artists.len() > 12,
+        Route::Genres => library.genres.len() > 12,
+        Route::Playlists => library.playlists.len() > 12,
+        _ => false,
+    }
+}
+pub(in crate::ui) fn begin_ui_perf_route_probe_drag(run: UiPerfRouteProbeRun) {
+    if ui_perf_route_probe_waits_for_scroll_geometry(
+        ui_perf_route_probe_expects_scroll(&run.shell, &run.route),
+        2,
+        route_scroll_max(&run.shell),
+        run.wait_started_at.elapsed(),
+    ) {
+        glib::timeout_add_local_once(
+            Duration::from_millis(UI_PERF_ROUTE_READY_POLL_MS),
+            move || begin_ui_perf_route_probe_drag(run),
+        );
+        return;
+    }
+
+    record_ui_perf_route_probe_drag_contract(&run, "ready_before_drag");
+    run.perf
+        .begin_scroll(run.route_name.clone(), UiPerfScenario::DragSweep);
+    let route_name = run.route_name.clone();
+    let scroll_source = Rc::new(RefCell::new(None::<glib::SourceId>));
+    let next_drag_checkpoint = Rc::new(Cell::new(0_usize));
+    let drag_checkpoint_hold_until = Rc::new(RefCell::new(None::<Instant>));
+    let drag_checkpoint_hold_started = Rc::new(RefCell::new(None::<Instant>));
+    let paused_drag_duration = Rc::new(Cell::new(Duration::ZERO));
+    let sample_delay_ms = ui_perf_route_probe_mid_drag_sample_delay_ms(run.perf.options.drag_ms);
+    let drag_run_duration = Duration::from_millis(run.perf.options.drag_ms.max(1)).saturating_add(
+        Duration::from_millis(sample_delay_ms)
+            .saturating_mul(UI_PERF_ROUTE_DRAG_CHECKPOINTS.len() as u32),
+    );
+
+    if let Some(scroller) = find_largest_scrolled_window(&run.shell.route_host.clone().upcast()) {
+        let perf_for_tick = Rc::clone(&run.perf);
+        let route_for_tick = route_name.clone();
+        let shell_for_tick = Rc::clone(&run.shell);
+        let route_for_contract = run.route.clone();
+        let route_name_for_contract = route_name.clone();
+        let next_drag_checkpoint_for_tick = Rc::clone(&next_drag_checkpoint);
+        let drag_checkpoint_hold_until_for_tick = Rc::clone(&drag_checkpoint_hold_until);
+        let drag_checkpoint_hold_started_for_tick = Rc::clone(&drag_checkpoint_hold_started);
+        let paused_drag_duration_for_tick = Rc::clone(&paused_drag_duration);
+        let duration = Duration::from_millis(run.perf.options.drag_ms.max(1));
+        let started_at = Instant::now();
+        let id = glib::timeout_add_local(Duration::from_millis(16), move || {
+            let hold_until = *drag_checkpoint_hold_until_for_tick.borrow();
+            if let Some(hold_until) = hold_until {
+                if Instant::now() < hold_until {
+                    return glib::ControlFlow::Continue;
+                }
+                *drag_checkpoint_hold_until_for_tick.borrow_mut() = None;
+                if let Some(hold_started) =
+                    drag_checkpoint_hold_started_for_tick.borrow_mut().take()
+                {
+                    paused_drag_duration_for_tick.set(
+                        paused_drag_duration_for_tick
+                            .get()
+                            .saturating_add(hold_started.elapsed()),
+                    );
+                }
+            }
+            let adjustment = scroller.vadjustment();
+            let page_size = adjustment.page_size().max(1.0);
+            let max_value = (adjustment.upper() - page_size).max(0.0);
+            if max_value > 1.0 {
+                let elapsed = started_at
+                    .elapsed()
+                    .saturating_sub(paused_drag_duration_for_tick.get());
+                let progress = elapsed.as_secs_f64() / duration.as_secs_f64();
+                let checkpoint = ui_perf_route_probe_drag_checkpoint_phase(
+                    progress,
+                    next_drag_checkpoint_for_tick.get(),
+                );
+                let next_progress = checkpoint
+                    .map(|(_, _, threshold)| threshold)
+                    .unwrap_or(progress)
+                    .clamp(0.0, 1.0);
+                let next = max_value * next_progress;
+                adjustment.set_value(next);
+                perf_for_tick.record_scroll_step(&route_for_tick, next, max_value);
+                if let Some((phase, next_checkpoint, _threshold)) = checkpoint {
+                    next_drag_checkpoint_for_tick.set(next_checkpoint);
+                    *drag_checkpoint_hold_started_for_tick.borrow_mut() = Some(Instant::now());
+                    *drag_checkpoint_hold_until_for_tick.borrow_mut() =
+                        Some(Instant::now() + Duration::from_millis(sample_delay_ms));
+                    let shell_for_sample = Rc::clone(&shell_for_tick);
+                    let perf_for_sample = Rc::clone(&perf_for_tick);
+                    let route_for_sample = route_for_contract.clone();
+                    let route_name_for_sample = route_name_for_contract.clone();
+                    glib::timeout_add_local_once(
+                        Duration::from_millis(sample_delay_ms),
+                        move || {
+                            let visible_contract = ui_perf_route_visible_contract(
+                                &shell_for_sample,
+                                route_name_for_sample.clone(),
+                                &route_for_sample,
+                                phase,
+                            );
+                            println!(
+                                "RUFIN_ROUTE_PROBE route_drag route={} phase={} layout={} visible_start={} visible_end={} expected_visible={} ready={} final_missing={} pending={} rendered_expected={} rendered_ready={} rendered_final_missing={} rendered_fallback={} fallback_after_reveal={} pending_assets={} active_decodes={} queued_decodes={} path_lookups={}",
+                                route_name_for_sample,
+                                phase,
+                                visible_contract.layout,
+                                visible_contract.visible_start,
+                                visible_contract.visible_end,
+                                visible_contract.expected_visible,
+                                visible_contract.ready,
+                                visible_contract.final_missing,
+                                visible_contract.pending,
+                                visible_contract.rendered_expected,
+                                visible_contract.rendered_ready,
+                                visible_contract.rendered_final_missing,
+                                visible_contract.rendered_fallback,
+                                visible_contract.fallback_after_reveal,
+                                visible_contract.pending_assets,
+                                visible_contract.active_decodes,
+                                visible_contract.queued_decodes,
+                                visible_contract.path_lookups,
+                            );
+                            perf_for_sample.record_route_visible_contract(visible_contract);
+                        },
+                    );
+                }
+            }
+            glib::ControlFlow::Continue
+        });
+        *scroll_source.borrow_mut() = Some(id);
+    } else {
+        run.perf
+            .record_scroll_note(&route_name, "no_scrolled_window");
+    }
+
+    glib::timeout_add_local_once(drag_run_duration, move || {
+        if let Some(source) = scroll_source.borrow_mut().take() {
+            source.remove();
+        }
+        run.perf.finish_scroll();
+        glib::timeout_add_local_once(
+            Duration::from_millis(UI_PERF_ROUTE_PROBE_SCROLL_SETTLE_MS),
+            move || {
+                let visible_contract = ui_perf_route_visible_contract(
+                    &run.shell,
+                    run.route_name.clone(),
+                    &run.route,
+                    "drag_done",
+                );
+                println!(
+                    "RUFIN_ROUTE_PROBE route_done route={} layout={} visible_start={} visible_end={} expected_visible={} ready={} final_missing={} pending={} rendered_expected={} rendered_ready={} rendered_final_missing={} rendered_fallback={} fallback_after_reveal={} pending_assets={} active_decodes={} queued_decodes={} path_lookups={}",
+                    run.route_name,
+                    visible_contract.layout,
+                    visible_contract.visible_start,
+                    visible_contract.visible_end,
+                    visible_contract.expected_visible,
+                    visible_contract.ready,
+                    visible_contract.final_missing,
+                    visible_contract.pending,
+                    visible_contract.rendered_expected,
+                    visible_contract.rendered_ready,
+                    visible_contract.rendered_final_missing,
+                    visible_contract.rendered_fallback,
+                    visible_contract.fallback_after_reveal,
+                    visible_contract.pending_assets,
+                    visible_contract.active_decodes,
+                    visible_contract.queued_decodes,
+                    visible_contract.path_lookups,
+                );
+                run.perf.record_route_visible_contract(visible_contract);
+                run_next_ui_perf_route_probe(
+                    run.shell,
+                    run.app,
+                    run.perf,
+                    run.routes,
+                    run.heartbeat,
+                );
+            },
+        );
+    });
+}
+
+fn record_ui_perf_route_probe_drag_contract(run: &UiPerfRouteProbeRun, phase: &'static str) {
+    let visible_contract =
+        ui_perf_route_visible_contract(&run.shell, run.route_name.clone(), &run.route, phase);
+    println!(
+        "RUFIN_ROUTE_PROBE route_drag route={} phase={} layout={} visible_start={} visible_end={} expected_visible={} ready={} final_missing={} pending={} rendered_expected={} rendered_ready={} rendered_final_missing={} rendered_fallback={} fallback_after_reveal={} pending_assets={} active_decodes={} queued_decodes={} path_lookups={}",
+        run.route_name,
+        phase,
+        visible_contract.layout,
+        visible_contract.visible_start,
+        visible_contract.visible_end,
+        visible_contract.expected_visible,
+        visible_contract.ready,
+        visible_contract.final_missing,
+        visible_contract.pending,
+        visible_contract.rendered_expected,
+        visible_contract.rendered_ready,
+        visible_contract.rendered_final_missing,
+        visible_contract.rendered_fallback,
+        visible_contract.fallback_after_reveal,
+        visible_contract.pending_assets,
+        visible_contract.active_decodes,
+        visible_contract.queued_decodes,
+        visible_contract.path_lookups,
+    );
+    run.perf.record_route_visible_contract(visible_contract);
+}
 pub(in crate::ui) fn start_ui_perf_heartbeat(perf: Rc<UiPerfMonitor>) -> glib::SourceId {
     let last_tick = Rc::new(RefCell::new(Instant::now()));
     glib::timeout_add_local(Duration::from_millis(16), move || {
@@ -942,6 +2436,15 @@ pub(in crate::ui) fn wait_for_ui_perf_startup_reveal(
         });
         return;
     }
+    if startup_reveal_wait_timed_out(started_at) {
+        perf.record_startup_reveal();
+        println!(
+            "RUFIN_PERF startup_reveal_timeout elapsed_ms={}",
+            duration_ms(started_at.elapsed())
+        );
+        finish_ui_perf_run(perf, app);
+        return;
+    }
 
     glib::timeout_add_local_once(
         Duration::from_millis(STARTUP_ROUTE_REVEAL_POLL_MS),
@@ -949,6 +2452,14 @@ pub(in crate::ui) fn wait_for_ui_perf_startup_reveal(
             wait_for_ui_perf_startup_reveal(shell, app, perf, runs, started_at);
         },
     );
+}
+fn startup_reveal_wait_timed_out(started_at: Instant) -> bool {
+    started_at.elapsed()
+        >= Duration::from_millis(
+            STARTUP_ROUTE_REVEAL_MAX_MS
+                .saturating_add(RESPONSIVE_RENDER_DELAY_MS)
+                .saturating_add(1_000),
+        )
 }
 pub(in crate::ui) fn run_next_ui_perf_route(
     shell: Rc<Shell>,
@@ -999,23 +2510,10 @@ pub(in crate::ui) fn run_next_ui_perf_route(
             heartbeat: heartbeat_for_next,
             route_name,
             scenario,
-            wait_started_at: Instant::now(),
         });
     });
 }
 pub(in crate::ui) fn begin_ui_perf_route_scroll(run: UiPerfRouteScrollRun) {
-    if route_cover_gate_active_for_current_route(&run.shell)
-        && run.wait_started_at.elapsed() < Duration::from_millis(UI_PERF_ROUTE_GATE_TIMEOUT_MS)
-    {
-        glib::timeout_add_local_once(
-            Duration::from_millis(UI_PERF_ROUTE_GATE_POLL_MS),
-            move || {
-                begin_ui_perf_route_scroll(run);
-            },
-        );
-        return;
-    }
-
     run.perf.begin_scroll(run.route_name.clone(), run.scenario);
     let scroll_source = Rc::new(RefCell::new(None::<glib::SourceId>));
     if let Some(scroller) = find_largest_scrolled_window(&run.shell.route_host.clone().upcast()) {
@@ -1060,29 +2558,17 @@ pub(in crate::ui) fn begin_ui_perf_route_scroll(run: UiPerfRouteScrollRun) {
         },
     );
 }
-pub(in crate::ui) fn route_cover_gate_active_for_current_route(shell: &Shell) -> bool {
-    let route_key = match shell.state.routes.borrow().current() {
-        Route::Tracks => "tracks",
-        Route::Albums => "albums",
-        Route::Artists => "artists",
-        Route::AlbumArtists => "album_artists",
-        _ => return false,
-    };
-    shell
-        .state
-        .route_cover_gate_started
-        .borrow()
-        .contains_key(route_key)
-        && !shell
-            .state
-            .route_cover_gate_timed_out
-            .borrow()
-            .contains(route_key)
-}
 pub(in crate::ui) fn reset_ui_perf_route_scroll_position(shell: &Shell) {
     if let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) {
         scroller.vadjustment().set_value(0.0);
     }
+}
+pub(in crate::ui) fn route_scroll_max(shell: &Shell) -> f64 {
+    let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) else {
+        return 0.0;
+    };
+    let adjustment = scroller.vadjustment();
+    (adjustment.upper() - adjustment.page_size()).max(0.0)
 }
 pub(in crate::ui) fn finish_ui_perf_run(perf: Rc<UiPerfMonitor>, app: adw::Application) {
     let failed = write_ui_perf_report(&perf, true);
@@ -1116,6 +2602,86 @@ pub(in crate::ui) fn ui_perf_plan_summary(plan: &VecDeque<(Route, UiPerfScenario
             summary.push_str(" -> ");
         }
         let _ = write!(summary, "{}:{route:?}:{}", index + 1, scenario.name());
+    }
+    summary
+}
+pub(in crate::ui) fn ui_perf_route_probe_plan(shell: &Shell) -> VecDeque<Route> {
+    let settings = shell.state.settings.borrow().clone();
+    let mut routes = VecDeque::new();
+    routes.push_back(Route::Home);
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::Tracks,
+        Route::Tracks,
+    );
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::Albums,
+        Route::Albums,
+    );
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::Artists,
+        Route::Artists,
+    );
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::Genres,
+        Route::Genres,
+    );
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::AlbumArtists,
+        Route::AlbumArtists,
+    );
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::Favorites,
+        Route::Favorites,
+    );
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::Folders,
+        Route::Folders { path: Vec::new() },
+    );
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::Playlists,
+        Route::Playlists,
+    );
+    push_ui_perf_probe_route(
+        &mut routes,
+        &settings,
+        SidebarRouteItem::SmartPlaylists,
+        Route::SmartPlaylists,
+    );
+    routes
+}
+pub(in crate::ui) fn push_ui_perf_probe_route(
+    routes: &mut VecDeque<Route>,
+    settings: &AppSettings,
+    item: SidebarRouteItem,
+    route: Route,
+) {
+    if sidebar_route_visible(settings, item) {
+        routes.push_back(route);
+    }
+}
+pub(in crate::ui) fn ui_perf_route_probe_plan_summary(plan: &VecDeque<Route>) -> String {
+    let mut summary = String::new();
+    for (index, route) in plan.iter().enumerate() {
+        if index > 0 {
+            summary.push_str(" -> ");
+        }
+        let _ = write!(summary, "{}:{route:?}", index + 1);
     }
     summary
 }

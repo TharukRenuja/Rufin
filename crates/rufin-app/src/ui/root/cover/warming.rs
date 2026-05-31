@@ -3,7 +3,6 @@ use super::*;
 #[derive(Clone, Copy)]
 enum CoverWarmIntent {
     Route,
-    Startup,
 }
 
 #[derive(Clone, Copy)]
@@ -17,30 +16,24 @@ impl CoverWarmIntent {
     fn current_generation(self, shell: &Shell) -> u64 {
         match self {
             Self::Route => shell.state.cover_warm_generation.get(),
-            Self::Startup => shell.state.startup_cover_warm_generation.get(),
         }
     }
 
     fn batch_size(self) -> usize {
         match self {
             Self::Route => COVER_WARM_BATCH_SIZE,
-            Self::Startup => STARTUP_COVER_WARM_BATCH_SIZE,
         }
     }
 
     fn interval_ms(self) -> u64 {
         match self {
             Self::Route => COVER_WARM_INTERVAL_MS,
-            Self::Startup => STARTUP_COVER_WARM_INTERVAL_MS,
         }
     }
 
     fn job_is_decoded(self, shell: &Shell, job: &CoverWarmJob) -> bool {
         match self {
             Self::Route => shell.decoded_cover_has_min_size(&job.key, job.size),
-            Self::Startup => shell
-                .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
-                .is_some(),
         }
     }
 }
@@ -56,20 +49,6 @@ impl CoverWarmSchedule {
 }
 
 impl Shell {
-    pub(in crate::ui) fn warm_cover_refs(
-        self: &Rc<Self>,
-        image_refs: Vec<ImageRef>,
-        fetch_size: u32,
-        size: i32,
-    ) {
-        self.schedule_route_cover_warm_refs(
-            image_refs,
-            fetch_size,
-            size,
-            COVER_WARM_INITIAL_DELAY_MS,
-        );
-    }
-
     pub(in crate::ui) fn warm_cover_refs_now(
         self: &Rc<Self>,
         image_refs: Vec<ImageRef>,
@@ -77,6 +56,53 @@ impl Shell {
         size: i32,
     ) {
         self.schedule_route_cover_warm_refs(image_refs, fetch_size, size, 0);
+    }
+
+    pub(in crate::ui) fn prime_cover_refs_now(
+        self: &Rc<Self>,
+        image_refs: Vec<ImageRef>,
+        fetch_size: u32,
+        size: i32,
+    ) {
+        let decode_size = cover_decode_size(size, fetch_size);
+        self.cancel_queued_warm_cover_decodes();
+        let mut seen = HashSet::new();
+        let jobs = image_refs
+            .into_iter()
+            .filter_map(|image_ref| {
+                let key = self.cover_cache_key(&image_ref, fetch_size)?;
+                if !seen.insert(key.clone()) {
+                    return None;
+                }
+                Some((key, image_ref))
+            })
+            .collect::<Vec<_>>();
+        let keep = jobs
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<HashSet<_>>();
+        retain_current_priority_cover_work(
+            &mut self.state.cover_path_lookups.borrow_mut(),
+            &mut self.state.cover_decode_queue.borrow_mut(),
+            &keep,
+        );
+
+        for (key, image_ref) in jobs {
+            if self
+                .decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
+                .is_some()
+                || self.state.cover_decodes.borrow().contains_key(&key)
+            {
+                continue;
+            }
+            self.start_cached_cover_path_lookup(CoverPathLookupRequest {
+                key,
+                image_ref,
+                fetch_size,
+                size: decode_size,
+                intent: CoverPathLookupIntent::Priority,
+            });
+        }
     }
 
     fn schedule_route_cover_warm_refs(
@@ -98,47 +124,9 @@ impl Shell {
         );
     }
 
-    pub(in crate::ui) fn schedule_startup_cover_warm(self: &Rc<Self>) {
-        if self.state.startup_cover_warm_active.get() {
-            self.state.startup_cover_warm_reschedule_requested.set(true);
-            return;
-        }
-
-        let jobs = self.startup_cover_warm_jobs();
-        if jobs.is_empty() {
-            return;
-        }
-
-        self.state.startup_cover_warm_active.set(true);
-        let generation = self.next_startup_cover_warm_generation();
-        info!(covers = jobs.len(), "scheduled startup cover warm");
-        self.schedule_cover_warm_jobs(
-            Rc::new(RefCell::new(jobs)),
-            CoverWarmSchedule::new(
-                CoverWarmIntent::Startup,
-                generation,
-                STARTUP_COVER_WARM_DELAY_MS,
-            ),
-        );
-    }
-
-    fn startup_cover_warm_jobs(&self) -> VecDeque<CoverWarmJob> {
-        startup_cover_background_jobs(self).into_iter().collect()
-    }
-
     fn next_cover_warm_generation(&self) -> u64 {
         let generation = self.state.cover_warm_generation.get().saturating_add(1);
         self.state.cover_warm_generation.set(generation);
-        generation
-    }
-
-    fn next_startup_cover_warm_generation(&self) -> u64 {
-        let generation = self
-            .state
-            .startup_cover_warm_generation
-            .get()
-            .saturating_add(1);
-        self.state.startup_cover_warm_generation.set(generation);
         generation
     }
 
@@ -147,6 +135,12 @@ impl Shell {
             .cover_warm_generation
             .set(self.state.cover_warm_generation.get().saturating_add(1));
         self.cancel_queued_warm_cover_decodes();
+    }
+
+    pub(in crate::ui) fn cancel_route_cover_warm(&self) {
+        self.state
+            .cover_warm_generation
+            .set(self.state.cover_warm_generation.get().saturating_add(1));
     }
 
     pub(in crate::ui) fn pause_cover_warm_for_interaction(self: &Rc<Self>) {
@@ -228,8 +222,6 @@ impl Shell {
             glib::idle_add_local_once(move || {
                 if schedule.intent.current_generation(&shell) == schedule.generation {
                     shell.start_cover_warm_jobs(jobs, schedule);
-                } else {
-                    shell.finish_startup_cover_warm(schedule);
                 }
             });
             return;
@@ -240,8 +232,6 @@ impl Shell {
             move || {
                 if schedule.intent.current_generation(&shell) == schedule.generation {
                     shell.start_cover_warm_jobs(jobs, schedule);
-                } else {
-                    shell.finish_startup_cover_warm(schedule);
                 }
             },
         );
@@ -257,11 +247,9 @@ impl Shell {
             Duration::from_millis(schedule.intent.interval_ms()),
             move || {
                 if schedule.intent.current_generation(&shell) != schedule.generation {
-                    shell.finish_startup_cover_warm(schedule);
                     return glib::ControlFlow::Break;
                 }
                 if jobs.borrow().is_empty() {
-                    shell.finish_startup_cover_warm(schedule);
                     return glib::ControlFlow::Break;
                 }
                 if shell.cover_warm_is_paused() {
@@ -287,30 +275,12 @@ impl Shell {
                 }
 
                 if jobs.borrow().is_empty() {
-                    shell.finish_startup_cover_warm(schedule);
                     glib::ControlFlow::Break
                 } else {
                     glib::ControlFlow::Continue
                 }
             },
         );
-    }
-
-    fn finish_startup_cover_warm(self: &Rc<Self>, schedule: CoverWarmSchedule) {
-        if !matches!(schedule.intent, CoverWarmIntent::Startup)
-            || schedule.intent.current_generation(self) != schedule.generation
-        {
-            return;
-        }
-
-        self.state.startup_cover_warm_active.set(false);
-        if self
-            .state
-            .startup_cover_warm_reschedule_requested
-            .replace(false)
-        {
-            self.schedule_startup_cover_warm();
-        }
     }
 
     fn cover_pipeline_in_flight(&self) -> usize {
@@ -327,7 +297,7 @@ impl Shell {
         intent: CoverWarmIntent,
     ) -> bool {
         intent.job_is_decoded(self, job)
-            || self.state.cover_decodes.borrow().contains(&job.key)
+            || self.state.cover_decodes.borrow().contains_key(&job.key)
             || self
                 .state
                 .cover_path_lookups

@@ -269,6 +269,146 @@ pub(in crate::controller) fn external_cover_known_miss_applies_to_route_visible_
         256
     ));
 }
+
+#[test]
+pub(in crate::controller) fn retry_external_cover_lookups_clears_misses_and_running_keys() {
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let server_id = ServerId::new("jellyfin:server:test");
+    let saved = SavedServer {
+        server: ServerIdentity {
+            id: server_id.clone(),
+            provider: "jellyfin".to_string(),
+            name: "Test".to_string(),
+            base_url: "https://music.example".to_string(),
+        },
+        user_id: "user".to_string(),
+        username: "demo".to_string(),
+        trust_invalid_cert: false,
+    };
+    let image_ref = ImageRef::new(
+        "external:album:Example%20Artist:Example%20Album",
+        Some("external-v1-test".to_string()),
+    );
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&server_id)?;
+            store.save_external_image_lookup_miss(
+                &server_id,
+                &image_ref.item_id,
+                "external-v1-test",
+                256,
+                "external cover lookup found no usable image",
+            )
+        })
+        .expect("seed external miss");
+    let key = controller.cover_key(&image_ref, 256).expect("cover key");
+    let generation_before = controller
+        .external_cover_retry_generation
+        .load(Ordering::SeqCst);
+    controller
+        .cover_in_flight
+        .lock()
+        .expect("cover in-flight lock")
+        .insert(key, generation_before);
+
+    controller
+        .retry_external_cover_lookups()
+        .expect("retry external covers");
+
+    assert!(!controller.external_cover_lookup_known_missing(&image_ref, 256));
+    assert!(
+        controller
+            .cover_in_flight
+            .lock()
+            .expect("cover in-flight lock")
+            .is_empty()
+    );
+    assert_eq!(
+        controller
+            .external_cover_retry_generation
+            .load(Ordering::SeqCst),
+        generation_before.saturating_add(1)
+    );
+}
+
+#[test]
+pub(in crate::controller) fn known_external_cover_miss_emits_unavailable() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let server_id = ServerId::new("jellyfin:server:test");
+    let saved = SavedServer {
+        server: ServerIdentity {
+            id: server_id.clone(),
+            provider: "jellyfin".to_string(),
+            name: "Test".to_string(),
+            base_url: "https://music.example".to_string(),
+        },
+        user_id: "user".to_string(),
+        username: "demo".to_string(),
+        trust_invalid_cert: false,
+    };
+    let image_ref = ImageRef::new(
+        "external:album:Example%20Artist:Example%20Album",
+        Some("external-v1-test".to_string()),
+    );
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&server_id)?;
+            store.save_external_image_lookup_miss(
+                &server_id,
+                &image_ref.item_id,
+                "external-v1-test",
+                256,
+                "external cover lookup found no usable image",
+            )
+        })
+        .expect("seed external miss");
+    let key = controller.cover_key(&image_ref, 256).expect("cover key");
+
+    controller.request_cover_for_key(key.clone(), image_ref, 256);
+
+    loop {
+        match events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("controller event")
+        {
+            ControllerEvent::CoverUnavailable {
+                key: event_key,
+                external_retry_generation,
+            } if event_key == key => {
+                assert_eq!(external_retry_generation, Some(0));
+                return;
+            }
+            ControllerEvent::CoverReady { key: event_key, .. } if event_key == key => {
+                panic!("known missing cover unexpectedly became ready");
+            }
+            ControllerEvent::Snapshot(_)
+            | ControllerEvent::HomeSectionsUpdated { .. }
+            | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
+            | ControllerEvent::FavoriteChanged { .. }
+            | ControllerEvent::Queue(_)
+            | ControllerEvent::Playback(_)
+            | ControllerEvent::Lyrics(_)
+            | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSaved { .. }
+            | ControllerEvent::FolderLoaded { .. }
+            | ControllerEvent::FolderLoadFailed { .. }
+            | ControllerEvent::HomeSectionPrefetched { .. }
+            | ControllerEvent::ServerDiscovery { .. }
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::PlaybackPerf(_)
+            | ControllerEvent::LoginStatus(_) => {}
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+        }
+    }
+}
 #[test]
 pub(in crate::controller) fn provider_cached_cover_reuses_available_size() {
     let (controller, _events, _snapshot, _queue, _player) =
@@ -361,7 +501,7 @@ pub(in crate::controller) fn thumbnail_cached_cover_does_not_satisfy_grid_reques
     let _cleanup = fs::remove_file(path);
 }
 #[test]
-pub(in crate::controller) fn missing_cached_cover_file_invalidates_cover_index() {
+pub(in crate::controller) fn missing_cached_cover_file_lookup_stays_read_only() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let server_id = ServerId::new("jellyfin:server:test");
@@ -408,7 +548,13 @@ pub(in crate::controller) fn missing_cached_cover_file_invalidates_cover_index()
                 256
             ))
             .expect("load cover cache"),
-        None
+        Some(CoverCacheEntry {
+            server_id,
+            item_id: image_ref.item_id,
+            image_tag: "tag-one".to_string(),
+            size: 256,
+            path: path.to_string_lossy().to_string(),
+        })
     );
 }
 #[test]

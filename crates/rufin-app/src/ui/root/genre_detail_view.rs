@@ -28,7 +28,11 @@ impl Shell {
         };
         let seed = stable_seed(detail.genre.id.as_str());
         let summary = format!("{} {}", detail.genre.track_count, tr("tracks"));
-        let cover_refs = grouped_cover_refs_for_items(&detail.albums, &detail.tracks);
+        let cover_refs = if detail.genre.image_refs.is_empty() {
+            grouped_cover_refs_for_items(&detail.albums, &detail.tracks)
+        } else {
+            detail.genre.image_refs.clone()
+        };
         self.grouped_detail_view(GroupedDetailData {
             title: detail.genre.name,
             image_ref: detail.genre.image_ref,

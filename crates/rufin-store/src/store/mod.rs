@@ -16,7 +16,7 @@ use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, Searc
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 const PRE_SMART_PLAYLISTS_SCHEMA_VERSION: i64 = 10;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;

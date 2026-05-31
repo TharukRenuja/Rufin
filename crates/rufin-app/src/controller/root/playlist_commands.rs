@@ -47,6 +47,7 @@ impl AppController {
                 name: name.trim().to_string(),
                 track_count: tracks.len() as u32,
                 duration_seconds: tracks.iter().map(|track| track.duration_seconds).sum(),
+                image_refs: track_cover_refs_for_items(&tracks),
                 image_ref: tracks.iter().find_map(|track| track.image_ref.clone()),
             };
             let entries = playlist_entries_for_tracks(&playlist_id, &tracks);
@@ -319,6 +320,13 @@ impl AppController {
                     .iter()
                     .map(|entry| entry.track.duration_seconds)
                     .sum(),
+                image_refs: track_cover_refs_for_items(
+                    &after
+                        .entries
+                        .iter()
+                        .map(|entry| entry.track.clone())
+                        .collect::<Vec<_>>(),
+                ),
                 image_ref: after
                     .entries
                     .iter()

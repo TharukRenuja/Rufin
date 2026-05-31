@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -31,6 +33,60 @@ const EXTERNAL_PREFETCH_COVER_SIZE: u32 = 256;
 const EXTERNAL_THUMB_COVER_SIZE: u32 = 96;
 const EXTERNAL_DETAIL_COVER_SIZE: u32 = 512;
 const EXTERNAL_PREFETCH_DELAY: Duration = Duration::from_secs(1);
+
+enum CoverRequestOutcome {
+    Ready(PathBuf),
+    TerminalMissing {
+        external_retry_generation: Option<u64>,
+    },
+    Deferred,
+}
+
+pub(super) fn mark_cover_in_flight(
+    cover_in_flight: &Arc<Mutex<HashMap<String, u64>>>,
+    key: &str,
+    generation: u64,
+) -> bool {
+    cover_in_flight
+        .lock()
+        .map(|mut in_flight| {
+            if in_flight
+                .get(key)
+                .is_some_and(|existing_generation| *existing_generation >= generation)
+            {
+                return false;
+            }
+            in_flight.insert(key.to_string(), generation);
+            true
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+pub(super) fn clear_cover_in_flight(cover_in_flight: &Arc<Mutex<HashMap<String, u64>>>) {
+    if let Ok(mut in_flight) = cover_in_flight.lock() {
+        in_flight.clear();
+    }
+}
+
+pub(super) fn unmark_cover_in_flight_generation(
+    cover_in_flight: &Arc<Mutex<HashMap<String, u64>>>,
+    key: &str,
+    generation: u64,
+) {
+    if let Ok(mut in_flight) = cover_in_flight.lock()
+        && in_flight.get(key).copied() == Some(generation)
+    {
+        in_flight.remove(key);
+    }
+}
+
+fn external_cover_retry_generation_is_current(
+    external_cover_retry_generation: &AtomicU64,
+    generation: u64,
+) -> bool {
+    external_cover_retry_generation.load(Ordering::SeqCst) == generation
+}
 
 impl AppController {
     #[cfg(test)]
@@ -64,6 +120,13 @@ impl AppController {
         cached_cover_path_for_key(key)
     }
 
+    pub fn external_cover_retry_generation_is_current(&self, generation: u64) -> bool {
+        external_cover_retry_generation_is_current(
+            &self.external_cover_retry_generation,
+            generation,
+        )
+    }
+
     pub fn external_cover_lookup_known_missing(&self, image_ref: &ImageRef, size: u32) -> bool {
         if !external_metadata::is_external_image_ref(image_ref) {
             return false;
@@ -88,6 +151,18 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(());
         };
+        let retry_generation = {
+            let mut in_flight = self
+                .cover_in_flight
+                .lock()
+                .map_err(|_| "cover in-flight lock was poisoned.".to_string())?;
+            let retry_generation = self
+                .external_cover_retry_generation
+                .fetch_add(1, Ordering::SeqCst)
+                .saturating_add(1);
+            in_flight.clear();
+            retry_generation
+        };
         self.store
             .with_store(|store| store.clear_external_image_lookup_misses(&saved.server.id))?;
         start_external_metadata_cover_prefetch_thread(ExternalCoverPrefetchRequest {
@@ -96,6 +171,8 @@ impl AppController {
             secrets: Arc::clone(&self.secrets),
             events: self.events.clone(),
             cover_in_flight: Arc::clone(&self.cover_in_flight),
+            external_cover_retry_generation: Arc::clone(&self.external_cover_retry_generation),
+            retry_generation,
             external_cover_prefetch_in_flight: Arc::clone(&self.external_cover_prefetch_in_flight),
             cover_slots: Arc::clone(&self.cover_slots),
             saved,
@@ -126,13 +203,9 @@ impl AppController {
             .clone()
             .unwrap_or_else(|| IMAGE_TAG_UNTAGGED.to_string());
         let key = image_cache_key(&saved.server.id, &image_ref.item_id, &tag, size);
-        match self.cover_in_flight.lock() {
-            Ok(mut in_flight) => {
-                if !in_flight.insert(key.clone()) {
-                    return;
-                }
-            }
-            Err(_) => return,
+        let retry_generation = self.external_cover_retry_generation.load(Ordering::SeqCst);
+        if !mark_cover_in_flight(&self.cover_in_flight, &key, retry_generation) {
+            return;
         }
 
         let store = self.store.clone();
@@ -143,16 +216,12 @@ impl AppController {
         let cover_slots = Arc::clone(&self.cover_slots);
         thread::spawn(move || {
             if !acquire_cover_slot(&cover_slots) {
-                if let Ok(mut in_flight) = cover_in_flight.lock() {
-                    in_flight.remove(&key);
-                }
+                unmark_cover_in_flight_generation(&cover_in_flight, &key, retry_generation);
                 return;
             }
             let result = fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size);
             release_cover_slot(&cover_slots);
-            if let Ok(mut in_flight) = cover_in_flight.lock() {
-                in_flight.remove(&key);
-            }
+            unmark_cover_in_flight_generation(&cover_in_flight, &key, retry_generation);
             match result {
                 Ok(path) => {
                     let _sent = events.send(ControllerEvent::CoverReady { key, path });
@@ -165,21 +234,17 @@ impl AppController {
     }
 
     pub fn request_cover_for_key(&self, key: String, image_ref: ImageRef, size: u32) {
-        match self.cover_in_flight.lock() {
-            Ok(mut in_flight) => {
-                if !in_flight.insert(key.clone()) {
-                    return;
-                }
-            }
-            Err(_) => return,
-        }
-
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
         let events = self.events.clone();
         let cover_in_flight = Arc::clone(&self.cover_in_flight);
         let cover_slots = Arc::clone(&self.cover_slots);
+        let external_cover_retry_generation = Arc::clone(&self.external_cover_retry_generation);
+        let retry_generation = external_cover_retry_generation.load(Ordering::SeqCst);
+        if !mark_cover_in_flight(&self.cover_in_flight, &key, retry_generation) {
+            return;
+        }
         thread::spawn(move || {
             let is_external_cover = external_metadata::is_external_image_ref(&image_ref);
             let miss_item_id = image_ref.item_id.clone();
@@ -187,77 +252,212 @@ impl AppController {
                 .tag
                 .clone()
                 .unwrap_or_else(|| IMAGE_TAG_UNTAGGED.to_string());
-            let result = (|| -> Result<Option<PathBuf>, String> {
-                let settings = load_settings_from_store(&store);
-                if is_external_cover && !external_metadata::enabled(&settings) {
-                    return Ok(None);
-                }
+            let result = (|| -> Result<CoverRequestOutcome, String> {
                 if let Some(path) = cached_cover_path_for_key(&key) {
-                    return Ok(Some(path));
-                }
-
-                let Some(saved) = store.with_store(|store| store.active_server())? else {
-                    return Ok(None);
-                };
-                if saved.server.provider == "fake" {
-                    return Ok(None);
-                }
-
-                let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-                let expected_key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
-                if expected_key != key {
-                    return Ok(None);
-                }
-
-                if let Some(path) = cached_cover_path_for_saved(&store, &saved, &image_ref, size)? {
-                    return Ok(Some(path));
-                }
-                if is_external_cover
-                    && external_lookup_miss_cached(&store, &saved, &image_ref, size)?
-                {
-                    return Ok(None);
+                    return Ok(CoverRequestOutcome::Ready(path));
                 }
 
                 if !acquire_cover_slot(&cover_slots) {
-                    return Ok(None);
+                    return Ok(CoverRequestOutcome::Deferred);
                 }
-                let result =
-                    fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size)
-                        .map(Some);
+                let result = (|| -> Result<CoverRequestOutcome, String> {
+                    let settings = load_settings_from_store(&store);
+                    if is_external_cover && !external_metadata::enabled(&settings) {
+                        return Ok(CoverRequestOutcome::TerminalMissing {
+                            external_retry_generation: Some(retry_generation),
+                        });
+                    }
+
+                    let Some(saved) = store.with_store(|store| store.active_server())? else {
+                        return Ok(CoverRequestOutcome::Deferred);
+                    };
+                    if saved.server.provider == "fake" {
+                        return Ok(CoverRequestOutcome::TerminalMissing {
+                            external_retry_generation: None,
+                        });
+                    }
+
+                    let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+                    let expected_key =
+                        image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
+                    if expected_key != key {
+                        return Ok(CoverRequestOutcome::Deferred);
+                    }
+
+                    if let Some(path) =
+                        cached_cover_path_for_saved(&store, &saved, &image_ref, size)?
+                    {
+                        return Ok(CoverRequestOutcome::Ready(path));
+                    }
+                    if is_external_cover
+                        && external_lookup_miss_cached(&store, &saved, &image_ref, size)?
+                    {
+                        if !external_cover_retry_generation_is_current(
+                            &external_cover_retry_generation,
+                            retry_generation,
+                        ) {
+                            return Ok(CoverRequestOutcome::Deferred);
+                        }
+                        return Ok(CoverRequestOutcome::TerminalMissing {
+                            external_retry_generation: Some(retry_generation),
+                        });
+                    }
+
+                    match fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size)
+                    {
+                        Ok(path) => Ok(CoverRequestOutcome::Ready(path)),
+                        Err(error)
+                            if cover_error_is_terminal(
+                                &saved.server.provider,
+                                is_external_cover,
+                                &error,
+                            ) =>
+                        {
+                            if is_external_cover
+                                && external_metadata::is_expected_lookup_miss(&error)
+                            {
+                                let _in_flight = cover_in_flight.lock().map_err(|_| {
+                                    "cover in-flight lock was poisoned.".to_string()
+                                })?;
+                                if !external_cover_retry_generation_is_current(
+                                    &external_cover_retry_generation,
+                                    retry_generation,
+                                ) {
+                                    return Ok(CoverRequestOutcome::Deferred);
+                                }
+                                let _saved_miss = store.with_store(|store| {
+                                    store.save_external_image_lookup_miss(
+                                        &saved.server.id,
+                                        &miss_item_id,
+                                        &miss_image_tag,
+                                        size,
+                                        &error,
+                                    )
+                                });
+                            }
+                            if is_external_cover {
+                                debug!(%error, "external metadata cover was not available");
+                            } else if is_provider_not_found_error(&error) {
+                                debug!(%error, "cached cover source item is no longer available");
+                            } else {
+                                warn!(%error, "cover is not available");
+                            }
+                            Ok(CoverRequestOutcome::TerminalMissing {
+                                external_retry_generation: is_external_cover
+                                    .then_some(retry_generation),
+                            })
+                        }
+                        Err(error) => Err(error),
+                    }
+                })();
                 release_cover_slot(&cover_slots);
                 result
             })();
 
-            if let Ok(mut in_flight) = cover_in_flight.lock() {
-                in_flight.remove(&key);
-            }
+            unmark_cover_in_flight_generation(&cover_in_flight, &key, retry_generation);
             match result {
-                Ok(Some(path)) => {
+                Ok(CoverRequestOutcome::Ready(path)) => {
                     let _sent = events.send(ControllerEvent::CoverReady { key, path });
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    if is_external_cover && external_metadata::is_expected_lookup_miss(&error) {
-                        let _saved_miss = store.with_store(|store| {
-                            if let Some(saved) = store.active_server()? {
-                                store.save_external_image_lookup_miss(
-                                    &saved.server.id,
-                                    &miss_item_id,
-                                    &miss_image_tag,
-                                    size,
-                                    &error,
-                                )?;
-                            }
-                            Ok(())
-                        });
-                        debug!(%error, "external metadata cover was not available");
-                    } else if is_provider_not_found_error(&error) {
-                        debug!(%error, "cached cover source item is no longer available");
-                    } else {
-                        warn!(%error, "failed to prepare cover");
+                Ok(CoverRequestOutcome::TerminalMissing {
+                    external_retry_generation,
+                }) => {
+                    if external_retry_generation.is_some_and(|generation| {
+                        !external_cover_retry_generation_is_current(
+                            &external_cover_retry_generation,
+                            generation,
+                        )
+                    }) {
+                        return;
                     }
+                    let _sent = events.send(ControllerEvent::CoverUnavailable {
+                        key,
+                        external_retry_generation,
+                    });
+                }
+                Ok(CoverRequestOutcome::Deferred) => {}
+                Err(error) => {
+                    warn!(%error, "failed to prepare cover");
                 }
             }
         });
+    }
+}
+
+fn cover_error_is_terminal(provider: &str, is_external_cover: bool, error: &str) -> bool {
+    is_provider_not_found_error(error)
+        || error == "cover response was empty"
+        || error.contains("No such file or directory")
+        || error.contains("os error 2")
+        || (provider == rufin_provider_local::LOCAL_PROVIDER_ID
+            && (error.contains("local cover exceeded")
+                || error.contains("embedded cover exceeded")
+                || error.contains("no pictures")
+                || error.contains("no tag found")))
+        || (is_external_cover && external_metadata::is_expected_lookup_miss(error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        clear_cover_in_flight, cover_error_is_terminal, mark_cover_in_flight,
+        unmark_cover_in_flight_generation,
+    };
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn cover_terminal_errors_exclude_retryable_external_failures() {
+        assert!(cover_error_is_terminal(
+            "jellyfin",
+            true,
+            "404 Not Found: did not return album art"
+        ));
+        assert!(!cover_error_is_terminal(
+            "jellyfin",
+            true,
+            "error sending request for url"
+        ));
+        assert!(!cover_error_is_terminal(
+            "jellyfin",
+            true,
+            "provider network failed: timed out"
+        ));
+    }
+
+    #[test]
+    fn local_missing_file_is_terminal_cover_unavailable() {
+        assert!(cover_error_is_terminal(
+            rufin_provider_local::LOCAL_PROVIDER_ID,
+            false,
+            "No such file or directory (os error 2)"
+        ));
+    }
+
+    #[test]
+    fn stale_cover_in_flight_release_keeps_newer_generation() {
+        let in_flight = Arc::new(Mutex::new(HashMap::new()));
+        let key = "server::cover::256";
+
+        assert!(mark_cover_in_flight(&in_flight, key, 1));
+        assert!(mark_cover_in_flight(&in_flight, key, 2));
+        assert!(!mark_cover_in_flight(&in_flight, key, 1));
+        clear_cover_in_flight(&in_flight);
+        assert!(mark_cover_in_flight(&in_flight, key, 1));
+        clear_cover_in_flight(&in_flight);
+        assert!(mark_cover_in_flight(&in_flight, key, 2));
+
+        unmark_cover_in_flight_generation(&in_flight, key, 1);
+        assert_eq!(
+            in_flight
+                .lock()
+                .expect("cover in-flight lock")
+                .get(key)
+                .copied(),
+            Some(2)
+        );
+
+        unmark_cover_in_flight_generation(&in_flight, key, 2);
+        assert!(in_flight.lock().expect("cover in-flight lock").is_empty());
     }
 }

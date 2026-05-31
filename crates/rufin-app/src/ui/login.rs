@@ -22,6 +22,20 @@ const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
 
 impl Shell {
     pub(super) fn present_add_server_dialog(self: &Rc<Self>) {
+        self.present_add_server_dialog_with_connect_handler(None);
+    }
+
+    pub(super) fn present_add_server_dialog_closing(self: &Rc<Self>, extra_dialog: &adw::Dialog) {
+        let extra_dialog = extra_dialog.clone();
+        self.present_add_server_dialog_with_connect_handler(Some(Rc::new(move || {
+            extra_dialog.close();
+        })));
+    }
+
+    fn present_add_server_dialog_with_connect_handler(
+        self: &Rc<Self>,
+        on_connect_started: Option<Rc<dyn Fn()>>,
+    ) {
         let toolbar = adw::ToolbarView::new();
         let header = adw::HeaderBar::new();
         let title = adw::WindowTitle::new(&tr("Add Server"), "");
@@ -38,8 +52,12 @@ impl Shell {
             ))
             .build();
         let dialog_for_connect = dialog.clone();
+        let on_connect_started = on_connect_started.clone();
         let child = self.add_server_view_with_connect_handler(Some(Rc::new(move || {
             dialog_for_connect.close();
+            if let Some(on_connect_started) = on_connect_started.as_ref() {
+                on_connect_started();
+            }
         })));
         toolbar.set_content(Some(&child));
         dialog.set_child(Some(&toolbar));
