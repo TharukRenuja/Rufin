@@ -9,8 +9,8 @@ Updates release metadata, commits it, and creates a signed annotated tag whose
 message includes commits since the previous release tag. VERSION may be vX.Y.Z
 or X.Y.Z. With --push, opens empty-body release PRs, waits for Checks to pass,
 merges them, pushes the signed tag, gates and verifies the AUR follow-up the
-same way, then publishes the GitHub Release from the tag using the
-authenticated gh user.
+same way, publishes the GitHub Release from the tag using the authenticated gh
+user, then watches the release-triggered AUR, Flatpak, and Nix workflows.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
@@ -198,6 +198,26 @@ first_merged_pr_for_author() {
   fi
 }
 
+format_release_note_author() {
+  local author="$1"
+
+  if [[ "$author" == *"[bot]" ]]; then
+    local app_slug="${author%\[bot\]}"
+    printf '[@%s](https://github.com/apps/%s)' "$app_slug" "$app_slug"
+    return
+  fi
+
+  printf '@%s' "$author"
+}
+
+is_release_note_bot_author() {
+  [[ "$1" == *"[bot]" ]]
+}
+
+is_release_publish_pr_title() {
+  [[ "$1" == "chore(release): publish v"* ]]
+}
+
 write_changelog() {
   local repo_url="$1"
   local repo_slug="$2"
@@ -239,9 +259,15 @@ write_changelog() {
 
       if [[ -z "${seen_prs[$pr_number]+x}" ]]; then
         seen_prs[$pr_number]=1
-        printf -- '- %s by @%s in #%s\n' "$pr_title" "$pr_author" "$pr_number"
+        if is_release_publish_pr_title "$pr_title"; then
+          continue
+        fi
 
-        if [[ -n "$pr_author" ]]; then
+        local author_display
+        author_display="$(format_release_note_author "$pr_author")"
+        printf -- '- %s by %s in #%s\n' "$pr_title" "$author_display" "$pr_number"
+
+        if [[ -n "$pr_author" ]] && ! is_release_note_bot_author "$pr_author"; then
           if [[ -z "${first_pr_by_author[$pr_author]+x}" ]]; then
             first_pr_by_author[$pr_author]="$(first_merged_pr_for_author "$repo_slug" "$pr_author")"
           fi
@@ -273,7 +299,9 @@ write_changelog() {
     for contributor in "${new_contributors[@]}"; do
       local author pr_number
       IFS=$'\t' read -r author pr_number <<< "$contributor"
-      printf -- '- @%s made their first contribution in #%s\n' "$author" "$pr_number"
+      local author_display
+      author_display="$(format_release_note_author "$author")"
+      printf -- '- %s made their first contribution in #%s\n' "$author_display" "$pr_number"
     done
   fi
 }
@@ -386,6 +414,24 @@ fast_forward_default_branch() {
   git merge --ff-only "origin/$default_branch"
 }
 
+mark_pre_pr_review() {
+  local marker="${RUFIN_PR_REVIEW_GATE_MARKER:-}"
+
+  if [[ -z "$marker" ]]; then
+    local default_marker="$HOME/.codex/skills/rufin-git-workflow/scripts/rufin-pr-review-gate.py"
+    if [[ -x "$default_marker" ]]; then
+      marker="$default_marker"
+    fi
+  fi
+
+  if [[ -z "$marker" ]]; then
+    return
+  fi
+
+  printf '\nMarking reviewed release HEAD for PR creation...\n'
+  "$marker" mark
+}
+
 open_release_pr() {
   local branch="$1"
   local title="$2"
@@ -464,6 +510,7 @@ push_branch_open_pr_and_merge() {
   printf '\nPushing %s to %s for PR Checks...\n' "$sha" "$branch"
   git push --force-with-lease origin "HEAD:refs/heads/$branch"
 
+  mark_pre_pr_review
   pr_number="$(open_release_pr "$branch" "$title")"
   merge_release_pr_after_checks "$pr_number" "$phase"
   fast_forward_default_branch
@@ -480,6 +527,49 @@ publish_github_release() {
     --notes-from-tag \
     --verify-tag
   printf '\nPublished GitHub Release %s with the authenticated gh user.\n' "$version"
+}
+
+release_run_id_for_workflow() {
+  local workflow="$1"
+
+  gh run list \
+    --workflow "$workflow" \
+    --event release \
+    --branch "$version" \
+    --limit 1 \
+    --json databaseId \
+    --jq '.[0].databaseId // empty'
+}
+
+wait_for_release_run() {
+  local workflow="$1"
+  local run_id=""
+
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 \
+    13 14 15 16 17 18 19 20 21 22 23 24; do
+    run_id="$(release_run_id_for_workflow "$workflow")"
+    if [[ -n "$run_id" ]]; then
+      printf '%s\n' "$run_id"
+      return
+    fi
+    sleep 5
+  done
+
+  echo "could not find release workflow run for $workflow on $version" >&2
+  exit 1
+}
+
+watch_release_workflows() {
+  if [[ "$skip_github_release" == "1" ]]; then
+    return
+  fi
+
+  local workflow run_id
+  for workflow in AUR Flatpak Nix; do
+    run_id="$(wait_for_release_run "$workflow")"
+    printf '\nWatching %s release workflow run %s...\n' "$workflow" "$run_id"
+    gh run watch "$run_id" --compact --exit-status --interval 15
+  done
 }
 
 update_aur_stable_package() {
@@ -568,4 +658,5 @@ if [[ "$push_tag" == "1" ]]; then
   fi
   check_aur_stable_package
   publish_github_release
+  watch_release_workflows
 fi
