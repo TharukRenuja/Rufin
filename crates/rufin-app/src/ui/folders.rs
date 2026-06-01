@@ -410,15 +410,15 @@ fn folder_table_track_row(
     gesture.connect_released(move |_, n_press, _, _| {
         table_for_click.select_row(Some(&row_for_click));
         row_for_click.grab_focus();
-        if n_press == 2 {
-            if let Some(activation) = loaded_tracks_window_play_activation(
+        if n_press == 2
+            && let Some(activation) = loaded_tracks_window_play_activation(
                 source_key.clone(),
                 tracks_for_click.len(),
                 position,
                 |index| tracks_for_click.get(index).cloned(),
-            ) {
-                controller.play_activation(activation);
-            }
+            )
+        {
+            controller.play_activation(activation);
         }
     });
     row.add_controller(gesture);
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn folder_activation_preserves_source_order_with_clicked_anchor() {
-        let tracks = vec![track(1), track(2), track(3)];
+        let tracks = [track(1), track(2), track(3)];
         let source_key = super::folder_play_source_key(
             &[FolderPathItem {
                 id: FolderId::fake(8),
@@ -560,8 +560,9 @@ mod tests {
             super::loaded_tracks_window_play_activation(source_key, tracks.len(), 2, |index| {
                 tracks.get(index).cloned()
             })
-            .unwrap();
-        let normalized = normalize_loaded_source_activation(activation).unwrap();
+            .expect("folder activation should be available");
+        let normalized = normalize_loaded_source_activation(activation)
+            .expect("folder activation should normalize");
 
         let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
             panic!("folder activation should create a queue replacement");

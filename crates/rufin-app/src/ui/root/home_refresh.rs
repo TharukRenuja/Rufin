@@ -422,8 +422,8 @@ pub(in crate::ui) fn present_artist_context_menu(
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
-            if let Some(activation) = loaded_tracks_window_play_activation(
+        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id)
+            && let Some(activation) = loaded_tracks_window_play_activation(
                 PlaySourceKey {
                     descriptor: PlaySourceDescriptor::ArtistTracks {
                         artist_id: artist_id.clone(),
@@ -435,9 +435,9 @@ pub(in crate::ui) fn present_artist_context_menu(
                 tracks.len(),
                 0,
                 |index| tracks.get(index).cloned(),
-            ) {
-                controller.play_activation(activation);
-            }
+            )
+        {
+            controller.play_activation(activation);
         }
     });
     actions.add_action(&play);
@@ -659,8 +659,8 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            if let Some(activation) = loaded_tracks_window_play_activation(
+        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id)
+            && let Some(activation) = loaded_tracks_window_play_activation(
                 smart_playlist_play_source_key(
                     &detail.smart_playlist,
                     selected_music_folder_id.clone(),
@@ -668,9 +668,9 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
                 detail.tracks.len(),
                 0,
                 |index| detail.tracks.get(index).cloned(),
-            ) {
-                controller.play_activation(activation);
-            }
+            )
+        {
+            controller.play_activation(activation);
         }
     });
     actions.add_action(&play);

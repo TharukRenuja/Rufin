@@ -1573,7 +1573,8 @@ pub(in crate::ui) fn album_activation_keeps_album_order_and_clicked_track_anchor
         .collect::<Vec<_>>();
     let activation =
         album_play_activation(AlbumId::fake(1), tracks, 1, None).expect("album activation");
-    let normalized = normalize_loaded_source_activation(activation).unwrap();
+    let normalized =
+        normalize_loaded_source_activation(activation).expect("album activation should normalize");
 
     let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
         panic!("album activation should replace the queue");

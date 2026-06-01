@@ -564,6 +564,7 @@ pub(in crate::ui) fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget
     title.append(&labels);
     title.upcast()
 }
+#[allow(clippy::too_many_arguments)]
 pub(in crate::ui) fn playlist_entry_row(
     shell: &Rc<Shell>,
     entries: Rc<Vec<PlaylistEntry>>,

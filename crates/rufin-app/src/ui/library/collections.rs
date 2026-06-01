@@ -1601,8 +1601,8 @@ pub(in crate::ui) fn artist_cover_tile(
     let artist_id = artist.id.clone();
     let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
-            if let Some(activation) = loaded_tracks_window_play_activation(
+        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id)
+            && let Some(activation) = loaded_tracks_window_play_activation(
                 rufin_core::PlaySourceKey {
                     descriptor: rufin_core::PlaySourceDescriptor::ArtistTracks {
                         artist_id: artist_id.clone(),
@@ -1614,9 +1614,9 @@ pub(in crate::ui) fn artist_cover_tile(
                 detail.tracks.len(),
                 0,
                 |index| detail.tracks.get(index).cloned(),
-            ) {
-                controller.play_activation(activation);
-            }
+            )
+        {
+            controller.play_activation(activation);
         }
     });
     let controller = shell.controller.clone();

@@ -26,6 +26,7 @@ pub enum PlayAction {
 
 // Track-only activations are accepted by the seam before route conversion emits them.
 #[allow(dead_code)]
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlayTarget {
     TrackOnly(Track),
@@ -297,7 +298,7 @@ mod tests {
                 source_item_id: Some("item-650".to_string()),
             },
         ))
-        .unwrap();
+        .expect("complete activation should normalize");
 
         let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
             panic!("expected queue replacement");
@@ -334,7 +335,7 @@ mod tests {
                 source_item_id: Some("item-250".to_string()),
             },
         ))
-        .unwrap();
+        .expect("complete activation should normalize");
 
         let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
             panic!("expected queue replacement");
@@ -364,7 +365,7 @@ mod tests {
                 source_item_id: None,
             },
         ))
-        .unwrap();
+        .expect("snippet activation should normalize");
 
         let NormalizedPlayTarget::TrackOnly(track) = normalized.target else {
             panic!("expected track-only fallback");
@@ -386,7 +387,7 @@ mod tests {
                 source_item_id: Some("item-0".to_string()),
             },
         ))
-        .unwrap_err();
+        .expect_err("invalid window activation should fail");
 
         assert_eq!(error, "The selected track is no longer available.");
     }
@@ -402,7 +403,7 @@ mod tests {
                 source_item_id: Some("item-10".to_string()),
             },
         ))
-        .unwrap_err();
+        .expect_err("invalid complete activation should fail");
 
         assert_eq!(error, "The selected track is no longer available.");
     }
@@ -421,7 +422,7 @@ mod tests {
                 source_item_id: Some("item-50".to_string()),
             },
         ))
-        .unwrap_err();
+        .expect_err("invalid window activation should fail");
 
         assert_eq!(error, "The selected track is no longer available.");
     }
@@ -440,7 +441,7 @@ mod tests {
                 source_item_id: Some("item-1".to_string()),
             },
         ))
-        .unwrap_err();
+        .expect_err("invalid window activation should fail");
 
         assert_eq!(error, "The selected track is no longer available.");
     }
@@ -473,7 +474,7 @@ mod tests {
                 source_item_id: Some("second".to_string()),
             },
         ))
-        .unwrap();
+        .expect("duplicate source item activation should normalize");
 
         let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
             panic!("expected queue replacement");

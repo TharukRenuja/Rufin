@@ -423,8 +423,8 @@ pub(super) fn smart_playlist_cover_tile(
     let playlist_id = playlist.id.clone();
     let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            if let Some(activation) = loaded_tracks_window_play_activation(
+        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id)
+            && let Some(activation) = loaded_tracks_window_play_activation(
                 smart_playlist_play_source_key(
                     &detail.smart_playlist,
                     selected_music_folder_id.clone(),
@@ -432,9 +432,9 @@ pub(super) fn smart_playlist_cover_tile(
                 detail.tracks.len(),
                 0,
                 |index| detail.tracks.get(index).cloned(),
-            ) {
-                controller.play_activation(activation);
-            }
+            )
+        {
+            controller.play_activation(activation);
         }
     });
     let controller = shell.controller.clone();
