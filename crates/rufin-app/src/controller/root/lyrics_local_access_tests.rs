@@ -464,6 +464,45 @@ pub(in crate::controller) fn resolve_stream_prefers_local_file_for_remote_server
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
+pub(in crate::controller) fn resolve_stream_uses_requested_saved_server_when_active_source_changes()
+{
+    let store = StoreHandle::open_memory().expect("memory store");
+    let playback_server = SavedServer {
+        server: ServerIdentity {
+            id: ServerId::new("fake:server:playback"),
+            provider: "fake".to_string(),
+            name: "Playback Server".to_string(),
+            base_url: "https://playback.example.test".to_string(),
+        },
+        user_id: "listener".to_string(),
+        username: "listener".to_string(),
+        trust_invalid_cert: false,
+    };
+    let local = local_source_saved();
+    store
+        .with_store(|store| {
+            store.save_server(&playback_server)?;
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)
+        })
+        .expect("seed servers");
+    let runtime = Arc::new(Runtime::new().expect("runtime"));
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let track_id = TrackId::new("fake:track:queued");
+
+    let stream = super::resolve_stream(
+        &store,
+        &runtime,
+        &secrets,
+        &playback_server.server.id,
+        &track_id,
+        &PlaybackSettings::default(),
+    )
+    .expect("stream");
+
+    assert_eq!(stream.uri(), "fake://local/stream/fake:track:queued");
+}
+#[test]
 pub(in crate::controller) fn resolve_stream_uses_cached_file_for_local_source() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = local_source_saved();
