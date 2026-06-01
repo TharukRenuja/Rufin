@@ -39,8 +39,8 @@ use rufin_secrets::{CachedSecretStore, SecretKey, SecretStore};
 #[cfg(test)]
 use rufin_store::CoverCacheEntry;
 use rufin_store::{
-    CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store, StoreError,
-    SyncState,
+    CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store,
+    StoreBackedSourceWindow, StoreError, SyncState,
 };
 #[cfg(any(test, feature = "dev-tools"))]
 use rufin_test_support::{FakeProvider, FakeScale};
@@ -372,6 +372,7 @@ pub struct AppController {
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     settings: settings_controller::SettingsController,
     queue: Arc<Mutex<Option<QueueEngine>>>,
+    play_activation_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,

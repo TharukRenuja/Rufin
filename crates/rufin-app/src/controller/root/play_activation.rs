@@ -35,6 +35,10 @@ pub enum PlayTarget {
         items: Vec<PlaySourceItem>,
         anchor: PlayAnchor,
     },
+    StoreBackedSource {
+        source_key: PlaySourceKey,
+        anchor: PlayAnchor,
+    },
 }
 
 // Complete/window activations are normalized here before route conversion starts constructing them.
@@ -84,6 +88,9 @@ pub fn normalize_loaded_source_activation(
             items,
             anchor,
         } => normalize_loaded_source_target(&action, source_key, completeness, items, anchor)?,
+        PlayTarget::StoreBackedSource { .. } => {
+            return Err("The selected source could not be resolved.".to_string());
+        }
     };
     Ok(NormalizedPlayActivation { action, target })
 }

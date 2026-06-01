@@ -193,6 +193,19 @@ fn playlist_source_window_preserves_duplicate_occurrences_in_display_order() {
             .collect::<Vec<_>>(),
         vec![Some("entry-one"), Some("entry-two"), Some("entry-three")]
     );
+
+    let window = store
+        .tracks_window_for_source(&saved.server.id, &source, 2, 1, 1)
+        .expect("source window near end");
+    assert_eq!(window.start_rank, 0);
+    assert_eq!(
+        window
+            .items
+            .iter()
+            .map(|item| item.source_item_id.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("entry-one"), Some("entry-two"), Some("entry-three")]
+    );
 }
 #[test]
 fn lyrics_cache_round_trips_by_server_and_track() {

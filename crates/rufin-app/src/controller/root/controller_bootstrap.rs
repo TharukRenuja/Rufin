@@ -43,6 +43,7 @@ impl AppController {
             runtime,
             secrets,
             queue: Arc::new(Mutex::new(queue)),
+            play_activation_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
@@ -114,6 +115,7 @@ impl AppController {
             runtime,
             secrets,
             queue: Arc::new(Mutex::new(queue)),
+            play_activation_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback: Arc::new(Mutex::new(playback_backend(false))),
             playback_snapshot: Arc::new(Mutex::new(playback_snapshot.clone())),
@@ -173,6 +175,7 @@ impl AppController {
             runtime,
             secrets,
             queue: Arc::new(Mutex::new(None)),
+            play_activation_generation: Arc::new(AtomicU64::new(0)),
             playback_request_generation: Arc::new(AtomicU64::new(0)),
             playback: Arc::new(Mutex::new(Box::new(FakePlaybackBackend::new()))),
             playback_snapshot: Arc::new(Mutex::new(PlaybackSnapshot {

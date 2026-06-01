@@ -24,7 +24,8 @@ use super::{
     snapshot_local_source_cache_gate_action,
 };
 use crate::controller::{
-    LyricsSearchResult, NormalizedPlayTarget, PlaybackPerfEvent, normalize_loaded_source_activation,
+    LyricsSearchResult, NormalizedPlayTarget, PlayAnchor, PlayTarget, PlaybackPerfEvent,
+    normalize_loaded_source_activation,
 };
 use gdk_pixbuf::{Colorspace, Pixbuf};
 use rufin_core::{
@@ -1548,14 +1549,13 @@ pub(in crate::ui) fn playlist_activation_distinguishes_duplicate_track_occurrenc
         &PlaylistEntryListState::default(),
     )
     .expect("playlist activation should be available");
-    let normalized = normalize_loaded_source_activation(activation).unwrap();
 
-    let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
-        panic!("playlist activation should replace the queue");
+    let PlayTarget::StoreBackedSource { anchor, .. } = activation.target else {
+        panic!("playlist activation should use the store-backed source");
     };
     assert!(matches!(
-        replacement.anchor,
-        QueueAnchor::SourceOccurrence {
+        anchor,
+        PlayAnchor {
             source_index: 1,
             source_item_id: Some(ref id),
             ..

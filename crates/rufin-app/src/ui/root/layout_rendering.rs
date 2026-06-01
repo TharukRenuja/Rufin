@@ -169,14 +169,18 @@ pub(in crate::ui) fn playlist_play_activation(
     anchor_index: usize,
     state: &PlaylistEntryListState,
 ) -> Option<PlayActivation> {
-    loaded_track_items_play_activation(
-        playlist_play_source_key(playlist_id, state),
-        entries
-            .into_iter()
-            .map(|entry| (entry.track, Some(entry.entry_id)))
-            .collect(),
-        anchor_index,
-    )
+    let anchor_entry = entries.get(anchor_index)?;
+    Some(PlayActivation {
+        action: PlayAction::ReplaceNow,
+        target: PlayTarget::StoreBackedSource {
+            source_key: playlist_play_source_key(playlist_id, state),
+            anchor: PlayAnchor {
+                track_id: anchor_entry.track.id.clone(),
+                source_index: anchor_index,
+                source_item_id: Some(anchor_entry.entry_id.clone()),
+            },
+        },
+    })
 }
 pub(in crate::ui) fn playlist_play_source_key(
     playlist_id: PlaylistId,

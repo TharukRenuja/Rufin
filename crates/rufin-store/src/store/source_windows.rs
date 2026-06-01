@@ -140,11 +140,16 @@ impl Store {
     ) -> StoreResult<StoreBackedSourceWindow> {
         let source_query = playlist_source_query(source)?;
         let total_source_items = self.count_tracks_for_source(server_id, source)?;
-        let start_rank = anchor_rank.saturating_sub(before).min(total_source_items);
+        let requested_len = before.saturating_add(after).saturating_add(1);
+        let mut start_rank = anchor_rank.saturating_sub(before).min(total_source_items);
         let end_rank = anchor_rank
             .saturating_add(after)
             .saturating_add(1)
             .min(total_source_items);
+        let len = end_rank.saturating_sub(start_rank);
+        if len < requested_len {
+            start_rank = start_rank.saturating_sub(requested_len - len);
+        }
         if start_rank >= end_rank {
             return Ok(StoreBackedSourceWindow {
                 start_rank,
