@@ -1,6 +1,53 @@
 use super::*;
 
 impl Shell {
+    pub(in crate::ui) fn current_playback_artwork_path(
+        &self,
+        entry: &QueueEntry,
+        preferred_size: u32,
+    ) -> Option<PlaybackArtworkPath> {
+        let server_id = self.current_playback_server_id()?;
+        let image_ref = entry.image_ref.as_ref()?;
+        playback_artwork_path_from_lookup(&server_id, image_ref, preferred_size, |key| {
+            self.controller.cached_cover_path_for_key(key)
+        })
+    }
+
+    pub(in crate::ui) fn current_playback_art_key_matches(
+        &self,
+        key: &str,
+        preferred_size: u32,
+    ) -> bool {
+        let Some(server_id) = self.current_playback_server_id() else {
+            return false;
+        };
+        self.state
+            .player
+            .borrow()
+            .current
+            .as_ref()
+            .and_then(|entry| entry.image_ref.as_ref())
+            .is_some_and(|image_ref| {
+                playback_artwork_key_matches(&server_id, image_ref, preferred_size, key)
+            })
+    }
+
+    fn current_playback_server_id(&self) -> Option<ServerId> {
+        self.state
+            .queue
+            .borrow()
+            .as_ref()
+            .map(|queue| queue.server_id.clone())
+            .or_else(|| {
+                self.state
+                    .library
+                    .borrow()
+                    .server
+                    .as_ref()
+                    .map(|server| server.id.clone())
+            })
+    }
+
     pub(in crate::ui) fn cover_cache_key(&self, image_ref: &ImageRef, size: u32) -> Option<String> {
         let server = self.state.library.borrow().server.clone()?;
         if server.provider == "fake" {

@@ -803,11 +803,15 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.apply_folder_load_failed(request_id, path, error);
                 }
                 ControllerEvent::CoverReady { key, path } => {
-                    #[cfg(unix)]
-                    let update_mpris_art = shell.current_mpris_art_key_is(&key);
+                    let update_playback_art =
+                        shell.current_playback_art_key_matches(&key, THUMB_COVER_SIZE);
                     shell.apply_cover_ready(&key, &path);
+                    if update_playback_art {
+                        let player = shell.state.player.borrow().clone();
+                        shell.notify_now_playing(&player);
+                    }
                     #[cfg(unix)]
-                    if update_mpris_art {
+                    if update_playback_art {
                         shell.update_mpris_player();
                     }
                 }
