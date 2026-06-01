@@ -33,6 +33,12 @@ enum QueuePanelLayout {
     Fullscreen,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum QueueScrollBehavior {
+    Preserve,
+    Reset,
+}
+
 impl Shell {
     pub(super) fn schedule_queue_panel_render(self: &Rc<Self>) {
         if self.state.queue_render_queued.replace(true) {
@@ -46,12 +52,21 @@ impl Shell {
     }
 
     pub(super) fn render_queue_panel(self: &Rc<Self>) {
+        self.render_queue_panel_with_scroll(QueueScrollBehavior::Preserve);
+    }
+
+    fn render_queue_panel_reset_scroll(self: &Rc<Self>) {
+        self.render_queue_panel_with_scroll(QueueScrollBehavior::Reset);
+    }
+
+    fn render_queue_panel_with_scroll(self: &Rc<Self>, scroll_behavior: QueueScrollBehavior) {
         let queue_filter = self.state.queue_filter.borrow().trim().to_lowercase();
         if self.state.resolved_right_sidebar.get() != RightSidebarMode::Hidden {
             self.render_queue_panel_into(
                 &self.queue_panel,
                 &queue_filter,
                 QueuePanelLayout::Sidebar,
+                scroll_behavior,
             );
         }
         if self.state.fullscreen_player_visible.get() {
@@ -59,6 +74,7 @@ impl Shell {
                 &self.fullscreen_player.queue_panel,
                 "",
                 QueuePanelLayout::Fullscreen,
+                scroll_behavior,
             );
         }
         self.controller.warm_waveforms_for_queue();
@@ -69,24 +85,23 @@ impl Shell {
         panel: &gtk::Box,
         queue_filter: &str,
         layout: QueuePanelLayout,
+        scroll_behavior: QueueScrollBehavior,
     ) {
         let queue_snapshot = self.state.queue.borrow().clone();
         let has_filter = !queue_filter.is_empty();
+        let queue_scroller = queue_panel_scroller(panel).unwrap_or_else(new_queue_scroller);
+        let previous_scroll = queue_scroller.vadjustment().value();
 
         while let Some(child) = panel.first_child() {
             panel.remove(&child);
         }
-
-        let queue_scroller = gtk::ScrolledWindow::new();
-        queue_scroller.add_css_class("queue-scroller");
-        queue_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        queue_scroller.set_vexpand(true);
 
         let queue_list = gtk::ListBox::new();
         queue_list.add_css_class("queue-list");
         queue_list.set_vexpand(true);
         queue_list.set_selection_mode(gtk::SelectionMode::None);
         let mut queue_has_entries = false;
+        let mut show_header = false;
         if let Some(snapshot) = &queue_snapshot {
             queue_has_entries = !snapshot.entries.is_empty();
             let mut visible_entries = 0;
@@ -95,7 +110,7 @@ impl Shell {
                     continue;
                 }
                 if visible_entries == 0 {
-                    panel.append(&queue_header_row(layout));
+                    show_header = true;
                 }
                 queue_list.append(&self.queue_row(index, entry, snapshot.current_index, layout));
                 visible_entries += 1;
@@ -113,8 +128,19 @@ impl Shell {
             empty.set_margin_top(24);
             queue_list.append(&empty);
         }
+        if show_header {
+            panel.append(&queue_header_row(layout));
+        }
         queue_scroller.set_child(Some(&queue_list));
         panel.append(&queue_scroller);
+        match scroll_behavior {
+            QueueScrollBehavior::Preserve => {
+                restore_queue_scroll_position(&queue_scroller, previous_scroll);
+            }
+            QueueScrollBehavior::Reset => {
+                restore_queue_scroll_position(&queue_scroller, 0.0);
+            }
+        }
     }
 
     fn queue_row(
@@ -289,7 +315,7 @@ pub(super) fn connect_queue_panel_controls(shell: &Rc<Shell>) {
     let filter_shell = Rc::clone(shell);
     shell.queue_search.connect_search_changed(move |entry| {
         *filter_shell.state.queue_filter.borrow_mut() = entry.text().trim().to_string();
-        filter_shell.render_queue_panel();
+        filter_shell.render_queue_panel_reset_scroll();
     });
 
     let controller = shell.controller.clone();
@@ -304,6 +330,32 @@ fn queue_entry_matches_filter(entry: &QueueEntry, filter: &str) -> bool {
         || entry.artist.to_lowercase().contains(filter)
         || entry.album.to_lowercase().contains(filter)
         || (entry.year != 0 && entry.year.to_string().contains(filter))
+}
+
+fn new_queue_scroller() -> gtk::ScrolledWindow {
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.add_css_class("queue-scroller");
+    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_vexpand(true);
+    scroller
+}
+
+fn queue_panel_scroller(panel: &gtk::Box) -> Option<gtk::ScrolledWindow> {
+    let mut child = panel.first_child();
+    while let Some(widget) = child {
+        if let Ok(scroller) = widget.clone().downcast::<gtk::ScrolledWindow>() {
+            return Some(scroller);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
+fn restore_queue_scroll_position(scroller: &gtk::ScrolledWindow, value: f64) {
+    let adjustment = scroller.vadjustment();
+    let lower = adjustment.lower();
+    let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
+    adjustment.set_value(value.clamp(lower, upper));
 }
 
 fn queue_header_row(layout: QueuePanelLayout) -> gtk::Widget {
