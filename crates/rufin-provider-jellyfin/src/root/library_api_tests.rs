@@ -31,6 +31,7 @@ async fn login_posts_credentials_and_maps_session() {
         username: "demo".to_string(),
         password: "pw".to_string(),
         trust_invalid_cert: false,
+        device_id: Some("rufin-install-one".to_string()),
     })
     .await
     .expect("login");
@@ -39,6 +40,7 @@ async fn login_posts_credentials_and_maps_session() {
     assert_eq!(session.server.name, "Music Box");
     assert_eq!(session.username, "demo");
     assert_eq!(session.access_token, "secret-token");
+    assert_eq!(session.device_id.as_deref(), Some("rufin-install-one"));
 }
 #[test]
 fn bare_server_addresses_default_to_http() {

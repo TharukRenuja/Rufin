@@ -397,6 +397,14 @@ pub struct AppSettings {
     pub prefer_server_lyrics: bool,
     #[serde(default)]
     pub seekbar_waveform_enabled: bool,
+    #[serde(default)]
+    pub tray_enabled: bool,
+    #[serde(default)]
+    pub exit_to_tray: bool,
+    #[serde(default)]
+    pub start_minimized: bool,
+    #[serde(default)]
+    pub jellyfin_device_id: String,
     pub discord_presence_enabled: bool,
     #[serde(default = "default_discord_client_id")]
     pub discord_client_id: String,
@@ -457,6 +465,10 @@ impl Default for AppSettings {
             external_metadata_enabled: true,
             prefer_server_lyrics: true,
             seekbar_waveform_enabled: true,
+            tray_enabled: false,
+            exit_to_tray: false,
+            start_minimized: false,
+            jellyfin_device_id: String::new(),
             discord_presence_enabled: false,
             discord_client_id: default_discord_client_id(),
             discord_display_type: DiscordDisplayType::Application,
@@ -511,6 +523,10 @@ impl AppSettings {
         self.layout.sanitize();
         self.sidebar.sanitize();
         self.sources.sanitize();
+        if !self.tray_enabled {
+            self.exit_to_tray = false;
+            self.start_minimized = false;
+        }
         if let Some((width, height)) = sanitized_window_size(self.window_width, self.window_height)
         {
             self.window_width = Some(width);

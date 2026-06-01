@@ -563,6 +563,18 @@ fn catalog_strings_for_extraction() {
     );
     let _ = tr("Music Server");
     let _ = tr("Private mode is on");
+    let _ = tr("App window");
+    let _ = tr("Show tray icon");
+    let _ = tr("Exit to tray");
+    let _ = tr("Start minimized");
+    let _ = tr("Show Rufin");
+    let _ = tr("Play/Pause");
+    let _ = tr("Previous Track");
+    let _ = tr("Next Track");
+    let _ = tr("Enable private mode");
+    let _ = tr("Disable private mode");
+    let _ = tr("Quit");
+    let _ = tr("Rufin is running in the tray");
     let _ = tr("Left sidebar density");
     let _ = tr("Choose when the left sidebar uses compact navigation");
     let _ = tr("Remove from queue");

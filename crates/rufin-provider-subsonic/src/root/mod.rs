@@ -108,6 +108,7 @@ impl SubsonicProvider {
             user_id: body.user.username.clone(),
             username: body.user.username,
             access_token: credential.serialize(),
+            device_id: None,
         })
     }
 

@@ -150,12 +150,24 @@ impl AppController {
             let _sent = events.send(ControllerEvent::LoginStatus(format!(
                 "Checking {provider_name} server..."
             )));
+            let device_id = if provider == StreamingProvider::Jellyfin {
+                match ensure_jellyfin_device_id(&store) {
+                    Ok(device_id) => Some(device_id),
+                    Err(error) => {
+                        let _sent = events.send(ControllerEvent::Error(error));
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
             let result = runtime.block_on(login_provider(
                 provider,
                 server_url,
                 username,
                 password,
                 trust_invalid_cert,
+                device_id,
             ));
 
             let session = match result {

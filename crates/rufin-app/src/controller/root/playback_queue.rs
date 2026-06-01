@@ -1,4 +1,7 @@
 use super::*;
+use std::fmt::Write as _;
+
+const JELLYFIN_DEVICE_ID_RANDOM_BYTES: usize = 16;
 
 pub(in crate::controller) fn lyrics_from_text(
     track_id: TrackId,
@@ -117,9 +120,15 @@ pub(in crate::controller) fn provider_for_saved(
             username: saved.username.clone(),
             trust_invalid_cert: saved.trust_invalid_cert,
             access_token: String::new(),
+            device_id: None,
         };
         return provider_from_saved(session).map_err(|error| error.to_string());
     }
+    let device_id = if saved.server.provider == "jellyfin" {
+        Some(ensure_jellyfin_device_id(store)?)
+    } else {
+        None
+    };
     let token = secrets
         .load_token(&saved.server.id)
         .map_err(|error| error.to_string())?
@@ -130,8 +139,50 @@ pub(in crate::controller) fn provider_for_saved(
         username: saved.username.clone(),
         trust_invalid_cert: saved.trust_invalid_cert,
         access_token: token,
+        device_id,
     };
     provider_from_saved(session).map_err(|error| error.to_string())
+}
+
+pub(in crate::controller) fn ensure_jellyfin_device_id(
+    store: &StoreHandle,
+) -> Result<String, String> {
+    ensure_jellyfin_device_id_with_generator(store, generate_jellyfin_device_id)
+}
+
+pub(in crate::controller) fn ensure_jellyfin_device_id_with_generator(
+    store: &StoreHandle,
+    generate: impl FnOnce() -> Result<String, String>,
+) -> Result<String, String> {
+    let mut settings = load_settings_from_store(store);
+    if let Some(device_id) = normalized_jellyfin_device_id(&settings.jellyfin_device_id) {
+        return Ok(device_id);
+    }
+
+    let device_id = normalized_jellyfin_device_id(&generate()?)
+        .ok_or_else(|| "generated Jellyfin device id was empty".to_string())?;
+    settings.jellyfin_device_id = device_id.clone();
+    settings.migrate_defaults();
+    store.save_settings(&settings)?;
+    Ok(device_id)
+}
+
+fn normalized_jellyfin_device_id(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn generate_jellyfin_device_id() -> Result<String, String> {
+    let mut bytes = [0_u8; JELLYFIN_DEVICE_ID_RANDOM_BYTES];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| format!("failed to generate Jellyfin device id: {error}"))?;
+    let mut value = String::with_capacity("rufin-".len() + bytes.len() * 2);
+    value.push_str("rufin-");
+    for byte in bytes {
+        write!(&mut value, "{byte:02x}")
+            .map_err(|error| format!("failed to format Jellyfin device id: {error}"))?;
+    }
+    Ok(value)
 }
 
 pub(in crate::controller) fn load_folder_detail(

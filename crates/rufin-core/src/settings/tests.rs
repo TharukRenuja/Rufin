@@ -20,6 +20,9 @@ fn settings_default_to_privacy_preserving_remote_features() {
     assert!(settings.external_metadata_enabled);
     assert!(settings.prefer_server_lyrics);
     assert!(settings.seekbar_waveform_enabled);
+    assert!(!settings.tray_enabled);
+    assert!(!settings.exit_to_tray);
+    assert!(!settings.start_minimized);
     assert!(!settings.discord_presence_enabled);
     assert_eq!(settings.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
     assert_eq!(
@@ -104,6 +107,13 @@ fn settings_default_to_privacy_preserving_remote_features() {
             .route_items
             .iter()
             .any(|entry| entry.item == SidebarRouteItem::Folders && entry.visible)
+    );
+    assert!(
+        settings
+            .sidebar
+            .route_items
+            .iter()
+            .any(|entry| entry.item == SidebarRouteItem::Genres && entry.visible)
     );
     assert!(
         settings
@@ -249,6 +259,25 @@ fn app_settings_migrate_defaults_clamps_auto_dj_refill_threshold() {
     );
 }
 #[test]
+fn app_settings_migrate_defaults_clears_dependent_tray_settings_when_tray_is_off() {
+    let mut settings = AppSettings {
+        exit_to_tray: true,
+        start_minimized: true,
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+    assert!(!settings.exit_to_tray);
+    assert!(!settings.start_minimized);
+
+    settings.tray_enabled = true;
+    settings.exit_to_tray = true;
+    settings.start_minimized = true;
+    settings.migrate_defaults();
+    assert!(settings.exit_to_tray);
+    assert!(settings.start_minimized);
+}
+#[test]
 fn app_settings_sanitize_local_library_folders() {
     let mut settings = AppSettings {
         sources: super::LibrarySourceSettings {
@@ -336,6 +365,9 @@ fn settings_restore_without_window_geometry() {
     assert!(restored.external_metadata_enabled);
     assert!(restored.prefer_server_lyrics);
     assert!(!restored.seekbar_waveform_enabled);
+    assert!(!restored.tray_enabled);
+    assert!(!restored.exit_to_tray);
+    assert!(!restored.start_minimized);
     assert_eq!(
         restored.playback.transition_mode,
         PlaybackTransitionMode::Gapless
@@ -358,6 +390,34 @@ fn settings_restore_without_window_geometry() {
     assert_eq!(restored.scrobbling.librefm.api_secret, "rufin");
     assert!(!restored.scrobbling.listenbrainz.enabled);
     assert_eq!(restored.track_table.sort_key, TrackSortKey::Title);
+}
+
+#[test]
+fn app_settings_migrates_new_sidebar_routes_into_legacy_preferences() {
+    let mut settings = AppSettings::default();
+    settings.sidebar.route_items.retain(|entry| {
+        !matches!(
+            entry.item,
+            SidebarRouteItem::Genres | SidebarRouteItem::SmartPlaylists
+        )
+    });
+
+    settings.migrate_defaults();
+
+    assert!(
+        settings
+            .sidebar
+            .route_items
+            .iter()
+            .any(|entry| entry.item == SidebarRouteItem::Genres && entry.visible)
+    );
+    assert!(
+        settings
+            .sidebar
+            .route_items
+            .iter()
+            .any(|entry| entry.item == SidebarRouteItem::SmartPlaylists && entry.visible)
+    );
 }
 #[test]
 fn app_settings_sanitize_language_preference() {

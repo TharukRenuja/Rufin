@@ -47,6 +47,28 @@ impl SecretStore for SaveFailingSecretStore {
     }
 }
 
+#[test]
+pub(in crate::controller) fn jellyfin_device_id_is_generated_once_and_saved() {
+    let store = StoreHandle::open_memory().expect("open memory store");
+
+    let first =
+        ensure_jellyfin_device_id_with_generator(&store, || Ok("rufin-install-one".to_string()))
+            .expect("first device id");
+    let second =
+        ensure_jellyfin_device_id_with_generator(&store, || Ok("rufin-install-two".to_string()))
+            .expect("second device id");
+
+    assert_eq!(first, "rufin-install-one");
+    assert_eq!(second, first);
+    assert_eq!(
+        store
+            .load_settings()
+            .expect("load settings")
+            .jellyfin_device_id,
+        "rufin-install-one"
+    );
+}
+
 pub(in crate::controller) struct RecordingPlaybackBackend {
     commands: Arc<Mutex<Vec<PlaybackCommand>>>,
     events: Vec<PlaybackEvent>,
@@ -213,6 +235,7 @@ pub(in crate::controller) fn activate_logged_in_server_selects_server_without_sa
         user_id: "user-id".to_string(),
         username: "listener".to_string(),
         access_token: "token".to_string(),
+        device_id: Some("rufin-install-one".to_string()),
     };
     activate_logged_in_server(
         &LoginActivationContext {
@@ -267,6 +290,7 @@ pub(in crate::controller) fn token_save_failure_does_not_persist_empty_server() 
         user_id: "user-id".to_string(),
         username: "listener".to_string(),
         access_token: "token".to_string(),
+        device_id: Some("rufin-install-one".to_string()),
     };
     let error = save_token_and_activate_logged_in_server(
         &LoginActivationContext {

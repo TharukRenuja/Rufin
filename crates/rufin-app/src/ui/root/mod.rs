@@ -48,6 +48,8 @@ mod source_selector;
 #[cfg(test)]
 #[path = "../style_contract.rs"]
 mod style_contract;
+#[cfg(unix)]
+mod tray;
 
 use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,
@@ -269,6 +271,10 @@ pub(in crate::ui) struct AppState {
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     #[cfg(unix)]
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
+    #[cfg(unix)]
+    tray_handle: RefCell<Option<tray::TrayHandle>>,
+    #[cfg(unix)]
+    tray_command_source: RefCell<Option<glib::SourceId>>,
     discord_presence: RefCell<DiscordPresence>,
     updating_player_controls: Cell<bool>,
     seek_preview_seconds: Cell<Option<u32>>,
@@ -722,6 +728,10 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         lyrics_timing_source: RefCell::new(None),
         #[cfg(unix)]
         mpris_player: RefCell::new(None),
+        #[cfg(unix)]
+        tray_handle: RefCell::new(None),
+        #[cfg(unix)]
+        tray_command_source: RefCell::new(None),
         discord_presence: RefCell::new(DiscordPresence::new()),
         updating_player_controls: Cell::new(false),
         seek_preview_seconds: Cell::new(None),
@@ -932,6 +942,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     shell.update_server_selector();
     connect_shell_actions(&shell, main_menu);
     install_window_state_persistence(&shell);
+    #[cfg(unix)]
+    tray::install_tray(&shell);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_split(&shell);
     connect_lyrics_search_controls(&shell);
@@ -974,6 +986,13 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         });
     }
 
+    #[cfg(unix)]
+    if !options.ui_perf_run && !options.ui_perf_route_probe && !perf_observe {
+        tray::present_initial_window(&shell);
+    } else {
+        shell.window.present();
+    }
+    #[cfg(not(unix))]
     shell.window.present();
     if defer_initial_route {
         shell.schedule_startup_route_reveal();

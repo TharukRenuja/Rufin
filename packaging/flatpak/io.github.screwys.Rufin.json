@@ -20,6 +20,7 @@
     "--socket=wayland",
     "--socket=pulseaudio",
     "--device=dri",
+    "--talk-name=org.kde.StatusNotifierWatcher",
     "--filesystem=xdg-music:ro",
     "--filesystem=xdg-run/app/com.discordapp.Discord:create"
   ],
@@ -40,6 +41,9 @@
         "install -Dm644 -t /app/share/icons/hicolor/scalable/status data/icons/hicolor/scalable/status/*.svg",
         "install -Dm644 -t /app/share/icons/hicolor/512x512/apps data/icons/hicolor/512x512/apps/*.png",
         "install -Dm644 -t /app/share/icons/hicolor/64x64/apps data/icons/hicolor/64x64/apps/*.png",
+        "test -f /app/share/icons/hicolor/scalable/actions/rufin-genres-symbolic.svg",
+        "test -f /app/share/icons/hicolor/scalable/actions/rufin-smart-playlist-symbolic.svg",
+        "gtk4-update-icon-cache -f -t /app/share/icons/hicolor || true",
         "for po_file in po/*.po; do if [ -f \"$po_file\" ]; then lang=\"$(basename \"$po_file\" .po)\"; mkdir -p \"/app/share/locale/$lang/LC_MESSAGES\"; msgfmt \"$po_file\" -o \"/app/share/locale/$lang/LC_MESSAGES/rufin.mo\"; fi; done"
       ],
       "sources": [

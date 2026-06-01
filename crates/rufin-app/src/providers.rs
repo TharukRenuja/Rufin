@@ -111,6 +111,7 @@ pub async fn login_provider(
     username: String,
     password: String,
     trust_invalid_cert: bool,
+    device_id: Option<String>,
 ) -> ProviderResult<ProviderSession> {
     if provider == StreamingProvider::Local {
         return Err(rufin_provider::ProviderError::Unsupported("local login"));
@@ -131,6 +132,7 @@ pub async fn login_provider(
         username,
         password,
         trust_invalid_cert,
+        device_id,
     })
     .await
 }

@@ -98,6 +98,11 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::LoginStatus(format!(
                     "Checking {provider_name} server..."
                 )));
+                let device_id = if request.provider == StreamingProvider::Jellyfin {
+                    Some(ensure_jellyfin_device_id(&store)?)
+                } else {
+                    None
+                };
                 runtime
                     .block_on(login_provider(
                         request.provider,
@@ -105,6 +110,7 @@ impl AppController {
                         request.username,
                         request.password,
                         request.trust_invalid_cert,
+                        device_id,
                     ))
                     .map_err(|error| error.to_string())
             });
@@ -560,6 +566,7 @@ mod tests {
             user_id: user_id.to_string(),
             username: username.to_string(),
             access_token: token.to_string(),
+            device_id: Some("rufin-install-one".to_string()),
         }
     }
 

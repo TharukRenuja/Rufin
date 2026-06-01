@@ -548,6 +548,7 @@ fn provider(server: &MockServer) -> SubsonicProvider {
         username: "demo".to_string(),
         trust_invalid_cert: false,
         access_token: "salt:token".to_string(),
+        device_id: None,
     })
     .expect("provider")
 }

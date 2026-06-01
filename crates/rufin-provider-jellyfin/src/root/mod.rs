@@ -40,7 +40,7 @@ use lyrics_playback_tests::provider;
 
 const CLIENT_NAME: &str = "Rufin";
 const DEVICE_NAME: &str = "Rufin";
-const DEVICE_ID: &str = "rufin-native";
+const DEFAULT_DEVICE_ID: &str = "rufin-native";
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JellyfinClientConfig {
@@ -52,11 +52,17 @@ pub struct JellyfinClientConfig {
     pub client_version: String,
 }
 impl JellyfinClientConfig {
-    pub fn new(base_url: impl Into<String>, trust_invalid_cert: bool) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        trust_invalid_cert: bool,
+        device_id: Option<String>,
+    ) -> Self {
         Self {
             base_url: base_url.into(),
             trust_invalid_cert,
-            device_id: DEVICE_ID.to_string(),
+            device_id: device_id
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_DEVICE_ID.to_string()),
             device_name: DEVICE_NAME.to_string(),
             client_name: CLIENT_NAME.to_string(),
             client_version: CLIENT_VERSION.to_string(),
@@ -75,13 +81,18 @@ pub struct JellyfinProvider {
     base_url: Url,
     user_id: String,
     access_token: Arc<str>,
+    device_id: Arc<str>,
     identity: ProviderIdentity,
     capabilities: ProviderCapabilities,
 }
 impl JellyfinProvider {
     #[instrument(skip(request), fields(base_url = %request.base_url, username = %request.username, trust_invalid_cert = request.trust_invalid_cert))]
     pub async fn login(request: LoginRequest) -> ProviderResult<ProviderSession> {
-        let config = JellyfinClientConfig::new(&request.base_url, request.trust_invalid_cert);
+        let config = JellyfinClientConfig::new(
+            &request.base_url,
+            request.trust_invalid_cert,
+            request.device_id,
+        );
         let base_url = normalize_base_url(&config.base_url)?;
         let client = build_client(config.trust_invalid_cert)?;
 
@@ -116,12 +127,16 @@ impl JellyfinProvider {
             user_id: response.user.id,
             username: response.user.name,
             access_token: response.access_token,
+            device_id: Some(config.device_id),
         })
     }
 
     pub fn from_saved_session(session: SavedProviderSession) -> ProviderResult<Self> {
-        let config =
-            JellyfinClientConfig::new(&session.server.base_url, session.trust_invalid_cert);
+        let config = JellyfinClientConfig::new(
+            &session.server.base_url,
+            session.trust_invalid_cert,
+            session.device_id,
+        );
         let base_url = normalize_base_url(&config.base_url)?;
         let client = build_client(config.trust_invalid_cert)?;
         Ok(Self {
@@ -129,6 +144,7 @@ impl JellyfinProvider {
             base_url,
             user_id: session.user_id,
             access_token: Arc::from(session.access_token),
+            device_id: Arc::from(config.device_id),
             identity: ProviderIdentity {
                 server: session.server,
             },
@@ -331,7 +347,11 @@ impl JellyfinProvider {
     }
 
     async fn get_json<T: DeserializeOwned>(&self, url: Url) -> ProviderResult<T> {
-        let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
+        let config = JellyfinClientConfig::new(
+            self.identity.server.base_url.clone(),
+            false,
+            Some(self.device_id.to_string()),
+        );
         send_json(self.client.get(url).header(
             header::AUTHORIZATION,
             auth_header(&config, Some(&self.access_token)),
@@ -343,7 +363,11 @@ impl JellyfinProvider {
         &self,
         request: reqwest::RequestBuilder,
     ) -> ProviderResult<T> {
-        let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
+        let config = JellyfinClientConfig::new(
+            self.identity.server.base_url.clone(),
+            false,
+            Some(self.device_id.to_string()),
+        );
         send_json(request.header(
             header::AUTHORIZATION,
             auth_header(&config, Some(&self.access_token)),
@@ -352,7 +376,11 @@ impl JellyfinProvider {
     }
 
     async fn send_unit(&self, request: reqwest::RequestBuilder) -> ProviderResult<()> {
-        let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
+        let config = JellyfinClientConfig::new(
+            self.identity.server.base_url.clone(),
+            false,
+            Some(self.device_id.to_string()),
+        );
         send_unit(request.header(
             header::AUTHORIZATION,
             auth_header(&config, Some(&self.access_token)),

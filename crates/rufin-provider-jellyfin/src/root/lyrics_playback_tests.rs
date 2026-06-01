@@ -3,6 +3,17 @@ use rufin_provider::MusicProvider;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+#[test]
+fn auth_header_uses_configured_device_id() {
+    let config = JellyfinClientConfig::new(
+        "https://library.example.test",
+        false,
+        Some("rufin-install-one".to_string()),
+    );
+
+    assert!(auth_header(&config, None).contains("DeviceId=\"rufin-install-one\""));
+}
+
 #[tokio::test]
 async fn lyrics_use_local_first_and_remote_fallback_when_enabled() {
     let server = MockServer::start().await;
@@ -238,6 +249,7 @@ async fn stream_url_uses_direct_audio_endpoint_and_redacts_token() {
             .starts_with(&format!("{}/Audio/track-one/stream?", server.uri()))
     );
     assert!(stream.uri().contains("api_key=secret-token"));
+    assert!(stream.uri().contains("DeviceId=rufin-install-one"));
     assert!(stream.redacted_uri().contains("api_key=%3Credacted%3E"));
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
@@ -273,6 +285,7 @@ pub(super) fn provider(server: &MockServer, token: &str) -> JellyfinProvider {
         username: "demo".to_string(),
         trust_invalid_cert: false,
         access_token: token.to_string(),
+        device_id: Some("rufin-install-one".to_string()),
     })
     .expect("provider")
 }

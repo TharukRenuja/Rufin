@@ -167,6 +167,8 @@ pub struct LoginRequest {
     pub username: String,
     pub password: String,
     pub trust_invalid_cert: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -175,6 +177,8 @@ pub struct ProviderSession {
     pub user_id: String,
     pub username: String,
     pub access_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -184,6 +188,8 @@ pub struct SavedProviderSession {
     pub username: String,
     pub trust_invalid_cert: bool,
     pub access_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -454,9 +460,11 @@ mod tests {
             username: "name".to_string(),
             trust_invalid_cert: false,
             access_token: "token".to_string(),
+            device_id: Some("rufin-install-one".to_string()),
         };
 
         assert_eq!(session.server.id.as_str(), "jellyfin:server:one");
         assert_eq!(session.access_token, "token");
+        assert_eq!(session.device_id.as_deref(), Some("rufin-install-one"));
     }
 }

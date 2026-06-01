@@ -19,6 +19,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 directories = "6.0.0"
 gettext-rs = { version = "0.7.7", features = ["gettext-system"] }
 gdk-pixbuf = "0.22.0"
+getrandom = "0.4.0"
 gtk = { package = "gtk4", version = "0.11.3", features = ["v4_20"] }
 adw = { package = "libadwaita", version = "0.9.1", features = ["v1_8", "gtk_v4_20"] }
 md5 = "0.8.0"
@@ -42,6 +43,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 rufin-test-support = { path = "../rufin-test-support" }
 
 [target.'cfg(unix)'.dependencies]
+ksni = { version = "0.3.4", features = ["blocking"] }
 mpris-server = "0.10.0"
 
 [lints]

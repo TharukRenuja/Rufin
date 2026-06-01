@@ -27,6 +27,46 @@ use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResul
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+#[test]
+fn close_request_hides_only_when_exit_to_tray_is_enabled_and_available() {
+    let mut settings = AppSettings::default();
+
+    assert!(!super::tray::should_hide_on_close_for_exit_to_tray(
+        &settings, true
+    ));
+
+    settings.exit_to_tray = true;
+
+    assert!(!super::tray::should_hide_on_close_for_exit_to_tray(
+        &settings, true
+    ));
+
+    settings.tray_enabled = true;
+
+    assert!(super::tray::should_hide_on_close_for_exit_to_tray(
+        &settings, true
+    ));
+    assert!(!super::tray::should_hide_on_close_for_exit_to_tray(
+        &settings, false
+    ));
+}
+
+#[test]
+fn startup_hides_only_when_start_minimized_is_enabled_and_tray_is_available() {
+    let mut settings = AppSettings::default();
+
+    assert!(!super::tray::should_start_minimized(&settings, true));
+
+    settings.start_minimized = true;
+
+    assert!(!super::tray::should_start_minimized(&settings, true));
+
+    settings.tray_enabled = true;
+
+    assert!(super::tray::should_start_minimized(&settings, true));
+    assert!(!super::tray::should_start_minimized(&settings, false));
+}
+
 fn ui_perf_test_options(strict_contracts: bool) -> super::UiPerfOptions {
     super::UiPerfOptions {
         max_gap_ms: 120,
