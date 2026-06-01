@@ -59,30 +59,6 @@ To build a release binary:
 cargo build --release -p rufin-app
 ```
 
-## Development
-
-The default app build exposes the user/admin CLI only:
-
-```text
-Usage: rufin [OPTIONS]
-```
-
-`--clear-cache` | Clears the active server cache and exits.
-
-`--forget-active-server` | Removes the active server state and exits.
-
-Development fixture and performance flags are available with the `dev-tools`
-feature. Pass app flags after `--`, for example:
-
-```bash
-cargo run -p rufin-app --features dev-tools -- --ui-perf-observe
-```
-
-`--fake-scale <small\|large>` | Starts with a generated small or large fake library.
-
-`--ui-perf-run` | Runs the automated startup, route, scroll, and artwork performance pass, then exits.
-
-`--ui-perf-observe` | Records manual route reveal, scroll, and artwork performance while you use the app.
 
 ## Tests
 
@@ -94,9 +70,22 @@ scripts/test-rust.sh
 `scripts/test-rust.sh` uses `cargo-nextest` when it is installed and falls back
 to `cargo test`.
 
+## Bonus
+
+We have some flags behind `dev-tools`, specifically to log how long hitting a route takes or if track covers appear in time, which are just bonus. For examle you can run:
+
+```bash
+cargo run -p rufin-app --features dev-tools -- --ui-perf-observe
+```
+then hit some routes, and logs would appear in `.local/perf`
+
+`--fake-scale <small\|large>` | Starts with a generated small or large fake library.
+
+`--ui-perf-run` | Runs the automated startup, route, scroll, and artwork performance pass, then exits.
+
 ## Commits
 
-For commit names and PRs, please use
+For commit names and PRs, you may use
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/#summary).
 This is not enforced, but it keeps the history easier to scan.
 
@@ -105,5 +94,4 @@ This is not enforced, but it keeps the history easier to scan.
 Each language lives in one file: `po/<locale>.po`. To start a translation, copy
 `po/rufin.pot` to a new locale file, a full locale id like `tr_TR.po`,
 `de_DE.po`, or `pt_BR.po`, set `Language: locale_id \n`, and translate
-`msgstr ""` values. When running Rufin from source with Cargo, local `.po`
-files are compiled automatically for testing if `msgfmt` is installed.
+`msgstr ""` values. 
