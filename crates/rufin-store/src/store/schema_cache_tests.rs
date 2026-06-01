@@ -25,6 +25,7 @@ fn current_schema_creates_library_route_indexes() {
         ("album_artists", "album_artists_server_name_nocase_idx"),
         ("genres", "genres_server_name_nocase_idx"),
         ("playlists", "playlists_server_name_nocase_idx"),
+        ("playlist_tracks", "playlist_tracks_order_idx"),
         ("album_genres", "album_genres_server_genre_idx"),
         ("track_genres", "track_genres_server_genre_idx"),
         ("collection_cover_refs", "collection_cover_refs_lookup_idx"),
