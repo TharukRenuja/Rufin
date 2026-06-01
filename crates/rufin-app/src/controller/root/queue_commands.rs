@@ -35,7 +35,7 @@ impl AppController {
         }
     }
 
-    fn next_play_activation_generation(&self) -> u64 {
+    pub(in crate::controller) fn next_play_activation_generation(&self) -> u64 {
         self.play_activation_generation
             .fetch_add(1, Ordering::AcqRel)
             + 1
@@ -46,7 +46,10 @@ impl AppController {
             .fetch_add(1, Ordering::AcqRel);
     }
 
-    fn play_activation_generation_matches(&self, generation: u64) -> bool {
+    pub(in crate::controller) fn play_activation_generation_matches(
+        &self,
+        generation: u64,
+    ) -> bool {
         self.play_activation_generation.load(Ordering::Acquire) == generation
     }
 
@@ -715,5 +718,58 @@ mod tests {
         );
         let queue = controller.queue_snapshot().expect("queue snapshot");
         assert!(queue.entries.is_empty());
+    }
+
+    #[test]
+    fn random_append_cancels_stale_store_backed_activation() {
+        let (controller, events, snapshot, ..) =
+            AppController::bootstrap_with_fake(FakeScale::Small);
+        let saved = snapshot.server.expect("server");
+        let current = snapshot.tracks[0].clone();
+        let stale = snapshot.tracks[1].clone();
+        let mut queue = QueueEngine::new(saved.id.clone());
+        queue.append(&current);
+        *controller.queue.lock().expect("queue") = Some(queue);
+
+        let generation = controller.next_play_activation_generation();
+        let stale_activation = PlayActivation {
+            action: PlayAction::ReplaceNow,
+            target: PlayTarget::LoadedSource {
+                source_key: PlaySourceKey {
+                    descriptor: PlaySourceDescriptor::Album {
+                        album_id: AlbumId::fake(1),
+                        selected_music_folder_id: None,
+                    },
+                    order: SourceOrder::Canonical,
+                },
+                completeness: LoadedCompleteness::Complete,
+                items: vec![PlaySourceItem {
+                    track: stale.clone(),
+                    source_index: 0,
+                    source_item_id: None,
+                }],
+                anchor: PlayAnchor {
+                    track_id: stale.id.clone(),
+                    source_index: 0,
+                    source_item_id: None,
+                },
+            },
+        };
+
+        controller.play_random_tracks(random_request(RandomPlayAction::AddLast, 2));
+        let random_queue = wait_for_queue(&events).expect("random queue");
+        assert!(random_queue.entries.len() > 1);
+
+        controller.finish_store_backed_source_activation(&saved.id, stale_activation, generation);
+        let queue = controller.queue_snapshot().expect("queue snapshot");
+        assert_eq!(queue.entries.len(), random_queue.entries.len());
+        assert_eq!(queue.entries[0].track_id, current.id);
+        assert!(
+            queue
+                .entries
+                .iter()
+                .skip(1)
+                .any(|entry| entry.track_id != stale.id)
+        );
     }
 }
