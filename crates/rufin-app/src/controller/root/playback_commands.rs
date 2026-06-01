@@ -41,6 +41,7 @@ impl AppController {
         }
     }
     pub fn stop(&self) {
+        self.invalidate_play_activation_requests();
         invalidate_playback_requests(&self.playback_request_generation);
         self.clear_playback_start_probe();
         self.report_playback(PlaybackReportKind::Stopped, false);
@@ -62,6 +63,7 @@ impl AppController {
         self.persist_and_emit_queue();
     }
     pub fn next_track(&self) {
+        self.invalidate_play_activation_requests();
         let mut moved = false;
         let mut had_current = false;
         let result = self.with_queue_mut(|queue| {
@@ -100,6 +102,7 @@ impl AppController {
         self.auto_dj_top_up_deferred();
     }
     pub fn previous_track(&self) {
+        self.invalidate_play_activation_requests();
         let should_restart_current = self
             .playback_snapshot
             .lock()

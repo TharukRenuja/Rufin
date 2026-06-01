@@ -41,7 +41,7 @@ impl AppController {
             + 1
     }
 
-    fn invalidate_play_activation_requests(&self) {
+    pub(in crate::controller) fn invalidate_play_activation_requests(&self) {
         self.play_activation_generation
             .fetch_add(1, Ordering::AcqRel);
     }
@@ -285,6 +285,7 @@ impl AppController {
             .flatten()
     }
     pub fn play_next(&self, track: Track) {
+        self.invalidate_play_activation_requests();
         let result = self.with_queue_mut(|queue| {
             queue.play_next(&track);
             Ok(())
@@ -302,6 +303,7 @@ impl AppController {
             ));
             return;
         }
+        self.invalidate_play_activation_requests();
         let result = self.with_queue_mut(|queue| {
             for track in &tracks {
                 queue.append(track);
@@ -315,6 +317,7 @@ impl AppController {
         self.persist_and_emit_queue();
     }
     pub fn remove_from_queue(&self, entry_id: QueueEntryId) {
+        self.invalidate_play_activation_requests();
         let mut removed_current = false;
         let mut has_current_after_remove = false;
         let result = self.with_queue_mut(|queue| {
@@ -344,6 +347,7 @@ impl AppController {
         }
     }
     pub fn activate_queue_entry(&self, entry_id: QueueEntryId) {
+        self.invalidate_play_activation_requests();
         let previous_current = self
             .queue
             .lock()
@@ -371,6 +375,7 @@ impl AppController {
         self.auto_dj_top_up_deferred();
     }
     pub fn move_queue_entry_after_current(&self, entry_id: QueueEntryId) {
+        self.invalidate_play_activation_requests();
         let result = self.with_queue_mut(|queue| {
             if queue.move_after_current(&entry_id) {
                 Ok(())
@@ -385,6 +390,7 @@ impl AppController {
         self.persist_and_emit_queue();
     }
     pub fn clear_queue(&self) {
+        self.invalidate_play_activation_requests();
         let had_current = self
             .queue
             .lock()
@@ -643,5 +649,71 @@ mod tests {
         assert_eq!(source.materialized_start, 0);
         assert_eq!(source.materialized_len, 3);
         assert!(!source.capped);
+    }
+
+    #[test]
+    fn stale_store_backed_activation_does_not_replace_queue_after_clear() {
+        let (controller, events, ..) = AppController::bootstrap_memory_for_test();
+        let saved = SavedServer {
+            server: ServerIdentity {
+                id: ServerId::new("fake:server:stale-activation"),
+                provider: "fake".to_string(),
+                name: "Queue Test".to_string(),
+                base_url: "https://music.example".to_string(),
+            },
+            user_id: "user".to_string(),
+            username: "demo".to_string(),
+            trust_invalid_cert: false,
+        };
+        controller
+            .store
+            .with_store(|store| {
+                store.save_server(&saved)?;
+                store.set_active_server(&saved.server.id)?;
+                Ok(())
+            })
+            .expect("seed store");
+        let current = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
+        let stale = library_track(2, None, AlbumId::fake(1), "Artist", &[]);
+        let mut queue = QueueEngine::new(saved.server.id.clone());
+        queue.append(&current);
+        *controller.queue.lock().expect("queue") = Some(queue);
+
+        let generation = controller.next_play_activation_generation();
+        let stale_activation = PlayActivation {
+            action: PlayAction::ReplaceNow,
+            target: PlayTarget::LoadedSource {
+                source_key: PlaySourceKey {
+                    descriptor: PlaySourceDescriptor::Album {
+                        album_id: AlbumId::fake(1),
+                        selected_music_folder_id: None,
+                    },
+                    order: SourceOrder::Canonical,
+                },
+                completeness: LoadedCompleteness::Complete,
+                items: vec![PlaySourceItem {
+                    track: stale.clone(),
+                    source_index: 0,
+                    source_item_id: None,
+                }],
+                anchor: PlayAnchor {
+                    track_id: stale.id,
+                    source_index: 0,
+                    source_item_id: None,
+                },
+            },
+        };
+
+        controller.clear_queue();
+        let queue = wait_for_queue(&events).expect("cleared queue");
+        assert!(queue.entries.is_empty());
+
+        controller.finish_store_backed_source_activation(
+            &saved.server.id,
+            stale_activation,
+            generation,
+        );
+        let queue = controller.queue_snapshot().expect("queue snapshot");
+        assert!(queue.entries.is_empty());
     }
 }
