@@ -7,6 +7,7 @@ use super::{
     prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
     refresh_home_sections, refresh_home_sections_without_explore, refresh_playlist_pages,
     save_token_and_activate_logged_in_server, sync_page_finished, sync_provider,
+    sync_provider_with_events,
 };
 use rufin_core::{
     AlbumId, AppSettings, ArtistCredit, HomeSection, HomeSectionKind, LibrarySourceSelection,
@@ -20,6 +21,7 @@ use rufin_secrets::SecretStore;
 use rufin_store::SavedServer;
 use rufin_test_support::{FakeProvider, FakeScale};
 use std::fs;
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -710,6 +712,69 @@ pub(in crate::controller) fn provider_sync_caches_all_track_pages() {
     assert_eq!(first_page.total, FakeScale::Small.track_count());
     assert_eq!(final_page.total, FakeScale::Small.track_count());
     assert_eq!(final_page.items.len(), 1);
+}
+#[test]
+pub(in crate::controller) fn provider_sync_emits_visible_cache_progress_with_counts_and_timing() {
+    let runtime = Runtime::new().expect("runtime");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let provider = FakeProvider::new(FakeScale::Small);
+    let server_id = provider.identity().server.id.clone();
+    let saved = SavedServer {
+        server: provider.identity().server.clone(),
+        user_id: "fake-user".to_string(),
+        username: "fake".to_string(),
+        trust_invalid_cert: false,
+    };
+    store
+        .with_store(|store| store.save_server(&saved))
+        .expect("save server");
+    let (events, receiver) = channel();
+
+    runtime
+        .block_on(sync_provider_with_events(
+            &store, &server_id, &provider, events,
+        ))
+        .expect("sync provider");
+
+    let statuses = receiver
+        .try_iter()
+        .filter_map(|event| match event {
+            ControllerEvent::LoginStatus(status) => Some(status),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(statuses.iter().any(|status| status.contains(
+        "Caching library... This may take some time. Cached tracks page 5/5 for Fake Library (Music Server), 2,400/2,400 fetched, 2,400 cached"
+    )));
+    assert!(
+        statuses
+            .iter()
+            .any(|status| status.contains("elapsed") && status.contains("Finalizing cache"))
+    );
+}
+#[test]
+pub(in crate::controller) fn cache_progress_status_degrades_when_total_is_unknown() {
+    let (events, receiver) = channel();
+    let mut progress =
+        SyncProgressReporter::new(Some(events), "Local Music".to_string(), "Local".to_string());
+
+    progress.page_written(SyncPageProgress {
+        collection: SyncCollection::Tracks,
+        page_number: 2,
+        fetched: 620,
+        written: 620,
+        total: None,
+        finished: true,
+        fetch_elapsed: Duration::from_millis(25),
+        write_elapsed: Duration::from_millis(10),
+    });
+
+    let status = wait_for_status(&receiver);
+    assert!(status.contains(
+        "Caching library... This may take some time. Cached tracks page 2 for Local Music (Local)"
+    ));
+    assert!(status.contains("620 fetched, 620 cached"));
+    assert!(!status.contains("620/"));
 }
 #[test]
 pub(in crate::controller) fn local_source_with_missing_artwork_does_not_resync_cached_rows() {

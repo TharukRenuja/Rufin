@@ -1,4 +1,8 @@
 use super::*;
+use std::future::Future;
+use std::time::{Duration, Instant};
+
+const SYNC_PROGRESS_MIN_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
     let server_id = saved.server.id.clone();
@@ -282,11 +286,17 @@ pub(in crate::controller) fn run_sync_job(
     prefetch_initial_covers: bool,
 ) -> Result<(), String> {
     let provider = provider_for_saved(&context.store, &context.runtime, &context.secrets, saved)?;
+    let progress = SyncProgressReporter::new(
+        Some(context.events.clone()),
+        saved.server.name.clone(),
+        provider_display_name(&saved.server.provider).to_string(),
+    );
     context.runtime.block_on(sync_provider_generation(
         &context.store,
         &saved.server.id,
         provider.as_music_provider(),
         generation,
+        progress,
     ))?;
     if prefetch_initial_covers {
         let _sent = context.events.send(ControllerEvent::LoginStatus(
@@ -360,48 +370,355 @@ pub(in crate::controller) async fn sync_provider(
     provider: &(impl MusicProvider + ?Sized),
 ) -> Result<(), String> {
     let generation = store.with_store(|store| store.begin_sync(server_id))?;
-    sync_provider_generation(store, server_id, provider, generation).await
+    sync_provider_generation(
+        store,
+        server_id,
+        provider,
+        generation,
+        SyncProgressReporter::silent(provider),
+    )
+    .await
 }
-#[instrument(skip(store, provider), fields(server_id = %server_id.as_str(), generation))]
+#[cfg(test)]
+pub(in crate::controller) async fn sync_provider_with_events(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &(impl MusicProvider + ?Sized),
+    events: Sender<ControllerEvent>,
+) -> Result<(), String> {
+    let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    sync_provider_generation(
+        store,
+        server_id,
+        provider,
+        generation,
+        SyncProgressReporter::for_provider(provider, Some(events)),
+    )
+    .await
+}
+#[instrument(skip(store, provider, progress), fields(server_id = %server_id.as_str(), generation))]
 async fn sync_provider_generation(
     store: &StoreHandle,
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
+    mut progress: SyncProgressReporter,
 ) -> Result<(), String> {
     info!(generation, "started provider cache sync");
-    sync_album_pages(store, server_id, provider, generation).await?;
-    sync_track_pages(store, server_id, provider, generation).await?;
+    sync_album_pages(store, server_id, provider, generation, &mut progress).await?;
+    sync_track_pages(store, server_id, provider, generation, &mut progress).await?;
+    progress.collection_started(SyncCollection::MusicFolders);
     sync_music_folders(store, server_id, provider, generation).await?;
+    progress.collection_started(SyncCollection::Artists);
     sync_artist_pages(store, server_id, provider, generation, false).await?;
+    progress.collection_started(SyncCollection::AlbumArtists);
     sync_artist_pages(store, server_id, provider, generation, true).await?;
+    progress.collection_started(SyncCollection::Genres);
     sync_genre_pages(store, server_id, provider, generation).await?;
+    progress.collection_started(SyncCollection::Playlists);
     sync_playlist_pages(store, server_id, provider, generation).await?;
+    progress.collection_started(SyncCollection::HomeSections);
     sync_home_sections(store, server_id, provider, generation).await?;
+    progress.finalizing();
+    let finalize_started = Instant::now();
     store.with_store(|store| store.refresh_library_counts(server_id))?;
     store.with_store(|store| store.complete_sync(server_id, generation))?;
+    let finalize_elapsed = finalize_started.elapsed();
+    progress.finished();
     if let Err(error) = refresh_local_track_matches(store, server_id).await {
         warn!(%error, "failed to refresh local track matches");
     }
-    info!(generation, "completed provider cache sync");
+    info!(
+        generation,
+        finalize_elapsed_ms = finalize_elapsed.as_millis() as u64,
+        total_elapsed_ms = progress.total_elapsed().as_millis() as u64,
+        "completed provider cache sync"
+    );
     Ok(())
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::controller) enum SyncCollection {
+    Albums,
+    Tracks,
+    MusicFolders,
+    Artists,
+    AlbumArtists,
+    Genres,
+    Playlists,
+    HomeSections,
+}
+impl SyncCollection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Albums => "albums",
+            Self::Tracks => "tracks",
+            Self::MusicFolders => "music folders",
+            Self::Artists => "artists",
+            Self::AlbumArtists => "album artists",
+            Self::Genres => "genres",
+            Self::Playlists => "playlists",
+            Self::HomeSections => "home sections",
+        }
+    }
+}
+pub(in crate::controller) struct SyncPageProgress {
+    pub(in crate::controller) collection: SyncCollection,
+    pub(in crate::controller) page_number: usize,
+    pub(in crate::controller) fetched: usize,
+    pub(in crate::controller) written: usize,
+    pub(in crate::controller) total: Option<usize>,
+    pub(in crate::controller) finished: bool,
+    pub(in crate::controller) fetch_elapsed: Duration,
+    pub(in crate::controller) write_elapsed: Duration,
+}
+pub(in crate::controller) struct SyncProgressReporter {
+    events: Option<Sender<ControllerEvent>>,
+    source_name: String,
+    provider_kind: String,
+    started_at: Instant,
+    last_status_at: Option<Instant>,
+    min_interval: Duration,
+}
+impl SyncProgressReporter {
+    pub(in crate::controller) fn new(
+        events: Option<Sender<ControllerEvent>>,
+        source_name: String,
+        provider_kind: String,
+    ) -> Self {
+        Self {
+            events,
+            source_name,
+            provider_kind,
+            started_at: Instant::now(),
+            last_status_at: None,
+            min_interval: SYNC_PROGRESS_MIN_INTERVAL,
+        }
+    }
+
+    #[cfg(test)]
+    fn for_provider(
+        provider: &(impl MusicProvider + ?Sized),
+        events: Option<Sender<ControllerEvent>>,
+    ) -> Self {
+        let server = &provider.identity().server;
+        Self::new(
+            events,
+            server.name.clone(),
+            provider_display_name(&server.provider).to_string(),
+        )
+    }
+
+    #[cfg(test)]
+    fn silent(provider: &(impl MusicProvider + ?Sized)) -> Self {
+        Self::for_provider(provider, None)
+    }
+
+    fn total_elapsed(&self) -> Duration {
+        self.started_at.elapsed()
+    }
+
+    fn collection_started(&mut self, collection: SyncCollection) {
+        self.emit_status(
+            true,
+            format!(
+                "Caching library... This may take some time. Fetching {} for {} ({})",
+                collection.label(),
+                self.source_label(),
+                elapsed_label(self.total_elapsed())
+            ),
+        );
+    }
+
+    fn page_fetching(
+        &mut self,
+        collection: SyncCollection,
+        page_number: usize,
+        fetched: usize,
+        total: Option<usize>,
+    ) {
+        let count = progress_count_label(fetched, total);
+        self.emit_status(
+            false,
+            format!(
+                "Caching library... This may take some time. Fetching {} page {page_number} for {}, {count} fetched ({})",
+                collection.label(),
+                self.source_label(),
+                elapsed_label(self.total_elapsed())
+            ),
+        );
+    }
+
+    pub(in crate::controller) fn page_written(&mut self, progress: SyncPageProgress) {
+        let fetched = progress_count_label(progress.fetched, progress.total);
+        let page = page_label(progress.page_number, progress.total);
+        self.emit_status(
+            progress.finished,
+            format!(
+                "Caching library... This may take some time. Cached {} {page} for {}, {fetched} fetched, {} cached ({})",
+                progress.collection.label(),
+                self.source_label(),
+                formatted_count(progress.written),
+                elapsed_label(self.total_elapsed())
+            ),
+        );
+        info!(
+            collection = progress.collection.label(),
+            page = progress.page_number,
+            fetched = progress.fetched,
+            written = progress.written,
+            total = progress.total,
+            finished = progress.finished,
+            fetch_elapsed_ms = progress.fetch_elapsed.as_millis() as u64,
+            write_elapsed_ms = progress.write_elapsed.as_millis() as u64,
+            total_elapsed_ms = self.total_elapsed().as_millis() as u64,
+            "synced library cache page"
+        );
+    }
+
+    fn finalizing(&mut self) {
+        self.emit_status(
+            true,
+            format!(
+                "Caching library... This may take some time. Finalizing cache for {} ({})",
+                self.source_label(),
+                elapsed_label(self.total_elapsed())
+            ),
+        );
+    }
+
+    fn finished(&mut self) {
+        self.emit_status(
+            true,
+            format!(
+                "Library cache ready for {} in {}",
+                self.source_label(),
+                elapsed_label(self.total_elapsed())
+            ),
+        );
+    }
+
+    fn source_label(&self) -> String {
+        if self.source_name.trim().is_empty() || self.source_name == self.provider_kind {
+            return self.provider_kind.clone();
+        }
+        format!("{} ({})", self.source_name, self.provider_kind)
+    }
+
+    fn emit_status(&mut self, force: bool, status: String) {
+        let now = Instant::now();
+        let due = self
+            .last_status_at
+            .is_none_or(|last| now.duration_since(last) >= self.min_interval);
+        if !force && !due {
+            return;
+        }
+        self.last_status_at = Some(now);
+        if let Some(events) = &self.events {
+            let _sent = events.send(ControllerEvent::LoginStatus(status));
+        }
+    }
+}
+fn known_sync_total(total: usize) -> Option<usize> {
+    (total > 0).then_some(total)
+}
+async fn fetch_page_with_progress<T, Fut>(
+    progress: &mut SyncProgressReporter,
+    collection: SyncCollection,
+    page_number: usize,
+    fetched: usize,
+    total: Option<usize>,
+    page: Fut,
+) -> rufin_provider::ProviderResult<rufin_provider::PagedResponse<T>>
+where
+    Fut: Future<Output = rufin_provider::ProviderResult<rufin_provider::PagedResponse<T>>>,
+{
+    progress.page_fetching(collection, page_number, fetched, total);
+    tokio::pin!(page);
+    loop {
+        tokio::select! {
+            result = &mut page => return result,
+            _ = tokio::time::sleep(progress.min_interval) => {
+                progress.page_fetching(collection, page_number, fetched, total);
+            }
+        }
+    }
+}
+fn page_label(page_number: usize, total: Option<usize>) -> String {
+    match total {
+        Some(total) => {
+            let page_total = total.div_ceil(PAGE_SIZE).max(1);
+            format!("page {page_number}/{page_total}")
+        }
+        None => format!("page {page_number}"),
+    }
+}
+fn progress_count_label(count: usize, total: Option<usize>) -> String {
+    match total {
+        Some(total) => format!("{}/{}", formatted_count(count), formatted_count(total)),
+        None => formatted_count(count),
+    }
+}
+fn formatted_count(count: usize) -> String {
+    let raw = count.to_string();
+    let mut output = String::new();
+    for (index, character) in raw.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            output.push(',');
+        }
+        output.push(character);
+    }
+    output.chars().rev().collect()
+}
+fn elapsed_label(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds < 60 {
+        return format!("{seconds}s elapsed");
+    }
+    let minutes = seconds / 60;
+    let seconds = seconds % 60;
+    format!("{minutes}m {seconds:02}s elapsed")
 }
 async fn sync_album_pages(
     store: &StoreHandle,
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
+    progress: &mut SyncProgressReporter,
 ) -> Result<(), String> {
+    progress.collection_started(SyncCollection::Albums);
     let mut offset = 0;
+    let mut page_number = 0;
     loop {
-        let page = provider
-            .albums(PagedRequest::new(offset, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
+        page_number += 1;
+        let fetch_started = Instant::now();
+        let page = fetch_page_with_progress(
+            progress,
+            SyncCollection::Albums,
+            page_number,
+            offset,
+            None,
+            provider.albums(PagedRequest::new(offset, PAGE_SIZE)),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let fetch_elapsed = fetch_started.elapsed();
+        let write_started = Instant::now();
         store.with_store(|store| store.upsert_albums(server_id, &page.items, generation))?;
+        let write_elapsed = write_started.elapsed();
         let item_count = page.items.len();
         offset += item_count;
-        if sync_page_finished(item_count, page.total, offset) {
+        let finished = sync_page_finished(item_count, page.total, offset);
+        progress.page_written(SyncPageProgress {
+            collection: SyncCollection::Albums,
+            page_number,
+            fetched: offset,
+            written: offset,
+            total: known_sync_total(page.total),
+            finished,
+            fetch_elapsed,
+            write_elapsed,
+        });
+        if finished {
             return Ok(());
         }
     }
@@ -411,17 +728,42 @@ async fn sync_track_pages(
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
+    progress: &mut SyncProgressReporter,
 ) -> Result<(), String> {
+    progress.collection_started(SyncCollection::Tracks);
     let mut offset = 0;
+    let mut page_number = 0;
     loop {
-        let page = provider
-            .tracks(PagedRequest::new(offset, PAGE_SIZE))
-            .await
-            .map_err(|error| error.to_string())?;
+        page_number += 1;
+        let fetch_started = Instant::now();
+        let page = fetch_page_with_progress(
+            progress,
+            SyncCollection::Tracks,
+            page_number,
+            offset,
+            None,
+            provider.tracks(PagedRequest::new(offset, PAGE_SIZE)),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let fetch_elapsed = fetch_started.elapsed();
+        let write_started = Instant::now();
         store.with_store(|store| store.upsert_tracks(server_id, &page.items, generation))?;
+        let write_elapsed = write_started.elapsed();
         let item_count = page.items.len();
         offset += item_count;
-        if sync_page_finished(item_count, page.total, offset) {
+        let finished = sync_page_finished(item_count, page.total, offset);
+        progress.page_written(SyncPageProgress {
+            collection: SyncCollection::Tracks,
+            page_number,
+            fetched: offset,
+            written: offset,
+            total: known_sync_total(page.total),
+            finished,
+            fetch_elapsed,
+            write_elapsed,
+        });
+        if finished {
             return Ok(());
         }
     }

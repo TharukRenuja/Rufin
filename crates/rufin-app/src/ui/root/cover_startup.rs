@@ -284,10 +284,10 @@ pub(in crate::ui) fn auto_lyrics_skip_action_enabled(
     track_id: Option<&rufin_core::TrackId>,
     lyrics: Option<&Lyrics>,
 ) -> bool {
-    let Some(track_id) = track_id else {
+    let Some((track_id, lyrics)) = track_id.zip(lyrics) else {
         return false;
     };
-    if lyrics.is_some_and(|lyrics| lyrics.source == LyricsSource::Server) {
+    if lyrics.source != LyricsSource::Remote {
         return false;
     }
     !settings.private_mode

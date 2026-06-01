@@ -549,6 +549,20 @@ impl Store {
             .map(|json| serde_json::from_str(&json).map_err(StoreError::from))
             .unwrap_or_else(|| Ok(None))
     }
+    pub fn delete_remote_lyrics(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<bool> {
+        let deleted = self.connection.execute(
+            "
+            DELETE FROM lyrics_cache
+            WHERE server_id = ?1 AND track_id = ?2 AND source = 'remote'
+            ",
+            params![server_id.as_str(), track_id.as_str()],
+        )?;
+        Ok(deleted > 0)
+    }
     pub fn search_library(
         &self,
         server_id: &ServerId,
