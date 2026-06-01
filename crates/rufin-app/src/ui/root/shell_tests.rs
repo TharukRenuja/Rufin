@@ -1731,11 +1731,19 @@ pub(in crate::ui) fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_exter
         external_lyrics_enabled: true,
         ..AppSettings::default()
     };
+    let remote_lyrics = Lyrics {
+        track_id: track_id.clone(),
+        source: LyricsSource::Remote,
+        lines: vec![LyricLine {
+            text: "remote line".to_string(),
+            start_millis: None,
+        }],
+    };
 
     assert!(auto_lyrics_skip_action_enabled(
         &settings,
         Some(&track_id),
-        None
+        Some(&remote_lyrics)
     ));
 
     settings
@@ -1744,7 +1752,7 @@ pub(in crate::ui) fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_exter
     assert!(!auto_lyrics_skip_action_enabled(
         &settings,
         Some(&track_id),
-        None
+        Some(&remote_lyrics)
     ));
 
     settings.suppressed_auto_lyrics_track_ids.clear();
@@ -1752,7 +1760,7 @@ pub(in crate::ui) fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_exter
     assert!(!auto_lyrics_skip_action_enabled(
         &settings,
         Some(&track_id),
-        None
+        Some(&remote_lyrics)
     ));
 
     settings.external_lyrics_enabled = true;
@@ -1760,9 +1768,14 @@ pub(in crate::ui) fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_exter
     assert!(!auto_lyrics_skip_action_enabled(
         &settings,
         Some(&track_id),
-        None
+        Some(&remote_lyrics)
     ));
     assert!(!auto_lyrics_skip_action_enabled(&settings, None, None));
+    assert!(!auto_lyrics_skip_action_enabled(
+        &settings,
+        Some(&track_id),
+        None
+    ));
 }
 #[test]
 pub(in crate::ui) fn auto_lyrics_skip_action_is_hidden_for_server_lyrics() {

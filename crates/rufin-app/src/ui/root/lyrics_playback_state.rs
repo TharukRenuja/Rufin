@@ -83,6 +83,12 @@ impl Shell {
                 }
             }
         }
+        if self.state.lyrics.borrow().as_ref().is_some_and(|lyrics| {
+            lyrics.track_id == track_id && lyrics.source == LyricsSource::Remote
+        }) {
+            *self.state.lyrics.borrow_mut() = None;
+            self.controller.clear_remote_lyrics_for_current();
+        }
         self.render_lyrics_panel();
     }
     pub(in crate::ui) fn lyrics_empty_status(&self) -> String {

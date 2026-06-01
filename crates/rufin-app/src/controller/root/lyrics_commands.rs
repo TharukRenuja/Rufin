@@ -10,6 +10,23 @@ impl AppController {
     pub fn refresh_lyrics_for_current(&self) {
         self.request_lyrics_for_current_with_cache(false);
     }
+    pub fn clear_remote_lyrics_for_current(&self) {
+        let Some((server_id, entry, _position)) = self.current_queue_entry() else {
+            return;
+        };
+        match self
+            .store
+            .with_store(|store| store.delete_remote_lyrics(&server_id, &entry.track_id))
+        {
+            Ok(true) => {
+                let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
+            }
+            Ok(false) => {}
+            Err(error) => {
+                let _sent = self.events.send(ControllerEvent::Error(error));
+            }
+        }
+    }
     pub(in crate::controller) fn request_lyrics_for_current_with_cache(&self, use_cache: bool) {
         let settings = load_settings_from_store(&self.store);
         self.request_lyrics_for_current_with_search(

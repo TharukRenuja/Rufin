@@ -81,6 +81,67 @@ fn lyrics_cache_round_trips_by_server_and_track() {
     );
 }
 #[test]
+fn delete_remote_lyrics_preserves_server_lyrics() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let track = track(1, &album);
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    let server_lyrics = Lyrics {
+        track_id: track.id.clone(),
+        source: LyricsSource::Server,
+        lines: vec![LyricLine {
+            start_millis: None,
+            text: "server line".to_string(),
+        }],
+    };
+    store
+        .save_lyrics(&saved.server.id, &server_lyrics)
+        .expect("save lyrics");
+
+    assert!(
+        !store
+            .delete_remote_lyrics(&saved.server.id, &track.id)
+            .expect("delete remote lyrics")
+    );
+    assert_eq!(
+        store
+            .load_lyrics(&saved.server.id, &track.id)
+            .expect("load lyrics"),
+        Some(server_lyrics)
+    );
+
+    let remote_lyrics = Lyrics {
+        track_id: track.id.clone(),
+        source: LyricsSource::Remote,
+        lines: vec![LyricLine {
+            start_millis: None,
+            text: "remote line".to_string(),
+        }],
+    };
+    store
+        .save_lyrics(&saved.server.id, &remote_lyrics)
+        .expect("save remote lyrics");
+    assert!(
+        store
+            .delete_remote_lyrics(&saved.server.id, &track.id)
+            .expect("delete remote lyrics")
+    );
+    assert_eq!(
+        store
+            .load_lyrics(&saved.server.id, &track.id)
+            .expect("load lyrics"),
+        None
+    );
+}
+#[test]
 fn favorite_flag_updates_refresh_cached_models_and_favorite_tracks() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();

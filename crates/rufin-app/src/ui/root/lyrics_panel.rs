@@ -24,7 +24,7 @@ impl Shell {
         drop(settings);
         pane.set_search_action(&search_label, search_enabled);
         pane.set_clear_auto_search_action(
-            &tr("Disable automatic lyric search for this track"),
+            &tr("Clear fetched lyrics for this track"),
             clear_auto_search_enabled,
         );
         let empty_status = self.lyrics_empty_status();

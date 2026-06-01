@@ -175,6 +175,78 @@ pub(in crate::controller) fn server_lyrics_request_ignores_cached_remote_lyrics(
     assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
+pub(in crate::controller) fn clearing_remote_lyrics_emits_empty_event_and_removes_cache() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let track = snapshot.tracks[0].clone();
+    controller.play_now(track.clone());
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let server_id = controller
+        .store
+        .with_store(|store| store.active_server())
+        .expect("load active server")
+        .expect("active server")
+        .server
+        .id;
+    let remote_lyrics = Lyrics {
+        track_id: track.id.clone(),
+        source: LyricsSource::Remote,
+        lines: vec![LyricLine {
+            text: "cached remote line".to_string(),
+            start_millis: None,
+        }],
+    };
+    controller
+        .store
+        .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
+        .expect("save remote lyrics");
+
+    controller.request_lyrics_for_current();
+    assert_eq!(wait_for_lyrics(&events), Some(remote_lyrics));
+    controller.clear_remote_lyrics_for_current();
+
+    assert!(wait_for_lyrics(&events).is_none());
+    assert_eq!(
+        controller
+            .store
+            .with_store(|store| store.load_lyrics(&server_id, &track.id))
+            .expect("load lyrics"),
+        None
+    );
+}
+#[test]
+pub(in crate::controller) fn clearing_remote_lyrics_preserves_server_cache() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let track = snapshot.tracks[0].clone();
+    controller.play_now(track.clone());
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let server_id = controller
+        .store
+        .with_store(|store| store.active_server())
+        .expect("load active server")
+        .expect("active server")
+        .server
+        .id;
+    let server_lyrics = Lyrics {
+        track_id: track.id.clone(),
+        source: LyricsSource::Server,
+        lines: vec![LyricLine {
+            text: "server line".to_string(),
+            start_millis: None,
+        }],
+    };
+    controller
+        .store
+        .with_store(|store| store.save_lyrics(&server_id, &server_lyrics))
+        .expect("save server lyrics");
+
+    controller.clear_remote_lyrics_for_current();
+    controller.request_lyrics_for_current();
+
+    assert_eq!(wait_for_lyrics(&events), Some(server_lyrics));
+}
+#[test]
 pub(in crate::controller) fn restored_queue_request_lyrics_emits_cached_current_lyrics() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = SavedServer {
@@ -832,6 +904,40 @@ pub(in crate::controller) fn lrclib_manual_search_keeps_single_field_fallbacks()
             vec![("track_name".to_string(), "Opening Theme".to_string())],
             vec![("q".to_string(), "Example Artist".to_string())],
         ]
+    );
+}
+#[test]
+pub(in crate::controller) fn lrclib_automatic_search_requires_track_and_artist() {
+    let urls = super::lrclib_automatic_search_urls("Example Artist", "Opening Theme")
+        .expect("lrclib automatic search urls");
+    let query_sets = urls
+        .iter()
+        .map(|url| {
+            url.query_pairs()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        query_sets,
+        vec![
+            vec![("q".to_string(), "Opening Theme Example Artist".to_string())],
+            vec![
+                ("track_name".to_string(), "Opening Theme".to_string()),
+                ("artist_name".to_string(), "Example Artist".to_string()),
+            ],
+        ]
+    );
+    assert!(
+        super::lrclib_automatic_search_urls("", "Opening Theme")
+            .expect("missing artist urls")
+            .is_empty()
+    );
+    assert!(
+        super::lrclib_automatic_search_urls("Example Artist", "")
+            .expect("missing track urls")
+            .is_empty()
     );
 }
 #[test]
