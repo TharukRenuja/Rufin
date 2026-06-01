@@ -65,6 +65,41 @@ fn library_toolbars_stay_on_one_compact_row() {
     }
 }
 #[test]
+fn fitted_column_widths_shrink_enabled_columns_to_available_width() {
+    let base_widths = [48, 96, 68, 220, 76];
+    let fitted = super::fitted_column_widths(&base_widths, 320);
+
+    assert_eq!(fitted.len(), base_widths.len());
+    assert_eq!(fitted.iter().sum::<i32>(), 320);
+    assert!(fitted.iter().all(|width| *width > 0));
+    assert!(fitted[3] > fitted[0]);
+}
+#[test]
+fn fitted_column_widths_expand_largest_column_when_space_allows() {
+    let base_widths = [48, 96, 68];
+    let fitted = super::fitted_column_widths(&base_widths, 400);
+
+    assert_eq!(fitted.iter().sum::<i32>(), 400);
+    assert_eq!(fitted[0], base_widths[0]);
+    assert!(fitted[1] > base_widths[1]);
+    assert_eq!(fitted[2], base_widths[2]);
+}
+#[test]
+fn album_detail_inline_columns_stay_inside_track_area() {
+    let fields = [
+        LibraryField::RowIndex,
+        LibraryField::Title,
+        LibraryField::AlbumArtist,
+    ];
+    let field_widths =
+        super::album_detail_track_field_widths(LibraryListKey::ArtistAlbums, &fields, 320);
+
+    assert_eq!(field_widths.len(), fields.len());
+    assert!(field_widths.iter().all(|(_, width)| *width > 0));
+    assert_eq!(super::album_detail_track_cells_width(&field_widths), 320);
+    assert!(field_widths[1].1 > field_widths[0].1);
+}
+#[test]
 fn complete_page_policy_loads_every_supported_library_layout_fully() {
     for key in LibraryListKey::all() {
         for layout in [

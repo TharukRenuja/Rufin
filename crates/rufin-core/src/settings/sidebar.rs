@@ -248,10 +248,18 @@ impl TrackTableSettings {
             TrackTableColumn::Album,
             TrackTableColumn::Year,
         ];
+        const PREVIOUS_DEFAULT_COLUMNS: [TrackTableColumn; 5] = [
+            TrackTableColumn::TrackNumber,
+            TrackTableColumn::Title,
+            TrackTableColumn::Album,
+            TrackTableColumn::Year,
+            TrackTableColumn::Favorite,
+        ];
 
         if self.layout_version < TRACK_TABLE_LAYOUT_VERSION
             && (self.visible_columns.as_slice() == LEGACY_DEFAULT_COLUMNS
-                || self.visible_columns.as_slice() == COMPOSITE_TITLE_DEFAULT_COLUMNS)
+                || self.visible_columns.as_slice() == COMPOSITE_TITLE_DEFAULT_COLUMNS
+                || self.visible_columns.as_slice() == PREVIOUS_DEFAULT_COLUMNS)
         {
             self.visible_columns = DEFAULT_TRACK_TABLE_COLUMNS.to_vec();
             self.sort_key = TrackSortKey::Title;

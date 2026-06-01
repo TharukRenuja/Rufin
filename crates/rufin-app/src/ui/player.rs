@@ -927,7 +927,7 @@ struct PlayerWallSpec {
 
 fn player_wall_spec() -> PlayerWallSpec {
     PlayerWallSpec {
-        horizontal_policy: gtk::PolicyType::Never,
+        horizontal_policy: gtk::PolicyType::External,
         vertical_policy: gtk::PolicyType::Never,
         overflow: gtk::Overflow::Hidden,
         min_content_width: 0,
@@ -1281,7 +1281,7 @@ mod tests {
     fn now_playing_wall_does_not_propagate_text_width() {
         let spec = super::player_wall_spec();
 
-        assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
+        assert_eq!(spec.horizontal_policy, gtk::PolicyType::External);
         assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
         assert_eq!(spec.overflow, gtk::Overflow::Hidden);
         assert_eq!(spec.min_content_width, 0);

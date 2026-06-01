@@ -224,7 +224,6 @@ fn settings_default_to_privacy_preserving_remote_features() {
             TrackTableColumn::Title,
             TrackTableColumn::Album,
             TrackTableColumn::Year,
-            TrackTableColumn::Favorite,
         ]
     );
     assert_eq!(settings.track_table.sort_key, TrackSortKey::Title);
@@ -749,7 +748,6 @@ fn settings_migrate_legacy_track_table_default_columns() {
             TrackTableColumn::Title,
             TrackTableColumn::Album,
             TrackTableColumn::Year,
-            TrackTableColumn::Favorite,
         ]
     );
     assert_eq!(settings.sort_key, TrackSortKey::Title);
@@ -775,7 +773,31 @@ fn settings_migrate_previous_composite_title_default_columns() {
             TrackTableColumn::Title,
             TrackTableColumn::Album,
             TrackTableColumn::Year,
-            TrackTableColumn::Favorite,
+        ]
+    );
+    assert_eq!(settings.sort_key, TrackSortKey::Title);
+    assert_eq!(settings.layout_version, super::TRACK_TABLE_LAYOUT_VERSION);
+}
+#[test]
+fn settings_migrate_previous_favorite_track_table_default_column() {
+    let json = r#"{
+            "visible_columns":["TrackNumber","Title","Album","Year","Favorite"],
+            "sort_key":"Title",
+            "descending":false,
+            "layout_version":2
+        }"#;
+
+    let mut settings =
+        serde_json::from_str::<super::TrackTableSettings>(json).expect("deserialize settings");
+    settings.migrate_defaults();
+
+    assert_eq!(
+        settings.visible_columns,
+        vec![
+            TrackTableColumn::TrackNumber,
+            TrackTableColumn::Title,
+            TrackTableColumn::Album,
+            TrackTableColumn::Year,
         ]
     );
     assert_eq!(settings.sort_key, TrackSortKey::Title);

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{Album, AlbumId, ArtistId, Route, Track};
+use rufin_core::{Album, AlbumId, Artist, ArtistId, Route, Track};
 use rufin_store::CachedArtistDetail;
 
 use super::*;
@@ -20,7 +20,7 @@ impl Shell {
         let has_favorite_tracks = !favorite_tracks.is_empty();
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_propagate_natural_width(false);
         scroller.set_hexpand(true);
@@ -30,54 +30,20 @@ impl Shell {
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(28);
         wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_margin_start(32);
+        wrapper.set_margin_end(32);
         wrapper.set_hexpand(true);
 
-        let title = gtk::Label::new(Some(&artist.name));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.0);
-        title.set_wrap(true);
-        wrapper.append(&title);
-
-        let summary = gtk::Label::new(Some(&artist_summary_text(
+        let track_count = artist
+            .track_count
+            .max(tracks.len().min(u32::MAX as usize) as u32);
+        wrapper.append(&self.artist_detail_header(
+            &artist,
+            &tracks,
             albums.len(),
             appears_on.len(),
-            artist
-                .track_count
-                .max(tracks.len().min(u32::MAX as usize) as u32),
-        )));
-        summary.add_css_class("muted");
-        summary.set_xalign(0.0);
-        wrapper.append(&summary);
-
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let favorite = favorite_icon_button("Favorite");
-        set_favorite_button_active(&favorite, artist.favorite);
-        self.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
-        let controller = self.controller.clone();
-        let artist_id = artist.id.clone();
-        favorite.connect_clicked(move |button| {
-            controller.set_artist_favorite(artist_id.clone(), !favorite_button_is_active(button));
-        });
-        actions.append(&favorite);
-
-        let discography = text_button("media-optical-symbolic", "Discography");
-        let shell = Rc::clone(self);
-        let artist_id = artist.id.clone();
-        discography.connect_clicked(move |_| {
-            shell.navigate(Route::ArtistDiscography(artist_id.clone()));
-        });
-        actions.append(&discography);
-
-        let all_tracks = text_button("audio-x-generic-symbolic", "View all tracks");
-        let shell = Rc::clone(self);
-        let artist_id = artist.id.clone();
-        all_tracks.connect_clicked(move |_| {
-            shell.navigate(Route::ArtistTracks(artist_id.clone()));
-        });
-        actions.append(&all_tracks);
-        wrapper.append(&actions);
+            track_count,
+        ));
 
         if has_favorite_tracks {
             wrapper.append(&section_heading("Favorite tracks"));
@@ -110,7 +76,7 @@ impl Shell {
         };
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_propagate_natural_width(false);
         scroller.set_hexpand(true);
@@ -171,23 +137,157 @@ impl Shell {
 
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_top(28);
+        wrapper.set_margin_bottom(36);
         wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
         wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
 
         let title = gtk::Label::new(Some(&detail.artist.name));
-        title.add_css_class("section-heading");
+        title.add_css_class("detail-title");
         title.set_xalign(0.0);
+        title.set_wrap(true);
         wrapper.append(&title);
-        wrapper.append(&self.library_tracks_panel(
+
+        let summary = gtk::Label::new(Some(&artist_summary_text(
+            detail.albums.len(),
+            detail.appears_on.len(),
+            detail
+                .artist
+                .track_count
+                .max(detail.tracks.len().min(u32::MAX as usize) as u32),
+        )));
+        summary.add_css_class("muted");
+        summary.set_xalign(0.0);
+        wrapper.append(&summary);
+
+        wrapper.append(&self.library_tracks_scrolling_panel(
             detail.tracks,
             LibraryListKey::ArtistTracks,
             "artist-tracks",
+            0,
         ));
 
         wrapper.upcast()
+    }
+
+    fn artist_detail_header(
+        self: &Rc<Self>,
+        artist: &Artist,
+        tracks: &[Track],
+        album_count: usize,
+        appears_on_count: usize,
+        track_count: u32,
+    ) -> gtk::Widget {
+        let content_width = route_content_width(self);
+        let cover_size = detail_showcase_cover_size(content_width);
+        let seed = stable_seed(artist.id.as_str());
+        let header = gtk::Box::new(
+            gtk::Orientation::Vertical,
+            detail_showcase_spacing(content_width),
+        );
+        header.add_css_class("detail-showcase");
+        header.add_css_class("artist-detail-showcase");
+        add_album_seed_gradient_class(&header, seed);
+
+        let image_ref = super::library::artist_cover_image_ref(self, artist);
+        self.prime_cover_ref_from_cache_now(image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
+        let cover = self.cover_tile_for(image_ref.as_ref(), seed, cover_size, DETAIL_COVER_SIZE);
+        cover.add_css_class("detail-showcase-cover");
+        cover.add_css_class("artist-detail-cover");
+        cover.set_halign(gtk::Align::Center);
+        header.append(&cover);
+
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        metadata.set_halign(gtk::Align::Center);
+
+        let kind = gtk::Label::new(Some(&tr("Artist")));
+        kind.add_css_class("eyebrow");
+        kind.set_xalign(0.5);
+        kind.set_halign(gtk::Align::Center);
+
+        let title = gtk::Label::new(Some(&artist.name));
+        title.add_css_class("detail-title");
+        title.set_xalign(0.5);
+        title.set_justify(gtk::Justification::Center);
+        title.set_wrap(true);
+        title.set_width_chars(1);
+        title.set_max_width_chars(24);
+
+        let summary = gtk::Label::new(Some(&artist_summary_text(
+            album_count,
+            appears_on_count,
+            track_count,
+        )));
+        summary.add_css_class("muted");
+        summary.set_xalign(0.5);
+        summary.set_halign(gtk::Align::Center);
+
+        let actions = detail_action_row();
+        actions.add_css_class("artist-detail-actions");
+
+        let play = detail_action_button("media-playback-start-symbolic", "Play");
+        play.add_css_class("detail-showcase-play-button");
+        let controller = self.controller.clone();
+        let play_tracks = tracks.to_vec();
+        play.connect_clicked(move |_| controller.play_tracks_now(play_tracks.clone()));
+        actions.append(&play);
+
+        let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");
+        let controller = self.controller.clone();
+        let next_tracks = tracks.to_vec();
+        play_next.connect_clicked(move |_| {
+            for track in next_tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        });
+        actions.append(&play_next);
+
+        let play_later = detail_action_button(PLAY_LATER_ICON, "Play Later");
+        let controller = self.controller.clone();
+        let later_tracks = tracks.to_vec();
+        play_later.connect_clicked(move |_| controller.play_last(later_tracks.clone()));
+        actions.append(&play_later);
+
+        let favorite = favorite_icon_button("Favorite");
+        favorite.add_css_class("detail-showcase-action-button");
+        set_favorite_button_active(&favorite, artist.favorite);
+        self.register_favorite_button(artist_favorite_key(&artist.id), &favorite);
+        let controller = self.controller.clone();
+        let artist_id = artist.id.clone();
+        favorite.connect_clicked(move |button| {
+            controller.set_artist_favorite(artist_id.clone(), !favorite_button_is_active(button));
+        });
+        actions.append(&favorite);
+
+        let links = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        links.add_css_class("detail-showcase-link-row");
+        links.set_halign(gtk::Align::Center);
+
+        let discography = detail_link_button("media-optical-symbolic", "Discography");
+        let shell = Rc::clone(self);
+        let artist_id = artist.id.clone();
+        discography.connect_clicked(move |_| {
+            shell.navigate(Route::ArtistDiscography(artist_id.clone()));
+        });
+        links.append(&discography);
+
+        let all_tracks = detail_link_button("audio-x-generic-symbolic", "View all tracks");
+        let shell = Rc::clone(self);
+        let artist_id = artist.id.clone();
+        all_tracks.connect_clicked(move |_| {
+            shell.navigate(Route::ArtistTracks(artist_id.clone()));
+        });
+        links.append(&all_tracks);
+
+        metadata.append(&kind);
+        metadata.append(&title);
+        metadata.append(&summary);
+        metadata.append(&actions);
+        metadata.append(&links);
+        header.append(&metadata);
+        detail_showcase_frame(header.upcast(), content_width)
     }
 
     fn artist_detail_data(&self, artist_id: &ArtistId) -> Option<CachedArtistDetail> {

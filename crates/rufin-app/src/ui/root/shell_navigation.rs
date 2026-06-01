@@ -185,6 +185,58 @@ pub(in crate::ui) fn set_track_table_columns(
     for column in &settings.visible_columns {
         table.append_column(&track_table_column(shell, *column));
     }
+    fit_track_table_columns_to_width(
+        table,
+        &settings.visible_columns,
+        super::library::route_column_view_initial_width(shell.as_ref()),
+    );
+}
+pub(in crate::ui) fn fit_track_table_columns(
+    table: &gtk::ColumnView,
+    visible_columns: &[TrackTableColumn],
+) {
+    let available_width = table.width().saturating_sub(2);
+    if available_width <= 1 || visible_columns.is_empty() {
+        return;
+    }
+
+    fit_track_table_columns_to_width(table, visible_columns, available_width);
+}
+pub(in crate::ui) fn fit_track_table_columns_to_width(
+    table: &gtk::ColumnView,
+    visible_columns: &[TrackTableColumn],
+    available_width: i32,
+) {
+    if available_width <= 1 || visible_columns.is_empty() {
+        return;
+    }
+
+    let base_widths = visible_columns
+        .iter()
+        .map(|column| track_table_column_width(*column))
+        .collect::<Vec<_>>();
+    let fitted_widths = super::library::fitted_column_widths(&base_widths, available_width);
+    let columns = table.columns();
+    for (index, width) in fitted_widths.into_iter().enumerate() {
+        let Some(column) = columns
+            .item(index as u32)
+            .and_then(|item| item.downcast::<gtk::ColumnViewColumn>().ok())
+        else {
+            continue;
+        };
+        column.set_fixed_width(width);
+    }
+}
+fn track_table_column_width(column: TrackTableColumn) -> i32 {
+    match column {
+        TrackTableColumn::TrackNumber => 54,
+        TrackTableColumn::Title => 320,
+        TrackTableColumn::Artist => 180,
+        TrackTableColumn::Album => 220,
+        TrackTableColumn::Year => 70,
+        TrackTableColumn::Duration => 90,
+        TrackTableColumn::Favorite => 76,
+    }
 }
 pub(in crate::ui) fn track_table_column(
     shell: &Rc<Shell>,
@@ -374,7 +426,7 @@ pub(in crate::ui) struct RouteBoundarySpec {
 }
 pub(in crate::ui) fn route_boundary_spec() -> RouteBoundarySpec {
     RouteBoundarySpec {
-        horizontal_policy: gtk::PolicyType::Automatic,
+        horizontal_policy: gtk::PolicyType::External,
         vertical_policy: gtk::PolicyType::Never,
         overflow: gtk::Overflow::Hidden,
         min_content_width: 0,
@@ -383,12 +435,8 @@ pub(in crate::ui) fn route_boundary_spec() -> RouteBoundarySpec {
         vexpand: true,
     }
 }
-pub(in crate::ui) fn route_boundary_spec_for_route(route: &Route) -> RouteBoundarySpec {
-    let mut spec = route_boundary_spec();
-    if matches!(route, Route::SmartPlaylists | Route::SmartPlaylistDetail(_)) {
-        spec.horizontal_policy = gtk::PolicyType::Never;
-    }
-    spec
+pub(in crate::ui) fn route_boundary_spec_for_route(_route: &Route) -> RouteBoundarySpec {
+    route_boundary_spec()
 }
 pub(in crate::ui) fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
     first_run
@@ -533,7 +581,9 @@ where
             return;
         };
         let label = gtk::Label::new(None);
-        label.set_xalign(0.0);
+        label.set_xalign(0.5);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         list_item.set_child(Some(&label));
     });
@@ -575,7 +625,9 @@ pub(in crate::ui) fn track_row_index_column() -> gtk::ColumnViewColumn {
             return;
         };
         let label = gtk::Label::new(None);
-        label.set_xalign(0.0);
+        label.set_xalign(0.5);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
         list_item.set_child(Some(&label));
     });
 
@@ -797,23 +849,23 @@ where
 
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         root.set_valign(gtk::Align::Center);
-        root.set_halign(gtk::Align::Start);
-        root.set_hexpand(false);
+        root.set_halign(gtk::Align::Fill);
+        root.set_hexpand(true);
 
         let button_label = gtk::Label::new(None);
         button_label.add_css_class("table-link-label");
-        button_label.set_xalign(0.0);
+        button_label.set_xalign(0.5);
         button_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        button_label.set_halign(gtk::Align::Start);
-        button_label.set_hexpand(false);
+        button_label.set_halign(gtk::Align::Fill);
+        button_label.set_hexpand(true);
         button_label.set_width_chars(1);
         button_label.set_max_width_chars((width / 8).clamp(8, 32));
 
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.add_css_class("table-link");
-        button.set_halign(gtk::Align::Start);
-        button.set_hexpand(false);
+        button.set_halign(gtk::Align::Fill);
+        button.set_hexpand(true);
         button.set_cursor_from_name(Some("pointer"));
         add_stateful_link_hover(button.upcast_ref(), &button_label, Rc::clone(&hover_text));
         button.set_child(Some(&button_label));
@@ -822,10 +874,10 @@ where
 
         let label = gtk::Label::new(None);
         label.add_css_class("table-link-label");
-        label.set_xalign(0.0);
+        label.set_xalign(0.5);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_halign(gtk::Align::Start);
-        label.set_hexpand(false);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
         label.set_width_chars(1);
         label.set_max_width_chars((width / 8).clamp(8, 32));
         label.set_visible(false);

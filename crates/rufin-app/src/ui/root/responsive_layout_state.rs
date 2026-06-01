@@ -56,10 +56,12 @@ impl Shell {
         self.right_panel_slot.set_visible(
             !login_active && !startup_loading_active && resolved.right_sidebar.is_visible(),
         );
-        self.right_panel_slot.set_min_content_width(0);
+        self.right_panel_slot
+            .set_width_request(resolved.right_sidebar_width);
+        self.right_panel_slot
+            .set_min_content_width(resolved.right_sidebar_width);
         self.right_panel_slot
             .set_max_content_width(resolved.right_sidebar_width);
-        self.right_panel_slot.set_size_request(-1, -1);
         self.right_panel
             .set_width_request(resolved.right_sidebar_width);
         self.right_panel.set_visible(

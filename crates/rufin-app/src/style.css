@@ -616,8 +616,9 @@ scale.volume-slider trough {
 }
 
 .album-detail-showcase,
+.detail-showcase,
 .playlist-detail-showcase {
-  padding: 22px;
+  padding: 26px;
   border-radius: 8px;
   color: @window_fg_color;
   box-shadow:
@@ -629,6 +630,7 @@ scale.volume-slider trough {
   padding: 22px;
 }
 
+.detail-showcase .detail-title,
 .album-detail-showcase .detail-title {
   font-size: 40px;
 }
@@ -637,16 +639,19 @@ scale.volume-slider trough {
   font-size: 34px;
 }
 
+.detail-showcase .muted,
 .album-detail-showcase .muted,
 .playlist-detail-showcase .muted {
   color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
 }
 
+.detail-showcase .eyebrow,
 .album-detail-showcase .eyebrow,
 .playlist-detail-showcase .eyebrow {
   color: color-mix(in srgb, @accent_color 72%, @window_fg_color);
 }
 
+.detail-showcase-cover,
 .album-detail-cover,
 .playlist-detail-cover {
   box-shadow:
@@ -654,14 +659,69 @@ scale.volume-slider trough {
     inset 0 0 0 1px color-mix(in srgb, @window_fg_color 14%, transparent);
 }
 
+.detail-showcase-actions,
 .album-detail-actions,
 .playlist-detail-actions {
   margin-top: 4px;
 }
 
+.detail-showcase-action-button,
 .album-detail-action-button,
-.home-showcase-action-button,
 .playlist-detail-action-button {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
+  background: color-mix(in srgb, @window_fg_color 14%, transparent);
+  color: @window_fg_color;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.detail-showcase-action-button:hover,
+.album-detail-action-button:hover,
+.playlist-detail-action-button:hover {
+  background: color-mix(in srgb, @window_fg_color 20%, transparent);
+}
+
+.detail-showcase-play-button,
+.album-detail-play-button,
+.playlist-detail-play-button {
+  background: color-mix(in srgb, @window_fg_color 90%, transparent);
+  color: @window_bg_color;
+}
+
+.detail-showcase-play-button:hover,
+.album-detail-play-button:hover,
+.playlist-detail-play-button:hover {
+  background: @window_fg_color;
+}
+
+.detail-showcase-action-button.favorite-toggle.active-toggle {
+  color: @accent_color;
+  background: color-mix(in srgb, @window_fg_color 14%, transparent);
+}
+
+.detail-showcase-action-button.favorite-toggle.active-toggle:hover {
+  background: color-mix(in srgb, @window_fg_color 20%, transparent);
+}
+
+.detail-showcase-link-row {
+  margin-top: -2px;
+}
+
+.detail-showcase-link-button {
+  min-height: 30px;
+  padding: 4px 8px;
+  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
+  background: transparent;
+  box-shadow: none;
+}
+
+.detail-showcase-link-button:hover {
+  color: @window_fg_color;
+  background: color-mix(in srgb, @window_fg_color 10%, transparent);
+}
+
+.home-showcase-action-button {
   min-width: 48px;
   min-height: 48px;
   background: color-mix(in srgb, @window_fg_color 14%, transparent);
@@ -669,22 +729,16 @@ scale.volume-slider trough {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
-.album-detail-action-button:hover,
-.home-showcase-action-button:hover,
-.playlist-detail-action-button:hover {
+.home-showcase-action-button:hover {
   background: color-mix(in srgb, @window_fg_color 20%, transparent);
 }
 
-.album-detail-play-button,
-.home-showcase-play-button,
-.playlist-detail-play-button {
+.home-showcase-play-button {
   background: color-mix(in srgb, @window_fg_color 90%, transparent);
   color: @window_bg_color;
 }
 
-.album-detail-play-button:hover,
-.home-showcase-play-button:hover,
-.playlist-detail-play-button:hover {
+.home-showcase-play-button:hover {
   background: @window_fg_color;
 }
 

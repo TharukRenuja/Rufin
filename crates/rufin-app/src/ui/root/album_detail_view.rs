@@ -27,7 +27,7 @@ impl Shell {
         };
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
@@ -37,19 +37,17 @@ impl Shell {
         content.set_margin_bottom(36);
         content.set_margin_start(32);
         content.set_margin_end(32);
+        content.set_hexpand(true);
 
         let content_width = route_content_width(self);
-        let compact = content_width < 760;
-        let cover_size = if compact { 164 } else { 204 };
-        let header_orientation = if compact {
-            gtk::Orientation::Vertical
-        } else {
-            gtk::Orientation::Horizontal
-        };
-        let header = gtk::Box::new(header_orientation, if compact { 16 } else { 24 });
+        let cover_size = detail_showcase_cover_size(content_width);
+        let header = gtk::Box::new(
+            gtk::Orientation::Vertical,
+            detail_showcase_spacing(content_width),
+        );
+        header.add_css_class("detail-showcase");
         header.add_css_class("album-detail-showcase");
         add_album_seed_gradient_class(&header, album.color_seed);
-        header.set_hexpand(true);
         self.prime_cover_ref_from_cache_now(
             album.image_ref.as_ref(),
             DETAIL_COVER_SIZE,
@@ -61,23 +59,28 @@ impl Shell {
             cover_size,
             DETAIL_COVER_SIZE,
         );
+        cover.add_css_class("detail-showcase-cover");
         cover.add_css_class("album-detail-cover");
+        cover.set_halign(gtk::Align::Center);
         header.append(&cover);
 
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        metadata.set_valign(gtk::Align::Center);
-        metadata.set_hexpand(true);
+        metadata.set_halign(gtk::Align::Center);
         let kind = gtk::Label::new(Some(&tr("Album")));
         kind.add_css_class("eyebrow");
-        kind.set_xalign(0.0);
+        kind.set_xalign(0.5);
+        kind.set_halign(gtk::Align::Center);
         let title = gtk::Label::new(Some(&album.title));
         title.add_css_class("detail-title");
-        title.set_xalign(0.0);
+        title.set_xalign(0.5);
+        title.set_justify(gtk::Justification::Center);
         title.set_wrap(true);
+        title.set_width_chars(1);
+        title.set_max_width_chars(24);
         let artist = gtk::Label::new(Some(&album.artist));
         artist.add_css_class("detail-artist");
-        artist.set_xalign(0.0);
-        artist.set_halign(gtk::Align::Start);
+        artist.set_xalign(0.5);
+        artist.set_halign(gtk::Align::Center);
         artist.set_cursor_from_name(Some("pointer"));
         add_dynamic_link_hover(artist.upcast_ref(), &artist);
         if let Some(artist_id) = album.artist_id.clone() {
@@ -103,20 +106,19 @@ impl Shell {
             format_duration(album.duration_seconds)
         )));
         facts.add_css_class("muted");
-        facts.set_xalign(0.0);
+        facts.set_xalign(0.5);
+        facts.set_halign(gtk::Align::Center);
 
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let actions = detail_action_row();
         actions.add_css_class("album-detail-actions");
-        let play_album = icon_button("media-playback-start-symbolic", "Play");
-        play_album.add_css_class("album-detail-action-button");
-        play_album.add_css_class("album-detail-play-button");
+        let play_album = detail_action_button("media-playback-start-symbolic", "Play");
+        play_album.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
         let album_tracks = tracks.clone();
         play_album.connect_clicked(move |_| controller.play_tracks_now(album_tracks.clone()));
         actions.append(&play_album);
 
-        let play_next = icon_button(PLAY_NEXT_ICON, "Play next");
-        play_next.add_css_class("album-detail-action-button");
+        let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");
         let controller = self.controller.clone();
         let next_tracks = tracks.clone();
         play_next.connect_clicked(move |_| {
@@ -126,8 +128,14 @@ impl Shell {
         });
         actions.append(&play_next);
 
+        let play_later = detail_action_button(PLAY_LATER_ICON, "Play Later");
+        let controller = self.controller.clone();
+        let later_tracks = tracks.clone();
+        play_later.connect_clicked(move |_| controller.play_last(later_tracks.clone()));
+        actions.append(&play_later);
+
         let favorite = favorite_icon_button("Favorite");
-        favorite.add_css_class("album-detail-action-button");
+        favorite.add_css_class("detail-showcase-action-button");
         set_favorite_button_active(&favorite, album.favorite);
         self.register_favorite_button(album_favorite_key(&album.id), &favorite);
         let controller = self.controller.clone();
@@ -139,11 +147,11 @@ impl Shell {
 
         metadata.append(&kind);
         metadata.append(&title);
+        metadata.append(&facts);
         metadata.append(&artist);
         metadata.append(&actions);
-        metadata.append(&facts);
         header.append(&metadata);
-        content.append(&header);
+        content.append(&detail_showcase_frame(header.upcast(), content_width));
 
         let table =
             self.library_tracks_panel(tracks, LibraryListKey::AlbumDetailTracks, "album-detail");

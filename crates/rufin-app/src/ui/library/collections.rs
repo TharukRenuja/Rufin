@@ -1,5 +1,9 @@
 use super::*;
 
+const ALBUM_DETAIL_ARTIST_SECTION_INSET: i32 = 64;
+const ALBUM_DETAIL_ROW_HORIZONTAL_INSET: i32 = 8;
+const ALBUM_DETAIL_TRACK_COLUMN_GAP: i32 = 8;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct LibraryRouteInsetSpec {
     pub(in crate::ui) margin_start: i32,
@@ -29,7 +33,7 @@ pub(in crate::ui) fn configure_library_route_scroller(
     scroller: &gtk::ScrolledWindow,
 ) {
     scroller.add_css_class("library-route-scroller");
-    scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+    scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
     scroller.set_min_content_width(0);
     scroller.set_propagate_natural_width(false);
     scroller.set_propagate_natural_height(false);
@@ -356,13 +360,19 @@ pub(in crate::ui) fn album_table(
 ) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
+    let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
     table.set_vexpand(true);
-    for field in shell.library_settings(key).row_fields {
-        table.append_column(&album_column(shell, field));
+    let fields = shell.library_settings(key).row_fields;
+    let mut columns = Vec::with_capacity(fields.len());
+    for field in fields {
+        let column = album_column(shell, field);
+        table.append_column(&column);
+        columns.push((column, column_width(field)));
     }
+    install_column_view_width_fit(&table, columns, initial_width);
     let shell = Rc::clone(shell);
     table.connect_activate(move |_, position| {
         if let Some(album) = item_at::<Album>(&model, position) {
@@ -378,13 +388,19 @@ pub(in crate::ui) fn artist_table(
 ) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
+    let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
     table.set_vexpand(true);
-    for field in shell.library_settings(key).row_fields {
-        table.append_column(&artist_column(shell, field));
+    let fields = shell.library_settings(key).row_fields;
+    let mut columns = Vec::with_capacity(fields.len());
+    for field in fields {
+        let column = artist_column(shell, field);
+        table.append_column(&column);
+        columns.push((column, column_width(field)));
     }
+    install_column_view_width_fit(&table, columns, initial_width);
     let shell = Rc::clone(shell);
     table.connect_activate(move |_, position| {
         if let Some(artist) = item_at::<Artist>(&model, position) {
@@ -396,26 +412,48 @@ pub(in crate::ui) fn artist_table(
 pub(in crate::ui) fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model));
     let table = gtk::ColumnView::new(Some(selection));
+    let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
     table.set_vexpand(true);
-    for field in shell.library_settings(LibraryListKey::Genres).row_fields {
-        table.append_column(&genre_column(field));
+    let fields = shell.library_settings(LibraryListKey::Genres).row_fields;
+    let mut columns = Vec::with_capacity(fields.len());
+    for field in fields {
+        let column = genre_column(field);
+        table.append_column(&column);
+        let width = if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
+            180
+        } else {
+            column_width(field)
+        };
+        columns.push((column, width));
     }
+    install_column_view_width_fit(&table, columns, initial_width);
     table
 }
 pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
+    let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
     table.set_single_click_activate(true);
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
     table.set_vexpand(true);
-    for field in shell.library_settings(LibraryListKey::Playlists).row_fields {
-        table.append_column(&playlist_column(shell, field));
+    let fields = shell.library_settings(LibraryListKey::Playlists).row_fields;
+    let mut columns = Vec::with_capacity(fields.len());
+    for field in fields {
+        let column = playlist_column(shell, field);
+        table.append_column(&column);
+        let width = if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
+            220
+        } else {
+            column_width(field)
+        };
+        columns.push((column, width));
     }
+    install_column_view_width_fit(&table, columns, initial_width);
     let shell = Rc::clone(shell);
     table.connect_activate(move |_, position| {
         if let Some(playlist) = item_at::<Playlist>(&model, position) {
@@ -430,18 +468,30 @@ pub(in crate::ui) fn smart_playlist_table(
 ) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
+    let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
     table.set_single_click_activate(true);
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
     table.set_vexpand(true);
-    table.append_column(&smart_playlist_reorder_column(shell));
-    for field in shell
+    let fields = shell
         .library_settings(LibraryListKey::SmartPlaylists)
-        .row_fields
-    {
-        table.append_column(&smart_playlist_column(shell, field));
+        .row_fields;
+    let reorder_column = smart_playlist_reorder_column(shell);
+    table.append_column(&reorder_column);
+    let mut columns = Vec::with_capacity(fields.len() + 1);
+    columns.push((reorder_column, SMART_PLAYLIST_REORDER_WIDTH));
+    for field in fields {
+        let column = smart_playlist_column(shell, field);
+        table.append_column(&column);
+        let width = if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
+            220
+        } else {
+            column_width(field)
+        };
+        columns.push((column, width));
     }
+    install_column_view_width_fit(&table, columns, initial_width);
     let shell = Rc::clone(shell);
     table.connect_activate(move |_, position| {
         if let Some(playlist) = item_at::<SmartPlaylist>(&model, position) {
@@ -481,6 +531,7 @@ pub(in crate::ui) fn track_table(
     selection.set_can_unselect(true);
     selection.set_selected(gtk::INVALID_LIST_POSITION);
     let table = gtk::ColumnView::new(Some(selection));
+    let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
@@ -490,9 +541,13 @@ pub(in crate::ui) fn track_table(
     } else {
         shell.library_settings(key).row_fields
     };
+    let mut columns = Vec::with_capacity(fields.len());
     for field in fields {
-        table.append_column(&track_column_for_key(shell, key, field));
+        let column = track_column_for_key(shell, key, field);
+        table.append_column(&column);
+        columns.push((column, track_column_width(key, field)));
     }
+    install_column_view_width_fit(&table, columns, initial_width);
     let controller = shell.controller.clone();
     table.connect_activate(move |_, position| {
         if let Some(track) = item_at::<Track>(&model, position) {
@@ -836,11 +891,18 @@ pub(in crate::ui) fn album_detail_lead_row(
     track_area.set_halign(gtk::Align::Fill);
     if !inline_tracks.is_empty() {
         let fields = shell.library_settings(key).detail_track_fields;
+        let track_width = album_detail_track_area_width(shell, key, meta_width, spacing, &fields);
+        let field_widths = album_detail_track_field_widths(key, &fields, track_width);
+        track_area.set_width_request(track_width);
         track_area.set_height_request(album_detail_track_area_height(inline_tracks.len()));
-        track_area.append(&album_detail_track_header(&fields));
+        track_area.append(&album_detail_track_header(&field_widths));
         for (index, track) in inline_tracks.iter().enumerate() {
             track_area.append(&album_detail_track_cells(
-                shell, track, index, &fields, selection,
+                shell,
+                track,
+                index,
+                &field_widths,
+                selection,
             ));
         }
     }
@@ -876,8 +938,14 @@ pub(in crate::ui) fn album_detail_track_row(
     row.append(&spacer);
 
     let fields = shell.library_settings(key).detail_track_fields;
+    let track_width = album_detail_track_area_width(shell, key, meta_width, spacing, &fields);
+    let field_widths = album_detail_track_field_widths(key, &fields, track_width);
     row.append(&album_detail_track_cells(
-        shell, track, index, &fields, selection,
+        shell,
+        track,
+        index,
+        &field_widths,
+        selection,
     ));
     row.upcast()
 }
@@ -963,15 +1031,18 @@ pub(in crate::ui) fn album_detail_cover_tile(
     install_album_context_menu(&overlay, shell, album.clone());
     overlay.upcast()
 }
-pub(in crate::ui) fn album_detail_track_header(fields: &[LibraryField]) -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+pub(in crate::ui) fn album_detail_track_header(
+    field_widths: &[(LibraryField, i32)],
+) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, ALBUM_DETAIL_TRACK_COLUMN_GAP);
     row.add_css_class("album-detail-track-cells");
     row.set_hexpand(true);
     row.set_halign(gtk::Align::Fill);
+    row.set_width_request(album_detail_track_cells_width(field_widths));
     row.set_height_request(ALBUM_DETAIL_TRACK_HEADER_HEIGHT);
-    row.set_margin_end(album_detail_track_trailing_inset(fields));
-    for field in fields {
-        let label = album_detail_track_label(&tr(field.title()), *field, false);
+    row.set_margin_end(album_detail_track_trailing_inset(field_widths));
+    for (field, width) in field_widths {
+        let label = album_detail_track_label(&tr(field.title()), *field, *width, false);
         label.add_css_class("muted");
         row.append(&label);
     }
@@ -981,24 +1052,27 @@ pub(in crate::ui) fn album_detail_track_cells(
     shell: &Rc<Shell>,
     track: &Track,
     index: usize,
-    fields: &[LibraryField],
+    field_widths: &[(LibraryField, i32)],
     selection: &AlbumDetailTrackSelection,
 ) -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, ALBUM_DETAIL_TRACK_COLUMN_GAP);
     row.add_css_class("album-detail-track-row");
     row.set_hexpand(true);
     row.set_halign(gtk::Align::Fill);
+    row.set_width_request(album_detail_track_cells_width(field_widths));
     row.set_height_request(LIBRARY_TABLE_ROW_HEIGHT);
     row.set_valign(gtk::Align::Center);
-    row.set_margin_end(album_detail_track_trailing_inset(fields));
+    row.set_margin_end(album_detail_track_trailing_inset(field_widths));
     row.set_focusable(true);
     row.update_property(&[gtk::accessible::Property::Label(&format!(
         "{} {}",
         track.title, track.artist
     ))]);
     selection.bind_row(row.upcast_ref(), &track.id);
-    for field in fields {
-        row.append(&album_detail_track_cell(shell, track, index, *field));
+    for (field, width) in field_widths {
+        row.append(&album_detail_track_cell(
+            shell, track, index, *field, *width,
+        ));
     }
     install_track_context_menu(&row, shell, track.clone());
 
@@ -1027,6 +1101,7 @@ pub(in crate::ui) fn album_detail_track_cell(
     track: &Track,
     index: usize,
     field: LibraryField,
+    width: i32,
 ) -> gtk::Widget {
     match field {
         LibraryField::Favorite => {
@@ -1037,61 +1112,109 @@ pub(in crate::ui) fn album_detail_track_cell(
             button.connect_clicked(move |button| {
                 controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
             });
-            button.set_width_request(column_width(field));
-            button.upcast()
+            button.set_halign(gtk::Align::Center);
+            album_detail_fixed_cell(width, button.upcast())
         }
-        LibraryField::Image => shell.cover_tile_for(
-            track.image_ref.as_ref(),
-            stable_seed(track.id.as_str()),
-            48,
-            THUMB_COVER_SIZE,
-        ),
-        _ => album_detail_track_label(&album_detail_track_text(track, index, field), field, true)
-            .upcast(),
+        LibraryField::Image => {
+            let cover = shell.cover_tile_for(
+                track.image_ref.as_ref(),
+                stable_seed(track.id.as_str()),
+                48,
+                THUMB_COVER_SIZE,
+            );
+            cover.set_halign(gtk::Align::Center);
+            album_detail_fixed_cell(width, cover)
+        }
+        _ => album_detail_track_label(
+            &album_detail_track_text(track, index, field),
+            field,
+            width,
+            true,
+        )
+        .upcast(),
     }
+}
+pub(in crate::ui) fn album_detail_fixed_cell(width: i32, child: gtk::Widget) -> gtk::Widget {
+    let clip = gtk::ScrolledWindow::new();
+    clip.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+    clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_min_content_width(0);
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(false);
+    clip.set_width_request(width);
+    clip.set_halign(gtk::Align::Fill);
+    clip.set_child(Some(&child));
+    clip.upcast()
 }
 pub(in crate::ui) fn album_detail_track_label(
     text: &str,
-    field: LibraryField,
+    _field: LibraryField,
+    width: i32,
     ellipsize: bool,
 ) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
-    label.set_xalign(if field == LibraryField::Duration {
-        1.0
-    } else {
-        0.0
-    });
+    label.set_xalign(0.5);
+    label.set_halign(gtk::Align::Fill);
     label.set_wrap(false);
     label.set_single_line_mode(true);
-    label.set_hexpand(album_detail_track_field_expands(field));
-    if !album_detail_track_field_expands(field) {
-        label.set_width_request(column_width(field));
-    }
+    label.set_width_request(width);
+    label.set_width_chars(1);
+    label.set_max_width_chars(1);
+    label.set_hexpand(false);
     if ellipsize {
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     }
     label
 }
-pub(in crate::ui) fn album_detail_track_field_expands(field: LibraryField) -> bool {
-    matches!(
-        field,
-        LibraryField::Title
-            | LibraryField::TitleMerged
-            | LibraryField::Album
-            | LibraryField::Artist
-            | LibraryField::AlbumArtist
-            | LibraryField::Genre
-    )
+pub(in crate::ui) fn album_detail_track_trailing_inset(
+    field_widths: &[(LibraryField, i32)],
+) -> i32 {
+    let _ = field_widths;
+    0
 }
-pub(in crate::ui) fn album_detail_track_trailing_inset(fields: &[LibraryField]) -> i32 {
-    if fields
-        .last()
-        .is_some_and(|field| !album_detail_track_field_expands(*field))
-    {
-        ALBUM_DETAIL_FIXED_TRAILING_INSET
-    } else {
-        0
-    }
+pub(in crate::ui) fn album_detail_track_field_widths(
+    key: LibraryListKey,
+    fields: &[LibraryField],
+    available_width: i32,
+) -> Vec<(LibraryField, i32)> {
+    let gap_count = fields.len().saturating_sub(1).min(i32::MAX as usize) as i32;
+    let gap_total = ALBUM_DETAIL_TRACK_COLUMN_GAP.saturating_mul(gap_count);
+    let available_width = available_width
+        .saturating_sub(gap_total)
+        .max(fields.len() as i32);
+    let base_widths = fields
+        .iter()
+        .map(|field| track_column_width(key, *field))
+        .collect::<Vec<_>>();
+    fields
+        .iter()
+        .copied()
+        .zip(fitted_column_widths(&base_widths, available_width))
+        .collect()
+}
+pub(in crate::ui) fn album_detail_track_cells_width(field_widths: &[(LibraryField, i32)]) -> i32 {
+    let fields_width = field_widths.iter().map(|(_, width)| *width).sum::<i32>();
+    let gap_count = field_widths.len().saturating_sub(1).min(i32::MAX as usize) as i32;
+    let gap_total = ALBUM_DETAIL_TRACK_COLUMN_GAP.saturating_mul(gap_count);
+    fields_width.saturating_add(gap_total).max(1)
+}
+pub(in crate::ui) fn album_detail_track_area_width(
+    shell: &Shell,
+    key: LibraryListKey,
+    meta_width: i32,
+    spacing: i32,
+    fields: &[LibraryField],
+) -> i32 {
+    let route_inset = match key {
+        LibraryListKey::ArtistAlbums => ALBUM_DETAIL_ARTIST_SECTION_INSET,
+        _ => 0,
+    };
+    route_content_width(shell)
+        .saturating_sub(route_inset)
+        .saturating_sub(meta_width)
+        .saturating_sub(spacing)
+        .saturating_sub(ALBUM_DETAIL_ROW_HORIZONTAL_INSET)
+        .max(fields.len() as i32)
 }
 pub(in crate::ui) fn album_detail_track_text(
     track: &Track,

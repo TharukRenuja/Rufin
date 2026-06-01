@@ -459,6 +459,35 @@ pub(in crate::ui) fn text_button(icon_name: &str, label: &str) -> gtk::Button {
     button.set_child(Some(&content));
     button
 }
+pub(in crate::ui) fn detail_action_button(icon_name: &str, label: &str) -> gtk::Button {
+    let button = icon_button(icon_name, label);
+    button.add_css_class("detail-showcase-action-button");
+    button
+}
+pub(in crate::ui) fn detail_action_row() -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.add_css_class("detail-showcase-actions");
+    row.set_halign(gtk::Align::Center);
+    row
+}
+pub(in crate::ui) fn detail_showcase_frame(
+    header: gtk::Widget,
+    _content_width: i32,
+) -> gtk::Widget {
+    header.set_hexpand(true);
+    header.set_halign(gtk::Align::Fill);
+    header
+}
+pub(in crate::ui) fn detail_link_button(icon_name: &str, label: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("detail-showcase-link-button");
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.append(&gtk::Image::from_icon_name(icon_name));
+    content.append(&gtk::Label::new(Some(&tr(label))));
+    button.set_child(Some(&content));
+    button
+}
 pub(in crate::ui) fn install_css() {
     let Some(display) = gtk::gdk::Display::default() else {
         return;
