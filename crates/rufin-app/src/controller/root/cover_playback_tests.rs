@@ -656,13 +656,8 @@ pub(in crate::controller) fn play_now_starts_fake_playback_and_persists_queue() 
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let queue = wait_for_queue(&events).expect("queue");
-    assert_eq!(queue.entries.len(), 1 + super::AUTO_DJ_ITEM_COUNT);
-    assert_eq!(queue.entries[0].track_id, track.id);
-    let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    assert_eq!(
-        playback.current.expect("current").track_id,
-        queue.entries[0].track_id
-    );
+    assert_eq!(queue.entries.len(), 1);
+    assert_eq!(queue.entries[0].track_id, track.id.clone());
     assert_eq!(
         controller
             .store
@@ -671,7 +666,16 @@ pub(in crate::controller) fn play_now_starts_fake_playback_and_persists_queue() 
             .expect("snapshot")
             .entries
             .len(),
-        1 + super::AUTO_DJ_ITEM_COUNT
+        1
+    );
+    let queue = wait_for_queue_matching(&events, |queue| {
+        queue.entries.len() == 1 + super::AUTO_DJ_ITEM_COUNT
+    });
+    assert_eq!(queue.entries[0].track_id, track.id);
+    let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    assert_eq!(
+        playback.current.expect("current").track_id,
+        queue.entries[0].track_id
     );
 }
 #[test]
