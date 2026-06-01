@@ -626,6 +626,8 @@ pub(in crate::ui) struct Shell {
     app_content_stack: gtk::Stack,
     login_host: gtk::Box,
     startup_loading_host: gtk::Box,
+    normal_nav_slot: gtk::ScrolledWindow,
+    compact_nav_slot: gtk::ScrolledWindow,
     normal_nav: gtk::Box,
     compact_nav: gtk::Box,
     server_selector: ServerSelector,
@@ -645,6 +647,18 @@ pub(in crate::ui) struct Shell {
     lyrics_pane: LyricsPane,
     fullscreen_player: FullscreenPlayerParts,
     player_controls: PlayerControls,
+}
+fn sidebar_scroll_slot(width: i32, child: &gtk::Box) -> gtk::ScrolledWindow {
+    let slot = gtk::ScrolledWindow::new();
+    slot.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    slot.set_width_request(width);
+    slot.set_min_content_width(width);
+    slot.set_propagate_natural_width(false);
+    slot.set_propagate_natural_height(false);
+    slot.set_hexpand(false);
+    slot.set_vexpand(true);
+    slot.set_child(Some(child));
+    slot
 }
 pub fn build(app: &adw::Application, options: AppOptions) {
     install_css();
@@ -796,6 +810,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     let root_stack = gtk::Stack::new();
     root_stack.add_css_class("app-root");
+    root_stack.set_hhomogeneous(false);
+    root_stack.set_vhomogeneous(false);
+    root_stack.set_interpolate_size(false);
     root_stack.set_hexpand(true);
     root_stack.set_vexpand(true);
 
@@ -830,11 +847,13 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     normal_nav.add_css_class("wide-sidebar");
     normal_nav.set_hexpand(false);
     normal_nav.set_width_request(NORMAL_SIDEBAR_WIDTH);
+    let normal_nav_slot = sidebar_scroll_slot(NORMAL_SIDEBAR_WIDTH, &normal_nav);
 
     let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 3);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_hexpand(false);
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
+    let compact_nav_slot = sidebar_scroll_slot(COMPACT_RAIL_WIDTH, &compact_nav);
     let server_selector = build_server_selector();
 
     let normal_back_button = sidebar_history_button("go-previous-symbolic", "Back");
@@ -860,8 +879,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     let fullscreen_player = build_fullscreen_player();
     let player_controls = build_bottom_player();
 
-    upper.append(&normal_nav);
-    upper.append(&compact_nav);
+    upper.append(&normal_nav_slot);
+    upper.append(&compact_nav_slot);
     upper.append(&content_chrome.root);
 
     app_content_stack.add_named(&upper, Some("main"));
@@ -885,6 +904,8 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         app_content_stack,
         login_host,
         startup_loading_host,
+        normal_nav_slot,
+        compact_nav_slot,
         normal_nav,
         compact_nav,
         server_selector,

@@ -43,12 +43,12 @@ impl Shell {
             .replace(resolved.right_sidebar_width);
         let previous_main_width = self.state.main_content_width.replace(resolved.main_width);
 
-        self.normal_nav.set_visible(
+        self.normal_nav_slot.set_visible(
             !login_active
                 && !startup_loading_active
                 && resolved.left_sidebar == LeftSidebarMode::Full,
         );
-        self.compact_nav.set_visible(
+        self.compact_nav_slot.set_visible(
             !login_active
                 && !startup_loading_active
                 && resolved.left_sidebar == LeftSidebarMode::Compact,

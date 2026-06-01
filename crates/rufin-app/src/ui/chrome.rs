@@ -68,7 +68,7 @@ pub(super) fn build_content_chrome(
     right_panel_slot.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
     right_panel_slot.set_overflow(gtk::Overflow::Hidden);
     right_panel_slot.set_propagate_natural_width(true);
-    right_panel_slot.set_propagate_natural_height(true);
+    right_panel_slot.set_propagate_natural_height(false);
     right_panel_slot.set_hexpand(false);
     right_panel_slot.set_vexpand(true);
     right_panel_slot.set_child(Some(right_panel));
