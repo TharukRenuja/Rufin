@@ -47,7 +47,21 @@ impl Shell {
 
         if has_favorite_tracks {
             wrapper.append(&section_heading("Favorite tracks"));
-            wrapper.append(&self.compact_artist_tracks_table(favorite_tracks, "artist-favorites"));
+            let favorite_artist_id = artist.id.clone();
+            let selected_music_folder_id = selected_music_folder_id(self);
+            let source_descriptor = PlaySourceDescriptor::HomeCollection {
+                section_id: "artist-favorites".to_string(),
+                source: Box::new(PlaySourceDescriptor::ArtistTracks {
+                    artist_id: favorite_artist_id,
+                    scope: ArtistTrackScope::AllCredits,
+                    selected_music_folder_id,
+                }),
+            };
+            wrapper.append(&self.compact_artist_tracks_table(
+                favorite_tracks,
+                "artist-favorites",
+                Some(source_descriptor),
+            ));
         }
 
         if !albums.is_empty() {
@@ -167,6 +181,11 @@ impl Shell {
             LibraryListKey::ArtistTracks,
             "artist-tracks",
             0,
+            Some(PlaySourceDescriptor::ArtistTracks {
+                artist_id: detail.artist.id,
+                scope: ArtistTrackScope::AllCredits,
+                selected_music_folder_id: selected_music_folder_id(self),
+            }),
         ));
 
         wrapper.upcast()

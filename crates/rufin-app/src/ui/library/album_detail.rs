@@ -167,9 +167,22 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
     let controls = cards::cover_play_hover_controls(size, "Play genre");
     let controller = shell.controller.clone();
     let genre_id = genre.id.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-            controller.play_tracks_now(detail.tracks);
+            if let Some(activation) = loaded_tracks_play_activation(
+                rufin_core::PlaySourceKey {
+                    descriptor: rufin_core::PlaySourceDescriptor::GenreTracks {
+                        genre_id: genre_id.clone(),
+                        selected_music_folder_id: selected_music_folder_id.clone(),
+                    },
+                    order: rufin_core::SourceOrder::Canonical,
+                },
+                detail.tracks,
+                0,
+            ) {
+                controller.play_activation(activation);
+            }
         }
     });
     let controller = shell.controller.clone();

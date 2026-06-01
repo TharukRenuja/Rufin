@@ -73,7 +73,19 @@ impl AppController {
     }
     pub fn play_album_now(&self, album_id: AlbumId) {
         match self.cached_album_detail(&album_id) {
-            Ok(Some((_, tracks))) => self.play_tracks_now(tracks),
+            Ok(Some((album, tracks))) => {
+                if tracks.is_empty() {
+                    let _sent = self.events.send(ControllerEvent::Error(
+                        "No tracks are available to play.".to_string(),
+                    ));
+                    return;
+                }
+                self.play_activation(Self::album_play_activation(
+                    album.id,
+                    tracks,
+                    Self::selected_music_folder_id_for_active_server(&self.store),
+                ));
+            }
             Ok(None) => {
                 let _sent = self.events.send(ControllerEvent::Error(
                     "The selected cached album was not found.".to_string(),
@@ -83,6 +95,57 @@ impl AppController {
                 let _sent = self.events.send(ControllerEvent::Error(error));
             }
         }
+    }
+
+    fn album_play_activation(
+        album_id: AlbumId,
+        tracks: Vec<Track>,
+        selected_music_folder_id: Option<MusicFolderId>,
+    ) -> PlayActivation {
+        let anchor_track_id = tracks
+            .first()
+            .expect("album activation has a first track")
+            .id
+            .clone();
+        PlayActivation {
+            action: PlayAction::ReplaceNow,
+            target: PlayTarget::LoadedSource {
+                source_key: PlaySourceKey {
+                    descriptor: PlaySourceDescriptor::Album {
+                        album_id,
+                        selected_music_folder_id,
+                    },
+                    order: SourceOrder::Canonical,
+                },
+                completeness: LoadedCompleteness::Complete,
+                items: tracks
+                    .into_iter()
+                    .enumerate()
+                    .map(|(source_index, track)| PlaySourceItem {
+                        track,
+                        source_index,
+                        source_item_id: None,
+                    })
+                    .collect(),
+                anchor: PlayAnchor {
+                    track_id: anchor_track_id,
+                    source_index: 0,
+                    source_item_id: None,
+                },
+            },
+        }
+    }
+
+    fn selected_music_folder_id_for_active_server(store: &StoreHandle) -> Option<MusicFolderId> {
+        store
+            .with_store(|store| {
+                let Some(saved) = store.active_server()? else {
+                    return Ok(None);
+                };
+                store.selected_music_folder_id(&saved.server.id)
+            })
+            .ok()
+            .flatten()
     }
     pub fn play_next(&self, track: Track) {
         let result = self.with_queue_mut(|queue| {

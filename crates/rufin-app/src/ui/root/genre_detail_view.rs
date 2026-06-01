@@ -41,6 +41,10 @@ impl Shell {
             summary,
             tracks: detail.tracks,
             table_context: "genre-detail",
+            source_descriptor: Some(PlaySourceDescriptor::GenreTracks {
+                genre_id,
+                selected_music_folder_id: selected_music_folder_id(self),
+            }),
         })
     }
 }

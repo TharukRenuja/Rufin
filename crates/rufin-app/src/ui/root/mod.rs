@@ -52,7 +52,9 @@ mod style_contract;
 mod tray;
 
 use crate::controller::{
-    AppController, ControllerEvent, DiscoveredServer, LibrarySnapshot, LyricsSearchResult,
+    AppController, ControllerEvent, DiscoveredServer, FULL_LOADED_LIMIT, LibrarySnapshot,
+    LoadedCompleteness, LyricsSearchResult, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
+    MATERIALIZED_WINDOW_LIMIT, PlayAction, PlayActivation, PlayAnchor, PlaySourceItem, PlayTarget,
     PlaybackPerfEvent, PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
 };
 use crate::external_metadata;
@@ -93,15 +95,17 @@ use preferences::{present_library_preferences_dialog, present_preferences_dialog
 use queue::connect_queue_panel_controls;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH,
-    FolderPathItem, Genre, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode,
-    LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, PlaylistId,
-    QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, ServerId,
-    SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
+    DEFAULT_WINDOW_WIDTH, FolderPathItem, Genre, HomeBlockKind, HomeSection, HomeSectionKind,
+    ImageRef, LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
+    MusicFolderId, PlaySourceDescriptor, PlaySourceKey, Playlist, PlaylistEntrySortDescriptor,
+    PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind,
+    ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
     SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField,
     SmartPlaylistRuleGroup, SmartPlaylistRuleNode, SmartPlaylistRuleOperator,
-    SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId, TrackSortKey, TrackTableColumn,
-    TrackTableSettings, format_duration, sanitized_window_size,
+    SmartPlaylistRuleValue, SmartPlaylistSortDescriptor, SmartPlaylistSortField, SourceOrder,
+    Track, TrackId, TrackSortDescriptor, TrackSortKey, TrackTableColumn, TrackTableSettings,
+    format_duration, sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -391,12 +395,13 @@ pub(in crate::ui) struct FolderRouteState {
     detail: Option<FolderDetail>,
     error: Option<String>,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(in crate::ui) struct TrackTableOptions {
     paging: Option<(usize, usize)>,
     expand: bool,
     max_visible_rows: Option<usize>,
     favorite_first: bool,
+    source_descriptor: Option<PlaySourceDescriptor>,
 }
 pub(in crate::ui) struct UiPerfOptions {
     max_gap_ms: u64,
@@ -632,6 +637,7 @@ pub(in crate::ui) struct GroupedDetailData {
     summary: String,
     tracks: Vec<Track>,
     table_context: &'static str,
+    source_descriptor: Option<PlaySourceDescriptor>,
 }
 pub(in crate::ui) struct Shell {
     state: AppState,

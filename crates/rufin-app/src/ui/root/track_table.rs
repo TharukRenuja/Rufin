@@ -1,3 +1,4 @@
+use super::library::item_at;
 use super::track_table_popover;
 use super::*;
 
@@ -6,6 +7,7 @@ impl Shell {
         self: &Rc<Self>,
         tracks: Vec<Track>,
         context: &str,
+        source_descriptor: Option<PlaySourceDescriptor>,
     ) -> gtk::Widget {
         self.tracks_table_with_options(
             tracks,
@@ -15,6 +17,7 @@ impl Shell {
                 expand: false,
                 max_visible_rows: Some(5),
                 favorite_first: true,
+                source_descriptor,
             },
         )
     }
@@ -36,6 +39,14 @@ impl Shell {
         });
         let server_search = page_cursor.is_some();
         let paged_query = Rc::new(RefCell::new(String::new()));
+        let play_context = options.source_descriptor.clone().map(|descriptor| {
+            track_table_play_context(
+                self,
+                descriptor,
+                Rc::clone(&paged_query),
+                options.favorite_first,
+            )
+        });
 
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         toolbar.add_css_class("track-toolbar");
@@ -82,6 +93,7 @@ impl Shell {
 
         let controller = self.controller.clone();
         let model_for_activate = model.clone();
+        let play_context_for_activate = play_context.clone();
         table.connect_activate(move |_, position| {
             let Some(item) = model_for_activate.item(position) else {
                 return;
@@ -89,7 +101,13 @@ impl Shell {
             let Ok(boxed) = item.downcast::<glib::BoxedAnyObject>() else {
                 return;
             };
-            controller.play_now(boxed.borrow::<Track>().clone());
+            play_track_table_item(
+                &controller,
+                &model_for_activate,
+                play_context_for_activate.as_ref(),
+                position,
+                boxed.borrow::<Track>().clone(),
+            );
         });
 
         let model_for_search = model.clone();
@@ -98,10 +116,10 @@ impl Shell {
         let page_cursor_for_search = page_cursor.clone();
         let paged_query_for_search = Rc::clone(&paged_query);
         search.connect_search_changed(move |entry| {
+            let query = entry.text().trim().to_string();
+            *paged_query_for_search.borrow_mut() = query.clone();
             let settings = shell.state.settings.borrow().track_table.clone();
             if let Some(cursor) = page_cursor_for_search.as_ref() {
-                let query = entry.text().trim().to_string();
-                *paged_query_for_search.borrow_mut() = query.clone();
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
@@ -224,4 +242,41 @@ impl Shell {
         wrapper.set_widget_name(context);
         wrapper.upcast()
     }
+}
+fn play_track_table_item(
+    controller: &crate::controller::AppController,
+    model: &gio::ListStore,
+    play_context: Option<&LoadedTrackPlayContext>,
+    position: u32,
+    fallback_track: Track,
+) {
+    let Some(play_context) = play_context else {
+        controller.play_now(fallback_track);
+        return;
+    };
+    let position = position as usize;
+    let anchor_index = item_at::<Track>(model, position as u32)
+        .is_some_and(|track| track.id == fallback_track.id)
+        .then_some(position)
+        .or_else(|| {
+            (0..model.n_items()).find_map(|position| {
+                item_at::<Track>(model, position)
+                    .is_some_and(|track| track.id == fallback_track.id)
+                    .then_some(position as usize)
+            })
+        });
+    let Some(anchor_index) = anchor_index else {
+        controller.play_now(fallback_track);
+        return;
+    };
+    let Some(activation) = loaded_tracks_window_play_activation(
+        play_context.source_key(),
+        model.n_items() as usize,
+        anchor_index,
+        |index| item_at::<Track>(model, index as u32),
+    ) else {
+        controller.play_now(fallback_track);
+        return;
+    };
+    controller.play_activation(activation);
 }

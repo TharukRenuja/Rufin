@@ -9,7 +9,7 @@ use super::startup_reveal::{
 };
 use super::{
     AutoLyricsRequest, GRID_COVER_SIZE, LocalSourceCacheGateAction, PLAYLIST_ENTRY_SORTS,
-    PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision,
+    PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision, album_play_activation,
     auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
     cover::record_cover_path_lookup_request, current_playback_track_id,
     home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
@@ -19,16 +19,19 @@ use super::{
     playlist_detail_header_orientation_for_width, playlist_detail_route_margin_for_width,
     playlist_detail_sort_width_for_width, playlist_detail_toolbar_orientation_for_width,
     playlist_drop_index, playlist_entries_for_state, playlist_entry_play_count_text,
-    playlist_tracks_starting_at, preferences_login_status_toast_message,
+    playlist_play_activation, preferences_login_status_toast_message,
     queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
     snapshot_local_source_cache_gate_action,
 };
-use crate::controller::{LyricsSearchResult, PlaybackPerfEvent};
+use crate::controller::{
+    LyricsSearchResult, NormalizedPlayTarget, PlaybackPerfEvent, normalize_loaded_source_activation,
+};
 use gdk_pixbuf::{Colorspace, Pixbuf};
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistId, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,
-    LibraryLayout, LibrarySourceSelection, PlaylistId, QueueEntry, QueueEntryId, QueueSnapshot,
-    RepeatMode, Route, SearchKind, ServerId, Track, TrackId, TrackSortKey, TrackTableSettings,
+    LibraryLayout, LibrarySourceSelection, PlaylistId, QueueAnchor, QueueEntry, QueueEntryId,
+    QueueSnapshot, RepeatMode, Route, SearchKind, ServerId, Track, TrackId, TrackSortKey,
+    TrackTableSettings,
 };
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
 use std::collections::HashMap;
@@ -1526,32 +1529,63 @@ pub(in crate::ui) fn playlist_entry_play_count_text_matches_track_field_format()
     assert_eq!(playlist_entry_play_count_text(Some(42)), "42");
 }
 #[test]
-pub(in crate::ui) fn playlist_tracks_starting_at_queues_clicked_entry_first() {
-    let entries = (1..=4)
+pub(in crate::ui) fn playlist_activation_distinguishes_duplicate_track_occurrences() {
+    let mut duplicate = test_track("Artist", None);
+    duplicate.id = TrackId::fake(7);
+    let activation = playlist_play_activation(
+        PlaylistId::fake(3),
+        vec![
+            PlaylistEntry {
+                entry_id: "entry-a".to_string(),
+                track: duplicate.clone(),
+            },
+            PlaylistEntry {
+                entry_id: "entry-b".to_string(),
+                track: duplicate,
+            },
+        ],
+        1,
+        &PlaylistEntryListState::default(),
+    )
+    .expect("playlist activation should be available");
+    let normalized = normalize_loaded_source_activation(activation).unwrap();
+
+    let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
+        panic!("playlist activation should replace the queue");
+    };
+    assert!(matches!(
+        replacement.anchor,
+        QueueAnchor::SourceOccurrence {
+            source_index: 1,
+            source_item_id: Some(ref id),
+            ..
+        } if id == "entry-b"
+    ));
+}
+#[test]
+pub(in crate::ui) fn album_activation_keeps_album_order_and_clicked_track_anchor() {
+    let tracks = (1..=3)
         .map(|number| {
             let mut track = test_track("Artist", None);
             track.id = TrackId::fake(number);
-            PlaylistEntry {
-                entry_id: format!("entry-{number}"),
-                track,
-            }
+            track
         })
         .collect::<Vec<_>>();
+    let activation =
+        album_play_activation(AlbumId::fake(1), tracks, 1, None).expect("album activation");
+    let normalized = normalize_loaded_source_activation(activation).unwrap();
 
-    let tracks = playlist_tracks_starting_at(&entries, 2);
-
-    assert_eq!(
-        tracks
-            .iter()
-            .map(|track| track.id.clone())
-            .collect::<Vec<_>>(),
-        vec![
-            TrackId::fake(3),
-            TrackId::fake(4),
-            TrackId::fake(1),
-            TrackId::fake(2)
-        ]
-    );
+    let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
+        panic!("album activation should replace the queue");
+    };
+    assert_eq!(replacement.items.len(), 3);
+    assert!(matches!(
+        replacement.anchor,
+        QueueAnchor::SourceOccurrence {
+            source_index: 1,
+            ..
+        }
+    ));
 }
 #[test]
 pub(in crate::ui) fn playlist_drop_index_accounts_for_removed_source_row() {

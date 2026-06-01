@@ -10,10 +10,12 @@ use super::layout::{
     home_album_content_width, home_album_page_size,
 };
 use super::{
-    GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, Shell, add_card_label_link,
-    add_link_hover, album_artist_route, favorite_button_is_active, favorite_icon_button,
-    icon_button, install_album_context_menu, install_track_context_menu,
-    set_favorite_button_active, stable_seed, track_artist_route,
+    GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, PlaylistEntryListState,
+    Shell, add_card_label_link, add_link_hover, album_artist_route, favorite_button_is_active,
+    favorite_icon_button, icon_button, install_album_context_menu, install_track_context_menu,
+    loaded_tracks_play_activation, playlist_play_activation, playlist_play_source_key,
+    selected_music_folder_id, set_favorite_button_active, smart_playlist_play_source_key,
+    stable_seed, track_artist_route,
 };
 use crate::controller::AppController;
 
@@ -253,6 +255,15 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
 }
 
 pub(super) fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
+    track_cover_tile_with_play_action(shell, track, size, None)
+}
+
+pub(super) fn track_cover_tile_with_play_action(
+    shell: &Rc<Shell>,
+    track: &Track,
+    size: i32,
+    play_action: Option<Rc<dyn Fn()>>,
+) -> gtk::Widget {
     let overlay = cover_overlay(size);
 
     let cover_button = gtk::Button::new();
@@ -267,15 +278,27 @@ pub(super) fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     )));
     let controller = shell.controller.clone();
     let track_for_play = track.clone();
-    cover_button.connect_clicked(move |_| controller.play_now(track_for_play.clone()));
+    let button_play_action = play_action.clone();
+    cover_button.connect_clicked(move |_| {
+        if let Some(play_action) = button_play_action.as_ref() {
+            play_action();
+        } else {
+            controller.play_now(track_for_play.clone());
+        }
+    });
     overlay.set_child(Some(&cover_button));
 
     let controls = cover_hover_controls(size, "Play track", track.favorite);
     let controller = shell.controller.clone();
     let track_for_play = track.clone();
-    controls
-        .play
-        .connect_clicked(move |_| controller.play_now(track_for_play.clone()));
+    let hover_play_action = play_action.clone();
+    controls.play.connect_clicked(move |_| {
+        if let Some(play_action) = hover_play_action.as_ref() {
+            play_action();
+        } else {
+            controller.play_now(track_for_play.clone());
+        }
+    });
 
     let controller = shell.controller.clone();
     let track_for_play_next = track.clone();
@@ -332,7 +355,19 @@ pub(super) fn playlist_cover_tile(
     let playlist_id = playlist.id.clone();
     controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
-            controller.play_tracks_now(detail.tracks);
+            let state = PlaylistEntryListState::default();
+            let activation = if detail.entries.is_empty() {
+                loaded_tracks_play_activation(
+                    playlist_play_source_key(playlist_id.clone(), &state),
+                    detail.tracks,
+                    0,
+                )
+            } else {
+                playlist_play_activation(playlist_id.clone(), detail.entries, 0, &state)
+            };
+            if let Some(activation) = activation {
+                controller.play_activation(activation);
+            }
         }
     });
     let controller = shell.controller.clone();
@@ -385,9 +420,19 @@ pub(super) fn smart_playlist_cover_tile(
     let controls = cover_play_hover_controls(size, "Play smart playlist");
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            controller.play_tracks_now(detail.tracks);
+            if let Some(activation) = loaded_tracks_play_activation(
+                smart_playlist_play_source_key(
+                    &detail.smart_playlist,
+                    selected_music_folder_id.clone(),
+                ),
+                detail.tracks,
+                0,
+            ) {
+                controller.play_activation(activation);
+            }
         }
     });
     let controller = shell.controller.clone();

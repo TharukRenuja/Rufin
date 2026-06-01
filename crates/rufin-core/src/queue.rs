@@ -177,6 +177,8 @@ pub enum SourceOrder {
     },
     FolderDisplayed {
         query: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter_key: Option<String>,
         sort: TrackSortDescriptor,
     },
     SearchDisplayed {
@@ -1404,9 +1406,14 @@ fn stable_source_order(order: &SourceOrder) -> String {
             stable_playlist_entry_sort(sort),
             descending
         ),
-        SourceOrder::FolderDisplayed { query, sort } => format!(
-            "folder-displayed;query={};sort={}",
+        SourceOrder::FolderDisplayed {
+            query,
+            filter_key,
+            sort,
+        } => format!(
+            "folder-displayed;query={};filter-key={};sort={}",
             stable_optional_str(query.as_deref()),
+            stable_optional_str(filter_key.as_deref()),
             stable_track_sort(sort)
         ),
         SourceOrder::SearchDisplayed { sort } => {

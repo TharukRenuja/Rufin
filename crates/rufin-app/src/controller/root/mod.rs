@@ -13,10 +13,10 @@ use rufin_core::ThemePreference;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
     HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, MusicFolder,
-    MusicFolderId, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
-    QueueReplacement, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist,
-    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, Track,
-    TrackId,
+    MusicFolderId, PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistId,
+    QueueEngine, QueueEntry, QueueEntryId, QueueReplacement, QueueSnapshot, RepeatMode, ServerId,
+    ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistDetail, SmartPlaylistId, SourceOrder, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -111,8 +111,10 @@ pub(in crate::controller) use controller_startup::*;
 pub(in crate::controller) use lyrics_local_access_tests::{
     controller_from_store_for_test, saved_server, unique_test_dir,
 };
-pub(in crate::controller) use play_activation::{
-    NormalizedPlayTarget, PlayAction, PlayActivation, normalize_loaded_source_activation,
+pub(crate) use play_activation::{
+    FULL_LOADED_LIMIT, LoadedCompleteness, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
+    MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayAction, PlayActivation, PlayAnchor,
+    PlaySourceItem, PlayTarget, normalize_loaded_source_activation,
 };
 use playback_activity::PlaybackActivityState;
 pub(in crate::controller) use playback_queue::*;

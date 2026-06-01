@@ -84,6 +84,7 @@ impl Shell {
             loading: std::cell::Cell::new(false),
         });
         let query = Rc::new(RefCell::new(String::new()));
+        let play_query = Rc::clone(&query);
         {
             let shell = Rc::clone(self);
             let model = model.clone();
@@ -194,12 +195,26 @@ impl Shell {
             !complete_page,
         );
         let shell_started = Instant::now();
+        let play_context = track_collection_play_context(
+            self,
+            PlaySourceDescriptor::GlobalTracks {
+                selected_music_folder_id: selected_music_folder_id(self),
+            },
+            LibraryListKey::Tracks,
+            play_query,
+            false,
+        );
         let view = self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Tracks,
             empty: tracks.borrow().is_empty(),
             empty_body: "Cached tracks will appear here after the background sync finishes.",
             search,
-            content: track_collection_widget(self, model, LibraryListKey::Tracks),
+            content: track_collection_widget(
+                self,
+                model,
+                LibraryListKey::Tracks,
+                Some(play_context),
+            ),
             load_next: if complete_page { None } else { Some(load_next) },
             configure_scroller: Some(track_viewport_warm),
         });

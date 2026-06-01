@@ -1,12 +1,13 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{Folder, FolderPathItem, Route, Track, format_duration};
+use rufin_core::{Folder, FolderPathItem, PlaySourceKey, Route, Track, format_duration};
 use rufin_provider::FolderDetail;
 
 use super::{
     PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, THUMB_COVER_SIZE,
-    install_track_context_menu, sort_tracks_with_options, stable_seed, track_matches_query,
+    folder_play_source_key, install_track_context_menu, loaded_tracks_play_activation,
+    selected_music_folder_id, sort_tracks_with_options, stable_seed, track_matches_query,
 };
 use crate::i18n::tr;
 
@@ -273,6 +274,8 @@ fn populate_folder_table(
         .collect::<Vec<_>>();
     let settings = shell.state.settings.borrow().track_table.clone();
     sort_tracks_with_options(&mut tracks, &settings, false);
+    let source_key =
+        folder_play_source_key(path, &query, &settings, selected_music_folder_id(shell));
 
     let name_column_width = name_column_width(&folders, &tracks);
     table.append(&folder_table_header(name_column_width));
@@ -295,6 +298,7 @@ fn populate_folder_table(
             position,
             track,
             name_column_width,
+            source_key.clone(),
         ));
     }
 
@@ -385,6 +389,7 @@ fn folder_table_track_row(
     position: usize,
     track: &Track,
     name_column_width: i32,
+    source_key: PlaySourceKey,
 ) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     row.add_css_class("folder-table-row");
@@ -406,7 +411,13 @@ fn folder_table_track_row(
         table_for_click.select_row(Some(&row_for_click));
         row_for_click.grab_focus();
         if n_press == 2 {
-            controller.play_tracks_now(rotated_from_position(&tracks_for_click, position));
+            if let Some(activation) = loaded_tracks_play_activation(
+                source_key.clone(),
+                tracks_for_click.as_ref().clone(),
+                position,
+            ) {
+                controller.play_activation(activation);
+            }
         }
     });
     row.add_controller(gesture);
@@ -521,25 +532,50 @@ fn path_for_child(path: &[FolderPathItem], folder: &Folder) -> Vec<FolderPathIte
     next
 }
 
-fn rotated_from_position<T: Clone>(items: &[T], position: usize) -> Vec<T> {
-    if items.is_empty() || position >= items.len() {
-        return Vec::new();
-    }
-    items[position..]
-        .iter()
-        .chain(items[..position].iter())
-        .cloned()
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::controller::{NormalizedPlayTarget, normalize_loaded_source_activation};
+    use rufin_core::{
+        AlbumId, FolderId, FolderPathItem, MusicFolderId, QueueAnchor, QueueReplacementSource,
+        SourceOrder, Track, TrackId, TrackSortKey, TrackTableSettings,
+    };
+
     #[test]
-    fn rotated_from_position_queues_clicked_item_first() {
-        assert_eq!(
-            super::rotated_from_position(&[1, 2, 3, 4], 2),
-            vec![3, 4, 1, 2]
+    fn folder_activation_preserves_source_order_with_clicked_anchor() {
+        let tracks = vec![track(1), track(2), track(3)];
+        let source_key = super::folder_play_source_key(
+            &[FolderPathItem {
+                id: FolderId::fake(8),
+                name: "Rock".to_string(),
+            }],
+            "track",
+            &TrackTableSettings {
+                sort_key: TrackSortKey::Title,
+                ..TrackTableSettings::default()
+            },
+            Some(MusicFolderId::fake(4)),
         );
+        let activation = super::loaded_tracks_play_activation(source_key, tracks, 2).unwrap();
+        let normalized = normalize_loaded_source_activation(activation).unwrap();
+
+        let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
+            panic!("folder activation should create a queue replacement");
+        };
+        assert!(matches!(
+            replacement.anchor,
+            QueueAnchor::SourceOccurrence {
+                source_index: 2,
+                ..
+            }
+        ));
+        assert_eq!(replacement.items.len(), 3);
+        let QueueReplacementSource::Source(source) = replacement.source else {
+            panic!("folder activation should keep folder source");
+        };
+        let SourceOrder::FolderDisplayed { query, .. } = source.source_key.order else {
+            panic!("folder activation should keep folder source order");
+        };
+        assert_eq!(query.as_deref(), Some("track"));
     }
 
     #[test]
@@ -605,5 +641,34 @@ mod tests {
 
         assert!(width > super::FOLDER_NAME_COLUMN_MIN_WIDTH);
         assert!(width <= super::FOLDER_NAME_COLUMN_MAX_WIDTH);
+    }
+
+    fn track(number: u32) -> Track {
+        Track {
+            id: TrackId::fake(number),
+            album_id: AlbumId::fake(1),
+            title: format!("Track {number}"),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
+            album: "Album".to_string(),
+            year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number: 1,
+            track_number: number as u16,
+            image_ref: None,
+            genres: Vec::new(),
+            local_path: None,
+            source_format: None,
+            comment: None,
+            skip_count: None,
+        }
     }
 }

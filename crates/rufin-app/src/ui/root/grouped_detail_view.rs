@@ -13,6 +13,7 @@ impl Shell {
             summary,
             tracks,
             table_context,
+            source_descriptor,
         } = data;
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
@@ -57,7 +58,12 @@ impl Shell {
             } else {
                 LibraryListKey::Tracks
             };
-            wrapper.append(&self.library_tracks_panel(tracks, key, table_context));
+            wrapper.append(&self.library_tracks_panel_with_source(
+                tracks,
+                key,
+                table_context,
+                source_descriptor,
+            ));
         }
         scroller.set_child(Some(&wrapper));
         scroller.upcast()

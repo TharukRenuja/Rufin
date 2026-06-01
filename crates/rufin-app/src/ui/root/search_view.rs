@@ -3,7 +3,7 @@ use super::*;
 impl Shell {
     pub(in crate::ui) fn search_view(
         self: &Rc<Self>,
-        _query: &str,
+        query: &str,
         library: LibrarySnapshot,
     ) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
@@ -34,10 +34,14 @@ impl Shell {
         }
 
         if has_tracks {
-            wrapper.append(&self.library_tracks_panel(
+            wrapper.append(&self.library_tracks_panel_with_source(
                 library.search.tracks,
                 LibraryListKey::Tracks,
                 "search",
+                Some(PlaySourceDescriptor::SearchResults {
+                    query: query.to_string(),
+                    selected_music_folder_id: selected_music_folder_id(self),
+                }),
             ));
         } else if !has_albums && !has_artists && !has_playlists {
             wrapper.append(&self.route_empty_view("No cached results found."));

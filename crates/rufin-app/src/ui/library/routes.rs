@@ -927,11 +927,12 @@ impl Shell {
             })),
         })
     }
-    pub(in crate::ui) fn library_tracks_panel(
+    pub(in crate::ui) fn library_tracks_panel_with_source(
         self: &Rc<Self>,
         tracks: Vec<Track>,
         key: LibraryListKey,
         context: &str,
+        source_descriptor: Option<PlaySourceDescriptor>,
     ) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
         let resize_scroller = scroller.clone();
@@ -939,7 +940,7 @@ impl Shell {
             set_library_table_content_height(&resize_scroller, row_count);
         });
         let (_empty, search, view, _model, _settings) =
-            self.searchable_track_collection(tracks, key, Some(resize));
+            self.searchable_track_collection(tracks, key, Some(resize), source_descriptor);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
         wrapper.set_hexpand(true);
@@ -962,9 +963,10 @@ impl Shell {
         key: LibraryListKey,
         context: &str,
         content_margin_start: i32,
+        source_descriptor: Option<PlaySourceDescriptor>,
     ) -> gtk::Widget {
         let (_empty, search, view, model, settings) =
-            self.searchable_track_collection(tracks, key, None);
+            self.searchable_track_collection(tracks, key, None, source_descriptor);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
         wrapper.set_hexpand(true);
@@ -990,8 +992,17 @@ impl Shell {
         context: &str,
         empty_body: &str,
     ) -> gtk::Widget {
+        let source_descriptor = match key {
+            LibraryListKey::FavoriteTracks => Some(PlaySourceDescriptor::FavoriteTracks {
+                selected_music_folder_id: selected_music_folder_id(self),
+            }),
+            LibraryListKey::Tracks => Some(PlaySourceDescriptor::GlobalTracks {
+                selected_music_folder_id: selected_music_folder_id(self),
+            }),
+            _ => None,
+        };
         let (empty, search, view, model, settings) =
-            self.searchable_track_collection(tracks, key, None);
+            self.searchable_track_collection(tracks, key, None, source_descriptor);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -1018,6 +1029,7 @@ impl Shell {
         tracks: Vec<Track>,
         key: LibraryListKey,
         on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
+        source_descriptor: Option<PlaySourceDescriptor>,
     ) -> (
         bool,
         gtk::SearchEntry,
@@ -1027,6 +1039,7 @@ impl Shell {
     ) {
         let empty = tracks.is_empty();
         let source_tracks = Rc::new(tracks);
+        let query = Rc::new(RefCell::new(String::new()));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let settings = self.library_settings(key);
         let visible_count =
@@ -1043,7 +1056,9 @@ impl Shell {
             let model = model.clone();
             let source_tracks = Rc::clone(&source_tracks);
             let on_visible_count_changed = on_visible_count_changed.clone();
+            let query = Rc::clone(&query);
             search.connect_search_changed(move |entry| {
+                *query.borrow_mut() = entry.text().trim().to_string();
                 let settings = shell.library_settings(key);
                 let visible_count = populate_track_model_for_settings(
                     &model,
@@ -1058,7 +1073,10 @@ impl Shell {
                 }
             });
         }
-        let view = track_collection_widget(self, model.clone(), key);
+        let play_context = source_descriptor.map(|descriptor| {
+            track_collection_play_context(self, descriptor, key, Rc::clone(&query), false)
+        });
+        let view = track_collection_widget(self, model.clone(), key, play_context);
         (empty, search, view, model, settings)
     }
 }
