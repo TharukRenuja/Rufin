@@ -2,7 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 use super::sidebar::*;
 use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
-pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
+pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 3;
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 4;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
@@ -263,12 +263,11 @@ fn default_sidebar_route_items() -> Vec<SidebarRouteItemSettings> {
         })
         .collect()
 }
-pub(super) const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 5] = [
+pub(super) const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 4] = [
     TrackTableColumn::TrackNumber,
     TrackTableColumn::Title,
     TrackTableColumn::Album,
     TrackTableColumn::Year,
-    TrackTableColumn::Favorite,
 ];
 pub(super) fn default_home_sections() -> Vec<HomeSectionKind> {
     vec![
@@ -674,7 +673,7 @@ impl LibraryField {
             Self::ReleaseDate => "Release date",
             Self::DateAdded => "Date added",
             Self::LastPlayed => "Last played",
-            Self::PlayCount => "Play count",
+            Self::PlayCount => "Plays",
             Self::UserRating => "Rating",
             Self::Genre => "Genre",
             Self::TrackNumber => "Track",

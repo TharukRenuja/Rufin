@@ -855,7 +855,10 @@ impl Shell {
             search,
             content: playlist_collection_widget(self, model),
             load_next: if complete_page { None } else { Some(load_next) },
-            configure_scroller: None,
+            configure_scroller: Some(Rc::new(|scroller| {
+                scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
+                scroller.set_min_content_width(0);
+            })),
         })
     }
     pub(in crate::ui) fn library_smart_playlists_view(self: &Rc<Self>) -> gtk::Widget {
@@ -919,7 +922,7 @@ impl Shell {
             content: smart_playlist_collection_widget(self, model),
             load_next: None,
             configure_scroller: Some(Rc::new(|scroller| {
-                scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+                scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
                 scroller.set_min_content_width(0);
             })),
         })
@@ -939,9 +942,16 @@ impl Shell {
             self.searchable_track_collection(tracks, key, Some(resize));
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
+        wrapper.set_hexpand(true);
+        wrapper.set_halign(gtk::Align::Fill);
         wrapper.append(&self.library_toolbar(key, search));
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
         scroller.set_min_content_width(0);
+        scroller.set_propagate_natural_width(false);
+        scroller.set_hexpand(true);
+        scroller.set_halign(gtk::Align::Fill);
+        view.set_hexpand(true);
+        view.set_halign(gtk::Align::Fill);
         scroller.set_child(Some(&view));
         wrapper.append(&scroller);
         wrapper.upcast()
@@ -967,7 +977,7 @@ impl Shell {
         let scroller = gtk::ScrolledWindow::new();
         configure_library_route_scroller(self, &scroller);
         connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         view.set_margin_start(content_margin_start);
         scroller.set_child(Some(&view));
         wrapper.append(&scroller);

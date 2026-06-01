@@ -76,7 +76,8 @@ use gtk::gio;
 use gtk::glib;
 use layout::{
     COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, resolve_layout, route_content_width,
+    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, detail_showcase_cover_size,
+    detail_showcase_spacing, resolve_layout, route_content_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;

@@ -55,7 +55,7 @@ pub(super) fn build_content_chrome(
     // Route-level scrollers own horizontal overflow. The main pane only
     // provides the clip boundary, otherwise child natural widths can surface
     // as duplicate horizontal scrollbars.
-    main_well.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+    main_well.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
     main_well.set_overflow(gtk::Overflow::Hidden);
     main_well.set_min_content_width(0);
     main_well.set_propagate_natural_width(false);
@@ -67,7 +67,7 @@ pub(super) fn build_content_chrome(
     let right_panel_slot = gtk::ScrolledWindow::new();
     right_panel_slot.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
     right_panel_slot.set_overflow(gtk::Overflow::Hidden);
-    right_panel_slot.set_propagate_natural_width(true);
+    right_panel_slot.set_propagate_natural_width(false);
     right_panel_slot.set_propagate_natural_height(false);
     right_panel_slot.set_hexpand(false);
     right_panel_slot.set_vexpand(true);

@@ -1687,7 +1687,7 @@ pub(in crate::ui) fn smart_playlists_use_responsive_cards() {
 pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
     let spec = super::route_boundary_spec();
 
-    assert_eq!(spec.horizontal_policy, gtk::PolicyType::Automatic);
+    assert_eq!(spec.horizontal_policy, gtk::PolicyType::External);
     assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
     assert_eq!(spec.overflow, gtk::Overflow::Hidden);
     assert_eq!(spec.min_content_width, 0);
@@ -1696,10 +1696,11 @@ pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
     assert!(spec.vexpand);
 }
 #[test]
-pub(in crate::ui) fn smart_playlist_route_boundary_disables_horizontal_scrolling() {
-    let spec = super::route_boundary_spec_for_route(&Route::SmartPlaylists);
-
-    assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
+pub(in crate::ui) fn route_boundary_hides_horizontal_scroll_for_library_routes() {
+    for route in [Route::Artists, Route::SmartPlaylists] {
+        let spec = super::route_boundary_spec_for_route(&route);
+        assert_eq!(spec.horizontal_policy, gtk::PolicyType::External);
+    }
 }
 #[test]
 pub(in crate::ui) fn regular_playlist_routes_use_default_route_width_boundary() {

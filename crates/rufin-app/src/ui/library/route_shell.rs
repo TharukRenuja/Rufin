@@ -54,7 +54,9 @@ impl Shell {
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.append(&self.library_toolbar(key, search));
-        wrapper.append(&album_collection_widget(self, model, key));
+        wrapper.append(&non_propagating_width_clip(album_collection_widget(
+            self, model, key,
+        )));
         wrapper.upcast()
     }
     pub(in crate::ui) fn library_tracks_page(
@@ -466,7 +468,7 @@ impl Shell {
         populate_library_field_rows(self, key, &fields_group, &rows);
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_child(Some(&content));
         toolbar.set_content(Some(&scroller));
 
@@ -637,4 +639,20 @@ fn append_library_toolbar_control(
     } else {
         toolbar.append(child);
     }
+}
+
+fn non_propagating_width_clip(child: gtk::Widget) -> gtk::Widget {
+    child.set_hexpand(true);
+    child.set_halign(gtk::Align::Fill);
+
+    let clip = gtk::ScrolledWindow::new();
+    clip.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+    clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_min_content_width(0);
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(true);
+    clip.set_hexpand(true);
+    clip.set_halign(gtk::Align::Fill);
+    clip.set_child(Some(&child));
+    clip.upcast()
 }

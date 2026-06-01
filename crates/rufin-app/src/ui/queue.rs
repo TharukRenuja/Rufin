@@ -162,7 +162,7 @@ impl Shell {
         row.append(&labels);
         row.append(&year);
         install_queue_row_activation(&row, &self.controller, entry.id.clone());
-        install_queue_row_context_menu(&row, &self.controller, entry.id.clone());
+        install_queue_row_context_menu(&row, self, entry);
         row.upcast()
     }
 
@@ -241,7 +241,7 @@ impl Shell {
         }
 
         install_queue_row_activation(&row, &self.controller, entry.id.clone());
-        install_queue_row_context_menu(&row, &self.controller, entry.id.clone());
+        install_queue_row_context_menu(&row, self, entry);
         row.upcast()
     }
 
@@ -468,21 +468,23 @@ fn install_queue_row_activation(
     row.add_controller(click);
 }
 
-fn install_queue_row_context_menu(
-    row: &gtk::Box,
-    controller: &AppController,
-    entry_id: QueueEntryId,
-) {
+fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &QueueEntry) {
     let menu = gio::Menu::new();
     menu.append(Some(&tr("Remove from Queue")), Some("queue.remove"));
     menu.append(Some(&tr("Play Now")), Some("queue.play-now"));
     menu.append(Some(&tr("Play Next")), Some("queue.play-next"));
+    let artist_route = queue_artist_route(entry);
+    if artist_route.is_some() {
+        menu.append(Some(&tr("Go to Artist")), Some("queue.go-artist"));
+    }
 
     let popover = gtk::PopoverMenu::from_model(Some(&menu));
     popover.add_css_class("queue-context-menu");
     popover.set_parent(row);
 
     let actions = gio::SimpleActionGroup::new();
+    let controller = shell.controller.clone();
+    let entry_id = entry.id.clone();
 
     let remove = gio::SimpleAction::new("remove", None);
     let remove_controller = controller.clone();
@@ -519,6 +521,21 @@ fn install_queue_row_context_menu(
     });
     actions.add_action(&play_next);
 
+    if let Some(artist_route) = artist_route {
+        let go_artist = gio::SimpleAction::new("go-artist", None);
+        let action_shell = Rc::clone(shell);
+        let go_artist_popover = popover.downgrade();
+        go_artist.connect_activate(move |_, _| {
+            if let Some(popover) = go_artist_popover.upgrade() {
+                popover.popdown();
+            }
+            let shell = Rc::clone(&action_shell);
+            let route = artist_route.clone();
+            glib::idle_add_local_once(move || shell.navigate(route));
+        });
+        actions.add_action(&go_artist);
+    }
+
     row.insert_action_group("queue", Some(&actions));
 
     let click_popover = popover.downgrade();
@@ -549,6 +566,19 @@ fn install_queue_row_context_menu(
         }
     });
     row.add_controller(key_controller);
+}
+
+fn queue_artist_route(entry: &QueueEntry) -> Option<Route> {
+    if let Some(artist_id) = entry.artist_id.clone() {
+        Some(Route::ArtistDetail(artist_id))
+    } else if !entry.artist.trim().is_empty() {
+        Some(Route::Search {
+            query: entry.artist.clone(),
+            kind: SearchKind::Artists,
+        })
+    } else {
+        None
+    }
 }
 
 fn queue_link_label(text: &str) -> gtk::Label {

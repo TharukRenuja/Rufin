@@ -86,7 +86,7 @@ impl Shell {
         populate_folder_table(self, &table, &path, &detail, "");
 
         let table_scroller = gtk::ScrolledWindow::new();
-        table_scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        table_scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         table_scroller.set_min_content_width(0);
         table_scroller.set_hexpand(true);
         table_scroller.set_vexpand(true);

@@ -60,6 +60,10 @@ fn present_track_context_menu_inner(
         })),
         Some("track.favorite"),
     );
+    let artist_route = track_artist_route(&track);
+    if artist_route.is_some() {
+        menu.append(Some(&tr("Go to Artist")), Some("track.go-artist"));
+    }
     menu.append(Some(&tr("Go to Album")), Some("track.go-album"));
     if remove_action.is_some() {
         menu.append(
@@ -142,6 +146,21 @@ fn present_track_context_menu_inner(
     });
     actions.add_action(&favorite_action);
 
+    if let Some(artist_route) = artist_route {
+        let go_artist = gio::SimpleAction::new("go-artist", None);
+        let action_shell = Rc::clone(shell);
+        let action_popover = popover.downgrade();
+        go_artist.connect_activate(move |_, _| {
+            if let Some(popover) = action_popover.upgrade() {
+                popover.popdown();
+            }
+            let shell = Rc::clone(&action_shell);
+            let route = artist_route.clone();
+            glib::idle_add_local_once(move || shell.navigate(route));
+        });
+        actions.add_action(&go_artist);
+    }
+
     let go_album = gio::SimpleAction::new("go-album", None);
     let go_album_shell = Rc::clone(shell);
     let album_id = track.album_id.clone();
@@ -218,6 +237,10 @@ pub(in crate::ui) fn present_album_context_menu(
         })),
         Some("album.favorite"),
     );
+    let artist_route = album_artist_route(&album);
+    if artist_route.is_some() {
+        menu.append(Some(&tr("Go to Artist")), Some("album.go-artist"));
+    }
     menu.append(Some(&tr("Go to Album")), Some("album.go-album"));
 
     let popover = gtk::PopoverMenu::from_model(Some(&menu));
@@ -301,6 +324,21 @@ pub(in crate::ui) fn present_album_context_menu(
         controller.set_album_favorite(album_id.clone(), favorite);
     });
     actions.add_action(&favorite_action);
+
+    if let Some(artist_route) = artist_route {
+        let go_artist = gio::SimpleAction::new("go-artist", None);
+        let action_shell = Rc::clone(shell);
+        let action_popover = popover.downgrade();
+        go_artist.connect_activate(move |_, _| {
+            if let Some(popover) = action_popover.upgrade() {
+                popover.popdown();
+            }
+            let shell = Rc::clone(&action_shell);
+            let route = artist_route.clone();
+            glib::idle_add_local_once(move || shell.navigate(route));
+        });
+        actions.add_action(&go_artist);
+    }
 
     let go_album = gio::SimpleAction::new("go-album", None);
     let shell = Rc::clone(shell);

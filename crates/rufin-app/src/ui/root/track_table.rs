@@ -72,6 +72,13 @@ impl Shell {
         table.set_hexpand(true);
         table.set_single_click_activate(false);
         set_track_table_columns(self, &table, &settings);
+        {
+            let shell = Rc::clone(self);
+            table.connect_notify_local(Some("width"), move |table, _| {
+                let settings = shell.state.settings.borrow().track_table.clone();
+                fit_track_table_columns(table, &settings.visible_columns);
+            });
+        }
 
         let controller = self.controller.clone();
         let model_for_activate = model.clone();
@@ -170,7 +177,7 @@ impl Shell {
         )));
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(options.expand);
         if let Some(max_visible_rows) = options.max_visible_rows {

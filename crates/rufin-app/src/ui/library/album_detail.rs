@@ -1,5 +1,149 @@
 use super::*;
 
+const FITTED_TABLE_WIDTH_PADDING: i32 = 2;
+const FITTED_TABLE_TARGET_MIN_COLUMN_WIDTH: i32 = 44;
+const FITTED_TABLE_ABSOLUTE_MIN_COLUMN_WIDTH: i32 = 24;
+const FITTED_TABLE_ROUTE_INSET: i32 = 72;
+
+pub(in crate::ui) fn route_column_view_initial_width(shell: &Shell) -> i32 {
+    route_content_width(shell)
+        .saturating_sub(FITTED_TABLE_ROUTE_INSET)
+        .max(1)
+}
+
+pub(in crate::ui) fn fitted_column_widths(base_widths: &[i32], available_width: i32) -> Vec<i32> {
+    if base_widths.is_empty() {
+        return Vec::new();
+    }
+
+    let available_width = available_width.max(base_widths.len() as i32);
+    let base_total = base_widths.iter().sum::<i32>();
+    if base_total <= available_width {
+        let mut widths = base_widths.to_vec();
+        distribute_extra_width_to_largest_column(&mut widths, available_width);
+        return widths;
+    }
+
+    let min_widths = base_widths
+        .iter()
+        .map(|width| {
+            (*width).clamp(
+                FITTED_TABLE_ABSOLUTE_MIN_COLUMN_WIDTH,
+                FITTED_TABLE_TARGET_MIN_COLUMN_WIDTH,
+            )
+        })
+        .collect::<Vec<_>>();
+    let min_total = min_widths.iter().sum::<i32>();
+    if min_total >= available_width {
+        return proportional_column_widths(&min_widths, available_width);
+    }
+
+    let remaining = available_width - min_total;
+    let flex_weights = base_widths
+        .iter()
+        .zip(min_widths.iter())
+        .map(|(base, minimum)| base.saturating_sub(*minimum))
+        .collect::<Vec<_>>();
+    let flex_total = flex_weights.iter().sum::<i32>();
+    if flex_total <= 0 {
+        return min_widths;
+    }
+
+    let mut widths = min_widths
+        .iter()
+        .zip(flex_weights.iter())
+        .map(|(minimum, flex)| minimum + (flex * remaining / flex_total))
+        .collect::<Vec<_>>();
+    distribute_column_width_remainder(&mut widths, available_width);
+    widths
+}
+
+fn proportional_column_widths(weights: &[i32], available_width: i32) -> Vec<i32> {
+    let available_width = available_width.max(weights.len() as i32);
+    let total = weights.iter().sum::<i32>().max(1);
+    let mut widths = weights
+        .iter()
+        .map(|weight| (weight * available_width / total).max(1))
+        .collect::<Vec<_>>();
+    distribute_column_width_remainder(&mut widths, available_width);
+    widths
+}
+
+fn distribute_column_width_remainder(widths: &mut [i32], target: i32) {
+    let mut remainder = target - widths.iter().sum::<i32>();
+    let mut index = 0;
+    while remainder > 0 && !widths.is_empty() {
+        let len = widths.len();
+        widths[index % len] += 1;
+        remainder -= 1;
+        index += 1;
+    }
+    while remainder < 0 && widths.iter().any(|width| *width > 1) {
+        let pos = widths
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, width)| **width)
+            .map(|(pos, _)| pos)
+            .unwrap_or(0);
+        widths[pos] -= 1;
+        remainder += 1;
+    }
+}
+
+fn distribute_extra_width_to_largest_column(widths: &mut [i32], target: i32) {
+    let remainder = target - widths.iter().sum::<i32>();
+    if remainder <= 0 || widths.is_empty() {
+        return;
+    }
+    let pos = widths
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, width)| **width)
+        .map(|(pos, _)| pos)
+        .unwrap_or(0);
+    widths[pos] += remainder;
+}
+
+pub(in crate::ui) fn install_column_view_width_fit(
+    table: &gtk::ColumnView,
+    columns: Vec<(gtk::ColumnViewColumn, i32)>,
+    initial_width: i32,
+) {
+    if columns.is_empty() {
+        return;
+    }
+
+    let columns = Rc::new(columns);
+    apply_column_view_width_fit_to_width(columns.as_ref(), initial_width);
+    let columns_for_resize = Rc::clone(&columns);
+    table.connect_notify_local(Some("width"), move |table, _| {
+        apply_column_view_width_fit(table, columns_for_resize.as_ref());
+    });
+}
+
+fn apply_column_view_width_fit(table: &gtk::ColumnView, columns: &[(gtk::ColumnViewColumn, i32)]) {
+    let available_width = table.width().saturating_sub(FITTED_TABLE_WIDTH_PADDING);
+    if available_width <= 1 {
+        return;
+    }
+
+    apply_column_view_width_fit_to_width(columns, available_width);
+}
+
+fn apply_column_view_width_fit_to_width(
+    columns: &[(gtk::ColumnViewColumn, i32)],
+    available_width: i32,
+) {
+    if available_width <= 1 {
+        return;
+    }
+    let base_widths = columns.iter().map(|(_, width)| *width).collect::<Vec<_>>();
+    let fitted_widths = fitted_column_widths(&base_widths, available_width);
+    for ((column, _), width) in columns.iter().zip(fitted_widths) {
+        column.set_fixed_width(width.max(1));
+    }
+}
+
 pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
     let overlay = cards::cover_overlay(size);
 
@@ -164,7 +308,7 @@ pub(in crate::ui) fn track_column_for_key(
             |track| track.image_ref.clone(),
             |track| stable_seed(track.id.as_str()),
         ),
-        LibraryField::Title => track_text_column(shell, "Title", width, true, 0.0, |track| {
+        LibraryField::Title => track_text_column(shell, "Title", width, true, 0.5, |track| {
             track.title.clone()
         }),
         LibraryField::Favorite => track_favorite_column(shell),
@@ -234,7 +378,9 @@ where
     factory.connect_setup(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             let label = gtk::Label::new(None);
-            label.set_xalign(0.0);
+            label.set_xalign(0.5);
+            label.set_halign(gtk::Align::Fill);
+            label.set_hexpand(true);
             label.set_wrap(false);
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
             label.set_single_line_mode(true);
@@ -276,6 +422,8 @@ pub(in crate::ui) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewC
             let label = gtk::Label::new(None);
             label.add_css_class("muted");
             label.set_xalign(0.5);
+            label.set_halign(gtk::Align::Fill);
+            label.set_hexpand(true);
             label.set_wrap(false);
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
             label.set_single_line_mode(true);
@@ -433,7 +581,9 @@ where
         };
         let current_album = Rc::new(RefCell::new(None::<Album>));
         let label = gtk::Label::new(None);
-        label.set_xalign(0.0);
+        label.set_xalign(0.5);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
         label.set_wrap(false);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_single_line_mode(true);
@@ -680,7 +830,9 @@ where
             return;
         };
         let label = gtk::Label::new(Some(&(value)(&artist)));
-        label.set_xalign(0.0);
+        label.set_xalign(0.5);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
         label.set_wrap(false);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_single_line_mode(true);
@@ -850,6 +1002,8 @@ where
         let current_track = Rc::new(RefCell::new(None::<Track>));
         let label = gtk::Label::new(None);
         label.set_xalign(xalign);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
         label.set_wrap(false);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_single_line_mode(true);
@@ -910,16 +1064,8 @@ where
     column
 }
 
-fn track_text_xalign(field: LibraryField) -> f32 {
-    match field {
-        LibraryField::Album
-        | LibraryField::AlbumArtist
-        | LibraryField::Artist
-        | LibraryField::Genre
-        | LibraryField::Title
-        | LibraryField::TitleMerged => 0.0,
-        _ => 0.5,
-    }
+fn track_text_xalign(_field: LibraryField) -> f32 {
+    0.5
 }
 pub(in crate::ui) fn track_merged_column<Title, Subtitle, Image, Seed>(
     shell: &Rc<Shell>,

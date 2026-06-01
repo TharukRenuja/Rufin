@@ -177,6 +177,26 @@ pub(super) fn route_content_width(shell: &Shell) -> i32 {
     )
 }
 
+pub(super) fn detail_showcase_cover_size(width: i32) -> i32 {
+    if width < 520 {
+        168
+    } else if width < 760 {
+        220
+    } else {
+        250
+    }
+}
+
+pub(super) fn detail_showcase_spacing(width: i32) -> i32 {
+    if width < 520 {
+        12
+    } else if width < 760 {
+        14
+    } else {
+        16
+    }
+}
+
 fn route_content_width_for(route_width: i32, resolved_width: i32) -> i32 {
     match (route_width > 1, resolved_width > 1) {
         (true, true) => route_width.min(resolved_width),

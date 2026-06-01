@@ -222,7 +222,7 @@ impl Shell {
         let route_margin = playlist_detail_route_margin_for_width(content_width);
         let cover_size = playlist_detail_cover_size_for_width(content_width);
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);
 
