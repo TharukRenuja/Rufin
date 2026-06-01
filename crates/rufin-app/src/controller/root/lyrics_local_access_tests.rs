@@ -720,6 +720,26 @@ pub(in crate::controller) fn lrclib_result_text_becomes_timed_lyrics() {
     assert_eq!(lyrics.lines[1].start_millis, Some(13_005));
 }
 #[test]
+pub(in crate::controller) fn selected_lrclib_result_becomes_current_track_lyrics() {
+    let result = super::LyricsSearchResult {
+        id: 12,
+        track_name: "Example Track".to_string(),
+        artist_name: "Example Artist".to_string(),
+        album_name: "Example Album".to_string(),
+        duration_seconds: 95,
+        synced_lyrics: Some("[00:01.00]line one".to_string()),
+        plain_lyrics: Some("line one".to_string()),
+    };
+
+    let lyrics = super::lyrics_from_lrclib_search_result(TrackId::new("track-preview"), &result)
+        .expect("lyrics");
+
+    assert_eq!(lyrics.track_id, TrackId::new("track-preview"));
+    assert_eq!(lyrics.source, LyricsSource::Remote);
+    assert_eq!(lyrics.lines[0].text, "line one");
+    assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
+}
+#[test]
 pub(in crate::controller) fn lrclib_duration_accepts_fractional_seconds() {
     let json = r#"{
             "id": 7,
@@ -746,6 +766,33 @@ pub(in crate::controller) fn lrclib_manual_search_uses_combined_query_first() {
     assert_eq!(
         query_pairs,
         vec![("q".to_string(), "feel my soul joy".to_string())]
+    );
+}
+#[test]
+pub(in crate::controller) fn lrclib_manual_search_keeps_single_field_fallbacks() {
+    let urls =
+        super::lrclib_search_urls("Example Artist", "Opening Theme").expect("lrclib search urls");
+    let query_sets = urls
+        .iter()
+        .map(|url| {
+            url.query_pairs()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        query_sets,
+        vec![
+            vec![("q".to_string(), "Opening Theme Example Artist".to_string())],
+            vec![
+                ("track_name".to_string(), "Opening Theme".to_string()),
+                ("artist_name".to_string(), "Example Artist".to_string()),
+            ],
+            vec![("q".to_string(), "Opening Theme".to_string())],
+            vec![("track_name".to_string(), "Opening Theme".to_string())],
+            vec![("q".to_string(), "Example Artist".to_string())],
+        ]
     );
 }
 #[test]
@@ -833,6 +880,25 @@ pub(in crate::controller) fn lrclib_search_body_decodes_feel_my_soul_result() {
     assert!(results[0].plain_lyrics.is_some());
 }
 #[test]
+pub(in crate::controller) fn lrclib_search_body_accepts_name_and_track_name_fields() {
+    let json = r#"[{
+            "id": 12,
+            "name": "Legacy Name",
+            "trackName": "Current Name",
+            "artistName": "Example Artist",
+            "albumName": "Example Album",
+            "duration": 95.0,
+            "plainLyrics": "line",
+            "syncedLyrics": null
+        }]"#;
+
+    let results = super::parse_lrclib_search_body(json).expect("parse lrclib response");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].track_name, "Current Name");
+    assert_eq!(results[0].artist_name, "Example Artist");
+}
+#[test]
 pub(in crate::controller) fn lrclib_results_prefer_matching_title_over_album_hit() {
     let mut results = vec![
         super::LyricsSearchResult {
@@ -856,6 +922,33 @@ pub(in crate::controller) fn lrclib_results_prefer_matching_title_over_album_hit
     ];
     super::order_lrclib_results(&mut results, "John Lennon", "Imagine");
     assert_eq!(results[0].track_name, "Imagine");
+}
+#[test]
+pub(in crate::controller) fn lrclib_results_prefer_compact_title_token_matches() {
+    let mut results = vec![
+        super::LyricsSearchResult {
+            id: 1,
+            track_name: "Long Title With Part Token".to_string(),
+            artist_name: "Example Artist".to_string(),
+            album_name: "Example Album".to_string(),
+            duration_seconds: 240,
+            synced_lyrics: Some("[00:01.00]line".to_string()),
+            plain_lyrics: Some("line".to_string()),
+        },
+        super::LyricsSearchResult {
+            id: 2,
+            track_name: "Part Two".to_string(),
+            artist_name: "Example Artist".to_string(),
+            album_name: "Example Album".to_string(),
+            duration_seconds: 120,
+            synced_lyrics: Some("[00:01.00]line".to_string()),
+            plain_lyrics: Some("line".to_string()),
+        },
+    ];
+
+    super::order_lrclib_results(&mut results, "", "part");
+
+    assert_eq!(results[0].track_name, "Part Two");
 }
 #[test]
 pub(in crate::controller) fn controller_events_are_sendable() {

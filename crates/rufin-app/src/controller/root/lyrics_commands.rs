@@ -153,6 +153,13 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || match lrclib_search(&artist_name, &track_name) {
             Ok(results) => {
+                debug!(
+                    track_id = %track_id,
+                    artist_name = %artist_name,
+                    track_name = %track_name,
+                    results = results.len(),
+                    "completed manual LRCLIB lyric search"
+                );
                 let _sent = events.send(ControllerEvent::LyricsSearchResults {
                     track_id,
                     artist_name,
@@ -161,6 +168,13 @@ impl AppController {
                 });
             }
             Err(error) => {
+                debug!(
+                    track_id = %track_id,
+                    artist_name = %artist_name,
+                    track_name = %track_name,
+                    %error,
+                    "manual LRCLIB lyric search failed"
+                );
                 let _sent = events.send(ControllerEvent::Error(error));
                 let _sent = events.send(ControllerEvent::LyricsSearchResults {
                     track_id,
@@ -202,5 +216,31 @@ impl AppController {
                 }
             },
         );
+    }
+    pub fn preview_lyrics_search_result(&self, track_id: TrackId, result: LyricsSearchResult) {
+        let Some((_server_id, entry, _position)) = self.current_queue_entry() else {
+            let _sent = self
+                .events
+                .send(ControllerEvent::Error("No track is playing.".to_string()));
+            return;
+        };
+        if entry.track_id != track_id {
+            let _sent = self.events.send(ControllerEvent::Error(
+                "The playing track changed before lyrics were loaded.".to_string(),
+            ));
+            return;
+        }
+        match lyrics_from_lrclib_search_result(entry.track_id, &result) {
+            Some(lyrics) => {
+                let _sent = self
+                    .events
+                    .send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+            }
+            None => {
+                let _sent = self.events.send(ControllerEvent::Error(
+                    "Selected lyric result has no lyrics to load.".to_string(),
+                ));
+            }
+        }
     }
 }

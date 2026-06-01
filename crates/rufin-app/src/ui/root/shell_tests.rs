@@ -12,11 +12,12 @@ use super::{
     SnapshotRenderDecision, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
     cover::record_cover_path_lookup_request, current_playback_track_id,
     home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
-    local_source_snapshot_is_syncing, playlist_drop_index, playlist_entries_for_state,
-    preferences_login_status_toast_message, queue_source_waits_for_snapshot,
-    seekbar_target_seconds, snapshot_event_outcome, snapshot_local_source_cache_gate_action,
+    local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_search_response_matches_query,
+    playlist_drop_index, playlist_entries_for_state, preferences_login_status_toast_message,
+    queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
+    snapshot_local_source_cache_gate_action,
 };
-use crate::controller::PlaybackPerfEvent;
+use crate::controller::{LyricsSearchResult, PlaybackPerfEvent};
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistId, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,
     LibraryLayout, LibrarySourceSelection, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode,
@@ -1635,6 +1636,47 @@ pub(in crate::ui) fn preferences_toast_only_uses_server_settings_statuses() {
     assert_eq!(
         preferences_login_status_toast_message("Library sync complete"),
         None
+    );
+}
+#[test]
+pub(in crate::ui) fn lyrics_search_results_ignore_queries_from_previous_fields() {
+    assert!(lyrics_search_response_matches_query(
+        "", "Opening", "", "Opening",
+    ));
+    assert!(!lyrics_search_response_matches_query(
+        "Earlier Artist",
+        "Opening",
+        "",
+        "Opening",
+    ));
+    assert!(!lyrics_search_response_matches_query(
+        "",
+        "Opening Theme",
+        "",
+        "Opening",
+    ));
+    assert!(!lyrics_search_response_matches_query(
+        "Earlier Artist",
+        "Long Song Title",
+        "",
+        "Song",
+    ));
+}
+#[test]
+pub(in crate::ui) fn lyrics_search_result_subtitle_prefers_synced_when_both_texts_exist() {
+    let result = LyricsSearchResult {
+        id: 12,
+        track_name: "Example Track".to_string(),
+        artist_name: "Example Artist".to_string(),
+        album_name: "Example Album".to_string(),
+        duration_seconds: 95,
+        synced_lyrics: Some("[00:01.00]line".to_string()),
+        plain_lyrics: Some("line".to_string()),
+    };
+
+    assert_eq!(
+        lyrics_result_subtitle(&result),
+        "Example Album - 1:35 - Synced lyrics"
     );
 }
 #[test]
