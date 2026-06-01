@@ -58,8 +58,10 @@ pub(in crate::controller) fn resolve_stream(
 #[serde(rename_all = "camelCase")]
 pub(in crate::controller) struct LrcLibLyricsDto {
     id: u64,
-    #[serde(default, alias = "name")]
+    #[serde(default)]
     track_name: String,
+    #[serde(default)]
+    name: String,
     #[serde(default)]
     artist_name: String,
     #[serde(default)]
@@ -75,7 +77,11 @@ impl From<LrcLibLyricsDto> for LyricsSearchResult {
     fn from(value: LrcLibLyricsDto) -> Self {
         Self {
             id: value.id,
-            track_name: value.track_name,
+            track_name: if value.track_name.trim().is_empty() {
+                value.name
+            } else {
+                value.track_name
+            },
             artist_name: value.artist_name,
             album_name: value.album_name.unwrap_or_default(),
             duration_seconds: value.duration.unwrap_or_default().round() as u32,
@@ -98,8 +104,10 @@ pub(in crate::controller) fn lrclib_search(
     let mut had_success = false;
     let mut errors = Vec::new();
     for url in lrclib_search_urls(artist_name, track_name)? {
+        debug!(url = %url, "requesting LRCLIB lyric search");
         match lrclib_fetch_search(&client, url) {
             Ok(batch) => {
+                debug!(results = batch.len(), "received LRCLIB lyric search batch");
                 had_success = true;
                 for result in batch {
                     if seen.insert(result.id) {
@@ -128,7 +136,9 @@ pub(in crate::controller) fn lrclib_best_lyrics(
             .map_err(|error| error.to_string())?;
         match lrclib_fetch_get(&client, url) {
             Ok(Some(result)) => {
-                if let Some(lyrics) = lyrics_from_lrclib_result(entry, result) {
+                if let Some(lyrics) =
+                    lyrics_from_lrclib_search_result(entry.track_id.clone(), &result)
+                {
                     return Ok(Some(lyrics));
                 }
             }
@@ -199,11 +209,14 @@ pub(in crate::controller) fn lyrics_from_lrclib_results(
 ) -> Option<Lyrics> {
     results
         .into_iter()
-        .find_map(|result| lyrics_from_lrclib_result(entry, result))
+        .find_map(|result| lyrics_from_lrclib_search_result(entry.track_id.clone(), &result))
 }
-fn lyrics_from_lrclib_result(entry: &QueueEntry, result: LyricsSearchResult) -> Option<Lyrics> {
-    lyrics_result_content(&result)?;
-    let lyrics = lyrics_from_text(entry.track_id.clone(), &result);
+pub(in crate::controller) fn lyrics_from_lrclib_search_result(
+    track_id: TrackId,
+    result: &LyricsSearchResult,
+) -> Option<Lyrics> {
+    lyrics_result_content(result)?;
+    let lyrics = lyrics_from_text(track_id, result);
     (!lyrics.lines.is_empty()).then_some(lyrics)
 }
 pub(in crate::controller) fn lrclib_search_urls(
@@ -221,7 +234,7 @@ pub(in crate::controller) fn lrclib_search_urls(
     if !combined_query.is_empty() {
         let mut url = lrclib_search_base_url()?;
         url.query_pairs_mut().append_pair("q", &combined_query);
-        urls.push(url);
+        push_unique_lrclib_search_url(&mut urls, url);
     }
     if !track_name.is_empty() {
         let mut url = lrclib_search_base_url()?;
@@ -232,9 +245,29 @@ pub(in crate::controller) fn lrclib_search_urls(
                 query.append_pair("artist_name", artist_name);
             }
         }
-        urls.push(url);
+        push_unique_lrclib_search_url(&mut urls, url);
+        let mut url = lrclib_search_base_url()?;
+        url.query_pairs_mut().append_pair("q", track_name);
+        push_unique_lrclib_search_url(&mut urls, url);
+
+        let mut url = lrclib_search_base_url()?;
+        url.query_pairs_mut().append_pair("track_name", track_name);
+        push_unique_lrclib_search_url(&mut urls, url);
+    }
+    if !artist_name.is_empty() {
+        let mut url = lrclib_search_base_url()?;
+        url.query_pairs_mut().append_pair("q", artist_name);
+        push_unique_lrclib_search_url(&mut urls, url);
     }
     Ok(urls)
+}
+fn push_unique_lrclib_search_url(urls: &mut Vec<reqwest::Url>, url: reqwest::Url) {
+    if urls
+        .iter()
+        .all(|existing| existing.as_str() != url.as_str())
+    {
+        urls.push(url);
+    }
 }
 pub(in crate::controller) fn lrclib_search_base_url() -> Result<reqwest::Url, String> {
     reqwest::Url::parse("https://lrclib.net/api/search").map_err(|error| error.to_string())
@@ -304,9 +337,6 @@ pub(in crate::controller) fn text_match_score(query: &str, candidate: &str) -> u
     if candidate == query {
         return 0;
     }
-    if candidate.contains(&query) || query.contains(&candidate) {
-        return 10;
-    }
     let query_tokens = query.split_whitespace().collect::<HashSet<_>>();
     if query_tokens.is_empty() {
         return 0;
@@ -316,6 +346,9 @@ pub(in crate::controller) fn text_match_score(query: &str, candidate: &str) -> u
     let missing = query_tokens.len().saturating_sub(matched);
     let extra = candidate_tokens.len().saturating_sub(matched);
     if matched == 0 {
+        if candidate.contains(&query) || query.contains(&candidate) {
+            return 10;
+        }
         return 100 + query_tokens.len() as u16 * 10;
     }
     (missing as u16 * 30) + (extra.min(6) as u16 * 4)

@@ -97,6 +97,11 @@ pub(in crate::ui) fn submit_lyrics_search(shell: &Rc<Shell>) {
     clear_list_box(&dialog.list);
     dialog.search_button.set_sensitive(false);
     dialog.status.set_text(&tr("Searching..."));
+    debug!(
+        artist_name = %artist_name,
+        track_name = %track_name,
+        "submitted manual lyric search"
+    );
     shell
         .controller
         .search_lyrics_for_current(artist_name, track_name);
@@ -109,6 +114,15 @@ pub(in crate::ui) fn auto_lyrics_search_is_suppressed(
         .suppressed_auto_lyrics_track_ids
         .iter()
         .any(|stored| stored == track_id.as_str())
+}
+pub(in crate::ui) fn lyrics_search_response_matches_query(
+    received_artist_name: &str,
+    received_track_name: &str,
+    current_artist_name: &str,
+    current_track_name: &str,
+) -> bool {
+    received_artist_name.trim() == current_artist_name.trim()
+        && received_track_name.trim() == current_track_name.trim()
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum AutoLyricsRequest {
@@ -314,21 +328,13 @@ pub(in crate::ui) fn lyrics_result_subtitle(result: &LyricsSearchResult) -> Stri
         .as_deref()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
     {
-        if result
-            .plain_lyrics
-            .as_deref()
-            .is_some_and(|lyrics| !lyrics.trim().is_empty())
-        {
-            subtitle.push_str(&tr("Synchronized + Unsynchronized"));
-        } else {
-            subtitle.push_str(&tr("Synchronized"));
-        }
+        subtitle.push_str(&tr("Synced lyrics"));
     } else if result
         .plain_lyrics
         .as_deref()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
     {
-        subtitle.push_str(&tr("Unsynchronized"));
+        subtitle.push_str(&tr("Plain lyrics"));
     } else {
         subtitle.push_str(&tr("No lyrics"));
     }

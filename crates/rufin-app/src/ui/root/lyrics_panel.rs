@@ -130,27 +130,57 @@ impl Shell {
 
         let search_shell = Rc::clone(self);
         artist_entry.connect_activate(move |_| submit_lyrics_search(&search_shell));
+        let edit_shell = Rc::clone(self);
+        artist_entry.connect_changed(move |_| edit_shell.clear_stale_lyrics_search_results());
 
         let search_shell = Rc::clone(self);
         title_entry.connect_activate(move |_| submit_lyrics_search(&search_shell));
+        let edit_shell = Rc::clone(self);
+        title_entry.connect_changed(move |_| edit_shell.clear_stale_lyrics_search_results());
 
         dialog.present(Some(&self.window));
         search_dialog.title_entry.grab_focus();
-        submit_lyrics_search(self);
     }
     pub(in crate::ui) fn apply_lyrics_search_results(
         self: &Rc<Self>,
         track_id: rufin_core::TrackId,
-        _artist_name: String,
-        _track_name: String,
+        artist_name: String,
+        track_name: String,
         results: Vec<LyricsSearchResult>,
     ) {
         let Some(dialog) = self.state.lyrics_search_dialog.borrow().clone() else {
             return;
         };
         if dialog.track_id != track_id {
+            debug!(
+                dialog_track_id = %dialog.track_id,
+                response_track_id = %track_id,
+                "ignored lyric search response for another track"
+            );
             return;
         }
+        if !lyrics_search_response_matches_query(
+            &artist_name,
+            &track_name,
+            dialog.artist_entry.text().as_str(),
+            dialog.title_entry.text().as_str(),
+        ) {
+            debug!(
+                response_artist_name = %artist_name,
+                response_track_name = %track_name,
+                current_artist_name = %dialog.artist_entry.text(),
+                current_track_name = %dialog.title_entry.text(),
+                results = results.len(),
+                "ignored stale lyric search response"
+            );
+            return;
+        }
+        debug!(
+            artist_name = %artist_name,
+            track_name = %track_name,
+            results = results.len(),
+            "applying lyric search response"
+        );
         dialog.search_button.set_sensitive(true);
         clear_list_box(&dialog.list);
         if results.is_empty() {
@@ -164,23 +194,40 @@ impl Shell {
         for result in results {
             let title = format!("{} - {}", result.artist_name, result.track_name);
             let subtitle = lyrics_result_subtitle(&result);
+            let has_content = lyrics_search_result_has_content(&result);
             let row = adw::ActionRow::builder()
                 .title(title)
                 .subtitle(subtitle)
                 .build();
+            row.set_activatable(has_content);
             let button = gtk::Button::with_label(&tr("Save"));
             button.set_valign(gtk::Align::Center);
             button.add_css_class("suggested-action");
-            button.set_sensitive(lyrics_search_result_has_content(&result));
+            button.set_sensitive(has_content);
             row.add_suffix(&button);
-            row.set_activatable_widget(Some(&button));
 
+            if has_content {
+                let preview_shell = Rc::clone(self);
+                let preview_track_id = track_id.clone();
+                let preview_result = result.clone();
+                row.connect_activated(move |_| {
+                    preview_shell.controller.preview_lyrics_search_result(
+                        preview_track_id.clone(),
+                        preview_result.clone(),
+                    );
+                    if let Some(dialog) = preview_shell.state.lyrics_search_dialog.borrow().as_ref()
+                    {
+                        dialog.status.set_text(&tr("Loaded in lyrics panel."));
+                    }
+                });
+            }
             let save_shell = Rc::clone(self);
             let save_track_id = track_id.clone();
+            let save_result = result.clone();
             button.connect_clicked(move |_| {
                 let shell = Rc::clone(&save_shell);
                 let track_id = save_track_id.clone();
-                let result = result.clone();
+                let result = save_result.clone();
                 gtk::glib::spawn_future_local(async move {
                     let dialog = gtk::FileDialog::builder()
                         .title(tr("Save Lyrics"))
@@ -199,6 +246,14 @@ impl Shell {
             });
             dialog.list.append(&row);
         }
+    }
+    fn clear_stale_lyrics_search_results(self: &Rc<Self>) {
+        let Some(dialog) = self.state.lyrics_search_dialog.borrow().clone() else {
+            return;
+        };
+        clear_list_box(&dialog.list);
+        dialog.search_button.set_sensitive(true);
+        dialog.status.set_text(&tr("Ready"));
     }
     pub(in crate::ui) fn apply_lyrics_saved(self: &Rc<Self>, path: PathBuf, lyrics: Lyrics) {
         let track_id = lyrics.track_id.clone();

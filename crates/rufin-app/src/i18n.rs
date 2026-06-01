@@ -514,10 +514,10 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Searching...");
     let _ = tr("No lyrics found.");
     let _ = tr("results");
-    let _ = tr("Synchronized");
-    let _ = tr("Unsynchronized");
-    let _ = tr("Synchronized + Unsynchronized");
+    let _ = tr("Synced lyrics");
+    let _ = tr("Plain lyrics");
     let _ = tr("No lyrics");
+    let _ = tr("Loaded in lyrics panel.");
     let _ = tr("Save");
     let _ = tr("Saved to");
     let _ = tr("Show Lyrics Panel");
