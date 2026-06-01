@@ -14,8 +14,9 @@ use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
     HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, MusicFolder,
     MusicFolderId, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
-    QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
-    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, Track, TrackId,
+    QueueReplacement, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist,
+    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, Track,
+    TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -73,6 +74,7 @@ mod folder_search_commands;
 mod library_mutations;
 mod local_source_commands;
 mod lyrics_commands;
+pub(in crate::controller) mod play_activation;
 mod playback_activity;
 mod playback_advance;
 mod playback_commands;
@@ -108,6 +110,9 @@ pub(in crate::controller) use controller_startup::*;
 #[cfg(test)]
 pub(in crate::controller) use lyrics_local_access_tests::{
     controller_from_store_for_test, saved_server, unique_test_dir,
+};
+pub(in crate::controller) use play_activation::{
+    NormalizedPlayTarget, PlayAction, PlayActivation, normalize_loaded_source_activation,
 };
 use playback_activity::PlaybackActivityState;
 pub(in crate::controller) use playback_queue::*;

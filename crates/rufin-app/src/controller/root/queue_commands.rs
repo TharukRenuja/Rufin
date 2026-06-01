@@ -1,6 +1,47 @@
 use super::*;
 
 impl AppController {
+    // Route conversion has not been wired yet, so this seam is intentionally idle in Task 5.
+    #[allow(dead_code)]
+    pub fn play_activation(&self, activation: PlayActivation) {
+        let activation = match normalize_loaded_source_activation(activation) {
+            Ok(activation) => activation,
+            Err(error) => {
+                let _sent = self.events.send(ControllerEvent::Error(error));
+                return;
+            }
+        };
+        match (activation.action, activation.target) {
+            (PlayAction::ReplaceNow, NormalizedPlayTarget::TrackOnly(track)) => {
+                self.play_now(track);
+            }
+            (PlayAction::ReplaceNow, NormalizedPlayTarget::Replacement(replacement)) => {
+                self.replace_queue_from_activation(replacement);
+            }
+            _ => {
+                let _sent = self.events.send(ControllerEvent::Error(
+                    "This play action is not available for the selected source.".to_string(),
+                ));
+            }
+        }
+    }
+
+    fn replace_queue_from_activation(&self, replacement: QueueReplacement) {
+        let result = self.with_queue_mut(|queue| {
+            queue
+                .replace_all(replacement)
+                .map(|_| ())
+                .map_err(|_| "The selected source could not be queued.".to_string())
+        });
+        if let Err(error) = result {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+            return;
+        }
+        self.auto_dj_top_up_or_emit_error();
+        self.persist_and_emit_queue();
+        self.start_current_track();
+    }
+
     pub fn play_tracks_now(&self, tracks: Vec<Track>) {
         if tracks.is_empty() {
             let _sent = self.events.send(ControllerEvent::Error(
