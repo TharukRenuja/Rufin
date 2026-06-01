@@ -33,7 +33,13 @@ pub fn available_sort_fields(key: LibraryListKey) -> &'static [LibraryField] {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
-        LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => &[
+        LibraryListKey::Playlists => &[
+            LibraryField::Title,
+            LibraryField::SongCount,
+            LibraryField::Duration,
+        ],
+        LibraryListKey::SmartPlaylists => &[
+            LibraryField::RowIndex,
             LibraryField::Title,
             LibraryField::SongCount,
             LibraryField::Duration,
@@ -81,7 +87,12 @@ pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
             LibraryField::AlbumCount,
             LibraryField::SongCount,
         ],
-        LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => vec![
+        LibraryListKey::Playlists => vec![
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::SongCount,
+        ],
+        LibraryListKey::SmartPlaylists => vec![
             LibraryField::Image,
             LibraryField::Title,
             LibraryField::SongCount,
@@ -120,9 +131,8 @@ pub(super) fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
         }
         LibraryListKey::Artists | LibraryListKey::AlbumArtists => Vec::new(),
         LibraryListKey::Genres => Vec::new(),
-        LibraryListKey::Playlists | LibraryListKey::SmartPlaylists => {
-            vec![LibraryField::SongCount, LibraryField::Duration]
-        }
+        LibraryListKey::Playlists => vec![LibraryField::SongCount],
+        LibraryListKey::SmartPlaylists => vec![LibraryField::SongCount, LibraryField::Duration],
         LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks
         | LibraryListKey::AlbumDetailTracks
@@ -153,9 +163,9 @@ pub(super) fn default_sort_key(key: LibraryListKey) -> LibraryField {
         | LibraryListKey::Genres
         | LibraryListKey::ArtistAlbums
         | LibraryListKey::Playlists
-        | LibraryListKey::SmartPlaylists
         | LibraryListKey::Tracks
         | LibraryListKey::FavoriteTracks => LibraryField::Title,
+        LibraryListKey::SmartPlaylists => LibraryField::RowIndex,
         LibraryListKey::AlbumDetailTracks
         | LibraryListKey::ArtistTracks
         | LibraryListKey::GenreTracks

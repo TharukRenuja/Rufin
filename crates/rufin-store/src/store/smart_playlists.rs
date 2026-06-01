@@ -15,6 +15,7 @@ const RETIRED_SMART_PLAYLIST_BUILTIN_KEYS: &[&str] = &[
 struct SmartPlaylistRow {
     id: SmartPlaylistId,
     name: String,
+    position: u32,
     builtin: Option<SmartPlaylistBuiltin>,
     definition: SmartPlaylistDefinition,
 }
@@ -89,7 +90,7 @@ impl Store {
         )?;
         let mut statement = self.connection.prepare(
             "
-            SELECT smart_playlist_id, name, builtin_key, definition_json
+            SELECT smart_playlist_id, name, builtin_key, definition_json, position
             FROM smart_playlists
             WHERE server_id = ?1
             ORDER BY position, name COLLATE NOCASE, smart_playlist_id
@@ -210,6 +211,45 @@ impl Store {
         Ok(())
     }
 
+    pub fn reorder_smart_playlist(
+        &self,
+        server_id: &ServerId,
+        dragged_id: &SmartPlaylistId,
+        target_id: &SmartPlaylistId,
+        after: bool,
+    ) -> StoreResult<bool> {
+        self.ensure_smart_playlist_defaults_seeded(server_id)?;
+        let mut statement = self.connection.prepare(
+            "
+            SELECT smart_playlist_id
+            FROM smart_playlists
+            WHERE server_id = ?1
+            ORDER BY position, name COLLATE NOCASE, smart_playlist_id
+            ",
+        )?;
+        let ids = collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+            row.get::<_, String>(0).map(SmartPlaylistId::new)
+        })?)?;
+        let Some(ids) = reorder_smart_playlist_ids(&ids, dragged_id, target_id, after) else {
+            return Ok(false);
+        };
+
+        self.write_batch(|connection| {
+            for (position, id) in ids.iter().enumerate() {
+                connection.execute(
+                    "
+                    UPDATE smart_playlists
+                    SET position = ?1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE server_id = ?2 AND smart_playlist_id = ?3
+                    ",
+                    params![position as i64, server_id.as_str(), id.as_str()],
+                )?;
+            }
+            Ok(true)
+        })
+    }
+
     pub fn missing_builtin_smart_playlists(
         &self,
         server_id: &ServerId,
@@ -303,7 +343,7 @@ impl Store {
         self.connection
             .query_row(
                 "
-                SELECT smart_playlist_id, name, builtin_key, definition_json
+                SELECT smart_playlist_id, name, builtin_key, definition_json, position
                 FROM smart_playlists
                 WHERE server_id = ?1 AND smart_playlist_id = ?2
                 ",
@@ -332,6 +372,7 @@ impl Store {
         Ok(SmartPlaylist {
             id: row.id,
             name: row.name,
+            position: row.position,
             builtin: row.builtin,
             definition: row.definition,
             track_count,
@@ -383,7 +424,7 @@ impl Store {
         let rows = {
             let mut statement = self.connection.prepare(
                 "
-                SELECT smart_playlist_id, name, builtin_key, definition_json
+                SELECT smart_playlist_id, name, builtin_key, definition_json, position
                 FROM smart_playlists
                 WHERE server_id = ?1
                 ORDER BY position, name COLLATE NOCASE, smart_playlist_id
@@ -631,9 +672,35 @@ fn smart_playlist_row_from_row(row: &Row<'_>) -> rusqlite::Result<SmartPlaylistR
     Ok(SmartPlaylistRow {
         id: SmartPlaylistId::new(row.get::<_, String>(0)?),
         name: row.get(1)?,
+        position: u32_from_i64(row.get::<_, i64>(4)?),
         builtin,
         definition,
     })
+}
+
+fn reorder_smart_playlist_ids(
+    ids: &[SmartPlaylistId],
+    dragged_id: &SmartPlaylistId,
+    target_id: &SmartPlaylistId,
+    after: bool,
+) -> Option<Vec<SmartPlaylistId>> {
+    if dragged_id == target_id {
+        return None;
+    }
+    let source_index = ids.iter().position(|id| id == dragged_id)?;
+    let target_index = ids.iter().position(|id| id == target_id)?;
+    let mut reordered = ids.to_vec();
+    let dragged = reordered.remove(source_index);
+    let mut insert_index = if after {
+        target_index.saturating_add(1)
+    } else {
+        target_index
+    };
+    if source_index < insert_index {
+        insert_index = insert_index.saturating_sub(1);
+    }
+    reordered.insert(insert_index.min(reordered.len()), dragged);
+    (reordered != ids).then_some(reordered)
 }
 
 pub(super) fn smart_builtin_id(builtin: SmartPlaylistBuiltin) -> SmartPlaylistId {
@@ -1099,6 +1166,36 @@ mod tests {
             .load_smart_playlists(&saved.server.id, 0, 20)
             .expect("after restore");
         assert_eq!(page.total, 3);
+    }
+
+    #[test]
+    fn smart_playlist_reorder_persists_manual_position() {
+        let store = Store::open_memory().expect("store");
+        let saved = saved_server();
+        store.save_server(&saved).expect("save server");
+        let page = store
+            .load_smart_playlists(&saved.server.id, 0, 20)
+            .expect("defaults");
+        let ids = page
+            .items
+            .iter()
+            .map(|playlist| playlist.id.clone())
+            .collect::<Vec<_>>();
+
+        assert!(
+            store
+                .reorder_smart_playlist(&saved.server.id, &ids[2], &ids[0], false)
+                .expect("move before first")
+        );
+        let moved = store
+            .load_smart_playlists(&saved.server.id, 0, 20)
+            .expect("after move")
+            .items
+            .into_iter()
+            .map(|playlist| playlist.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(moved, vec![ids[2].clone(), ids[0].clone(), ids[1].clone()]);
     }
 
     #[test]

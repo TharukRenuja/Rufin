@@ -1,10 +1,35 @@
 use super::*;
 
+#[derive(Clone, Debug)]
+pub(in crate::ui) struct PlaylistEntryContextMenuAction {
+    pub(in crate::ui) playlist_id: PlaylistId,
+    pub(in crate::ui) entry_id: String,
+    pub(in crate::ui) title: String,
+}
+
 pub(in crate::ui) fn present_track_context_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     track: Track,
     position: Option<(f64, f64)>,
+) {
+    present_track_context_menu_inner(target, shell, track, position, None);
+}
+pub(in crate::ui) fn present_playlist_entry_track_context_menu(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    track: Track,
+    remove_action: PlaylistEntryContextMenuAction,
+    position: Option<(f64, f64)>,
+) {
+    present_track_context_menu_inner(target, shell, track, position, Some(remove_action));
+}
+fn present_track_context_menu_inner(
+    target: &gtk::Widget,
+    shell: &Rc<Shell>,
+    track: Track,
+    position: Option<(f64, f64)>,
+    remove_action: Option<PlaylistEntryContextMenuAction>,
 ) {
     let menu = gio::Menu::new();
     menu.append_item(&menu_item(
@@ -36,6 +61,12 @@ pub(in crate::ui) fn present_track_context_menu(
         Some("track.favorite"),
     );
     menu.append(Some(&tr("Go to Album")), Some("track.go-album"));
+    if remove_action.is_some() {
+        menu.append(
+            Some(&tr("Remove from playlist")),
+            Some("track.remove-from-playlist"),
+        );
+    }
 
     let popover = gtk::PopoverMenu::from_model(Some(&menu));
     popover.add_css_class("track-context-menu");
@@ -112,18 +143,36 @@ pub(in crate::ui) fn present_track_context_menu(
     actions.add_action(&favorite_action);
 
     let go_album = gio::SimpleAction::new("go-album", None);
-    let shell = Rc::clone(shell);
+    let go_album_shell = Rc::clone(shell);
     let album_id = track.album_id.clone();
     let action_popover = popover.downgrade();
     go_album.connect_activate(move |_, _| {
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        let shell = Rc::clone(&shell);
+        let shell = Rc::clone(&go_album_shell);
         let album_id = album_id.clone();
         glib::idle_add_local_once(move || shell.navigate(Route::AlbumDetail(album_id)));
     });
     actions.add_action(&go_album);
+
+    if let Some(remove_action) = remove_action {
+        let remove_from_playlist = gio::SimpleAction::new("remove-from-playlist", None);
+        let shell = Rc::clone(shell);
+        let action_popover = popover.downgrade();
+        remove_from_playlist.connect_activate(move |_, _| {
+            if let Some(popover) = action_popover.upgrade() {
+                popover.popdown();
+            }
+            confirm_remove_playlist_entry(
+                &shell,
+                remove_action.playlist_id.clone(),
+                remove_action.entry_id.clone(),
+                remove_action.title.clone(),
+            );
+        });
+        actions.add_action(&remove_from_playlist);
+    }
 
     target.insert_action_group("track", Some(&actions));
     popover.connect_closed(move |popover| {
@@ -1259,5 +1308,4 @@ pub(in crate::ui) enum PlaylistEntrySort {
     Title,
     Artist,
     Album,
-    Duration,
 }

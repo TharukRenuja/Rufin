@@ -7,16 +7,14 @@ impl PlaylistEntrySort {
             Self::Title => "Title",
             Self::Artist => "Artist",
             Self::Album => "Album",
-            Self::Duration => "Duration",
         }
     }
 }
-pub(in crate::ui) const PLAYLIST_ENTRY_SORTS: [PlaylistEntrySort; 5] = [
+pub(in crate::ui) const PLAYLIST_ENTRY_SORTS: [PlaylistEntrySort; 4] = [
     PlaylistEntrySort::Order,
     PlaylistEntrySort::Title,
     PlaylistEntrySort::Artist,
     PlaylistEntrySort::Album,
-    PlaylistEntrySort::Duration,
 ];
 #[derive(Clone, Debug)]
 pub(in crate::ui) struct PlaylistEntryListState {
@@ -87,6 +85,20 @@ pub(in crate::ui) fn playlist_entries_for_state(
     });
     rows
 }
+pub(in crate::ui) fn playlist_tracks_starting_at(
+    entries: &[PlaylistEntry],
+    start_index: usize,
+) -> Vec<Track> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let start_index = start_index.min(entries.len() - 1);
+    entries[start_index..]
+        .iter()
+        .chain(entries[..start_index].iter())
+        .map(|entry| entry.track.clone())
+        .collect()
+}
 pub(in crate::ui) fn playlist_entry_matches_query(entry: &PlaylistEntry, query: &str) -> bool {
     entry.track.title.to_lowercase().contains(query)
         || entry.track.artist.to_lowercase().contains(query)
@@ -102,11 +114,6 @@ pub(in crate::ui) fn compare_playlist_entry(
         PlaylistEntrySort::Title => cmp_text(&left.1.track.title, &right.1.track.title),
         PlaylistEntrySort::Artist => cmp_text(&left.1.track.artist, &right.1.track.artist),
         PlaylistEntrySort::Album => cmp_text(&left.1.track.album, &right.1.track.album),
-        PlaylistEntrySort::Duration => left
-            .1
-            .track
-            .duration_seconds
-            .cmp(&right.1.track.duration_seconds),
     }
     .then_with(|| left.0.cmp(&right.0))
 }
@@ -130,8 +137,12 @@ pub(in crate::ui) fn playlist_entries_header_row() -> gtk::Widget {
         playlist_header_text_label("Title", PLAYLIST_ENTRY_TITLE_MAX_CHARS).upcast(),
         playlist_header_album_label("Album", PLAYLIST_ENTRY_ALBUM_MAX_CHARS).upcast(),
     ));
-    row.append(&playlist_duration_header_icon());
-    row.append(&fixed_spacer(PLAYLIST_ENTRY_REMOVE_WIDTH));
+    row.append(&playlist_header_label(
+        "Plays",
+        PLAYLIST_ENTRY_PLAY_COUNT_WIDTH,
+        false,
+        1.0,
+    ));
     row.upcast()
 }
 pub(in crate::ui) fn playlist_header_label(
@@ -151,16 +162,6 @@ pub(in crate::ui) fn playlist_header_label(
         label.set_max_width_chars(PLAYLIST_ENTRY_TITLE_MAX_CHARS);
     }
     label
-}
-pub(in crate::ui) fn playlist_duration_header_icon() -> gtk::Image {
-    let image = gtk::Image::from_icon_name("appointment-soon-symbolic");
-    let label = tr("Duration");
-    image.add_css_class("muted");
-    image.set_width_request(PLAYLIST_ENTRY_DURATION_WIDTH);
-    image.set_halign(gtk::Align::Center);
-    image.set_tooltip_text(Some(&label));
-    image.update_property(&[gtk::accessible::Property::Label(&label)]);
-    image
 }
 pub(in crate::ui) fn playlist_header_text_label(text: &str, max_width_chars: i32) -> gtk::Label {
     let label = gtk::Label::new(Some(&tr(text)));
@@ -190,9 +191,9 @@ pub(in crate::ui) fn playlist_text_columns(title: gtk::Widget, album: gtk::Widge
     title.set_width_request(1);
     columns.append(&title);
 
-    album.set_hexpand(false);
+    album.set_hexpand(true);
     album.set_halign(gtk::Align::Fill);
-    album.set_width_request(PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH);
+    album.set_width_request(1);
     columns.append(&album);
 
     columns.upcast()
@@ -275,44 +276,37 @@ pub(in crate::ui) fn playlist_entry_row(
         album.upcast(),
     ));
 
-    let duration = gtk::Label::new(Some(&format_duration(entry.track.duration_seconds)));
-    duration.add_css_class("muted");
-    duration.set_xalign(0.5);
-    duration.set_width_request(PLAYLIST_ENTRY_DURATION_WIDTH);
-    row.append(&duration);
-
-    let remove = gtk::Button::with_label("x");
-    remove.add_css_class("icon-button");
-    remove.add_css_class("flat");
-    remove.add_css_class("circular");
-    remove.set_tooltip_text(Some(&tr("Remove from playlist")));
-    remove.set_width_request(PLAYLIST_ENTRY_REMOVE_WIDTH);
-    let remove_shell = Rc::clone(shell);
-    let remove_playlist_id = playlist_id.clone();
-    let remove_entry_id = entry.entry_id.clone();
-    let remove_title = entry.track.title.clone();
-    remove.connect_clicked(move |_| {
-        confirm_remove_playlist_entry(
-            &remove_shell,
-            remove_playlist_id.clone(),
-            remove_entry_id.clone(),
-            remove_title.clone(),
-        );
-    });
-    row.append(&remove);
+    let play_count = gtk::Label::new(Some(&playlist_entry_play_count_text(
+        entry.track.play_count,
+    )));
+    play_count.add_css_class("muted");
+    play_count.set_xalign(1.0);
+    play_count.set_valign(gtk::Align::Center);
+    play_count.set_width_request(PLAYLIST_ENTRY_PLAY_COUNT_WIDTH);
+    row.append(&play_count);
 
     let controller = shell.controller.clone();
-    let track = entry.track.clone();
+    let entries_for_play = Rc::clone(&entries);
     let click = gtk::GestureClick::new();
     click.set_button(1);
     click.connect_released(move |gesture, n_press, _, _| {
         if n_press == 2 {
             gesture.set_state(gtk::EventSequenceState::Claimed);
-            controller.play_now(track.clone());
+            controller.play_tracks_now(playlist_tracks_starting_at(
+                &entries_for_play,
+                original_index,
+            ));
         }
     });
     row.add_controller(click);
-    install_track_context_menu(&row, shell, entry.track.clone());
+    install_playlist_entry_context_menu(
+        &row,
+        shell,
+        entry.track.clone(),
+        playlist_id.clone(),
+        entry.entry_id.clone(),
+        entry.track.title.clone(),
+    );
 
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
     let controller = shell.controller.clone();
@@ -371,6 +365,9 @@ pub(in crate::ui) fn playlist_entry_text_label(
     label.set_single_line_mode(true);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label
+}
+pub(in crate::ui) fn playlist_entry_play_count_text(value: Option<u32>) -> String {
+    value.map(|value| value.to_string()).unwrap_or_default()
 }
 pub(in crate::ui) fn fixed_spacer(width: i32) -> gtk::Widget {
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);

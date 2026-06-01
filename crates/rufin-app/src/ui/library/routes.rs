@@ -855,10 +855,7 @@ impl Shell {
             search,
             content: playlist_collection_widget(self, model),
             load_next: if complete_page { None } else { Some(load_next) },
-            configure_scroller: Some(Rc::new(|scroller| {
-                scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-                scroller.set_min_content_width(0);
-            })),
+            configure_scroller: None,
         })
     }
     pub(in crate::ui) fn library_smart_playlists_view(self: &Rc<Self>) -> gtk::Widget {

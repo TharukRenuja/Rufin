@@ -6,6 +6,7 @@ pub(in crate::ui) struct LibraryRouteInsetSpec {
     pub(in crate::ui) margin_end: i32,
     pub(in crate::ui) hexpand: bool,
 }
+const SMART_PLAYLIST_REORDER_WIDTH: i32 = 30;
 pub(in crate::ui) fn library_route_inset_spec() -> LibraryRouteInsetSpec {
     LibraryRouteInsetSpec {
         margin_start: PRIMARY_ROUTE_MARGIN_START,
@@ -434,6 +435,7 @@ pub(in crate::ui) fn smart_playlist_table(
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
     table.set_vexpand(true);
+    table.append_column(&smart_playlist_reorder_column(shell));
     for field in shell
         .library_settings(LibraryListKey::SmartPlaylists)
         .row_fields
@@ -447,6 +449,26 @@ pub(in crate::ui) fn smart_playlist_table(
         }
     });
     table
+}
+
+pub(in crate::ui) fn smart_playlist_reorder_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(playlist) = item_at_from_item::<SmartPlaylist>(item) else {
+            return;
+        };
+        let handle = smart_playlist_drag_handle(&playlist.id);
+        install_smart_playlist_drop_target(&handle, &shell, &playlist.id);
+        item.set_child(Some(&handle));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let column = gtk::ColumnViewColumn::new(None::<&str>, Some(factory));
+    column.set_fixed_width(SMART_PLAYLIST_REORDER_WIDTH);
+    column
 }
 pub(in crate::ui) fn track_table(
     shell: &Rc<Shell>,
@@ -1235,8 +1257,58 @@ pub(in crate::ui) fn smart_playlist_card(
             card.append(&center_label(&value, "muted"));
         }
     }
-    install_smart_playlist_context_menu(&card, shell, playlist.clone());
-    card.upcast()
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&card));
+    let drag = smart_playlist_drag_handle(&playlist.id);
+    drag.set_margin_start(6);
+    drag.set_margin_top(6);
+    drag.set_halign(gtk::Align::Start);
+    drag.set_valign(gtk::Align::Start);
+    overlay.add_overlay(&drag);
+    install_smart_playlist_drop_target(&overlay, shell, &playlist.id);
+    install_smart_playlist_context_menu(&overlay, shell, playlist.clone());
+    overlay.upcast()
+}
+
+pub(in crate::ui) fn smart_playlist_drag_handle(playlist_id: &SmartPlaylistId) -> gtk::Image {
+    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    drag.add_css_class("dim-label");
+    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+    drag.set_width_request(SMART_PLAYLIST_REORDER_WIDTH);
+    drag.set_halign(gtk::Align::Center);
+    let source = gtk::DragSource::builder()
+        .actions(gtk::gdk::DragAction::MOVE)
+        .build();
+    let drag_id = playlist_id.as_str().to_string();
+    source.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(&drag_id.to_value()))
+    });
+    drag.add_controller(source);
+    drag
+}
+
+pub(in crate::ui) fn install_smart_playlist_drop_target(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    target_id: &SmartPlaylistId,
+) {
+    let widget = target.as_ref().clone();
+    let controller = shell.controller.clone();
+    let target_id = target_id.clone();
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(dragged_id) = value.get::<String>() else {
+            return false;
+        };
+        let dragged_id = SmartPlaylistId::new(dragged_id);
+        if dragged_id == target_id {
+            return false;
+        }
+        let after = y > f64::from(widget.height()) / 2.0;
+        controller.move_smart_playlist(dragged_id, target_id.clone(), after);
+        true
+    });
+    target.add_controller(drop_target);
 }
 pub(in crate::ui) fn track_card(
     shell: &Rc<Shell>,

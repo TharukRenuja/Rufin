@@ -108,6 +108,7 @@ pub(in crate::ui) fn compare_smart_playlist(
     field: LibraryField,
 ) -> Ordering {
     match field {
+        LibraryField::RowIndex => left.position.cmp(&right.position),
         LibraryField::SongCount => left.track_count.cmp(&right.track_count),
         LibraryField::Duration => left.duration_seconds.cmp(&right.duration_seconds),
         _ => cmp_string(&left.name, &right.name),
@@ -877,6 +878,7 @@ mod tests {
         SmartPlaylist {
             id: rufin_core::SmartPlaylistId::new("smart:test"),
             name: "Smart Mix".to_string(),
+            position: 0,
             builtin: None,
             definition: rufin_core::SmartPlaylistDefinition {
                 root: rufin_core::SmartPlaylistRuleGroup {

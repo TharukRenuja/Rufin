@@ -304,6 +304,8 @@ pub struct SmartPlaylistDefinition {
 pub struct SmartPlaylist {
     pub id: SmartPlaylistId,
     pub name: String,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub position: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin: Option<SmartPlaylistBuiltin>,
     pub definition: SmartPlaylistDefinition,
@@ -446,6 +448,10 @@ pub fn format_duration(seconds: u32) -> String {
     let minutes = seconds / 60;
     let seconds = seconds % 60;
     format!("{minutes}:{seconds:02}")
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
 }
 
 #[cfg(test)]

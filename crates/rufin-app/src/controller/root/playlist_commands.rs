@@ -172,6 +172,31 @@ impl AppController {
             emit_snapshot_result(&store, &events, result);
         });
     }
+    pub fn move_smart_playlist(
+        &self,
+        dragged_id: SmartPlaylistId,
+        target_id: SmartPlaylistId,
+        after: bool,
+    ) {
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let Some(saved) = store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                let _sent = events.send(ControllerEvent::Error(
+                    "No active music server is saved.".to_string(),
+                ));
+                return;
+            };
+            let result = store.with_store(|store| {
+                store.reorder_smart_playlist(&saved.server.id, &dragged_id, &target_id, after)?;
+                Ok(())
+            });
+            emit_snapshot_result(&store, &events, result);
+        });
+    }
     pub fn save_smart_playlist(&self, name: String, definition: SmartPlaylistDefinition) {
         let store = self.store.clone();
         let events = self.events.clone();

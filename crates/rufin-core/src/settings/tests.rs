@@ -152,6 +152,12 @@ fn settings_default_to_privacy_preserving_remote_features() {
     );
     assert_eq!(
         settings
+            .library_list(LibraryListKey::SmartPlaylists)
+            .sort_key,
+        LibraryField::RowIndex
+    );
+    assert_eq!(
+        settings
             .library_list(LibraryListKey::SmartPlaylistTracks)
             .row_fields,
         vec![
@@ -542,15 +548,79 @@ fn default_library_list_settings_include_playlists() {
         vec![
             LibraryField::Image,
             LibraryField::Title,
-            LibraryField::SongCount,
-            LibraryField::Duration
+            LibraryField::SongCount
         ]
     );
-    assert_eq!(
-        playlists.grid_fields,
-        vec![LibraryField::SongCount, LibraryField::Duration]
-    );
+    assert_eq!(playlists.grid_fields, vec![LibraryField::SongCount]);
     assert_eq!(playlists.sort_key, LibraryField::Title);
+}
+#[test]
+fn library_list_settings_migrate_old_playlist_defaults_without_duration() {
+    let mut settings = AppSettings {
+        library_lists: vec![super::LibraryListSettingsEntry {
+            key: LibraryListKey::Playlists,
+            settings: super::LibraryListSettings {
+                layout: LibraryLayout::Grid,
+                row_fields: vec![
+                    LibraryField::Image,
+                    LibraryField::Title,
+                    LibraryField::SongCount,
+                    LibraryField::Duration,
+                ],
+                grid_fields: vec![LibraryField::SongCount, LibraryField::Duration],
+                detail_track_fields: Vec::new(),
+                sort_key: LibraryField::Title,
+                descending: false,
+                layout_version: 2,
+            },
+        }],
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+    let playlists = settings.library_list(LibraryListKey::Playlists);
+
+    assert_eq!(
+        playlists.row_fields,
+        vec![
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::SongCount
+        ]
+    );
+    assert_eq!(playlists.grid_fields, vec![LibraryField::SongCount]);
+}
+#[test]
+fn library_list_settings_migrate_smart_playlists_to_manual_order() {
+    let mut settings = AppSettings {
+        library_lists: vec![super::LibraryListSettingsEntry {
+            key: LibraryListKey::SmartPlaylists,
+            settings: super::LibraryListSettings {
+                layout: LibraryLayout::Grid,
+                row_fields: vec![
+                    LibraryField::Image,
+                    LibraryField::Title,
+                    LibraryField::SongCount,
+                    LibraryField::Duration,
+                ],
+                grid_fields: vec![LibraryField::SongCount, LibraryField::Duration],
+                detail_track_fields: Vec::new(),
+                sort_key: LibraryField::Title,
+                descending: false,
+                layout_version: 3,
+            },
+        }],
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+
+    assert_eq!(
+        settings
+            .library_list(LibraryListKey::SmartPlaylists)
+            .sort_key,
+        LibraryField::RowIndex
+    );
 }
 #[test]
 fn default_smart_playlist_track_rows_include_play_count() {
