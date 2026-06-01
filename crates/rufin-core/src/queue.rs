@@ -225,6 +225,24 @@ pub struct QueueReplacement {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueueInsertion {
+    pub source: QueueInsertionSource,
+    pub items: Vec<QueueItemInput>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QueueInsertionSource {
+    Manual,
+    Source {
+        source_key: PlaySourceKey,
+    },
+    AutoDj {
+        generated_from_track_id: TrackId,
+        reason: AutoDjReason,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QueueReplacementSource {
     Source(QueueSourceInput),
     Manual,
@@ -514,33 +532,123 @@ impl QueueEngine {
     }
 
     pub fn play_next(&mut self, track: &Track) -> QueueEntryId {
-        let entry = self.entry_from_track(track);
-        let id = entry.id.clone();
-        let insert_index = self.current_index.map_or(0, |index| index + 1);
-        self.entries.insert(insert_index, entry);
-        if self.current_index.is_none() {
-            self.current_index = Some(0);
-        }
-        self.rebuild_shuffle_order();
-        self.move_shuffle_entry_after_current(&id);
-        id
+        self.insert_next(QueueInsertion {
+            source: QueueInsertionSource::Manual,
+            items: vec![QueueItemInput::Manual {
+                track: track.clone(),
+            }],
+        })
+        .expect("single manual insertion is valid")
+        .into_iter()
+        .next()
+        .expect("single manual insertion returns an id")
     }
 
     pub fn append(&mut self, track: &Track) -> QueueEntryId {
-        let entry = self.entry_from_track(track);
-        let id = entry.id.clone();
-        let new_index = self.entries.len();
-        self.entries.push(entry);
+        self.append_last(QueueInsertion {
+            source: QueueInsertionSource::Manual,
+            items: vec![QueueItemInput::Manual {
+                track: track.clone(),
+            }],
+        })
+        .expect("single manual append is valid")
+        .into_iter()
+        .next()
+        .expect("single manual append returns an id")
+    }
+
+    pub fn insert_next(
+        &mut self,
+        insertion: QueueInsertion,
+    ) -> Result<Vec<QueueEntryId>, QueueError> {
+        let entries = self.entries_from_insertion(insertion)?;
+        let ids = entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+        let insert_index = self.current_index.map_or(0, |index| index + 1);
+        let inserted_count = ids.len();
+        let previous_current_index = self.current_index;
+        let previous_shuffle_order = self.shuffle_order.clone();
+        let previous_len = self.entries.len();
+        self.entries.splice(insert_index..insert_index, entries);
         if self.current_index.is_none() {
-            self.current_index = Some(0);
+            self.current_index = Some(insert_index);
         }
-        if self.shuffle.enabled {
-            self.shuffle_order.push(new_index);
+        if self.shuffle.enabled
+            && previous_current_index.is_some()
+            && valid_shuffle_order(&previous_shuffle_order, previous_len)
+        {
+            self.shuffle_order = previous_shuffle_order
+                .into_iter()
+                .map(|index| {
+                    if index >= insert_index {
+                        index + inserted_count
+                    } else {
+                        index
+                    }
+                })
+                .collect();
+            let Some(current_position) = self
+                .shuffle_order
+                .iter()
+                .position(|index| Some(*index) == previous_current_index)
+            else {
+                self.rebuild_shuffle_order();
+                return Ok(ids);
+            };
+
+            let mut inserted_block =
+                (insert_index..insert_index + inserted_count).collect::<Vec<_>>();
+            let first_inserted = inserted_block.remove(0);
+            let seed = self.shuffle.seed;
+            inserted_block.sort_by_key(|index| {
+                stable_shuffle_key(seed, entry_shuffle_key(&self.entries[*index]))
+            });
+            inserted_block.insert(0, first_inserted);
+            self.shuffle_order
+                .splice(current_position + 1..current_position + 1, inserted_block);
             self.sync_shuffle_position();
         } else {
             self.rebuild_shuffle_order();
         }
-        id
+        Ok(ids)
+    }
+
+    pub fn append_last(
+        &mut self,
+        insertion: QueueInsertion,
+    ) -> Result<Vec<QueueEntryId>, QueueError> {
+        let entries = self.entries_from_insertion(insertion)?;
+        let ids = entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+        let first_inserted_index = self.entries.len();
+        let previous_current_index = self.current_index;
+        let previous_shuffle_order = self.shuffle_order.clone();
+        let previous_len = self.entries.len();
+        self.entries.extend(entries);
+        if self.current_index.is_none() {
+            self.current_index = Some(first_inserted_index);
+        }
+        if self.shuffle.enabled
+            && previous_current_index.is_some()
+            && valid_shuffle_order(&previous_shuffle_order, previous_len)
+        {
+            self.shuffle_order = previous_shuffle_order;
+            let mut appended_indices =
+                (first_inserted_index..self.entries.len()).collect::<Vec<_>>();
+            let seed = self.shuffle.seed;
+            appended_indices.sort_by_key(|index| {
+                stable_shuffle_key(seed, entry_shuffle_key(&self.entries[*index]))
+            });
+            self.shuffle_order.extend(appended_indices);
+            self.sync_shuffle_position();
+        } else {
+            self.rebuild_shuffle_order();
+        }
+        Ok(ids)
     }
 
     pub fn remove(&mut self, entry_id: &QueueEntryId) -> Option<QueueEntry> {
@@ -674,6 +782,115 @@ impl QueueEngine {
         let batch_key = QueueBatchKey::new(format!("batch-{}", self.next_batch_number));
         self.next_batch_number += 1;
         batch_key
+    }
+
+    fn entries_from_insertion(
+        &mut self,
+        insertion: QueueInsertion,
+    ) -> Result<Vec<QueueEntry>, QueueError> {
+        if insertion.items.is_empty() {
+            return Err(QueueError::EmptyReplacement);
+        }
+
+        match insertion.source {
+            QueueInsertionSource::Manual => {
+                let mut tracks = Vec::with_capacity(insertion.items.len());
+                for item in insertion.items {
+                    let QueueItemInput::Manual { track } = item else {
+                        return Err(QueueError::WrongItemKind);
+                    };
+                    tracks.push(track);
+                }
+
+                Ok(tracks
+                    .into_iter()
+                    .map(|track| {
+                        let mut entry = self.entry_from_track(&track);
+                        entry.origin = Some(QueueEntryOrigin::Manual {
+                            shuffle_key: manual_shuffle_key(&entry),
+                        });
+                        entry
+                    })
+                    .collect())
+            }
+            QueueInsertionSource::Source { source_key } => {
+                let mut source_items = Vec::with_capacity(insertion.items.len());
+                for item in insertion.items {
+                    let QueueItemInput::Source {
+                        track,
+                        source_index,
+                        source_item_id,
+                    } = item
+                    else {
+                        return Err(QueueError::WrongItemKind);
+                    };
+                    source_items.push((track, source_index, source_item_id));
+                }
+
+                let batch_key = self.next_batch_key();
+                Ok(source_items
+                    .into_iter()
+                    .map(|(track, source_index, source_item_id)| {
+                        let mut entry = self.entry_from_track(&track);
+                        entry.origin = Some(QueueEntryOrigin::Source {
+                            source_key: source_key.clone(),
+                            occurrence_key: source_occurrence_key(
+                                &source_key,
+                                source_index,
+                                source_item_id.as_deref(),
+                                &track.id,
+                            ),
+                            source_index,
+                            source_item_id: source_item_id.clone(),
+                            batch_key: batch_key.clone(),
+                            shuffle_key: source_insertion_shuffle_key(
+                                &source_key,
+                                &batch_key,
+                                source_index,
+                                source_item_id.as_deref(),
+                                &track.id,
+                            ),
+                        });
+                        entry
+                    })
+                    .collect())
+            }
+            QueueInsertionSource::AutoDj {
+                generated_from_track_id,
+                reason,
+            } => {
+                let mut generated_items = Vec::with_capacity(insertion.items.len());
+                for item in insertion.items {
+                    let QueueItemInput::Generated {
+                        track,
+                        generated_index,
+                    } = item
+                    else {
+                        return Err(QueueError::WrongItemKind);
+                    };
+                    generated_items.push((track, generated_index));
+                }
+
+                Ok(generated_items
+                    .into_iter()
+                    .map(|(track, generated_index)| {
+                        let mut entry = self.entry_from_track(&track);
+                        entry.origin = Some(QueueEntryOrigin::AutoDj {
+                            generated_from_track_id: generated_from_track_id.clone(),
+                            generated_index,
+                            reason: reason.clone(),
+                            shuffle_key: auto_dj_shuffle_key(
+                                &generated_from_track_id,
+                                generated_index,
+                                &reason,
+                                &track.id,
+                            ),
+                        });
+                        entry
+                    })
+                    .collect())
+            }
+        }
     }
 
     fn replace_all_source(
@@ -1040,6 +1257,23 @@ fn source_shuffle_key(
     ))
 }
 
+fn source_insertion_shuffle_key(
+    source_key: &PlaySourceKey,
+    batch_key: &QueueBatchKey,
+    source_index: usize,
+    source_item_id: Option<&str>,
+    track_id: &TrackId,
+) -> QueueShuffleKey {
+    QueueShuffleKey::new(format!(
+        "source-insertion-shuffle|source={}|batch={}|source-index={}|source-item={}|track={}",
+        stable_play_source_key(source_key),
+        escape_component(batch_key.as_str()),
+        source_index,
+        stable_optional_str(source_item_id),
+        escape_component(track_id.as_str())
+    ))
+}
+
 fn stable_source_entry_key(
     prefix: &str,
     source_key: &PlaySourceKey,
@@ -1276,6 +1510,27 @@ fn random_shuffle_key(seed: u64, random_index: usize, track_id: &TrackId) -> Que
     ))
 }
 
+fn auto_dj_shuffle_key(
+    generated_from_track_id: &TrackId,
+    generated_index: usize,
+    reason: &AutoDjReason,
+    track_id: &TrackId,
+) -> QueueShuffleKey {
+    QueueShuffleKey::new(format!(
+        "auto-dj|generated-from={}|generated-index={}|reason={}|track={}",
+        escape_component(generated_from_track_id.as_str()),
+        generated_index,
+        stable_auto_dj_reason(reason),
+        escape_component(track_id.as_str())
+    ))
+}
+
+fn stable_auto_dj_reason(reason: &AutoDjReason) -> &'static str {
+    match reason {
+        AutoDjReason::Similarity => "similarity",
+    }
+}
+
 fn next_entry_number(entries: &[QueueEntry]) -> u64 {
     entries
         .iter()
@@ -1337,8 +1592,8 @@ fn valid_shuffle_order(shuffle_order: &[usize], entries_len: usize) -> bool {
 mod tests {
     use super::{
         PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, QueueAnchor, QueueEngine,
-        QueueEntryOrigin, QueueError, QueueItemInput, QueueReplacement, QueueReplacementSource,
-        QueueSourceInput, RepeatMode, SourceOrder,
+        QueueEntryOrigin, QueueError, QueueInsertion, QueueInsertionSource, QueueItemInput,
+        QueueReplacement, QueueReplacementSource, QueueSourceInput, RepeatMode, SourceOrder,
     };
     use crate::domain::{AlbumId, ServerId, Track, TrackId};
 
@@ -1641,6 +1896,127 @@ mod tests {
     }
 
     #[test]
+    fn source_insert_next_keeps_first_inserted_entry_next_under_shuffle() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(4));
+        queue.set_shuffle(true, 19);
+
+        let inserted = queue
+            .insert_next(QueueInsertion {
+                source: QueueInsertionSource::Source {
+                    source_key: source_key("insert"),
+                },
+                items: vec![source_item(track(2), 1, "b"), source_item(track(3), 2, "c")],
+            })
+            .unwrap();
+
+        assert_eq!(inserted.len(), 2);
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(2))
+        );
+    }
+
+    #[test]
+    fn source_insert_next_keeps_inserted_batch_before_older_future_under_shuffle() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(4));
+        queue.set_shuffle(true, 19);
+
+        queue
+            .insert_next(QueueInsertion {
+                source: QueueInsertionSource::Source {
+                    source_key: source_key("insert"),
+                },
+                items: vec![source_item(track(2), 1, "b"), source_item(track(3), 2, "c")],
+            })
+            .unwrap();
+
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(2))
+        );
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(3))
+        );
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(4))
+        );
+    }
+
+    #[test]
+    fn repeated_source_insertions_get_distinct_batch_keys() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue
+            .insert_next(QueueInsertion {
+                source: QueueInsertionSource::Source {
+                    source_key: source_key("insert"),
+                },
+                items: vec![source_item(track(2), 1, "b")],
+            })
+            .unwrap();
+        queue
+            .insert_next(QueueInsertion {
+                source: QueueInsertionSource::Source {
+                    source_key: source_key("insert"),
+                },
+                items: vec![source_item(track(2), 1, "b")],
+            })
+            .unwrap();
+
+        let batch_keys = queue
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry.origin.as_ref()? {
+                QueueEntryOrigin::Source { batch_key, .. } => Some(batch_key.as_str().to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_ne!(batch_keys[0], batch_keys[1]);
+    }
+
+    #[test]
+    fn repeated_source_insertions_get_distinct_shuffle_keys() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue
+            .insert_next(QueueInsertion {
+                source: QueueInsertionSource::Source {
+                    source_key: source_key("insert"),
+                },
+                items: vec![source_item(track(2), 1, "b")],
+            })
+            .unwrap();
+        queue
+            .insert_next(QueueInsertion {
+                source: QueueInsertionSource::Source {
+                    source_key: source_key("insert"),
+                },
+                items: vec![source_item(track(2), 1, "b")],
+            })
+            .unwrap();
+
+        let shuffle_keys = queue
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry.origin.as_ref()? {
+                QueueEntryOrigin::Source { shuffle_key, .. } => {
+                    Some(shuffle_key.as_str().to_string())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_ne!(shuffle_keys[0], shuffle_keys[1]);
+    }
+
+    #[test]
     fn queue_entries_keep_navigation_ids_from_tracks() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         let mut track = track(1);
@@ -1856,7 +2232,10 @@ mod tests {
         second.replace_all(replacement()).unwrap();
         second.set_shuffle(true, 77);
 
-        assert_eq!(first.snapshot().shuffle_order, second.snapshot().shuffle_order);
+        assert_eq!(
+            first.snapshot().shuffle_order,
+            second.snapshot().shuffle_order
+        );
     }
 
     #[test]
@@ -1925,12 +2304,13 @@ mod tests {
     }
 
     #[test]
-    fn appending_while_shuffled_adds_new_tracks_after_existing_traversal() {
+    fn appending_to_exhausted_shuffled_queue_adds_new_track_after_current() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
         queue.append(&track(3));
         queue.set_shuffle(true, 99);
+        queue.set_repeat_mode(RepeatMode::Off);
 
         while queue.remaining_after_current() > 0 {
             queue.next_track();
@@ -1944,6 +2324,38 @@ mod tests {
             queue.next_track().map(|entry| &entry.track_id),
             Some(&TrackId::fake(4))
         );
+    }
+
+    #[test]
+    fn append_last_to_empty_shuffled_queue_starts_current_first_traversal() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.set_shuffle(true, 19);
+        queue.set_repeat_mode(RepeatMode::Off);
+
+        let inserted = queue
+            .append_last(QueueInsertion {
+                source: QueueInsertionSource::Manual,
+                items: vec![
+                    QueueItemInput::Manual { track: track(1) },
+                    QueueItemInput::Manual { track: track(2) },
+                    QueueItemInput::Manual { track: track(3) },
+                ],
+            })
+            .unwrap();
+
+        assert_eq!(inserted.len(), 3);
+        assert_eq!(
+            queue.current().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(1))
+        );
+        assert_eq!(queue.shuffle_order.first().copied(), Some(0));
+        assert_eq!(queue.shuffle_position, Some(0));
+        let next_track_id = queue
+            .next_track()
+            .map(|entry| entry.track_id.clone())
+            .expect("shuffled queue has a next item");
+        assert_ne!(next_track_id, TrackId::fake(1));
+        assert!([TrackId::fake(2), TrackId::fake(3)].contains(&next_track_id));
     }
 
     #[test]

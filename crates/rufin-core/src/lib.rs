@@ -15,10 +15,10 @@ pub use domain::{
 pub use queue::{
     ArtistTrackScope, AutoDjReason, PlaySourceDescriptor, PlaySourceKey,
     PlaylistEntrySortDescriptor, QueueAnchor, QueueBatchKey, QueueEngine, QueueEntry, QueueEntryId,
-    QueueEntryOrigin, QueueError, QueueItemInput, QueueReplacement, QueueReplacementSource,
-    QueueShuffleKey, QueueSnapshot, QueueSourceInput, QueueSourceSnapshot, RepeatMode,
-    SearchSortDescriptor, ShuffleState, SmartPlaylistSortDescriptor, SourceOrder,
-    TrackSortDescriptor,
+    QueueEntryOrigin, QueueError, QueueInsertion, QueueInsertionSource, QueueItemInput,
+    QueueReplacement, QueueReplacementSource, QueueShuffleKey, QueueSnapshot, QueueSourceInput,
+    QueueSourceSnapshot, RepeatMode, SearchSortDescriptor, ShuffleState,
+    SmartPlaylistSortDescriptor, SourceOrder, TrackSortDescriptor,
 };
 pub use route::{FolderPathItem, Route, RouteStack, SearchKind};
 pub use settings::{
