@@ -712,7 +712,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.render_startup_loading_view();
                         continue;
                     }
-                    shell.render_queue_panel();
+                    shell.schedule_queue_panel_render();
                     shell.update_bottom_player();
                     shell.update_fullscreen_player();
                 }
@@ -759,7 +759,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             .lyrics_pane
                             .clear_follow_scroll_pause();
                         shell.cancel_scheduled_lyrics_highlight();
-                        shell.render_queue_panel();
+                        shell.schedule_queue_panel_render();
                         shell.render_lyrics_panel();
                         shell.request_auto_lyrics_if_needed();
                         shell.notify_now_playing(&next_snapshot);

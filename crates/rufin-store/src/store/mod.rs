@@ -33,6 +33,8 @@ pub enum StoreError {
     UnsupportedSchemaVersion(i64),
     #[error("incomplete store schema version: {0}")]
     IncompleteSchemaVersion(i64),
+    #[error("unsupported store-backed source window")]
+    UnsupportedSourceWindow,
 }
 
 pub type StoreResult<T> = Result<T, StoreError>;
@@ -91,6 +93,20 @@ pub struct Store {
     connection: Connection,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoreBackedSourceItem {
+    pub track: Track,
+    pub source_index: usize,
+    pub source_item_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoreBackedSourceWindow {
+    pub start_rank: usize,
+    pub total_source_items: usize,
+    pub items: Vec<StoreBackedSourceItem>,
+}
+
 mod library_auxiliary_cache;
 mod library_cache_reads;
 mod library_cache_writes;
@@ -100,6 +116,7 @@ mod library_search_helpers;
 mod library_track_sort;
 mod servers;
 mod smart_playlists;
+mod source_windows;
 mod store_lifecycle_schema;
 
 pub use servers::{image_cache_key, lyrics_cache_key};

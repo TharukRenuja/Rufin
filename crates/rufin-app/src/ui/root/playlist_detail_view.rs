@@ -144,8 +144,18 @@ impl Shell {
         actions.add_css_class("playlist-detail-actions");
         let play = playlist_detail_action_button("media-playback-start-symbolic", "Play", true);
         let controller = self.controller.clone();
+        let source_key =
+            smart_playlist_play_source_key(&detail.smart_playlist, selected_music_folder_id(self));
         let tracks = detail.tracks.clone();
-        play.connect_clicked(move |_| controller.play_tracks_now(tracks.clone()));
+        play.connect_clicked(move |_| {
+            if let Some(activation) =
+                loaded_tracks_window_play_activation(source_key.clone(), tracks.len(), 0, |index| {
+                    tracks.get(index).cloned()
+                })
+            {
+                controller.play_activation(activation);
+            }
+        });
         actions.append(&play);
         let edit = playlist_detail_action_button("document-edit-symbolic", "Edit", false);
         let shell = Rc::clone(self);
@@ -174,6 +184,13 @@ impl Shell {
                 LibraryListKey::SmartPlaylistTracks,
                 "smart-playlist-detail",
                 route_margin,
+                Some(PlaySourceDescriptor::SmartPlaylist {
+                    smart_playlist_id: detail.smart_playlist.id.clone(),
+                    definition_fingerprint: smart_playlist_definition_fingerprint(
+                        &detail.smart_playlist.definition,
+                    ),
+                    selected_music_folder_id: selected_music_folder_id(self),
+                }),
             ));
         }
         wrapper.upcast()
@@ -270,8 +287,18 @@ impl Shell {
         actions.add_css_class("playlist-detail-actions");
         let play = playlist_detail_action_button("media-playback-start-symbolic", "Play", true);
         let controller = self.controller.clone();
-        let tracks = detail.tracks.clone();
-        play.connect_clicked(move |_| controller.play_tracks_now(tracks.clone()));
+        let playlist_id_for_play = detail.playlist.id.clone();
+        let entries_for_play = detail.entries.clone();
+        play.connect_clicked(move |_| {
+            if let Some(activation) = playlist_play_activation(
+                playlist_id_for_play.clone(),
+                entries_for_play.clone(),
+                0,
+                &PlaylistEntryListState::default(),
+            ) {
+                controller.play_activation(activation);
+            }
+        });
         actions.append(&play);
         let rename = playlist_detail_action_button("document-edit-symbolic", "Rename", false);
         let shell = Rc::clone(self);

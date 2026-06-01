@@ -13,9 +13,10 @@ use rufin_core::ThemePreference;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
     HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, MusicFolder,
-    MusicFolderId, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
-    QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
-    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, Track, TrackId,
+    MusicFolderId, PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistId,
+    QueueEngine, QueueEntry, QueueEntryId, QueueReplacement, QueueSnapshot, RepeatMode, ServerId,
+    ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistDetail, SmartPlaylistId, SourceOrder, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -38,8 +39,8 @@ use rufin_secrets::{CachedSecretStore, SecretKey, SecretStore};
 #[cfg(test)]
 use rufin_store::CoverCacheEntry;
 use rufin_store::{
-    CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store, StoreError,
-    SyncState,
+    CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store,
+    StoreBackedSourceWindow, StoreError, SyncState,
 };
 #[cfg(any(test, feature = "dev-tools"))]
 use rufin_test_support::{FakeProvider, FakeScale};
@@ -73,6 +74,7 @@ mod folder_search_commands;
 mod library_mutations;
 mod local_source_commands;
 mod lyrics_commands;
+pub(in crate::controller) mod play_activation;
 mod playback_activity;
 mod playback_advance;
 mod playback_commands;
@@ -108,6 +110,11 @@ pub(in crate::controller) use controller_startup::*;
 #[cfg(test)]
 pub(in crate::controller) use lyrics_local_access_tests::{
     controller_from_store_for_test, saved_server, unique_test_dir,
+};
+pub(crate) use play_activation::{
+    FULL_LOADED_LIMIT, LoadedCompleteness, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
+    MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayAction, PlayActivation, PlayAnchor,
+    PlaySourceItem, PlayTarget, normalize_loaded_source_activation,
 };
 use playback_activity::PlaybackActivityState;
 pub(in crate::controller) use playback_queue::*;
@@ -365,6 +372,8 @@ pub struct AppController {
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
     settings: settings_controller::SettingsController,
     queue: Arc<Mutex<Option<QueueEngine>>>,
+    play_activation_generation: Arc<AtomicU64>,
+    queue_persist_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,

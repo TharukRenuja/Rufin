@@ -702,6 +702,8 @@ impl Store {
                 ON genres(server_id, name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS playlists_server_name_nocase_idx
                 ON playlists(server_id, name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS playlist_tracks_order_idx
+                ON playlist_tracks(server_id, playlist_id, position, entry_id);
             CREATE INDEX IF NOT EXISTS tracks_server_album_idx
                 ON tracks(server_id, album_id, disc_number, track_number);
             CREATE INDEX IF NOT EXISTS tracks_server_artist_idx

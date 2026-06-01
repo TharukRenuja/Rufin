@@ -416,13 +416,28 @@ pub(in crate::ui) fn present_artist_context_menu(
     let play = gio::SimpleAction::new("play", None);
     let controller = shell.controller.clone();
     let artist_id = artist.id.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
     let action_popover = popover.downgrade();
     play.connect_activate(move |_, _| {
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
-            controller.play_tracks_now(tracks);
+        if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id)
+            && let Some(activation) = loaded_tracks_window_play_activation(
+                PlaySourceKey {
+                    descriptor: PlaySourceDescriptor::ArtistTracks {
+                        artist_id: artist_id.clone(),
+                        scope: ArtistTrackScope::AllCredits,
+                        selected_music_folder_id: selected_music_folder_id.clone(),
+                    },
+                    order: SourceOrder::Canonical,
+                },
+                tracks.len(),
+                0,
+                |index| tracks.get(index).cloned(),
+            )
+        {
+            controller.play_activation(activation);
         }
     });
     actions.add_action(&play);
@@ -555,7 +570,20 @@ pub(in crate::ui) fn present_playlist_context_menu(
             popover.popdown();
         }
         if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
-            controller.play_tracks_now(detail.tracks);
+            let state = PlaylistEntryListState::default();
+            let activation = if detail.entries.is_empty() {
+                loaded_tracks_window_play_activation(
+                    playlist_play_source_key(playlist_id.clone(), &state),
+                    detail.tracks.len(),
+                    0,
+                    |index| detail.tracks.get(index).cloned(),
+                )
+            } else {
+                playlist_play_activation(playlist_id.clone(), detail.entries, 0, &state)
+            };
+            if let Some(activation) = activation {
+                controller.play_activation(activation);
+            }
         }
     });
     actions.add_action(&play);
@@ -625,13 +653,24 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
     let play = gio::SimpleAction::new("play", None);
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
     let action_popover = popover.downgrade();
     play.connect_activate(move |_, _| {
         if let Some(popover) = action_popover.upgrade() {
             popover.popdown();
         }
-        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            controller.play_tracks_now(detail.tracks);
+        if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id)
+            && let Some(activation) = loaded_tracks_window_play_activation(
+                smart_playlist_play_source_key(
+                    &detail.smart_playlist,
+                    selected_music_folder_id.clone(),
+                ),
+                detail.tracks.len(),
+                0,
+                |index| detail.tracks.get(index).cloned(),
+            )
+        {
+            controller.play_activation(activation);
         }
     });
     actions.add_action(&play);

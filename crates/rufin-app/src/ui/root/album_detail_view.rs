@@ -114,8 +114,19 @@ impl Shell {
         let play_album = detail_action_button("media-playback-start-symbolic", "Play");
         play_album.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
+        let album_id_for_play = album.id.clone();
         let album_tracks = tracks.clone();
-        play_album.connect_clicked(move |_| controller.play_tracks_now(album_tracks.clone()));
+        let selected_folder_for_play = selected_music_folder_id(self);
+        play_album.connect_clicked(move |_| {
+            if let Some(activation) = album_play_activation(
+                album_id_for_play.clone(),
+                album_tracks.clone(),
+                0,
+                selected_folder_for_play.clone(),
+            ) {
+                controller.play_activation(activation);
+            }
+        });
         actions.append(&play_album);
 
         let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");
@@ -153,8 +164,15 @@ impl Shell {
         header.append(&metadata);
         content.append(&detail_showcase_frame(header.upcast(), content_width));
 
-        let table =
-            self.library_tracks_panel(tracks, LibraryListKey::AlbumDetailTracks, "album-detail");
+        let table = self.library_tracks_panel_with_source(
+            tracks,
+            LibraryListKey::AlbumDetailTracks,
+            "album-detail",
+            Some(PlaySourceDescriptor::Album {
+                album_id: album.id.clone(),
+                selected_music_folder_id: selected_music_folder_id(self),
+            }),
+        );
         content.append(&table);
 
         scroller.set_child(Some(&content));

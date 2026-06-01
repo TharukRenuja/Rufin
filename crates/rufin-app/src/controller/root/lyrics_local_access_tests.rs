@@ -332,6 +332,7 @@ pub(in crate::controller) fn saved_lrclib_result_uses_explicit_output_path() {
         image_ref: None,
         local_path: Some(dir.join("Track.flac").to_string_lossy().into_owned()),
         source_format: None,
+        origin: None,
     };
     let result = super::LyricsSearchResult {
         id: 1,
@@ -974,6 +975,7 @@ pub(in crate::controller) fn automatic_lrclib_fallback_skips_empty_hits() {
         image_ref: None,
         local_path: None,
         source_format: None,
+        origin: None,
     };
     let results = vec![
         super::LyricsSearchResult {
@@ -1132,6 +1134,8 @@ pub(in crate::controller) fn controller_from_store_for_test(
         runtime,
         secrets,
         queue: Arc::new(Mutex::new(queue)),
+        play_activation_generation: Arc::new(AtomicU64::new(0)),
+        queue_persist_generation: Arc::new(AtomicU64::new(0)),
         playback_request_generation: Arc::new(AtomicU64::new(0)),
         playback: Arc::new(Mutex::new(Box::new(
             rufin_playback::FakePlaybackBackend::new(),

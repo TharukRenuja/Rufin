@@ -1,4 +1,5 @@
 use super::test_support::*;
+use rufin_core::{PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, SourceOrder};
 
 #[test]
 fn playlist_entries_allow_duplicate_tracks_and_keep_entry_ids() {
@@ -41,6 +42,170 @@ fn playlist_entries_allow_duplicate_tracks_and_keep_entry_ids() {
         .expect("playlist detail");
     assert_eq!(detail.entries, entries);
     assert_eq!(detail.tracks, vec![track.clone(), track]);
+}
+
+#[test]
+fn playlist_source_window_preserves_duplicate_occurrences_in_display_order() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut repeated_track = track(1, &album);
+    repeated_track.title = "Echo".to_string();
+    let mut other_track = track(2, &album);
+    other_track.title = "Outside".to_string();
+    let mut playlist = playlist(1, None);
+    playlist.track_count = 3;
+    playlist.duration_seconds = 540;
+    let entries = vec![
+        PlaylistEntry {
+            entry_id: "entry-one".to_string(),
+            track: repeated_track.clone(),
+        },
+        PlaylistEntry {
+            entry_id: "entry-two".to_string(),
+            track: repeated_track.clone(),
+        },
+        PlaylistEntry {
+            entry_id: "entry-three".to_string(),
+            track: other_track.clone(),
+        },
+    ];
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            &[repeated_track.clone(), other_track.clone()],
+            generation,
+        )
+        .expect("upsert tracks");
+    store
+        .upsert_playlists(
+            &saved.server.id,
+            std::slice::from_ref(&playlist),
+            generation,
+        )
+        .expect("upsert playlist");
+    store
+        .upsert_playlist_entries(&saved.server.id, &playlist.id, &entries, generation)
+        .expect("upsert playlist entries");
+
+    let source = PlaySourceKey {
+        descriptor: PlaySourceDescriptor::Playlist {
+            playlist_id: playlist.id.clone(),
+        },
+        order: SourceOrder::PlaylistDisplayed {
+            query: Some("echo".to_string()),
+            sort: PlaylistEntrySortDescriptor::Title,
+            descending: true,
+        },
+    };
+
+    assert_eq!(
+        store
+            .count_tracks_for_source(&saved.server.id, &source)
+            .expect("count source tracks"),
+        2
+    );
+    assert_eq!(
+        store
+            .track_rank_for_source(
+                &saved.server.id,
+                &source,
+                &repeated_track.id,
+                Some("entry-two")
+            )
+            .expect("rank second duplicate"),
+        Some(0)
+    );
+    assert_eq!(
+        store
+            .track_rank_for_source(
+                &saved.server.id,
+                &source,
+                &repeated_track.id,
+                Some("entry-one")
+            )
+            .expect("rank first duplicate"),
+        Some(1)
+    );
+    assert_eq!(
+        store
+            .track_rank_for_source(&saved.server.id, &source, &other_track.id, None)
+            .expect("rank filtered track"),
+        None
+    );
+
+    let window = store
+        .tracks_window_for_source(&saved.server.id, &source, 0, 0, 1)
+        .expect("source window");
+    assert_eq!(window.start_rank, 0);
+    assert_eq!(window.total_source_items, 2);
+    assert_eq!(
+        window
+            .items
+            .iter()
+            .map(|item| item.source_item_id.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("entry-two"), Some("entry-one")]
+    );
+    assert_eq!(
+        window
+            .items
+            .iter()
+            .map(|item| item.source_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+
+    let source = PlaySourceKey {
+        descriptor: PlaySourceDescriptor::Playlist {
+            playlist_id: playlist.id,
+        },
+        order: SourceOrder::PlaylistDisplayed {
+            query: None,
+            sort: PlaylistEntrySortDescriptor::Position,
+            descending: false,
+        },
+    };
+    let anchor_rank = store
+        .track_rank_for_source(
+            &saved.server.id,
+            &source,
+            &repeated_track.id,
+            Some("entry-two"),
+        )
+        .expect("rank source occurrence")
+        .expect("source occurrence rank");
+    let window = store
+        .tracks_window_for_source(&saved.server.id, &source, anchor_rank, 1, 1)
+        .expect("source window");
+    assert_eq!(window.start_rank, 0);
+    assert_eq!(window.total_source_items, 3);
+    assert_eq!(
+        window
+            .items
+            .iter()
+            .map(|item| item.source_item_id.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("entry-one"), Some("entry-two"), Some("entry-three")]
+    );
+
+    let window = store
+        .tracks_window_for_source(&saved.server.id, &source, 2, 1, 1)
+        .expect("source window near end");
+    assert_eq!(window.start_rank, 0);
+    assert_eq!(
+        window
+            .items
+            .iter()
+            .map(|item| item.source_item_id.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("entry-one"), Some("entry-two"), Some("entry-three")]
+    );
 }
 #[test]
 fn lyrics_cache_round_trips_by_server_and_track() {

@@ -30,11 +30,20 @@ pub struct RandomPlayRequest {
 
 impl AppController {
     pub fn play_random_tracks(&self, request: RandomPlayRequest) {
+        let generation = self.next_play_activation_generation();
         let controller = self.clone();
         thread::spawn(
             move || match controller.random_tracks_for_request(&request) {
-                Ok(tracks) => controller.apply_random_tracks(request.action, tracks),
-                Err(error) => controller.emit_random_error(error),
+                Ok(tracks) => {
+                    if controller.play_activation_generation_matches(generation) {
+                        controller.apply_random_tracks(request.action, tracks);
+                    }
+                }
+                Err(error) => {
+                    if controller.play_activation_generation_matches(generation) {
+                        controller.emit_random_error(error);
+                    }
+                }
             },
         );
     }

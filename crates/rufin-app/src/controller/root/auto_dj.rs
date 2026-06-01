@@ -1,3 +1,4 @@
+use super::queue_state::persist_queue_snapshot_deferred_from_handles;
 use super::*;
 
 impl AppController {
@@ -11,57 +12,164 @@ impl AppController {
         }
     }
     pub(in crate::controller) fn auto_dj_top_up(&self) -> Result<bool, String> {
+        auto_dj_top_up_from_handles(&self.auto_dj_enabled, &self.queue, &self.store)
+    }
+    pub(in crate::controller) fn auto_dj_top_up_deferred(&self) {
         if !self
             .auto_dj_enabled
             .lock()
             .map(|enabled| *enabled)
             .unwrap_or_default()
         {
-            return Ok(false);
+            return;
         }
-        let Some((server_id, current, queued_track_ids, remaining)) = self.auto_dj_queue_state()
-        else {
-            return Ok(false);
-        };
-        let settings = load_settings_for_active_server(&self.store);
-        if remaining >= usize::from(settings.auto_dj_refill_threshold) {
-            return Ok(false);
-        }
-        let mut tracks = self
-            .store
-            .with_store(|store| store.load_tracks(&server_id, 0, AUTO_DJ_LIBRARY_LIMIT))
-            .map(|page| page.items)?;
-        external_metadata::normalize_tracks(&mut tracks, &settings);
-        let candidates = auto_dj_candidates(&tracks, &current, &queued_track_ids, shuffle_seed());
-        if candidates.is_empty() {
-            return Ok(false);
-        }
-        self.with_queue_mut(|queue| {
-            for track in &candidates {
-                queue.append(track);
+
+        let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
+        let queue = Arc::clone(&self.queue);
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let playback = Arc::clone(&self.playback);
+        let queue_persist_generation = Arc::clone(&self.queue_persist_generation);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            match auto_dj_top_up_from_handles(&auto_dj_enabled, &queue, &store) {
+                Ok(true) => {
+                    let queue_snapshot = queue
+                        .lock()
+                        .ok()
+                        .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot));
+                    if let Some(snapshot) = queue_snapshot {
+                        persist_queue_snapshot_deferred_from_handles(
+                            store.clone(),
+                            events.clone(),
+                            queue_persist_generation,
+                            snapshot.clone(),
+                        );
+                        let _sent = events.send(ControllerEvent::Queue(Box::new(Some(snapshot))));
+                    }
+                    prepare_next_stream_from_handles(
+                        store, runtime, secrets, playback, queue, events,
+                    );
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                }
             }
-            Ok(())
-        })?;
-        Ok(true)
+        });
     }
-    pub(in crate::controller) fn auto_dj_queue_state(
-        &self,
-    ) -> Option<(ServerId, QueueEntry, HashSet<TrackId>, usize)> {
-        self.queue.lock().ok().and_then(|queue| {
-            let queue = queue.as_ref()?;
-            let snapshot = queue.snapshot();
-            let current = queue.current()?.clone();
-            let queued = queue
-                .entries()
-                .iter()
-                .map(|entry| entry.track_id.clone())
-                .collect::<HashSet<_>>();
-            Some((
-                snapshot.server_id,
-                current,
-                queued,
-                queue.remaining_after_current(),
-            ))
+}
+
+#[derive(Clone, Debug)]
+struct AutoDjQueueState {
+    server_id: ServerId,
+    current: QueueEntry,
+    queued_track_ids: HashSet<TrackId>,
+    remaining: usize,
+}
+
+fn auto_dj_top_up_from_handles(
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    store: &StoreHandle,
+) -> Result<bool, String> {
+    if !auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default()
+    {
+        return Ok(false);
+    }
+    let Some(state) = auto_dj_queue_state_from_handle(queue) else {
+        return Ok(false);
+    };
+    let settings = load_settings_for_active_server(store);
+    let refill_threshold = usize::from(settings.auto_dj_refill_threshold);
+    if state.remaining >= refill_threshold {
+        return Ok(false);
+    }
+    let mut tracks = store
+        .with_store(|store| store.load_tracks(&state.server_id, 0, AUTO_DJ_LIBRARY_LIMIT))
+        .map(|page| page.items)?;
+    external_metadata::normalize_tracks(&mut tracks, &settings);
+    let candidates = auto_dj_candidates(
+        &tracks,
+        &state.current,
+        &state.queued_track_ids,
+        shuffle_seed(),
+    );
+    if candidates.is_empty() {
+        return Ok(false);
+    }
+    if !auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default()
+    {
+        return Ok(false);
+    }
+    append_auto_dj_candidates_if_current(queue, &state, refill_threshold, &candidates)
+}
+
+fn auto_dj_queue_state_from_handle(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+) -> Option<AutoDjQueueState> {
+    queue.lock().ok().and_then(|queue| {
+        let queue = queue.as_ref()?;
+        let current = queue.current()?.clone();
+        let queued = queue
+            .entries()
+            .iter()
+            .map(|entry| entry.track_id.clone())
+            .collect::<HashSet<_>>();
+        Some(AutoDjQueueState {
+            server_id: queue.server_id().clone(),
+            current,
+            queued_track_ids: queued,
+            remaining: queue.remaining_after_current(),
         })
+    })
+}
+
+fn append_auto_dj_candidates_if_current(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    state: &AutoDjQueueState,
+    refill_threshold: usize,
+    candidates: &[Track],
+) -> Result<bool, String> {
+    let mut queue = queue
+        .lock()
+        .map_err(|_| "queue lock was poisoned".to_string())?;
+    let Some(queue) = queue.as_mut() else {
+        return Ok(false);
+    };
+    let Some(current) = queue.current() else {
+        return Ok(false);
+    };
+    if queue.server_id() != &state.server_id
+        || current.id != state.current.id
+        || current.track_id != state.current.track_id
+    {
+        return Ok(false);
     }
+    if queue.remaining_after_current() >= refill_threshold {
+        return Ok(false);
+    }
+    let queued_track_ids = queue
+        .entries()
+        .iter()
+        .map(|entry| entry.track_id.clone())
+        .collect::<HashSet<_>>();
+    let candidates = candidates
+        .iter()
+        .filter(|track| !queued_track_ids.contains(&track.id))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Ok(false);
+    }
+    for track in candidates {
+        queue.append(track);
+    }
+    Ok(true)
 }

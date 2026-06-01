@@ -44,6 +44,19 @@ impl PlaybackBackend for QueuedPlaybackEvents {
     }
 }
 
+fn wait_for_queue_matching(
+    events: &Receiver<ControllerEvent>,
+    mut matches: impl FnMut(&QueueSnapshot) -> bool,
+) -> QueueSnapshot {
+    for _ in 0..8 {
+        let queue = wait_for_queue(events).expect("queue");
+        if matches(&queue) {
+            return queue;
+        }
+    }
+    panic!("matching queue event was not emitted");
+}
+
 pub(in crate::controller) fn wait_for_token_deleted(
     secrets: &Arc<dyn SecretStore>,
     server_id: &ServerId,
@@ -643,13 +656,8 @@ pub(in crate::controller) fn play_now_starts_fake_playback_and_persists_queue() 
     let track = snapshot.tracks[0].clone();
     controller.play_now(track.clone());
     let queue = wait_for_queue(&events).expect("queue");
-    assert_eq!(queue.entries.len(), 1 + super::AUTO_DJ_ITEM_COUNT);
-    assert_eq!(queue.entries[0].track_id, track.id);
-    let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    assert_eq!(
-        playback.current.expect("current").track_id,
-        queue.entries[0].track_id
-    );
+    assert_eq!(queue.entries.len(), 1);
+    assert_eq!(queue.entries[0].track_id, track.id.clone());
     assert_eq!(
         controller
             .store
@@ -658,7 +666,16 @@ pub(in crate::controller) fn play_now_starts_fake_playback_and_persists_queue() 
             .expect("snapshot")
             .entries
             .len(),
-        1 + super::AUTO_DJ_ITEM_COUNT
+        1
+    );
+    let queue = wait_for_queue_matching(&events, |queue| {
+        queue.entries.len() == 1 + super::AUTO_DJ_ITEM_COUNT
+    });
+    assert_eq!(queue.entries[0].track_id, track.id);
+    let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    assert_eq!(
+        playback.current.expect("current").track_id,
+        queue.entries[0].track_id
     );
 }
 #[test]
@@ -1139,7 +1156,11 @@ pub(in crate::controller) fn auto_dj_tops_up_low_queue_from_cached_library() {
         AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
     controller.play_now(first.clone());
-    let queue = wait_for_queue(&events).expect("queue");
+    let queue = wait_for_queue(&events).expect("initial queue");
+    assert_eq!(queue.entries.len(), 1);
+    let queue = wait_for_queue_matching(&events, |queue| {
+        queue.entries.len() == 1 + super::AUTO_DJ_ITEM_COUNT
+    });
     assert_eq!(queue.entries.len(), 1 + super::AUTO_DJ_ITEM_COUNT);
     assert_eq!(queue.entries[0].track_id, first.id);
     assert_eq!(
@@ -1180,20 +1201,73 @@ pub(in crate::controller) fn auto_dj_refill_threshold_controls_top_up_timing() {
 pub(in crate::controller) fn auto_dj_extends_queue_before_manual_next_at_end() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
+    let mut settings = controller.load_settings();
+    settings.auto_dj_refill_threshold = 0;
+    controller
+        .save_settings(&settings)
+        .expect("save Auto DJ settings");
     let first = snapshot.tracks[0].clone();
     let second = snapshot.tracks[1].clone();
     controller.play_tracks_now(vec![first, second.clone()]);
     let _queue = wait_for_queue(&events).expect("queue");
     controller.next_track();
-    let queue = wait_for_queue(&events).expect("second queue");
+    let queue = wait_for_queue_matching(&events, |queue| {
+        queue.entries[queue.current_index.expect("current")].track_id == second.id
+    });
     assert_eq!(
         queue.entries[queue.current_index.expect("current")].track_id,
         second.id
     );
+    let mut settings = controller.load_settings();
+    settings.auto_dj_refill_threshold = 2;
+    controller
+        .save_settings(&settings)
+        .expect("save Auto DJ settings");
     controller.next_track();
-    let queue = wait_for_queue(&events).expect("auto dj queue");
+    let queue = wait_for_queue_matching(&events, |queue| {
+        queue.entries.len() == 2 + super::AUTO_DJ_ITEM_COUNT
+            && queue.entries[queue.current_index.expect("current")].track_id != second.id
+    });
     assert_eq!(queue.entries.len(), 2 + super::AUTO_DJ_ITEM_COUNT);
     assert_ne!(
+        queue.entries[queue.current_index.expect("current")].track_id,
+        second.id
+    );
+}
+
+#[test]
+pub(in crate::controller) fn auto_dj_defers_top_up_when_end_of_stream_has_next() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let mut settings = controller.load_settings();
+    settings.auto_dj_refill_threshold = 0;
+    controller
+        .save_settings(&settings)
+        .expect("save Auto DJ settings");
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first, second.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+
+    let mut settings = controller.load_settings();
+    settings.auto_dj_refill_threshold = 2;
+    controller
+        .save_settings(&settings)
+        .expect("save Auto DJ settings");
+    controller.advance_after_end_of_stream();
+    let queue = wait_for_queue_matching(&events, |queue| {
+        queue.entries[queue.current_index.expect("current")].track_id == second.id
+    });
+    assert_eq!(queue.entries.len(), 2);
+    assert_eq!(
+        queue.entries[queue.current_index.expect("current")].track_id,
+        second.id
+    );
+
+    let queue = wait_for_queue_matching(&events, |queue| {
+        queue.entries.len() == 2 + super::AUTO_DJ_ITEM_COUNT
+    });
+    assert_eq!(
         queue.entries[queue.current_index.expect("current")].track_id,
         second.id
     );

@@ -103,13 +103,73 @@ pub(in crate::ui) fn track_collection_widget(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
+    play_context: Option<LoadedTrackPlayContext>,
 ) -> gtk::Widget {
     match shell.library_settings(key).layout {
-        LibraryLayout::Grid => track_grid(shell, model, key).upcast(),
+        LibraryLayout::Grid => track_grid(shell, model, key, play_context).upcast(),
         LibraryLayout::Row | LibraryLayout::Detail => {
-            track_table(shell, model, key, false).upcast()
+            track_table(shell, model, key, false, play_context).upcast()
         }
     }
+}
+fn track_model_play_action(
+    shell: &Rc<Shell>,
+    model: &gio::ListStore,
+    play_context: LoadedTrackPlayContext,
+    preferred_position: Option<u32>,
+    fallback_track: Track,
+) -> Rc<dyn Fn()> {
+    let controller = shell.controller.clone();
+    let model = model.clone();
+    Rc::new(move || {
+        play_track_from_model(
+            &controller,
+            &model,
+            Some(&play_context),
+            preferred_position,
+            fallback_track.clone(),
+        );
+    })
+}
+fn play_track_from_model(
+    controller: &crate::controller::AppController,
+    model: &gio::ListStore,
+    play_context: Option<&LoadedTrackPlayContext>,
+    preferred_position: Option<u32>,
+    fallback_track: Track,
+) {
+    let Some(play_context) = play_context else {
+        controller.play_now(fallback_track);
+        return;
+    };
+    let anchor_index = preferred_position
+        .and_then(|position| {
+            let position = position as usize;
+            item_at::<Track>(model, position as u32)
+                .is_some_and(|track| track.id == fallback_track.id)
+                .then_some(position)
+        })
+        .or_else(|| {
+            (0..model.n_items()).find_map(|position| {
+                item_at::<Track>(model, position)
+                    .is_some_and(|track| track.id == fallback_track.id)
+                    .then_some(position as usize)
+            })
+        });
+    let Some(anchor_index) = anchor_index else {
+        controller.play_now(fallback_track);
+        return;
+    };
+    let Some(activation) = loaded_tracks_window_play_activation(
+        play_context.source_key(),
+        model.n_items() as usize,
+        anchor_index,
+        |index| item_at::<Track>(model, index as u32),
+    ) else {
+        controller.play_now(fallback_track);
+        return;
+    };
+    controller.play_activation(activation);
 }
 pub(in crate::ui) fn album_grid(
     shell: &Rc<Shell>,
@@ -314,11 +374,14 @@ pub(in crate::ui) fn track_grid(
     shell: &Rc<Shell>,
     model: gio::ListStore,
     key: LibraryListKey,
+    play_context: Option<LoadedTrackPlayContext>,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.responsive_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
+    let model_for_factory = model.clone();
+    let play_context_for_factory = play_context.clone();
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -330,11 +393,21 @@ pub(in crate::ui) fn track_grid(
             return;
         };
         let track = boxed.borrow::<Track>();
+        let play_action = play_context_for_factory.as_ref().map(|context| {
+            track_model_play_action(
+                &shell_for_factory,
+                &model_for_factory,
+                context.clone(),
+                None,
+                track.clone(),
+            )
+        });
         item.set_child(Some(&track_card(
             &shell_for_factory,
             &track,
             key,
             card_size,
+            play_action,
         )));
     });
     factory.connect_unbind(clear_list_item_child);
@@ -346,9 +419,16 @@ pub(in crate::ui) fn track_grid(
     grid.set_hexpand(true);
     grid.set_vexpand(true);
     let controller = shell.controller.clone();
+    let play_context = play_context.clone();
     grid.connect_activate(move |_, position| {
         if let Some(track) = item_at::<Track>(&model, position) {
-            controller.play_now(track);
+            play_track_from_model(
+                &controller,
+                &model,
+                play_context.as_ref(),
+                Some(position),
+                track,
+            );
         }
     });
     grid
@@ -525,6 +605,7 @@ pub(in crate::ui) fn track_table(
     model: gio::ListStore,
     key: LibraryListKey,
     detail: bool,
+    play_context: Option<LoadedTrackPlayContext>,
 ) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     selection.set_autoselect(false);
@@ -549,9 +630,16 @@ pub(in crate::ui) fn track_table(
     }
     install_column_view_width_fit(&table, columns, initial_width);
     let controller = shell.controller.clone();
+    let play_context = play_context.clone();
     table.connect_activate(move |_, position| {
         if let Some(track) = item_at::<Track>(&model, position) {
-            controller.play_now(track);
+            play_track_from_model(
+                &controller,
+                &model,
+                play_context.as_ref(),
+                Some(position),
+                track,
+            );
         }
     });
     table
@@ -588,13 +676,14 @@ pub(in crate::ui) fn album_detail_list(
     list.set_halign(gtk::Align::Fill);
     list.set_vexpand(true);
     let controller = shell.controller.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
     list.connect_activate(move |_, position| {
         let Some(AlbumDetailItem::Track { track, .. }) =
             item_at::<AlbumDetailItem>(&model, position)
         else {
             return;
         };
-        controller.play_now(track);
+        play_album_track_from_cache(&controller, track, selected_music_folder_id.clone());
     });
     list
 }
@@ -1078,6 +1167,7 @@ pub(in crate::ui) fn album_detail_track_cells(
 
     let controller = shell.controller.clone();
     let track = track.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
     let selection = selection.clone();
     let row_for_click = row.clone();
     let gesture = gtk::GestureClick::new();
@@ -1090,11 +1180,35 @@ pub(in crate::ui) fn album_detail_track_cells(
             gesture.set_state(gtk::EventSequenceState::Claimed);
             let controller = controller.clone();
             let track = track.clone();
-            glib::idle_add_local_once(move || controller.play_now(track));
+            let selected_music_folder_id = selected_music_folder_id.clone();
+            glib::idle_add_local_once(move || {
+                play_album_track_from_cache(&controller, track, selected_music_folder_id)
+            });
         }
     });
     row.add_controller(gesture);
     row.upcast()
+}
+fn play_album_track_from_cache(
+    controller: &crate::controller::AppController,
+    track: Track,
+    selected_music_folder_id: Option<rufin_core::MusicFolderId>,
+) {
+    let Ok(Some((album, tracks))) = controller.cached_album_detail(&track.album_id) else {
+        controller.play_now(track);
+        return;
+    };
+    let Some(anchor_index) = tracks.iter().position(|candidate| candidate.id == track.id) else {
+        controller.play_now(track);
+        return;
+    };
+    let Some(activation) =
+        album_play_activation(album.id, tracks, anchor_index, selected_music_folder_id)
+    else {
+        controller.play_now(track);
+        return;
+    };
+    controller.play_activation(activation);
 }
 pub(in crate::ui) fn album_detail_track_cell(
     shell: &Rc<Shell>,
@@ -1438,10 +1552,16 @@ pub(in crate::ui) fn track_card(
     track: &Track,
     key: LibraryListKey,
     size: i32,
+    play_action: Option<Rc<dyn Fn()>>,
 ) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
-    card.append(&cards::track_cover_tile(shell, track, size));
+    card.append(&cards::track_cover_tile_with_play_action(
+        shell,
+        track,
+        size,
+        play_action,
+    ));
     card.append(&center_label(&track.title, "track-title"));
     for field in shell.library_settings(key).grid_fields {
         let value = track_field(track, field);
@@ -1479,9 +1599,24 @@ pub(in crate::ui) fn artist_cover_tile(
     let controls = cards::cover_hover_controls(size, "Play artist", artist.favorite);
     let controller = shell.controller.clone();
     let artist_id = artist.id.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id) {
-            controller.play_tracks_now(detail.tracks);
+        if let Ok(Some(detail)) = controller.cached_artist_detail(&artist_id)
+            && let Some(activation) = loaded_tracks_window_play_activation(
+                rufin_core::PlaySourceKey {
+                    descriptor: rufin_core::PlaySourceDescriptor::ArtistTracks {
+                        artist_id: artist_id.clone(),
+                        scope: rufin_core::ArtistTrackScope::AllCredits,
+                        selected_music_folder_id: selected_music_folder_id.clone(),
+                    },
+                    order: rufin_core::SourceOrder::Canonical,
+                },
+                detail.tracks.len(),
+                0,
+                |index| detail.tracks.get(index).cloned(),
+            )
+        {
+            controller.play_activation(activation);
         }
     });
     let controller = shell.controller.clone();

@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use rufin_core::{Album, AlbumId, Artist, ArtistId, Route, Track};
+use rufin_core::{
+    Album, AlbumId, Artist, ArtistId, ArtistTrackScope, PlaySourceDescriptor, PlaySourceKey, Route,
+    SourceOrder, Track,
+};
 use rufin_store::CachedArtistDetail;
 
 use super::*;
@@ -47,7 +50,21 @@ impl Shell {
 
         if has_favorite_tracks {
             wrapper.append(&section_heading("Favorite tracks"));
-            wrapper.append(&self.compact_artist_tracks_table(favorite_tracks, "artist-favorites"));
+            let favorite_artist_id = artist.id.clone();
+            let selected_music_folder_id = selected_music_folder_id(self);
+            let source_descriptor = PlaySourceDescriptor::HomeCollection {
+                section_id: "artist-favorites".to_string(),
+                source: Box::new(PlaySourceDescriptor::ArtistTracks {
+                    artist_id: favorite_artist_id,
+                    scope: ArtistTrackScope::AllCredits,
+                    selected_music_folder_id,
+                }),
+            };
+            wrapper.append(&self.compact_artist_tracks_table(
+                favorite_tracks,
+                "artist-favorites",
+                Some(source_descriptor),
+            ));
         }
 
         if !albums.is_empty() {
@@ -167,6 +184,11 @@ impl Shell {
             LibraryListKey::ArtistTracks,
             "artist-tracks",
             0,
+            Some(PlaySourceDescriptor::ArtistTracks {
+                artist_id: detail.artist.id,
+                scope: ArtistTrackScope::AllCredits,
+                selected_music_folder_id: selected_music_folder_id(self),
+            }),
         ));
 
         wrapper.upcast()
@@ -231,7 +253,25 @@ impl Shell {
         play.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
         let play_tracks = tracks.to_vec();
-        play.connect_clicked(move |_| controller.play_tracks_now(play_tracks.clone()));
+        let artist_id = artist.id.clone();
+        let selected_music_folder_id = selected_music_folder_id(self);
+        play.connect_clicked(move |_| {
+            let source_key = PlaySourceKey {
+                descriptor: PlaySourceDescriptor::ArtistTracks {
+                    artist_id: artist_id.clone(),
+                    scope: ArtistTrackScope::AllCredits,
+                    selected_music_folder_id: selected_music_folder_id.clone(),
+                },
+                order: SourceOrder::Canonical,
+            };
+            if let Some(activation) =
+                loaded_tracks_window_play_activation(source_key, play_tracks.len(), 0, |index| {
+                    play_tracks.get(index).cloned()
+                })
+            {
+                controller.play_activation(activation);
+            }
+        });
         actions.append(&play);
 
         let play_next = detail_action_button(PLAY_NEXT_ICON, "Next");

@@ -81,6 +81,13 @@ impl Shell {
             debug!(?resolved, "resolved layout changed");
             self.queue_responsive_route_render();
         }
+        if previous_right == RightSidebarMode::Hidden
+            && resolved.right_sidebar.is_visible()
+            && !login_active
+            && !startup_loading_active
+        {
+            self.schedule_queue_panel_render();
+        }
         self.log_layout_snapshot("apply_resolved_layout");
         changed
     }
