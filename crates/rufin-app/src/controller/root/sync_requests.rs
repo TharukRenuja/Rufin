@@ -16,9 +16,13 @@ pub(in crate::controller) fn resolve_stream(
     playback_settings: &PlaybackSettings,
 ) -> Result<StreamDescriptor, String> {
     let saved = store
-        .with_store(|store| store.active_server())?
-        .filter(|saved| saved.server.id == *server_id)
-        .ok_or_else(|| "No matching active server is saved.".to_string())?;
+        .with_store(|store| {
+            Ok(store
+                .list_servers()?
+                .into_iter()
+                .find(|saved| saved.server.id == *server_id))
+        })?
+        .ok_or_else(|| "No matching saved server is saved.".to_string())?;
     if saved.server.provider == "fake" {
         return Ok(StreamDescriptor::new(format!(
             "fake://local/stream/{}",
