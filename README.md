@@ -31,19 +31,14 @@
 
 
 <p align="center">
-  <img src="data/artists.png" width="400">
-  &nbsp;&nbsp;
-  <img src="data/albums.png" width="400">
-</p>
-<p align="center">
   <img src="data/tracks.png" width="400">
   &nbsp;&nbsp;
-  <img src="data/general.png" width="400">
+  <img src="data/smart_playlists.png" width="400">
 </p>
 <p align="center">
-  <img src="data/customize_display.png" width="400">
+  <img src="data/play_random.png" width="400">
   &nbsp;&nbsp;
-  <img src="data/library.png" width="400">
+  <img src="data/playback.png" width="400">
 </p>
 
 # Installation

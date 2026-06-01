@@ -16,38 +16,36 @@
     <color type="primary" scheme_preference="dark">#28596b</color>
   </branding>
   <description>
-    <p>Connect Rufin to Jellyfin, Subsonic, Navidrome, or a local music folder, then browse artists, albums, and tracks from one responsive library.</p>
-    <p>Rufin keeps a local cache for fast navigation and lets you customize how albums, artists, and tracks are displayed.</p>
-    <p>It supports Last.fm, Libre.fm, and ListenBrainz scrobbling, Discord Rich Presence, lyrics and cover art lookup, gapless playback, crossfade, ReplayGain, and an equalizer.</p>
+    <p>Native music client for your music servers or local folders with built-in scrobbling and advanced customization settings.</p>
+    <ul>
+      <li>Can connect to multiple Jellyfin, Subsonic, Navidrome servers as well as multiple local folders, and can seamlessly switch between them</li>
+      <li>Built-in Last.fm, Libre.fm, and ListenBrainz scrobbling</li>
+      <li>Discord Rich Presence</li>
+      <li>Automatic lyrics/Cover art lookup</li>
+      <li>Music player basics like ReplayGain, Gapless, CrossFade and an equalizer</li>
+      <li>Smart playlists that support multiple combinations</li>
+    </ul>
   </description>
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/Rufin.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Browse artists</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/artists.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Browse albums</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/albums.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/tracks.png</image>
     </screenshot>
     <screenshot>
-      <caption>Configure app layout</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/general.png</image>
+      <caption>Build smart playlists</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
-      <caption>Customize the library layout</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/customize_display.png</image>
+      <caption>Play random selections</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/play_random.png</image>
     </screenshot>
     <screenshot>
-      <caption>Configure library sources</caption>
-      <image type="source">https://raw.githubusercontent.com/screwys/Rufin/v0.5.0/data/library.png</image>
+      <caption>Tune playback settings</caption>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/main/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
