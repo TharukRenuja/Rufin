@@ -1688,7 +1688,7 @@ mod tests {
                     source_item_id: Some("c".to_string()),
                 },
             })
-            .unwrap();
+            .expect("source queue replacement should be valid");
 
         assert_eq!(
             queue
@@ -1773,7 +1773,9 @@ mod tests {
             },
         };
 
-        queue.replace_all(replacement).unwrap();
+        queue
+            .replace_all(replacement)
+            .expect("source queue replacement should be valid");
         let snapshot = queue.snapshot();
 
         assert_eq!(
@@ -1811,7 +1813,7 @@ mod tests {
                     source_item_id: Some("entry:c".to_string()),
                 },
             })
-            .unwrap();
+            .expect("source queue replacement should be valid");
 
         let Some(QueueEntryOrigin::Source {
             occurrence_key,
@@ -1925,7 +1927,7 @@ mod tests {
                 },
                 items: vec![source_item(track(2), 1, "b"), source_item(track(3), 2, "c")],
             })
-            .unwrap();
+            .expect("source insertion should be valid");
 
         assert_eq!(inserted.len(), 2);
         assert_eq!(
@@ -1948,7 +1950,7 @@ mod tests {
                 },
                 items: vec![source_item(track(2), 1, "b"), source_item(track(3), 2, "c")],
             })
-            .unwrap();
+            .expect("source insertion should be valid");
 
         assert_eq!(
             queue.next_track().map(|entry| &entry.track_id),
@@ -1975,7 +1977,7 @@ mod tests {
                 },
                 items: vec![source_item(track(2), 1, "b")],
             })
-            .unwrap();
+            .expect("source insertion should be valid");
         queue
             .insert_next(QueueInsertion {
                 source: QueueInsertionSource::Source {
@@ -1983,7 +1985,7 @@ mod tests {
                 },
                 items: vec![source_item(track(2), 1, "b")],
             })
-            .unwrap();
+            .expect("source insertion should be valid");
 
         let batch_keys = queue
             .entries()
@@ -2008,7 +2010,7 @@ mod tests {
                 },
                 items: vec![source_item(track(2), 1, "b")],
             })
-            .unwrap();
+            .expect("source insertion should be valid");
         queue
             .insert_next(QueueInsertion {
                 source: QueueInsertionSource::Source {
@@ -2016,7 +2018,7 @@ mod tests {
                 },
                 items: vec![source_item(track(2), 1, "b")],
             })
-            .unwrap();
+            .expect("source insertion should be valid");
 
         let shuffle_keys = queue
             .entries()
@@ -2260,12 +2262,16 @@ mod tests {
         let mut first = QueueEngine::new(ServerId::fake(1));
         first.append(&track(90));
         first.append(&track(91));
-        first.replace_all(replacement()).unwrap();
+        first
+            .replace_all(replacement())
+            .expect("source queue replacement should be valid");
         first.set_shuffle(true, 77);
 
         let mut second = QueueEngine::new(ServerId::fake(1));
         second.append(&track(10));
-        second.replace_all(replacement()).unwrap();
+        second
+            .replace_all(replacement())
+            .expect("source queue replacement should be valid");
         second.set_shuffle(true, 77);
 
         assert_eq!(
@@ -2297,7 +2303,7 @@ mod tests {
                     source_item_id: Some("b".to_string()),
                 },
             })
-            .unwrap();
+            .expect("source queue replacement should be valid");
 
         queue.set_shuffle(true, 51);
         queue.set_shuffle(false, 51);
@@ -2377,7 +2383,7 @@ mod tests {
                     QueueItemInput::Manual { track: track(3) },
                 ],
             })
-            .unwrap();
+            .expect("manual append should be valid");
 
         assert_eq!(inserted.len(), 3);
         assert_eq!(
