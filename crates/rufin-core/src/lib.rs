@@ -14,8 +14,9 @@ pub use domain::{
 };
 pub use queue::{
     ArtistTrackScope, AutoDjReason, PlaySourceDescriptor, PlaySourceKey,
-    PlaylistEntrySortDescriptor, QueueBatchKey, QueueEngine, QueueEntry, QueueEntryId,
-    QueueEntryOrigin, QueueShuffleKey, QueueSnapshot, QueueSourceSnapshot, RepeatMode,
+    PlaylistEntrySortDescriptor, QueueAnchor, QueueBatchKey, QueueEngine, QueueEntry, QueueEntryId,
+    QueueEntryOrigin, QueueError, QueueItemInput, QueueReplacement, QueueReplacementSource,
+    QueueShuffleKey, QueueSnapshot, QueueSourceInput, QueueSourceSnapshot, RepeatMode,
     SearchSortDescriptor, ShuffleState, SmartPlaylistSortDescriptor, SourceOrder,
     TrackSortDescriptor,
 };
