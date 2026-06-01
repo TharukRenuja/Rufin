@@ -29,28 +29,45 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.1/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.5/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.1/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.5/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.1/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.5/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.1/data/play_random.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.5/data/play_random.png</image>
     </screenshot>
     <screenshot>
       <caption>Tune playback settings</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.1/data/playback.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.5/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.5.5" date="2026-06-01">
+      <description>
+        <p>This has been a fruitful release, got to make pages more consistent with the app UI, and fix a lot of bugs thanks to people reporting on Github. There is more optimization for caching, and QoL I'm working on, so stay tuned!</p>
+        <ul>
+          <li>Redesigned artist, album and playlists pages</li>
+          <li>Added an option to close the app to tray, and added multimedia controls to tray icon</li>
+          <li>Added in-app toast notifications for server auth</li>
+          <li>Playing notification now correctly shows the the album artwork</li>
+          <li>Queue is now kept alive, it no longer refreshes and jumps to first entry on clicking one item</li>
+          <li>Fixed an issue sidebar icons were not showing up in flatpak</li>
+          <li>Initial caching screen now reports progress</li>
+          <li>Fixed a bug where items got buried under the right sidebar, or pushed the right sidebar out of the window</li>
+          <li>Fixed a bug that automatic lyrics fetching could fetch lyrics just based on song names</li>
+          <li>Fixed a bug that shuffle relied on a stagnant queue</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-06-01">
       <description>
         <ul>
