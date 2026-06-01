@@ -919,8 +919,9 @@ impl QueueEngine {
     fn rebuild_shuffle_order(&mut self) {
         self.shuffle_order = (0..self.entries.len()).collect();
         let seed = self.shuffle.seed;
-        self.shuffle_order
-            .sort_by_key(|index| stable_shuffle_key(seed, self.entries[*index].id.as_str()));
+        self.shuffle_order.sort_by_key(|index| {
+            stable_shuffle_key(seed, entry_shuffle_key(&self.entries[*index]))
+        });
         if self.shuffle.enabled
             && let Some(current_index) = self.current_index
             && let Some(position) = self
@@ -996,6 +997,17 @@ fn stable_shuffle_key(seed: u64, value: &str) -> u64 {
         .fold(seed ^ 0x9e37_79b9_7f4a_7c15, |hash, byte| {
             hash.rotate_left(5) ^ u64::from(byte)
         })
+}
+
+fn entry_shuffle_key(entry: &QueueEntry) -> &str {
+    match entry.origin.as_ref() {
+        Some(QueueEntryOrigin::Source { shuffle_key, .. })
+        | Some(QueueEntryOrigin::Manual { shuffle_key })
+        | Some(QueueEntryOrigin::Random { shuffle_key, .. })
+        | Some(QueueEntryOrigin::AutoDj { shuffle_key, .. })
+        | Some(QueueEntryOrigin::RestoredUnknown { shuffle_key, .. }) => shuffle_key.as_str(),
+        None => entry.id.as_str(),
+    }
 }
 
 fn source_occurrence_key(
@@ -1807,6 +1819,95 @@ mod tests {
         let right_order = right.shuffle_order.clone();
 
         assert_eq!(left_order, right_order);
+    }
+
+    #[test]
+    fn same_source_and_seed_shuffle_is_independent_of_prior_queue_history() {
+        let source = QueueSourceInput {
+            source_key: source_key("shuffle"),
+            total_source_items: Some(4),
+            materialized_start: 0,
+            materialized_len: 4,
+            capped: false,
+        };
+        let replacement = || QueueReplacement {
+            source: QueueReplacementSource::Source(source.clone()),
+            items: vec![
+                source_item(track(1), 0, "a"),
+                source_item(track(2), 1, "b"),
+                source_item(track(3), 2, "c"),
+                source_item(track(4), 3, "d"),
+            ],
+            anchor: QueueAnchor::SourceOccurrence {
+                track_id: TrackId::fake(2),
+                source_index: 1,
+                source_item_id: Some("b".to_string()),
+            },
+        };
+
+        let mut first = QueueEngine::new(ServerId::fake(1));
+        first.append(&track(90));
+        first.append(&track(91));
+        first.replace_all(replacement()).unwrap();
+        first.set_shuffle(true, 77);
+
+        let mut second = QueueEngine::new(ServerId::fake(1));
+        second.append(&track(10));
+        second.replace_all(replacement()).unwrap();
+        second.set_shuffle(true, 77);
+
+        assert_eq!(first.snapshot().shuffle_order, second.snapshot().shuffle_order);
+    }
+
+    #[test]
+    fn disabling_shuffle_returns_to_source_order_from_current_display_index() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue
+            .replace_all(QueueReplacement {
+                source: QueueReplacementSource::Source(QueueSourceInput {
+                    source_key: source_key("display"),
+                    total_source_items: Some(3),
+                    materialized_start: 0,
+                    materialized_len: 3,
+                    capped: false,
+                }),
+                items: vec![
+                    source_item(track(1), 0, "a"),
+                    source_item(track(2), 1, "b"),
+                    source_item(track(3), 2, "c"),
+                ],
+                anchor: QueueAnchor::SourceOccurrence {
+                    track_id: TrackId::fake(2),
+                    source_index: 1,
+                    source_item_id: Some("b".to_string()),
+                },
+            })
+            .unwrap();
+
+        queue.set_shuffle(true, 51);
+        queue.set_shuffle(false, 51);
+
+        assert_eq!(
+            queue.next_track().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(3))
+        );
+    }
+
+    #[test]
+    fn restored_valid_shuffle_order_is_used_until_rebuild() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        queue.append(&track(3));
+        queue.set_shuffle(true, 42);
+
+        let mut snapshot = queue.snapshot();
+        snapshot.shuffle_order = vec![1, 2, 0];
+        snapshot.current_index = Some(1);
+
+        let restored = QueueEngine::restore(snapshot);
+
+        assert_eq!(restored.snapshot().shuffle_order, vec![1, 2, 0]);
     }
 
     #[test]
