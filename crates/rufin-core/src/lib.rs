@@ -12,7 +12,13 @@ pub use domain::{
     SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
     SmartPlaylistSortField, Track, TrackId, format_duration,
 };
-pub use queue::{QueueEngine, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, ShuffleState};
+pub use queue::{
+    ArtistTrackScope, AutoDjReason, PlaySourceDescriptor, PlaySourceKey,
+    PlaylistEntrySortDescriptor, QueueBatchKey, QueueEngine, QueueEntry, QueueEntryId,
+    QueueEntryOrigin, QueueShuffleKey, QueueSnapshot, QueueSourceSnapshot, RepeatMode,
+    SearchSortDescriptor, ShuffleState, SmartPlaylistSortDescriptor, SourceOrder,
+    TrackSortDescriptor,
+};
 pub use route::{FolderPathItem, Route, RouteStack, SearchKind};
 pub use settings::{
     AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DEFAULT_WINDOW_HEIGHT,

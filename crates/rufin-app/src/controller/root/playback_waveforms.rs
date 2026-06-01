@@ -649,6 +649,7 @@ mod tests {
                     image_ref: None,
                     local_path: None,
                     source_format: None,
+                    origin: None,
                 })
                 .collect(),
             current_index: Some(2),
@@ -656,6 +657,7 @@ mod tests {
             shuffle: rufin_core::ShuffleState::default(),
             shuffle_order: Vec::new(),
             progress_seconds: 0,
+            source_snapshot: None,
         };
 
         let requests =

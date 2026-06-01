@@ -687,6 +687,7 @@ mod tests {
             image_ref: None,
             local_path: None,
             source_format: None,
+            origin: None,
         }
     }
 

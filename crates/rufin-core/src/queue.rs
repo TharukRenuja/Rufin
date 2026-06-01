@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{AlbumId, ArtistId, ImageRef, ServerId, Track, TrackId};
+use crate::domain::{
+    AlbumId, ArtistId, GenreId, ImageRef, MusicFolderId, PlaylistId, ServerId, SmartPlaylistId,
+    Track, TrackId,
+};
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct QueueEntryId(String);
@@ -45,6 +48,194 @@ impl Default for ShuffleState {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct QueueBatchKey(String);
+
+impl QueueBatchKey {
+    #[allow(dead_code)]
+    fn new(value: impl Into<String>) -> Self {
+        let value = value.into();
+        assert!(!value.is_empty(), "QueueBatchKey cannot be empty");
+        Self(value)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct QueueShuffleKey(String);
+
+impl QueueShuffleKey {
+    fn new(value: impl Into<String>) -> Self {
+        let value = value.into();
+        assert!(!value.is_empty(), "QueueShuffleKey cannot be empty");
+        Self(value)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum AutoDjReason {
+    Similarity,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum PlaylistEntrySortDescriptor {
+    Position,
+    Title,
+    Album,
+    Artist,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum TrackSortDescriptor {
+    Album,
+    Artist,
+    DateAdded,
+    Title,
+    TrackNumber,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SearchSortDescriptor {
+    Relevance,
+    Title,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SmartPlaylistSortDescriptor {
+    Definition,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ArtistTrackScope {
+    MainArtist,
+    AllCredits,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum PlaySourceDescriptor {
+    Album {
+        album_id: AlbumId,
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    Playlist {
+        playlist_id: PlaylistId,
+    },
+    SmartPlaylist {
+        smart_playlist_id: SmartPlaylistId,
+        definition_fingerprint: String,
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    FolderLoaded {
+        path: Vec<String>,
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    ArtistTracks {
+        artist_id: ArtistId,
+        scope: ArtistTrackScope,
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    GenreTracks {
+        genre_id: GenreId,
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    FavoriteTracks {
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    SearchResults {
+        query: String,
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    GlobalTracks {
+        selected_music_folder_id: Option<MusicFolderId>,
+    },
+    HomeCollection {
+        section_id: String,
+        source: Box<PlaySourceDescriptor>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SourceOrder {
+    Canonical,
+    LibraryDisplayed {
+        filter_key: Option<String>,
+        sort: TrackSortDescriptor,
+    },
+    PlaylistDisplayed {
+        query: Option<String>,
+        sort: PlaylistEntrySortDescriptor,
+        descending: bool,
+    },
+    FolderDisplayed {
+        query: Option<String>,
+        sort: TrackSortDescriptor,
+    },
+    SearchDisplayed {
+        sort: SearchSortDescriptor,
+    },
+    SmartPlaylistDefinition {
+        sort: SmartPlaylistSortDescriptor,
+        limit: Option<usize>,
+        skip_count: usize,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PlaySourceKey {
+    pub descriptor: PlaySourceDescriptor,
+    pub order: SourceOrder,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct QueueSourceSnapshot {
+    pub source_key: PlaySourceKey,
+    pub batch_key: QueueBatchKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_source_items: Option<usize>,
+    pub materialized_start: usize,
+    pub materialized_len: usize,
+    pub anchor_index: usize,
+    pub capped: bool,
+    pub materialized_track_ids: Vec<TrackId>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum QueueEntryOrigin {
+    Source {
+        source_key: PlaySourceKey,
+        occurrence_key: String,
+        source_index: usize,
+        source_item_id: Option<String>,
+        batch_key: QueueBatchKey,
+        shuffle_key: QueueShuffleKey,
+    },
+    Manual {
+        shuffle_key: QueueShuffleKey,
+    },
+    Random {
+        seed: u64,
+        random_index: usize,
+        shuffle_key: QueueShuffleKey,
+    },
+    AutoDj {
+        generated_from_track_id: TrackId,
+        generated_index: usize,
+        reason: AutoDjReason,
+        shuffle_key: QueueShuffleKey,
+    },
+    RestoredUnknown {
+        restored_index: usize,
+        shuffle_key: QueueShuffleKey,
+    },
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct QueueEntry {
     pub id: QueueEntryId,
@@ -67,6 +258,8 @@ pub struct QueueEntry {
     pub local_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<QueueEntryOrigin>,
 }
 
 impl QueueEntry {
@@ -85,6 +278,7 @@ impl QueueEntry {
             image_ref: track.image_ref.clone(),
             local_path: track.local_path.clone(),
             source_format: track.source_format.clone(),
+            origin: None,
         }
     }
 }
@@ -99,6 +293,8 @@ pub struct QueueSnapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shuffle_order: Vec<usize>,
     pub progress_seconds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_snapshot: Option<QueueSourceSnapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +307,9 @@ pub struct QueueEngine {
     shuffle_order: Vec<usize>,
     shuffle_position: Option<usize>,
     next_entry_number: u64,
+    source_snapshot: Option<QueueSourceSnapshot>,
+    #[allow(dead_code)]
+    next_batch_number: u64,
     progress_seconds: u32,
 }
 
@@ -125,23 +324,29 @@ impl QueueEngine {
             shuffle_order: Vec::new(),
             shuffle_position: None,
             next_entry_number: 1,
+            source_snapshot: None,
+            next_batch_number: 1,
             progress_seconds: 0,
         }
     }
 
     pub fn restore(snapshot: QueueSnapshot) -> Self {
+        let mut entries = snapshot.entries;
+        repair_missing_origins(&mut entries);
         let current_index = snapshot
             .current_index
-            .filter(|index| *index < snapshot.entries.len());
+            .filter(|index| *index < entries.len());
         let mut engine = Self {
             server_id: snapshot.server_id,
-            next_entry_number: next_entry_number(&snapshot.entries),
-            entries: snapshot.entries,
+            next_entry_number: next_entry_number(&entries),
+            next_batch_number: next_batch_number(&entries),
+            entries,
             current_index,
             repeat_mode: snapshot.repeat_mode,
             shuffle: snapshot.shuffle,
             shuffle_order: snapshot.shuffle_order,
             shuffle_position: None,
+            source_snapshot: snapshot.source_snapshot,
             progress_seconds: snapshot.progress_seconds,
         };
         if engine.shuffle.enabled
@@ -167,6 +372,7 @@ impl QueueEngine {
                 Vec::new()
             },
             progress_seconds: self.progress_seconds,
+            source_snapshot: self.source_snapshot.clone(),
         }
     }
 
@@ -219,6 +425,7 @@ impl QueueEngine {
         let id = entry.id.clone();
         self.entries.clear();
         self.entries.push(entry);
+        self.source_snapshot = None;
         self.current_index = Some(0);
         self.progress_seconds = 0;
         self.rebuild_shuffle_order();
@@ -290,6 +497,7 @@ impl QueueEngine {
         self.current_index = None;
         self.shuffle_order.clear();
         self.shuffle_position = None;
+        self.source_snapshot = None;
         self.progress_seconds = 0;
     }
 
@@ -516,6 +724,39 @@ fn next_entry_number(entries: &[QueueEntry]) -> u64 {
         + 1
 }
 
+fn restored_shuffle_key(index: usize, entry: &QueueEntry) -> QueueShuffleKey {
+    QueueShuffleKey::new(format!("restored-{index}-{}", entry.id.as_str()))
+}
+
+fn repair_missing_origins(entries: &mut [QueueEntry]) {
+    for (index, entry) in entries.iter_mut().enumerate() {
+        if entry.origin.is_none() {
+            entry.origin = Some(QueueEntryOrigin::RestoredUnknown {
+                restored_index: index,
+                shuffle_key: restored_shuffle_key(index, entry),
+            });
+        }
+    }
+}
+
+fn next_batch_number(entries: &[QueueEntry]) -> u64 {
+    entries
+        .iter()
+        .filter_map(|entry| entry.origin.as_ref())
+        .filter_map(|origin| match origin {
+            QueueEntryOrigin::Source { batch_key, .. } => Some(batch_key),
+            QueueEntryOrigin::Manual { .. }
+            | QueueEntryOrigin::Random { .. }
+            | QueueEntryOrigin::AutoDj { .. }
+            | QueueEntryOrigin::RestoredUnknown { .. } => None,
+        })
+        .filter_map(|batch_key| batch_key.as_str().strip_prefix("batch-"))
+        .filter_map(|number| number.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
 fn valid_shuffle_order(shuffle_order: &[usize], entries_len: usize) -> bool {
     if shuffle_order.len() != entries_len {
         return false;
@@ -532,7 +773,10 @@ fn valid_shuffle_order(shuffle_order: &[usize], entries_len: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{QueueEngine, RepeatMode};
+    use super::{
+        PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, QueueEngine,
+        QueueEntryOrigin, RepeatMode, SourceOrder,
+    };
     use crate::domain::{AlbumId, ServerId, Track, TrackId};
 
     fn track(number: u32) -> Track {
@@ -562,6 +806,51 @@ mod tests {
             comment: None,
             skip_count: None,
         }
+    }
+
+    #[allow(dead_code)]
+    fn source_key(label: &str) -> PlaySourceKey {
+        PlaySourceKey {
+            descriptor: PlaySourceDescriptor::Playlist {
+                playlist_id: crate::domain::PlaylistId::fake(7),
+            },
+            order: SourceOrder::PlaylistDisplayed {
+                query: Some(label.to_string()),
+                sort: PlaylistEntrySortDescriptor::Position,
+                descending: false,
+            },
+        }
+    }
+
+    #[test]
+    fn old_snapshots_repair_missing_origins() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+
+        let mut snapshot = queue.snapshot();
+        for entry in &mut snapshot.entries {
+            entry.origin = None;
+        }
+        snapshot.source_snapshot = None;
+
+        let restored = QueueEngine::restore(snapshot);
+
+        assert_eq!(restored.entries().len(), 2);
+        assert!(matches!(
+            restored.entries()[0].origin.as_ref(),
+            Some(QueueEntryOrigin::RestoredUnknown {
+                restored_index: 0,
+                ..
+            })
+        ));
+        assert!(matches!(
+            restored.entries()[1].origin.as_ref(),
+            Some(QueueEntryOrigin::RestoredUnknown {
+                restored_index: 1,
+                ..
+            })
+        ));
     }
 
     #[test]

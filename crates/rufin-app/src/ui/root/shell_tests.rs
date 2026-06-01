@@ -404,6 +404,7 @@ pub(in crate::ui) fn queue_source_waits_until_library_snapshot_matches() {
         shuffle: Default::default(),
         shuffle_order: Vec::new(),
         progress_seconds: 0,
+        source_snapshot: None,
     };
 
     assert!(queue_source_waits_for_snapshot(
@@ -1399,6 +1400,7 @@ pub(in crate::ui) fn current_playback_track_id_uses_restored_current_entry() {
             image_ref: None,
             local_path: None,
             source_format: None,
+            origin: None,
         }),
         ..super::PlaybackSnapshot::default()
     };

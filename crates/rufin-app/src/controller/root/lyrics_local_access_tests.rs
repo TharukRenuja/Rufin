@@ -332,6 +332,7 @@ pub(in crate::controller) fn saved_lrclib_result_uses_explicit_output_path() {
         image_ref: None,
         local_path: Some(dir.join("Track.flac").to_string_lossy().into_owned()),
         source_format: None,
+        origin: None,
     };
     let result = super::LyricsSearchResult {
         id: 1,
@@ -974,6 +975,7 @@ pub(in crate::controller) fn automatic_lrclib_fallback_skips_empty_hits() {
         image_ref: None,
         local_path: None,
         source_format: None,
+        origin: None,
     };
     let results = vec![
         super::LyricsSearchResult {
