@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use rufin_core::{QueueEntry, QueueEntryId, Route, SearchKind, format_duration};
+use rufin_core::{QueueEntry, QueueEntryId, RightSidebarMode, Route, SearchKind, format_duration};
 
 use crate::controller::AppController;
 use crate::i18n::tr;
@@ -34,14 +34,33 @@ enum QueuePanelLayout {
 }
 
 impl Shell {
+    pub(super) fn schedule_queue_panel_render(self: &Rc<Self>) {
+        if self.state.queue_render_queued.replace(true) {
+            return;
+        }
+        let shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            shell.state.queue_render_queued.set(false);
+            shell.render_queue_panel();
+        });
+    }
+
     pub(super) fn render_queue_panel(self: &Rc<Self>) {
         let queue_filter = self.state.queue_filter.borrow().trim().to_lowercase();
-        self.render_queue_panel_into(&self.queue_panel, &queue_filter, QueuePanelLayout::Sidebar);
-        self.render_queue_panel_into(
-            &self.fullscreen_player.queue_panel,
-            "",
-            QueuePanelLayout::Fullscreen,
-        );
+        if self.state.resolved_right_sidebar.get() != RightSidebarMode::Hidden {
+            self.render_queue_panel_into(
+                &self.queue_panel,
+                &queue_filter,
+                QueuePanelLayout::Sidebar,
+            );
+        }
+        if self.state.fullscreen_player_visible.get() {
+            self.render_queue_panel_into(
+                &self.fullscreen_player.queue_panel,
+                "",
+                QueuePanelLayout::Fullscreen,
+            );
+        }
         self.controller.warm_waveforms_for_queue();
     }
 

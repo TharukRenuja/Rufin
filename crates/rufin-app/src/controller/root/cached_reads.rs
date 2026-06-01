@@ -661,7 +661,7 @@ pub(in crate::controller) fn activate_queue_for_saved(
     let mut queue = queue
         .lock()
         .map_err(|_| "queue lock was poisoned".to_string())?;
-    let current_server_id = queue.as_ref().map(|queue| queue.snapshot().server_id);
+    let current_server_id = queue.as_ref().map(|queue| queue.server_id().clone());
     if current_server_id.as_ref() == Some(&saved.server.id) {
         return Ok(None);
     }
@@ -1344,8 +1344,7 @@ pub(in crate::controller) fn playback_snapshot_from_queue(
 pub(in crate::controller) fn next_queue_entry_after_current(
     queue: &QueueEngine,
 ) -> Option<QueueEntry> {
-    let mut preview = QueueEngine::restore(queue.snapshot());
-    preview.advance_after_end_of_stream().cloned()
+    queue.next_after_end_of_stream().cloned()
 }
 
 pub(in crate::controller) fn queue_state_matches_current_playback_request(
@@ -1356,7 +1355,7 @@ pub(in crate::controller) fn queue_state_matches_current_playback_request(
     let Some(queue) = queue else {
         return false;
     };
-    if queue.snapshot().server_id != *server_id {
+    if queue.server_id() != server_id {
         return false;
     }
     queue
@@ -1399,7 +1398,7 @@ fn queue_state_matches_next_preload_request(
     let Some(queue) = queue else {
         return false;
     };
-    if queue.snapshot().server_id != request.server_id {
+    if queue.server_id() != &request.server_id {
         return false;
     }
     let Some(current) = queue.current() else {
@@ -1623,7 +1622,7 @@ pub(in crate::controller) fn next_preload_request_from_queue(
 ) -> Option<NextPreloadRequest> {
     queue.lock().ok().and_then(|queue| {
         let queue = queue.as_ref()?;
-        let server_id = queue.snapshot().server_id;
+        let server_id = queue.server_id().clone();
         let current_entry_id = queue.current()?.id.clone();
         let next_entry = next_queue_entry_after_current(queue)?;
         let next_entry_id = next_entry.id.clone();

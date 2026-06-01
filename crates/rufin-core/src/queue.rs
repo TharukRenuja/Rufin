@@ -460,8 +460,17 @@ impl QueueEngine {
         &self.entries
     }
 
+    pub fn server_id(&self) -> &ServerId {
+        &self.server_id
+    }
+
     pub fn current(&self) -> Option<&QueueEntry> {
         self.current_index.and_then(|index| self.entries.get(index))
+    }
+
+    pub fn next_after_end_of_stream(&self) -> Option<&QueueEntry> {
+        self.next_index(RepeatOneBehavior::Stay)
+            .and_then(|index| self.entries.get(index))
     }
 
     pub fn remaining_after_current(&self) -> usize {
@@ -2070,6 +2079,26 @@ mod tests {
             queue.current().map(|entry| &entry.track_id),
             Some(&TrackId::fake(1))
         );
+    }
+
+    #[test]
+    fn next_after_end_of_stream_peeks_without_advancing() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        queue.append(&track(1));
+        queue.append(&track(2));
+        queue.set_progress_seconds(42);
+
+        assert_eq!(
+            queue
+                .next_after_end_of_stream()
+                .map(|entry| &entry.track_id),
+            Some(&TrackId::fake(2))
+        );
+        assert_eq!(
+            queue.current().map(|entry| &entry.track_id),
+            Some(&TrackId::fake(1))
+        );
+        assert_eq!(queue.progress_seconds(), 42);
     }
 
     #[test]

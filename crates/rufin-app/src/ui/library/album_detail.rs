@@ -170,7 +170,8 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
     let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-            if let Some(activation) = loaded_tracks_play_activation(
+            let tracks = detail.tracks;
+            if let Some(activation) = loaded_tracks_window_play_activation(
                 rufin_core::PlaySourceKey {
                     descriptor: rufin_core::PlaySourceDescriptor::GenreTracks {
                         genre_id: genre_id.clone(),
@@ -178,8 +179,9 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
                     },
                     order: rufin_core::SourceOrder::Canonical,
                 },
-                detail.tracks,
+                tracks.len(),
                 0,
+                |index| tracks.get(index).cloned(),
             ) {
                 controller.play_activation(activation);
             }

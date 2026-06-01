@@ -149,7 +149,9 @@ impl Shell {
         let tracks = detail.tracks.clone();
         play.connect_clicked(move |_| {
             if let Some(activation) =
-                loaded_tracks_play_activation(source_key.clone(), tracks.clone(), 0)
+                loaded_tracks_window_play_activation(source_key.clone(), tracks.len(), 0, |index| {
+                    tracks.get(index).cloned()
+                })
             {
                 controller.play_activation(activation);
             }

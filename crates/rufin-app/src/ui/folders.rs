@@ -6,7 +6,7 @@ use rufin_provider::FolderDetail;
 
 use super::{
     PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, THUMB_COVER_SIZE,
-    folder_play_source_key, install_track_context_menu, loaded_tracks_play_activation,
+    folder_play_source_key, install_track_context_menu, loaded_tracks_window_play_activation,
     selected_music_folder_id, sort_tracks_with_options, stable_seed, track_matches_query,
 };
 use crate::i18n::tr;
@@ -411,10 +411,11 @@ fn folder_table_track_row(
         table_for_click.select_row(Some(&row_for_click));
         row_for_click.grab_focus();
         if n_press == 2 {
-            if let Some(activation) = loaded_tracks_play_activation(
+            if let Some(activation) = loaded_tracks_window_play_activation(
                 source_key.clone(),
-                tracks_for_click.as_ref().clone(),
+                tracks_for_click.len(),
                 position,
+                |index| tracks_for_click.get(index).cloned(),
             ) {
                 controller.play_activation(activation);
             }
@@ -555,7 +556,11 @@ mod tests {
             },
             Some(MusicFolderId::fake(4)),
         );
-        let activation = super::loaded_tracks_play_activation(source_key, tracks, 2).unwrap();
+        let activation =
+            super::loaded_tracks_window_play_activation(source_key, tracks.len(), 2, |index| {
+                tracks.get(index).cloned()
+            })
+            .unwrap();
         let normalized = normalize_loaded_source_activation(activation).unwrap();
 
         let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {

@@ -423,7 +423,7 @@ pub(in crate::ui) fn present_artist_context_menu(
             popover.popdown();
         }
         if let Some(tracks) = artist_tracks_for_context(&controller, &artist_id) {
-            if let Some(activation) = loaded_tracks_play_activation(
+            if let Some(activation) = loaded_tracks_window_play_activation(
                 PlaySourceKey {
                     descriptor: PlaySourceDescriptor::ArtistTracks {
                         artist_id: artist_id.clone(),
@@ -432,8 +432,9 @@ pub(in crate::ui) fn present_artist_context_menu(
                     },
                     order: SourceOrder::Canonical,
                 },
-                tracks,
+                tracks.len(),
                 0,
+                |index| tracks.get(index).cloned(),
             ) {
                 controller.play_activation(activation);
             }
@@ -571,10 +572,11 @@ pub(in crate::ui) fn present_playlist_context_menu(
         if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
             let state = PlaylistEntryListState::default();
             let activation = if detail.entries.is_empty() {
-                loaded_tracks_play_activation(
+                loaded_tracks_window_play_activation(
                     playlist_play_source_key(playlist_id.clone(), &state),
-                    detail.tracks,
+                    detail.tracks.len(),
                     0,
+                    |index| detail.tracks.get(index).cloned(),
                 )
             } else {
                 playlist_play_activation(playlist_id.clone(), detail.entries, 0, &state)
@@ -658,13 +660,14 @@ pub(in crate::ui) fn present_smart_playlist_context_menu(
             popover.popdown();
         }
         if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            if let Some(activation) = loaded_tracks_play_activation(
+            if let Some(activation) = loaded_tracks_window_play_activation(
                 smart_playlist_play_source_key(
                     &detail.smart_playlist,
                     selected_music_folder_id.clone(),
                 ),
-                detail.tracks,
+                detail.tracks.len(),
                 0,
+                |index| detail.tracks.get(index).cloned(),
             ) {
                 controller.play_activation(activation);
             }

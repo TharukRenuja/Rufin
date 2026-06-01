@@ -62,7 +62,6 @@ impl AppController {
         self.persist_and_emit_queue();
     }
     pub fn next_track(&self) {
-        self.auto_dj_top_up_or_emit_error();
         let mut moved = false;
         let mut had_current = false;
         let result = self.with_queue_mut(|queue| {
@@ -76,15 +75,29 @@ impl AppController {
         }
         if !moved {
             if had_current {
-                self.seek(0);
+                if self.auto_dj_top_up_or_emit_error() {
+                    let result = self.with_queue_mut(|queue| {
+                        moved = queue.next_track().is_some();
+                        Ok(())
+                    });
+                    if let Err(error) = result {
+                        let _sent = self.events.send(ControllerEvent::Error(error));
+                        return;
+                    }
+                }
+                if !moved {
+                    self.seek(0);
+                    return;
+                }
             } else {
                 self.stop();
+                return;
             }
-            return;
         }
         self.record_current_skip_if_needed();
-        self.persist_and_emit_queue();
+        self.persist_and_emit_queue_for_playback_start();
         self.start_current_track();
+        self.auto_dj_top_up_deferred();
     }
     pub fn previous_track(&self) {
         let should_restart_current = self
@@ -109,9 +122,9 @@ impl AppController {
             self.seek(0);
             return;
         }
-        self.auto_dj_top_up_or_emit_error();
-        self.persist_and_emit_queue();
+        self.persist_and_emit_queue_for_playback_start();
         self.start_current_track();
+        self.auto_dj_top_up_deferred();
     }
     pub fn seek(&self, seconds: u32) {
         self.seek_millis(u64::from(seconds) * 1_000);
@@ -128,7 +141,7 @@ impl AppController {
         }
         let queue_snapshot = self.queue_snapshot();
         if let Some(snapshot) = &queue_snapshot {
-            self.persist_queue_snapshot(snapshot);
+            self.persist_queue_snapshot_deferred(snapshot.clone());
         }
         self.sync_playback_snapshot_from_queue();
         self.update_playback_snapshot(|snapshot| {

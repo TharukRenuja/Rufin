@@ -1135,6 +1135,7 @@ pub(in crate::controller) fn controller_from_store_for_test(
         secrets,
         queue: Arc::new(Mutex::new(queue)),
         play_activation_generation: Arc::new(AtomicU64::new(0)),
+        queue_persist_generation: Arc::new(AtomicU64::new(0)),
         playback_request_generation: Arc::new(AtomicU64::new(0)),
         playback: Arc::new(Mutex::new(Box::new(
             rufin_playback::FakePlaybackBackend::new(),

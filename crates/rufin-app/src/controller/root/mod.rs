@@ -373,6 +373,7 @@ pub struct AppController {
     settings: settings_controller::SettingsController,
     queue: Arc<Mutex<Option<QueueEngine>>>,
     play_activation_generation: Arc<AtomicU64>,
+    queue_persist_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,

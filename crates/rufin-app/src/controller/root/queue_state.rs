@@ -2,21 +2,42 @@ use super::*;
 
 impl AppController {
     pub(in crate::controller) fn persist_and_emit_queue(&self) {
+        self.persist_and_emit_queue_with_next_preload(true);
+    }
+    pub(in crate::controller) fn persist_and_emit_queue_for_playback_start(&self) {
+        self.persist_and_emit_queue_with_next_preload(false);
+    }
+    fn persist_and_emit_queue_with_next_preload(&self, prepare_next: bool) {
         let queue_snapshot = self.queue_snapshot();
         if let Some(snapshot) = &queue_snapshot {
-            self.persist_queue_snapshot(snapshot);
+            self.persist_queue_snapshot_deferred(snapshot.clone());
         }
         self.sync_playback_snapshot_from_queue();
         let _sent = self
             .events
             .send(ControllerEvent::Queue(Box::new(queue_snapshot)));
         self.emit_playback_snapshot();
-        self.prepare_next_stream();
+        if prepare_next {
+            self.prepare_next_stream();
+        }
     }
     pub(in crate::controller) fn persist_current_queue_snapshot(&self) {
         if let Some(snapshot) = self.queue_snapshot() {
             self.persist_queue_snapshot(&snapshot);
         }
+    }
+    pub(in crate::controller) fn persist_queue_snapshot_deferred(&self, snapshot: QueueSnapshot) {
+        if matches!(&self.store, StoreHandle::Memory { .. }) {
+            self.persist_queue_snapshot(&snapshot);
+            return;
+        }
+
+        persist_queue_snapshot_deferred_from_handles(
+            self.store.clone(),
+            self.events.clone(),
+            Arc::clone(&self.queue_persist_generation),
+            snapshot,
+        );
     }
     pub(in crate::controller) fn persist_queue_snapshot(&self, snapshot: &QueueSnapshot) {
         if let Err(error) = self
@@ -110,4 +131,22 @@ impl AppController {
             .events
             .send(ControllerEvent::Playback(Box::new(snapshot)));
     }
+}
+
+pub(in crate::controller) fn persist_queue_snapshot_deferred_from_handles(
+    store: StoreHandle,
+    events: Sender<ControllerEvent>,
+    generation: Arc<AtomicU64>,
+    snapshot: QueueSnapshot,
+) {
+    let request_generation = generation.fetch_add(1, Ordering::AcqRel) + 1;
+    thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if generation.load(Ordering::Acquire) != request_generation {
+            return;
+        }
+        if let Err(error) = store.with_store(|store| store.save_queue_snapshot(&snapshot)) {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+    });
 }

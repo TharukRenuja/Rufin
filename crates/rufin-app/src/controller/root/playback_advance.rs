@@ -4,9 +4,10 @@ impl AppController {
     pub(in crate::controller) fn advance_after_end_of_stream(&self) {
         self.report_playback(PlaybackReportKind::Stopped, false);
         self.record_playback_activity_completed_current();
-        self.auto_dj_top_up_or_emit_error();
         let mut has_next = false;
+        let mut had_current = false;
         let result = self.with_queue_mut(|queue| {
+            had_current = queue.current().is_some();
             has_next = queue.advance_after_end_of_stream().is_some();
             Ok(())
         });
@@ -14,9 +15,20 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
+        if !has_next && had_current && self.auto_dj_top_up_or_emit_error() {
+            let result = self.with_queue_mut(|queue| {
+                has_next = queue.advance_after_end_of_stream().is_some();
+                Ok(())
+            });
+            if let Err(error) = result {
+                let _sent = self.events.send(ControllerEvent::Error(error));
+                return;
+            }
+        }
         if has_next {
-            self.persist_and_emit_queue();
+            self.persist_and_emit_queue_for_playback_start();
             self.start_current_track();
+            self.auto_dj_top_up_deferred();
         } else {
             self.stop();
         }
@@ -39,7 +51,6 @@ impl AppController {
         }
         self.report_playback(PlaybackReportKind::Stopped, false);
         self.record_playback_activity_completed_current();
-        self.auto_dj_top_up_or_emit_error();
         let mut has_next = false;
         let result = self.with_queue_mut(|queue| {
             has_next = queue.advance_after_end_of_stream().is_some();
@@ -53,7 +64,7 @@ impl AppController {
             self.stop();
             return;
         }
-        self.persist_and_emit_queue();
+        self.persist_and_emit_queue_for_playback_start();
         self.sync_playback_snapshot_from_queue();
         self.update_playback_snapshot(|snapshot| {
             snapshot.state = PlaybackState::Playing;
@@ -68,6 +79,7 @@ impl AppController {
         }
         self.emit_playback_snapshot();
         self.report_playback(PlaybackReportKind::Started, false);
+        self.auto_dj_top_up_deferred();
         self.prepare_next_stream();
         self.request_waveform_for_current();
     }

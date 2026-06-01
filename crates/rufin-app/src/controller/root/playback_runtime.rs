@@ -223,9 +223,8 @@ impl AppController {
     pub(in crate::controller) fn current_queue_entry(&self) -> Option<(ServerId, QueueEntry, u32)> {
         self.queue.lock().ok().and_then(|queue| {
             let queue = queue.as_ref()?;
-            let snapshot = queue.snapshot();
             let entry = queue.current()?.clone();
-            Some((snapshot.server_id, entry, snapshot.progress_seconds))
+            Some((queue.server_id().clone(), entry, queue.progress_seconds()))
         })
     }
     pub(in crate::controller) fn current_playback_request(
@@ -240,14 +239,13 @@ impl AppController {
         let playback_settings = self.load_settings().playback;
         self.queue.lock().ok().and_then(|queue| {
             let queue = queue.as_ref()?;
-            let snapshot = queue.snapshot();
             let entry = queue.current()?.clone();
             let next = next_queue_entry_after_current(queue);
             Some((
-                snapshot.server_id,
+                queue.server_id().clone(),
                 entry,
                 next,
-                snapshot.progress_seconds,
+                queue.progress_seconds(),
                 playback_settings,
             ))
         })

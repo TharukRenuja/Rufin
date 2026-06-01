@@ -3,9 +3,9 @@ use rufin_core::{
     QueueSourceInput, Track, TrackId,
 };
 
-pub const FULL_LOADED_LIMIT: usize = 1_000;
-pub const MATERIALIZED_WINDOW_LIMIT: usize = 500;
-pub const MATERIALIZED_WINDOW_BEFORE_ANCHOR: usize = 100;
+pub const FULL_LOADED_LIMIT: usize = 100;
+pub const MATERIALIZED_WINDOW_LIMIT: usize = 100;
+pub const MATERIALIZED_WINDOW_BEFORE_ANCHOR: usize = 20;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlayActivation {
@@ -302,12 +302,12 @@ mod tests {
         let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
             panic!("expected queue replacement");
         };
-        assert_eq!(replacement.items.len(), 500);
+        assert_eq!(replacement.items.len(), MATERIALIZED_WINDOW_LIMIT);
         let QueueReplacementSource::Source(source) = replacement.source else {
             panic!("expected source replacement");
         };
-        assert_eq!(source.materialized_start, 550);
-        assert_eq!(source.materialized_len, 500);
+        assert_eq!(source.materialized_start, 630);
+        assert_eq!(source.materialized_len, MATERIALIZED_WINDOW_LIMIT);
         assert_eq!(source.total_source_items, Some(1_200));
         assert!(source.capped);
         assert_eq!(
@@ -318,6 +318,34 @@ mod tests {
                 source_item_id: Some("item-650".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn five_hundred_item_source_is_windowed_for_play_start() {
+        let items = (0..500)
+            .map(|index| source_item(index as u32, index))
+            .collect::<Vec<_>>();
+        let normalized = normalize_loaded_source_activation(activation(
+            LoadedCompleteness::Complete,
+            items,
+            PlayAnchor {
+                track_id: TrackId::fake(250),
+                source_index: 250,
+                source_item_id: Some("item-250".to_string()),
+            },
+        ))
+        .unwrap();
+
+        let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
+            panic!("expected queue replacement");
+        };
+        assert_eq!(replacement.items.len(), MATERIALIZED_WINDOW_LIMIT);
+        let QueueReplacementSource::Source(source) = replacement.source else {
+            panic!("expected source replacement");
+        };
+        assert_eq!(source.materialized_start, 230);
+        assert_eq!(source.total_source_items, Some(500));
+        assert!(source.capped);
     }
 
     #[test]

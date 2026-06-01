@@ -173,9 +173,9 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        self.auto_dj_top_up_or_emit_error();
-        self.persist_and_emit_queue();
+        self.persist_and_emit_queue_for_playback_start();
         self.start_current_track();
+        self.auto_dj_top_up_deferred();
     }
 
     pub fn play_tracks_now(&self, tracks: Vec<Track>) {
@@ -201,9 +201,9 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        self.auto_dj_top_up_or_emit_error();
-        self.persist_and_emit_queue();
+        self.persist_and_emit_queue_for_playback_start();
         self.start_current_track();
+        self.auto_dj_top_up_deferred();
     }
     pub fn play_now(&self, track: Track) {
         self.play_tracks_now(vec![track]);
@@ -336,9 +336,11 @@ impl AppController {
             let _result = self.send_playback_command(PlaybackCommand::Stop);
             self.clear_playback_activity();
         }
-        self.persist_and_emit_queue();
         if removed_current && has_current_after_remove {
+            self.persist_and_emit_queue_for_playback_start();
             self.start_current_track();
+        } else {
+            self.persist_and_emit_queue();
         }
     }
     pub fn activate_queue_entry(&self, entry_id: QueueEntryId) {
@@ -364,9 +366,9 @@ impl AppController {
         {
             self.record_current_skip_if_needed();
         }
-        self.auto_dj_top_up_or_emit_error();
-        self.persist_and_emit_queue();
+        self.persist_and_emit_queue_for_playback_start();
         self.start_current_track();
+        self.auto_dj_top_up_deferred();
     }
     pub fn move_queue_entry_after_current(&self, entry_id: QueueEntryId) {
         let result = self.with_queue_mut(|queue| {

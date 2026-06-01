@@ -13,7 +13,7 @@ use super::{
     GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, PlaylistEntryListState,
     Shell, add_card_label_link, add_link_hover, album_artist_route, favorite_button_is_active,
     favorite_icon_button, icon_button, install_album_context_menu, install_track_context_menu,
-    loaded_tracks_play_activation, playlist_play_activation, playlist_play_source_key,
+    loaded_tracks_window_play_activation, playlist_play_activation, playlist_play_source_key,
     selected_music_folder_id, set_favorite_button_active, smart_playlist_play_source_key,
     stable_seed, track_artist_route,
 };
@@ -357,10 +357,11 @@ pub(super) fn playlist_cover_tile(
         if let Ok(Some(detail)) = controller.cached_playlist_detail(&playlist_id) {
             let state = PlaylistEntryListState::default();
             let activation = if detail.entries.is_empty() {
-                loaded_tracks_play_activation(
+                loaded_tracks_window_play_activation(
                     playlist_play_source_key(playlist_id.clone(), &state),
-                    detail.tracks,
+                    detail.tracks.len(),
                     0,
+                    |index| detail.tracks.get(index).cloned(),
                 )
             } else {
                 playlist_play_activation(playlist_id.clone(), detail.entries, 0, &state)
@@ -423,13 +424,14 @@ pub(super) fn smart_playlist_cover_tile(
     let selected_music_folder_id = selected_music_folder_id(shell);
     controls.play.connect_clicked(move |_| {
         if let Ok(Some(detail)) = controller.cached_smart_playlist_detail(&playlist_id) {
-            if let Some(activation) = loaded_tracks_play_activation(
+            if let Some(activation) = loaded_tracks_window_play_activation(
                 smart_playlist_play_source_key(
                     &detail.smart_playlist,
                     selected_music_folder_id.clone(),
                 ),
-                detail.tracks,
+                detail.tracks.len(),
                 0,
+                |index| detail.tracks.get(index).cloned(),
             ) {
                 controller.play_activation(activation);
             }
