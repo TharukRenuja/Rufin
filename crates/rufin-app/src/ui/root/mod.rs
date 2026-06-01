@@ -70,7 +70,7 @@ use favorites::{
 use fullscreen_player::{
     FullscreenPlayerParts, build_fullscreen_player, connect_fullscreen_player_controls,
 };
-use gdk_pixbuf::Pixbuf;
+use gdk_pixbuf::{Colorspace, InterpType, Pixbuf};
 use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
@@ -95,12 +95,12 @@ use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH,
     FolderPathItem, Genre, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode,
     LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, PlaylistId,
-    QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, SidebarRouteItem,
-    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId,
-    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
-    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
-    SmartPlaylistSortField, Track, TrackId, TrackSortKey, TrackTableColumn, TrackTableSettings,
-    format_duration, sanitized_window_size,
+    QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind, ServerId,
+    SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField,
+    SmartPlaylistRuleGroup, SmartPlaylistRuleNode, SmartPlaylistRuleOperator,
+    SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId, TrackSortKey, TrackTableColumn,
+    TrackTableSettings, format_duration, sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -173,6 +173,11 @@ pub(in crate::ui) const GRID_COVER_SIZE: u32 = 256;
 pub(in crate::ui) const DETAIL_COVER_SIZE: u32 = 512;
 pub(in crate::ui) const THUMB_COVER_SIZE: u32 = 96;
 pub(in crate::ui) const IMAGE_TAG_UNTAGGED: &str = "untagged";
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct PlaybackArtworkPath {
+    key: String,
+    path: PathBuf,
+}
 pub(in crate::ui) const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
 pub(in crate::ui) const DECODED_COVER_CACHE_SOFT_BYTES: usize = 256 * 1024 * 1024;
 pub(in crate::ui) const COVER_WARM_BATCH_SIZE: usize = 3;

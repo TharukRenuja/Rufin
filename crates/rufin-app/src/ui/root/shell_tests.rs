@@ -18,6 +18,7 @@ use super::{
     snapshot_local_source_cache_gate_action,
 };
 use crate::controller::{LyricsSearchResult, PlaybackPerfEvent};
+use gdk_pixbuf::{Colorspace, Pixbuf};
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistId, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,
     LibraryLayout, LibrarySourceSelection, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode,
@@ -25,6 +26,8 @@ use rufin_core::{
 };
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
 use std::collections::HashMap;
+use std::io::Cursor;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[test]
@@ -123,6 +126,74 @@ pub(in crate::ui) fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
                 .position(|size| *size == super::GRID_COVER_SIZE)
     );
 }
+#[test]
+pub(in crate::ui) fn playback_artwork_path_uses_prefetched_grid_cover_for_thumbnail() {
+    let server_id = ServerId::new("server:one");
+    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+    let grid_key = rufin_store::image_cache_key(
+        &server_id,
+        &image_ref.item_id,
+        image_ref.tag.as_deref().expect("tag"),
+        super::GRID_COVER_SIZE,
+    );
+    let grid_path = PathBuf::from("/tmp/rufin-grid-cover.jpg");
+
+    let artwork = super::playback_artwork_path_from_lookup(
+        &server_id,
+        &image_ref,
+        super::THUMB_COVER_SIZE,
+        |key| (key == grid_key).then(|| grid_path.clone()),
+    )
+    .expect("playback artwork path");
+
+    assert_eq!(artwork.key, grid_key);
+    assert_eq!(artwork.path, grid_path);
+}
+
+#[test]
+pub(in crate::ui) fn playback_artwork_key_match_accepts_candidate_cover_sizes() {
+    let server_id = ServerId::new("server:one");
+    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
+    let grid_key = rufin_store::image_cache_key(
+        &server_id,
+        &image_ref.item_id,
+        image_ref.tag.as_deref().expect("tag"),
+        super::GRID_COVER_SIZE,
+    );
+    let other_key = rufin_store::image_cache_key(
+        &ServerId::new("server:two"),
+        &image_ref.item_id,
+        image_ref.tag.as_deref().expect("tag"),
+        super::GRID_COVER_SIZE,
+    );
+
+    assert!(super::playback_artwork_key_matches(
+        &server_id,
+        &image_ref,
+        super::THUMB_COVER_SIZE,
+        &grid_key,
+    ));
+    assert!(!super::playback_artwork_key_matches(
+        &server_id,
+        &image_ref,
+        super::THUMB_COVER_SIZE,
+        &other_key,
+    ));
+}
+
+#[test]
+pub(in crate::ui) fn playback_notification_icon_bytes_are_square_for_portals() {
+    let cover = Pixbuf::new(Colorspace::Rgb, false, 8, 320, 180).expect("cover pixbuf");
+    cover.fill(0x336699ff);
+
+    let bytes =
+        super::playback_notification_icon_bytes_from_pixbuf(&cover).expect("notification bytes");
+    let icon = Pixbuf::from_read(Cursor::new(bytes)).expect("notification pixbuf");
+
+    assert_eq!(icon.width(), super::THUMB_COVER_SIZE as i32);
+    assert_eq!(icon.height(), super::THUMB_COVER_SIZE as i32);
+}
+
 #[test]
 pub(in crate::ui) fn visible_cover_lookup_reuses_and_upgrades_warm_lookup() {
     let mut lookups = HashMap::new();

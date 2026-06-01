@@ -7,12 +7,11 @@ use mpris_server::{
 };
 use rufin_core::{QueueEntry, RepeatMode};
 use rufin_playback::PlaybackState;
-use rufin_store::image_cache_key;
 use tracing::warn;
 
 use crate::controller::PlaybackSnapshot;
 
-use super::{IMAGE_TAG_UNTAGGED, Shell, THUMB_COVER_SIZE};
+use super::{Shell, THUMB_COVER_SIZE};
 
 impl Shell {
     pub(super) fn update_mpris_player(&self) {
@@ -67,33 +66,10 @@ impl Shell {
     }
 
     fn current_art_url(&self, entry: &QueueEntry) -> Option<String> {
-        let key = self.current_art_key(entry)?;
-        let path = self.controller.cached_cover_path_for_key(&key)?;
-        glib::filename_to_uri(path, None)
+        let artwork = self.current_playback_artwork_path(entry, THUMB_COVER_SIZE)?;
+        glib::filename_to_uri(artwork.path, None)
             .ok()
             .map(|uri| uri.to_string())
-    }
-
-    fn current_art_key(&self, entry: &QueueEntry) -> Option<String> {
-        let server = self.state.library.borrow().server.as_ref()?.clone();
-        let image_ref = entry.image_ref.as_ref()?;
-        Some(image_cache_key(
-            &server.id,
-            &image_ref.item_id,
-            image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
-            THUMB_COVER_SIZE,
-        ))
-    }
-
-    pub(super) fn current_mpris_art_key_is(&self, key: &str) -> bool {
-        self.state
-            .player
-            .borrow()
-            .current
-            .as_ref()
-            .and_then(|entry| self.current_art_key(entry))
-            .as_deref()
-            == Some(key)
     }
 }
 
