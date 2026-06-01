@@ -179,29 +179,51 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     language_group.add(&language_row);
     page.add(&language_group);
 
-    let privacy_group = adw::PreferencesGroup::builder()
-        .title(tr("Privacy"))
-        .build();
-    let private_row = adw::SwitchRow::builder()
-        .title(tr("Private mode"))
-        .active(settings.private_mode)
-        .build();
-    let private_shell = Rc::clone(shell);
-    private_row.connect_active_notify(move |row| {
-        private_shell.set_private_mode(row.is_active());
-    });
-    privacy_group.add(&private_row);
-
-    let notifications_row = adw::SwitchRow::builder()
-        .title(tr("Now playing notifications"))
-        .active(settings.notifications_enabled)
-        .build();
-    let notifications_shell = Rc::clone(shell);
-    notifications_row.connect_active_notify(move |row| {
-        notifications_shell.set_notifications_enabled(row.is_active());
-    });
-    privacy_group.add(&notifications_row);
-    page.add(&privacy_group);
+    #[cfg(unix)]
+    {
+        let window_group = adw::PreferencesGroup::builder()
+            .title(tr("App window"))
+            .build();
+        let tray_row = adw::SwitchRow::builder()
+            .title(tr("Show tray icon"))
+            .active(settings.tray_enabled)
+            .build();
+        let exit_to_tray_row = adw::SwitchRow::builder()
+            .title(tr("Exit to tray"))
+            .active(settings.tray_enabled && settings.exit_to_tray)
+            .build();
+        let start_minimized_row = adw::SwitchRow::builder()
+            .title(tr("Start minimized"))
+            .active(settings.tray_enabled && settings.start_minimized)
+            .build();
+        exit_to_tray_row.set_visible(settings.tray_enabled);
+        start_minimized_row.set_visible(settings.tray_enabled);
+        let tray_shell = Rc::clone(shell);
+        let exit_to_tray_row_for_tray = exit_to_tray_row.clone();
+        let start_minimized_row_for_tray = start_minimized_row.clone();
+        tray_row.connect_active_notify(move |row| {
+            let enabled = row.is_active();
+            exit_to_tray_row_for_tray.set_visible(enabled);
+            start_minimized_row_for_tray.set_visible(enabled);
+            if !enabled {
+                exit_to_tray_row_for_tray.set_active(false);
+                start_minimized_row_for_tray.set_active(false);
+            }
+            tray_shell.set_tray_enabled(enabled);
+        });
+        let exit_to_tray_shell = Rc::clone(shell);
+        exit_to_tray_row.connect_active_notify(move |row| {
+            exit_to_tray_shell.set_exit_to_tray_enabled(row.is_active());
+        });
+        let start_minimized_shell = Rc::clone(shell);
+        start_minimized_row.connect_active_notify(move |row| {
+            start_minimized_shell.set_start_minimized_enabled(row.is_active());
+        });
+        window_group.add(&tray_row);
+        window_group.add(&exit_to_tray_row);
+        window_group.add(&start_minimized_row);
+        page.add(&window_group);
+    }
 
     let metadata_group = adw::PreferencesGroup::builder()
         .title(tr("Metadata"))
@@ -215,9 +237,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         metadata_shell.set_external_metadata_enabled(row.is_active());
     });
     metadata_group.add(&external_metadata_row);
-    page.add(&metadata_group);
 
-    let lyrics_group = adw::PreferencesGroup::builder().title(tr("Lyrics")).build();
     let external_row = adw::SwitchRow::builder()
         .title(tr("External lyric lookup"))
         .active(settings.external_lyrics_enabled)
@@ -240,9 +260,9 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         prefer_server_row_for_external.set_sensitive(enabled);
         external_shell.set_external_lyrics_enabled(enabled);
     });
-    lyrics_group.add(&external_row);
-    lyrics_group.add(&prefer_server_row);
-    page.add(&lyrics_group);
+    metadata_group.add(&external_row);
+    metadata_group.add(&prefer_server_row);
+    page.add(&metadata_group);
 
     let discord_group = adw::PreferencesGroup::builder()
         .title(tr("Discord"))
@@ -336,6 +356,31 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     discord_group.add(&lastfm_row);
 
     page.add(&discord_group);
+
+    let privacy_group = adw::PreferencesGroup::builder()
+        .title(tr("Privacy"))
+        .build();
+    let private_row = adw::SwitchRow::builder()
+        .title(tr("Private mode"))
+        .active(settings.private_mode)
+        .build();
+    let private_shell = Rc::clone(shell);
+    private_row.connect_active_notify(move |row| {
+        private_shell.set_private_mode(row.is_active());
+    });
+    privacy_group.add(&private_row);
+
+    let notifications_row = adw::SwitchRow::builder()
+        .title(tr("Now playing notifications"))
+        .active(settings.notifications_enabled)
+        .build();
+    let notifications_shell = Rc::clone(shell);
+    notifications_row.connect_active_notify(move |row| {
+        notifications_shell.set_notifications_enabled(row.is_active());
+    });
+    privacy_group.add(&notifications_row);
+
+    page.add(&privacy_group);
 
     page
 }

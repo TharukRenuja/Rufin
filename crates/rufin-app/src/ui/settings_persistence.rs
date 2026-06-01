@@ -139,6 +139,8 @@ impl Shell {
         {
             return;
         }
+        #[cfg(unix)]
+        self.refresh_tray_private_mode();
         self.update_discord_presence(&self.state.player.borrow());
         self.controller.reload_snapshot();
         *self.state.lyrics.borrow_mut() = None;

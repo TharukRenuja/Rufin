@@ -204,26 +204,38 @@ fn configure_app_icon() {
 }
 
 fn app_icon_search_paths() -> Vec<PathBuf> {
+    app_icon_search_paths_for(
+        option_env!("CARGO_MANIFEST_DIR").map(PathBuf::from),
+        std::env::current_exe().ok(),
+        std::env::current_dir().ok(),
+    )
+}
+
+fn app_icon_search_paths_for(
+    manifest_dir: Option<PathBuf>,
+    exe: Option<PathBuf>,
+    current_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    if let Some(path) = option_env!("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .map(|path| path.join("../../data/icons"))
-    {
+    if let Some(path) = manifest_dir.map(|path| path.join("../../data/icons")) {
         paths.push(path);
     }
 
-    if let Ok(exe) = std::env::current_exe()
+    if let Some(exe) = exe
         && let Some(exe_dir) = exe.parent()
     {
         paths.push(exe_dir.join("data/icons"));
         paths.push(exe_dir.join("share/icons"));
+        if let Some(install_prefix) = exe_dir.parent() {
+            paths.push(install_prefix.join("share/icons"));
+        }
         if let Some(repo_root) = exe_dir.parent().and_then(|path| path.parent()) {
             paths.push(repo_root.join("data/icons"));
         }
     }
 
-    if let Ok(current_dir) = std::env::current_dir() {
+    if let Some(current_dir) = current_dir {
         paths.push(current_dir.join("data/icons"));
     }
 
@@ -237,4 +249,17 @@ fn init_tracing() {
         filter = filter.add_directive("lofty=error".parse().expect("valid lofty filter"));
     }
     fmt().with_env_filter(filter).compact().init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flatpak_install_prefix_is_used_for_icon_search() {
+        let paths =
+            app_icon_search_paths_for(None, Some(PathBuf::from("/app/bin/rufin.bin")), None);
+
+        assert!(paths.contains(&PathBuf::from("/app/share/icons")));
+    }
 }

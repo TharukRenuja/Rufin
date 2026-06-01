@@ -425,7 +425,7 @@ impl MusicProvider for JellyfinProvider {
             let mut query = url.query_pairs_mut();
             query
                 .append_pair("UserId", &self.user_id)
-                .append_pair("DeviceId", DEVICE_ID)
+                .append_pair("DeviceId", &self.device_id)
                 .append_pair("Static", static_stream)
                 .append_pair("api_key", &self.access_token);
             if let Some(max_bitrate) = &max_bitrate {
@@ -441,7 +441,7 @@ impl MusicProvider for JellyfinProvider {
             redacted_query
                 .clear()
                 .append_pair("UserId", &self.user_id)
-                .append_pair("DeviceId", DEVICE_ID)
+                .append_pair("DeviceId", &self.device_id)
                 .append_pair("Static", static_stream)
                 .append_pair("api_key", "<redacted>");
             if let Some(max_bitrate) = &max_bitrate {
@@ -515,7 +515,11 @@ impl MusicProvider for JellyfinProvider {
         if let Some(tag) = request.tag.as_deref().filter(|tag| !tag.is_empty()) {
             url.query_pairs_mut().append_pair("tag", tag);
         }
-        let config = JellyfinClientConfig::new(self.identity.server.base_url.clone(), false);
+        let config = JellyfinClientConfig::new(
+            self.identity.server.base_url.clone(),
+            false,
+            Some(self.device_id.to_string()),
+        );
         send_bytes(self.client.get(url).header(
             header::AUTHORIZATION,
             auth_header(&config, Some(&self.access_token)),
