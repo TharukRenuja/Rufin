@@ -493,8 +493,10 @@ merge_release_pr_after_checks() {
     exit 1
   fi
 
-  printf '\nWaiting for PR #%s Checks (%s)...\n' "$pr_number" "$phase"
-  gh pr checks "$pr_number" --repo "$repo_slug" --watch --fail-fast --interval 15
+  bash .github/scripts/watch-pr-checks.sh \
+    --repo "$repo_slug" \
+    "$pr_number" \
+    "$phase"
 
   printf '\nMerging PR #%s after Checks passed...\n' "$pr_number"
   gh pr merge "$pr_number" --repo "$repo_slug" --merge --delete-branch
