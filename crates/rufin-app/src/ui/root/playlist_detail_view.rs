@@ -1,6 +1,71 @@
 use super::*;
 
-const PLAYLIST_DETAIL_ROUTE_MARGIN: i32 = 32;
+const PLAYLIST_DETAIL_WIDE_ROUTE_MARGIN: i32 = 24;
+const PLAYLIST_DETAIL_COMPACT_ROUTE_MARGIN: i32 = 16;
+const PLAYLIST_DETAIL_COMPACT_WIDTH: i32 = 760;
+const PLAYLIST_DETAIL_WIDE_COVER_SIZE: i32 = 208;
+const PLAYLIST_DETAIL_COMPACT_COVER_SIZE: i32 = 182;
+const PLAYLIST_DETAIL_COVER_FETCH_SIZE: u32 = GRID_COVER_SIZE;
+
+pub(in crate::ui) fn playlist_detail_compact_for_width(width: i32) -> bool {
+    width < PLAYLIST_DETAIL_COMPACT_WIDTH
+}
+
+pub(in crate::ui) fn playlist_detail_route_margin_for_width(width: i32) -> i32 {
+    if playlist_detail_compact_for_width(width) {
+        PLAYLIST_DETAIL_COMPACT_ROUTE_MARGIN
+    } else {
+        PLAYLIST_DETAIL_WIDE_ROUTE_MARGIN
+    }
+}
+pub(in crate::ui) fn playlist_detail_header_orientation_for_width(_width: i32) -> gtk::Orientation {
+    gtk::Orientation::Horizontal
+}
+pub(in crate::ui) fn playlist_detail_toolbar_orientation_for_width(
+    _width: i32,
+) -> gtk::Orientation {
+    gtk::Orientation::Horizontal
+}
+pub(in crate::ui) fn playlist_detail_sort_width_for_width(width: i32) -> i32 {
+    if playlist_detail_compact_for_width(width) {
+        (width / 3).clamp(112, 150)
+    } else {
+        170
+    }
+}
+pub(in crate::ui) fn playlist_detail_cover_fetch_size() -> u32 {
+    PLAYLIST_DETAIL_COVER_FETCH_SIZE
+}
+#[cfg(test)]
+pub(in crate::ui) fn playlist_detail_cover_decode_size_for_width(
+    width: i32,
+    cover_ref_count: usize,
+) -> i32 {
+    let cover_size = playlist_detail_cover_size_for_width(width);
+    let display_size = if cover_ref_count > 1 {
+        (cover_size / 2).max(1)
+    } else {
+        cover_size
+    };
+    cover_decode_size(display_size, playlist_detail_cover_fetch_size())
+}
+
+pub(in crate::ui) fn playlist_detail_cover_size_for_width(width: i32) -> i32 {
+    if playlist_detail_compact_for_width(width) {
+        PLAYLIST_DETAIL_COMPACT_COVER_SIZE
+    } else {
+        PLAYLIST_DETAIL_WIDE_COVER_SIZE
+    }
+}
+
+fn playlist_detail_action_button(icon: &str, label: &str, primary: bool) -> gtk::Button {
+    let button = icon_button(icon, label);
+    button.add_css_class("playlist-detail-action-button");
+    if primary {
+        button.add_css_class("playlist-detail-play-button");
+    }
+    button
+}
 
 impl Shell {
     pub(in crate::ui) fn smart_playlist_detail_view(
@@ -30,45 +95,64 @@ impl Shell {
             tr("tracks"),
             format_duration(detail.smart_playlist.duration_seconds)
         );
+        let content_width = route_content_width(self);
+        let compact = playlist_detail_compact_for_width(content_width);
+        let route_margin = playlist_detail_route_margin_for_width(content_width);
+        let cover_size = playlist_detail_cover_size_for_width(content_width);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_width_request(1);
         wrapper.set_vexpand(true);
         wrapper.set_margin_top(28);
         wrapper.set_margin_bottom(36);
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
-        header.set_margin_start(PLAYLIST_DETAIL_ROUTE_MARGIN);
-        header.set_margin_end(PLAYLIST_DETAIL_ROUTE_MARGIN);
-        header.append(&self.cover_group_tile_for(
+        let header = gtk::Box::new(
+            playlist_detail_header_orientation_for_width(content_width),
+            if compact { 20 } else { 28 },
+        );
+        header.add_css_class("playlist-detail-showcase");
+        add_album_seed_gradient_class(&header, seed);
+        header.set_hexpand(true);
+        header.set_halign(gtk::Align::Fill);
+        header.set_width_request(1);
+        header.set_margin_start(route_margin);
+        header.set_margin_end(route_margin);
+        let cover = self.cover_group_tile_for(
             cover_refs,
             detail.smart_playlist.image_ref.as_ref(),
             seed,
-            160,
-            DETAIL_COVER_SIZE,
-        ));
+            cover_size,
+            playlist_detail_cover_fetch_size(),
+        );
+        cover.add_css_class("playlist-detail-cover");
+        header.append(&cover);
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_valign(gtk::Align::Center);
+        metadata.set_hexpand(true);
+        metadata.set_width_request(1);
         let title = gtk::Label::new(Some(&detail.smart_playlist.name));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
         title.set_wrap(true);
+        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         let summary = gtk::Label::new(Some(&summary));
         summary.add_css_class("muted");
         summary.set_xalign(0.0);
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let play = text_button("media-playback-start-symbolic", "Play");
+        actions.add_css_class("playlist-detail-actions");
+        let play = playlist_detail_action_button("media-playback-start-symbolic", "Play", true);
         let controller = self.controller.clone();
         let tracks = detail.tracks.clone();
         play.connect_clicked(move |_| controller.play_tracks_now(tracks.clone()));
         actions.append(&play);
-        let edit = text_button("document-edit-symbolic", "Edit");
+        let edit = playlist_detail_action_button("document-edit-symbolic", "Edit", false);
         let shell = Rc::clone(self);
         let playlist_for_edit = detail.smart_playlist.clone();
         edit.connect_clicked(move |_| shell.edit_smart_playlist_dialog(playlist_for_edit.clone()));
         actions.append(&edit);
-        let delete = text_button("user-trash-symbolic", "Delete");
+        let delete = playlist_detail_action_button("user-trash-symbolic", "Delete", false);
         let controller = self.controller.clone();
         let delete_id = detail.smart_playlist.id.clone();
         delete.connect_clicked(move |_| controller.delete_smart_playlist(delete_id.clone()));
@@ -81,15 +165,15 @@ impl Shell {
 
         if detail.tracks.is_empty() {
             let empty = self.placeholder_view("Tracks", "No tracks match this smart playlist.");
-            empty.set_margin_start(PLAYLIST_DETAIL_ROUTE_MARGIN);
-            empty.set_margin_end(PLAYLIST_DETAIL_ROUTE_MARGIN);
+            empty.set_margin_start(route_margin);
+            empty.set_margin_end(route_margin);
             wrapper.append(&empty);
         } else {
             wrapper.append(&self.library_tracks_scrolling_panel(
                 detail.tracks,
                 LibraryListKey::SmartPlaylistTracks,
                 "smart-playlist-detail",
-                PLAYLIST_DETAIL_ROUTE_MARGIN,
+                route_margin,
             ));
         }
         wrapper.upcast()
@@ -133,6 +217,10 @@ impl Shell {
             tr("tracks"),
             format_duration(detail.playlist.duration_seconds)
         );
+        let content_width = route_content_width(self);
+        let compact = playlist_detail_compact_for_width(content_width);
+        let route_margin = playlist_detail_route_margin_for_width(content_width);
+        let cover_size = playlist_detail_cover_size_for_width(content_width);
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
@@ -142,35 +230,50 @@ impl Shell {
         wrapper.add_css_class("route-content");
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_width_request(1);
         wrapper.set_margin_top(28);
         wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(32);
-        wrapper.set_margin_end(32);
+        wrapper.set_margin_start(route_margin);
+        wrapper.set_margin_end(route_margin);
 
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 22);
-        header.append(&self.cover_group_tile_for(
+        let header = gtk::Box::new(
+            playlist_detail_header_orientation_for_width(content_width),
+            if compact { 20 } else { 28 },
+        );
+        header.add_css_class("playlist-detail-showcase");
+        add_album_seed_gradient_class(&header, seed);
+        header.set_hexpand(true);
+        header.set_halign(gtk::Align::Fill);
+        header.set_width_request(1);
+        let cover = self.cover_group_tile_for(
             cover_refs,
             detail.playlist.image_ref.as_ref(),
             seed,
-            160,
-            DETAIL_COVER_SIZE,
-        ));
+            cover_size,
+            playlist_detail_cover_fetch_size(),
+        );
+        cover.add_css_class("playlist-detail-cover");
+        header.append(&cover);
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_valign(gtk::Align::Center);
+        metadata.set_hexpand(true);
+        metadata.set_width_request(1);
         let title = gtk::Label::new(Some(&detail.playlist.name));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
         title.set_wrap(true);
+        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         let summary = gtk::Label::new(Some(&summary));
         summary.add_css_class("muted");
         summary.set_xalign(0.0);
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let play = text_button("media-playback-start-symbolic", "Play");
+        actions.add_css_class("playlist-detail-actions");
+        let play = playlist_detail_action_button("media-playback-start-symbolic", "Play", true);
         let controller = self.controller.clone();
         let tracks = detail.tracks.clone();
         play.connect_clicked(move |_| controller.play_tracks_now(tracks.clone()));
         actions.append(&play);
-        let rename = text_button("document-edit-symbolic", "Rename");
+        let rename = playlist_detail_action_button("document-edit-symbolic", "Rename", false);
         let shell = Rc::clone(self);
         let playlist_id_for_rename = detail.playlist.id.clone();
         let current_name = detail.playlist.name.clone();
@@ -178,7 +281,7 @@ impl Shell {
             shell.rename_playlist_dialog(playlist_id_for_rename.clone(), current_name.clone())
         });
         actions.append(&rename);
-        let add_current = text_button("list-add-symbolic", "Add current");
+        let add_current = playlist_detail_action_button("list-add-symbolic", "Add current", false);
         let current_track = self
             .state
             .player
@@ -203,7 +306,7 @@ impl Shell {
             }
         });
         actions.append(&add_current);
-        let delete = text_button("user-trash-symbolic", "Delete");
+        let delete = playlist_detail_action_button("user-trash-symbolic", "Delete", false);
         let controller = self.controller.clone();
         let window = self.window.clone();
         let playlist_id_for_delete = detail.playlist.id.clone();
@@ -250,12 +353,21 @@ impl Shell {
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 8);
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_width_request(1);
 
-        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let content_width = route_content_width(self);
+        let toolbar = gtk::Box::new(
+            playlist_detail_toolbar_orientation_for_width(content_width),
+            8,
+        );
         toolbar.add_css_class("track-toolbar");
+        toolbar.set_hexpand(true);
+        toolbar.set_halign(gtk::Align::Fill);
+        toolbar.set_width_request(1);
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
         search.set_hexpand(true);
+        search.set_width_request(1);
         toolbar.append(&search);
 
         let sort_titles = PLAYLIST_ENTRY_SORTS
@@ -265,11 +377,14 @@ impl Shell {
         let sort_refs = sort_titles.iter().map(String::as_str).collect::<Vec<_>>();
         let sort_options = gtk::StringList::new(&sort_refs);
         let sort_dropdown = gtk::DropDown::new(Some(sort_options), None::<gtk::Expression>);
-        toolbar.append(&sort_dropdown);
+        sort_dropdown.set_hexpand(false);
+        sort_dropdown.set_halign(gtk::Align::End);
+        sort_dropdown.set_width_request(playlist_detail_sort_width_for_width(content_width));
 
         let direction = gtk::Button::from_icon_name("view-sort-ascending-symbolic");
         direction.add_css_class("flat");
         direction.set_tooltip_text(Some(&tr("Change sort order")));
+        toolbar.append(&sort_dropdown);
         toolbar.append(&direction);
         wrapper.append(&toolbar);
 

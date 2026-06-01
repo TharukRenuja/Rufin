@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use super::sidebar::*;
 use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 2;
-pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 2;
+pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 4;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
@@ -716,6 +716,7 @@ impl LibraryListSettings {
     }
 
     pub fn sanitize(&mut self, key: LibraryListKey) {
+        self.migrate_defaults(key);
         if !key.supports_layout(self.layout) {
             self.layout = key.default_layout();
         }
@@ -736,6 +737,35 @@ impl LibraryListSettings {
             self.sort_key = default_sort_key(key);
         }
         self.layout_version = LIBRARY_LIST_LAYOUT_VERSION;
+    }
+
+    fn migrate_defaults(&mut self, key: LibraryListKey) {
+        if self.layout_version >= LIBRARY_LIST_LAYOUT_VERSION {
+            return;
+        }
+
+        if key == LibraryListKey::Playlists {
+            if self.row_fields
+                == [
+                    LibraryField::Image,
+                    LibraryField::Title,
+                    LibraryField::SongCount,
+                    LibraryField::Duration,
+                ]
+            {
+                self.row_fields = default_row_fields(key);
+            }
+            if self.grid_fields == [LibraryField::SongCount, LibraryField::Duration] {
+                self.grid_fields = default_grid_fields(key);
+            }
+        }
+
+        if key == LibraryListKey::SmartPlaylists
+            && self.layout_version < 4
+            && self.sort_key == LibraryField::Title
+        {
+            self.sort_key = default_sort_key(key);
+        }
     }
 }
 pub fn default_library_list_settings() -> Vec<LibraryListSettingsEntry> {

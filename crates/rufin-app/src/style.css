@@ -615,7 +615,8 @@ scale.volume-slider trough {
   min-height: 45px;
 }
 
-.album-detail-showcase {
+.album-detail-showcase,
+.playlist-detail-showcase {
   padding: 22px;
   border-radius: 8px;
   color: @window_fg_color;
@@ -624,30 +625,43 @@ scale.volume-slider trough {
     0 18px 44px rgba(0, 0, 0, 0.18);
 }
 
+.playlist-detail-showcase {
+  padding: 22px;
+}
+
 .album-detail-showcase .detail-title {
   font-size: 40px;
 }
 
-.album-detail-showcase .muted {
+.playlist-detail-showcase .detail-title {
+  font-size: 34px;
+}
+
+.album-detail-showcase .muted,
+.playlist-detail-showcase .muted {
   color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
 }
 
-.album-detail-showcase .eyebrow {
+.album-detail-showcase .eyebrow,
+.playlist-detail-showcase .eyebrow {
   color: color-mix(in srgb, @accent_color 72%, @window_fg_color);
 }
 
-.album-detail-cover {
+.album-detail-cover,
+.playlist-detail-cover {
   box-shadow:
     0 18px 38px rgba(0, 0, 0, 0.28),
     inset 0 0 0 1px color-mix(in srgb, @window_fg_color 14%, transparent);
 }
 
-.album-detail-actions {
+.album-detail-actions,
+.playlist-detail-actions {
   margin-top: 4px;
 }
 
 .album-detail-action-button,
-.home-showcase-action-button {
+.home-showcase-action-button,
+.playlist-detail-action-button {
   min-width: 48px;
   min-height: 48px;
   background: color-mix(in srgb, @window_fg_color 14%, transparent);
@@ -656,18 +670,21 @@ scale.volume-slider trough {
 }
 
 .album-detail-action-button:hover,
-.home-showcase-action-button:hover {
+.home-showcase-action-button:hover,
+.playlist-detail-action-button:hover {
   background: color-mix(in srgb, @window_fg_color 20%, transparent);
 }
 
 .album-detail-play-button,
-.home-showcase-play-button {
+.home-showcase-play-button,
+.playlist-detail-play-button {
   background: color-mix(in srgb, @window_fg_color 90%, transparent);
   color: @window_bg_color;
 }
 
 .album-detail-play-button:hover,
-.home-showcase-play-button:hover {
+.home-showcase-play-button:hover,
+.playlist-detail-play-button:hover {
   background: @window_fg_color;
 }
 

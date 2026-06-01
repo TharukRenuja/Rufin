@@ -385,13 +385,7 @@ pub(in crate::ui) fn route_boundary_spec() -> RouteBoundarySpec {
 }
 pub(in crate::ui) fn route_boundary_spec_for_route(route: &Route) -> RouteBoundarySpec {
     let mut spec = route_boundary_spec();
-    if matches!(
-        route,
-        Route::Playlists
-            | Route::PlaylistDetail(_)
-            | Route::SmartPlaylists
-            | Route::SmartPlaylistDetail(_)
-    ) {
+    if matches!(route, Route::SmartPlaylists | Route::SmartPlaylistDetail(_)) {
         spec.horizontal_policy = gtk::PolicyType::Never;
     }
     spec
@@ -950,6 +944,64 @@ pub(in crate::ui) fn install_track_context_menu(
     track: Track,
 ) {
     install_dynamic_track_context_menu(target, shell, Rc::new(RefCell::new(Some(track))));
+}
+pub(in crate::ui) fn install_playlist_entry_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    track: Track,
+    playlist_id: PlaylistId,
+    entry_id: String,
+    title: String,
+) {
+    let remove_action = PlaylistEntryContextMenuAction {
+        playlist_id,
+        entry_id,
+        title,
+    };
+    let target = target.as_ref();
+    let target_weak = target.downgrade();
+    let click_shell = Rc::clone(shell);
+    let click_track = track.clone();
+    let click_remove_action = remove_action.clone();
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.connect_pressed(move |_, _, x, y| {
+        let Some(target) = target_weak.upgrade() else {
+            return;
+        };
+        present_playlist_entry_track_context_menu(
+            &target,
+            &click_shell,
+            context_track(&click_shell, &click_track),
+            click_remove_action.clone(),
+            Some((x, y)),
+        );
+    });
+    target.add_controller(click);
+
+    let target_weak = target.downgrade();
+    let key_shell = Rc::clone(shell);
+    let key_track = track;
+    let key_remove_action = remove_action;
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !opens_menu {
+            return glib::Propagation::Proceed;
+        }
+        if let Some(target) = target_weak.upgrade() {
+            present_playlist_entry_track_context_menu(
+                &target,
+                &key_shell,
+                context_track(&key_shell, &key_track),
+                key_remove_action.clone(),
+                None,
+            );
+        }
+        glib::Propagation::Stop
+    });
+    target.add_controller(key);
 }
 pub(in crate::ui) fn install_dynamic_track_context_menu(
     target: &impl IsA<gtk::Widget>,

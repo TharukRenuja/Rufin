@@ -17,8 +17,8 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use rufin_core::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, Playlist, SmartPlaylist, Track, TrackId, available_sort_fields,
-    format_duration,
+    LibraryListSettings, Playlist, SmartPlaylist, SmartPlaylistId, Track, TrackId,
+    available_sort_fields, format_duration,
 };
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;

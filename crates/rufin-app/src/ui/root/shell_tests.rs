@@ -8,12 +8,18 @@ use super::startup_reveal::{
     startup_route_reveal_action,
 };
 use super::{
-    AutoLyricsRequest, LocalSourceCacheGateAction, PlaylistEntryListState, PlaylistEntrySort,
-    SnapshotRenderDecision, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
+    AutoLyricsRequest, GRID_COVER_SIZE, LocalSourceCacheGateAction, PLAYLIST_ENTRY_SORTS,
+    PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision,
+    auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
     cover::record_cover_path_lookup_request, current_playback_track_id,
     home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
     local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_search_response_matches_query,
-    playlist_drop_index, playlist_entries_for_state, preferences_login_status_toast_message,
+    playlist_detail_compact_for_width, playlist_detail_cover_decode_size_for_width,
+    playlist_detail_cover_fetch_size, playlist_detail_cover_size_for_width,
+    playlist_detail_header_orientation_for_width, playlist_detail_route_margin_for_width,
+    playlist_detail_sort_width_for_width, playlist_detail_toolbar_orientation_for_width,
+    playlist_drop_index, playlist_entries_for_state, playlist_entry_play_count_text,
+    playlist_tracks_starting_at, preferences_login_status_toast_message,
     queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
     snapshot_local_source_cache_gate_action,
 };
@@ -21,8 +27,8 @@ use crate::controller::{LyricsSearchResult, PlaybackPerfEvent};
 use gdk_pixbuf::{Colorspace, Pixbuf};
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistId, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,
-    LibraryLayout, LibrarySourceSelection, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode,
-    Route, SearchKind, ServerId, Track, TrackId, TrackSortKey, TrackTableSettings,
+    LibraryLayout, LibrarySourceSelection, PlaylistId, QueueEntry, QueueEntryId, QueueSnapshot,
+    RepeatMode, Route, SearchKind, ServerId, Track, TrackId, TrackSortKey, TrackTableSettings,
 };
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
 use std::collections::HashMap;
@@ -1440,12 +1446,110 @@ pub(in crate::ui) fn playlist_entry_search_and_sort_use_track_fields() {
         &entries,
         &PlaylistEntryListState {
             query: String::new(),
-            sort: PlaylistEntrySort::Duration,
+            sort: PlaylistEntrySort::Album,
             descending: true,
         },
     );
     assert_eq!(sorted[0].1.entry_id, "entry-alpha");
     assert_eq!(sorted[1].1.entry_id, "entry-beta");
+}
+#[test]
+pub(in crate::ui) fn playlist_entry_sort_menu_omits_duration() {
+    assert_eq!(
+        PLAYLIST_ENTRY_SORTS.as_slice(),
+        &[
+            PlaylistEntrySort::Order,
+            PlaylistEntrySort::Title,
+            PlaylistEntrySort::Artist,
+            PlaylistEntrySort::Album,
+        ]
+    );
+}
+#[test]
+pub(in crate::ui) fn playlist_detail_layout_tightens_for_sidebar_panes() {
+    assert!(playlist_detail_compact_for_width(550));
+    assert_eq!(playlist_detail_route_margin_for_width(550), 16);
+    assert!(!playlist_detail_compact_for_width(760));
+    assert_eq!(playlist_detail_route_margin_for_width(760), 24);
+}
+#[test]
+pub(in crate::ui) fn playlist_detail_showcase_stays_horizontal_in_sidebar_panes() {
+    assert_eq!(
+        playlist_detail_header_orientation_for_width(550),
+        gtk::Orientation::Horizontal
+    );
+    assert_eq!(
+        playlist_detail_header_orientation_for_width(760),
+        gtk::Orientation::Horizontal
+    );
+}
+#[test]
+pub(in crate::ui) fn playlist_detail_showcase_cover_scales_up_with_frame() {
+    assert_eq!(playlist_detail_cover_size_for_width(550), 182);
+    assert_eq!(playlist_detail_cover_size_for_width(760), 208);
+}
+#[test]
+pub(in crate::ui) fn playlist_detail_mosaic_reuses_grid_cover_decode_class() {
+    assert_eq!(playlist_detail_cover_fetch_size(), GRID_COVER_SIZE);
+    assert_eq!(
+        playlist_detail_cover_decode_size_for_width(550, 4),
+        GRID_COVER_SIZE as i32
+    );
+    assert_eq!(
+        playlist_detail_cover_decode_size_for_width(760, 4),
+        GRID_COVER_SIZE as i32
+    );
+}
+#[test]
+pub(in crate::ui) fn playlist_detail_toolbar_keeps_controls_in_one_row() {
+    assert_eq!(
+        playlist_detail_toolbar_orientation_for_width(550),
+        gtk::Orientation::Horizontal
+    );
+    assert_eq!(
+        playlist_detail_toolbar_orientation_for_width(760),
+        gtk::Orientation::Horizontal
+    );
+}
+#[test]
+pub(in crate::ui) fn playlist_detail_sort_control_width_scales_for_compact_panes() {
+    assert_eq!(playlist_detail_sort_width_for_width(360), 120);
+    assert_eq!(playlist_detail_sort_width_for_width(550), 150);
+    assert_eq!(playlist_detail_sort_width_for_width(760), 170);
+}
+#[test]
+pub(in crate::ui) fn playlist_entry_play_count_text_matches_track_field_format() {
+    assert_eq!(playlist_entry_play_count_text(None), "");
+    assert_eq!(playlist_entry_play_count_text(Some(0)), "0");
+    assert_eq!(playlist_entry_play_count_text(Some(42)), "42");
+}
+#[test]
+pub(in crate::ui) fn playlist_tracks_starting_at_queues_clicked_entry_first() {
+    let entries = (1..=4)
+        .map(|number| {
+            let mut track = test_track("Artist", None);
+            track.id = TrackId::fake(number);
+            PlaylistEntry {
+                entry_id: format!("entry-{number}"),
+                track,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let tracks = playlist_tracks_starting_at(&entries, 2);
+
+    assert_eq!(
+        tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            TrackId::fake(3),
+            TrackId::fake(4),
+            TrackId::fake(1),
+            TrackId::fake(2)
+        ]
+    );
 }
 #[test]
 pub(in crate::ui) fn playlist_drop_index_accounts_for_removed_source_row() {
@@ -1592,10 +1696,24 @@ pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
     assert!(spec.vexpand);
 }
 #[test]
-pub(in crate::ui) fn playlist_route_boundary_disables_horizontal_scrolling() {
+pub(in crate::ui) fn smart_playlist_route_boundary_disables_horizontal_scrolling() {
     let spec = super::route_boundary_spec_for_route(&Route::SmartPlaylists);
 
     assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
+}
+#[test]
+pub(in crate::ui) fn regular_playlist_routes_use_default_route_width_boundary() {
+    let default = super::route_boundary_spec();
+
+    assert_eq!(
+        super::route_boundary_spec_for_route(&Route::Playlists).horizontal_policy,
+        default.horizontal_policy
+    );
+    assert_eq!(
+        super::route_boundary_spec_for_route(&Route::PlaylistDetail(PlaylistId::new("playlist")))
+            .horizontal_policy,
+        default.horizontal_policy
+    );
 }
 #[test]
 pub(in crate::ui) fn seekbar_target_seconds_uses_committed_clamped_value() {

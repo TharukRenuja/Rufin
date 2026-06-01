@@ -163,6 +163,13 @@ pub(in crate::ui) use cover_startup::*;
 pub(in crate::ui) use home_refresh::*;
 pub(in crate::ui) use layout_rendering::*;
 #[cfg(test)]
+pub(in crate::ui) use playlist_detail_view::{
+    playlist_detail_compact_for_width, playlist_detail_cover_decode_size_for_width,
+    playlist_detail_cover_fetch_size, playlist_detail_cover_size_for_width,
+    playlist_detail_header_orientation_for_width, playlist_detail_route_margin_for_width,
+    playlist_detail_sort_width_for_width, playlist_detail_toolbar_orientation_for_width,
+};
+#[cfg(test)]
 pub(in crate::ui) use route_rendering::post_route_visible_warm_targets;
 pub(in crate::ui) use shell_navigation::*;
 
@@ -208,11 +215,9 @@ pub(in crate::ui) const FAVORITE_FILLED_GLYPH: &str = "♥";
 pub(in crate::ui) const PLAYLIST_ENTRY_DRAG_WIDTH: i32 = 18;
 pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_WIDTH: i32 = 24;
 pub(in crate::ui) const PLAYLIST_ENTRY_COVER_WIDTH: i32 = 36;
-pub(in crate::ui) const PLAYLIST_ENTRY_DURATION_WIDTH: i32 = 64;
-pub(in crate::ui) const PLAYLIST_ENTRY_REMOVE_WIDTH: i32 = 34;
+pub(in crate::ui) const PLAYLIST_ENTRY_PLAY_COUNT_WIDTH: i32 = 50;
 pub(in crate::ui) const PLAYLIST_ENTRY_COLUMN_GAP: i32 = 8;
 pub(in crate::ui) const PLAYLIST_ENTRY_TEXT_COLUMN_GAP: i32 = 16;
-pub(in crate::ui) const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 120;
 pub(in crate::ui) const PLAYLIST_ENTRY_NUMBER_XALIGN: f32 = 0.35;
 pub(in crate::ui) const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;
 pub(in crate::ui) const PLAYLIST_ENTRY_ALBUM_MAX_CHARS: i32 = 18;

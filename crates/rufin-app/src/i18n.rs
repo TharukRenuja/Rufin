@@ -577,6 +577,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Rufin is running in the tray");
     let _ = tr("Left sidebar density");
     let _ = tr("Choose when the left sidebar uses compact navigation");
+    let _ = tr("Plays");
+    let _ = tr("Remove from playlist");
     let _ = tr("Remove from queue");
     let _ = tr("Remove from Queue");
     let _ = tr("Mute");

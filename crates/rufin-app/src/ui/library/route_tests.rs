@@ -50,6 +50,21 @@ fn smart_playlist_default_track_columns_fit_compact_pane() {
     assert!(smart_width < regular_width);
 }
 #[test]
+fn library_toolbars_stay_on_one_compact_row() {
+    for key in LibraryListKey::all() {
+        assert_eq!(
+            super::library_toolbar_orientation_for_width(key, 550),
+            gtk::Orientation::Horizontal,
+            "{key:?}"
+        );
+        assert_eq!(
+            super::library_toolbar_sort_width_for_width(key, 550),
+            Some(137),
+            "{key:?}"
+        );
+    }
+}
+#[test]
 fn complete_page_policy_loads_every_supported_library_layout_fully() {
     for key in LibraryListKey::all() {
         for layout in [

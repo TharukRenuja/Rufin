@@ -2,6 +2,7 @@ use super::*;
 
 pub(in crate::ui) type LibraryRouteLoader = Rc<dyn Fn()>;
 pub(in crate::ui) type LibraryRouteScrollerConfigurator = Rc<dyn Fn(&gtk::ScrolledWindow)>;
+const LIBRARY_TOOLBAR_STACK_WIDTH: i32 = 760;
 
 pub(in crate::ui) struct LibraryPageShellOptions {
     pub(in crate::ui) key: LibraryListKey,
@@ -256,22 +257,39 @@ impl Shell {
         key: LibraryListKey,
         search: gtk::SearchEntry,
     ) -> gtk::Widget {
-        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let content_width = route_content_width(self);
+        let compact = library_toolbar_compact_for_width(content_width);
+        let stacked = library_toolbar_stacks_for_key_width(key, content_width);
+        let toolbar = gtk::Box::new(library_toolbar_orientation_for_width(key, content_width), 8);
         toolbar.add_css_class("track-toolbar");
+        toolbar.set_hexpand(true);
+        toolbar.set_halign(gtk::Align::Fill);
+        toolbar.set_width_request(1);
+        search.set_hexpand(true);
+        search.set_width_request(1);
         toolbar.append(&search);
+        let controls = stacked.then(|| gtk::Box::new(gtk::Orientation::Horizontal, 8));
 
         match key {
             LibraryListKey::Playlists => {
-                let create = text_button("list-add-symbolic", "New Playlist");
+                let create = if compact {
+                    icon_button("list-add-symbolic", "New Playlist")
+                } else {
+                    text_button("list-add-symbolic", "New Playlist")
+                };
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_playlist_dialog());
-                toolbar.append(&create);
+                append_library_toolbar_control(&toolbar, controls.as_ref(), &create);
             }
             LibraryListKey::SmartPlaylists => {
-                let create = text_button("list-add-symbolic", "New Playlist");
+                let create = if compact {
+                    icon_button("list-add-symbolic", "New Playlist")
+                } else {
+                    text_button("list-add-symbolic", "New Playlist")
+                };
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_smart_playlist_dialog());
-                toolbar.append(&create);
+                append_library_toolbar_control(&toolbar, controls.as_ref(), &create);
             }
             _ => {}
         }
@@ -290,6 +308,15 @@ impl Shell {
                 .position(|field| *field == settings.sort_key)
                 .unwrap_or(0) as u32,
         );
+        if stacked {
+            sort_dropdown.set_hexpand(true);
+            sort_dropdown.set_halign(gtk::Align::Fill);
+            sort_dropdown.set_width_request(1);
+        } else if let Some(width) = library_toolbar_sort_width_for_width(key, content_width) {
+            sort_dropdown.set_hexpand(false);
+            sort_dropdown.set_halign(gtk::Align::End);
+            sort_dropdown.set_width_request(width);
+        }
         {
             let shell = Rc::clone(self);
             sort_dropdown.connect_selected_notify(move |dropdown| {
@@ -301,7 +328,7 @@ impl Shell {
                 shell.render_current_route_preserving_scroll();
             });
         }
-        toolbar.append(&sort_dropdown);
+        append_library_toolbar_control(&toolbar, controls.as_ref(), &sort_dropdown);
 
         let direction = gtk::Button::from_icon_name(if settings.descending {
             "view-sort-descending-symbolic"
@@ -319,7 +346,7 @@ impl Shell {
                 shell.render_current_route_preserving_scroll();
             });
         }
-        toolbar.append(&direction);
+        append_library_toolbar_control(&toolbar, controls.as_ref(), &direction);
 
         let layout = gtk::Button::from_icon_name(layout_icon(settings.layout));
         layout.add_css_class("flat");
@@ -337,7 +364,7 @@ impl Shell {
                 shell.render_current_route_preserving_scroll();
             });
         }
-        toolbar.append(&layout);
+        append_library_toolbar_control(&toolbar, controls.as_ref(), &layout);
 
         let configure = gtk::Button::from_icon_name("view-more-symbolic");
         configure.add_css_class("flat");
@@ -348,7 +375,10 @@ impl Shell {
                 shell.present_library_config_dialog(key);
             });
         }
-        toolbar.append(&configure);
+        append_library_toolbar_control(&toolbar, controls.as_ref(), &configure);
+        if let Some(controls) = controls {
+            toolbar.append(&controls);
+        }
         toolbar.upcast()
     }
     pub(in crate::ui) fn present_library_config_dialog(self: &Rc<Self>, key: LibraryListKey) {
@@ -565,5 +595,46 @@ impl Shell {
             }
         }
         Some(tracks_by_album)
+    }
+}
+
+pub(in crate::ui) fn library_toolbar_stacks_for_width(_width: i32) -> bool {
+    false
+}
+fn library_toolbar_compact_for_width(width: i32) -> bool {
+    width < LIBRARY_TOOLBAR_STACK_WIDTH
+}
+pub(in crate::ui) fn library_toolbar_stacks_for_key_width(
+    _key: LibraryListKey,
+    width: i32,
+) -> bool {
+    library_toolbar_stacks_for_width(width)
+}
+pub(in crate::ui) fn library_toolbar_orientation_for_width(
+    key: LibraryListKey,
+    width: i32,
+) -> gtk::Orientation {
+    if library_toolbar_stacks_for_key_width(key, width) {
+        gtk::Orientation::Vertical
+    } else {
+        gtk::Orientation::Horizontal
+    }
+}
+pub(in crate::ui) fn library_toolbar_sort_width_for_width(
+    _key: LibraryListKey,
+    width: i32,
+) -> Option<i32> {
+    library_toolbar_compact_for_width(width).then_some((width / 4).clamp(112, 150))
+}
+
+fn append_library_toolbar_control(
+    toolbar: &gtk::Box,
+    controls: Option<&gtk::Box>,
+    child: &impl IsA<gtk::Widget>,
+) {
+    if let Some(controls) = controls {
+        controls.append(child);
+    } else {
+        toolbar.append(child);
     }
 }

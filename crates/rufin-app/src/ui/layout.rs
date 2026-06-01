@@ -14,7 +14,7 @@ pub(super) const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 180;
 const HOME_ALBUM_MAX_SIZE: i32 = 210;
-const HOME_ALBUM_MIN_COLUMNS: usize = 2;
+const HOME_ALBUM_MIN_COLUMNS: usize = 1;
 const HOME_ALBUM_MAX_COLUMNS: usize = 12;
 pub(super) const PRIMARY_ROUTE_MARGIN_START: i32 = 0;
 pub(super) const PRIMARY_ROUTE_MARGIN_END: i32 = 28;
@@ -187,7 +187,7 @@ fn route_content_width_for(route_width: i32, resolved_width: i32) -> i32 {
 }
 
 fn home_album_content_width_for(width: i32) -> i32 {
-    (width.max(1) - HOME_ALBUM_HORIZONTAL_MARGINS).max(HOME_ALBUM_MIN_SIZE)
+    (width.max(1) - HOME_ALBUM_HORIZONTAL_MARGINS).max(1)
 }
 
 pub(super) fn home_album_card_size(width: i32, page_size: usize) -> i32 {
@@ -276,8 +276,19 @@ mod tests {
 
         let four_cards_width = HOME_ALBUM_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
         assert_eq!(home_album_page_size(four_cards_width, None), 4);
-        assert_eq!(home_album_page_size(1, None), 2);
+        assert_eq!(home_album_page_size(1, None), 1);
         assert_eq!(home_album_page_size(10_000, None), HOME_ALBUM_MAX_COLUMNS);
+    }
+
+    #[test]
+    fn home_album_metrics_allow_single_column_tight_panes() {
+        let tight_width = HOME_ALBUM_MIN_SIZE + HOME_ALBUM_GAP - 1;
+
+        assert_eq!(home_album_page_size(tight_width, None), 1);
+        assert_eq!(
+            home_album_content_width_for(120),
+            120 - HOME_ALBUM_HORIZONTAL_MARGINS
+        );
     }
 
     #[test]
