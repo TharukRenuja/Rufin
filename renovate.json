@@ -20,17 +20,11 @@
       "automerge": false
     },
     {
-      "description": "Regenerate Rust packaging metadata after dependency updates.",
+      "description": "Regenerate Flatpak cargo sources after Rust dependency updates.",
       "matchManagers": ["cargo"],
       "postUpgradeTasks": {
-        "commands": [
-          "bash packaging/flatpak/update-cargo-sources.sh",
-          "bash .github/scripts/update-nix-cargo-hash.sh"
-        ],
-        "fileFilters": ["packaging/flatpak/cargo-sources.json", "flake.nix"],
-        "installTools": {
-          "nix": {}
-        },
+        "commands": ["bash packaging/flatpak/update-cargo-sources.sh"],
+        "fileFilters": ["packaging/flatpak/cargo-sources.json"],
         "executionMode": "branch"
       }
     },
@@ -40,6 +34,14 @@
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "rust minor and patch dependencies",
       "groupSlug": "rust-minor-patch"
+    },
+    {
+      "description": "Keep bundled SQLite updates isolated because native build scripts are toolchain-sensitive.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["rusqlite"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "rust sqlite dependency",
+      "groupSlug": "rust-sqlite"
     },
     {
       "description": "Group GitHub Actions updates.",
