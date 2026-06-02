@@ -52,8 +52,9 @@ pub(super) fn build_library(
             && let Some(cover) = cover
         {
             let cover_id = cover_id(&cover);
+            let revision = cover_revision(&cover);
             covers.entry(cover_id.clone()).or_insert(cover);
-            album_entry.album.image_ref = Some(ImageRef::new(cover_id, None));
+            album_entry.album.image_ref = Some(ImageRef::new(cover_id, revision));
         }
         album_entry.album.track_count = album_entry.album.track_count.saturating_add(1);
         album_entry.album.duration_seconds = album_entry
@@ -218,10 +219,11 @@ fn assign_local_artist_image_ref(
         let Some(path) = artist_cover_in_dir(&dir, artist_name, allow_single_fallback) else {
             continue;
         };
-        let cover = LocalCover::File(path);
+        let cover = local_file_cover(path);
         let cover_id = cover_id(&cover);
+        let revision = cover_revision(&cover);
         covers.entry(cover_id.clone()).or_insert(cover);
-        artist.image_ref = Some(ImageRef::new(cover_id, None));
+        artist.image_ref = Some(ImageRef::new(cover_id, revision));
         return;
     }
 }
@@ -299,7 +301,7 @@ fn folder_image_paths(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-fn supported_cover_extension(path: &Path) -> bool {
+pub(super) fn supported_cover_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -406,10 +408,12 @@ pub(super) fn embedded_cover(
         .and_then(|tag| select_best_picture(tag.pictures()))
         .or_else(|| tagged_file.and_then(|file| select_best_picture_from_tags(file.tags())))?;
     let bytes = picture_data_bounded(picture).ok()?;
+    let revision = embedded_cover_revision(&bytes, picture.mime_type().map(ToString::to_string));
     Some(LocalCover::Embedded {
         path: path.to_path_buf(),
         bytes: Arc::from(bytes),
         content_type: picture.mime_type().map(ToString::to_string),
+        revision: Some(revision),
     })
 }
 pub(super) fn select_best_picture(pictures: &[Picture]) -> Option<&Picture> {
@@ -424,7 +428,7 @@ pub(super) fn select_best_picture_from_tags(tags: &[Tag]) -> Option<&Picture> {
 }
 pub(super) fn cover_id(cover: &LocalCover) -> String {
     let raw = match cover {
-        LocalCover::File(path) => format!("file:{}", path.to_string_lossy()),
+        LocalCover::File { path, .. } => format!("file:{}", path.to_string_lossy()),
         LocalCover::Embedded { path, .. } => format!("embedded:{}", path.to_string_lossy()),
     };
     format!(
@@ -432,13 +436,22 @@ pub(super) fn cover_id(cover: &LocalCover) -> String {
         utf8_percent_encode(&raw, NON_ALPHANUMERIC)
     )
 }
+pub(super) fn cover_revision(cover: &LocalCover) -> Option<String> {
+    match cover {
+        LocalCover::File { revision, .. } | LocalCover::Embedded { revision, .. } => {
+            revision.clone()
+        }
+    }
+}
 pub(super) fn cover_url(cover: &LocalCover) -> ProviderResult<String> {
     match cover {
-        LocalCover::File(path) | LocalCover::Embedded { path, .. } => Url::from_file_path(path)
-            .map(|url| url.to_string())
-            .map_err(|()| {
-                ProviderError::Other("could not turn cover path into a file URI".to_string())
-            }),
+        LocalCover::File { path, .. } | LocalCover::Embedded { path, .. } => {
+            Url::from_file_path(path)
+                .map(|url| url.to_string())
+                .map_err(|()| {
+                    ProviderError::Other("could not turn cover path into a file URI".to_string())
+                })
+        }
     }
 }
 pub(super) fn content_type_from_path(path: &Path) -> Option<String> {
@@ -488,6 +501,53 @@ pub(super) fn album_grouping_path(path: &Path) -> String {
         .map(|parent| parent.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
+pub(super) fn local_file_cover(path: PathBuf) -> LocalCover {
+    LocalCover::File {
+        revision: file_revision(&path),
+        path,
+    }
+}
+pub(super) fn manifest_cover_from_local(cover: &LocalCover) -> Option<LocalManifestCover> {
+    match cover {
+        LocalCover::File { path, revision } => Some(LocalManifestCover {
+            item_id: cover_id(cover),
+            kind: LocalManifestCoverKind::File,
+            source_path: path.clone(),
+            revision: revision
+                .clone()
+                .unwrap_or_else(|| path_revision_fallback(path)),
+            embedded_index: None,
+        }),
+        LocalCover::Embedded {
+            path,
+            content_type: _,
+            revision,
+            ..
+        } => Some(LocalManifestCover {
+            item_id: cover_id(cover),
+            kind: LocalManifestCoverKind::Embedded,
+            source_path: path.clone(),
+            revision: revision
+                .clone()
+                .unwrap_or_else(|| path_revision_fallback(path)),
+            embedded_index: None,
+        }),
+    }
+}
+pub(super) fn local_cover_from_manifest(cover: &LocalManifestCover) -> LocalCover {
+    match cover.kind {
+        LocalManifestCoverKind::File => LocalCover::File {
+            path: cover.source_path.clone(),
+            revision: Some(cover.revision.clone()),
+        },
+        LocalManifestCoverKind::Embedded => LocalCover::Embedded {
+            path: cover.source_path.clone(),
+            bytes: Arc::<[u8]>::from([]),
+            content_type: None,
+            revision: Some(cover.revision.clone()),
+        },
+    }
+}
 pub(super) fn merge_genres(target: &mut Vec<String>, source: &[String]) {
     for genre in source {
         if !target.iter().any(|candidate| candidate == genre) {
@@ -508,6 +568,97 @@ pub(super) fn stable_hash(value: &str) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+pub(super) fn stable_hash_bytes(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+pub(super) fn hash_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for part in parts {
+        for byte in part.as_bytes().iter().chain(std::iter::once(&0)) {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    format!("{hash:016x}")
+}
+pub(super) fn track_metadata_hash(track: &Track, album_artist: &str) -> String {
+    let artist_id = track.artist_id.as_ref().map(ArtistId::as_str).unwrap_or("");
+    let artist_credits = artist_credit_hash_value(&track.artist_credits);
+    let album_artist_credits = artist_credit_hash_value(&track.album_artist_credits);
+    let genres = track.genres.join("\u{1f}");
+    let year = track.year.to_string();
+    let duration_seconds = track.duration_seconds.to_string();
+    let disc_number = track.disc_number.to_string();
+    let track_number = track.track_number.to_string();
+    hash_parts(vec![
+        track.title.as_str(),
+        track.artist.as_str(),
+        artist_id,
+        track.album.as_str(),
+        album_artist,
+        artist_credits.as_str(),
+        album_artist_credits.as_str(),
+        genres.as_str(),
+        track.album_id.as_str(),
+        year.as_str(),
+        duration_seconds.as_str(),
+        disc_number.as_str(),
+        track_number.as_str(),
+        track.local_path.as_deref().unwrap_or(""),
+        track.source_format.as_deref().unwrap_or(""),
+        track.comment.as_deref().unwrap_or(""),
+    ])
+}
+pub(super) fn track_search_hash(track: &Track) -> String {
+    let artist_credits = artist_credit_hash_value(&track.artist_credits);
+    let album_artist_credits = artist_credit_hash_value(&track.album_artist_credits);
+    let genres = track.genres.join("\u{1f}");
+    hash_parts(vec![
+        track.title.as_str(),
+        track.album_id.as_str(),
+        track.album.as_str(),
+        track.artist.as_str(),
+        artist_credits.as_str(),
+        album_artist_credits.as_str(),
+        genres.as_str(),
+    ])
+}
+fn artist_credit_hash_value(credits: &[ArtistCredit]) -> String {
+    credits
+        .iter()
+        .map(|credit| format!("{}:{}", credit.id.as_str(), credit.name))
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
+}
+pub(super) fn file_revision(path: &Path) -> Option<String> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
+    Some(format!(
+        "file:{:016x}",
+        stable_hash(&format!(
+            "{}:{}:{}:{}",
+            path.to_string_lossy(),
+            metadata.len(),
+            duration.as_secs(),
+            duration.subsec_nanos()
+        ))
+    ))
+}
+fn path_revision_fallback(path: &Path) -> String {
+    format!("path:{:016x}", stable_hash(&path.to_string_lossy()))
+}
+fn embedded_cover_revision(bytes: &[u8], content_type: Option<String>) -> String {
+    let mut hash_input = content_type.unwrap_or_default().into_bytes();
+    hash_input.push(0);
+    hash_input.extend_from_slice(bytes);
+    format!("embedded:{:016x}", stable_hash_bytes(&hash_input))
 }
 pub(super) fn normalize_search(value: &str) -> String {
     value

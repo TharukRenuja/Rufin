@@ -689,6 +689,9 @@ impl Store {
         &self,
         operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
+        if !self.connection.is_autocommit() {
+            return operation(&self.connection);
+        }
         self.connection.execute_batch("BEGIN IMMEDIATE")?;
         let result = operation(&self.connection);
         match result {

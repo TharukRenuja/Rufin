@@ -71,11 +71,9 @@ impl AppController {
         }
         let provider_is_local = self
             .store
-            .with_store(|store| store.active_server())
+            .with_store(|store| store.saved_server(&server_id))
             .unwrap_or(None)
-            .is_some_and(|saved| {
-                saved.server.id == server_id && saved.server.provider == LOCAL_PROVIDER_ID
-            });
+            .is_some_and(|saved| saved.server.provider == LOCAL_PROVIDER_ID);
         if provider_is_local {
             debug!(track_id = %entry.track_id, "local provider has no server lyrics");
             let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
@@ -92,9 +90,8 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(saved) = store
-                .with_store(|store| store.active_server())
+                .with_store(|store| store.saved_server(&server_id))
                 .unwrap_or(None)
-                .filter(|saved| saved.server.id == server_id)
             else {
                 let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
                 return;

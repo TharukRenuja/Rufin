@@ -548,6 +548,10 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
     if artist_route.is_some() {
         menu.append(Some(&tr("Go to Artist")), Some("queue.go-artist"));
     }
+    let album_route = entry.album_id.clone().map(Route::AlbumDetail);
+    if album_route.is_some() {
+        menu.append(Some(&tr("Go to Album")), Some("queue.go-album"));
+    }
 
     let popover = gtk::PopoverMenu::from_model(Some(&menu));
     popover.add_css_class("queue-context-menu");
@@ -605,6 +609,20 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
             glib::idle_add_local_once(move || shell.navigate(route));
         });
         actions.add_action(&go_artist);
+    }
+    if let Some(album_route) = album_route {
+        let go_album = gio::SimpleAction::new("go-album", None);
+        let action_shell = Rc::clone(shell);
+        let go_album_popover = popover.downgrade();
+        go_album.connect_activate(move |_, _| {
+            if let Some(popover) = go_album_popover.upgrade() {
+                popover.popdown();
+            }
+            let shell = Rc::clone(&action_shell);
+            let route = album_route.clone();
+            glib::idle_add_local_once(move || shell.navigate(route));
+        });
+        actions.add_action(&go_album);
     }
 
     row.insert_action_group("queue", Some(&actions));

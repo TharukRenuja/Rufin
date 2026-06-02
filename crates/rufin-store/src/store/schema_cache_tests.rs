@@ -1,12 +1,16 @@
-use std::fs;
+use std::{fs, path::PathBuf};
 
 use super::PRE_SMART_PLAYLISTS_SCHEMA_VERSION;
 use super::servers::COLLECTION_COVER_GENRE;
 use super::test_support::*;
+use crate::LocalLibraryDelta;
+use rufin_core::{
+    LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, TrackId,
+};
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 12);
+    assert_eq!(store.schema_version().expect("schema version"), 13);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -34,8 +38,45 @@ fn current_schema_creates_library_route_indexes() {
         ("track_music_folders", "track_music_folders_folder_idx"),
         ("track_music_folders", "track_music_folders_track_idx"),
         ("track_local_matches", "track_local_matches_track_idx"),
+        ("local_file_manifest", "local_file_manifest_track_idx"),
+        ("local_file_manifest", "local_file_manifest_album_idx"),
+        ("local_file_manifest", "local_file_manifest_generation_idx"),
+        ("local_file_manifest", "local_file_manifest_root_idx"),
+        (
+            "local_artwork_manifest",
+            "local_artwork_manifest_source_idx",
+        ),
     ] {
         assert!(index_exists(&store, table, index), "{index} should exist");
+    }
+}
+fn local_manifest_entry() -> LocalManifestEntry {
+    let album = album(1);
+    let mut track = track(1, &album);
+    track.local_path = Some("/music/Album/track.mp3".to_string());
+    track.source_format = Some("mp3".to_string());
+    LocalManifestEntry {
+        facts: LocalFileFacts {
+            path: PathBuf::from("/music/Album/track.mp3"),
+            root_path: PathBuf::from("/music"),
+            relative_path: "Album/track.mp3".to_string(),
+            file_size: 123,
+            mtime_seconds: 456,
+            mtime_nanos: 789,
+            inode: Some(10),
+            device: Some(20),
+        },
+        track,
+        album_artist: "Artist".to_string(),
+        cover: Some(LocalManifestCover {
+            item_id: "local:cover:file%3A%2Fmusic%2FAlbum%2Fcover.jpg".to_string(),
+            kind: LocalManifestCoverKind::File,
+            source_path: PathBuf::from("/music/Album/cover.jpg"),
+            revision: "file:cover-one".to_string(),
+            embedded_index: None,
+        }),
+        metadata_hash: "metadata-one".to_string(),
+        search_hash: "search-one".to_string(),
     }
 }
 #[test]
@@ -80,7 +121,7 @@ fn unsupported_file_store_resets_cache_database() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 12);
+    assert_eq!(store.schema_version().expect("schema version"), 13);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -132,7 +173,7 @@ fn incomplete_user_version_ten_file_store_resets_cache_database() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 12);
+    assert_eq!(store.schema_version().expect("schema version"), 13);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -158,7 +199,7 @@ fn current_file_store_reopens_without_dropping_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 12);
+    assert_eq!(store.schema_version().expect("schema version"), 13);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -201,7 +242,7 @@ fn user_version_ten_file_store_upgrades_without_dropping_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 12);
+    assert_eq!(store.schema_version().expect("schema version"), 13);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -220,6 +261,11 @@ fn user_version_ten_file_store_upgrades_without_dropping_servers() {
     assert!(
         store
             .table_exists("collection_cover_refs")
+            .expect("table lookup")
+    );
+    assert!(
+        store
+            .table_exists("local_file_manifest")
             .expect("table lookup")
     );
     drop(store);
@@ -242,12 +288,12 @@ fn future_user_version_file_store_resets_cache_database() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 13)
+        .pragma_update(None, "user_version", 14)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 12);
+    assert_eq!(store.schema_version().expect("schema version"), 13);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -304,6 +350,527 @@ fn active_server_round_trips_without_token() {
         .expect("set active server");
     assert_eq!(store.active_server().expect("active server"), Some(saved));
 }
+#[test]
+fn saved_server_loads_requested_server_without_active_source() {
+    let store = Store::open_memory().expect("open store");
+    let playback = saved_server_with_id("server:playback");
+    let active = saved_server_with_id("server:active");
+    store.save_server(&playback).expect("save playback server");
+    store.save_server(&active).expect("save active server");
+    store
+        .set_active_server(&active.server.id)
+        .expect("set active server");
+
+    assert_eq!(
+        store
+            .saved_server(&playback.server.id)
+            .expect("load requested server"),
+        Some(playback)
+    );
+}
+#[test]
+fn local_manifest_round_trips_and_clears_with_server_lifecycle() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server_with_id("local:server:manifest");
+    store.save_server(&saved).expect("save server");
+    let entry = local_manifest_entry();
+
+    store
+        .replace_local_manifest(&saved.server.id, 1, std::slice::from_ref(&entry))
+        .expect("replace manifest");
+
+    assert_eq!(
+        store
+            .load_local_manifest(&saved.server.id)
+            .expect("load manifest"),
+        vec![entry.clone()]
+    );
+
+    store
+        .clear_library_cache(&saved.server.id)
+        .expect("clear library cache");
+    assert!(
+        store
+            .load_local_manifest(&saved.server.id)
+            .expect("load cleared manifest")
+            .is_empty()
+    );
+
+    store
+        .replace_local_manifest(&saved.server.id, 2, std::slice::from_ref(&entry))
+        .expect("replace manifest again");
+    store
+        .forget_server(&saved.server.id)
+        .expect("forget server");
+    assert!(
+        store
+            .load_local_manifest(&saved.server.id)
+            .expect("load forgotten manifest")
+            .is_empty()
+    );
+}
+#[test]
+fn failed_local_delta_commit_does_not_delete_tracks() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server_with_id("local:server:rollback");
+    store.save_server(&saved).expect("save server");
+    let album = album(1);
+    let mut kept = track(1, &album);
+    kept.local_path = Some("/music/Album/kept.mp3".to_string());
+    let mut removed = track(2, &album);
+    removed.local_path = Some("/music/Album/removed.mp3".to_string());
+    let mut kept_entry = local_manifest_entry();
+    kept_entry.track = kept.clone();
+    kept_entry.facts.path = PathBuf::from("/music/Album/kept.mp3");
+    kept_entry.facts.relative_path = "Album/kept.mp3".to_string();
+    kept_entry.metadata_hash = "metadata-kept".to_string();
+    kept_entry.search_hash = "search-kept".to_string();
+    let mut removed_entry = kept_entry.clone();
+    removed_entry.track = removed.clone();
+    removed_entry.facts.path = PathBuf::from("/music/Album/removed.mp3");
+    removed_entry.facts.relative_path = "Album/removed.mp3".to_string();
+    removed_entry.metadata_hash = "metadata-removed".to_string();
+    removed_entry.search_hash = "search-removed".to_string();
+    let first_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin first sync");
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            first_generation,
+        )
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            &[kept.clone(), removed.clone()],
+            first_generation,
+        )
+        .expect("upsert tracks");
+    store
+        .complete_sync(&saved.server.id, first_generation)
+        .expect("complete first sync");
+    store
+        .replace_local_manifest(
+            &saved.server.id,
+            first_generation,
+            &[kept_entry.clone(), removed_entry],
+        )
+        .expect("replace manifest");
+    let failed_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin failed sync");
+    let mut duplicate_manifest = kept_entry.clone();
+    duplicate_manifest.track.id = TrackId::fake(99);
+    let error = store.commit_local_library_delta(
+        &saved.server.id,
+        failed_generation,
+        LocalLibraryDelta {
+            deleted_track_ids: vec![removed.id.clone()],
+            current_album_ids: vec![album.id.clone()],
+            dirty_albums: vec![album],
+            manifest_entries: vec![kept_entry, duplicate_manifest],
+            ..LocalLibraryDelta::default()
+        },
+    );
+
+    assert!(error.is_err());
+    let tracks = store
+        .load_tracks(&saved.server.id, 0, 10)
+        .expect("tracks after failed delta");
+    assert_eq!(tracks.total, 2);
+    assert_eq!(
+        store
+            .track_local_path(&saved.server.id, &removed.id)
+            .expect("removed path after failed delta")
+            .as_deref(),
+        Some("/music/Album/removed.mp3")
+    );
+}
+
+#[test]
+fn local_artwork_delta_updates_image_without_rewriting_track_links_or_fts() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let mut album = album(1);
+    album.genres = vec!["Dream Pop".to_string()];
+    album.image_ref = Some(image_ref("local:cover:file:album", "cover-one"));
+    let mut track = track(1, &album);
+    track.local_path = Some("/music/Album/track.mp3".to_string());
+    let first_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin first sync");
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            first_generation,
+        )
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            std::slice::from_ref(&track),
+            first_generation,
+        )
+        .expect("upsert track");
+    store
+        .complete_sync(&saved.server.id, first_generation)
+        .expect("complete first sync");
+    let fts_rowid = library_fts_rowid(&store, &saved.server.id, &track.id);
+    let genre_rowid = track_genre_rowid(&store, &saved.server.id, &track.id, "Dream Pop");
+    let artist_rowid = track_artist_link_rowid(
+        &store,
+        &saved.server.id,
+        &track.id,
+        track.artist_id.as_ref().expect("artist id"),
+    );
+
+    let mut updated_album = album.clone();
+    updated_album.image_ref = Some(image_ref("local:cover:file:album", "cover-two"));
+    let mut artwork_track = track.clone();
+    artwork_track.image_ref = updated_album.image_ref.clone();
+    let second_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin artwork sync");
+    store
+        .commit_local_library_delta(
+            &saved.server.id,
+            second_generation,
+            LocalLibraryDelta {
+                artwork_tracks: vec![artwork_track],
+                current_album_ids: vec![updated_album.id.clone()],
+                dirty_albums: vec![updated_album],
+                manifest_entries: vec![local_manifest_entry()],
+                ..LocalLibraryDelta::default()
+            },
+        )
+        .expect("commit artwork delta");
+
+    let loaded = store
+        .load_track(&saved.server.id, &track.id)
+        .expect("load track")
+        .expect("track");
+    assert_eq!(
+        loaded
+            .image_ref
+            .as_ref()
+            .and_then(|image| image.tag.as_deref()),
+        Some("cover-two")
+    );
+    assert_eq!(
+        library_fts_rowid(&store, &saved.server.id, &track.id),
+        fts_rowid
+    );
+    assert_eq!(
+        track_genre_rowid(&store, &saved.server.id, &track.id, "Dream Pop"),
+        genre_rowid
+    );
+    assert_eq!(
+        track_artist_link_rowid(
+            &store,
+            &saved.server.id,
+            &track.id,
+            track.artist_id.as_ref().expect("artist id"),
+        ),
+        artist_rowid
+    );
+}
+
+#[test]
+fn local_metadata_delta_updates_track_row_without_rewriting_track_links_or_fts() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let mut album = album(1);
+    album.genres = vec!["Dream Pop".to_string()];
+    let mut track = super::test_support::track(1, &album);
+    track.local_path = Some("/music/Album/track.mp3".to_string());
+    let mut retained_track = super::test_support::track(2, &album);
+    retained_track.local_path = Some("/music/Album/retained.mp3".to_string());
+    let first_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin first sync");
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            first_generation,
+        )
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            &[track.clone(), retained_track.clone()],
+            first_generation,
+        )
+        .expect("upsert track");
+    store
+        .complete_sync(&saved.server.id, first_generation)
+        .expect("complete first sync");
+    let fts_rowid = library_fts_rowid(&store, &saved.server.id, &track.id);
+    let genre_rowid = track_genre_rowid(&store, &saved.server.id, &track.id, "Dream Pop");
+    let artist_rowid = track_artist_link_rowid(
+        &store,
+        &saved.server.id,
+        &track.id,
+        track.artist_id.as_ref().expect("artist id"),
+    );
+    let retained_track_generation =
+        track_table_generation(&store, "tracks", &saved.server.id, &retained_track.id);
+    let retained_genre_generation =
+        track_table_generation(&store, "track_genres", &saved.server.id, &retained_track.id);
+    let retained_artist_generation = track_table_generation(
+        &store,
+        "track_artist_links",
+        &saved.server.id,
+        &retained_track.id,
+    );
+
+    let mut updated_track = track.clone();
+    updated_track.duration_seconds += 1;
+    let second_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin metadata sync");
+    store
+        .commit_local_library_delta(
+            &saved.server.id,
+            second_generation,
+            LocalLibraryDelta {
+                metadata_tracks: vec![updated_track.clone()],
+                current_album_ids: vec![album.id.clone()],
+                dirty_albums: vec![album],
+                manifest_entries: vec![local_manifest_entry()],
+                ..LocalLibraryDelta::default()
+            },
+        )
+        .expect("commit metadata delta");
+
+    let loaded = store
+        .load_track(&saved.server.id, &track.id)
+        .expect("load track")
+        .expect("track");
+    assert_eq!(loaded.duration_seconds, updated_track.duration_seconds);
+    assert_eq!(
+        library_fts_rowid(&store, &saved.server.id, &track.id),
+        fts_rowid
+    );
+    assert_eq!(
+        track_genre_rowid(&store, &saved.server.id, &track.id, "Dream Pop"),
+        genre_rowid
+    );
+    assert_eq!(
+        track_artist_link_rowid(
+            &store,
+            &saved.server.id,
+            &track.id,
+            track.artist_id.as_ref().expect("artist id"),
+        ),
+        artist_rowid
+    );
+    assert_eq!(
+        track_table_generation(&store, "tracks", &saved.server.id, &retained_track.id),
+        retained_track_generation
+    );
+    assert_eq!(
+        track_table_generation(&store, "track_genres", &saved.server.id, &retained_track.id),
+        retained_genre_generation
+    );
+    assert_eq!(
+        track_table_generation(
+            &store,
+            "track_artist_links",
+            &saved.server.id,
+            &retained_track.id
+        ),
+        retained_artist_generation
+    );
+}
+
+#[test]
+fn local_changed_track_delta_updates_artist_link_album_id() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let mut first_album = album(1);
+    first_album.artist = "Primary Artist".to_string();
+    first_album.artist_id = Some(ArtistId::fake(10));
+    let mut second_album = album(2);
+    second_album.title = first_album.title.clone();
+    second_album.artist = first_album.artist.clone();
+    second_album.artist_id = first_album.artist_id.clone();
+    let credited_artist_id = ArtistId::fake(20);
+    let mut track = super::test_support::track(1, &first_album);
+    track.artist = first_album.artist.clone();
+    track.artist_id = first_album.artist_id.clone();
+    track.artist_credits = vec![credit(credited_artist_id.clone(), "Featured Artist")];
+    track.local_path = Some("/music/Album/track.mp3".to_string());
+    let first_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin first sync");
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&first_album),
+            first_generation,
+        )
+        .expect("upsert first album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            std::slice::from_ref(&track),
+            first_generation,
+        )
+        .expect("upsert track");
+    store
+        .complete_sync(&saved.server.id, first_generation)
+        .expect("complete first sync");
+    assert_eq!(
+        track_artist_link_album_id(&store, &saved.server.id, &track.id, &credited_artist_id),
+        first_album.id
+    );
+
+    let mut updated_track = track.clone();
+    updated_track.album_id = second_album.id.clone();
+    let second_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin album move sync");
+    store
+        .commit_local_library_delta(
+            &saved.server.id,
+            second_generation,
+            LocalLibraryDelta {
+                changed_tracks: vec![updated_track.clone()],
+                current_album_ids: vec![second_album.id.clone()],
+                dirty_albums: vec![second_album.clone()],
+                manifest_entries: vec![local_manifest_entry()],
+                ..LocalLibraryDelta::default()
+            },
+        )
+        .expect("commit changed track delta");
+
+    assert_eq!(
+        track_artist_link_album_id(&store, &saved.server.id, &track.id, &credited_artist_id),
+        second_album.id
+    );
+    let detail = store
+        .load_artist_detail(&saved.server.id, &credited_artist_id)
+        .expect("load artist detail")
+        .expect("artist detail");
+    assert_eq!(
+        detail
+            .appears_on
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<Vec<_>>(),
+        vec![second_album.id]
+    );
+    assert_eq!(
+        detail
+            .tracks
+            .iter()
+            .map(|track| track.album_id.clone())
+            .collect::<Vec<_>>(),
+        vec![updated_track.album_id]
+    );
+}
+
+fn library_fts_rowid(store: &Store, server_id: &ServerId, track_id: &TrackId) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT rowid
+            FROM library_fts
+            WHERE server_id = ?1 AND item_type = 'track' AND item_id = ?2
+            ",
+            rusqlite::params![server_id.as_str(), track_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("library fts rowid")
+}
+
+fn track_genre_rowid(store: &Store, server_id: &ServerId, track_id: &TrackId, genre: &str) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT rowid
+            FROM track_genres
+            WHERE server_id = ?1 AND track_id = ?2 AND genre_name = ?3
+            ",
+            rusqlite::params![server_id.as_str(), track_id.as_str(), genre],
+            |row| row.get(0),
+        )
+        .expect("track genre rowid")
+}
+
+fn track_artist_link_rowid(
+    store: &Store,
+    server_id: &ServerId,
+    track_id: &TrackId,
+    artist_id: &ArtistId,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT rowid
+            FROM track_artist_links
+            WHERE server_id = ?1 AND track_id = ?2 AND artist_id = ?3
+            ",
+            rusqlite::params![server_id.as_str(), track_id.as_str(), artist_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("track artist link rowid")
+}
+
+fn track_artist_link_album_id(
+    store: &Store,
+    server_id: &ServerId,
+    track_id: &TrackId,
+    artist_id: &ArtistId,
+) -> AlbumId {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT album_id
+            FROM track_artist_links
+            WHERE server_id = ?1 AND track_id = ?2 AND artist_id = ?3
+            ",
+            rusqlite::params![server_id.as_str(), track_id.as_str(), artist_id.as_str()],
+            |row| row.get::<_, String>(0).map(AlbumId::new),
+        )
+        .expect("track artist link album id")
+}
+
+fn track_table_generation(
+    store: &Store,
+    table: &str,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            &format!(
+                "
+                SELECT sync_generation
+                FROM {table}
+                WHERE server_id = ?1
+                  AND track_id = ?2
+                LIMIT 1
+                "
+            ),
+            rusqlite::params![server_id.as_str(), track_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("track table generation")
+}
+
 #[test]
 fn server_local_access_round_trips() {
     let store = Store::open_memory().expect("open store");
@@ -535,6 +1102,40 @@ fn track_local_matches_round_trip_and_replace() {
             )],
         )
         .expect("replace local matches");
+    store
+        .connection
+        .execute(
+            "
+            UPDATE track_local_matches
+            SET updated_at = '2000-01-01 00:00:00'
+            WHERE server_id = ?1 AND track_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), track_id.as_str()],
+        )
+        .expect("mark local match timestamp");
+    store
+        .replace_track_local_matches(
+            &saved.server.id,
+            &[(
+                track_id.clone(),
+                "/home/me/Music/Track 1.flac".to_string(),
+                "metadata".to_string(),
+            )],
+        )
+        .expect("replace unchanged local matches");
+    let updated_at = store
+        .connection
+        .query_row(
+            "
+            SELECT updated_at
+            FROM track_local_matches
+            WHERE server_id = ?1 AND track_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), track_id.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("local match timestamp");
+    assert_eq!(updated_at, "2000-01-01 00:00:00");
     assert_eq!(
         store
             .track_local_match_path(&saved.server.id, &track_id)

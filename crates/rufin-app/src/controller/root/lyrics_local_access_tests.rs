@@ -697,6 +697,69 @@ pub(in crate::controller) fn relative_local_audio_path_uses_configured_local_pre
     let _cleanup = fs::remove_dir_all(local_root);
 }
 #[test]
+pub(in crate::controller) fn local_access_matching_uses_manifest_cached_track_data() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = self::saved_server();
+    let root = self::unique_test_dir("local-access-manifest");
+    let audio = root.join("Album/Filename Fallback.mp3");
+    fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
+    fs::write(&audio, []).expect("audio");
+    let generation = store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)?;
+            store.save_server_local_access(&ServerLocalAccess {
+                server_id: saved.server.id.clone(),
+                root_path: root.to_string_lossy().into_owned(),
+                path_replace_from: None,
+                path_replace_to: Some(root.to_string_lossy().into_owned()),
+            })?;
+            store.begin_sync(&saved.server.id)
+        })
+        .expect("begin sync");
+    let mut remote = restored_track();
+    remote.title = "Manifest Title".to_string();
+    remote.album = "Manifest Album".to_string();
+    remote.artist = "Manifest Artist".to_string();
+    remote.duration_seconds = 0;
+    let mut local = remote.clone();
+    local.id = TrackId::new("local:track:manifest");
+    local.album_id = AlbumId::new("local:album:manifest");
+    local.local_path = Some(audio.to_string_lossy().into_owned());
+    let manifest = LocalManifestEntry {
+        facts: local_manifest_file_facts(&root, &audio),
+        track: local,
+        album_artist: "Manifest Artist".to_string(),
+        cover: None,
+        metadata_hash: "metadata".to_string(),
+        search_hash: "search".to_string(),
+    };
+    store
+        .with_store(|store| {
+            store.upsert_tracks(&saved.server.id, &[remote.clone()], generation)?;
+            store.replace_local_manifest(&saved.server.id, generation, &[manifest])
+        })
+        .expect("seed tracks and manifest");
+    let runtime = Runtime::new().expect("runtime");
+
+    let count = runtime
+        .block_on(super::refresh_local_track_matches(
+            &store,
+            &saved.server.id,
+            Some(generation),
+        ))
+        .expect("refresh local matches");
+
+    assert_eq!(count, 1);
+    assert_eq!(
+        store
+            .with_store(|store| store.track_local_match_path(&saved.server.id, &remote.id))
+            .expect("match path"),
+        Some(audio.to_string_lossy().into_owned())
+    );
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
 pub(in crate::controller) fn snapshot_local_access_status_counts_cached_mapping_candidates() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
@@ -1311,6 +1374,48 @@ pub(in crate::controller) fn unique_test_dir(label: &str) -> PathBuf {
         std::process::id(),
         std::thread::current().id()
     ))
+}
+pub(in crate::controller) fn local_manifest_file_facts(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> rufin_core::LocalFileFacts {
+    let metadata = fs::metadata(path).expect("metadata");
+    let modified = metadata.modified().expect("modified time");
+    let duration = modified
+        .duration_since(UNIX_EPOCH)
+        .expect("modified after epoch");
+    rufin_core::LocalFileFacts {
+        path: path.to_path_buf(),
+        root_path: root.to_path_buf(),
+        relative_path: path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned(),
+        file_size: metadata.len(),
+        mtime_seconds: duration.as_secs().min(i64::MAX as u64) as i64,
+        mtime_nanos: duration.subsec_nanos(),
+        inode: local_manifest_inode(&metadata),
+        device: local_manifest_device(&metadata),
+    }
+}
+#[cfg(unix)]
+fn local_manifest_inode(metadata: &fs::Metadata) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Some(metadata.ino())
+}
+#[cfg(not(unix))]
+fn local_manifest_inode(_metadata: &fs::Metadata) -> Option<u64> {
+    None
+}
+#[cfg(unix)]
+fn local_manifest_device(metadata: &fs::Metadata) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Some(metadata.dev())
+}
+#[cfg(not(unix))]
+fn local_manifest_device(_metadata: &fs::Metadata) -> Option<u64> {
+    None
 }
 pub(in crate::controller) fn test_image_ref(number: u32) -> ImageRef {
     ImageRef::new(

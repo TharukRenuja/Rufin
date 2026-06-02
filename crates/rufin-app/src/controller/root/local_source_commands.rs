@@ -141,25 +141,31 @@ impl AppController {
                     return;
                 }
             };
+            let no_local_folders = settings.sources.local_folders.is_empty();
             let result = store.with_store(|store| {
-                if selected_local && !settings.sources.local_folders.is_empty() {
+                if selected_local && !no_local_folders {
                     store.set_active_server(&saved.server.id)?;
                 }
-                store.clear_library_cache(&saved.server.id)
+                if no_local_folders {
+                    store.clear_library_cache(&saved.server.id)?;
+                }
+                Ok(())
             });
             if let Err(error) = result {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
+            if no_local_folders {
+                if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
+                if let Err(error) = clear_disk_waveform_cache(&saved.server.id) {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                    return;
+                }
             }
-            if let Err(error) = clear_disk_waveform_cache(&saved.server.id) {
-                let _sent = events.send(ControllerEvent::Error(error));
-                return;
-            }
-            if selected_local && settings.sources.local_folders.is_empty() {
+            if selected_local && no_local_folders {
                 clear_queue_and_stop_playback(
                     &queue,
                     &playback_request_generation,
@@ -192,7 +198,7 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Playback(Box::new(player)));
             }
             emit_snapshot(&store, &events);
-            if selected_local && settings.sources.local_folders.is_empty() {
+            if selected_local && no_local_folders {
                 match store.with_store(|store| store.active_server()) {
                     Ok(Some(fallback)) if fallback.server.provider != LOCAL_PROVIDER_ID => {
                         if let Err(error) = activate_queue_for_saved_and_emit(
@@ -216,7 +222,7 @@ impl AppController {
                     }
                 }
             }
-            if selected_local && !settings.sources.local_folders.is_empty() {
+            if !no_local_folders {
                 start_sync_thread(sync_context, saved);
             }
         });

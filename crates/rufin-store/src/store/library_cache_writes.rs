@@ -2,22 +2,29 @@ use super::servers::*;
 use super::*;
 
 impl Store {
-    pub fn complete_sync(&self, server_id: &ServerId, generation: i64) -> StoreResult<()> {
-        self.prune_missing_items(server_id, generation)?;
-        self.refresh_collection_cover_refs(server_id)?;
-        self.refresh_smart_playlist_cover_refs(server_id)?;
-        self.connection.execute(
-            "
-            UPDATE sync_state
-            SET status = 'idle',
-                generation = ?2,
-                last_completed_at = CURRENT_TIMESTAMP,
-                last_error = NULL
-            WHERE server_id = ?1
-            ",
-            params![server_id.as_str(), generation],
-        )?;
-        Ok(())
+    pub fn complete_sync(
+        &self,
+        server_id: &ServerId,
+        generation: i64,
+    ) -> StoreResult<Vec<CoverCacheEntry>> {
+        self.write_batch(|_| {
+            self.prune_missing_items(server_id, generation)?;
+            self.refresh_collection_cover_refs(server_id)?;
+            self.refresh_smart_playlist_cover_refs(server_id)?;
+            let pruned_cover_entries = self.prune_stale_image_cache_entries(server_id)?;
+            self.connection.execute(
+                "
+                UPDATE sync_state
+                SET status = 'idle',
+                    generation = ?2,
+                    last_completed_at = CURRENT_TIMESTAMP,
+                    last_error = NULL
+                WHERE server_id = ?1
+                ",
+                params![server_id.as_str(), generation],
+            )?;
+            Ok(pruned_cover_entries)
+        })
     }
     pub fn fail_sync(&self, server_id: &ServerId, error: &str) -> StoreResult<()> {
         self.connection.execute(

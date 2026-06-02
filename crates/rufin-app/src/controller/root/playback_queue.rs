@@ -106,23 +106,24 @@ pub(in crate::controller) fn provider_for_saved(
         && saved.server.id.as_str() == LOCAL_SOURCE_SERVER_ID
     {
         let settings = load_settings_from_store(store);
-        return LocalProvider::from_roots_with_identity(
+        let manifest_cache = load_local_manifest_cache(store, &saved.server.id)?;
+        return LocalProvider::from_roots_with_manifest_cache(
             local_folder_paths(&settings),
             saved.server.clone(),
+            manifest_cache,
         )
         .map(LoadedProvider::Local)
         .map_err(|error| error.to_string());
     }
     if saved.server.provider == LOCAL_PROVIDER_ID {
-        let session = SavedProviderSession {
-            server: saved.server.clone(),
-            user_id: saved.user_id.clone(),
-            username: saved.username.clone(),
-            trust_invalid_cert: saved.trust_invalid_cert,
-            access_token: String::new(),
-            device_id: None,
-        };
-        return provider_from_saved(session).map_err(|error| error.to_string());
+        let manifest_cache = load_local_manifest_cache(store, &saved.server.id)?;
+        return LocalProvider::from_roots_with_manifest_cache(
+            vec![PathBuf::from(&saved.server.base_url)],
+            saved.server.clone(),
+            manifest_cache,
+        )
+        .map(LoadedProvider::Local)
+        .map_err(|error| error.to_string());
     }
     let device_id = if saved.server.provider == "jellyfin" {
         Some(ensure_jellyfin_device_id(store)?)
@@ -142,6 +143,12 @@ pub(in crate::controller) fn provider_for_saved(
         device_id,
     };
     provider_from_saved(session).map_err(|error| error.to_string())
+}
+fn load_local_manifest_cache(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<Vec<LocalManifestEntry>, String> {
+    store.with_store(|store| store.load_local_manifest(server_id))
 }
 
 pub(in crate::controller) fn ensure_jellyfin_device_id(
@@ -506,6 +513,75 @@ pub(in crate::controller) fn clear_disk_cover_cache(server_id: &ServerId) -> Res
     remove_dir_if_exists(&path)
 }
 
+pub(in crate::controller) fn prune_disk_cover_cache_entries(entries: &[CoverCacheEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+    let Some(root) = cover_cache_dir() else {
+        return;
+    };
+    prune_disk_cover_cache_entries_in_dir(entries, &root);
+}
+
+fn prune_disk_cover_cache_entries_in_dir(entries: &[CoverCacheEntry], root: &Path) {
+    let Ok(root) = root.canonicalize() else {
+        return;
+    };
+    let mut removed = 0_usize;
+    let mut skipped = 0_usize;
+    let mut failed = 0_usize;
+    for entry in entries {
+        match stale_cover_cache_file_path(entry, &root) {
+            Some(path) => match remove_safe_cover_cache_file(&path, &root) {
+                Ok(true) => removed += 1,
+                Ok(false) => skipped += 1,
+                Err(_) => failed += 1,
+            },
+            None => skipped += 1,
+        }
+    }
+    if failed > 0 {
+        warn!(
+            removed,
+            skipped, failed, "failed to remove some stale cover cache files"
+        );
+    } else {
+        debug!(removed, skipped, "pruned stale cover cache files");
+    }
+}
+
+fn stale_cover_cache_file_path(entry: &CoverCacheEntry, root: &Path) -> Option<PathBuf> {
+    let key = rufin_store::image_cache_key(
+        &entry.server_id,
+        &entry.item_id,
+        &entry.image_tag,
+        entry.size,
+    );
+    let expected_path = root.join(key);
+    let stored_path = PathBuf::from(&entry.path);
+    (stored_path == expected_path).then_some(stored_path)
+}
+
+fn remove_safe_cover_cache_file(path: &Path, root: &Path) -> Result<bool, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let canonical_path = path.canonicalize().map_err(|error| error.to_string())?;
+    if !canonical_path.starts_with(root) {
+        return Ok(false);
+    }
+    match fs::remove_file(&canonical_path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 pub(in crate::controller) fn clear_disk_waveform_cache(server_id: &ServerId) -> Result<(), String> {
     let Some(path) = cache_dir().map(|dir| {
         waveform_cache_dir_for_cache_dir(&dir).join(encode_key_part(server_id.as_str()))
@@ -567,5 +643,71 @@ pub(in crate::controller) fn release_cover_slot(slots: &Arc<(Mutex<usize>, Condv
     if let Ok(mut active) = lock.lock() {
         *active = active.saturating_sub(1);
         ready.notify_one();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prune_disk_cover_cache_entries_removes_only_safe_expected_files() {
+        let root = unique_test_dir("cover-prune-root");
+        let outside = unique_test_dir("cover-prune-outside").join("stale-cover");
+        fs::create_dir_all(&root).expect("cover root");
+        fs::create_dir_all(outside.parent().expect("outside parent")).expect("outside root");
+
+        let server_id = ServerId::new("local-source".to_string());
+        let expected_key = rufin_store::image_cache_key(&server_id, "album-one", "old-tag", 256);
+        let expected_path = root.join(&expected_key);
+        fs::create_dir_all(expected_path.parent().expect("expected parent"))
+            .expect("expected parent dir");
+        fs::write(&expected_path, b"stale").expect("write expected stale file");
+
+        let mismatched_path = root.join("local-source").join("unexpected");
+        fs::create_dir_all(mismatched_path.parent().expect("mismatched parent"))
+            .expect("mismatched parent dir");
+        fs::write(&mismatched_path, b"keep").expect("write mismatched file");
+        fs::write(&outside, b"keep").expect("write outside file");
+
+        let entries = vec![
+            CoverCacheEntry {
+                server_id: server_id.clone(),
+                item_id: "album-one".to_string(),
+                image_tag: "old-tag".to_string(),
+                size: 256,
+                path: expected_path.to_string_lossy().into_owned(),
+            },
+            CoverCacheEntry {
+                server_id: server_id.clone(),
+                item_id: "album-two".to_string(),
+                image_tag: "old-tag".to_string(),
+                size: 256,
+                path: mismatched_path.to_string_lossy().into_owned(),
+            },
+            CoverCacheEntry {
+                server_id,
+                item_id: "album-three".to_string(),
+                image_tag: "old-tag".to_string(),
+                size: 256,
+                path: outside.to_string_lossy().into_owned(),
+            },
+        ];
+
+        prune_disk_cover_cache_entries_in_dir(&entries, &root);
+
+        assert!(!expected_path.exists());
+        assert!(mismatched_path.exists());
+        assert!(outside.exists());
+        let _cleanup_root = fs::remove_dir_all(root);
+        let _cleanup_outside = fs::remove_dir_all(outside.parent().expect("outside parent"));
+    }
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("rufin-{label}-{}-{nanos}", std::process::id()))
     }
 }

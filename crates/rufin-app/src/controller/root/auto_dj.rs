@@ -93,12 +93,13 @@ fn auto_dj_top_up_from_handles(
         .with_store(|store| store.load_tracks(&state.server_id, 0, AUTO_DJ_LIBRARY_LIMIT))
         .map(|page| page.items)?;
     external_metadata::normalize_tracks(&mut tracks, &settings);
-    let candidates = auto_dj_candidates(
+    let mut candidates = auto_dj_candidates(
         &tracks,
         &state.current,
         &state.queued_track_ids,
         shuffle_seed(),
     );
+    normalize_auto_dj_candidate_image_refs(store, &state.server_id, &mut candidates)?;
     if candidates.is_empty() {
         return Ok(false);
     }
@@ -110,6 +111,19 @@ fn auto_dj_top_up_from_handles(
         return Ok(false);
     }
     append_auto_dj_candidates_if_current(queue, &state, refill_threshold, &candidates)
+}
+fn normalize_auto_dj_candidate_image_refs(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    candidates: &mut [Track],
+) -> Result<(), String> {
+    let saved = store.with_store(|store| store.saved_server(server_id))?;
+    let saved =
+        saved.or_else(|| (server_id.as_str() == LOCAL_SOURCE_SERVER_ID).then(local_source_saved));
+    let Some(saved) = saved else {
+        return Ok(());
+    };
+    normalize_local_track_image_refs_from_albums(store, &saved, candidates, &[])
 }
 
 fn auto_dj_queue_state_from_handle(

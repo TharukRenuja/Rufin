@@ -185,6 +185,7 @@ pub(in crate::ui) fn local_source_cache_gate_action(
     local_folders_changed: bool,
     next_source: &Option<rufin_core::LibrarySourceSelection>,
     has_local_folders: bool,
+    has_cached_library: bool,
     preparing: bool,
     sync_seen: bool,
     sync_status: &str,
@@ -199,7 +200,8 @@ pub(in crate::ui) fn local_source_cache_gate_action(
 
     if !preparing
         && has_local_folders
-        && (local_folders_changed || local_source_snapshot_is_syncing(sync_status))
+        && (local_folders_changed
+            || (local_source_snapshot_is_syncing(sync_status) && !has_cached_library))
     {
         return LocalSourceCacheGateAction::Enter;
     }
@@ -213,28 +215,6 @@ pub(in crate::ui) fn local_source_cache_gate_action(
     } else {
         LocalSourceCacheGateAction::Reveal
     }
-}
-pub(in crate::ui) fn snapshot_local_source_cache_gate_action(
-    render: SnapshotRenderDecision,
-    local_folders_changed: bool,
-    next_source: &Option<rufin_core::LibrarySourceSelection>,
-    has_local_folders: bool,
-    preparing: bool,
-    sync_seen: bool,
-    sync_status: &str,
-) -> LocalSourceCacheGateAction {
-    if matches!(render, SnapshotRenderDecision::FirstRunFinished) {
-        return LocalSourceCacheGateAction::None;
-    }
-
-    local_source_cache_gate_action(
-        local_folders_changed,
-        next_source,
-        has_local_folders,
-        preparing,
-        sync_seen,
-        sync_status,
-    )
 }
 pub(in crate::ui) fn library_source_is_local(
     source: &Option<rufin_core::LibrarySourceSelection>,
@@ -516,15 +496,25 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             current.local_folders != snapshot.local_folders,
                         )
                     };
-                    let local_gate_action = snapshot_local_source_cache_gate_action(
+                    let local_gate_action = if matches!(
                         snapshot_outcome.render,
-                        local_folders_changed,
-                        &snapshot.selected_source,
-                        !snapshot.local_folders.is_empty(),
-                        shell.state.local_source_preparing.get(),
-                        shell.state.local_source_sync_seen.get(),
-                        &snapshot.sync_status,
-                    );
+                        SnapshotRenderDecision::FirstRunFinished
+                    ) {
+                        LocalSourceCacheGateAction::None
+                    } else {
+                        local_source_cache_gate_action(
+                            local_folders_changed,
+                            &snapshot.selected_source,
+                            !snapshot.local_folders.is_empty(),
+                            snapshot
+                                .cached_album_count
+                                .saturating_add(snapshot.cached_track_count)
+                                > 0,
+                            shell.state.local_source_preparing.get(),
+                            shell.state.local_source_sync_seen.get(),
+                            &snapshot.sync_status,
+                        )
+                    };
                     let local_snapshot_syncing =
                         local_source_snapshot_is_syncing(&snapshot.sync_status);
                     let server_id = snapshot.server.as_ref().map(|server| server.id.clone());

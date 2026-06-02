@@ -387,6 +387,299 @@ fn cover_cache_index_can_delete_missing_entries() {
     );
 }
 #[test]
+fn successful_sync_prunes_stale_local_cover_cache_and_misses() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut album = album(1);
+    album.image_ref = Some(ImageRef::new("album-one", Some("tag-one".to_string())));
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    for entry in [
+        cover_entry(&saved.server.id),
+        CoverCacheEntry {
+            server_id: saved.server.id.clone(),
+            item_id: "album-one".to_string(),
+            image_tag: "old-tag".to_string(),
+            size: 256,
+            path: "/tmp/rufin-old-cover.jpg".to_string(),
+        },
+        CoverCacheEntry {
+            server_id: saved.server.id.clone(),
+            item_id: "external:album:artist:album".to_string(),
+            image_tag: "external-tag".to_string(),
+            size: 256,
+            path: "/tmp/rufin-external-cover.jpg".to_string(),
+        },
+    ] {
+        store
+            .save_cover_cache_entry(&entry)
+            .expect("save cover cache");
+    }
+    store
+        .save_external_image_lookup_miss(&saved.server.id, "album-one", "old-tag", 256, "old")
+        .expect("save old miss");
+    store
+        .save_external_image_lookup_miss(
+            &saved.server.id,
+            "external:album:artist:album",
+            "external-tag",
+            256,
+            "external",
+        )
+        .expect("save external miss");
+
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    assert!(
+        store
+            .load_cover_cache_entry(&saved.server.id, "album-one", "tag-one", 256)
+            .expect("live cover")
+            .is_some()
+    );
+    assert!(
+        store
+            .load_cover_cache_entry(&saved.server.id, "album-one", "old-tag", 256)
+            .expect("stale cover")
+            .is_none()
+    );
+    assert!(
+        !store
+            .load_external_image_lookup_miss(&saved.server.id, "album-one", "old-tag", 256)
+            .expect("stale miss")
+    );
+    assert!(
+        store
+            .load_cover_cache_entry(
+                &saved.server.id,
+                "external:album:artist:album",
+                "external-tag",
+                256,
+            )
+            .expect("external cover")
+            .is_some()
+    );
+    assert!(
+        store
+            .load_external_image_lookup_miss(
+                &saved.server.id,
+                "external:album:artist:album",
+                "external-tag",
+                256,
+            )
+            .expect("external miss")
+    );
+}
+
+#[test]
+fn generated_external_prune_removes_rows_when_settings_disable_external_lookup() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let entry = CoverCacheEntry {
+        server_id: saved.server.id.clone(),
+        item_id: "external:album:artist:album".to_string(),
+        image_tag: "external-tag".to_string(),
+        size: 256,
+        path: "/tmp/rufin-external-cover.jpg".to_string(),
+    };
+    store
+        .save_cover_cache_entry(&entry)
+        .expect("save external cover");
+    store
+        .save_external_image_lookup_miss(
+            &saved.server.id,
+            &entry.item_id,
+            &entry.image_tag,
+            256,
+            "external",
+        )
+        .expect("save external miss");
+
+    let pruned = store
+        .prune_stale_generated_external_image_cache_entries(&saved.server.id, &[], true)
+        .expect("prune external");
+
+    assert_eq!(pruned, vec![entry.clone()]);
+    assert!(
+        store
+            .load_cover_cache_entry(&saved.server.id, &entry.item_id, &entry.image_tag, 256)
+            .expect("external cover")
+            .is_none()
+    );
+    assert!(
+        !store
+            .load_external_image_lookup_miss(
+                &saved.server.id,
+                &entry.item_id,
+                &entry.image_tag,
+                256
+            )
+            .expect("external miss")
+    );
+}
+
+#[test]
+fn generated_external_prune_keeps_live_refs_and_ttl_guards_old_misses() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let live = ImageRef::new(
+        "external:album:artist:album",
+        Some("external-tag".to_string()),
+    );
+    let live_cover = CoverCacheEntry {
+        server_id: saved.server.id.clone(),
+        item_id: live.item_id.clone(),
+        image_tag: live.tag.clone().expect("live tag"),
+        size: 256,
+        path: "/tmp/rufin-external-live.jpg".to_string(),
+    };
+    let stale_cover = CoverCacheEntry {
+        server_id: saved.server.id.clone(),
+        item_id: "external:album:old:album".to_string(),
+        image_tag: "external-old".to_string(),
+        size: 256,
+        path: "/tmp/rufin-external-stale.jpg".to_string(),
+    };
+    for entry in [&live_cover, &stale_cover] {
+        store
+            .save_cover_cache_entry(entry)
+            .expect("save external cover");
+    }
+    for (item_id, image_tag, reason) in [
+        (
+            live_cover.item_id.as_str(),
+            live_cover.image_tag.as_str(),
+            "live",
+        ),
+        (
+            stale_cover.item_id.as_str(),
+            stale_cover.image_tag.as_str(),
+            "old",
+        ),
+        ("external:album:recent:album", "external-recent", "recent"),
+    ] {
+        store
+            .save_external_image_lookup_miss(&saved.server.id, item_id, image_tag, 256, reason)
+            .expect("save external miss");
+    }
+    store
+        .connection
+        .execute(
+            "
+            UPDATE external_image_lookup_misses
+            SET updated_at = datetime('now', '-31 days')
+            WHERE server_id = ?1 AND item_id = ?2 AND image_tag = ?3
+            ",
+            rusqlite::params![
+                saved.server.id.as_str(),
+                stale_cover.item_id.as_str(),
+                stale_cover.image_tag.as_str()
+            ],
+        )
+        .expect("age stale miss");
+
+    let pruned = store
+        .prune_stale_generated_external_image_cache_entries(
+            &saved.server.id,
+            std::slice::from_ref(&live),
+            false,
+        )
+        .expect("prune external");
+
+    assert_eq!(pruned, vec![stale_cover.clone()]);
+    assert!(
+        store
+            .load_cover_cache_entry(
+                &saved.server.id,
+                &live_cover.item_id,
+                &live_cover.image_tag,
+                256,
+            )
+            .expect("live cover")
+            .is_some()
+    );
+    assert!(
+        store
+            .load_cover_cache_entry(
+                &saved.server.id,
+                &stale_cover.item_id,
+                &stale_cover.image_tag,
+                256,
+            )
+            .expect("stale cover")
+            .is_none()
+    );
+    assert!(
+        store
+            .load_external_image_lookup_miss(
+                &saved.server.id,
+                &live_cover.item_id,
+                &live_cover.image_tag,
+                256,
+            )
+            .expect("live miss")
+    );
+    assert!(
+        !store
+            .load_external_image_lookup_miss(
+                &saved.server.id,
+                &stale_cover.item_id,
+                &stale_cover.image_tag,
+                256,
+            )
+            .expect("old stale miss")
+    );
+    assert!(
+        store
+            .load_external_image_lookup_miss(
+                &saved.server.id,
+                "external:album:recent:album",
+                "external-recent",
+                256,
+            )
+            .expect("recent stale miss")
+    );
+}
+
+#[test]
+fn successful_sync_keeps_untagged_live_cover_cache_rows() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut album = album(1);
+    album.image_ref = Some(ImageRef::new("album-one", None));
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .save_cover_cache_entry(&CoverCacheEntry {
+            server_id: saved.server.id.clone(),
+            item_id: "album-one".to_string(),
+            image_tag: "untagged".to_string(),
+            size: 256,
+            path: "/tmp/rufin-untagged-cover.jpg".to_string(),
+        })
+        .expect("save untagged cover");
+
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    assert!(
+        store
+            .load_cover_cache_entry(&saved.server.id, "album-one", "untagged", 256)
+            .expect("untagged cover")
+            .is_some()
+    );
+}
+#[test]
 fn external_image_lookup_miss_index_round_trips() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
