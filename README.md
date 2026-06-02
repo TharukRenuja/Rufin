@@ -18,7 +18,7 @@
 
 # Features
 
-- Lightweight, fast, native and modern client
+- Fast, native and modern client
 - Supports playing Jellyfin, Subsonic, Navidrome servers and local folders
 - Built-in scrobbling for Last.fm, Libre.fm, and ListenBrainz
 - Discord Rich Presence support
@@ -27,6 +27,7 @@
 - Best-effort path matching with your music server and local folders if enabled, you can play from your local files while keeping server reporting
 - Rich customization while preserving GTK menus
 - Smart playlists that support nested rules
+- System tray integration
 
 # Screenshots
 
