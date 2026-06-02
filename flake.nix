@@ -168,6 +168,7 @@
                 clippy
                 desktop-file-utils
                 gettext
+                jq
                 pkg-config
                 rust-analyzer
                 rustc

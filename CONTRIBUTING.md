@@ -10,6 +10,7 @@ but you need:
 - Rust 1.92 or newer, with Cargo, rustfmt, and clippy
 - pkg-config or pkgconf
 - gettext
+- jq
 - GTK 4.20 or newer
 - libadwaita 1.8 or newer
 - gdk-pixbuf
@@ -19,7 +20,7 @@ On Arch Linux, that is:
 
 ```bash
 sudo pacman -S --needed \
-  rust cargo rust-analyzer pkgconf gettext gtk4 libadwaita gdk-pixbuf2 \
+  rust cargo rust-analyzer pkgconf gettext jq gtk4 libadwaita gdk-pixbuf2 \
   gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
   gst-plugins-ugly gst-libav
 ```
