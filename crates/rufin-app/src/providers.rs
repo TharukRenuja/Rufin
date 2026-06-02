@@ -62,6 +62,7 @@ impl StreamingProvider {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum LoadedProvider {
     Jellyfin(JellyfinProvider),
     Local(LocalProvider),

@@ -295,15 +295,6 @@ fn waveform_source_for_track(
     secrets: &Arc<dyn SecretStore>,
     request: &WaveformWarmRequest,
 ) -> Option<(String, String)> {
-    if let Some(uri) = local_audio_path_for_track(store, &request.server_id, &request.track_id)
-        .and_then(|path| {
-            reqwest::Url::from_file_path(&path)
-                .ok()
-                .map(|url| url.to_string())
-        })
-    {
-        return Some((uri.clone(), uri));
-    }
     let stream = resolve_stream(
         store,
         runtime,

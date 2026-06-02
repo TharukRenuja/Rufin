@@ -650,6 +650,238 @@ impl Store {
         )?;
         Ok(())
     }
+    pub fn prune_stale_image_cache_entries(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<Vec<CoverCacheEntry>> {
+        self.write_batch(|connection| {
+            let mut statement = connection.prepare(
+                "
+                WITH live_image_refs AS (
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM albums WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM tracks WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM artists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM album_artists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM genres WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM playlists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM collection_cover_refs WHERE image_item_id IS NOT NULL
+                )
+                SELECT server_id, item_id, image_tag, size, path
+                FROM cover_cache cache
+                WHERE cache.server_id = ?1
+                  AND cache.item_id NOT LIKE 'external:%'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM live_image_refs
+                      WHERE live_image_refs.server_id = cache.server_id
+                        AND live_image_refs.item_id = cache.item_id
+                        AND live_image_refs.image_tag = cache.image_tag
+                  )
+                ",
+            )?;
+            let pruned_entries = collect_rows(
+                statement.query_map(params![server_id.as_str()], |row| {
+                    Ok(CoverCacheEntry {
+                        server_id: ServerId::new(row.get::<_, String>(0)?),
+                        item_id: row.get(1)?,
+                        image_tag: row.get(2)?,
+                        size: u32_from_i64(row.get(3)?),
+                        path: row.get(4)?,
+                    })
+                })?,
+            )?;
+            connection.execute(
+                "
+                WITH live_image_refs AS (
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM albums WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM tracks WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM artists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM album_artists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM genres WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM playlists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM collection_cover_refs WHERE image_item_id IS NOT NULL
+                )
+                DELETE FROM cover_cache
+                WHERE server_id = ?1
+                  AND item_id NOT LIKE 'external:%'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM live_image_refs
+                      WHERE live_image_refs.server_id = cover_cache.server_id
+                        AND live_image_refs.item_id = cover_cache.item_id
+                        AND live_image_refs.image_tag = cover_cache.image_tag
+                  )
+                ",
+                params![server_id.as_str()],
+            )?;
+            connection.execute(
+                "
+                WITH live_image_refs AS (
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM albums WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM tracks WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM artists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM album_artists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM genres WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM playlists WHERE image_item_id IS NOT NULL
+                    UNION
+                    SELECT server_id, image_item_id AS item_id, COALESCE(image_tag, 'untagged') AS image_tag
+                    FROM collection_cover_refs WHERE image_item_id IS NOT NULL
+                )
+                DELETE FROM external_image_lookup_misses
+                WHERE server_id = ?1
+                  AND item_id NOT LIKE 'external:%'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM live_image_refs
+                      WHERE live_image_refs.server_id = external_image_lookup_misses.server_id
+                        AND live_image_refs.item_id = external_image_lookup_misses.item_id
+                        AND live_image_refs.image_tag = external_image_lookup_misses.image_tag
+                  )
+                ",
+                params![server_id.as_str()],
+            )?;
+            Ok(pruned_entries)
+        })
+    }
+
+    pub fn prune_stale_generated_external_image_cache_entries(
+        &self,
+        server_id: &ServerId,
+        live_refs: &[ImageRef],
+        prune_all_external: bool,
+    ) -> StoreResult<Vec<CoverCacheEntry>> {
+        const EXTERNAL_MISS_TTL: &str = "-30 days";
+
+        self.write_batch(|connection| {
+            connection.execute(
+                "
+                CREATE TEMP TABLE IF NOT EXISTS live_generated_external_image_refs (
+                    item_id TEXT NOT NULL,
+                    image_tag TEXT NOT NULL,
+                    PRIMARY KEY (item_id, image_tag)
+                )
+                ",
+                [],
+            )?;
+            connection.execute("DELETE FROM live_generated_external_image_refs", [])?;
+            {
+                let mut insert_live = connection.prepare(
+                    "
+                    INSERT INTO live_generated_external_image_refs (item_id, image_tag)
+                    VALUES (?1, ?2)
+                    ON CONFLICT(item_id, image_tag) DO NOTHING
+                    ",
+                )?;
+                for image_ref in live_refs {
+                    let tag = image_ref.tag.as_deref().unwrap_or("untagged");
+                    insert_live.execute(params![image_ref.item_id.as_str(), tag])?;
+                }
+            }
+
+            let prune_all = bool_to_i64(prune_all_external);
+            let mut statement = connection.prepare(
+                "
+                SELECT server_id, item_id, image_tag, size, path
+                FROM cover_cache cache
+                WHERE cache.server_id = ?1
+                  AND cache.item_id LIKE 'external:%'
+                  AND (
+                      ?2 = 1 OR NOT EXISTS (
+                          SELECT 1
+                          FROM live_generated_external_image_refs live
+                          WHERE live.item_id = cache.item_id
+                            AND live.image_tag = cache.image_tag
+                      )
+                  )
+                ",
+            )?;
+            let pruned_entries = collect_rows(statement.query_map(
+                params![server_id.as_str(), prune_all],
+                |row| {
+                    Ok(CoverCacheEntry {
+                        server_id: ServerId::new(row.get::<_, String>(0)?),
+                        item_id: row.get(1)?,
+                        image_tag: row.get(2)?,
+                        size: u32_from_i64(row.get(3)?),
+                        path: row.get(4)?,
+                    })
+                },
+            )?)?;
+            connection.execute(
+                "
+                DELETE FROM cover_cache
+                WHERE server_id = ?1
+                  AND item_id LIKE 'external:%'
+                  AND (
+                      ?2 = 1 OR NOT EXISTS (
+                          SELECT 1
+                          FROM live_generated_external_image_refs live
+                          WHERE live.item_id = cover_cache.item_id
+                            AND live.image_tag = cover_cache.image_tag
+                      )
+                  )
+                ",
+                params![server_id.as_str(), prune_all],
+            )?;
+            connection.execute(
+                "
+                DELETE FROM external_image_lookup_misses
+                WHERE server_id = ?1
+                  AND item_id LIKE 'external:%'
+                  AND (
+                      ?2 = 1 OR (
+                          updated_at <= datetime('now', ?3)
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM live_generated_external_image_refs live
+                              WHERE live.item_id = external_image_lookup_misses.item_id
+                                AND live.image_tag = external_image_lookup_misses.image_tag
+                          )
+                      )
+                  )
+                ",
+                params![server_id.as_str(), prune_all, EXTERNAL_MISS_TTL],
+            )?;
+            Ok(pruned_entries)
+        })
+    }
     pub fn save_external_image_lookup_miss(
         &self,
         server_id: &ServerId,

@@ -1,3 +1,4 @@
+use super::local_manifest::clear_local_manifest_on_connection;
 use super::*;
 
 pub(super) fn reset_database_files(path: &Path) -> StoreResult<()> {
@@ -795,6 +796,7 @@ pub(super) fn clear_library_cache_on_connection(
     connection: &Connection,
     server_id: &ServerId,
 ) -> StoreResult<()> {
+    clear_local_manifest_on_connection(connection, server_id)?;
     for table in [
         "collection_cover_refs",
         "home_section_prefetch_items",

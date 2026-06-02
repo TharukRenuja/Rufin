@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -170,6 +170,81 @@ pub struct Track {
     pub comment: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_count: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalManifestEntry {
+    pub facts: LocalFileFacts,
+    pub track: Track,
+    pub album_artist: String,
+    pub cover: Option<LocalManifestCover>,
+    pub metadata_hash: String,
+    pub search_hash: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct LocalFileFacts {
+    pub path: PathBuf,
+    pub root_path: PathBuf,
+    pub relative_path: String,
+    pub file_size: u64,
+    pub mtime_seconds: i64,
+    pub mtime_nanos: u32,
+    pub inode: Option<u64>,
+    pub device: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct LocalManifestCover {
+    pub item_id: String,
+    pub kind: LocalManifestCoverKind,
+    pub source_path: PathBuf,
+    pub revision: String,
+    pub embedded_index: Option<i64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum LocalManifestCoverKind {
+    File,
+    Embedded,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LocalManifestScan {
+    pub entries: Vec<LocalManifestEntry>,
+    pub deleted_paths: Vec<PathBuf>,
+    pub changed_track_ids: Vec<TrackId>,
+    pub metadata_track_ids: Vec<TrackId>,
+    pub artwork_track_ids: Vec<TrackId>,
+    pub retained_track_ids: Vec<TrackId>,
+    pub deleted_track_ids: Vec<TrackId>,
+    pub dirty_album_ids: Vec<AlbumId>,
+    pub dirty_artist_ids: Vec<ArtistId>,
+    pub dirty_album_artist_ids: Vec<ArtistId>,
+    pub dirty_genre_names: Vec<String>,
+    pub counters: LocalScanCounters,
+    pub library_changed: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LocalScanCounters {
+    pub roots_walked: u64,
+    pub directory_entries_visited: u64,
+    pub audio_candidates: u64,
+    pub artwork_candidates: u64,
+    pub unchanged_reused: u64,
+    pub changed_reparsed: u64,
+    pub new_parsed: u64,
+    pub deleted: u64,
+    pub artwork_changed: u64,
+    pub tag_reads: u64,
+    pub parse_failures: u64,
+    pub reused_track_rows: u64,
+    pub repaired_stale_manifest_rows: u64,
+    pub filesystem_walk_elapsed_ms: u64,
+    pub manifest_compare_elapsed_ms: u64,
+    pub tag_parse_elapsed_ms: u64,
+    pub library_build_elapsed_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

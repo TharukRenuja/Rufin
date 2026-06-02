@@ -10,6 +10,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 11,
         run: migrate_to_collection_cover_refs_schema,
     },
+    SchemaMigration {
+        from_version: 12,
+        run: migrate_to_local_manifest_schema,
+    },
 ];
 const SCHEMA_VERSION_10_TABLES: &[&str] = &[
     "queue_snapshots",
@@ -165,6 +169,36 @@ const COLLECTION_COVER_REF_COLUMNS: &[(&str, &str)] = &[
     ("collection_cover_refs", "image_item_id"),
     ("collection_cover_refs", "image_tag"),
 ];
+const LOCAL_MANIFEST_TABLES: &[&str] = &[
+    "local_file_manifest",
+    "local_track_manifest_data",
+    "local_artwork_manifest",
+];
+const LOCAL_MANIFEST_COLUMNS: &[(&str, &str)] = &[
+    ("local_file_manifest", "manifest_version"),
+    ("local_file_manifest", "path"),
+    ("local_file_manifest", "root_path"),
+    ("local_file_manifest", "relative_path"),
+    ("local_file_manifest", "file_size"),
+    ("local_file_manifest", "mtime_seconds"),
+    ("local_file_manifest", "mtime_nanos"),
+    ("local_file_manifest", "inode"),
+    ("local_file_manifest", "device"),
+    ("local_file_manifest", "track_id"),
+    ("local_file_manifest", "metadata_hash"),
+    ("local_file_manifest", "search_hash"),
+    ("local_file_manifest", "artwork_revision"),
+    ("local_track_manifest_data", "track_json"),
+    ("local_track_manifest_data", "album_artist"),
+    ("local_track_manifest_data", "cover_kind"),
+    ("local_track_manifest_data", "cover_path"),
+    ("local_track_manifest_data", "cover_embedded_index"),
+    ("local_track_manifest_data", "cover_revision"),
+    ("local_artwork_manifest", "cover_item_id"),
+    ("local_artwork_manifest", "source_kind"),
+    ("local_artwork_manifest", "source_path"),
+    ("local_artwork_manifest", "revision"),
+];
 
 struct SchemaMigration {
     from_version: i64,
@@ -263,6 +297,9 @@ fn migrate_to_collection_cover_refs_schema(store: &Store) -> StoreResult<()> {
         ",
     )?;
     Ok(())
+}
+fn migrate_to_local_manifest_schema(store: &Store) -> StoreResult<()> {
+    store.create_local_manifest_schema()
 }
 
 impl Store {
@@ -371,6 +408,9 @@ impl Store {
                     COLLECTION_COVER_REF_TABLES,
                     COLLECTION_COVER_REF_COLUMNS,
                 )?),
+            13 => Ok(self.schema_is_complete_for_version(12)?
+                && self
+                    .schema_has_required_parts(LOCAL_MANIFEST_TABLES, LOCAL_MANIFEST_COLUMNS)?),
             _ => Ok(false),
         }
     }
@@ -390,6 +430,75 @@ impl Store {
             }
         }
         Ok(true)
+    }
+    fn create_local_manifest_schema(&self) -> StoreResult<()> {
+        self.connection.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS local_file_manifest (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                manifest_version INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                root_path TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                mtime_seconds INTEGER NOT NULL,
+                mtime_nanos INTEGER NOT NULL DEFAULT 0,
+                inode INTEGER,
+                device INTEGER,
+                content_hash TEXT,
+                track_id TEXT NOT NULL,
+                album_id TEXT NOT NULL,
+                source_format TEXT,
+                metadata_hash TEXT NOT NULL,
+                search_hash TEXT NOT NULL,
+                artwork_revision TEXT,
+                scan_generation INTEGER NOT NULL,
+                last_tag_read_at TEXT,
+                last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, path)
+            );
+            CREATE TABLE IF NOT EXISTS local_track_manifest_data (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                manifest_version INTEGER NOT NULL,
+                track_id TEXT NOT NULL,
+                track_json TEXT NOT NULL,
+                album_artist TEXT NOT NULL,
+                cover_kind TEXT,
+                cover_path TEXT,
+                cover_embedded_index INTEGER,
+                cover_revision TEXT,
+                metadata_hash TEXT NOT NULL,
+                search_hash TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, track_id)
+            );
+            CREATE TABLE IF NOT EXISTS local_artwork_manifest (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                cover_item_id TEXT NOT NULL,
+                manifest_version INTEGER NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                source_size INTEGER,
+                mtime_seconds INTEGER,
+                mtime_nanos INTEGER,
+                content_hash TEXT,
+                revision TEXT NOT NULL,
+                scan_generation INTEGER NOT NULL,
+                PRIMARY KEY (server_id, cover_item_id)
+            );
+            CREATE INDEX IF NOT EXISTS local_file_manifest_track_idx
+                ON local_file_manifest(server_id, track_id);
+            CREATE INDEX IF NOT EXISTS local_file_manifest_album_idx
+                ON local_file_manifest(server_id, album_id);
+            CREATE INDEX IF NOT EXISTS local_file_manifest_generation_idx
+                ON local_file_manifest(server_id, scan_generation);
+            CREATE INDEX IF NOT EXISTS local_file_manifest_root_idx
+                ON local_file_manifest(server_id, root_path);
+            CREATE INDEX IF NOT EXISTS local_artwork_manifest_source_idx
+                ON local_artwork_manifest(server_id, source_path);
+            ",
+        )?;
+        Ok(())
     }
     pub(super) fn initialize_schema(&self) -> StoreResult<()> {
         self.connection.execute_batch(
@@ -736,6 +845,7 @@ impl Store {
                 ON track_local_matches(server_id, track_id);
             ",
         )?;
+        self.create_local_manifest_schema()?;
         self.ensure_column("tracks", "source_format", "TEXT")?;
         self.ensure_column("tracks", "comment", "TEXT")?;
         self.ensure_column("tracks", "skip_count", "INTEGER")?;
@@ -841,6 +951,20 @@ impl Store {
                 WHERE a.singleton = 1
                 ",
                 [],
+                saved_server_from_row,
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+    pub fn saved_server(&self, server_id: &ServerId) -> StoreResult<Option<SavedServer>> {
+        self.connection
+            .query_row(
+                "
+                SELECT server_id, provider, name, base_url, user_id, username, trust_invalid_cert
+                FROM servers
+                WHERE server_id = ?1
+                ",
+                params![server_id.as_str()],
                 saved_server_from_row,
             )
             .optional()
@@ -1023,6 +1147,16 @@ impl Store {
         server_id: &ServerId,
         matches: &[(TrackId, String, String)],
     ) -> StoreResult<()> {
+        let mut incoming = matches.to_vec();
+        incoming.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(&right.2))
+        });
+        if self.track_local_matches_with_kind(server_id)? == incoming {
+            return Ok(());
+        }
         self.write_batch(|connection| {
             connection.execute(
                 "DELETE FROM track_local_matches WHERE server_id = ?1",
@@ -1046,6 +1180,26 @@ impl Store {
             }
             Ok(())
         })
+    }
+    fn track_local_matches_with_kind(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<Vec<(TrackId, String, String)>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT track_id, local_path, match_kind
+            FROM track_local_matches
+            WHERE server_id = ?1
+            ORDER BY track_id, local_path, match_kind
+            ",
+        )?;
+        collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+            Ok((
+                TrackId::new(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?)
     }
     pub fn delete_track_local_matches(&self, server_id: &ServerId) -> StoreResult<()> {
         self.connection.execute(

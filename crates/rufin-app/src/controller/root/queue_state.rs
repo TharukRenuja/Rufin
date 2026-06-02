@@ -91,35 +91,11 @@ impl AppController {
         }
     }
     pub(in crate::controller) fn sync_playback_snapshot_from_queue(&self) {
-        let queue = self.queue.lock().ok();
-        let queue = queue.as_ref().and_then(|queue| queue.as_ref());
-        self.update_playback_snapshot(|snapshot| {
-            snapshot.current = queue.and_then(|queue| queue.current().cloned());
-            snapshot.position_seconds = queue.map(QueueEngine::progress_seconds).unwrap_or(0);
-            snapshot.position_millis = u64::from(snapshot.position_seconds) * 1_000;
-            snapshot.duration_seconds = snapshot
-                .current
-                .as_ref()
-                .map(|entry| entry.duration_seconds)
-                .unwrap_or(0);
-            snapshot.repeat_mode = queue
-                .map(QueueEngine::repeat_mode)
-                .unwrap_or(RepeatMode::Off);
-            snapshot.shuffle_enabled = queue
-                .map(|queue| queue.shuffle().enabled)
-                .unwrap_or_default();
-            snapshot.auto_dj_enabled = self
-                .auto_dj_enabled
-                .lock()
-                .map(|enabled| *enabled)
-                .unwrap_or_default();
-            set_waveform_cache_key(snapshot, waveform_cache_key_for_queue(queue));
-            if snapshot.current.is_none() {
-                snapshot.state = PlaybackState::Stopped;
-                snapshot.last_error = None;
-                snapshot.buffering_percent = None;
-            }
-        });
+        sync_playback_snapshot_from_queue_handles(
+            &self.queue,
+            &self.playback_snapshot,
+            &self.auto_dj_enabled,
+        );
     }
     pub(in crate::controller) fn emit_playback_snapshot(&self) {
         let snapshot = self
@@ -130,6 +106,42 @@ impl AppController {
         let _sent = self
             .events
             .send(ControllerEvent::Playback(Box::new(snapshot)));
+    }
+}
+
+pub(in crate::controller) fn sync_playback_snapshot_from_queue_handles(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+) {
+    let queue = queue.lock().ok();
+    let queue = queue.as_ref().and_then(|queue| queue.as_ref());
+    let Ok(mut snapshot) = playback_snapshot.lock() else {
+        return;
+    };
+    snapshot.current = queue.and_then(|queue| queue.current().cloned());
+    snapshot.position_seconds = queue.map(QueueEngine::progress_seconds).unwrap_or(0);
+    snapshot.position_millis = u64::from(snapshot.position_seconds) * 1_000;
+    snapshot.duration_seconds = snapshot
+        .current
+        .as_ref()
+        .map(|entry| entry.duration_seconds)
+        .unwrap_or(0);
+    snapshot.repeat_mode = queue
+        .map(QueueEngine::repeat_mode)
+        .unwrap_or(RepeatMode::Off);
+    snapshot.shuffle_enabled = queue
+        .map(|queue| queue.shuffle().enabled)
+        .unwrap_or_default();
+    snapshot.auto_dj_enabled = auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default();
+    set_waveform_cache_key(&mut snapshot, waveform_cache_key_for_queue(queue));
+    if snapshot.current.is_none() {
+        snapshot.state = PlaybackState::Stopped;
+        snapshot.last_error = None;
+        snapshot.buffering_percent = None;
     }
 }
 

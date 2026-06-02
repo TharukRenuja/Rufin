@@ -239,14 +239,13 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         &mut playlists,
         &mut favorites,
     );
+    normalize_local_album_image_refs_from_tracks(store, &saved, &mut albums)?;
     normalize_local_track_image_refs_from_albums(store, &saved, &mut tracks, &albums)?;
     for section in &mut home_sections {
-        let albums = section.albums.clone();
-        normalize_local_track_image_refs_from_albums(store, &saved, &mut section.tracks, &albums)?;
+        normalize_home_section_local_image_refs(store, &saved, section)?;
     }
     if let Some(section) = &mut prefetched_explore {
-        let albums = section.albums.clone();
-        normalize_local_track_image_refs_from_albums(store, &saved, &mut section.tracks, &albums)?;
+        normalize_home_section_local_image_refs(store, &saved, section)?;
     }
     normalize_local_track_image_refs_from_albums(store, &saved, &mut favorites, &albums)?;
     let status = sync_state
@@ -414,6 +413,92 @@ pub(in crate::controller) fn normalize_local_track_image_refs_from_albums(
     }
     Ok(())
 }
+pub(in crate::controller) fn normalize_local_album_image_refs_from_tracks(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    albums: &mut [Album],
+) -> Result<(), String> {
+    if saved.server.provider != LOCAL_PROVIDER_ID || albums.is_empty() {
+        return Ok(());
+    }
+    let album_ids = albums
+        .iter_mut()
+        .map(|album| {
+            scrub_source_image_ref(saved, &mut album.image_ref);
+            album.id.clone()
+        })
+        .fold(Vec::<AlbumId>::new(), |mut ids, album_id| {
+            if !ids.iter().any(|existing| existing == &album_id) {
+                ids.push(album_id);
+            }
+            ids
+        });
+    if album_ids.is_empty() {
+        return Ok(());
+    }
+    let mut image_refs =
+        store.with_store(|store| store.load_album_image_refs(&saved.server.id, &album_ids))?;
+    image_refs.retain(|_, image_ref| source_image_ref_allowed(saved, image_ref));
+    for album in albums {
+        if let Some(image_ref) = image_refs.get(&album.id) {
+            album.image_ref = Some(image_ref.clone());
+        }
+    }
+    Ok(())
+}
+pub(in crate::controller) fn normalize_home_section_image_refs_for_saved(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    section: &mut HomeSection,
+) -> Result<(), String> {
+    let metadata_settings = load_settings_for_saved(store, saved);
+    scrub_source_home_section_image_refs(saved, section);
+    external_metadata::normalize_home_section(section, &metadata_settings);
+    scrub_source_home_section_image_refs(saved, section);
+    normalize_home_section_local_image_refs(store, saved, section)
+}
+fn normalize_home_section_local_image_refs(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    section: &mut HomeSection,
+) -> Result<(), String> {
+    normalize_local_album_image_refs_from_tracks(store, saved, &mut section.albums)?;
+    let albums = section.albums.clone();
+    normalize_local_track_image_refs_from_albums(store, saved, &mut section.tracks, &albums)
+}
+pub(in crate::controller) fn normalize_local_queue_image_refs_from_albums(
+    store: &StoreHandle,
+    server: &ServerIdentity,
+    entries: &mut [QueueEntry],
+) -> Result<(), String> {
+    if server.provider != LOCAL_PROVIDER_ID || entries.is_empty() {
+        return Ok(());
+    }
+    let missing_album_ids = entries
+        .iter()
+        .filter_map(|entry| entry.album_id.clone())
+        .fold(Vec::<AlbumId>::new(), |mut ids, album_id| {
+            if !ids.iter().any(|existing| existing == &album_id) {
+                ids.push(album_id);
+            }
+            ids
+        });
+    if missing_album_ids.is_empty() {
+        return Ok(());
+    }
+    let mut image_refs =
+        store.with_store(|store| store.load_album_image_refs(&server.id, &missing_album_ids))?;
+    image_refs.retain(|_, image_ref| source_image_ref_allowed_for_server(server, image_ref));
+    for entry in entries {
+        let Some(album_id) = &entry.album_id else {
+            continue;
+        };
+        if let Some(image_ref) = image_refs.get(album_id) {
+            entry.image_ref = Some(image_ref.clone());
+        }
+    }
+    Ok(())
+}
 pub(in crate::controller) fn push_unique_cover_ref(
     image_refs: &mut Vec<ImageRef>,
     image_ref: Option<&ImageRef>,
@@ -494,7 +579,7 @@ pub(in crate::controller) fn seed_fake_cache(
             .await
             .map_err(|error| error.to_string())?;
 
-        store.with_store(|store| {
+        let pruned_cover_entries = store.with_store(|store| {
             store.upsert_albums(&server.id, &albums.items, generation)?;
             store.upsert_tracks(&server.id, &tracks.items, generation)?;
             store.upsert_artists(&server.id, &artists.items, false, generation)?;
@@ -503,9 +588,10 @@ pub(in crate::controller) fn seed_fake_cache(
             store.upsert_genres(&server.id, &genres.items, generation)?;
             store.upsert_playlists(&server.id, &playlists.items, generation)?;
             store.upsert_home_sections(&server.id, &home_sections, generation)?;
-            store.complete_sync(&server.id, generation)?;
-            Ok(())
-        })
+            store.complete_sync(&server.id, generation)
+        })?;
+        prune_successful_sync_image_cache(store, &server.id, pruned_cover_entries);
+        Ok::<(), String>(())
     })?;
     Ok(())
 }
@@ -518,6 +604,11 @@ pub(in crate::controller) fn restore_queue(
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
         Ok(Some(mut snapshot)) => {
             external_metadata::normalize_queue_snapshot(&mut snapshot, &settings);
+            if let Err(error) =
+                normalize_local_queue_image_refs_from_albums(store, server, &mut snapshot.entries)
+            {
+                warn!(%error, "failed to normalize local queue image refs");
+            }
             Some(QueueEngine::restore(snapshot))
         }
         Ok(None) => Some(QueueEngine::new(server.id.clone())),
@@ -839,6 +930,7 @@ pub(in crate::controller) enum SyncRequiredReason {
     EmptyCache,
     PreviousSyncError,
     RemoteCacheStale,
+    LocalManifestRefresh,
     LocalArtworkMissing,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -855,6 +947,7 @@ pub(in crate::controller) struct SourceSyncReadinessInput<'a> {
     pub(in crate::controller) cached_item_count: usize,
     pub(in crate::controller) sync_status: Option<&'a str>,
     pub(in crate::controller) sync_completed_age_seconds: Option<i64>,
+    pub(in crate::controller) local_library_configured: bool,
     pub(in crate::controller) local_artwork_missing: bool,
 }
 pub(in crate::controller) fn source_sync_readiness(
@@ -870,6 +963,8 @@ pub(in crate::controller) fn source_sync_readiness(
         && input.provider != LOCAL_PROVIDER_ID
     {
         Some(SyncRequiredReason::RemoteCacheStale)
+    } else if input.provider == LOCAL_PROVIDER_ID && input.local_library_configured {
+        Some(SyncRequiredReason::LocalManifestRefresh)
     } else {
         None
     };
@@ -915,6 +1010,11 @@ fn active_source_readiness_inner(
     server_id: &ServerId,
     include_local_artwork: bool,
 ) -> Result<SourceSyncReadiness, String> {
+    let local_library_configured = server_id.as_str() == LOCAL_SOURCE_SERVER_ID
+        && !load_settings_from_store(store)
+            .sources
+            .local_folders
+            .is_empty();
     let (provider, cached_item_count, sync_status, sync_completed_age_seconds) =
         store.with_store(|store| {
             let provider = store
@@ -948,6 +1048,7 @@ fn active_source_readiness_inner(
         cached_item_count,
         sync_status: sync_status.as_deref(),
         sync_completed_age_seconds,
+        local_library_configured,
         local_artwork_missing,
     }))
 }
@@ -1012,6 +1113,103 @@ pub(in crate::controller) fn load_settings_for_server(
 ) -> AppSettings {
     settings_for_server(load_settings_from_store(store), server)
 }
+
+pub(in crate::controller) fn prune_successful_sync_image_cache(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    mut pruned_entries: Vec<CoverCacheEntry>,
+) {
+    match stale_generated_external_image_cache_entries(store, server_id) {
+        Ok(mut entries) => pruned_entries.append(&mut entries),
+        Err(error) => warn!(%error, "failed to prune generated external image cache entries"),
+    }
+    prune_disk_cover_cache_entries(&pruned_entries);
+}
+
+fn stale_generated_external_image_cache_entries(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<Vec<CoverCacheEntry>, String> {
+    let saved = store.with_store(|store| store.saved_server(server_id))?;
+    let settings = saved
+        .as_ref()
+        .map(|saved| load_settings_for_saved(store, saved))
+        .unwrap_or_else(|| load_settings_from_store(store));
+    let prune_all_external = !external_metadata::enabled(&settings);
+    let live_refs = if prune_all_external {
+        Vec::new()
+    } else {
+        generated_external_image_refs(store, server_id, &settings)?
+    };
+    store.with_store(|store| {
+        store.prune_stale_generated_external_image_cache_entries(
+            server_id,
+            &live_refs,
+            prune_all_external,
+        )
+    })
+}
+
+fn generated_external_image_refs(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    settings: &AppSettings,
+) -> Result<Vec<ImageRef>, String> {
+    let mut albums = load_all_cached_albums_for_external_prune(store, server_id)?;
+    let mut tracks = load_all_cached_tracks_for_external_prune(store, server_id)?;
+    external_metadata::normalize_albums(&mut albums, settings);
+    external_metadata::normalize_tracks(&mut tracks, settings);
+    let mut seen = HashSet::<(String, Option<String>)>::new();
+    let mut refs = Vec::new();
+    for image_ref in albums
+        .into_iter()
+        .filter_map(|album| album.image_ref)
+        .chain(tracks.into_iter().filter_map(|track| track.image_ref))
+    {
+        if !external_metadata::is_external_image_ref(&image_ref) {
+            continue;
+        }
+        if seen.insert((image_ref.item_id.clone(), image_ref.tag.clone())) {
+            refs.push(image_ref);
+        }
+    }
+    Ok(refs)
+}
+
+fn load_all_cached_albums_for_external_prune(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<Vec<Album>, String> {
+    let mut albums = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = store.with_store(|store| store.load_albums(server_id, offset, PAGE_SIZE))?;
+        let item_count = page.items.len();
+        albums.extend(page.items);
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            return Ok(albums);
+        }
+    }
+}
+
+fn load_all_cached_tracks_for_external_prune(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<Vec<Track>, String> {
+    let mut tracks = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = store.with_store(|store| store.load_tracks(server_id, offset, PAGE_SIZE))?;
+        let item_count = page.items.len();
+        tracks.extend(page.items);
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            return Ok(tracks);
+        }
+    }
+}
+
 pub(in crate::controller) fn settings_for_server(
     mut settings: AppSettings,
     server: &ServerIdentity,
@@ -1284,7 +1482,10 @@ fn scrub_source_image_ref_vec(saved: &SavedServer, image_refs: &mut Vec<ImageRef
     image_refs.retain(|image_ref| source_image_ref_allowed(saved, image_ref));
 }
 fn source_image_ref_allowed(saved: &SavedServer, image_ref: &ImageRef) -> bool {
-    if saved.server.provider == LOCAL_PROVIDER_ID {
+    source_image_ref_allowed_for_server(&saved.server, image_ref)
+}
+fn source_image_ref_allowed_for_server(server: &ServerIdentity, image_ref: &ImageRef) -> bool {
+    if server.provider == LOCAL_PROVIDER_ID {
         return is_local_provider_image_ref(image_ref);
     }
     !is_local_provider_image_ref(image_ref)

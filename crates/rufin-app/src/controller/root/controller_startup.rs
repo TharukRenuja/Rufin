@@ -40,11 +40,12 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
         )));
         let sync_result = run_sync_job(&context, &saved, generation, prefetch_initial_covers);
         drop(permit);
-        if !sync_target_is_current(&context.store, &server_id) {
-            return;
-        }
         match sync_result {
             Ok(()) => {
+                if !sync_target_is_current(&context.store, &server_id) {
+                    return;
+                }
+                refresh_local_queue_image_refs_after_sync(&context, &saved);
                 covers::start_external_metadata_cover_prefetch_thread(
                     covers::ExternalCoverPrefetchRequest {
                         store: context.store.clone(),
@@ -84,10 +85,116 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
                     store.fail_sync(&saved.server.id, &error)?;
                     Ok(())
                 });
+                if !sync_target_is_current(&context.store, &server_id) {
+                    return;
+                }
                 let _sent = context.events.send(ControllerEvent::Error(error));
             }
         }
     });
+}
+
+pub(in crate::controller) fn refresh_local_queue_image_refs_after_sync(
+    context: &SyncContext,
+    saved: &SavedServer,
+) {
+    let Some(original_snapshot) = context
+        .queue
+        .lock()
+        .ok()
+        .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot))
+    else {
+        return;
+    };
+    refresh_local_queue_image_refs_from_snapshot(context, saved, original_snapshot);
+}
+
+pub(in crate::controller) fn refresh_local_queue_image_refs_from_snapshot(
+    context: &SyncContext,
+    saved: &SavedServer,
+    original_snapshot: QueueSnapshot,
+) {
+    if saved.server.provider != LOCAL_PROVIDER_ID {
+        return;
+    }
+    if original_snapshot.server_id != saved.server.id {
+        return;
+    }
+    let mut normalized_entries = original_snapshot.entries.clone();
+    if let Err(error) = normalize_local_queue_image_refs_from_albums(
+        &context.store,
+        &saved.server,
+        &mut normalized_entries,
+    ) {
+        warn!(%error, "failed to refresh local queue image refs after sync");
+        return;
+    }
+    if normalized_entries == original_snapshot.entries {
+        return;
+    }
+    let mut queue = match context.queue.lock() {
+        Ok(queue) => queue,
+        Err(error) => {
+            warn!(%error, "failed to lock queue after local sync");
+            return;
+        }
+    };
+    let Some(current_snapshot) = queue.as_ref().map(QueueEngine::snapshot) else {
+        return;
+    };
+    if !queue_snapshot_entries_match(&original_snapshot, &current_snapshot) {
+        return;
+    }
+    let mut refreshed_snapshot = current_snapshot.clone();
+    for (entry, normalized_entry) in refreshed_snapshot
+        .entries
+        .iter_mut()
+        .zip(normalized_entries)
+    {
+        entry.image_ref = normalized_entry.image_ref;
+    }
+    if refreshed_snapshot.entries == current_snapshot.entries {
+        return;
+    }
+    *queue = Some(QueueEngine::restore(refreshed_snapshot.clone()));
+    drop(queue);
+
+    persist_queue_snapshot_deferred_from_handles(
+        context.store.clone(),
+        context.events.clone(),
+        Arc::clone(&context.queue_persist_generation),
+        refreshed_snapshot.clone(),
+    );
+    sync_playback_snapshot_from_queue_handles(
+        &context.queue,
+        &context.playback_snapshot,
+        &context.auto_dj_enabled,
+    );
+    let _sent = context
+        .events
+        .send(ControllerEvent::Queue(Box::new(Some(refreshed_snapshot))));
+    let playback = context
+        .playback_snapshot
+        .lock()
+        .map(|snapshot| snapshot.clone())
+        .unwrap_or_default();
+    let _sent = context
+        .events
+        .send(ControllerEvent::Playback(Box::new(playback)));
+}
+
+fn queue_snapshot_entries_match(left: &QueueSnapshot, right: &QueueSnapshot) -> bool {
+    left.server_id == right.server_id
+        && left.entries.len() == right.entries.len()
+        && left
+            .entries
+            .iter()
+            .zip(&right.entries)
+            .all(|(left, right)| {
+                left.id == right.id
+                    && left.track_id == right.track_id
+                    && left.album_id == right.album_id
+            })
 }
 
 pub(in crate::controller) fn sync_target_is_current(
@@ -291,13 +398,7 @@ pub(in crate::controller) fn run_sync_job(
         saved.server.name.clone(),
         provider_display_name(&saved.server.provider).to_string(),
     );
-    context.runtime.block_on(sync_provider_generation(
-        &context.store,
-        &saved.server.id,
-        provider.as_music_provider(),
-        generation,
-        progress,
-    ))?;
+    sync_loaded_provider_generation(context, saved, generation, &provider, progress)?;
     if prefetch_initial_covers {
         let _sent = context.events.send(ControllerEvent::LoginStatus(
             "Caching library artwork...".to_string(),
@@ -318,6 +419,378 @@ pub(in crate::controller) fn run_sync_job(
         })?;
     }
     Ok(())
+}
+fn sync_loaded_provider_generation(
+    context: &SyncContext,
+    saved: &SavedServer,
+    generation: i64,
+    provider: &LoadedProvider,
+    progress: SyncProgressReporter,
+) -> Result<(), String> {
+    match provider {
+        LoadedProvider::Local(local) => {
+            sync_local_provider_generation(context, &saved.server.id, local, generation, progress)
+        }
+        _ => context.runtime.block_on(sync_provider_generation(
+            &context.store,
+            &saved.server.id,
+            provider.as_music_provider(),
+            generation,
+            progress,
+        )),
+    }
+}
+fn sync_local_provider_generation(
+    context: &SyncContext,
+    server_id: &ServerId,
+    provider: &LocalProvider,
+    generation: i64,
+    progress: SyncProgressReporter,
+) -> Result<(), String> {
+    let scan = provider.manifest_scan();
+    info!(
+        generation,
+        tag_reads = scan.counters.tag_reads,
+        unchanged_reused = scan.counters.unchanged_reused,
+        deleted = scan.counters.deleted,
+        artwork_changed = scan.counters.artwork_changed,
+        filesystem_walk_elapsed_ms = scan.counters.filesystem_walk_elapsed_ms,
+        manifest_compare_elapsed_ms = scan.counters.manifest_compare_elapsed_ms,
+        "completed manifest-backed local scan"
+    );
+    context
+        .runtime
+        .block_on(sync_local_provider_store_generation(
+            &context.store,
+            server_id,
+            provider,
+            generation,
+            progress,
+        ))
+}
+async fn sync_local_provider_store_generation(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &LocalProvider,
+    generation: i64,
+    mut progress: SyncProgressReporter,
+) -> Result<(), String> {
+    let scan = provider.manifest_scan();
+    let snapshot = collect_local_provider_snapshot(provider, &mut progress).await?;
+    let aggregate_dirty = local_aggregate_image_dirty(store, server_id, &snapshot)?;
+    if !scan.library_changed && aggregate_dirty.is_empty() {
+        let pruned_cover_entries =
+            store.with_store(|store| store.complete_unchanged_local_sync(server_id, generation))?;
+        prune_successful_sync_image_cache(store, server_id, pruned_cover_entries);
+        info!(
+            generation,
+            "completed unchanged local sync without library row writes"
+        );
+        return Ok(());
+    }
+    info!(
+        generation,
+        changed_tracks = scan.changed_track_ids.len(),
+        metadata_tracks = scan.metadata_track_ids.len(),
+        artwork_tracks = scan.artwork_track_ids.len(),
+        retained_tracks = scan.retained_track_ids.len(),
+        deleted_tracks = scan.deleted_track_ids.len(),
+        "started manifest-delta local sync"
+    );
+    progress.finalizing();
+    let finalize_started = Instant::now();
+    let delta = local_library_delta(provider.manifest_scan(), snapshot, aggregate_dirty);
+    let pruned_cover_entries =
+        store.with_store(|store| store.commit_local_library_delta(server_id, generation, delta))?;
+    prune_successful_sync_image_cache(store, server_id, pruned_cover_entries);
+    progress.finished();
+    info!(
+        generation,
+        finalize_elapsed_ms = finalize_started.elapsed().as_millis() as u64,
+        total_elapsed_ms = progress.total_elapsed().as_millis() as u64,
+        "completed manifest-delta local sync"
+    );
+    Ok(())
+}
+#[derive(Clone, Debug, Default)]
+struct LocalProviderSnapshot {
+    tracks: Vec<Track>,
+    albums: Vec<Album>,
+    artists: Vec<Artist>,
+    album_artists: Vec<Artist>,
+    genres: Vec<Genre>,
+    home_sections: Vec<HomeSection>,
+}
+#[derive(Clone, Debug, Default)]
+struct LocalAggregateDirty {
+    album_ids: HashSet<AlbumId>,
+    artist_ids: HashSet<ArtistId>,
+    album_artist_ids: HashSet<ArtistId>,
+    genre_names: HashSet<String>,
+}
+impl LocalAggregateDirty {
+    fn is_empty(&self) -> bool {
+        self.album_ids.is_empty()
+            && self.artist_ids.is_empty()
+            && self.album_artist_ids.is_empty()
+            && self.genre_names.is_empty()
+    }
+}
+async fn collect_local_provider_snapshot(
+    provider: &LocalProvider,
+    progress: &mut SyncProgressReporter,
+) -> Result<LocalProviderSnapshot, String> {
+    progress.collection_started(SyncCollection::Tracks);
+    let tracks = load_all_local_tracks_for_matching(provider).await?;
+    progress.collection_started(SyncCollection::Albums);
+    let albums = load_all_local_albums(provider).await?;
+    progress.collection_started(SyncCollection::Artists);
+    let artists = load_all_local_artists(provider, false).await?;
+    progress.collection_started(SyncCollection::AlbumArtists);
+    let album_artists = load_all_local_artists(provider, true).await?;
+    progress.collection_started(SyncCollection::Genres);
+    let genres = load_all_local_genres(provider).await?;
+    progress.collection_started(SyncCollection::HomeSections);
+    let home_sections = provider
+        .home_sections()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(LocalProviderSnapshot {
+        tracks,
+        albums,
+        artists,
+        album_artists,
+        genres,
+        home_sections,
+    })
+}
+async fn load_all_local_albums(provider: &LocalProvider) -> Result<Vec<Album>, String> {
+    let mut albums = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = provider
+            .albums(PagedRequest::new(offset, PAGE_SIZE))
+            .await
+            .map_err(|error| error.to_string())?;
+        let item_count = page.items.len();
+        albums.extend(page.items);
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            return Ok(albums);
+        }
+    }
+}
+async fn load_all_local_artists(
+    provider: &LocalProvider,
+    album_artist: bool,
+) -> Result<Vec<Artist>, String> {
+    let mut artists = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = if album_artist {
+            provider
+                .album_artists(PagedRequest::new(offset, PAGE_SIZE))
+                .await
+        } else {
+            provider.artists(PagedRequest::new(offset, PAGE_SIZE)).await
+        }
+        .map_err(|error| error.to_string())?;
+        let item_count = page.items.len();
+        artists.extend(page.items);
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            return Ok(artists);
+        }
+    }
+}
+async fn load_all_local_genres(provider: &LocalProvider) -> Result<Vec<Genre>, String> {
+    let mut genres = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = provider
+            .genres(PagedRequest::new(offset, PAGE_SIZE))
+            .await
+            .map_err(|error| error.to_string())?;
+        let item_count = page.items.len();
+        genres.extend(page.items);
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            return Ok(genres);
+        }
+    }
+}
+fn local_aggregate_image_dirty(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    snapshot: &LocalProviderSnapshot,
+) -> Result<LocalAggregateDirty, String> {
+    let cached_albums = load_all_cached_albums(store, server_id)?;
+    let cached_artists = load_all_cached_artists(store, server_id, false)?;
+    let cached_album_artists = load_all_cached_artists(store, server_id, true)?;
+    let cached_album_refs = cached_albums
+        .into_iter()
+        .map(|album| (album.id, album.image_ref))
+        .collect::<HashMap<_, _>>();
+    let cached_artist_refs = cached_artists
+        .into_iter()
+        .map(|artist| (artist.id, artist.image_ref))
+        .collect::<HashMap<_, _>>();
+    let cached_album_artist_refs = cached_album_artists
+        .into_iter()
+        .map(|artist| (artist.id, artist.image_ref))
+        .collect::<HashMap<_, _>>();
+    let mut dirty = LocalAggregateDirty::default();
+    for album in &snapshot.albums {
+        if cached_album_refs.get(&album.id) != Some(&album.image_ref) {
+            dirty.album_ids.insert(album.id.clone());
+        }
+    }
+    for artist in &snapshot.artists {
+        if cached_artist_refs.get(&artist.id) != Some(&artist.image_ref) {
+            dirty.artist_ids.insert(artist.id.clone());
+        }
+    }
+    for artist in &snapshot.album_artists {
+        if cached_album_artist_refs.get(&artist.id) != Some(&artist.image_ref) {
+            dirty.album_artist_ids.insert(artist.id.clone());
+        }
+    }
+    Ok(dirty)
+}
+fn local_library_delta(
+    scan: &LocalManifestScan,
+    snapshot: LocalProviderSnapshot,
+    aggregate_dirty: LocalAggregateDirty,
+) -> LocalLibraryDelta {
+    let changed_track_ids = scan
+        .changed_track_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let metadata_track_ids = scan
+        .metadata_track_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let artwork_track_ids = scan
+        .artwork_track_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let mut dirty_album_ids = scan.dirty_album_ids.iter().cloned().collect::<HashSet<_>>();
+    dirty_album_ids.extend(aggregate_dirty.album_ids);
+    let mut dirty_artist_ids = scan
+        .dirty_artist_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    dirty_artist_ids.extend(aggregate_dirty.artist_ids);
+    let mut dirty_album_artist_ids = scan
+        .dirty_album_artist_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    dirty_album_artist_ids.extend(aggregate_dirty.album_artist_ids);
+    let mut dirty_genre_names = scan
+        .dirty_genre_names
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    dirty_genre_names.extend(aggregate_dirty.genre_names);
+    LocalLibraryDelta {
+        changed_tracks: snapshot
+            .tracks
+            .iter()
+            .filter(|track| changed_track_ids.contains(&track.id))
+            .cloned()
+            .collect(),
+        metadata_tracks: snapshot
+            .tracks
+            .iter()
+            .filter(|track| metadata_track_ids.contains(&track.id))
+            .cloned()
+            .collect(),
+        artwork_tracks: snapshot
+            .tracks
+            .iter()
+            .filter(|track| artwork_track_ids.contains(&track.id))
+            .cloned()
+            .collect(),
+        deleted_track_ids: scan.deleted_track_ids.clone(),
+        current_album_ids: snapshot
+            .albums
+            .iter()
+            .map(|album| album.id.clone())
+            .collect(),
+        current_artist_ids: snapshot
+            .artists
+            .iter()
+            .map(|artist| artist.id.clone())
+            .collect(),
+        current_album_artist_ids: snapshot
+            .album_artists
+            .iter()
+            .map(|artist| artist.id.clone())
+            .collect(),
+        current_genre_ids: snapshot
+            .genres
+            .iter()
+            .map(|genre| genre.id.clone())
+            .collect(),
+        dirty_albums: snapshot
+            .albums
+            .into_iter()
+            .filter(|album| dirty_album_ids.contains(&album.id))
+            .collect(),
+        dirty_artists: snapshot
+            .artists
+            .into_iter()
+            .filter(|artist| dirty_artist_ids.contains(&artist.id))
+            .collect(),
+        dirty_album_artists: snapshot
+            .album_artists
+            .into_iter()
+            .filter(|artist| dirty_album_artist_ids.contains(&artist.id))
+            .collect(),
+        dirty_genres: snapshot
+            .genres
+            .into_iter()
+            .filter(|genre| dirty_genre_names.contains(&genre.name))
+            .collect(),
+        home_sections: snapshot.home_sections,
+        manifest_entries: scan.entries.clone(),
+    }
+}
+fn load_all_cached_albums(store: &StoreHandle, server_id: &ServerId) -> Result<Vec<Album>, String> {
+    let mut albums = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = store.with_store(|store| store.load_albums(server_id, offset, PAGE_SIZE))?;
+        let item_count = page.items.len();
+        albums.extend(page.items);
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            return Ok(albums);
+        }
+    }
+}
+fn load_all_cached_artists(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    album_artist: bool,
+) -> Result<Vec<Artist>, String> {
+    let mut artists = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = store
+            .with_store(|store| store.load_artists(server_id, album_artist, offset, PAGE_SIZE))?;
+        let item_count = page.items.len();
+        artists.extend(page.items);
+        offset += item_count;
+        if sync_page_finished(item_count, page.total, offset) {
+            return Ok(artists);
+        }
+    }
 }
 pub(in crate::controller) fn refresh_playlists_for_saved(
     store: &StoreHandle,
@@ -355,12 +828,14 @@ pub(in crate::controller) fn prefetch_home_section_for_saved(
     kind: HomeSectionKind,
 ) -> Result<HomeSection, String> {
     let provider = provider_for_saved(store, runtime, secrets, saved)?;
-    runtime.block_on(prefetch_home_section(
+    let mut section = runtime.block_on(prefetch_home_section(
         store,
         &saved.server.id,
         provider.as_music_provider(),
         kind,
-    ))
+    ))?;
+    normalize_home_section_image_refs_for_saved(store, saved, &mut section)?;
+    Ok(section)
 }
 #[cfg(test)]
 #[instrument(skip(store, provider), fields(server_id = %server_id.as_str()))]
@@ -396,6 +871,23 @@ pub(in crate::controller) async fn sync_provider_with_events(
     )
     .await
 }
+#[cfg(test)]
+pub(in crate::controller) async fn sync_local_provider_with_events(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &LocalProvider,
+    events: Sender<ControllerEvent>,
+) -> Result<(), String> {
+    let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    sync_local_provider_store_generation(
+        store,
+        server_id,
+        provider,
+        generation,
+        SyncProgressReporter::for_provider(provider, Some(events)),
+    )
+    .await
+}
 #[instrument(skip(store, provider, progress), fields(server_id = %server_id.as_str(), generation))]
 async fn sync_provider_generation(
     store: &StoreHandle,
@@ -422,10 +914,12 @@ async fn sync_provider_generation(
     progress.finalizing();
     let finalize_started = Instant::now();
     store.with_store(|store| store.refresh_library_counts(server_id))?;
-    store.with_store(|store| store.complete_sync(server_id, generation))?;
+    let pruned_cover_entries =
+        store.with_store(|store| store.complete_sync(server_id, generation))?;
+    prune_successful_sync_image_cache(store, server_id, pruned_cover_entries);
     let finalize_elapsed = finalize_started.elapsed();
     progress.finished();
-    if let Err(error) = refresh_local_track_matches(store, server_id).await {
+    if let Err(error) = refresh_local_track_matches(store, server_id, Some(generation)).await {
         warn!(%error, "failed to refresh local track matches");
     }
     info!(
@@ -810,6 +1304,7 @@ async fn sync_music_folders(
 pub(in crate::controller) async fn refresh_local_track_matches(
     store: &StoreHandle,
     server_id: &ServerId,
+    manifest_generation: Option<i64>,
 ) -> Result<usize, String> {
     let Some(access) = store.with_store(|store| store.server_local_access(server_id))? else {
         return Ok(0);
@@ -832,12 +1327,34 @@ pub(in crate::controller) async fn refresh_local_track_matches(
         store.with_store(|store| store.replace_track_local_matches(server_id, &[]))?;
         return Ok(0);
     }
-    let local_provider = LocalProvider::from_root(PathBuf::from(&access.root_path))
-        .map_err(|error| error.to_string())?;
+    let root = PathBuf::from(&access.root_path);
+    let manifest_cache = store.with_store(|store| store.load_local_manifest(server_id))?;
+    let local_identity =
+        LocalProvider::identity_for_root(&root).map_err(|error| error.to_string())?;
+    let local_provider =
+        LocalProvider::from_roots_with_manifest_cache(vec![root], local_identity, manifest_cache)
+            .map_err(|error| error.to_string())?;
+    let scan = local_provider.manifest_scan();
+    info!(
+        server_id = %server_id,
+        tag_reads = scan.counters.tag_reads,
+        unchanged_reused = scan.counters.unchanged_reused,
+        deleted = scan.counters.deleted,
+        filesystem_walk_elapsed_ms = scan.counters.filesystem_walk_elapsed_ms,
+        manifest_compare_elapsed_ms = scan.counters.manifest_compare_elapsed_ms,
+        "completed manifest-backed local-access scan"
+    );
     let local_tracks = load_all_local_tracks_for_matching(&local_provider).await?;
     let matches = conservative_local_matches(&remote_tracks, &local_tracks);
     let count = matches.len();
-    store.with_store(|store| store.replace_track_local_matches(server_id, &matches))?;
+    store.with_store(|store| {
+        store.replace_track_local_matches(server_id, &matches)?;
+        store.replace_local_manifest(
+            server_id,
+            manifest_generation.unwrap_or_default(),
+            &local_provider.manifest_scan().entries,
+        )
+    })?;
     debug!(server_id = %server_id, count, "refreshed local track matches");
     Ok(count)
 }

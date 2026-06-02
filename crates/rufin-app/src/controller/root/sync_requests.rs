@@ -16,12 +16,7 @@ pub(in crate::controller) fn resolve_stream(
     playback_settings: &PlaybackSettings,
 ) -> Result<StreamDescriptor, String> {
     let saved = store
-        .with_store(|store| {
-            Ok(store
-                .list_servers()?
-                .into_iter()
-                .find(|saved| saved.server.id == *server_id))
-        })?
+        .with_store(|store| store.saved_server(server_id))?
         .ok_or_else(|| "No matching saved server is saved.".to_string())?;
     if saved.server.provider == "fake" {
         return Ok(StreamDescriptor::new(format!(
@@ -29,7 +24,9 @@ pub(in crate::controller) fn resolve_stream(
             track_id.as_str()
         )));
     }
-    if let Some(local_path) = local_audio_path_for_track(store, server_id, track_id) {
+    if let Some(local_path) =
+        local_audio_path_for_saved_track(store, &saved.server, server_id, track_id)
+    {
         let url = reqwest::Url::from_file_path(&local_path).map_err(|()| {
             format!(
                 "Could not turn local track path into a file URI: {}",
@@ -475,44 +472,78 @@ pub(in crate::controller) fn local_audio_path_for_track(
     server_id: &ServerId,
     track_id: &TrackId,
 ) -> Option<PathBuf> {
-    let saved = store
+    let lookup = store
         .with_store(|store| {
-            store.list_servers().map(|servers| {
-                servers
-                    .into_iter()
-                    .find(|saved| saved.server.id == *server_id)
-            })
+            let Some(saved) = store.saved_server(server_id)? else {
+                return Ok(None);
+            };
+            local_audio_path_lookup(store, &saved.server, server_id, track_id)
         })
         .ok()
         .flatten()?;
-    let raw = store
-        .with_store(|store| store.track_local_path(server_id, track_id))
-        .ok()
-        .flatten();
-    if saved.server.provider == "local" {
-        let direct = PathBuf::from(raw?);
-        return direct.is_file().then_some(direct);
-    }
-    let access = store
-        .with_store(|store| store.server_local_access(server_id))
+    local_audio_path_from_lookup(&lookup)
+}
+fn local_audio_path_for_saved_track(
+    store: &StoreHandle,
+    server: &ServerIdentity,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> Option<PathBuf> {
+    let lookup = store
+        .with_store(|store| local_audio_path_lookup(store, server, server_id, track_id))
         .ok()
         .flatten()?;
-    if let Some(matched) = store
-        .with_store(|store| store.track_local_match_path(server_id, track_id))
-        .ok()
-        .flatten()
-    {
-        let matched = PathBuf::from(matched);
-        if matched.is_file() {
-            return Some(matched);
-        }
+    local_audio_path_from_lookup(&lookup)
+}
+struct LocalAudioPathLookup {
+    provider_is_local: bool,
+    raw_path: Option<String>,
+    access: Option<ServerLocalAccess>,
+    matched_path: Option<String>,
+}
+fn local_audio_path_lookup(
+    store: &Store,
+    server: &ServerIdentity,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> StoreResult<Option<LocalAudioPathLookup>> {
+    let raw_path = store.track_local_path(server_id, track_id)?;
+    if server.provider == LOCAL_PROVIDER_ID {
+        return Ok(Some(LocalAudioPathLookup {
+            provider_is_local: true,
+            raw_path,
+            access: None,
+            matched_path: None,
+        }));
     }
-    let raw = raw?;
+    let Some(access) = store.server_local_access(server_id)? else {
+        return Ok(None);
+    };
+    let matched_path = store.track_local_match_path(server_id, track_id)?;
+    Ok(Some(LocalAudioPathLookup {
+        provider_is_local: false,
+        raw_path,
+        access: Some(access),
+        matched_path,
+    }))
+}
+fn local_audio_path_from_lookup(lookup: &LocalAudioPathLookup) -> Option<PathBuf> {
+    if lookup.provider_is_local {
+        let direct = PathBuf::from(lookup.raw_path.as_deref()?);
+        return direct.is_file().then_some(direct);
+    }
+    let access = lookup.access.as_ref()?;
+    if let Some(matched) = lookup.matched_path.as_deref().map(PathBuf::from)
+        && matched.is_file()
+    {
+        return Some(matched);
+    }
+    let raw = lookup.raw_path.as_deref()?;
     let direct = PathBuf::from(&raw);
     if direct.is_file() {
         return Some(direct);
     }
-    let mapped = map_server_path_to_local(&raw, &access)?;
+    let mapped = map_server_path_to_local(raw, access)?;
     mapped.is_file().then_some(mapped)
 }
 fn read_response_text_bounded(

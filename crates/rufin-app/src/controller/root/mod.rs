@@ -12,11 +12,12 @@ use directories::ProjectDirs;
 use rufin_core::ThemePreference;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
-    HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, MusicFolder,
-    MusicFolderId, PlaySourceDescriptor, PlaySourceKey, PlaybackSettings, Playlist, PlaylistId,
-    QueueEngine, QueueEntry, QueueEntryId, QueueReplacement, QueueSnapshot, RepeatMode, ServerId,
-    ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
-    SmartPlaylistDetail, SmartPlaylistId, SourceOrder, Track, TrackId,
+    HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, LocalManifestEntry,
+    LocalManifestScan, MusicFolder, MusicFolderId, PlaySourceDescriptor, PlaySourceKey,
+    PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
+    QueueReplacement, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist,
+    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
+    SourceOrder, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -36,11 +37,9 @@ use rufin_secrets::MemorySecretStore;
 #[cfg(unix)]
 use rufin_secrets::SecretServiceStore;
 use rufin_secrets::{CachedSecretStore, SecretKey, SecretStore};
-#[cfg(test)]
-use rufin_store::CoverCacheEntry;
 use rufin_store::{
-    CachedArtistDetail, CachedGenreDetail, SavedServer, ServerLocalAccess, Store,
-    StoreBackedSourceWindow, StoreError, SyncState,
+    CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, LocalLibraryDelta, SavedServer,
+    ServerLocalAccess, Store, StoreBackedSourceWindow, StoreError, StoreResult, SyncState,
 };
 #[cfg(any(test, feature = "dev-tools"))]
 use rufin_test_support::{FakeProvider, FakeScale};
@@ -121,6 +120,9 @@ pub(in crate::controller) use playback_queue::*;
 pub(in crate::controller) use playback_waveforms::{
     cached_waveform_peaks, request_waveform_for_prepared_item, set_waveform_cache_key,
     waveform_cache_key, waveform_cache_key_for_queue,
+};
+pub(in crate::controller) use queue_state::{
+    persist_queue_snapshot_deferred_from_handles, sync_playback_snapshot_from_queue_handles,
 };
 #[cfg(test)]
 pub(in crate::controller) use startup_sync_tests::RecordingPlaybackBackend;
@@ -533,6 +535,10 @@ pub(in crate::controller) struct SyncContext {
     runtime: Arc<Runtime>,
     secrets: Arc<dyn SecretStore>,
     events: Sender<ControllerEvent>,
+    queue: Arc<Mutex<Option<QueueEngine>>>,
+    queue_persist_generation: Arc<AtomicU64>,
+    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: Arc<Mutex<bool>>,
     sync_in_flight: InFlightGuards<ServerId>,
     cover_in_flight: Arc<Mutex<HashMap<String, u64>>>,
     external_cover_retry_generation: Arc<AtomicU64>,

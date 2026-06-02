@@ -36,9 +36,11 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Err(error) =
-                runtime.block_on(refresh_local_track_matches(&store, &matched_server_id))
-            {
+            if let Err(error) = runtime.block_on(refresh_local_track_matches(
+                &store,
+                &matched_server_id,
+                None,
+            )) {
                 warn!(%error, "failed to refresh local track matches");
             }
             prepare_next_stream_from_handles(

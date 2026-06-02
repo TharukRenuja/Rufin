@@ -21,7 +21,6 @@ use super::{
     playlist_drop_index, playlist_entries_for_state, playlist_entry_play_count_text,
     playlist_play_activation, preferences_login_status_toast_message,
     queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
-    snapshot_local_source_cache_gate_action,
 };
 use crate::controller::{
     LyricsSearchResult, NormalizedPlayTarget, PlayAnchor, PlayTarget, PlaybackPerfEvent,
@@ -321,22 +320,26 @@ pub(in crate::ui) fn local_source_cache_gate_ignores_cached_source_change() {
     let source = Some(LibrarySourceSelection::Local);
 
     assert_eq!(
-        local_source_cache_gate_action(false, &source, true, false, false, "Cached library ready"),
-        LocalSourceCacheGateAction::None
-    );
-    assert_eq!(
-        local_source_cache_gate_action(true, &source, false, false, false, "Cached library ready"),
-        LocalSourceCacheGateAction::None
-    );
-    assert_eq!(
-        snapshot_local_source_cache_gate_action(
-            SnapshotRenderDecision::SourceChanged,
+        local_source_cache_gate_action(
             false,
             &source,
             true,
+            true,
             false,
             false,
-            "Cached library ready",
+            "Cached library ready"
+        ),
+        LocalSourceCacheGateAction::None
+    );
+    assert_eq!(
+        local_source_cache_gate_action(
+            true,
+            &source,
+            false,
+            false,
+            false,
+            false,
+            "Cached library ready"
         ),
         LocalSourceCacheGateAction::None
     );
@@ -346,24 +349,68 @@ pub(in crate::ui) fn local_source_cache_gate_enters_for_folder_change() {
     let source = Some(LibrarySourceSelection::Local);
 
     assert_eq!(
-        local_source_cache_gate_action(false, &source, true, false, false, "Cached library ready"),
+        local_source_cache_gate_action(
+            false,
+            &source,
+            true,
+            true,
+            false,
+            false,
+            "Cached library ready"
+        ),
         LocalSourceCacheGateAction::None
     );
     assert_eq!(
-        local_source_cache_gate_action(true, &source, true, false, false, "Cached library ready"),
+        local_source_cache_gate_action(
+            true,
+            &source,
+            true,
+            true,
+            false,
+            false,
+            "Cached library ready"
+        ),
         LocalSourceCacheGateAction::Enter
     );
 }
 #[test]
-pub(in crate::ui) fn local_source_cache_gate_enters_for_same_source_local_sync() {
+pub(in crate::ui) fn local_source_cache_gate_enters_for_uncached_local_sync_only() {
     let source = Some(LibrarySourceSelection::Local);
 
     assert_eq!(
-        local_source_cache_gate_action(false, &source, true, false, false, "Syncing library..."),
+        local_source_cache_gate_action(
+            false,
+            &source,
+            true,
+            false,
+            false,
+            false,
+            "Syncing library..."
+        ),
         LocalSourceCacheGateAction::Enter
     );
     assert_eq!(
-        local_source_cache_gate_action(false, &source, true, false, false, "Cached library ready"),
+        local_source_cache_gate_action(
+            false,
+            &source,
+            true,
+            true,
+            false,
+            false,
+            "Syncing library..."
+        ),
+        LocalSourceCacheGateAction::None
+    );
+    assert_eq!(
+        local_source_cache_gate_action(
+            false,
+            &source,
+            true,
+            true,
+            false,
+            false,
+            "Cached library ready"
+        ),
         LocalSourceCacheGateAction::None
     );
 }
@@ -372,16 +419,40 @@ pub(in crate::ui) fn local_source_cache_gate_waits_until_sync_snapshot_finishes(
     let source = Some(LibrarySourceSelection::Local);
 
     assert_eq!(
-        local_source_cache_gate_action(false, &source, true, true, false, "Cached library ready"),
+        local_source_cache_gate_action(
+            false,
+            &source,
+            true,
+            false,
+            true,
+            false,
+            "Cached library ready"
+        ),
         LocalSourceCacheGateAction::Wait
     );
     assert!(local_source_snapshot_is_syncing("Syncing library..."));
     assert_eq!(
-        local_source_cache_gate_action(false, &source, true, true, true, "Syncing library..."),
+        local_source_cache_gate_action(
+            false,
+            &source,
+            true,
+            false,
+            true,
+            true,
+            "Syncing library..."
+        ),
         LocalSourceCacheGateAction::Wait
     );
     assert_eq!(
-        local_source_cache_gate_action(false, &source, true, true, true, "Cached library ready"),
+        local_source_cache_gate_action(
+            false,
+            &source,
+            true,
+            false,
+            true,
+            true,
+            "Cached library ready"
+        ),
         LocalSourceCacheGateAction::Reveal
     );
 }
@@ -392,7 +463,15 @@ pub(in crate::ui) fn local_source_cache_gate_cancels_when_source_leaves_local() 
     )));
 
     assert_eq!(
-        local_source_cache_gate_action(false, &source, true, true, true, "Cached library ready"),
+        local_source_cache_gate_action(
+            false,
+            &source,
+            true,
+            true,
+            true,
+            true,
+            "Cached library ready"
+        ),
         LocalSourceCacheGateAction::Cancel
     );
 }
@@ -420,23 +499,6 @@ pub(in crate::ui) fn queue_source_waits_until_library_snapshot_matches() {
         Some(&next_source)
     ));
     assert!(!queue_source_waits_for_snapshot(None, Some(&old_source)));
-}
-#[test]
-pub(in crate::ui) fn first_run_completion_suppresses_local_source_cache_gate() {
-    let source = Some(LibrarySourceSelection::Local);
-
-    assert_eq!(
-        snapshot_local_source_cache_gate_action(
-            SnapshotRenderDecision::FirstRunFinished,
-            false,
-            &source,
-            true,
-            true,
-            true,
-            "Cached library ready",
-        ),
-        LocalSourceCacheGateAction::None
-    );
 }
 #[test]
 pub(in crate::ui) fn startup_loading_uses_root_stack_until_route_reveal() {
