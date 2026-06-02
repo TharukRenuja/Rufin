@@ -31,17 +31,11 @@
 
 # Screenshots
 
+![Tracks page](data/tracks.png)
+![Smart playlists](data/smart_playlists.png)
+![Play random](data/play_random.png)
+![Playback settings](data/playback.png)
 
-<p align="center">
-  <img src="data/tracks.png" width="400">
-  &nbsp;&nbsp;
-  <img src="data/smart_playlists.png" width="400">
-</p>
-<p align="center">
-  <img src="data/play_random.png" width="400">
-  &nbsp;&nbsp;
-  <img src="data/playback.png" width="400">
-</p>
 
 # Installation
 
