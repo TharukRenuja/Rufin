@@ -8,6 +8,5 @@ module.exports = {
   ],
   allowedCommands: [
     "^bash packaging/flatpak/update-cargo-sources\\.sh$",
-    "^bash \\.github/scripts/update-nix-cargo-hash\\.sh$",
   ],
 };
