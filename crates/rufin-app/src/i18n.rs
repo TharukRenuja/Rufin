@@ -513,6 +513,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Enter an artist or song.");
     let _ = tr("Searching...");
     let _ = tr("No lyrics found.");
+    let _ = tr("Search failed.");
     let _ = tr("results");
     let _ = tr("Synced lyrics");
     let _ = tr("Plain lyrics");

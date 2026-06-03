@@ -879,6 +879,12 @@ msgstr ""
 msgid "Search Lyrics"
 msgstr ""
 
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:71
+msgid ""
+"Tap to the entry to load the lyrics and save in the app cache, click save "
+"only if you also want to save it in your music folder"
+msgstr ""
+
 #: crates/rufin-app/src/i18n.rs:487
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:186
 msgid "Save Lyrics"
@@ -924,11 +930,16 @@ msgid "No lyrics found."
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:496
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:157
+msgid "Search failed."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:497
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:163
 msgid "results"
 msgstr ""
 
-#: crates/rufin-app/src/i18n.rs:497
+#: crates/rufin-app/src/i18n.rs:498
 #: crates/rufin-app/src/ui/root/cover_startup.rs:177
 msgid "Synchronized"
 msgstr ""

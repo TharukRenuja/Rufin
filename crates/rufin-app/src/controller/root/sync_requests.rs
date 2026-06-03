@@ -3,7 +3,7 @@ use super::*;
 use std::io::{self, Read};
 use std::time::Duration;
 
-const LRCLIB_REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+const LRCLIB_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const LRCLIB_RESPONSE_MAX_BYTES: usize = 2 * 1024 * 1024;
 pub(in crate::controller) const LOCAL_LYRICS_MAX_BYTES: usize = 2 * 1024 * 1024;
 
@@ -95,7 +95,7 @@ pub(in crate::controller) fn lrclib_search(
     artist_name: &str,
     track_name: &str,
 ) -> Result<Vec<LyricsSearchResult>, String> {
-    lrclib_search_with_urls(
+    lrclib_search_priority_urls(
         lrclib_search_urls(artist_name, track_name)?,
         artist_name,
         track_name,
@@ -125,9 +125,21 @@ fn lrclib_search_with_urls(
     let mut seen = HashSet::new();
     let mut had_success = false;
     let mut errors = Vec::new();
-    for url in urls {
-        debug!(url = %url, "requesting LRCLIB lyric search");
-        match lrclib_fetch_search(&client, url) {
+    let handles = urls
+        .into_iter()
+        .map(|url| {
+            let client = client.clone();
+            thread::spawn(move || {
+                debug!(url = %url, "requesting LRCLIB lyric search");
+                lrclib_fetch_search(&client, url)
+            })
+        })
+        .collect::<Vec<_>>();
+    for handle in handles {
+        match handle
+            .join()
+            .unwrap_or_else(|_| Err("Lyric search worker failed.".to_string()))
+        {
             Ok(batch) => {
                 debug!(results = batch.len(), "received LRCLIB lyric search batch");
                 had_success = true;
@@ -145,6 +157,57 @@ fn lrclib_search_with_urls(
     }
     order_lrclib_results(&mut results, artist_name, track_name);
     Ok(results)
+}
+fn lrclib_search_priority_urls(
+    urls: Vec<reqwest::Url>,
+    artist_name: &str,
+    track_name: &str,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    if urls.is_empty() {
+        return Ok(Vec::new());
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(LRCLIB_REQUEST_TIMEOUT)
+        .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut errors = Vec::new();
+    let mut had_success = false;
+    let request_count = urls.len();
+    let (sender, receiver) = channel();
+    for url in urls {
+        let client = client.clone();
+        let sender = sender.clone();
+        thread::spawn(move || {
+            debug!(url = %url, "requesting LRCLIB lyric search");
+            let _sent = sender.send(lrclib_fetch_search(&client, url));
+        });
+    }
+    drop(sender);
+    for _ in 0..request_count {
+        match receiver
+            .recv()
+            .unwrap_or_else(|_| Err("Lyric search worker failed.".to_string()))
+        {
+            Ok(mut results) => {
+                debug!(
+                    results = results.len(),
+                    "received LRCLIB lyric search batch"
+                );
+                had_success = true;
+                if !results.is_empty() {
+                    order_lrclib_results(&mut results, artist_name, track_name);
+                    return Ok(results);
+                }
+            }
+            Err(error) => errors.push(error),
+        }
+    }
+    if had_success {
+        Ok(Vec::new())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 pub(in crate::controller) fn lrclib_best_lyrics(
     entry: &QueueEntry,
@@ -247,41 +310,47 @@ pub(in crate::controller) fn lrclib_search_urls(
 ) -> Result<Vec<reqwest::Url>, String> {
     let artist_name = artist_name.trim();
     let track_name = track_name.trim();
-    let mut urls = Vec::new();
     let combined_query = [track_name, artist_name]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
+    let combined_query = normalize_search_text(&combined_query);
+    let mut urls = Vec::new();
+    if !artist_name.is_empty() && !track_name.is_empty() {
+        let mut field_url = lrclib_search_base_url()?;
+        {
+            let mut query = field_url.query_pairs_mut();
+            query.append_pair("track_name", track_name);
+            query.append_pair("artist_name", artist_name);
+        }
+        push_unique_lrclib_search_url(&mut urls, field_url);
+    }
     if !combined_query.is_empty() {
         let mut url = lrclib_search_base_url()?;
         url.query_pairs_mut().append_pair("q", &combined_query);
         push_unique_lrclib_search_url(&mut urls, url);
     }
-    if !track_name.is_empty() {
-        let mut url = lrclib_search_base_url()?;
-        {
-            let mut query = url.query_pairs_mut();
-            query.append_pair("track_name", track_name);
-            if !artist_name.is_empty() {
-                query.append_pair("artist_name", artist_name);
-            }
+    if !track_name.is_empty()
+        && let Some(short_artist_query) = shortened_artist_query(artist_name)
+    {
+        let short_query = normalize_search_text(&format!("{track_name} {short_artist_query}"));
+        if !short_query.is_empty() {
+            let mut url = lrclib_search_base_url()?;
+            url.query_pairs_mut().append_pair("q", &short_query);
+            push_unique_lrclib_search_url(&mut urls, url);
         }
-        push_unique_lrclib_search_url(&mut urls, url);
-        let mut url = lrclib_search_base_url()?;
-        url.query_pairs_mut().append_pair("q", track_name);
-        push_unique_lrclib_search_url(&mut urls, url);
-
-        let mut url = lrclib_search_base_url()?;
-        url.query_pairs_mut().append_pair("track_name", track_name);
-        push_unique_lrclib_search_url(&mut urls, url);
-    }
-    if !artist_name.is_empty() {
-        let mut url = lrclib_search_base_url()?;
-        url.query_pairs_mut().append_pair("q", artist_name);
-        push_unique_lrclib_search_url(&mut urls, url);
     }
     Ok(urls)
+}
+fn shortened_artist_query(artist_name: &str) -> Option<String> {
+    let normalized = normalize_search_text(artist_name);
+    let mut tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() < 2 {
+        return None;
+    }
+    tokens.pop();
+    Some(tokens.join(" "))
 }
 pub(in crate::controller) fn lrclib_automatic_search_urls(
     artist_name: &str,

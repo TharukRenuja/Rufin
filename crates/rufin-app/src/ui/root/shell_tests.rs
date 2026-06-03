@@ -1,3 +1,4 @@
+use super::lyrics_playback_state::allow_loaded_lyrics_cache_revisit;
 use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
     clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_initial_position,
@@ -13,7 +14,8 @@ use super::{
     auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
     cover::record_cover_path_lookup_request, current_playback_track_id,
     home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
-    local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_search_response_matches_query,
+    local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_result_subtitle_markup,
+    lyrics_result_title_markup, lyrics_search_response_matches_query,
     playlist_detail_compact_for_width, playlist_detail_cover_decode_size_for_width,
     playlist_detail_cover_fetch_size, playlist_detail_cover_size_for_width,
     playlist_detail_header_orientation_for_width, playlist_detail_route_margin_for_width,
@@ -34,7 +36,7 @@ use rufin_core::{
     TrackTableSettings,
 };
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -1958,6 +1960,27 @@ pub(in crate::ui) fn auto_lyrics_request_keeps_server_lookup_when_external_searc
     );
 }
 #[test]
+pub(in crate::ui) fn loaded_lyrics_allows_revisit_to_check_cache() {
+    let track_id = TrackId::fake(13);
+    let previous_failed_track_id = TrackId::fake(14);
+    let mut attempted = HashSet::from([track_id.clone(), previous_failed_track_id.clone()]);
+    let lyrics = Lyrics {
+        track_id: track_id.clone(),
+        source: LyricsSource::Remote,
+        lines: vec![LyricLine {
+            text: "line one".to_string(),
+            start_millis: Some(1_000),
+        }],
+    };
+
+    allow_loaded_lyrics_cache_revisit(&mut attempted, Some(&lyrics));
+
+    assert!(!attempted.contains(&track_id));
+    assert!(attempted.contains(&previous_failed_track_id));
+    allow_loaded_lyrics_cache_revisit(&mut attempted, None);
+    assert!(attempted.contains(&previous_failed_track_id));
+}
+#[test]
 pub(in crate::ui) fn preferences_toast_only_uses_server_settings_statuses() {
     assert_eq!(
         preferences_login_status_toast_message("Checking Jellyfin server..."),
@@ -1984,6 +2007,12 @@ pub(in crate::ui) fn preferences_toast_only_uses_server_settings_statuses() {
 pub(in crate::ui) fn lyrics_search_results_ignore_queries_from_previous_fields() {
     assert!(lyrics_search_response_matches_query(
         "", "Opening", "", "Opening",
+    ));
+    assert!(lyrics_search_response_matches_query(
+        "ATARASHII GAKKO",
+        "Freaks",
+        "atarashii gakko",
+        "freaks",
     ));
     assert!(!lyrics_search_response_matches_query(
         "Earlier Artist",
@@ -2019,6 +2048,27 @@ pub(in crate::ui) fn lyrics_search_result_subtitle_prefers_synced_when_both_text
     assert_eq!(
         lyrics_result_subtitle(&result),
         "Example Album - 1:35 - Synced lyrics"
+    );
+}
+#[test]
+pub(in crate::ui) fn lyrics_search_result_markup_escapes_external_text() {
+    let result = LyricsSearchResult {
+        id: 13,
+        track_name: "Poker Face (Piano & Voice Version) [Live]".to_string(),
+        artist_name: "Lady Gaga".to_string(),
+        album_name: "Hits & Rarities".to_string(),
+        duration_seconds: 95,
+        synced_lyrics: Some("[00:01.00]line".to_string()),
+        plain_lyrics: None,
+    };
+
+    assert_eq!(
+        lyrics_result_title_markup(&result).as_str(),
+        "Lady Gaga - Poker Face (Piano &amp; Voice Version) [Live]"
+    );
+    assert_eq!(
+        lyrics_result_subtitle_markup(&result).as_str(),
+        "Hits &amp; Rarities - 1:35 - Synced lyrics"
     );
 }
 #[test]

@@ -487,6 +487,11 @@ scale.volume-slider trough {
   color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
 }
 
+.lyrics-search-helper {
+  color: color-mix(in srgb, @window_fg_color 68%, @window_bg_color);
+  font-size: 12px;
+}
+
 .error-text {
   color: @error_color;
 }

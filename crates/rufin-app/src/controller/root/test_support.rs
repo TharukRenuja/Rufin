@@ -51,6 +51,7 @@ pub(in crate::controller) fn wait_for_snapshot(
             | ControllerEvent::Playback(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -85,6 +86,7 @@ pub(in crate::controller) fn wait_for_favorite_changed(
             | ControllerEvent::Playback(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -118,6 +120,7 @@ pub(in crate::controller) fn wait_for_playlist_changed(
             | ControllerEvent::Playback(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -147,6 +150,7 @@ pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>)
             | ControllerEvent::Playback(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -177,6 +181,7 @@ pub(in crate::controller) fn wait_for_queue(
             | ControllerEvent::LoginStatus(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -232,6 +237,7 @@ pub(in crate::controller) fn wait_for_cover_ready(
             | ControllerEvent::LoginStatus(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -262,6 +268,7 @@ pub(in crate::controller) fn wait_for_lyrics(
             | ControllerEvent::Playback(_)
             | ControllerEvent::LoginStatus(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -313,6 +320,7 @@ pub(in crate::controller) fn wait_for_playback_state(
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSearchFailed { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::FolderLoaded { .. }
                 | ControllerEvent::FolderLoadFailed { .. }
@@ -352,6 +360,7 @@ pub(in crate::controller) fn wait_for_playback_position(
             | ControllerEvent::Queue(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -386,6 +395,7 @@ pub(in crate::controller) fn wait_for_playback_auto_dj(
             | ControllerEvent::Queue(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }
@@ -430,6 +440,7 @@ pub(in crate::controller) fn wait_for_playback_current_favorite(
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSearchFailed { .. }
                 | ControllerEvent::LyricsSaved { .. }
                 | ControllerEvent::FolderLoaded { .. }
                 | ControllerEvent::FolderLoadFailed { .. }

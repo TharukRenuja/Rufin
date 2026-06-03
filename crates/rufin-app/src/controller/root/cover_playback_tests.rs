@@ -409,6 +409,7 @@ pub(in crate::controller) fn known_external_cover_miss_emits_unavailable() {
             | ControllerEvent::Playback(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }
             | ControllerEvent::FolderLoaded { .. }
             | ControllerEvent::FolderLoadFailed { .. }

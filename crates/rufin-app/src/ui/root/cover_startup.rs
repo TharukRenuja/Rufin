@@ -88,6 +88,13 @@ pub(in crate::ui) fn submit_lyrics_search(shell: &Rc<Shell>) {
     let Some(dialog) = shell.state.lyrics_search_dialog.borrow().clone() else {
         return;
     };
+    if let Some(source) = dialog.search_debounce_source.borrow_mut().take() {
+        source.remove();
+    }
+    if current_playback_track_id(&shell.state.player.borrow()).as_ref() != Some(&dialog.track_id) {
+        dialog.dialog.close();
+        return;
+    }
     let artist_name = dialog.artist_entry.text().trim().to_string();
     let track_name = dialog.title_entry.text().trim().to_string();
     if artist_name.is_empty() && track_name.is_empty() {
@@ -95,7 +102,6 @@ pub(in crate::ui) fn submit_lyrics_search(shell: &Rc<Shell>) {
         return;
     }
     clear_list_box(&dialog.list);
-    dialog.search_button.set_sensitive(false);
     dialog.status.set_text(&tr("Searching..."));
     debug!(
         artist_name = %artist_name,
@@ -121,8 +127,11 @@ pub(in crate::ui) fn lyrics_search_response_matches_query(
     current_artist_name: &str,
     current_track_name: &str,
 ) -> bool {
-    received_artist_name.trim() == current_artist_name.trim()
-        && received_track_name.trim() == current_track_name.trim()
+    lyrics_search_text_matches(received_artist_name, current_artist_name)
+        && lyrics_search_text_matches(received_track_name, current_track_name)
+}
+pub(in crate::ui) fn lyrics_search_text_matches(received: &str, current: &str) -> bool {
+    received.trim().to_lowercase() == current.trim().to_lowercase()
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum AutoLyricsRequest {
@@ -289,6 +298,12 @@ pub(in crate::ui) fn lyrics_search_result_has_content(result: &LyricsSearchResul
             .as_deref()
             .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
+pub(in crate::ui) fn lyrics_result_title(result: &LyricsSearchResult) -> String {
+    format!("{} - {}", result.artist_name, result.track_name)
+}
+pub(in crate::ui) fn lyrics_result_title_markup(result: &LyricsSearchResult) -> glib::GString {
+    glib::markup_escape_text(&lyrics_result_title(result))
+}
 pub(in crate::ui) fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
     let mut subtitle = String::new();
     if !result.album_name.trim().is_empty() {
@@ -319,6 +334,9 @@ pub(in crate::ui) fn lyrics_result_subtitle(result: &LyricsSearchResult) -> Stri
         subtitle.push_str(&tr("No lyrics"));
     }
     subtitle
+}
+pub(in crate::ui) fn lyrics_result_subtitle_markup(result: &LyricsSearchResult) -> glib::GString {
+    glib::markup_escape_text(&lyrics_result_subtitle(result))
 }
 pub(in crate::ui) fn initial_window_size(width: Option<i32>, height: Option<i32>) -> (i32, i32) {
     sanitized_window_size(width, height).unwrap_or((DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT))
@@ -764,8 +782,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.update_discord_presence(&next_snapshot);
                 }
                 ControllerEvent::Lyrics(lyrics) => {
-                    *shell.state.lyrics.borrow_mut() = *lyrics;
-                    shell.render_lyrics_panel();
+                    shell.apply_loaded_lyrics(*lyrics);
                 }
                 ControllerEvent::LyricsSearchResults {
                     track_id,
@@ -774,6 +791,14 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     results,
                 } => {
                     shell.apply_lyrics_search_results(track_id, artist_name, track_name, results);
+                }
+                ControllerEvent::LyricsSearchFailed {
+                    track_id,
+                    artist_name,
+                    track_name,
+                    error,
+                } => {
+                    shell.apply_lyrics_search_failed(track_id, artist_name, track_name, error);
                 }
                 ControllerEvent::LyricsSaved { path, lyrics } => {
                     shell.apply_lyrics_saved(path, lyrics);
