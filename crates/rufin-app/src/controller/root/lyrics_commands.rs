@@ -189,12 +189,11 @@ impl AppController {
                     %error,
                     "manual LRCLIB lyric search failed"
                 );
-                let _sent = events.send(ControllerEvent::Error(error));
-                let _sent = events.send(ControllerEvent::LyricsSearchResults {
+                let _sent = events.send(ControllerEvent::LyricsSearchFailed {
                     track_id,
                     artist_name,
                     track_name,
-                    results: Vec::new(),
+                    error,
                 });
             }
         });
@@ -232,7 +231,7 @@ impl AppController {
         );
     }
     pub fn preview_lyrics_search_result(&self, track_id: TrackId, result: LyricsSearchResult) {
-        let Some((_server_id, entry, _position)) = self.current_queue_entry() else {
+        let Some((server_id, entry, _position)) = self.current_queue_entry() else {
             let _sent = self
                 .events
                 .send(ControllerEvent::Error("No track is playing.".to_string()));
@@ -246,6 +245,9 @@ impl AppController {
         }
         match lyrics_from_lrclib_search_result(entry.track_id, &result) {
             Some(lyrics) => {
+                let _saved = self
+                    .store
+                    .with_store(|store| store.save_lyrics(&server_id, &lyrics));
                 let _sent = self
                     .events
                     .send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));

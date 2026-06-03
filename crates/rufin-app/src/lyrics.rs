@@ -245,6 +245,12 @@ impl LyricsPane {
         self.follow_pause_until.set(None);
     }
 
+    pub fn restart_follow_tracking(&self) {
+        self.active_index.set(None);
+        self.follow_pause_until.set(None);
+        self.cancel_scroll_animation();
+    }
+
     fn connect_user_scroll_pause(&self) {
         let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
         controller.set_propagation_phase(gtk::PropagationPhase::Capture);

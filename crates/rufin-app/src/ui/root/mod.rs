@@ -350,7 +350,7 @@ pub(in crate::ui) struct LyricsSearchDialog {
     track_id: rufin_core::TrackId,
     artist_entry: gtk::Entry,
     title_entry: gtk::Entry,
-    search_button: gtk::Button,
+    search_debounce_source: Rc<RefCell<Option<glib::SourceId>>>,
     list: gtk::ListBox,
     status: gtk::Label,
 }

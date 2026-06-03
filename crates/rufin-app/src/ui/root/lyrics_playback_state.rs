@@ -30,6 +30,24 @@ impl Shell {
         self.cancel_scheduled_lyrics_highlight();
         self.update_lyrics_highlight_at(self.current_position_millis());
     }
+    pub(in crate::ui) fn apply_loaded_lyrics(self: &Rc<Self>, lyrics: Option<Lyrics>) {
+        self.restart_lyrics_follow_tracking();
+        allow_loaded_lyrics_cache_revisit(
+            &mut self.state.lyrics_auto_search_attempted.borrow_mut(),
+            lyrics.as_ref(),
+        );
+        *self.state.lyrics.borrow_mut() = lyrics;
+        self.render_lyrics_panel();
+        let shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            shell.restart_lyrics_follow_tracking();
+            shell.update_lyrics_highlight();
+        });
+    }
+    fn restart_lyrics_follow_tracking(&self) {
+        self.lyrics_pane.restart_follow_tracking();
+        self.fullscreen_player.lyrics_pane.restart_follow_tracking();
+    }
     pub(in crate::ui) fn request_initial_lyrics_if_needed(&self) {
         let Some(track_id) = current_playback_track_id(&self.state.player.borrow()) else {
             return;
@@ -123,5 +141,14 @@ impl Shell {
             .clear_follow_scroll_pause();
         self.controller.seek_millis(position_millis);
         self.update_lyrics_highlight_at(position_millis);
+    }
+}
+
+pub(in crate::ui) fn allow_loaded_lyrics_cache_revisit(
+    attempted: &mut HashSet<TrackId>,
+    lyrics: Option<&Lyrics>,
+) {
+    if let Some(lyrics) = lyrics {
+        attempted.remove(&lyrics.track_id);
     }
 }

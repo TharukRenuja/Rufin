@@ -316,6 +316,12 @@ pub enum ControllerEvent {
         track_name: String,
         results: Vec<LyricsSearchResult>,
     },
+    LyricsSearchFailed {
+        track_id: TrackId,
+        artist_name: String,
+        track_name: String,
+        error: String,
+    },
     LyricsSaved {
         path: PathBuf,
         lyrics: Lyrics,

@@ -70,27 +70,6 @@ scripts/test-rust.sh
 `scripts/test-rust.sh` uses `cargo-nextest` when it is installed and falls back
 to `cargo test`.
 
-For less CPU burn, `scripts/test-rust.sh` caps nextest to 4 test threads by
-default. To choose a different cap:
-
-```bash
-NEXTEST_JOBS=4 scripts/test-rust.sh
-```
-
-## Bonus
-
-We have some flags behind `dev-tools`, specifically to log how long hitting a route takes or if track covers appear in time, which are just bonus. For examle you can run:
-
-```bash
-cargo run -p rufin-app --features dev-tools -- --ui-perf-observe
-```
-
-then hit some routes, and logs would appear in `.local/perf`
-
-`--fake-scale <small\|large>` | Starts with a generated small or large fake library.
-
-`--ui-perf-run` | Runs the automated startup, route, scroll, and artwork performance pass, then exits.
-
 ## Commits
 
 For commit names and PRs, you may use

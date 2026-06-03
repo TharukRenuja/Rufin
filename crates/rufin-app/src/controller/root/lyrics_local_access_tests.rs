@@ -915,6 +915,36 @@ pub(in crate::controller) fn selected_lrclib_result_becomes_current_track_lyrics
     assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
 }
 #[test]
+pub(in crate::controller) fn preview_lrclib_result_saves_current_track_lyrics_to_cache() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let server_id = snapshot.server.expect("active server").id;
+    let track = snapshot.tracks[0].clone();
+    let result = super::LyricsSearchResult {
+        id: 21,
+        track_name: "Example Track".to_string(),
+        artist_name: "Example Artist".to_string(),
+        album_name: "Example Album".to_string(),
+        duration_seconds: 95,
+        synced_lyrics: Some("[00:30.00]line at thirty seconds".to_string()),
+        plain_lyrics: None,
+    };
+
+    controller.play_now(track.clone());
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    controller.preview_lyrics_search_result(track.id.clone(), result);
+
+    let lyrics = wait_for_lyrics(&events).expect("lyrics");
+    let cached = controller
+        .store
+        .with_store(|store| store.load_lyrics(&server_id, &track.id))
+        .expect("load cached lyrics")
+        .expect("cached lyrics");
+    assert_eq!(cached, lyrics);
+    assert_eq!(cached.lines[0].text, "line at thirty seconds");
+    assert_eq!(cached.lines[0].start_millis, Some(30_000));
+}
+#[test]
 pub(in crate::controller) fn lrclib_duration_accepts_fractional_seconds() {
     let json = r#"{
             "id": 7,
@@ -932,21 +962,32 @@ pub(in crate::controller) fn lrclib_duration_accepts_fractional_seconds() {
     assert_eq!(result.artist_name, "John Lennon");
 }
 #[test]
-pub(in crate::controller) fn lrclib_manual_search_uses_combined_query_first() {
-    let urls = super::lrclib_search_urls("joy", "feel my soul").expect("lrclib search urls");
-    let query_pairs = urls[0]
-        .query_pairs()
-        .map(|(key, value)| (key.to_string(), value.to_string()))
+pub(in crate::controller) fn lrclib_manual_search_uses_normalized_and_exact_queries() {
+    let urls =
+        super::lrclib_search_urls("EXAMPLE ARTIST!", "Opening Theme").expect("lrclib search urls");
+    let query_sets = urls
+        .iter()
+        .map(|url| {
+            url.query_pairs()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<Vec<_>>()
+        })
         .collect::<Vec<_>>();
     assert_eq!(
-        query_pairs,
-        vec![("q".to_string(), "feel my soul joy".to_string())]
+        query_sets,
+        vec![
+            vec![
+                ("track_name".to_string(), "Opening Theme".to_string()),
+                ("artist_name".to_string(), "EXAMPLE ARTIST!".to_string()),
+            ],
+            vec![("q".to_string(), "opening theme example artist".to_string())],
+            vec![("q".to_string(), "opening theme example".to_string())],
+        ]
     );
 }
 #[test]
-pub(in crate::controller) fn lrclib_manual_search_keeps_single_field_fallbacks() {
-    let urls =
-        super::lrclib_search_urls("Example Artist", "Opening Theme").expect("lrclib search urls");
+pub(in crate::controller) fn lrclib_manual_search_accepts_single_field_query() {
+    let urls = super::lrclib_search_urls("", "Opening Theme").expect("lrclib search urls");
     let query_sets = urls
         .iter()
         .map(|url| {
@@ -958,16 +999,7 @@ pub(in crate::controller) fn lrclib_manual_search_keeps_single_field_fallbacks()
 
     assert_eq!(
         query_sets,
-        vec![
-            vec![("q".to_string(), "Opening Theme Example Artist".to_string())],
-            vec![
-                ("track_name".to_string(), "Opening Theme".to_string()),
-                ("artist_name".to_string(), "Example Artist".to_string()),
-            ],
-            vec![("q".to_string(), "Opening Theme".to_string())],
-            vec![("track_name".to_string(), "Opening Theme".to_string())],
-            vec![("q".to_string(), "Example Artist".to_string())],
-        ]
+        vec![vec![("q".to_string(), "opening theme".to_string())]]
     );
 }
 #[test]
