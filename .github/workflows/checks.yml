@@ -129,7 +129,7 @@ jobs:
         run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run Rust tests
-        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command bash scripts/test-rust.sh
+        run: bash .github/scripts/retry-nix-command.sh nix --accept-flake-config develop "${{ steps.nix-environment.outputs.target }}" --command bash scripts/test-rust.sh --full
 
   cargo-deny:
     name: cargo-deny

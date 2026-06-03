@@ -60,7 +60,6 @@ To build a release binary:
 cargo build --release -p rufin-app
 ```
 
-
 ## Tests
 
 ```bash
@@ -71,6 +70,13 @@ scripts/test-rust.sh
 `scripts/test-rust.sh` uses `cargo-nextest` when it is installed and falls back
 to `cargo test`.
 
+For less CPU burn, `scripts/test-rust.sh` caps nextest to 4 test threads by
+default. To choose a different cap:
+
+```bash
+NEXTEST_JOBS=4 scripts/test-rust.sh
+```
+
 ## Bonus
 
 We have some flags behind `dev-tools`, specifically to log how long hitting a route takes or if track covers appear in time, which are just bonus. For examle you can run:
@@ -78,6 +84,7 @@ We have some flags behind `dev-tools`, specifically to log how long hitting a ro
 ```bash
 cargo run -p rufin-app --features dev-tools -- --ui-perf-observe
 ```
+
 then hit some routes, and logs would appear in `.local/perf`
 
 `--fake-scale <small\|large>` | Starts with a generated small or large fake library.
@@ -95,4 +102,4 @@ This is not enforced, but it keeps the history easier to scan.
 Each language lives in one file: `po/<locale>.po`. To start a translation, copy
 `po/rufin.pot` to a new locale file, a full locale id like `tr_TR.po`,
 `de_DE.po`, or `pt_BR.po`, set `Language: locale_id \n`, and translate
-`msgstr ""` values. 
+`msgstr ""` values.
