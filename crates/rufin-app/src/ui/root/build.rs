@@ -1,9 +1,35 @@
 use super::*;
 
-pub(in crate::ui) struct StartupCoverTarget {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct CoverWarmTarget {
     pub(in crate::ui) image_ref: ImageRef,
     pub(in crate::ui) fetch_size: u32,
     pub(in crate::ui) size: i32,
+}
+#[derive(Clone, Copy)]
+pub(in crate::ui) struct InitialRouteCoverMetrics {
+    pub(in crate::ui) route_height: i32,
+    pub(in crate::ui) app_height: i32,
+    pub(in crate::ui) grid_columns: usize,
+    pub(in crate::ui) grid_card_size: i32,
+    pub(in crate::ui) home_showcase_seed: u64,
+}
+impl InitialRouteCoverMetrics {
+    fn initial_visible_count(self, layout: LibraryLayout) -> usize {
+        let viewport_height = self.route_height.max(self.app_height).max(1);
+        match layout {
+            LibraryLayout::Row => {
+                let row_height = library::LIBRARY_TABLE_ROW_HEIGHT.max(1);
+                (viewport_height / row_height).saturating_add(2).max(1) as usize
+            }
+            LibraryLayout::Grid | LibraryLayout::Detail => {
+                let columns = self.grid_columns.max(1);
+                let item_extent = self.grid_card_size.saturating_add(88).max(1);
+                let rows = (viewport_height / item_extent).saturating_add(2).max(1) as usize;
+                rows.saturating_mul(columns)
+            }
+        }
+    }
 }
 pub(in crate::ui) fn startup_cover_prime_jobs(shell: &Shell) -> Vec<CoverWarmJob> {
     startup_cover_jobs_from_targets(
@@ -14,7 +40,7 @@ pub(in crate::ui) fn startup_cover_prime_jobs(shell: &Shell) -> Vec<CoverWarmJob
 }
 pub(in crate::ui) fn startup_cover_jobs_from_targets(
     shell: &Shell,
-    targets: Vec<StartupCoverTarget>,
+    targets: Vec<CoverWarmTarget>,
     limit: Option<usize>,
 ) -> Vec<CoverWarmJob> {
     let mut seen = HashSet::new();
@@ -45,7 +71,6 @@ pub(in crate::ui) fn startup_cover_jobs_from_targets(
 
     jobs
 }
-#[cfg(test)]
 pub(in crate::ui) fn sidebar_route_visible(settings: &AppSettings, item: SidebarRouteItem) -> bool {
     settings
         .sidebar
@@ -53,7 +78,7 @@ pub(in crate::ui) fn sidebar_route_visible(settings: &AppSettings, item: Sidebar
         .iter()
         .any(|entry| entry.item == item && entry.visible)
 }
-pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
+pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<CoverWarmTarget> {
     startup_cover_prime_targets_from_snapshot(
         &shell.state.library.borrow(),
         &shell.state.settings.borrow(),
@@ -64,20 +89,37 @@ pub(in crate::ui) fn startup_cover_prime_targets_from_snapshot(
     library: &LibrarySnapshot,
     settings: &AppSettings,
     home_showcase_seed: u64,
-) -> Vec<StartupCoverTarget> {
+) -> Vec<CoverWarmTarget> {
     startup_home_cover_prime_targets_from_snapshot(library, settings, home_showcase_seed)
 }
-#[cfg(test)]
-pub(in crate::ui) fn library_route_cover_prime_targets_from_snapshot(
+pub(in crate::ui) fn source_route_cover_warm_targets_from_snapshot(
     library: &LibrarySnapshot,
+    smart_playlists: &[SmartPlaylist],
     settings: &AppSettings,
-) -> Vec<StartupCoverTarget> {
+    route_metrics: InitialRouteCoverMetrics,
+) -> Vec<CoverWarmTarget> {
     let mut targets = Vec::new();
-    let mut seen = HashSet::new();
-    push_startup_route_prime_targets(&mut targets, &mut seen, library, settings);
+    push_startup_home_prime_targets(
+        &mut targets,
+        library,
+        settings,
+        route_metrics.home_showcase_seed,
+    );
+    let Some(server_id) = library.server.as_ref().map(|server| &server.id) else {
+        return targets;
+    };
+    push_source_route_warm_targets(
+        &mut targets,
+        server_id,
+        library,
+        smart_playlists,
+        settings,
+        route_metrics,
+    );
+    dedupe_source_route_cover_warm_targets(&mut targets, server_id);
     targets
 }
-pub(in crate::ui) fn startup_home_cover_prime_targets(shell: &Shell) -> Vec<StartupCoverTarget> {
+pub(in crate::ui) fn startup_home_cover_prime_targets(shell: &Shell) -> Vec<CoverWarmTarget> {
     startup_home_cover_prime_targets_from_snapshot(
         &shell.state.library.borrow(),
         &shell.state.settings.borrow(),
@@ -88,13 +130,13 @@ pub(in crate::ui) fn startup_home_cover_prime_targets_from_snapshot(
     library: &LibrarySnapshot,
     settings: &AppSettings,
     home_showcase_seed: u64,
-) -> Vec<StartupCoverTarget> {
+) -> Vec<CoverWarmTarget> {
     let mut targets = Vec::new();
     push_startup_home_prime_targets(&mut targets, library, settings, home_showcase_seed);
     targets
 }
 fn push_startup_home_prime_targets(
-    targets: &mut Vec<StartupCoverTarget>,
+    targets: &mut Vec<CoverWarmTarget>,
     library: &LibrarySnapshot,
     settings: &AppSettings,
     home_showcase_seed: u64,
@@ -156,7 +198,7 @@ pub(in crate::ui) fn row_layout_uses_cover(settings: &LibraryListSettings) -> bo
         .any(|field| matches!(field, LibraryField::Image | LibraryField::TitleMerged))
 }
 pub(in crate::ui) fn push_startup_cover_target(
-    targets: &mut Vec<StartupCoverTarget>,
+    targets: &mut Vec<CoverWarmTarget>,
     image_ref: Option<&ImageRef>,
     fetch_size: u32,
     size: i32,
@@ -164,202 +206,281 @@ pub(in crate::ui) fn push_startup_cover_target(
     let Some(image_ref) = image_ref else {
         return;
     };
-    targets.push(StartupCoverTarget {
+    targets.push(CoverWarmTarget {
         image_ref: image_ref.clone(),
         fetch_size,
         size,
     });
 }
-#[cfg(test)]
-fn push_startup_route_prime_targets(
-    targets: &mut Vec<StartupCoverTarget>,
-    seen: &mut HashSet<String>,
+fn push_source_route_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    server_id: &ServerId,
     library: &LibrarySnapshot,
+    smart_playlists: &[SmartPlaylist],
     settings: &AppSettings,
+    route_metrics: InitialRouteCoverMetrics,
 ) {
     if sidebar_route_visible(settings, SidebarRouteItem::Tracks) {
         let list_settings = settings.library_list(LibraryListKey::Tracks);
-        push_track_startup_prime_targets(
+        push_track_source_warm_targets(
             targets,
-            seen,
             library.tracks.clone(),
             &list_settings,
             false,
+            route_metrics,
+        );
+        push_track_anchor_source_warm_targets(
+            targets,
+            library.tracks.clone(),
+            &list_settings,
+            route_metrics,
         );
     }
     if sidebar_route_visible(settings, SidebarRouteItem::Albums) {
         let list_settings = settings.library_list(LibraryListKey::Albums);
-        push_album_startup_prime_targets(targets, seen, library.albums.clone(), &list_settings);
+        push_album_source_warm_targets(
+            targets,
+            library.albums.clone(),
+            &list_settings,
+            route_metrics,
+        );
     }
     if sidebar_route_visible(settings, SidebarRouteItem::Artists) {
         let list_settings = settings.library_list(LibraryListKey::Artists);
-        push_artist_startup_prime_targets(targets, seen, library.artists.clone(), &list_settings);
+        push_artist_source_warm_targets(
+            targets,
+            library.artists.clone(),
+            &list_settings,
+            route_metrics,
+        );
     }
     if sidebar_route_visible(settings, SidebarRouteItem::AlbumArtists) {
         let list_settings = settings.library_list(LibraryListKey::AlbumArtists);
-        push_artist_startup_prime_targets(
+        push_artist_source_warm_targets(
             targets,
-            seen,
             library.album_artists.clone(),
             &list_settings,
+            route_metrics,
         );
     }
     if sidebar_route_visible(settings, SidebarRouteItem::Genres) {
         let list_settings = settings.library_list(LibraryListKey::Genres);
-        push_genre_startup_prime_targets(targets, seen, library, &list_settings);
+        push_genre_source_warm_targets(
+            targets,
+            library.genres.clone(),
+            &list_settings,
+            route_metrics,
+        );
     }
     if sidebar_route_visible(settings, SidebarRouteItem::Favorites) {
         let list_settings = settings.library_list(LibraryListKey::FavoriteTracks);
-        push_track_startup_prime_targets(
+        push_track_source_warm_targets(
             targets,
-            seen,
             library.favorites.clone(),
             &list_settings,
             true,
+            route_metrics,
         );
     }
     if sidebar_route_visible(settings, SidebarRouteItem::Playlists) {
         let list_settings = settings.library_list(LibraryListKey::Playlists);
-        push_playlist_startup_prime_targets(
+        push_playlist_source_warm_targets(
             targets,
-            seen,
             library.playlists.clone(),
             &list_settings,
+            route_metrics,
         );
     }
+    if sidebar_route_visible(settings, SidebarRouteItem::SmartPlaylists) {
+        let list_settings = settings.library_list(LibraryListKey::SmartPlaylists);
+        push_smart_playlist_source_warm_targets(
+            targets,
+            smart_playlists.to_vec(),
+            &list_settings,
+            route_metrics,
+        );
+    }
+    dedupe_source_route_cover_warm_targets(targets, server_id);
 }
-#[cfg(test)]
-fn push_track_startup_prime_targets(
-    targets: &mut Vec<StartupCoverTarget>,
-    seen: &mut HashSet<String>,
+fn push_track_source_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
     mut tracks: Vec<Track>,
     settings: &LibraryListSettings,
     favorite_first: bool,
+    route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = startup_route_cover_size(settings) else {
+    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
         return;
     };
     library::sort_tracks(&mut tracks, settings, favorite_first);
-    for track in &tracks {
-        push_unique_startup_cover_target(targets, seen, track.image_ref.as_ref(), fetch_size, size);
+    for track in tracks
+        .iter()
+        .take(route_metrics.initial_visible_count(settings.layout))
+    {
+        push_startup_cover_target(targets, track.image_ref.as_ref(), fetch_size, size);
     }
 }
-#[cfg(test)]
-fn push_album_startup_prime_targets(
-    targets: &mut Vec<StartupCoverTarget>,
-    seen: &mut HashSet<String>,
+fn push_track_anchor_source_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    mut tracks: Vec<Track>,
+    settings: &LibraryListSettings,
+    route_metrics: InitialRouteCoverMetrics,
+) {
+    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+        return;
+    };
+    library::sort_tracks(&mut tracks, settings, false);
+    let total = tracks.len();
+    if total == 0 {
+        return;
+    }
+    let visible_rows = route_metrics
+        .initial_visible_count(settings.layout)
+        .max(1)
+        .min(total);
+    for numerator in [1_usize, 2, 3, 4] {
+        let start = total.saturating_sub(visible_rows).saturating_mul(numerator) / 4;
+        let end = start.saturating_add(visible_rows).min(total);
+        for track in &tracks[start..end] {
+            push_startup_cover_target(targets, track.image_ref.as_ref(), fetch_size, size);
+        }
+    }
+}
+fn push_album_source_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
     mut albums: Vec<Album>,
     settings: &LibraryListSettings,
+    route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = startup_route_cover_size(settings) else {
+    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
         return;
     };
     library::sort_albums(&mut albums, settings);
-    for album in &albums {
-        push_unique_startup_cover_target(targets, seen, album.image_ref.as_ref(), fetch_size, size);
+    for album in albums
+        .iter()
+        .take(route_metrics.initial_visible_count(settings.layout))
+    {
+        push_startup_cover_target(targets, album.image_ref.as_ref(), fetch_size, size);
     }
 }
-#[cfg(test)]
-fn push_artist_startup_prime_targets(
-    targets: &mut Vec<StartupCoverTarget>,
-    seen: &mut HashSet<String>,
+fn push_artist_source_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
     mut artists: Vec<Artist>,
     settings: &LibraryListSettings,
+    route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = startup_route_cover_size(settings) else {
+    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
         return;
     };
     library::sort_artists(&mut artists, settings);
-    for artist in &artists {
-        push_unique_startup_cover_target(
-            targets,
-            seen,
-            artist.image_ref.as_ref(),
-            fetch_size,
-            size,
-        );
+    for artist in artists
+        .iter()
+        .take(route_metrics.initial_visible_count(settings.layout))
+    {
+        push_startup_cover_target(targets, artist.image_ref.as_ref(), fetch_size, size);
     }
 }
-#[cfg(test)]
-fn push_genre_startup_prime_targets(
-    targets: &mut Vec<StartupCoverTarget>,
-    seen: &mut HashSet<String>,
-    library: &LibrarySnapshot,
+fn push_genre_source_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    mut genres: Vec<Genre>,
     settings: &LibraryListSettings,
+    route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = startup_route_cover_size(settings) else {
+    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
         return;
     };
-    let mut genres = library.genres.clone();
     library::sort_genres(&mut genres, settings);
-    for genre in &genres {
+    for genre in genres
+        .iter()
+        .take(route_metrics.initial_visible_count(settings.layout))
+    {
         for image_ref in &genre.image_refs {
-            push_unique_startup_cover_target(targets, seen, Some(image_ref), fetch_size, size);
+            push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
         }
-        push_unique_startup_cover_target(targets, seen, genre.image_ref.as_ref(), fetch_size, size);
+        push_startup_cover_target(targets, genre.image_ref.as_ref(), fetch_size, size);
     }
 }
-#[cfg(test)]
-fn push_playlist_startup_prime_targets(
-    targets: &mut Vec<StartupCoverTarget>,
-    seen: &mut HashSet<String>,
+fn push_playlist_source_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
     mut playlists: Vec<Playlist>,
     settings: &LibraryListSettings,
+    route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = startup_route_cover_size(settings) else {
+    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
         return;
     };
     library::sort_playlists(&mut playlists, settings);
-    for playlist in &playlists {
+    for playlist in playlists
+        .iter()
+        .take(route_metrics.initial_visible_count(settings.layout))
+    {
         for image_ref in &playlist.image_refs {
-            push_unique_startup_cover_target(targets, seen, Some(image_ref), fetch_size, size);
+            push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
         }
-        push_unique_startup_cover_target(
-            targets,
-            seen,
-            playlist.image_ref.as_ref(),
-            fetch_size,
-            size,
-        );
+        push_startup_cover_target(targets, playlist.image_ref.as_ref(), fetch_size, size);
     }
 }
-#[cfg(test)]
-fn startup_route_cover_size(settings: &LibraryListSettings) -> Option<(u32, i32)> {
-    match settings.layout {
-        LibraryLayout::Grid | LibraryLayout::Detail => {
-            Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32))
+fn push_smart_playlist_source_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    mut playlists: Vec<SmartPlaylist>,
+    settings: &LibraryListSettings,
+    route_metrics: InitialRouteCoverMetrics,
+) {
+    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+        return;
+    };
+    library::sort_smart_playlists(&mut playlists, settings);
+    for playlist in playlists
+        .iter()
+        .take(route_metrics.initial_visible_count(settings.layout))
+    {
+        for image_ref in &playlist.image_refs {
+            push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
         }
+        push_startup_cover_target(targets, playlist.image_ref.as_ref(), fetch_size, size);
+    }
+}
+fn source_route_cover_size(
+    settings: &LibraryListSettings,
+    route_metrics: InitialRouteCoverMetrics,
+) -> Option<(u32, i32)> {
+    match settings.layout {
+        LibraryLayout::Grid => Some((GRID_COVER_SIZE, route_metrics.grid_card_size)),
+        LibraryLayout::Detail => Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32)),
         LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
     }
 }
-#[cfg(test)]
-fn push_unique_startup_cover_target(
-    targets: &mut Vec<StartupCoverTarget>,
-    seen: &mut HashSet<String>,
-    image_ref: Option<&ImageRef>,
-    fetch_size: u32,
-    size: i32,
+pub(in crate::ui) fn dedupe_source_route_cover_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    server_id: &ServerId,
 ) {
-    if targets.len() >= STARTUP_CACHED_COVER_PRIME_LIMIT {
-        return;
+    let mut positions = HashMap::<String, usize>::new();
+    let mut deduped = Vec::<CoverWarmTarget>::new();
+    for target in targets.drain(..) {
+        let key = source_route_cover_warm_dedupe_key(server_id, &target.image_ref);
+        if let Some(index) = positions.get(&key).copied() {
+            let existing = &mut deduped[index];
+            let existing_decode_size = cover_decode_size(existing.size, existing.fetch_size);
+            let target_decode_size = cover_decode_size(target.size, target.fetch_size);
+            if (target.fetch_size, target_decode_size) > (existing.fetch_size, existing_decode_size)
+            {
+                existing.fetch_size = target.fetch_size;
+                existing.size = target.size;
+            }
+            continue;
+        }
+        positions.insert(key, deduped.len());
+        deduped.push(target);
     }
-    let Some(image_ref) = image_ref else {
-        return;
-    };
-    let seen_key = startup_cover_target_dedupe_key(image_ref, fetch_size);
-    if !seen.insert(seen_key) {
-        return;
-    }
-    push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
+    *targets = deduped;
 }
-#[cfg(test)]
-fn startup_cover_target_dedupe_key(image_ref: &ImageRef, fetch_size: u32) -> String {
+fn source_route_cover_warm_dedupe_key(server_id: &ServerId, image_ref: &ImageRef) -> String {
     format!(
         "{}\u{1f}{}\u{1f}{}",
+        server_id.as_str(),
         image_ref.item_id,
         image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
-        fetch_size
     )
 }
 pub(in crate::ui) fn cover_group_slots(image_refs: &[ImageRef]) -> Vec<ImageRef> {

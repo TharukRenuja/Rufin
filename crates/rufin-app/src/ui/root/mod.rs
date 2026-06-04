@@ -94,20 +94,18 @@ use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use preferences::{present_library_preferences_dialog, present_preferences_dialog};
 use queue::connect_queue_panel_controls;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
-#[cfg(test)]
-use rufin_core::SidebarRouteItem;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH, FolderPathItem, Genre, HomeBlockKind, HomeSection, HomeSectionKind,
     ImageRef, LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
     MusicFolderId, PlaySourceDescriptor, PlaySourceKey, Playlist, PlaylistEntrySortDescriptor,
     PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind,
-    ServerId, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId,
-    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
-    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
-    SmartPlaylistSortDescriptor, SmartPlaylistSortField, SourceOrder, Track, TrackId,
-    TrackSortDescriptor, TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
-    sanitized_window_size,
+    ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
+    SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField,
+    SmartPlaylistRuleGroup, SmartPlaylistRuleNode, SmartPlaylistRuleOperator,
+    SmartPlaylistRuleValue, SmartPlaylistSortDescriptor, SmartPlaylistSortField, SourceOrder,
+    Track, TrackId, TrackSortDescriptor, TrackSortKey, TrackTableColumn, TrackTableSettings,
+    format_duration, sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -206,6 +204,8 @@ pub(in crate::ui) const FIRST_RUN_COVER_PRIME_POLL_MS: u64 = 33;
 pub(in crate::ui) const FIRST_RUN_HOME_SECTION_LIMIT: usize = 3;
 pub(in crate::ui) const FIRST_RUN_HOME_SECTION_COVER_LIMIT: usize = 4;
 pub(in crate::ui) const FIRST_RUN_GRID_COVER_PRIME_LIMIT: usize = 192;
+pub(in crate::ui) const SOURCE_ROUTE_COVER_WARM_SETTLE_DELAY_MS: u64 =
+    RESPONSIVE_RENDER_DELAY_MS * 5;
 pub(in crate::ui) const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
 pub(in crate::ui) const LIBRARY_PREPARING_STATUS: &str = "Preparing library...";
 pub(in crate::ui) const FAVORITE_EMPTY_GLYPH: &str = "♡";
@@ -227,7 +227,6 @@ static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct AppOptions {
     #[cfg(feature = "dev-tools")]
     pub fake_scale: Option<FakeScale>,
-    pub smoke_exit_ms: Option<u64>,
 }
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
@@ -283,6 +282,9 @@ pub(in crate::ui) struct AppState {
     first_run_connection_ready: Cell<bool>,
     first_run_cover_prime_generation: Cell<u64>,
     first_run_cover_prime_pending: RefCell<HashSet<String>>,
+    source_route_cover_warm_next_token: Cell<u64>,
+    source_route_cover_warm_pending_for: RefCell<Option<(ServerId, u64)>>,
+    source_route_cover_warm_started_for: RefCell<Option<ServerId>>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
     server_discovery_status: RefCell<String>,
     server_discovery_running: Cell<bool>,
@@ -419,18 +421,18 @@ fn sidebar_scroll_slot(width: i32, child: &gtk::Box) -> gtk::ScrolledWindow {
     slot.set_child(Some(child));
     slot
 }
-pub fn build(app: &adw::Application, options: AppOptions) {
+pub fn build(app: &adw::Application, _options: AppOptions) {
     install_css();
 
     let loaded_at = std::time::Instant::now();
     #[cfg(feature = "dev-tools")]
-    let using_fake_library = options.fake_scale.is_some();
+    let using_fake_library = _options.fake_scale.is_some();
     #[cfg(not(feature = "dev-tools"))]
     let using_fake_library = false;
     let (controller, events, library, queue, player) = {
         #[cfg(feature = "dev-tools")]
         {
-            if let Some(scale) = options.fake_scale {
+            if let Some(scale) = _options.fake_scale {
                 AppController::bootstrap_with_fake(scale)
             } else {
                 AppController::bootstrap()
@@ -511,6 +513,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         first_run_connection_ready: Cell::new(false),
         first_run_cover_prime_generation: Cell::new(0),
         first_run_cover_prime_pending: RefCell::new(HashSet::new()),
+        source_route_cover_warm_next_token: Cell::new(0),
+        source_route_cover_warm_pending_for: RefCell::new(None),
+        source_route_cover_warm_started_for: RefCell::new(None),
         discovered_servers: RefCell::new(Vec::new()),
         server_discovery_status: RefCell::new("Searching will start automatically".to_string()),
         server_discovery_running: Cell::new(false),
@@ -701,14 +706,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
 
     if !using_fake_library {
         schedule_startup_sync(&shell);
-    }
-
-    if let Some(delay_ms) = options.smoke_exit_ms {
-        let app = app.clone();
-        glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
-            info!(delay_ms, "smoke exit requested");
-            app.quit();
-        });
     }
 
     #[cfg(unix)]

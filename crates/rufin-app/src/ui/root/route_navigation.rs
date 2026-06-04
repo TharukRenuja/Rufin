@@ -12,6 +12,14 @@ impl Shell {
             .first_run_cover_prime_pending
             .borrow_mut()
             .clear();
+        self.state
+            .source_route_cover_warm_pending_for
+            .borrow_mut()
+            .take();
+        self.state
+            .source_route_cover_warm_started_for
+            .borrow_mut()
+            .take();
         self.state.route_tracks.borrow_mut().clear();
         self.state.smart_playlists.borrow_mut().clear();
         self.cancel_cover_warm();

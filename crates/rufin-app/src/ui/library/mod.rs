@@ -521,13 +521,63 @@ fn genre_cover_refs_for_model_range(
         let Some(genre) = item_at::<Genre>(model, index as u32) else {
             continue;
         };
-        let mut genre_refs = genre.image_refs;
-        genre_refs.extend(genre.image_ref);
-        for image_ref in genre_refs {
-            if !refs.iter().any(|existing| existing == &image_ref) {
-                refs.push(image_ref);
-            }
+        refs.extend(grouped_collection_cover_refs(
+            &genre.image_refs,
+            genre.image_ref.as_ref(),
+            &refs,
+        ));
+    }
+    refs
+}
+fn playlist_cover_refs_for_model_range(
+    model: &gio::ListStore,
+    start: usize,
+    end: usize,
+) -> Vec<ImageRef> {
+    let mut refs = Vec::new();
+    for index in start..end.min(model.n_items() as usize) {
+        let Some(playlist) = item_at::<Playlist>(model, index as u32) else {
+            continue;
+        };
+        refs.extend(grouped_collection_cover_refs(
+            &playlist.image_refs,
+            playlist.image_ref.as_ref(),
+            &refs,
+        ));
+    }
+    refs
+}
+fn smart_playlist_cover_refs_for_model_range(
+    model: &gio::ListStore,
+    start: usize,
+    end: usize,
+) -> Vec<ImageRef> {
+    let mut refs = Vec::new();
+    for index in start..end.min(model.n_items() as usize) {
+        let Some(playlist) = item_at::<SmartPlaylist>(model, index as u32) else {
+            continue;
+        };
+        refs.extend(grouped_collection_cover_refs(
+            &playlist.image_refs,
+            playlist.image_ref.as_ref(),
+            &refs,
+        ));
+    }
+    refs
+}
+fn grouped_collection_cover_refs(
+    image_refs: &[ImageRef],
+    image_ref: Option<&ImageRef>,
+    existing_refs: &[ImageRef],
+) -> Vec<ImageRef> {
+    let mut refs = Vec::new();
+    for candidate in image_refs.iter().chain(image_ref) {
+        if existing_refs.iter().any(|existing| existing == candidate)
+            || refs.iter().any(|existing| existing == candidate)
+        {
+            continue;
         }
+        refs.push(candidate.clone());
     }
     refs
 }
@@ -774,6 +824,49 @@ fn connect_genre_viewport_cover_warm(
     model: &gio::ListStore,
     settings: &LibraryListSettings,
 ) {
+    connect_grouped_collection_viewport_cover_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        genre_cover_refs_for_model_range,
+    );
+}
+fn connect_playlist_viewport_cover_warm(
+    shell: &Rc<Shell>,
+    scroller: &gtk::ScrolledWindow,
+    model: &gio::ListStore,
+    settings: &LibraryListSettings,
+) {
+    connect_grouped_collection_viewport_cover_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        playlist_cover_refs_for_model_range,
+    );
+}
+fn connect_smart_playlist_viewport_cover_warm(
+    shell: &Rc<Shell>,
+    scroller: &gtk::ScrolledWindow,
+    model: &gio::ListStore,
+    settings: &LibraryListSettings,
+) {
+    connect_grouped_collection_viewport_cover_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        smart_playlist_cover_refs_for_model_range,
+    );
+}
+fn connect_grouped_collection_viewport_cover_warm(
+    shell: &Rc<Shell>,
+    scroller: &gtk::ScrolledWindow,
+    model: &gio::ListStore,
+    settings: &LibraryListSettings,
+    refs_for_range: fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>,
+) {
     let Some((fetch_size, size)) = grid_or_row_cover_warm_sizes(shell, settings) else {
         return;
     };
@@ -790,13 +883,14 @@ fn connect_genre_viewport_cover_warm(
         let settings = settings.clone();
         let adjustment = adjustment.clone();
         glib::idle_add_local_once(move || {
-            warm_genre_cover_model_viewport(
+            warm_grouped_collection_cover_model_viewport(
                 &shell,
                 &model,
                 &adjustment,
                 &settings,
                 fetch_size,
                 size,
+                refs_for_range,
             );
         });
     }
@@ -817,13 +911,14 @@ fn connect_genre_viewport_cover_warm(
             let generation = Rc::clone(&generation);
             move || {
                 if generation.get() == next_generation {
-                    prime_genre_cover_model_viewport(
+                    prime_grouped_collection_cover_model_viewport(
                         &shell,
                         &model,
                         &adjustment,
                         &settings,
                         fetch_size,
                         size,
+                        refs_for_range,
                     );
                 }
             }
@@ -834,44 +929,63 @@ fn connect_genre_viewport_cover_warm(
                 if generation.get() != next_generation {
                     return;
                 }
-                warm_genre_cover_model_viewport(
+                warm_grouped_collection_cover_model_viewport(
                     &shell,
                     &model,
                     &adjustment,
                     &settings,
                     fetch_size,
                     size,
+                    refs_for_range,
                 );
             },
         );
     });
 }
-fn warm_genre_cover_model_viewport(
+fn warm_grouped_collection_cover_model_viewport(
     shell: &Rc<Shell>,
     model: &gio::ListStore,
     adjustment: &gtk::Adjustment,
     settings: &LibraryListSettings,
     fetch_size: u32,
     size: i32,
+    refs_for_range: fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>,
 ) {
-    prepare_genre_cover_model_viewport(
-        shell, model, adjustment, settings, fetch_size, size, true, false,
+    prepare_grouped_collection_cover_model_viewport(
+        shell,
+        model,
+        adjustment,
+        settings,
+        fetch_size,
+        size,
+        true,
+        false,
+        refs_for_range,
     );
 }
-fn prime_genre_cover_model_viewport(
+fn prime_grouped_collection_cover_model_viewport(
     shell: &Rc<Shell>,
     model: &gio::ListStore,
     adjustment: &gtk::Adjustment,
     settings: &LibraryListSettings,
     fetch_size: u32,
     size: i32,
+    refs_for_range: fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>,
 ) {
-    prepare_genre_cover_model_viewport(
-        shell, model, adjustment, settings, fetch_size, size, false, true,
+    prepare_grouped_collection_cover_model_viewport(
+        shell,
+        model,
+        adjustment,
+        settings,
+        fetch_size,
+        size,
+        false,
+        true,
+        refs_for_range,
     );
 }
 #[allow(clippy::too_many_arguments)]
-fn prepare_genre_cover_model_viewport(
+fn prepare_grouped_collection_cover_model_viewport(
     shell: &Rc<Shell>,
     model: &gio::ListStore,
     adjustment: &gtk::Adjustment,
@@ -880,6 +994,7 @@ fn prepare_genre_cover_model_viewport(
     size: i32,
     include_warm: bool,
     interaction: bool,
+    refs_for_range: fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>,
 ) {
     let ranges = if interaction {
         library_interaction_viewport_cover_ranges(
@@ -896,7 +1011,7 @@ fn prepare_genre_cover_model_viewport(
     };
 
     let batches = viewport_cover_ref_batches_for_ranges(ranges, |start, end| {
-        genre_cover_refs_for_model_range(model, start, end)
+        refs_for_range(model, start, end)
     });
     prepare_viewport_cover_refs(shell, batches, fetch_size, size, include_warm);
 }
@@ -1079,6 +1194,34 @@ fn warm_playlist_covers_for_settings_now(
     };
     let mut values = playlists.to_vec();
     sort_playlists(&mut values, settings);
+    let image_refs = values
+        .iter()
+        .take(GRID_ROUTE_PAGE_SIZE)
+        .flat_map(|playlist| {
+            let mut refs = playlist.image_refs.clone();
+            refs.extend(playlist.image_ref.iter().cloned());
+            refs
+        })
+        .collect::<Vec<ImageRef>>();
+    shell.prime_cover_refs_now(image_refs, fetch_size, size);
+}
+fn warm_smart_playlist_covers_for_settings(
+    shell: &Rc<Shell>,
+    playlists: &[SmartPlaylist],
+    settings: &LibraryListSettings,
+) {
+    warm_smart_playlist_covers_for_settings_now(shell, playlists, settings);
+}
+fn warm_smart_playlist_covers_for_settings_now(
+    shell: &Rc<Shell>,
+    playlists: &[SmartPlaylist],
+    settings: &LibraryListSettings,
+) {
+    let Some((fetch_size, size)) = grid_or_row_cover_warm_sizes(shell, settings) else {
+        return;
+    };
+    let mut values = playlists.to_vec();
+    sort_smart_playlists(&mut values, settings);
     let image_refs = values
         .iter()
         .take(GRID_ROUTE_PAGE_SIZE)

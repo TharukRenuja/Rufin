@@ -1,26 +1,5 @@
 use super::*;
 
-const POST_ROUTE_VISIBLE_WARM_DELAY_MS: u64 = 64;
-const POST_HOME_TRACK_WARM_ROWS: usize = TRACK_ROUTE_PAGE_SIZE;
-
-#[derive(Clone)]
-pub(in crate::ui) struct PostRouteVisibleWarmTarget {
-    pub(in crate::ui) route: Route,
-    pub(in crate::ui) leading_rows: usize,
-}
-
-pub(in crate::ui) fn post_route_visible_warm_targets(
-    route: &Route,
-) -> Vec<PostRouteVisibleWarmTarget> {
-    match route {
-        Route::Home => vec![PostRouteVisibleWarmTarget {
-            route: Route::Tracks,
-            leading_rows: POST_HOME_TRACK_WARM_ROWS,
-        }],
-        _ => Vec::new(),
-    }
-}
-
 impl Shell {
     pub(in crate::ui) fn render_current_route(self: &Rc<Self>) {
         self.reset_queued_cover_work_for_route_render();
@@ -101,29 +80,6 @@ impl Shell {
                 shell.prime_route_visible_cover_window(&route);
             });
         }
-        self.schedule_post_route_visible_cover_warm(&route);
-    }
-    fn schedule_post_route_visible_cover_warm(self: &Rc<Self>, route: &Route) {
-        let targets = post_route_visible_warm_targets(route);
-        if targets.is_empty() {
-            return;
-        }
-        let shell = Rc::clone(self);
-        let source_route = route.clone();
-        glib::timeout_add_local_once(
-            Duration::from_millis(POST_ROUTE_VISIBLE_WARM_DELAY_MS),
-            move || {
-                if shell.state.routes.borrow().current() != &source_route {
-                    return;
-                }
-                for target in targets {
-                    shell.prime_route_leading_and_warm_anchor_cover_windows(
-                        &target.route,
-                        target.leading_rows,
-                    );
-                }
-            },
-        );
     }
     pub(in crate::ui) fn render_current_route_preserving_scroll(self: &Rc<Self>) {
         let scroll_value = self.current_route_scroll_value();
