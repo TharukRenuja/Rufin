@@ -445,6 +445,16 @@ pub(in crate::controller) fn app_settings_path_for_config_dir(config_dir: &Path)
     config_dir.join(SETTINGS_FILE_NAME)
 }
 
+pub(in crate::controller) fn config_secrets_path() -> PathBuf {
+    config_dir()
+        .map(|dir| config_secrets_path_for_config_dir(&dir))
+        .unwrap_or_else(|| PathBuf::from(CONFIG_SECRETS_FILE_NAME))
+}
+
+pub(in crate::controller) fn config_secrets_path_for_config_dir(config_dir: &Path) -> PathBuf {
+    config_dir.join(CONFIG_SECRETS_FILE_NAME)
+}
+
 pub(in crate::controller) fn cover_cache_dir() -> Option<PathBuf> {
     cache_dir().map(|dir| cover_cache_dir_for_cache_dir(&dir))
 }

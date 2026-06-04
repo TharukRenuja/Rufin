@@ -34,7 +34,8 @@ pub(in crate::controller) fn load_settings_with_secrets(
         &settings,
         &mut persisted,
         MissingSecretAction::Keep,
-    );
+    )
+    .unwrap_or(false);
     hydrate_scrobbling_secret_values(secrets, &mut settings);
     if migrated {
         persisted.migrate_defaults();
@@ -56,7 +57,7 @@ pub(in crate::controller) fn save_settings_with_secrets(
         settings,
         &mut persisted,
         MissingSecretAction::Delete,
-    );
+    )?;
     persisted.migrate_defaults();
     store.save_settings(&persisted)
 }
@@ -72,7 +73,7 @@ fn persist_scrobbling_secret_values(
     settings: &AppSettings,
     persisted: &mut AppSettings,
     missing_action: MissingSecretAction,
-) -> bool {
+) -> Result<bool, String> {
     let mut migrated = false;
     persist_secret_value(
         secrets,
@@ -81,7 +82,7 @@ fn persist_scrobbling_secret_values(
         &mut persisted.scrobbling.lastfm.api_secret,
         missing_action,
         &mut migrated,
-    );
+    )?;
     persist_secret_value(
         secrets,
         &SecretKey::LastFmSession,
@@ -89,7 +90,7 @@ fn persist_scrobbling_secret_values(
         &mut persisted.scrobbling.lastfm.session_key,
         missing_action,
         &mut migrated,
-    );
+    )?;
     persist_secret_value(
         secrets,
         &SecretKey::LibreFmSession,
@@ -97,7 +98,7 @@ fn persist_scrobbling_secret_values(
         &mut persisted.scrobbling.librefm.session_key,
         missing_action,
         &mut migrated,
-    );
+    )?;
     persist_secret_value(
         secrets,
         &SecretKey::ListenBrainzToken,
@@ -105,8 +106,8 @@ fn persist_scrobbling_secret_values(
         &mut persisted.scrobbling.listenbrainz.user_token,
         missing_action,
         &mut migrated,
-    );
-    migrated
+    )?;
+    Ok(migrated)
 }
 
 fn persist_secret_value(
@@ -116,7 +117,7 @@ fn persist_secret_value(
     persisted_value: &mut String,
     missing_action: MissingSecretAction,
     migrated: &mut bool,
-) {
+) -> Result<(), String> {
     let value = value.trim();
     if value.is_empty() {
         if missing_action == MissingSecretAction::Delete
@@ -125,16 +126,21 @@ fn persist_secret_value(
             warn!(%error, ?key, "failed to delete scrobbling secret");
         }
         persisted_value.clear();
-        return;
+        return Ok(());
     }
 
     match secrets.save_secret(key, value) {
         Ok(()) => {
             persisted_value.clear();
             *migrated = true;
+            Ok(())
         }
         Err(error) => {
             warn!(%error, ?key, "failed to save scrobbling secret");
+            if missing_action == MissingSecretAction::Delete {
+                return Err(format!("failed to save scrobbling secret: {error}"));
+            }
+            Ok(())
         }
     }
 }
@@ -180,6 +186,23 @@ mod tests {
     use rufin_core::{
         AudioscrobblerScrobbleSettings, ListenBrainzScrobbleSettings, ScrobblingSettings,
     };
+    use rufin_secrets::{SecretError, SecretResult};
+
+    struct FailingSecretStore;
+
+    impl SecretStore for FailingSecretStore {
+        fn save_secret(&self, _key: &SecretKey, _secret: &str) -> SecretResult<()> {
+            Err(SecretError::Backend("unavailable".to_string()))
+        }
+
+        fn load_secret(&self, _key: &SecretKey) -> SecretResult<Option<String>> {
+            Ok(None)
+        }
+
+        fn delete_secret(&self, _key: &SecretKey) -> SecretResult<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn load_settings_migrates_scrobbling_secrets_to_secret_store() {
@@ -268,5 +291,30 @@ mod tests {
             loaded.scrobbling.listenbrainz.user_token,
             "listenbrainz-token"
         );
+    }
+
+    #[test]
+    fn save_settings_does_not_write_scrobbling_secret_when_secret_store_fails() {
+        let store = StoreHandle::open_memory().expect("memory store");
+        let secrets: Arc<dyn SecretStore> = Arc::new(FailingSecretStore);
+        let controller = SettingsController::new(store.clone(), secrets);
+        let settings = AppSettings {
+            scrobbling: ScrobblingSettings {
+                lastfm: AudioscrobblerScrobbleSettings {
+                    session_key: "lastfm-session".to_string(),
+                    ..AudioscrobblerScrobbleSettings::default()
+                },
+                ..ScrobblingSettings::default()
+            },
+            ..AppSettings::default()
+        };
+
+        let error = controller
+            .save_settings(&settings)
+            .expect_err("secret save failure");
+
+        assert!(error.contains("failed to save scrobbling secret"));
+        let persisted = store.load_settings().expect("load persisted settings");
+        assert_eq!(persisted.scrobbling.lastfm.session_key, "");
     }
 }

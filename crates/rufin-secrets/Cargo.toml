@@ -6,12 +6,18 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64 = "0.22.1"
 rufin-core = { path = "../rufin-core" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
 thiserror = "2.0.18"
 
 [target.'cfg(unix)'.dependencies]
 oo7 = "0.6.0"
 tokio = { version = "1.52.3", features = ["rt", "time"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"
 
 [lints]
 workspace = true

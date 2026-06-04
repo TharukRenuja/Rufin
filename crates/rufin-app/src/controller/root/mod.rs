@@ -34,9 +34,9 @@ use rufin_provider::{LyricLine, LyricsSource, PlayedFilter};
 use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
 #[cfg(any(test, feature = "dev-tools"))]
 use rufin_secrets::MemorySecretStore;
+use rufin_secrets::{CachedSecretStore, ConfigSecretStore, SecretKey, SecretStore};
 #[cfg(unix)]
-use rufin_secrets::SecretServiceStore;
-use rufin_secrets::{CachedSecretStore, SecretKey, SecretStore};
+use rufin_secrets::{FallbackSecretStore, SecretServiceStore};
 use rufin_store::{
     CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, LocalLibraryDelta, SavedServer,
     ServerLocalAccess, Store, StoreBackedSourceWindow, StoreError, StoreResult, SyncState,
@@ -140,6 +140,7 @@ const AUTO_DJ_ITEM_COUNT: usize = 5;
 const AUTO_DJ_LIBRARY_LIMIT: usize = 5_000;
 const CACHE_DATABASE_FILE_NAME: &str = "rufin-cache.sqlite";
 const SETTINGS_FILE_NAME: &str = "settings.json";
+const CONFIG_SECRETS_FILE_NAME: &str = "secrets.json";
 const STORE_DIR_NAME: &str = "store";
 const COVER_CACHE_DIR_NAME: &str = "covers";
 const LYRICS_CACHE_DIR_NAME: &str = "lyrics";
