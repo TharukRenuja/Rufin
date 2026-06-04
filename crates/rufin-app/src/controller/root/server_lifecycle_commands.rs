@@ -193,11 +193,8 @@ impl AppController {
                 local_access_root: local_access_root.as_deref(),
                 path_replace_from: path_replace_from.as_deref(),
             };
-            let saved = match save_token_and_activate_logged_in_server(
-                &activation_context,
-                &secrets,
-                activation_request,
-            ) {
+            let saved = match activate_with_token(&activation_context, &secrets, activation_request)
+            {
                 Ok(saved) => saved,
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));

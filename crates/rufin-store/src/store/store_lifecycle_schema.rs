@@ -8,7 +8,7 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
     },
     SchemaMigration {
         from_version: 11,
-        run: migrate_to_collection_cover_refs_schema,
+        run: migrate_cover_refs,
     },
     SchemaMigration {
         from_version: 12,
@@ -279,7 +279,7 @@ fn migrate_to_smart_playlists_schema(store: &Store) -> StoreResult<()> {
     )?;
     Ok(())
 }
-fn migrate_to_collection_cover_refs_schema(store: &Store) -> StoreResult<()> {
+fn migrate_cover_refs(store: &Store) -> StoreResult<()> {
     store.connection.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS collection_cover_refs (
@@ -924,7 +924,7 @@ impl Store {
         self.write_batch(|connection| {
             save_server_on_connection(connection, saved)?;
             if clear_identity_cache {
-                clear_server_identity_cache_on_connection(connection, &saved.server.id)?;
+                clear_server_cache(connection, &saved.server.id)?;
             }
             Ok(())
         })
@@ -1349,10 +1349,7 @@ pub(super) fn save_server_on_connection(
     Ok(())
 }
 
-pub(super) fn clear_server_identity_cache_on_connection(
-    connection: &Connection,
-    server_id: &ServerId,
-) -> StoreResult<()> {
+pub(super) fn clear_server_cache(connection: &Connection, server_id: &ServerId) -> StoreResult<()> {
     clear_library_cache_on_connection(connection, server_id)?;
     connection.execute(
         "DELETE FROM queue_snapshots WHERE server_id = ?1",
@@ -1386,7 +1383,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_migration_path_requires_adjacent_steps() {
+    fn store_require_steps() {
         static MIGRATIONS: &[SchemaMigration] = &[
             SchemaMigration {
                 from_version: 1,

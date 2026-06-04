@@ -45,27 +45,25 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
                 if !sync_target_is_current(&context.store, &server_id) {
                     return;
                 }
-                refresh_local_queue_image_refs_after_sync(&context, &saved);
-                covers::start_external_metadata_cover_prefetch_thread(
-                    covers::ExternalCoverPrefetchRequest {
-                        store: context.store.clone(),
-                        runtime: Arc::clone(&context.runtime),
-                        secrets: Arc::clone(&context.secrets),
-                        events: context.events.clone(),
-                        cover_in_flight: Arc::clone(&context.cover_in_flight),
-                        external_cover_retry_generation: Arc::clone(
-                            &context.external_cover_retry_generation,
-                        ),
-                        retry_generation: context
-                            .external_cover_retry_generation
-                            .load(Ordering::SeqCst),
-                        external_cover_prefetch_in_flight: Arc::clone(
-                            &context.external_cover_prefetch_in_flight,
-                        ),
-                        cover_slots: Arc::clone(&context.cover_slots),
-                        saved: saved.clone(),
-                    },
-                );
+                refresh_queue_refs(&context, &saved);
+                covers::start_cover_prefetch(covers::ExternalCoverPrefetchRequest {
+                    store: context.store.clone(),
+                    runtime: Arc::clone(&context.runtime),
+                    secrets: Arc::clone(&context.secrets),
+                    events: context.events.clone(),
+                    cover_in_flight: Arc::clone(&context.cover_in_flight),
+                    external_cover_retry_generation: Arc::clone(
+                        &context.external_cover_retry_generation,
+                    ),
+                    retry_generation: context
+                        .external_cover_retry_generation
+                        .load(Ordering::SeqCst),
+                    external_cover_prefetch_in_flight: Arc::clone(
+                        &context.external_cover_prefetch_in_flight,
+                    ),
+                    cover_slots: Arc::clone(&context.cover_slots),
+                    saved: saved.clone(),
+                });
                 let _sent = context.events.send(ControllerEvent::LoginStatus(
                     "Library sync complete".to_string(),
                 ));
@@ -94,10 +92,7 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
     });
 }
 
-pub(in crate::controller) fn refresh_local_queue_image_refs_after_sync(
-    context: &SyncContext,
-    saved: &SavedServer,
-) {
+pub(in crate::controller) fn refresh_queue_refs(context: &SyncContext, saved: &SavedServer) {
     let Some(original_snapshot) = context
         .queue
         .lock()
@@ -106,10 +101,10 @@ pub(in crate::controller) fn refresh_local_queue_image_refs_after_sync(
     else {
         return;
     };
-    refresh_local_queue_image_refs_from_snapshot(context, saved, original_snapshot);
+    snapshot_queue_refs(context, saved, original_snapshot);
 }
 
-pub(in crate::controller) fn refresh_local_queue_image_refs_from_snapshot(
+pub(in crate::controller) fn snapshot_queue_refs(
     context: &SyncContext,
     saved: &SavedServer,
     original_snapshot: QueueSnapshot,
@@ -121,11 +116,7 @@ pub(in crate::controller) fn refresh_local_queue_image_refs_from_snapshot(
         return;
     }
     let mut normalized_entries = original_snapshot.entries.clone();
-    if let Err(error) = normalize_local_queue_image_refs_from_albums(
-        &context.store,
-        &saved.server,
-        &mut normalized_entries,
-    ) {
+    if let Err(error) = queue_album_refs(&context.store, &saved.server, &mut normalized_entries) {
         warn!(%error, "failed to refresh local queue image refs after sync");
         return;
     }
@@ -159,13 +150,13 @@ pub(in crate::controller) fn refresh_local_queue_image_refs_from_snapshot(
     *queue = Some(QueueEngine::restore(refreshed_snapshot.clone()));
     drop(queue);
 
-    persist_queue_snapshot_deferred_from_handles(
+    defer_queue_snapshot(
         context.store.clone(),
         context.events.clone(),
         Arc::clone(&context.queue_persist_generation),
         refreshed_snapshot.clone(),
     );
-    sync_playback_snapshot_from_queue_handles(
+    sync_queue_snapshot(
         &context.queue,
         &context.playback_snapshot,
         &context.auto_dj_enabled,
@@ -346,7 +337,7 @@ pub(in crate::controller) fn start_explore_prefetch_thread(
         }
     });
 }
-pub(in crate::controller) fn start_prefetched_home_section_promotion_thread(
+pub(in crate::controller) fn start_home_promotion(
     store: StoreHandle,
     events: Sender<ControllerEvent>,
     server_id: ServerId,
@@ -541,7 +532,7 @@ async fn collect_local_provider_snapshot(
     progress: &mut SyncProgressReporter,
 ) -> Result<LocalProviderSnapshot, String> {
     progress.collection_started(SyncCollection::Tracks);
-    let tracks = load_all_local_tracks_for_matching(provider).await?;
+    let tracks = load_match_tracks(provider).await?;
     progress.collection_started(SyncCollection::Albums);
     let albums = load_all_local_albums(provider).await?;
     progress.collection_started(SyncCollection::Artists);
@@ -834,7 +825,7 @@ pub(in crate::controller) fn prefetch_home_section_for_saved(
         provider.as_music_provider(),
         kind,
     ))?;
-    normalize_home_section_image_refs_for_saved(store, saved, &mut section)?;
+    home_image_refs(store, saved, &mut section)?;
     Ok(section)
 }
 #[cfg(test)]
@@ -1344,7 +1335,7 @@ pub(in crate::controller) async fn refresh_local_track_matches(
         manifest_compare_elapsed_ms = scan.counters.manifest_compare_elapsed_ms,
         "completed manifest-backed local-access scan"
     );
-    let local_tracks = load_all_local_tracks_for_matching(&local_provider).await?;
+    let local_tracks = load_match_tracks(&local_provider).await?;
     let matches = conservative_local_matches(&remote_tracks, &local_tracks);
     let count = matches.len();
     store.with_store(|store| {
@@ -1358,9 +1349,7 @@ pub(in crate::controller) async fn refresh_local_track_matches(
     debug!(server_id = %server_id, count, "refreshed local track matches");
     Ok(count)
 }
-async fn load_all_local_tracks_for_matching(
-    provider: &LocalProvider,
-) -> Result<Vec<Track>, String> {
+async fn load_match_tracks(provider: &LocalProvider) -> Result<Vec<Track>, String> {
     let mut tracks = Vec::new();
     let mut offset = 0;
     loop {

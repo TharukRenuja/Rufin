@@ -115,7 +115,7 @@ impl AppController {
         let Some(queue_snapshot) = self.queue_snapshot() else {
             return;
         };
-        let requests = waveform_warm_requests_for_queue_snapshot(
+        let requests = waveform_warm_requests(
             &queue_snapshot,
             &settings.playback,
             WAVEFORM_WARM_QUEUE_LIMIT,
@@ -320,7 +320,7 @@ fn remote_waveform_warm_can_run(playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>
         .unwrap_or(false)
 }
 
-fn waveform_warm_requests_for_queue_snapshot(
+fn waveform_warm_requests(
     snapshot: &QueueSnapshot,
     playback_settings: &PlaybackSettings,
     limit: usize,
@@ -424,7 +424,7 @@ fn remote_waveform_temp_path(cache_key: &str) -> Option<PathBuf> {
         .as_nanos();
     let key_hash = format!("{:x}", md5::compute(cache_key));
     cache_dir().map(|dir| {
-        tmp_cache_dir_for_cache_dir(&dir)
+        tmp_cache_dir(&dir)
             .join("waveforms")
             .join(format!("{key_hash}-{}-{stamp}.audio", std::process::id()))
     })
@@ -492,10 +492,10 @@ pub(in crate::controller) fn set_waveform_cache_key(
     snapshot: &mut PlaybackSnapshot,
     key: Option<String>,
 ) {
-    set_waveform_cache_key_for_duration(snapshot, key, snapshot.duration_seconds);
+    waveform_duration_key(snapshot, key, snapshot.duration_seconds);
 }
 
-pub(in crate::controller) fn set_waveform_cache_key_for_duration(
+pub(in crate::controller) fn waveform_duration_key(
     snapshot: &mut PlaybackSnapshot,
     key: Option<String>,
     duration_seconds: u32,
@@ -567,7 +567,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn waveform_cache_key_is_path_safe_and_duration_scoped() {
+    fn playback_waveform_scoped() {
         let server_id = ServerId::new("server/one");
         let track_id = TrackId::new("album/track:one");
 
@@ -579,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_waveform_peaks_drops_invalid_values_and_clamps_amplitudes() {
+    fn playback_clamp_amplitudes() {
         let peaks = sanitize_waveform_peaks(vec![(0.5, 1.5), (f64::NAN, 0.2), (-1.0, 0.25)])
             .expect("peaks");
 
@@ -588,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn waveform_generation_routes_file_and_remote_sources() {
+    fn playback_waveform_sources() {
         assert!(waveform_generation_source_is_local(
             "file:///music/track.flac"
         ));
@@ -610,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn waveform_generation_permit_blocks_duplicate_keys() {
+    fn playback_waveform_key() {
         let cache_key = "test-server/test-track-42.json";
 
         let permit = acquire_waveform_generation_permit(cache_key).expect("first permit");
@@ -621,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_waveform_warm_starts_at_current_and_caps() {
+    fn playback_cap_current() {
         let server_id = ServerId::new("server-one");
         let snapshot = QueueSnapshot {
             server_id: server_id.clone(),
@@ -650,8 +650,7 @@ mod tests {
             progress_seconds: 0,
         };
 
-        let requests =
-            waveform_warm_requests_for_queue_snapshot(&snapshot, &PlaybackSettings::default(), 2);
+        let requests = waveform_warm_requests(&snapshot, &PlaybackSettings::default(), 2);
 
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].server_id, server_id);
@@ -660,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_waveform_parser_rejects_stale_metadata() {
+    fn playback_reject_meta() {
         let current = serde_json::to_string(&CachedWaveform {
             version: WAVEFORM_CACHE_VERSION,
             duration_seconds: 42,

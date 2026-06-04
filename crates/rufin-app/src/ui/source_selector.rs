@@ -498,14 +498,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn popover_offset_aligns_wider_selector_with_left_sidebar_anchor() {
+    fn source_align_anchor() {
         let offset = selector_popover_x_offset(160, 304);
 
         assert_eq!(80 + offset - 152, 0);
     }
 
     #[test]
-    fn popover_offset_handles_compact_selector_anchor() {
+    fn source_handle_anchor() {
         let offset = selector_popover_x_offset(62, 304);
 
         assert_eq!(31 + offset - 152, 0);

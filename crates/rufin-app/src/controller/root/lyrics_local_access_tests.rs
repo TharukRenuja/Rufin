@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-pub(in crate::controller) fn explicit_favorite_updates_can_unfavorite_persistent_controls() {
+pub(in crate::controller) fn lyrics_update_controls() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let album = snapshot
@@ -36,7 +36,7 @@ pub(in crate::controller) fn explicit_favorite_updates_can_unfavorite_persistent
     );
 }
 #[test]
-pub(in crate::controller) fn fake_playlist_mutations_create_move_and_remove_entries() {
+pub(in crate::controller) fn lyrics_remove_entry() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let first = snapshot.tracks[0].clone();
@@ -92,7 +92,7 @@ pub(in crate::controller) fn fake_playlist_mutations_create_move_and_remove_entr
     );
 }
 #[test]
-pub(in crate::controller) fn fake_lyrics_request_emits_empty_lyrics_event() {
+pub(in crate::controller) fn lyrics_emit_event() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     controller.play_now(snapshot.tracks[0].clone());
@@ -101,7 +101,7 @@ pub(in crate::controller) fn fake_lyrics_request_emits_empty_lyrics_event() {
     assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
-pub(in crate::controller) fn local_lyrics_request_skips_unsupported_provider_lookup() {
+pub(in crate::controller) fn lyrics_local_lookup() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = local_source_saved();
     let mut track = restored_track();
@@ -125,7 +125,7 @@ pub(in crate::controller) fn local_lyrics_request_skips_unsupported_provider_loo
 }
 
 #[test]
-pub(in crate::controller) fn local_loaded_provider_lyrics_respects_capability() {
+pub(in crate::controller) fn lyrics_local_capability() {
     let root = self::unique_test_dir("local-provider-lyrics-capability");
     fs::create_dir_all(&root).expect("create local root");
     let provider = LoadedProvider::Local(
@@ -146,7 +146,7 @@ pub(in crate::controller) fn local_loaded_provider_lyrics_respects_capability() 
 }
 
 #[test]
-pub(in crate::controller) fn server_lyrics_request_ignores_cached_remote_lyrics() {
+pub(in crate::controller) fn lyrics_ignore_remote() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let track = snapshot.tracks[0].clone();
@@ -175,7 +175,7 @@ pub(in crate::controller) fn server_lyrics_request_ignores_cached_remote_lyrics(
     assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
-pub(in crate::controller) fn clearing_remote_lyrics_emits_empty_event_and_removes_cache() {
+pub(in crate::controller) fn lyrics_remove_cache() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let track = snapshot.tracks[0].clone();
@@ -215,7 +215,7 @@ pub(in crate::controller) fn clearing_remote_lyrics_emits_empty_event_and_remove
     );
 }
 #[test]
-pub(in crate::controller) fn clearing_remote_lyrics_preserves_server_cache() {
+pub(in crate::controller) fn lyrics_preserve_cache() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let track = snapshot.tracks[0].clone();
@@ -247,7 +247,7 @@ pub(in crate::controller) fn clearing_remote_lyrics_preserves_server_cache() {
     assert_eq!(wait_for_lyrics(&events), Some(server_lyrics));
 }
 #[test]
-pub(in crate::controller) fn restored_queue_request_lyrics_emits_cached_current_lyrics() {
+pub(in crate::controller) fn lyrics_emit_current() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = SavedServer {
         server: ServerIdentity {
@@ -286,7 +286,7 @@ pub(in crate::controller) fn restored_queue_request_lyrics_emits_cached_current_
     assert_eq!(wait_for_lyrics(&events), Some(lyrics));
 }
 #[test]
-pub(in crate::controller) fn lyrics_search_respects_private_mode_and_preference() {
+pub(in crate::controller) fn lyrics_search_preference() {
     let mut settings = AppSettings {
         external_lyrics_enabled: true,
         ..AppSettings::default()
@@ -313,7 +313,7 @@ pub(in crate::controller) fn lyrics_search_respects_private_mode_and_preference(
     );
 }
 #[test]
-pub(in crate::controller) fn saved_lrclib_result_uses_explicit_output_path() {
+pub(in crate::controller) fn lyrics_use_path() {
     let dir = self::unique_test_dir("lyrics-portal-save");
     fs::create_dir_all(&dir).expect("create dir");
     let sidecar = dir.join("Track.lrc");
@@ -361,7 +361,7 @@ pub(in crate::controller) fn saved_lrclib_result_uses_explicit_output_path() {
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
-pub(in crate::controller) fn local_sidecar_lyrics_use_same_stem_as_audio_file() {
+pub(in crate::controller) fn lyrics_use_file() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let dir = self::unique_test_dir("local-sidecar");
@@ -396,7 +396,7 @@ pub(in crate::controller) fn local_sidecar_lyrics_use_same_stem_as_audio_file() 
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
-pub(in crate::controller) fn local_sidecar_lyrics_ignore_oversized_files() {
+pub(in crate::controller) fn lyrics_ignore_files() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let dir = self::unique_test_dir("local-sidecar-large");
@@ -432,7 +432,7 @@ pub(in crate::controller) fn local_sidecar_lyrics_ignore_oversized_files() {
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
-pub(in crate::controller) fn mapped_local_audio_path_uses_server_prefix_replacement() {
+pub(in crate::controller) fn lyrics_use_replacement() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let generation = store
@@ -472,7 +472,7 @@ pub(in crate::controller) fn mapped_local_audio_path_uses_server_prefix_replacem
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn remote_local_audio_path_requires_configured_access() {
+pub(in crate::controller) fn lyrics_require_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let generation = store
@@ -496,7 +496,7 @@ pub(in crate::controller) fn remote_local_audio_path_requires_configured_access(
     let _cleanup = fs::remove_dir_all(dir);
 }
 #[test]
-pub(in crate::controller) fn resolve_stream_prefers_local_file_for_remote_server_with_access() {
+pub(in crate::controller) fn lyrics_resolve_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("local-playback-stream");
@@ -537,8 +537,7 @@ pub(in crate::controller) fn resolve_stream_prefers_local_file_for_remote_server
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn resolve_stream_uses_requested_saved_server_when_active_source_changes()
-{
+pub(in crate::controller) fn lyrics_change_source() {
     let store = StoreHandle::open_memory().expect("memory store");
     let playback_server = SavedServer {
         server: ServerIdentity {
@@ -576,7 +575,7 @@ pub(in crate::controller) fn resolve_stream_uses_requested_saved_server_when_act
     assert_eq!(stream.uri(), "fake://local/stream/fake:track:queued");
 }
 #[test]
-pub(in crate::controller) fn resolve_stream_uses_cached_file_for_local_source() {
+pub(in crate::controller) fn lyrics_use_source() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = local_source_saved();
     let root = self::unique_test_dir("local-source-stream");
@@ -614,7 +613,7 @@ pub(in crate::controller) fn resolve_stream_uses_cached_file_for_local_source() 
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn resolve_stream_uses_cached_local_match_without_server_path() {
+pub(in crate::controller) fn lyrics_match_path() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("cached-local-match-stream");
@@ -664,7 +663,7 @@ pub(in crate::controller) fn resolve_stream_uses_cached_local_match_without_serv
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn relative_local_audio_path_uses_configured_local_prefix() {
+pub(in crate::controller) fn lyrics_use_prefix() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let scan_root = self::unique_test_dir("relative-scan-root");
@@ -697,7 +696,7 @@ pub(in crate::controller) fn relative_local_audio_path_uses_configured_local_pre
     let _cleanup = fs::remove_dir_all(local_root);
 }
 #[test]
-pub(in crate::controller) fn local_access_matching_uses_manifest_cached_track_data() {
+pub(in crate::controller) fn access_match_use() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("local-access-manifest");
@@ -760,7 +759,7 @@ pub(in crate::controller) fn local_access_matching_uses_manifest_cached_track_da
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn snapshot_local_access_status_counts_cached_mapping_candidates() {
+pub(in crate::controller) fn lyrics_snapshot_candidate() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("local-access-status");
@@ -827,7 +826,7 @@ pub(in crate::controller) fn snapshot_local_access_status_counts_cached_mapping_
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn conservative_local_matches_only_accept_unique_duration_matches() {
+pub(in crate::controller) fn lyrics_match_duration() {
     let album = AlbumId::fake(1);
     let mut remote = restored_track();
     remote.album_id = album.clone();
@@ -855,7 +854,7 @@ pub(in crate::controller) fn conservative_local_matches_only_accept_unique_durat
     assert!(super::conservative_local_matches(&[remote], &[local_one, duplicate]).is_empty());
 }
 #[test]
-pub(in crate::controller) fn snapshot_includes_active_server_local_access() {
+pub(in crate::controller) fn lyrics_include_access() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let access = ServerLocalAccess {
@@ -875,7 +874,7 @@ pub(in crate::controller) fn snapshot_includes_active_server_local_access() {
     assert_eq!(snapshot.local_access, Some(access));
 }
 #[test]
-pub(in crate::controller) fn lrclib_result_text_becomes_timed_lyrics() {
+pub(in crate::controller) fn lyrics_lrclib_timed() {
     let result = super::LyricsSearchResult {
         id: 7,
         track_name: "Song".to_string(),
@@ -895,7 +894,7 @@ pub(in crate::controller) fn lrclib_result_text_becomes_timed_lyrics() {
     assert_eq!(lyrics.lines[1].start_millis, Some(13_005));
 }
 #[test]
-pub(in crate::controller) fn selected_lrclib_result_becomes_current_track_lyrics() {
+pub(in crate::controller) fn lyrics_track_current() {
     let result = super::LyricsSearchResult {
         id: 12,
         track_name: "Example Track".to_string(),
@@ -915,7 +914,7 @@ pub(in crate::controller) fn selected_lrclib_result_becomes_current_track_lyrics
     assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
 }
 #[test]
-pub(in crate::controller) fn preview_lrclib_result_saves_current_track_lyrics_to_cache() {
+pub(in crate::controller) fn preview_lrclib_result() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.expect("active server").id;
@@ -945,7 +944,7 @@ pub(in crate::controller) fn preview_lrclib_result_saves_current_track_lyrics_to
     assert_eq!(cached.lines[0].start_millis, Some(30_000));
 }
 #[test]
-pub(in crate::controller) fn lrclib_duration_accepts_fractional_seconds() {
+pub(in crate::controller) fn lyrics_accept_seconds() {
     let json = r#"{
             "id": 7,
             "trackName": "Imagine",
@@ -962,7 +961,7 @@ pub(in crate::controller) fn lrclib_duration_accepts_fractional_seconds() {
     assert_eq!(result.artist_name, "John Lennon");
 }
 #[test]
-pub(in crate::controller) fn lrclib_manual_search_uses_normalized_and_exact_queries() {
+pub(in crate::controller) fn lyrics_use_queries() {
     let urls =
         super::lrclib_search_urls("EXAMPLE ARTIST!", "Opening Theme").expect("lrclib search urls");
     let query_sets = urls
@@ -986,7 +985,7 @@ pub(in crate::controller) fn lrclib_manual_search_uses_normalized_and_exact_quer
     );
 }
 #[test]
-pub(in crate::controller) fn lrclib_manual_search_accepts_single_field_query() {
+pub(in crate::controller) fn lyrics_accept_query() {
     let urls = super::lrclib_search_urls("", "Opening Theme").expect("lrclib search urls");
     let query_sets = urls
         .iter()
@@ -1003,7 +1002,7 @@ pub(in crate::controller) fn lrclib_manual_search_accepts_single_field_query() {
     );
 }
 #[test]
-pub(in crate::controller) fn lrclib_automatic_search_requires_track_and_artist() {
+pub(in crate::controller) fn lyrics_track_artist() {
     let urls = super::lrclib_automatic_search_urls("Example Artist", "Opening Theme")
         .expect("lrclib automatic search urls");
     let query_sets = urls
@@ -1037,7 +1036,7 @@ pub(in crate::controller) fn lrclib_automatic_search_requires_track_and_artist()
     );
 }
 #[test]
-pub(in crate::controller) fn lrclib_exact_lookup_url_uses_track_artist_and_duration() {
+pub(in crate::controller) fn lyrics_track_duration() {
     let url = super::lrclib_get_url("The Cure", "Lovesong", 210)
         .expect("lrclib get url")
         .expect("url");
@@ -1055,7 +1054,7 @@ pub(in crate::controller) fn lrclib_exact_lookup_url_uses_track_artist_and_durat
     );
 }
 #[test]
-pub(in crate::controller) fn automatic_lrclib_fallback_skips_empty_hits() {
+pub(in crate::controller) fn lyrics_automatic_hits() {
     let entry = QueueEntry {
         id: QueueEntryId::new("queue-entry:lyrics-fallback"),
         track_id: TrackId::new("jellyfin:track:lovesong"),
@@ -1101,7 +1100,7 @@ pub(in crate::controller) fn automatic_lrclib_fallback_skips_empty_hits() {
     assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
 }
 #[test]
-pub(in crate::controller) fn lrclib_search_body_decodes_feel_my_soul_result() {
+pub(in crate::controller) fn lyrics_decode_result() {
     let json = r#"[{
             "id": 9386114,
             "name": "feel my soul",
@@ -1122,7 +1121,7 @@ pub(in crate::controller) fn lrclib_search_body_decodes_feel_my_soul_result() {
     assert!(results[0].plain_lyrics.is_some());
 }
 #[test]
-pub(in crate::controller) fn lrclib_search_body_accepts_name_and_track_name_fields() {
+pub(in crate::controller) fn lyrics_track_field() {
     let json = r#"[{
             "id": 12,
             "name": "Legacy Name",
@@ -1141,7 +1140,7 @@ pub(in crate::controller) fn lrclib_search_body_accepts_name_and_track_name_fiel
     assert_eq!(results[0].artist_name, "Example Artist");
 }
 #[test]
-pub(in crate::controller) fn lrclib_results_prefer_matching_title_over_album_hit() {
+pub(in crate::controller) fn lyrics_match_hit() {
     let mut results = vec![
         super::LyricsSearchResult {
             id: 1,
@@ -1166,7 +1165,7 @@ pub(in crate::controller) fn lrclib_results_prefer_matching_title_over_album_hit
     assert_eq!(results[0].track_name, "Imagine");
 }
 #[test]
-pub(in crate::controller) fn lrclib_results_prefer_compact_title_token_matches() {
+pub(in crate::controller) fn lyrics_match_token() {
     let mut results = vec![
         super::LyricsSearchResult {
             id: 1,
@@ -1198,7 +1197,7 @@ pub(in crate::controller) fn controller_events_are_sendable() {
     assert_send::<ControllerEvent>();
 }
 #[test]
-pub(in crate::controller) fn provider_not_found_cover_errors_are_classified() {
+pub(in crate::controller) fn lyrics_found_classified() {
     assert!(super::covers::is_provider_not_found_error(
         "provider item was not found"
     ));
@@ -1296,7 +1295,7 @@ pub(in crate::controller) fn saved_server() -> SavedServer {
     }
 }
 #[test]
-pub(in crate::controller) fn grouped_cover_refs_keep_one_unique_cover_full_size() {
+pub(in crate::controller) fn lyrics_keep_size() {
     let cover = test_image_ref(1);
     let albums = vec![library_album(
         1,
@@ -1308,7 +1307,7 @@ pub(in crate::controller) fn grouped_cover_refs_keep_one_unique_cover_full_size(
     assert_eq!(refs, vec![cover]);
 }
 #[test]
-pub(in crate::controller) fn grouped_cover_refs_deduplicate_and_limit_to_four() {
+pub(in crate::controller) fn lyrics_cover_four() {
     let first = test_image_ref(1);
     let second = test_image_ref(2);
     let third = test_image_ref(3);
@@ -1331,8 +1330,7 @@ pub(in crate::controller) fn grouped_cover_refs_deduplicate_and_limit_to_four() 
     assert_eq!(refs, vec![first, second, third, fourth]);
 }
 #[test]
-pub(in crate::controller) fn artist_detail_fallback_uses_external_album_image_after_normalization()
-{
+pub(in crate::controller) fn artist_detail_fallback() {
     let mut detail = CachedArtistDetail {
         artist: rufin_core::Artist {
             id: ArtistId::fake(1),
@@ -1363,8 +1361,7 @@ pub(in crate::controller) fn artist_detail_fallback_uses_external_album_image_af
     );
 }
 #[test]
-pub(in crate::controller) fn artist_collection_fallback_uses_external_album_image_after_normalization()
- {
+pub(in crate::controller) fn artist_collection_fallback() {
     let artist_id = ArtistId::fake(1);
     let mut artists = vec![rufin_core::Artist {
         id: artist_id.clone(),
@@ -1386,7 +1383,7 @@ pub(in crate::controller) fn artist_collection_fallback_uses_external_album_imag
         ..AppSettings::default()
     };
 
-    super::apply_artist_album_fallback_image_refs(&mut artists, fallback_albums, &settings);
+    super::artist_album_fallback(&mut artists, fallback_albums, &settings);
 
     let image_ref = artists[0]
         .image_ref

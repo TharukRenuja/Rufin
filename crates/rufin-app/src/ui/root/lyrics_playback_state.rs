@@ -18,7 +18,7 @@ impl Shell {
         let notification = gio::Notification::new(&entry.title);
         notification.set_body(Some(&format!("{} - {}", entry.artist, entry.album)));
         if let Some(artwork) = self.current_playback_artwork_path(entry, THUMB_COVER_SIZE)
-            && let Some(bytes) = playback_notification_icon_bytes_from_path(&artwork.path)
+            && let Some(bytes) = notification_icon_path(&artwork.path)
         {
             let bytes = glib::Bytes::from_owned(bytes);
             notification.set_icon(&gio::BytesIcon::new(&bytes));

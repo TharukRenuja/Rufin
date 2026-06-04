@@ -27,7 +27,7 @@ impl Store {
         albums: &mut [Album],
     ) -> StoreResult<()> {
         self.attach_album_genres(server_id, albums)?;
-        self.attach_album_track_fallback_image_refs(server_id, albums)?;
+        self.album_track_fallback(server_id, albums)?;
         if albums.is_empty() {
             return Ok(());
         }
@@ -43,7 +43,7 @@ impl Store {
         Ok(())
     }
 
-    pub(super) fn attach_album_track_fallback_image_refs(
+    pub(super) fn album_track_fallback(
         &self,
         server_id: &ServerId,
         albums: &mut [Album],

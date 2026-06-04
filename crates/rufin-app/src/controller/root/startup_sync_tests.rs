@@ -3,11 +3,10 @@ use super::*;
 use super::{
     AppController, ControllerEvent, LOCAL_SOURCE_SERVER_ID, LibrarySnapshot,
     LoginActivationContext, LoginActivationRequest, SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT,
-    StoreHandle, activate_logged_in_server, home_refresh_completed_event, load_snapshot,
-    prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
+    StoreHandle, activate_logged_in_server, activate_with_token, home_refresh_completed_event,
+    load_snapshot, prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
     refresh_home_sections, refresh_home_sections_without_explore, refresh_playlist_pages,
-    save_token_and_activate_logged_in_server, sync_local_provider_with_events, sync_page_finished,
-    sync_provider, sync_provider_with_events,
+    sync_local_provider_with_events, sync_page_finished, sync_provider, sync_provider_with_events,
 };
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
@@ -52,15 +51,13 @@ impl SecretStore for SaveFailingSecretStore {
 }
 
 #[test]
-pub(in crate::controller) fn jellyfin_device_id_is_generated_once_and_saved() {
+pub(in crate::controller) fn startup_jellyfin_saved() {
     let store = StoreHandle::open_memory().expect("open memory store");
 
     let first =
-        ensure_jellyfin_device_id_with_generator(&store, || Ok("rufin-install-one".to_string()))
-            .expect("first device id");
+        ensure_device_id(&store, || Ok("rufin-install-one".to_string())).expect("first device id");
     let second =
-        ensure_jellyfin_device_id_with_generator(&store, || Ok("rufin-install-two".to_string()))
-            .expect("second device id");
+        ensure_device_id(&store, || Ok("rufin-install-two".to_string())).expect("second device id");
 
     assert_eq!(first, "rufin-install-one");
     assert_eq!(second, first);
@@ -116,7 +113,7 @@ impl PlaybackBackend for RecordingPlaybackBackend {
     }
 }
 #[test]
-pub(in crate::controller) fn no_server_bootstrap_enters_first_run_state() {
+pub(in crate::controller) fn startup_server_state() {
     let (_controller, _events, snapshot, queue, player) =
         AppController::bootstrap_memory_for_test();
     assert!(snapshot.first_run);
@@ -125,7 +122,7 @@ pub(in crate::controller) fn no_server_bootstrap_enters_first_run_state() {
     assert_eq!(player.state, PlaybackState::Stopped);
 }
 #[test]
-pub(in crate::controller) fn source_selection_activates_queue_for_selected_source() {
+pub(in crate::controller) fn startup_activate_source() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let server_id = snapshot.server.as_ref().expect("server").id.clone();
@@ -165,7 +162,7 @@ pub(in crate::controller) fn source_selection_activates_queue_for_selected_sourc
     );
 }
 #[test]
-pub(in crate::controller) fn first_run_local_server_initializes_active_queue() {
+pub(in crate::controller) fn startup_init_queue() {
     let (controller, events, _snapshot, initial_queue, _player) =
         AppController::bootstrap_memory_for_test();
     assert!(initial_queue.is_none());
@@ -194,7 +191,7 @@ pub(in crate::controller) fn first_run_local_server_initializes_active_queue() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn first_run_local_server_accepts_multiple_folders() {
+pub(in crate::controller) fn startup_accept_folders() {
     let (controller, events, _snapshot, initial_queue, _player) =
         AppController::bootstrap_memory_for_test();
     assert!(initial_queue.is_none());
@@ -225,7 +222,7 @@ pub(in crate::controller) fn first_run_local_server_accepts_multiple_folders() {
     let _cleanup_second = fs::remove_dir_all(second);
 }
 #[test]
-pub(in crate::controller) fn activate_logged_in_server_selects_server_without_saving_token() {
+pub(in crate::controller) fn startup_activate_token() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let server_id = ServerId::new("jellyfin:server:new");
@@ -279,7 +276,7 @@ pub(in crate::controller) fn activate_logged_in_server_selects_server_without_sa
     );
 }
 #[test]
-pub(in crate::controller) fn token_save_failure_does_not_persist_empty_server() {
+pub(in crate::controller) fn startup_persist_server() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let secrets: Arc<dyn SecretStore> = Arc::new(SaveFailingSecretStore);
@@ -296,7 +293,7 @@ pub(in crate::controller) fn token_save_failure_does_not_persist_empty_server() 
         access_token: "token".to_string(),
         device_id: Some("rufin-install-one".to_string()),
     };
-    let error = save_token_and_activate_logged_in_server(
+    let error = activate_with_token(
         &LoginActivationContext {
             store: &controller.store,
             queue: &controller.queue,
@@ -334,7 +331,7 @@ pub(in crate::controller) fn token_save_failure_does_not_persist_empty_server() 
     assert!(events.try_recv().is_err());
 }
 #[test]
-pub(in crate::controller) fn local_source_snapshot_loads_configured_folders() {
+pub(in crate::controller) fn startup_load_folders() {
     let store = StoreHandle::open_memory().expect("memory store");
     let root = unique_test_dir("local-source-snapshot");
     fs::create_dir_all(&root).expect("create root");
@@ -363,7 +360,7 @@ pub(in crate::controller) fn local_source_snapshot_loads_configured_folders() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn snapshot_load_reconciles_active_server_to_selected_remote_source() {
+pub(in crate::controller) fn startup_load_source() {
     let store = StoreHandle::open_memory().expect("memory store");
     let active_saved = saved_server();
     let mut selected_saved = saved_server();
@@ -402,7 +399,7 @@ pub(in crate::controller) fn snapshot_load_reconciles_active_server_to_selected_
     assert_eq!(active_after.server.id, selected_saved.server.id);
 }
 #[test]
-pub(in crate::controller) fn local_folder_preferences_add_selects_local_source_and_syncs() {
+pub(in crate::controller) fn startup_add_syncs() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = saved_server();
     let root = unique_test_dir("add-local-folder-select-source");
@@ -436,7 +433,7 @@ pub(in crate::controller) fn local_folder_preferences_add_selects_local_source_a
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn selecting_empty_local_source_starts_manifest_refresh() {
+pub(in crate::controller) fn startup_start_refresh() {
     let store = StoreHandle::open_memory().expect("memory store");
     let remote = saved_server();
     let local = local_source_saved();
@@ -479,7 +476,7 @@ pub(in crate::controller) fn selecting_empty_local_source_starts_manifest_refres
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn selecting_local_source_with_missing_artwork_reuses_cached_rows() {
+pub(in crate::controller) fn startup_reuse_cache() {
     let store = StoreHandle::open_memory().expect("memory store");
     let remote = saved_server();
     let local = local_source_saved();
@@ -525,7 +522,7 @@ pub(in crate::controller) fn selecting_local_source_with_missing_artwork_reuses_
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn local_manifest_delta_sync_prunes_deleted_tracks() {
+pub(in crate::controller) fn startup_track_deleted() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let root = unique_test_dir("local-delta-prune");
@@ -635,7 +632,7 @@ pub(in crate::controller) fn local_manifest_delta_sync_prunes_deleted_tracks() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn unchanged_local_manifest_sync_does_not_advance_generation() {
+pub(in crate::controller) fn startup_advance_generation() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let root = unique_test_dir("local-no-change-generation");
@@ -730,7 +727,7 @@ pub(in crate::controller) fn unchanged_local_manifest_sync_does_not_advance_gene
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn local_artist_artwork_revision_updates_without_audio_change() {
+pub(in crate::controller) fn startup_change_audio() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let root = unique_test_dir("local-artist-artwork-delta");
@@ -799,7 +796,7 @@ pub(in crate::controller) fn local_artist_artwork_revision_updates_without_audio
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn local_folder_preferences_remove_preserves_remote_source_selection() {
+pub(in crate::controller) fn startup_preserve_selection() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = saved_server();
     let root = unique_test_dir("remove-local-folder-preserve-source");
@@ -832,7 +829,7 @@ pub(in crate::controller) fn local_folder_preferences_remove_preserves_remote_so
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn removing_inactive_local_folder_syncs_remaining_local_cache() {
+pub(in crate::controller) fn startup_removing_cache() {
     let store = StoreHandle::open_memory().expect("memory store");
     let remote = saved_server();
     let local = local_source_saved();
@@ -922,7 +919,7 @@ pub(in crate::controller) fn removing_inactive_local_folder_syncs_remaining_loca
 }
 
 #[test]
-pub(in crate::controller) fn inactive_sync_failure_records_error_state() {
+pub(in crate::controller) fn startup_record_state() {
     let store = StoreHandle::open_memory().expect("memory store");
     let remote = saved_server();
     let failing = SavedServer {
@@ -976,7 +973,7 @@ pub(in crate::controller) fn inactive_sync_failure_records_error_state() {
 }
 
 #[test]
-pub(in crate::controller) fn update_server_settings_persists_editable_fields() {
+pub(in crate::controller) fn startup_persist_field() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let server_id = ServerId::new("server:editable");
@@ -1024,7 +1021,7 @@ pub(in crate::controller) fn update_server_settings_persists_editable_fields() {
     assert!(saved.trust_invalid_cert);
 }
 #[test]
-pub(in crate::controller) fn unchanged_server_settings_emit_visible_status() {
+pub(in crate::controller) fn startup_emit_status() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let server_id = ServerId::new("server:unchanged");
@@ -1058,7 +1055,7 @@ pub(in crate::controller) fn unchanged_server_settings_emit_visible_status() {
     assert_eq!(wait_for_status(&events), "No changes to save.");
 }
 #[test]
-pub(in crate::controller) fn fake_bootstrap_routes_data_through_store_cache() {
+pub(in crate::controller) fn startup_store_cache() {
     let (_controller, _events, snapshot, queue, player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     assert!(!snapshot.first_run);
@@ -1076,14 +1073,14 @@ pub(in crate::controller) fn fake_bootstrap_routes_data_through_store_cache() {
     assert_eq!(snapshot.cached_track_count, FakeScale::Small.track_count());
 }
 #[test]
-pub(in crate::controller) fn sync_pages_continue_when_total_is_unknown() {
+pub(in crate::controller) fn startup_sync_total() {
     assert!(!sync_page_finished(500, 0, 500));
     assert!(sync_page_finished(120, 0, 620));
     assert!(!sync_page_finished(120, 1_000, 620));
     assert!(sync_page_finished(500, 1_000, 1_000));
 }
 #[test]
-pub(in crate::controller) fn large_fake_bootstrap_seeds_visible_cache_window() {
+pub(in crate::controller) fn startup_large_window() {
     let (_controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Large);
     assert!(!snapshot.first_run);
@@ -1093,7 +1090,7 @@ pub(in crate::controller) fn large_fake_bootstrap_seeds_visible_cache_window() {
     assert_eq!(snapshot.cached_track_count, 2_000);
 }
 #[test]
-pub(in crate::controller) fn provider_sync_caches_all_track_pages() {
+pub(in crate::controller) fn startup_track_page() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let provider = FakeProvider::new(FakeScale::Small);
@@ -1121,7 +1118,7 @@ pub(in crate::controller) fn provider_sync_caches_all_track_pages() {
     assert_eq!(final_page.items.len(), 1);
 }
 #[test]
-pub(in crate::controller) fn provider_sync_emits_visible_cache_progress_with_counts_and_timing() {
+pub(in crate::controller) fn startup_emit_timing() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let provider = FakeProvider::new(FakeScale::Small);
@@ -1160,7 +1157,7 @@ pub(in crate::controller) fn provider_sync_emits_visible_cache_progress_with_cou
     );
 }
 #[test]
-pub(in crate::controller) fn cache_progress_status_degrades_when_total_is_unknown() {
+pub(in crate::controller) fn startup_cache_total() {
     let (events, receiver) = channel();
     let mut progress =
         SyncProgressReporter::new(Some(events), "Local Music".to_string(), "Local".to_string());
@@ -1184,7 +1181,7 @@ pub(in crate::controller) fn cache_progress_status_degrades_when_total_is_unknow
     assert!(!status.contains("620/"));
 }
 #[test]
-pub(in crate::controller) fn local_source_with_missing_artwork_does_not_resync_cached_rows() {
+pub(in crate::controller) fn startup_local_cache() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fexample-cover", None);
@@ -1211,7 +1208,7 @@ pub(in crate::controller) fn local_source_with_missing_artwork_does_not_resync_c
     );
 }
 #[test]
-pub(in crate::controller) fn startup_readiness_does_not_scan_local_artwork_cache() {
+pub(in crate::controller) fn startup_readiness_cache() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fmissing-startup-cover", None);
@@ -1236,7 +1233,7 @@ pub(in crate::controller) fn startup_readiness_does_not_scan_local_artwork_cache
     assert_eq!(readiness.startup_delay_ms, None);
 }
 #[test]
-pub(in crate::controller) fn configured_local_warm_cache_schedules_manifest_refresh() {
+pub(in crate::controller) fn warm_cache_schedule() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let root = unique_test_dir("local-warm-manifest-refresh");
@@ -1277,7 +1274,7 @@ pub(in crate::controller) fn configured_local_warm_cache_schedules_manifest_refr
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn configured_local_empty_cache_schedules_manifest_refresh() {
+pub(in crate::controller) fn empty_cache_schedule() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let root = unique_test_dir("local-empty-manifest-refresh");
@@ -1310,7 +1307,7 @@ pub(in crate::controller) fn configured_local_empty_cache_schedules_manifest_ref
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn local_server_without_configured_folders_skips_manifest_refresh() {
+pub(in crate::controller) fn startup_local_refresh() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     store
@@ -1336,7 +1333,7 @@ pub(in crate::controller) fn local_server_without_configured_folders_skips_manif
     assert!(!active_server_needs_sync(&store, &local.server.id));
 }
 #[test]
-pub(in crate::controller) fn local_source_sync_skips_artwork_cache_when_cover_file_exists() {
+pub(in crate::controller) fn startup_local_exists() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fcached-cover", None);
@@ -1372,7 +1369,7 @@ pub(in crate::controller) fn local_source_sync_skips_artwork_cache_when_cover_fi
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn local_source_thumbnail_only_cache_still_needs_grid_artwork() {
+pub(in crate::controller) fn startup_local_artwork() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let image_ref = ImageRef::new("local:cover:file%3A%2F%2Fthumbnail-only-cover", None);
@@ -1408,7 +1405,7 @@ pub(in crate::controller) fn local_source_thumbnail_only_cache_still_needs_grid_
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn local_startup_sync_policy_ignores_remote_age_when_artwork_is_ready() {
+pub(in crate::controller) fn startup_ignore_ready() {
     let stale_age = Some(STARTUP_CACHE_STALE_SECONDS + 60);
 
     let local_ready = source_sync_readiness(SourceSyncReadinessInput {
@@ -1456,7 +1453,7 @@ pub(in crate::controller) fn local_startup_sync_policy_ignores_remote_age_when_a
     assert!(!local_missing_artwork.artwork_fresh);
 }
 #[test]
-pub(in crate::controller) fn local_home_section_cache_discards_cross_source_items() {
+pub(in crate::controller) fn startup_local_source() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let local_image_ref = ImageRef::new("local:cover:file%3A%2F%2Fsection-cover", None);
@@ -1498,7 +1495,7 @@ pub(in crate::controller) fn local_home_section_cache_discards_cross_source_item
     );
 }
 #[test]
-pub(in crate::controller) fn local_snapshot_reuses_album_image_for_stale_track_image_refs() {
+pub(in crate::controller) fn snapshot_reuse_album() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let album_image_ref = ImageRef::new("local:cover:file%3A%2F%2Falbum-cover", None);
@@ -1550,7 +1547,7 @@ pub(in crate::controller) fn local_snapshot_reuses_album_image_for_stale_track_i
     );
 }
 #[test]
-pub(in crate::controller) fn local_home_section_payload_reuses_track_fallback_for_album_cards() {
+pub(in crate::controller) fn startup_track_cards() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let track_image_ref = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fpayload.flac", None);
@@ -1579,15 +1576,13 @@ pub(in crate::controller) fn local_home_section_payload_reuses_track_fallback_fo
         tracks: vec![track],
     };
 
-    normalize_home_section_image_refs_for_saved(&store, &local, &mut section)
-        .expect("normalize home section");
+    home_image_refs(&store, &local, &mut section).expect("normalize home section");
 
     assert_eq!(section.albums[0].image_ref.as_ref(), Some(&track_image_ref));
     assert_eq!(section.tracks[0].image_ref.as_ref(), Some(&track_image_ref));
 }
 #[test]
-pub(in crate::controller) fn local_cached_tracks_page_reuses_album_image_for_stale_track_image_refs()
- {
+pub(in crate::controller) fn stale_track_images() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let local = local_source_saved();
@@ -1625,8 +1620,7 @@ pub(in crate::controller) fn local_cached_tracks_page_reuses_album_image_for_sta
 }
 
 #[test]
-pub(in crate::controller) fn auto_dj_local_candidates_reuse_album_image_for_stale_track_image_refs()
-{
+pub(in crate::controller) fn auto_dj_candidate() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let local = local_source_saved();
@@ -1671,7 +1665,7 @@ pub(in crate::controller) fn auto_dj_local_candidates_reuse_album_image_for_stal
 }
 
 #[test]
-pub(in crate::controller) fn restored_local_queue_reuses_album_image_for_stale_track_image_refs() {
+pub(in crate::controller) fn restored_queue_reuse() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let album_image_ref = ImageRef::new("local:cover:file%3A%2F%2Falbum-cover", None);
@@ -1709,7 +1703,7 @@ pub(in crate::controller) fn restored_local_queue_reuses_album_image_for_stale_t
 }
 
 #[test]
-pub(in crate::controller) fn local_sync_refreshes_active_queue_and_playback_image_refs() {
+pub(in crate::controller) fn sync_refreshes_queue() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let local = local_source_saved();
@@ -1736,7 +1730,7 @@ pub(in crate::controller) fn local_sync_refreshes_active_queue_and_playback_imag
     *controller.queue.lock().expect("queue") = Some(queue);
     controller.sync_playback_snapshot_from_queue();
 
-    super::refresh_local_queue_image_refs_after_sync(&controller.sync_context(), &local);
+    super::refresh_queue_refs(&controller.sync_context(), &local);
 
     let queue = wait_for_queue(&events).expect("queue");
     assert_eq!(queue.entries[0].image_ref.as_ref(), Some(&new_image_ref));
@@ -1752,7 +1746,7 @@ pub(in crate::controller) fn local_sync_refreshes_active_queue_and_playback_imag
 }
 
 #[test]
-pub(in crate::controller) fn local_sync_queue_image_refresh_preserves_progress_changes() {
+pub(in crate::controller) fn startup_change_progress() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let local = local_source_saved();
@@ -1792,11 +1786,7 @@ pub(in crate::controller) fn local_sync_queue_image_refresh_preserves_progress_c
         .expect("queue")
         .set_progress_seconds(17);
 
-    super::refresh_local_queue_image_refs_from_snapshot(
-        &controller.sync_context(),
-        &local,
-        original_snapshot,
-    );
+    super::snapshot_queue_refs(&controller.sync_context(), &local, original_snapshot);
 
     let queue = wait_for_queue(&events).expect("queue");
     assert_eq!(queue.progress_seconds, 17);
@@ -1814,7 +1804,7 @@ pub(in crate::controller) fn local_sync_queue_image_refresh_preserves_progress_c
 }
 
 #[test]
-pub(in crate::controller) fn remote_snapshot_discards_local_provider_image_refs() {
+pub(in crate::controller) fn snapshot_discards_image() {
     let store = StoreHandle::open_memory().expect("memory store");
     let remote = saved_server();
     let local_image_ref = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftrack.flac", None);
@@ -1845,12 +1835,12 @@ pub(in crate::controller) fn remote_snapshot_discards_local_provider_image_refs(
     let snapshot = load_snapshot(&store).expect("load snapshot");
 
     assert_eq!(snapshot.albums.len(), 1);
-    assert_not_local_provider_image_ref(snapshot.albums[0].image_ref.as_ref());
+    startup_assert_ref(snapshot.albums[0].image_ref.as_ref());
     assert_eq!(snapshot.home_sections.len(), 1);
-    assert_not_local_provider_image_ref(snapshot.home_sections[0].albums[0].image_ref.as_ref());
+    startup_assert_ref(snapshot.home_sections[0].albums[0].image_ref.as_ref());
 }
 #[test]
-pub(in crate::controller) fn local_snapshot_discards_external_metadata_image_refs() {
+pub(in crate::controller) fn snapshot_discards_external() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let external_image_ref = ImageRef::new("external:album:Example%20Artist:Example%20Album", None);
@@ -1889,7 +1879,7 @@ pub(in crate::controller) fn local_snapshot_discards_external_metadata_image_ref
     assert!(snapshot.home_sections[0].albums[0].image_ref.is_none());
 }
 #[test]
-pub(in crate::controller) fn local_snapshot_does_not_reuse_external_album_image_for_tracks() {
+pub(in crate::controller) fn startup_track_image() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let external_image_ref = ImageRef::new("external:album:Example%20Artist:Example%20Album", None);
@@ -1923,7 +1913,7 @@ pub(in crate::controller) fn local_snapshot_does_not_reuse_external_album_image_
     assert!(snapshot.tracks[0].image_ref.is_none());
 }
 #[test]
-pub(in crate::controller) fn remote_cached_album_page_discards_local_provider_image_refs() {
+pub(in crate::controller) fn cache_album_page() {
     let store = StoreHandle::open_memory().expect("memory store");
     let remote = saved_server();
     let local_image_ref = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftrack.flac", None);
@@ -1949,11 +1939,10 @@ pub(in crate::controller) fn remote_cached_album_page_discards_local_provider_im
         .expect("load cached albums");
 
     assert_eq!(page.items.len(), 1);
-    assert_not_local_provider_image_ref(page.items[0].image_ref.as_ref());
+    startup_assert_ref(page.items[0].image_ref.as_ref());
 }
 #[test]
-pub(in crate::controller) fn local_cached_tracks_page_discards_external_album_fallback_image_refs()
-{
+pub(in crate::controller) fn external_album_refs() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
     let local = local_source_saved();
@@ -1988,7 +1977,7 @@ pub(in crate::controller) fn local_cached_tracks_page_discards_external_album_fa
     assert!(page.items[0].image_ref.is_none());
 }
 #[test]
-pub(in crate::controller) fn cached_remote_sync_skips_initial_artwork_cache() {
+pub(in crate::controller) fn startup_remote_cache() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let provider = FakeProvider::new(FakeScale::Small);
@@ -2074,14 +2063,14 @@ fn remote_album_with_image_ref(image_ref: ImageRef) -> Album {
     album.artist_id = Some(ArtistId::new("jellyfin:artist:one"));
     album
 }
-fn assert_not_local_provider_image_ref(image_ref: Option<&ImageRef>) {
+fn startup_assert_ref(image_ref: Option<&ImageRef>) {
     assert!(
         !image_ref.is_some_and(|image_ref| image_ref.item_id.starts_with("local:cover:")),
         "remote cached reads must not expose local provider image refs"
     );
 }
 #[test]
-pub(in crate::controller) fn home_refresh_replaces_cached_sections_without_full_sync() {
+pub(in crate::controller) fn home_refresh_replace() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let provider = FakeProvider::new(FakeScale::Small);
@@ -2152,7 +2141,7 @@ pub(in crate::controller) fn home_refresh_replaces_cached_sections_without_full_
     assert_eq!(sync_state.status, "idle");
 }
 #[test]
-pub(in crate::controller) fn playlist_refresh_replaces_cached_list_without_full_sync() {
+pub(in crate::controller) fn playlist_refresh_replace() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let provider = FakeProvider::new(FakeScale::Small);
@@ -2232,7 +2221,7 @@ pub(in crate::controller) fn playlist_refresh_replaces_cached_list_without_full_
     assert_eq!(sync_state.status, "idle");
 }
 #[test]
-pub(in crate::controller) fn home_section_refresh_replaces_only_selected_section() {
+pub(in crate::controller) fn startup_replace_section() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let provider = FakeProvider::new(FakeScale::Small);
@@ -2304,7 +2293,7 @@ pub(in crate::controller) fn home_section_refresh_replaces_only_selected_section
     assert_eq!(after[1].tracks, vec![expected_track]);
 }
 #[test]
-pub(in crate::controller) fn home_section_refresh_uses_home_update_event() {
+pub(in crate::controller) fn startup_update_event() {
     let event = home_refresh_completed_event(
         super::HomeRefreshTarget::Section(HomeSectionKind::MostPlayed),
         Box::new(LibrarySnapshot::first_run()),
@@ -2329,7 +2318,7 @@ pub(in crate::controller) fn home_section_refresh_uses_home_update_event() {
     ));
 }
 #[test]
-pub(in crate::controller) fn in_flight_permit_suppresses_duplicates_until_release() {
+pub(in crate::controller) fn startup_suppress_release() {
     let guards = InFlightGuards::new("Test");
     let server_id = ServerId::new("test-server");
     let permit = guards
@@ -2356,7 +2345,7 @@ pub(in crate::controller) fn in_flight_permit_suppresses_duplicates_until_releas
     );
 }
 #[test]
-pub(in crate::controller) fn in_flight_guards_keep_poisoned_locks_blocking() {
+pub(in crate::controller) fn startup_keep_blocking() {
     let guards = InFlightGuards::new("Test");
     let poisoned = guards.clone();
     let _panic = std::thread::spawn(move || {
@@ -2373,7 +2362,7 @@ pub(in crate::controller) fn in_flight_guards_keep_poisoned_locks_blocking() {
     assert_eq!(error, "Test guard lock was poisoned.");
 }
 #[test]
-pub(in crate::controller) fn home_refresh_without_explore_leaves_explore_cache_unchanged() {
+pub(in crate::controller) fn startup_home_unchanged() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let provider = FakeProvider::new(FakeScale::Small);
@@ -2438,7 +2427,7 @@ pub(in crate::controller) fn home_refresh_without_explore_leaves_explore_cache_u
     assert_eq!(after[1].tracks[0].id, TrackId::fake(1));
 }
 #[test]
-pub(in crate::controller) fn explore_prefetch_promotes_only_when_requested() {
+pub(in crate::controller) fn startup_promote_prefetch() {
     let runtime = Runtime::new().expect("runtime");
     let store = StoreHandle::open_memory().expect("memory store");
     let provider = FakeProvider::new(FakeScale::Small);
@@ -2509,7 +2498,7 @@ pub(in crate::controller) fn explore_prefetch_promotes_only_when_requested() {
     );
 }
 #[test]
-pub(in crate::controller) fn clear_cache_emits_empty_active_server_snapshot() {
+pub(in crate::controller) fn startup_emit_snapshot() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let server = snapshot.server.expect("server");

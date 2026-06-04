@@ -158,7 +158,7 @@ pub(in crate::ui) fn cover_decode_has_capacity(
                 .values()
                 .filter(|active_priority| **active_priority == CoverDecodePriority::Visible)
                 .count()
-                < COVER_VISIBLE_DECODE_MAX_IN_FLIGHT
+                < COVER_DECODE_LIMIT
         }
         CoverDecodePriority::Warm => active.len() < COVER_DECODE_MAX_IN_FLIGHT,
     }
@@ -170,7 +170,7 @@ mod priority_work_tests {
     use std::collections::{HashMap, HashSet};
 
     #[test]
-    fn visible_viewport_work_drops_stale_priority_backlog() {
+    fn visible_drop_backlog() {
         let mut lookups = HashMap::from([
             ("old-priority".to_string(), CoverPathLookupIntent::Priority),
             (
@@ -227,7 +227,7 @@ mod priority_work_tests {
     }
 
     #[test]
-    fn visible_decode_jobs_keep_request_order_ahead_of_warm_work() {
+    fn visible_warm_work() {
         let mut queue = VecDeque::from([decode_job("warm-old", CoverDecodePriority::Warm)]);
 
         queue_cover_decode_job(
@@ -251,7 +251,7 @@ mod priority_work_tests {
     }
 
     #[test]
-    fn visible_decode_capacity_is_independent_from_warm_lane() {
+    fn visible_warm_lane() {
         let active = (0..COVER_DECODE_MAX_IN_FLIGHT)
             .map(|index| (format!("warm-{index}"), CoverDecodePriority::Warm))
             .collect::<HashMap<_, _>>();
@@ -267,7 +267,7 @@ mod priority_work_tests {
     }
 
     #[test]
-    fn route_change_drops_visible_work_but_keeps_background_warm_work() {
+    fn route_warm_work() {
         let mut lookups = HashMap::from([
             ("old-visible".to_string(), CoverPathLookupIntent::Visible),
             ("old-priority".to_string(), CoverPathLookupIntent::Priority),

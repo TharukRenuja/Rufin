@@ -30,11 +30,11 @@ impl FakePlaybackBackend {
         }
     }
 
-    pub fn emit_end_of_stream_for_test(&mut self) {
+    pub fn emit_test_eos(&mut self) {
         self.events.push_back(PlaybackEvent::EndOfStream);
     }
 
-    pub fn emit_prepared_track_started_for_test(&mut self) {
+    pub fn emit_prepared_track(&mut self) {
         if let Some(next) = self.next.take() {
             self.current = Some(next.track.clone());
             self.duration_seconds = next.track.duration_seconds;

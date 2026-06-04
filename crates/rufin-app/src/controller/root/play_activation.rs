@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_loaded_source_over_limit_uses_anchor_biased_window() {
+    fn play_use_window() {
         let items = (0..1_200)
             .map(|index| source_item(index as u32, index))
             .collect::<Vec<_>>();
@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn five_hundred_item_source_is_windowed_for_play_start() {
+    fn play_start_windowed() {
         let items = (0..500)
             .map(|index| source_item(index as u32, index))
             .collect::<Vec<_>>();
@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn snippet_replace_degrades_to_track_only() {
+    fn play_track_degrades() {
         let selected = TrackId::fake(9);
         let normalized = normalize_loaded_source_activation(activation(
             LoadedCompleteness::Snippet,
@@ -352,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn window_rejects_items_when_first_source_index_does_not_match_start() {
+    fn play_start_index() {
         let error = normalize_loaded_source_activation(activation(
             LoadedCompleteness::Window {
                 start: 25,
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_rejects_items_when_first_source_index_is_not_zero() {
+    fn play_reject_zero() {
         let error = normalize_loaded_source_activation(activation(
             LoadedCompleteness::Complete,
             vec![source_item(1, 10), source_item(2, 11)],
@@ -387,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn window_rejects_items_that_do_not_fit_inside_total() {
+    fn play_fit_total() {
         let error = normalize_loaded_source_activation(activation(
             LoadedCompleteness::Window {
                 start: 50,
@@ -406,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn window_rejects_items_when_last_source_index_is_outside_total() {
+    fn play_reject_total() {
         let error = normalize_loaded_source_activation(activation(
             LoadedCompleteness::Window {
                 start: 1,
@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_track_ids_with_different_source_item_id_selects_matching_anchor_occurrence() {
+    fn play_match_occurrence() {
         let duplicate_id = TrackId::fake(42);
         let first = PlaySourceItem {
             track: Track {

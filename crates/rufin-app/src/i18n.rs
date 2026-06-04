@@ -640,7 +640,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn locale_candidates_include_unix_utf8_variants() {
+    fn i18n_include_variants() {
         assert_eq!(
             locale_candidates("de-DE"),
             vec!["de-DE", "de_DE", "de_DE.UTF-8", "de_DE.utf8"]
@@ -648,12 +648,12 @@ mod tests {
     }
 
     #[test]
-    fn locale_candidates_force_english_to_untranslated_catalog() {
+    fn i18n_locale_catalog() {
         assert_eq!(locale_candidates("en_US"), vec!["C"]);
     }
 
     #[test]
-    fn language_option_index_defaults_unknown_values_to_system() {
+    fn i18n_language_system() {
         let options = vec![
             LanguageOption {
                 id: SYSTEM_LANGUAGE_PREFERENCE.to_string(),
@@ -675,14 +675,14 @@ mod tests {
     }
 
     #[test]
-    fn language_display_name_uses_clean_language_name() {
+    fn i18n_use_name() {
         assert_eq!(language_display_name("pt_BR"), "Portuguese");
         assert_eq!(language_display_name("de_DE"), "German");
         assert_eq!(language_display_name("zz_ZZ"), "zz_ZZ");
     }
 
     #[test]
-    fn translation_falls_back_when_catalog_entry_is_empty() {
+    fn i18n_fall_empty() {
         assert_eq!(non_empty_translation("Previous", String::new()), "Previous");
         assert_eq!(non_empty_translation("", String::new()), "");
         assert_eq!(

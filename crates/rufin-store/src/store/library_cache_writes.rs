@@ -599,7 +599,7 @@ impl Store {
                 } else {
                     genre.image_refs.clone()
                 };
-                replace_collection_cover_refs_on_connection(
+                replace_collection_refs(
                     connection,
                     server_id,
                     COLLECTION_COVER_GENRE,
@@ -661,7 +661,7 @@ impl Store {
                 } else {
                     playlist.image_refs.clone()
                 };
-                replace_collection_cover_refs_on_connection(
+                replace_collection_refs(
                     connection,
                     server_id,
                     COLLECTION_COVER_PLAYLIST,
@@ -797,7 +797,7 @@ impl Store {
                 ",
                 params![server_id.as_str(), home_section_kind_key(section.kind)],
             )?;
-            Self::insert_home_section_items_for_table(
+            Self::insert_home_items(
                 connection,
                 "home_section_prefetch_items",
                 server_id,
@@ -829,7 +829,7 @@ impl Store {
         section: &HomeSection,
         generation: i64,
     ) -> StoreResult<()> {
-        Self::insert_home_section_items_for_table(
+        Self::insert_home_items(
             connection,
             "home_section_items",
             server_id,
@@ -837,7 +837,7 @@ impl Store {
             generation,
         )
     }
-    pub(super) fn insert_home_section_items_for_table(
+    pub(super) fn insert_home_items(
         connection: &Connection,
         table: &str,
         server_id: &ServerId,

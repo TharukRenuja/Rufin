@@ -1231,7 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_all_source_preserves_order_and_current_index() {
+    fn queue_preserve_index() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         let id = queue
             .replace_all(QueueReplacement {
@@ -1274,7 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_all_source_rejects_stale_position_anchor() {
+    fn queue_reject_anchor() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(9));
         let before = queue.snapshot();
@@ -1326,7 +1326,7 @@ mod tests {
     }
 
     #[test]
-    fn appends_and_moves_to_next_track() {
+    fn queue_track_next() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1356,7 +1356,7 @@ mod tests {
     }
 
     #[test]
-    fn play_next_remains_next_when_shuffle_is_enabled() {
+    fn queue_play_enabled() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1371,7 +1371,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_entries_keep_navigation_ids_from_tracks() {
+    fn queue_track_id() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         let mut track = track(1);
         track.album_id = AlbumId::fake(9);
@@ -1390,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_current_advances_to_valid_entry() {
+    fn queue_advance_entry() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         let first = queue.append(&track(1));
         queue.append(&track(2));
@@ -1404,7 +1404,7 @@ mod tests {
     }
 
     #[test]
-    fn reorder_moves_entries_without_changing_current_track() {
+    fn reorder_move_entry() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1420,7 +1420,7 @@ mod tests {
     }
 
     #[test]
-    fn next_after_end_of_stream_peeks_without_advancing() {
+    fn queue_peek_advancing() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1440,7 +1440,7 @@ mod tests {
     }
 
     #[test]
-    fn activate_jumps_to_existing_queue_entry() {
+    fn queue_jump_entry() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         let second = queue.append(&track(2));
@@ -1456,7 +1456,7 @@ mod tests {
     }
 
     #[test]
-    fn move_after_current_preserves_current_playback() {
+    fn queue_preserve_playback() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1481,7 +1481,7 @@ mod tests {
     }
 
     #[test]
-    fn move_after_current_remains_next_when_shuffle_is_enabled() {
+    fn queue_move_enabled() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1497,7 +1497,7 @@ mod tests {
     }
 
     #[test]
-    fn end_of_stream_repeat_one_keeps_current_track() {
+    fn end_stream_repeat() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1572,7 +1572,7 @@ mod tests {
     }
 
     #[test]
-    fn same_source_and_seed_shuffle_is_independent_of_prior_queue_history() {
+    fn queue_source_history() {
         let source = QueueSourceInput {
             source_key: source_key("shuffle"),
             materialized_start: 0,
@@ -1613,7 +1613,7 @@ mod tests {
     }
 
     #[test]
-    fn disabling_shuffle_returns_to_source_order_from_current_display_index() {
+    fn queue_return_index() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue
             .replace_all(QueueReplacement {
@@ -1643,7 +1643,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_valid_shuffle_order_is_used_until_rebuild() {
+    fn queue_restored_rebuild() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1660,7 +1660,7 @@ mod tests {
     }
 
     #[test]
-    fn enabling_shuffle_starts_traversal_at_current_track() {
+    fn enabling_shuffle_start() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1674,7 +1674,7 @@ mod tests {
     }
 
     #[test]
-    fn appending_to_exhausted_shuffled_queue_adds_new_track_after_current() {
+    fn appending_exhausted_shuffled() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
         queue.append(&track(2));
@@ -1697,7 +1697,7 @@ mod tests {
     }
 
     #[test]
-    fn append_last_to_empty_shuffled_queue_starts_current_first_traversal() {
+    fn queue_start_traversal() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.set_shuffle(true, 19);
         queue.set_repeat_mode(RepeatMode::Off);
@@ -1768,7 +1768,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_removes_entries_and_current_track() {
+    fn clear_remove_entry() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(1));
 

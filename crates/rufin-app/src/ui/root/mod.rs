@@ -167,8 +167,7 @@ pub(in crate::ui) use home_refresh::*;
 pub(in crate::ui) use layout_rendering::*;
 #[cfg(test)]
 pub(in crate::ui) use playlist_detail_view::{
-    playlist_detail_compact_for_width, playlist_detail_route_margin_for_width,
-    playlist_detail_sort_width_for_width,
+    playlist_detail_compact_for_width, playlist_route_margin, playlist_sort_width,
 };
 pub(in crate::ui) use shell_navigation::*;
 
@@ -187,25 +186,24 @@ pub(in crate::ui) struct PlaybackArtworkPath {
 pub(in crate::ui) const DECODED_COVER_CACHE_LIMIT: usize = 3_072;
 pub(in crate::ui) const DECODED_COVER_CACHE_SOFT_BYTES: usize = 256 * 1024 * 1024;
 pub(in crate::ui) const COVER_WARM_BATCH_SIZE: usize = 3;
-pub(in crate::ui) const COVER_PATH_LOOKUP_MAX_IN_FLIGHT: usize = 12;
+pub(in crate::ui) const COVER_LOOKUP_LIMIT: usize = 12;
 pub(in crate::ui) const COVER_WARM_INTERVAL_MS: u64 = 32;
 pub(in crate::ui) const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
 pub(in crate::ui) const COVER_VISIBLE_REQUEST_DELAY_MS: u64 = 48;
 pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
-pub(in crate::ui) const COVER_VISIBLE_DECODE_MAX_IN_FLIGHT: usize = 16;
+pub(in crate::ui) const COVER_DECODE_LIMIT: usize = 16;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
 pub(in crate::ui) const STARTUP_HOME_SECTION_LIMIT: usize = 3;
 pub(in crate::ui) const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
 pub(in crate::ui) const STARTUP_CACHED_COVER_PRIME_LIMIT: usize = 3_072;
-pub(in crate::ui) const FIRST_RUN_COVER_PRIME_TIMEOUT_MS: u64 = 3_000;
-pub(in crate::ui) const FIRST_RUN_COVER_PRIME_POLL_MS: u64 = 33;
+pub(in crate::ui) const PRIME_TIMEOUT_MS: u64 = 3_000;
+pub(in crate::ui) const PRIME_POLL_MS: u64 = 33;
 pub(in crate::ui) const FIRST_RUN_HOME_SECTION_LIMIT: usize = 3;
-pub(in crate::ui) const FIRST_RUN_HOME_SECTION_COVER_LIMIT: usize = 4;
-pub(in crate::ui) const FIRST_RUN_GRID_COVER_PRIME_LIMIT: usize = 192;
-pub(in crate::ui) const SOURCE_ROUTE_COVER_WARM_SETTLE_DELAY_MS: u64 =
-    RESPONSIVE_RENDER_DELAY_MS * 5;
+pub(in crate::ui) const HOME_COVER_LIMIT: usize = 4;
+pub(in crate::ui) const GRID_COVER_LIMIT: usize = 192;
+pub(in crate::ui) const WARM_SETTLE_MS: u64 = RESPONSIVE_RENDER_DELAY_MS * 5;
 pub(in crate::ui) const LIBRARY_SYNC_COMPLETE_STATUS: &str = "Library sync complete";
 pub(in crate::ui) const LIBRARY_PREPARING_STATUS: &str = "Preparing library...";
 pub(in crate::ui) const FAVORITE_EMPTY_GLYPH: &str = "♡";
@@ -282,9 +280,9 @@ pub(in crate::ui) struct AppState {
     first_run_connection_ready: Cell<bool>,
     first_run_cover_prime_generation: Cell<u64>,
     first_run_cover_prime_pending: RefCell<HashSet<String>>,
-    source_route_cover_warm_next_token: Cell<u64>,
-    source_route_cover_warm_pending_for: RefCell<Option<(ServerId, u64)>>,
-    source_route_cover_warm_started_for: RefCell<Option<ServerId>>,
+    cover_warm_token: Cell<u64>,
+    cover_warm_pending: RefCell<Option<(ServerId, u64)>>,
+    cover_warm_started: RefCell<Option<ServerId>>,
     discovered_servers: RefCell<Vec<DiscoveredServer>>,
     server_discovery_status: RefCell<String>,
     server_discovery_running: Cell<bool>,
@@ -513,9 +511,9 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         first_run_connection_ready: Cell::new(false),
         first_run_cover_prime_generation: Cell::new(0),
         first_run_cover_prime_pending: RefCell::new(HashSet::new()),
-        source_route_cover_warm_next_token: Cell::new(0),
-        source_route_cover_warm_pending_for: RefCell::new(None),
-        source_route_cover_warm_started_for: RefCell::new(None),
+        cover_warm_token: Cell::new(0),
+        cover_warm_pending: RefCell::new(None),
+        cover_warm_started: RefCell::new(None),
         discovered_servers: RefCell::new(Vec::new()),
         server_discovery_status: RefCell::new("Searching will start automatically".to_string()),
         server_discovery_running: Cell::new(false),

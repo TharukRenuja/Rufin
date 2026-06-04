@@ -541,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn opaque_ids_are_displayable_and_comparable() {
+    fn domain_opaque_comparable() {
         let album = AlbumId::new("jellyfin:album:abc");
         let same_album = AlbumId::from("jellyfin:album:abc");
         let track = TrackId::fake(42);

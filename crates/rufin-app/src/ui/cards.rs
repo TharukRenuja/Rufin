@@ -255,10 +255,10 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
 }
 
 pub(super) fn track_cover_tile(shell: &Rc<Shell>, track: &Track, size: i32) -> gtk::Widget {
-    track_cover_tile_with_play_action(shell, track, size, None)
+    track_play_tile(shell, track, size, None)
 }
 
-pub(super) fn track_cover_tile_with_play_action(
+pub(super) fn track_play_tile(
     shell: &Rc<Shell>,
     track: &Track,
     size: i32,

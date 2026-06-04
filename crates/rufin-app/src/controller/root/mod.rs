@@ -121,9 +121,7 @@ pub(in crate::controller) use playback_waveforms::{
     cached_waveform_peaks, request_waveform_for_prepared_item, set_waveform_cache_key,
     waveform_cache_key, waveform_cache_key_for_queue,
 };
-pub(in crate::controller) use queue_state::{
-    persist_queue_snapshot_deferred_from_handles, sync_playback_snapshot_from_queue_handles,
-};
+pub(in crate::controller) use queue_state::{defer_queue_snapshot, sync_queue_snapshot};
 #[cfg(test)]
 pub(in crate::controller) use startup_sync_tests::RecordingPlaybackBackend;
 pub(in crate::controller) use sync_requests::*;

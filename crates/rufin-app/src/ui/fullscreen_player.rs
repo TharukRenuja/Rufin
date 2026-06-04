@@ -183,7 +183,7 @@ impl Shell {
             FULLSCREEN_PLAYER_VIEW_NAME,
             gtk::StackTransitionType::OverUp,
         );
-        schedule_fullscreen_stack_transition_reset(self);
+        reset_fullscreen_stack(self);
         let update_shell = Rc::clone(self);
         glib::timeout_add_local_once(
             Duration::from_millis(FULLSCREEN_PLAYER_DEFERRED_UPDATE_MS),
@@ -226,7 +226,7 @@ impl Shell {
             .set_transition_duration(FULLSCREEN_PLAYER_TRANSITION_MS);
         self.app_content_stack
             .set_visible_child_full(MAIN_VIEW_NAME, gtk::StackTransitionType::UnderDown);
-        schedule_fullscreen_stack_transition_reset(self);
+        reset_fullscreen_stack(self);
     }
 
     pub(super) fn toggle_fullscreen_player(self: &Rc<Self>) {
@@ -431,7 +431,7 @@ impl Shell {
     }
 }
 
-fn schedule_fullscreen_stack_transition_reset(shell: &Rc<Shell>) {
+fn reset_fullscreen_stack(shell: &Rc<Shell>) {
     let reset_shell = Rc::clone(shell);
     glib::timeout_add_local(
         Duration::from_millis(u64::from(FULLSCREEN_PLAYER_TRANSITION_MS) + 16),
@@ -518,22 +518,22 @@ mod tests {
     use super::fullscreen_artwork_size_for;
 
     #[test]
-    fn fullscreen_artwork_size_stays_useful_in_compact_windows() {
+    fn fullscreen_stay_windows() {
         assert_eq!(fullscreen_artwork_size_for(480, 360), 140);
     }
 
     #[test]
-    fn fullscreen_artwork_size_caps_on_wide_windows() {
+    fn fullscreen_cap_windows() {
         assert_eq!(fullscreen_artwork_size_for(1440, 900), 320);
     }
 
     #[test]
-    fn fullscreen_artwork_size_uses_available_height_before_width() {
+    fn fullscreen_use_width() {
         assert_eq!(fullscreen_artwork_size_for(900, 560), 200);
     }
 
     #[test]
-    fn fullscreen_meta_uses_year_and_source_not_duration() {
+    fn fullscreen_use_duration() {
         assert_eq!(
             super::fullscreen_player_meta_parts(2013, Some("FLAC")),
             "FLAC - 2013"
@@ -541,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_source_label_uses_uppercase_file_extension() {
+    fn fullscreen_use_extension() {
         assert_eq!(
             super::audio_source_label_from_path("/music/album/track.mpc").as_deref(),
             Some("MPC")
@@ -549,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_source_label_ignores_url_query() {
+    fn fullscreen_ignore_query() {
         assert_eq!(
             super::audio_source_label_from_path("/music/album/track.flac?token=redacted")
                 .as_deref(),
@@ -558,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_source_label_normalizes_content_type() {
+    fn fullscreen_normalize_type() {
         assert_eq!(
             super::audio_source_label_from_format("audio/mpeg").as_deref(),
             Some("MP3")

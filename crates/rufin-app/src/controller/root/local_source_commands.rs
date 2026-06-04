@@ -5,12 +5,12 @@ impl AppController {
         self.add_local_server_folders(vec![root_path]);
     }
     pub fn add_local_server_folders(&self, root_paths: Vec<PathBuf>) {
-        self.add_local_library_folders_with_selection(root_paths, true);
+        self.add_library_folders(root_paths, true);
     }
     pub fn add_local_library_folder(&self, root_path: PathBuf) {
-        self.add_local_library_folders_with_selection(vec![root_path], true);
+        self.add_library_folders(vec![root_path], true);
     }
-    pub(in crate::controller) fn add_local_library_folders_with_selection(
+    pub(in crate::controller) fn add_library_folders(
         &self,
         root_paths: Vec<PathBuf>,
         select_local: bool,
@@ -81,7 +81,7 @@ impl AppController {
                 return;
             }
             if select_local
-                && let Err(error) = activate_queue_for_saved_and_emit(
+                && let Err(error) = activate_saved_queue(
                     &QueueActivationContext {
                         store: &store,
                         queue: &queue,
@@ -201,7 +201,7 @@ impl AppController {
             if selected_local && no_local_folders {
                 match store.with_store(|store| store.active_server()) {
                     Ok(Some(fallback)) if fallback.server.provider != LOCAL_PROVIDER_ID => {
-                        if let Err(error) = activate_queue_for_saved_and_emit(
+                        if let Err(error) = activate_saved_queue(
                             &QueueActivationContext {
                                 store: &store,
                                 queue: &queue,

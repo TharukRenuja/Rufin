@@ -229,7 +229,7 @@ pub(in crate::ui) fn track_table_play_context(
                     query.borrow().as_str(),
                     favorite_first,
                 ),
-                sort: track_sort_descriptor_for_track_sort_key(settings.sort_key),
+                sort: track_sort_descriptor(settings.sort_key),
             },
         }
     })
@@ -241,7 +241,7 @@ pub(in crate::ui) fn library_displayed_source_order(
 ) -> SourceOrder {
     SourceOrder::LibraryDisplayed {
         filter_key: library_filter_key(settings, query, favorite_first),
-        sort: track_sort_descriptor_for_library_field(settings.sort_key),
+        sort: library_sort_descriptor(settings.sort_key),
     }
 }
 pub(in crate::ui) fn folder_play_source_key(
@@ -258,7 +258,7 @@ pub(in crate::ui) fn folder_play_source_key(
         order: SourceOrder::FolderDisplayed {
             query: source_query(query),
             filter_key: track_table_filter_key(settings, query, false),
-            sort: track_sort_descriptor_for_track_sort_key(settings.sort_key),
+            sort: track_sort_descriptor(settings.sort_key),
         },
     }
 }
@@ -335,7 +335,7 @@ fn track_sort_key(sort_key: TrackSortKey) -> &'static str {
         TrackSortKey::Favorite => "favorite",
     }
 }
-fn track_sort_descriptor_for_track_sort_key(sort_key: TrackSortKey) -> TrackSortDescriptor {
+fn track_sort_descriptor(sort_key: TrackSortKey) -> TrackSortDescriptor {
     match sort_key {
         TrackSortKey::TrackNumber => TrackSortDescriptor::TrackNumber,
         TrackSortKey::Title => TrackSortDescriptor::Title,
@@ -346,7 +346,7 @@ fn track_sort_descriptor_for_track_sort_key(sort_key: TrackSortKey) -> TrackSort
         }
     }
 }
-fn track_sort_descriptor_for_library_field(field: LibraryField) -> TrackSortDescriptor {
+fn library_sort_descriptor(field: LibraryField) -> TrackSortDescriptor {
     match field {
         LibraryField::TrackNumber | LibraryField::DiscNumber => TrackSortDescriptor::TrackNumber,
         LibraryField::Title | LibraryField::TitleMerged => TrackSortDescriptor::Title,

@@ -199,14 +199,14 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         exit_to_tray_row.set_visible(settings.tray_enabled);
         start_minimized_row.set_visible(settings.tray_enabled);
         let tray_shell = Rc::clone(shell);
-        let exit_to_tray_row_for_tray = exit_to_tray_row.clone();
+        let tray_exit_row = exit_to_tray_row.clone();
         let start_minimized_row_for_tray = start_minimized_row.clone();
         tray_row.connect_active_notify(move |row| {
             let enabled = row.is_active();
-            exit_to_tray_row_for_tray.set_visible(enabled);
+            tray_exit_row.set_visible(enabled);
             start_minimized_row_for_tray.set_visible(enabled);
             if !enabled {
-                exit_to_tray_row_for_tray.set_active(false);
+                tray_exit_row.set_active(false);
                 start_minimized_row_for_tray.set_active(false);
             }
             tray_shell.set_tray_enabled(enabled);
@@ -701,7 +701,7 @@ fn sidebar_item_row(
         let Ok(source_id) = value.get::<String>() else {
             return false;
         };
-        let Some(source_item) = sidebar_route_item_from_drag_id(&source_id) else {
+        let Some(source_item) = sidebar_drag_route(&source_id) else {
             return false;
         };
         if source_item == entry.item {
@@ -794,7 +794,7 @@ fn sidebar_route_item_drag_id(item: SidebarRouteItem) -> &'static str {
         SidebarRouteItem::SmartPlaylists => "SmartPlaylists",
     }
 }
-fn sidebar_route_item_from_drag_id(id: &str) -> Option<SidebarRouteItem> {
+fn sidebar_drag_route(id: &str) -> Option<SidebarRouteItem> {
     SidebarRouteItem::all()
         .into_iter()
         .find(|item| sidebar_route_item_drag_id(*item) == id)

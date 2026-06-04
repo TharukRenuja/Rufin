@@ -1,8 +1,8 @@
 use super::*;
 
 const FITTED_TABLE_WIDTH_PADDING: i32 = 2;
-const FITTED_TABLE_TARGET_MIN_COLUMN_WIDTH: i32 = 44;
-const FITTED_TABLE_ABSOLUTE_MIN_COLUMN_WIDTH: i32 = 24;
+const TABLE_TARGET_WIDTH: i32 = 44;
+const TABLE_MIN_WIDTH: i32 = 24;
 const FITTED_TABLE_ROUTE_INSET: i32 = 72;
 
 pub(in crate::ui) fn route_column_view_initial_width(shell: &Shell) -> i32 {
@@ -20,18 +20,13 @@ pub(in crate::ui) fn fitted_column_widths(base_widths: &[i32], available_width: 
     let base_total = base_widths.iter().sum::<i32>();
     if base_total <= available_width {
         let mut widths = base_widths.to_vec();
-        distribute_extra_width_to_largest_column(&mut widths, available_width);
+        distribute_column_width(&mut widths, available_width);
         return widths;
     }
 
     let min_widths = base_widths
         .iter()
-        .map(|width| {
-            (*width).clamp(
-                FITTED_TABLE_ABSOLUTE_MIN_COLUMN_WIDTH,
-                FITTED_TABLE_TARGET_MIN_COLUMN_WIDTH,
-            )
-        })
+        .map(|width| (*width).clamp(TABLE_MIN_WIDTH, TABLE_TARGET_WIDTH))
         .collect::<Vec<_>>();
     let min_total = min_widths.iter().sum::<i32>();
     if min_total >= available_width {
@@ -90,7 +85,7 @@ fn distribute_column_width_remainder(widths: &mut [i32], target: i32) {
     }
 }
 
-fn distribute_extra_width_to_largest_column(widths: &mut [i32], target: i32) {
+fn distribute_column_width(widths: &mut [i32], target: i32) {
     let remainder = target - widths.iter().sum::<i32>();
     if remainder <= 0 || widths.is_empty() {
         return;
@@ -114,7 +109,7 @@ pub(in crate::ui) fn install_column_view_width_fit(
     }
 
     let columns = Rc::new(columns);
-    apply_column_view_width_fit_to_width(columns.as_ref(), initial_width);
+    fit_column_widths(columns.as_ref(), initial_width);
     let columns_for_resize = Rc::clone(&columns);
     table.connect_notify_local(Some("width"), move |table, _| {
         apply_column_view_width_fit(table, columns_for_resize.as_ref());
@@ -127,13 +122,10 @@ fn apply_column_view_width_fit(table: &gtk::ColumnView, columns: &[(gtk::ColumnV
         return;
     }
 
-    apply_column_view_width_fit_to_width(columns, available_width);
+    fit_column_widths(columns, available_width);
 }
 
-fn apply_column_view_width_fit_to_width(
-    columns: &[(gtk::ColumnViewColumn, i32)],
-    available_width: i32,
-) {
+fn fit_column_widths(columns: &[(gtk::ColumnViewColumn, i32)], available_width: i32) {
     if available_width <= 1 {
         return;
     }
@@ -1316,7 +1308,7 @@ pub(in crate::ui) fn populate_album_collection_model(
     album_tracks: &HashMap<AlbumId, Vec<Track>>,
 ) {
     if settings.layout == LibraryLayout::Detail {
-        replace_album_detail_items_in_model(
+        replace_album_items(
             model,
             album_detail_items_for(albums, settings, album_tracks),
         );
@@ -1331,7 +1323,7 @@ pub(in crate::ui) fn append_album_collection_model(
     album_tracks: &HashMap<AlbumId, Vec<Track>>,
 ) {
     if settings.layout == LibraryLayout::Detail {
-        append_album_detail_items_to_model(
+        append_album_items(
             model,
             album_detail_items_for(&albums, settings, album_tracks),
         );

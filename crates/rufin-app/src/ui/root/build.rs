@@ -79,20 +79,20 @@ pub(in crate::ui) fn sidebar_route_visible(settings: &AppSettings, item: Sidebar
         .any(|entry| entry.item == item && entry.visible)
 }
 pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<CoverWarmTarget> {
-    startup_cover_prime_targets_from_snapshot(
+    startup_cover_targets(
         &shell.state.library.borrow(),
         &shell.state.settings.borrow(),
         shell.state.home_showcase_seed.get(),
     )
 }
-pub(in crate::ui) fn startup_cover_prime_targets_from_snapshot(
+pub(in crate::ui) fn startup_cover_targets(
     library: &LibrarySnapshot,
     settings: &AppSettings,
     home_showcase_seed: u64,
 ) -> Vec<CoverWarmTarget> {
-    startup_home_cover_prime_targets_from_snapshot(library, settings, home_showcase_seed)
+    startup_prime_targets(library, settings, home_showcase_seed)
 }
-pub(in crate::ui) fn source_route_cover_warm_targets_from_snapshot(
+pub(in crate::ui) fn source_warm_targets(
     library: &LibrarySnapshot,
     smart_playlists: &[SmartPlaylist],
     settings: &AppSettings,
@@ -116,17 +116,17 @@ pub(in crate::ui) fn source_route_cover_warm_targets_from_snapshot(
         settings,
         route_metrics,
     );
-    dedupe_source_route_cover_warm_targets(&mut targets, server_id);
+    dedupe_warm_targets(&mut targets, server_id);
     targets
 }
 pub(in crate::ui) fn startup_home_cover_prime_targets(shell: &Shell) -> Vec<CoverWarmTarget> {
-    startup_home_cover_prime_targets_from_snapshot(
+    startup_prime_targets(
         &shell.state.library.borrow(),
         &shell.state.settings.borrow(),
         shell.state.home_showcase_seed.get(),
     )
 }
-pub(in crate::ui) fn startup_home_cover_prime_targets_from_snapshot(
+pub(in crate::ui) fn startup_prime_targets(
     library: &LibrarySnapshot,
     settings: &AppSettings,
     home_showcase_seed: u64,
@@ -229,7 +229,7 @@ fn push_source_route_warm_targets(
             false,
             route_metrics,
         );
-        push_track_anchor_source_warm_targets(
+        push_track_targets(
             targets,
             library.tracks.clone(),
             &list_settings,
@@ -293,14 +293,14 @@ fn push_source_route_warm_targets(
     }
     if sidebar_route_visible(settings, SidebarRouteItem::SmartPlaylists) {
         let list_settings = settings.library_list(LibraryListKey::SmartPlaylists);
-        push_smart_playlist_source_warm_targets(
+        push_smart_targets(
             targets,
             smart_playlists.to_vec(),
             &list_settings,
             route_metrics,
         );
     }
-    dedupe_source_route_cover_warm_targets(targets, server_id);
+    dedupe_warm_targets(targets, server_id);
 }
 fn push_track_source_warm_targets(
     targets: &mut Vec<CoverWarmTarget>,
@@ -320,7 +320,7 @@ fn push_track_source_warm_targets(
         push_startup_cover_target(targets, track.image_ref.as_ref(), fetch_size, size);
     }
 }
-fn push_track_anchor_source_warm_targets(
+fn push_track_targets(
     targets: &mut Vec<CoverWarmTarget>,
     mut tracks: Vec<Track>,
     settings: &LibraryListSettings,
@@ -420,7 +420,7 @@ fn push_playlist_source_warm_targets(
         push_startup_cover_target(targets, playlist.image_ref.as_ref(), fetch_size, size);
     }
 }
-fn push_smart_playlist_source_warm_targets(
+fn push_smart_targets(
     targets: &mut Vec<CoverWarmTarget>,
     mut playlists: Vec<SmartPlaylist>,
     settings: &LibraryListSettings,
@@ -451,14 +451,11 @@ fn source_route_cover_size(
         LibraryLayout::Row => None,
     }
 }
-pub(in crate::ui) fn dedupe_source_route_cover_warm_targets(
-    targets: &mut Vec<CoverWarmTarget>,
-    server_id: &ServerId,
-) {
+pub(in crate::ui) fn dedupe_warm_targets(targets: &mut Vec<CoverWarmTarget>, server_id: &ServerId) {
     let mut positions = HashMap::<String, usize>::new();
     let mut deduped = Vec::<CoverWarmTarget>::new();
     for target in targets.drain(..) {
-        let key = source_route_cover_warm_dedupe_key(server_id, &target.image_ref);
+        let key = warm_dedupe_key(server_id, &target.image_ref);
         if let Some(index) = positions.get(&key).copied() {
             let existing = &mut deduped[index];
             let existing_decode_size = cover_decode_size(existing.size, existing.fetch_size);
@@ -475,7 +472,7 @@ pub(in crate::ui) fn dedupe_source_route_cover_warm_targets(
     }
     *targets = deduped;
 }
-fn source_route_cover_warm_dedupe_key(server_id: &ServerId, image_ref: &ImageRef) -> String {
+fn warm_dedupe_key(server_id: &ServerId, image_ref: &ImageRef) -> String {
     format!(
         "{}\u{1f}{}\u{1f}{}",
         server_id.as_str(),
@@ -544,13 +541,11 @@ pub(in crate::ui) fn playback_artwork_key_matches(
         .iter()
         .any(|candidate| candidate == key)
 }
-pub(in crate::ui) fn playback_notification_icon_bytes_from_path(path: &Path) -> Option<Vec<u8>> {
+pub(in crate::ui) fn notification_icon_path(path: &Path) -> Option<Vec<u8>> {
     let pixbuf = Pixbuf::from_file(path).ok()?;
-    playback_notification_icon_bytes_from_pixbuf(&pixbuf)
+    notification_icon_pixbuf(&pixbuf)
 }
-pub(in crate::ui) fn playback_notification_icon_bytes_from_pixbuf(
-    pixbuf: &Pixbuf,
-) -> Option<Vec<u8>> {
+pub(in crate::ui) fn notification_icon_pixbuf(pixbuf: &Pixbuf) -> Option<Vec<u8>> {
     let target_size = THUMB_COVER_SIZE.clamp(1, 512) as i32;
     let width = pixbuf.width().max(1);
     let height = pixbuf.height().max(1);
@@ -579,18 +574,10 @@ pub(in crate::ui) fn first_run_cover_prime_refs(library: &LibrarySnapshot) -> Ve
         .iter()
         .take(FIRST_RUN_HOME_SECTION_LIMIT)
     {
-        for album in section
-            .albums
-            .iter()
-            .take(FIRST_RUN_HOME_SECTION_COVER_LIMIT)
-        {
+        for album in section.albums.iter().take(HOME_COVER_LIMIT) {
             push_first_run_cover_ref(&mut refs, &mut seen, album.image_ref.as_ref());
         }
-        for track in section
-            .tracks
-            .iter()
-            .take(FIRST_RUN_HOME_SECTION_COVER_LIMIT)
-        {
+        for track in section.tracks.iter().take(HOME_COVER_LIMIT) {
             push_first_run_cover_ref(&mut refs, &mut seen, track.image_ref.as_ref());
         }
     }
@@ -627,7 +614,7 @@ pub(in crate::ui) fn push_first_run_cover_ref(
     seen: &mut HashSet<(String, String)>,
     image_ref: Option<&ImageRef>,
 ) {
-    if refs.len() >= FIRST_RUN_GRID_COVER_PRIME_LIMIT {
+    if refs.len() >= GRID_COVER_LIMIT {
         return;
     }
     let Some(image_ref) = image_ref else {

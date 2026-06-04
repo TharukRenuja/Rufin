@@ -127,7 +127,7 @@ impl AppController {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
-                    if let Err(error) = reset_active_queue_after_server_identity_change(
+                    if let Err(error) = reset_identity_queue(
                         &QueueActivationContext {
                             store: &store,
                             queue: &queue,
@@ -473,7 +473,7 @@ fn restore_server_token(
     .map_err(|error| error.to_string())
 }
 
-fn reset_active_queue_after_server_identity_change(
+fn reset_identity_queue(
     context: &QueueActivationContext<'_>,
     saved: &SavedServer,
 ) -> Result<(), String> {
@@ -618,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn name_only_server_edit_preserves_token_and_cache() {
+    fn name_server_edit() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let saved = saved_server_for_settings();
@@ -658,7 +658,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_sensitive_server_edit_success_refreshes_token_without_clearing_same_identity() {
+    fn server_auth_identity() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let saved = saved_server_for_settings();
@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_sensitive_server_edit_failure_preserves_settings_token_and_cache() {
+    fn auth_sensitive_server() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let saved = saved_server_for_settings();
@@ -748,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_sensitive_server_edit_clears_cache_when_authenticated_identity_changes() {
+    fn server_change_identity() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let saved = saved_server_for_settings();

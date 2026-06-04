@@ -12,7 +12,7 @@ const LASTFM_PLACEHOLDER_IMAGE_IDS: [&str; 1] = ["2a96cbd8b46e442fc41c2b86b82156
 const MUSICBRAINZ_RELEASE_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release/";
 const MUSICBRAINZ_RELEASE_GROUP_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release-group/";
 const COVER_ART_ARCHIVE_RELEASE_URL: &str = "https://coverartarchive.org/release";
-const COVER_ART_ARCHIVE_RELEASE_GROUP_URL: &str = "https://coverartarchive.org/release-group";
+const RELEASE_GROUP_URL: &str = "https://coverartarchive.org/release-group";
 const EXTERNAL_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
 const EXTERNAL_METADATA_JSON_MAX_BYTES: usize = 4 * 1024 * 1024;
 const EXTERNAL_METADATA_USER_AGENT: &str = concat!(
@@ -62,7 +62,7 @@ fn fetch_album_cover_with_client(
         }
     }
 
-    match cover_art_archive_release_group_urls(client, art, size) {
+    match release_group_urls(client, art, size) {
         Ok(urls) => {
             for url in urls {
                 match download_image(client, &url) {
@@ -165,7 +165,7 @@ fn is_lastfm_placeholder_image_url(url: &str) -> bool {
         .any(|placeholder| url.contains(placeholder))
 }
 
-fn cover_art_archive_release_group_urls(
+fn release_group_urls(
     client: &Client,
     art: &ExternalAlbumArt,
     size: u32,
@@ -174,7 +174,7 @@ fn cover_art_archive_release_group_urls(
     let cover_path = cover_art_size_path(size);
     Ok(ids
         .into_iter()
-        .map(|id| format!("{COVER_ART_ARCHIVE_RELEASE_GROUP_URL}/{id}/{cover_path}"))
+        .map(|id| format!("{RELEASE_GROUP_URL}/{id}/{cover_path}"))
         .collect())
 }
 

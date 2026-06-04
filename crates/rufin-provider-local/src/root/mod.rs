@@ -166,7 +166,7 @@ impl LocalProvider {
         Ok(identity_for_root(&root))
     }
 
-    pub fn image_bytes_for_cover_item_id(
+    pub fn cover_item_bytes(
         item_id: &str,
         roots: impl IntoIterator<Item = PathBuf>,
     ) -> ProviderResult<ImageBytes> {

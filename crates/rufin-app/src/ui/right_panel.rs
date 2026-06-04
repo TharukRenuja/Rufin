@@ -254,7 +254,7 @@ pub(super) fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
             && applied_height_for_tick.replace(available_height) != available_height
         {
             let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
-            set_queue_lyrics_split_position_without_saving(split, &suppress_for_tick, saved_ratio);
+            set_lyrics_split(split, &suppress_for_tick, saved_ratio);
         }
         glib::ControlFlow::Continue
     });
@@ -338,11 +338,7 @@ pub(super) fn queue_lyrics_initial_position(
         .unwrap_or_else(|| queue_lyrics_default_position(available_height))
 }
 
-fn set_queue_lyrics_split_position_without_saving(
-    split: &gtk::Paned,
-    suppress_save: &Rc<Cell<u32>>,
-    saved_ratio: Option<f64>,
-) {
+fn set_lyrics_split(split: &gtk::Paned, suppress_save: &Rc<Cell<u32>>, saved_ratio: Option<f64>) {
     let available_height = split.height();
     if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT {
         return;
@@ -361,7 +357,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_split_keeps_lyrics_at_least_three_hundred_pixels_when_possible() {
+    fn right_keep_possible() {
         let available_height = 756;
         let position = queue_lyrics_default_position(available_height);
 
@@ -369,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn split_clamp_preserves_queue_when_panel_is_shorter_than_ideal() {
+    fn right_preserve_ideal() {
         let available_height = 360;
         let position = clamp_queue_lyrics_position(available_height, 280);
 

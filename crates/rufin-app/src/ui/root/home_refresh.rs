@@ -15,7 +15,7 @@ pub(in crate::ui) fn present_track_context_menu(
 ) {
     present_track_context_menu_inner(target, shell, track, position, None);
 }
-pub(in crate::ui) fn present_playlist_entry_track_context_menu(
+pub(in crate::ui) fn present_track_menu(
     target: &gtk::Widget,
     shell: &Rc<Shell>,
     track: Track,

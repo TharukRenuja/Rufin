@@ -4,10 +4,7 @@ use rufin_core::{Album, AppSettings, Artist, Genre, ImageRef, Playlist, Track};
 
 use crate::external_metadata;
 
-pub(super) fn external_album_image_refs_from_albums(
-    mut albums: Vec<Album>,
-    settings: &AppSettings,
-) -> Vec<ImageRef> {
+pub(super) fn external_album_refs(mut albums: Vec<Album>, settings: &AppSettings) -> Vec<ImageRef> {
     let mut image_refs = Vec::new();
     let mut seen = HashSet::new();
     external_metadata::normalize_albums(&mut albums, settings);
@@ -27,7 +24,7 @@ pub(super) fn external_album_image_refs_from_albums(
     image_refs
 }
 
-pub(super) fn provider_artist_image_refs_from_artists(artists: Vec<Artist>) -> Vec<ImageRef> {
+pub(super) fn provider_artist_refs(artists: Vec<Artist>) -> Vec<ImageRef> {
     let mut image_refs = Vec::new();
     let mut seen = HashSet::new();
     push_provider_artist_image_refs(&mut image_refs, &mut seen, artists);
@@ -110,12 +107,12 @@ mod tests {
     use rufin_core::{AlbumId, ArtistId, TrackId};
 
     #[test]
-    fn synced_external_cover_candidates_use_only_albums_without_provider_art() {
+    fn sync_external_cover() {
         let settings = AppSettings {
             external_metadata_enabled: true,
             ..AppSettings::default()
         };
-        let refs = external_album_image_refs_from_albums(
+        let refs = external_album_refs(
             vec![
                 album_without_cover(1, "Loveless", "My Bloody Valentine"),
                 album_with_cover(2, "Souvlaki", "Slowdive"),
@@ -133,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn synced_external_cover_candidates_respect_private_mode() {
+    fn candidate_sync_mode() {
         let settings = AppSettings {
             external_metadata_enabled: true,
             private_mode: true,
@@ -141,7 +138,7 @@ mod tests {
         };
 
         assert!(
-            external_album_image_refs_from_albums(
+            external_album_refs(
                 vec![album_without_cover(1, "Loveless", "My Bloody Valentine")],
                 &settings,
             )
@@ -150,12 +147,12 @@ mod tests {
     }
 
     #[test]
-    fn synced_external_cover_candidates_keep_existing_external_refs() {
+    fn candidate_keep_refs() {
         let settings = AppSettings {
             external_metadata_enabled: true,
             ..AppSettings::default()
         };
-        let refs = external_album_image_refs_from_albums(
+        let refs = external_album_refs(
             vec![Album {
                 image_ref: Some(ImageRef::new(
                     "external:album:Example%20Artist:Example%20Album",
@@ -174,8 +171,8 @@ mod tests {
     }
 
     #[test]
-    fn synced_provider_artist_cover_candidates_use_only_provider_art() {
-        let refs = provider_artist_image_refs_from_artists(vec![
+    fn sync_artist_cover() {
+        let refs = provider_artist_refs(vec![
             artist_without_cover(1, "Slowdive"),
             artist_with_cover(2, "Ride"),
             artist_with_cover(2, "Ride"),
@@ -187,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn initial_provider_cover_candidates_include_track_refs_once() {
+    fn candidate_track_refs() {
         let mut refs = Vec::new();
         let mut seen = HashSet::new();
         push_provider_album_image_refs(

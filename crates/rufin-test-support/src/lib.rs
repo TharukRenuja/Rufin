@@ -579,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn paged_album_and_track_reads_are_stable() {
+    fn paged_read_stable() {
         let provider = FakeProvider::new(FakeScale::Small);
 
         let albums = block_on(provider.albums(PagedRequest::new(10, 3))).expect("albums");
@@ -593,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn home_sections_provide_enough_items_for_wide_rows() {
+    fn home_wide_sections() {
         let provider = FakeProvider::new(FakeScale::Small);
 
         let sections = block_on(provider.home_sections()).expect("home sections");

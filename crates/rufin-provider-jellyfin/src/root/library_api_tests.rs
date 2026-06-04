@@ -3,7 +3,7 @@ use rufin_provider::MusicProvider;
 use wiremock::matchers::{body_json, header_regex, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 #[tokio::test]
-async fn login_posts_credentials_and_maps_session() {
+async fn library_map_session() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/Users/AuthenticateByName"))
@@ -43,13 +43,13 @@ async fn login_posts_credentials_and_maps_session() {
     assert_eq!(session.device_id.as_deref(), Some("rufin-install-one"));
 }
 #[test]
-fn bare_server_addresses_default_to_http() {
+fn library_bare_http() {
     let url = normalize_base_url("music.local:8096").expect("normalized url");
 
     assert_eq!(url.as_str(), "http://music.local:8096/");
 }
 #[tokio::test]
-async fn album_reads_send_auth_header_and_map_pages() {
+async fn library_map_page() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items"))
@@ -127,7 +127,7 @@ async fn album_reads_send_auth_header_and_map_pages() {
     assert!(page.items[0].favorite);
 }
 #[tokio::test]
-async fn album_mapping_does_not_treat_contributing_artists_as_album_artists() {
+async fn library_album_artist() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items"))
@@ -164,7 +164,7 @@ async fn album_mapping_does_not_treat_contributing_artists_as_album_artists() {
     );
 }
 #[tokio::test]
-async fn image_bytes_send_auth_header_and_size_params() {
+async fn library_image_params() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items/album-one/Images/Primary"))
@@ -247,7 +247,7 @@ async fn json_reads_reject_oversized_response() {
     );
 }
 #[tokio::test]
-async fn image_errors_do_not_expose_tokens() {
+async fn library_image_token() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items/album-one/Images/Primary"))
@@ -270,7 +270,7 @@ async fn image_errors_do_not_expose_tokens() {
     assert!(!error.to_string().contains("secret-token"));
 }
 #[tokio::test]
-async fn album_detail_loads_album_and_matching_tracks() {
+async fn library_track_album() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items/album-one"))
@@ -352,7 +352,7 @@ async fn album_detail_loads_album_and_matching_tracks() {
     );
 }
 #[tokio::test]
-async fn music_folders_load_music_user_views() {
+async fn library_load_views() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Users/user-one/Views"))
@@ -382,7 +382,7 @@ async fn music_folders_load_music_user_views() {
     assert_eq!(folders[0].name, "Music");
 }
 #[tokio::test]
-async fn tracks_in_music_folder_scope_items_by_parent_id() {
+async fn library_scope_id() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items"))
@@ -419,7 +419,7 @@ async fn tracks_in_music_folder_scope_items_by_parent_id() {
     assert_eq!(page.items[0].id.as_str(), "jellyfin:track:track-one");
 }
 #[tokio::test]
-async fn folder_root_lists_music_user_views() {
+async fn library_folder_views() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Users/user-one/Views"))
@@ -442,7 +442,7 @@ async fn folder_root_lists_music_user_views() {
     assert!(detail.tracks.is_empty());
 }
 #[tokio::test]
-async fn folder_selected_music_root_loads_immediate_children() {
+async fn library_load_child() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items/music-one"))
@@ -494,7 +494,7 @@ async fn folder_selected_music_root_loads_immediate_children() {
     assert_eq!(detail.tracks[0].id.as_str(), "jellyfin:track:track-one");
 }
 #[tokio::test]
-async fn folder_nested_directory_maps_child_folders_and_tracks() {
+async fn library_track_folders() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items/folder-one"))
@@ -550,7 +550,7 @@ async fn folder_nested_directory_maps_child_folders_and_tracks() {
     assert_eq!(detail.tracks[0].id.as_str(), "jellyfin:track:track-two");
 }
 #[tokio::test]
-async fn artists_playlists_and_favorites_map_common_counts() {
+async fn library_map_counts() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Artists"))
@@ -589,7 +589,7 @@ async fn artists_playlists_and_favorites_map_common_counts() {
     assert!(artists.items[0].favorite);
 }
 #[tokio::test]
-async fn genres_use_music_genres_endpoint_and_scope_to_music_items() {
+async fn library_scope_music() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/MusicGenres"))
@@ -633,7 +633,7 @@ async fn genres_use_music_genres_endpoint_and_scope_to_music_items() {
     );
 }
 #[tokio::test]
-async fn random_tracks_use_random_sort_and_requested_filters() {
+async fn library_filter_sort() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items"))
@@ -681,7 +681,7 @@ async fn random_tracks_use_random_sort_and_requested_filters() {
     assert_eq!(tracks[0].year, 2000);
 }
 #[tokio::test]
-async fn playlist_detail_paginates_and_maps_ordered_tracks() {
+async fn library_track_ordered() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items/playlist-one"))
@@ -779,7 +779,7 @@ async fn playlist_detail_paginates_and_maps_ordered_tracks() {
     assert_eq!(detail.tracks[1].title, "Second Motion");
 }
 #[tokio::test]
-async fn favorite_mutations_use_jellyfin_item_favorite_endpoints() {
+async fn library_use_favorite() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/UserFavoriteItems/track-one"))
@@ -815,7 +815,7 @@ async fn favorite_mutations_use_jellyfin_item_favorite_endpoints() {
         .expect("unfavorite album");
 }
 #[tokio::test]
-async fn playlist_write_mutations_use_jellyfin_playlist_endpoints() {
+async fn library_use_playlist() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/Playlists"))

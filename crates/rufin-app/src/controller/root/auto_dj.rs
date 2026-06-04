@@ -1,8 +1,8 @@
-use super::queue_state::persist_queue_snapshot_deferred_from_handles;
+use super::queue_state::defer_queue_snapshot;
 use super::*;
 
 impl AppController {
-    pub(in crate::controller) fn auto_dj_top_up_or_emit_error(&self) -> bool {
+    pub(in crate::controller) fn auto_dj_topup(&self) -> bool {
         match self.auto_dj_top_up() {
             Ok(topped_up) => topped_up,
             Err(error) => {
@@ -12,7 +12,7 @@ impl AppController {
         }
     }
     pub(in crate::controller) fn auto_dj_top_up(&self) -> Result<bool, String> {
-        auto_dj_top_up_from_handles(&self.auto_dj_enabled, &self.queue, &self.store)
+        auto_dj_handles(&self.auto_dj_enabled, &self.queue, &self.store)
     }
     pub(in crate::controller) fn auto_dj_top_up_deferred(&self) {
         if !self
@@ -32,15 +32,15 @@ impl AppController {
         let playback = Arc::clone(&self.playback);
         let queue_persist_generation = Arc::clone(&self.queue_persist_generation);
         let events = self.events.clone();
-        thread::spawn(move || {
-            match auto_dj_top_up_from_handles(&auto_dj_enabled, &queue, &store) {
+        thread::spawn(
+            move || match auto_dj_handles(&auto_dj_enabled, &queue, &store) {
                 Ok(true) => {
                     let queue_snapshot = queue
                         .lock()
                         .ok()
                         .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot));
                     if let Some(snapshot) = queue_snapshot {
-                        persist_queue_snapshot_deferred_from_handles(
+                        defer_queue_snapshot(
                             store.clone(),
                             events.clone(),
                             queue_persist_generation,
@@ -56,8 +56,8 @@ impl AppController {
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
                 }
-            }
-        });
+            },
+        );
     }
 }
 
@@ -69,7 +69,7 @@ struct AutoDjQueueState {
     remaining: usize,
 }
 
-fn auto_dj_top_up_from_handles(
+fn auto_dj_handles(
     auto_dj_enabled: &Arc<Mutex<bool>>,
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     store: &StoreHandle,
@@ -81,7 +81,7 @@ fn auto_dj_top_up_from_handles(
     {
         return Ok(false);
     }
-    let Some(state) = auto_dj_queue_state_from_handle(queue) else {
+    let Some(state) = auto_dj_state(queue) else {
         return Ok(false);
     };
     let settings = load_settings_for_active_server(store);
@@ -99,7 +99,7 @@ fn auto_dj_top_up_from_handles(
         &state.queued_track_ids,
         shuffle_seed(),
     );
-    normalize_auto_dj_candidate_image_refs(store, &state.server_id, &mut candidates)?;
+    auto_dj_refs(store, &state.server_id, &mut candidates)?;
     if candidates.is_empty() {
         return Ok(false);
     }
@@ -110,9 +110,9 @@ fn auto_dj_top_up_from_handles(
     {
         return Ok(false);
     }
-    append_auto_dj_candidates_if_current(queue, &state, refill_threshold, &candidates)
+    append_auto_dj(queue, &state, refill_threshold, &candidates)
 }
-fn normalize_auto_dj_candidate_image_refs(
+fn auto_dj_refs(
     store: &StoreHandle,
     server_id: &ServerId,
     candidates: &mut [Track],
@@ -123,12 +123,10 @@ fn normalize_auto_dj_candidate_image_refs(
     let Some(saved) = saved else {
         return Ok(());
     };
-    normalize_local_track_image_refs_from_albums(store, &saved, candidates, &[])
+    track_album_refs(store, &saved, candidates, &[])
 }
 
-fn auto_dj_queue_state_from_handle(
-    queue: &Arc<Mutex<Option<QueueEngine>>>,
-) -> Option<AutoDjQueueState> {
+fn auto_dj_state(queue: &Arc<Mutex<Option<QueueEngine>>>) -> Option<AutoDjQueueState> {
     queue.lock().ok().and_then(|queue| {
         let queue = queue.as_ref()?;
         let current = queue.current()?.clone();
@@ -146,7 +144,7 @@ fn auto_dj_queue_state_from_handle(
     })
 }
 
-fn append_auto_dj_candidates_if_current(
+fn append_auto_dj(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     state: &AutoDjQueueState,
     refill_threshold: usize,

@@ -1,6 +1,6 @@
 use super::*;
 #[test]
-fn local_identity_is_stable_for_root() {
+fn local_root_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
 
     let first = LocalProvider::identity_for_root(dir.path()).expect("identity");
@@ -68,7 +68,7 @@ async fn local_provider_dedupes_overlapping_roots() {
     assert_eq!(provider.manifest_scan().entries.len(), 1);
 }
 #[tokio::test]
-async fn manifest_scan_reuses_unchanged_audio_without_tag_reads() {
+async fn manifest_scan_reuse() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("track.mp3"), []).expect("track file");
     let server = LocalProvider::identity_for_root(dir.path()).expect("identity");
@@ -96,7 +96,7 @@ async fn manifest_scan_reuses_unchanged_audio_without_tag_reads() {
     );
 }
 #[tokio::test]
-async fn manifest_scan_updates_folder_art_revision_without_tag_reads() {
+async fn manifest_scan_update() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("track.mp3"), []).expect("track file");
     let cover = dir.path().join("cover.jpg");
@@ -139,7 +139,7 @@ async fn manifest_scan_updates_folder_art_revision_without_tag_reads() {
 }
 
 #[test]
-fn reparsed_manifest_entry_classifies_cover_only_change_as_artwork_track() {
+fn reparsed_track_artwork() {
     let stale = scanned_test_track(
         1,
         AlbumId::new("local:album:one"),
@@ -167,7 +167,7 @@ fn reparsed_manifest_entry_classifies_cover_only_change_as_artwork_track() {
 }
 
 #[test]
-fn reparsed_manifest_entry_classifies_non_search_metadata_change_as_metadata_track() {
+fn metadata_track_reparse() {
     let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
     let mut current_scanned = stale_scanned.clone();
     current_scanned.track.duration_seconds += 1;
@@ -185,7 +185,7 @@ fn reparsed_manifest_entry_classifies_non_search_metadata_change_as_metadata_tra
 }
 
 #[test]
-fn reparsed_manifest_entry_classifies_album_id_change_as_changed_track() {
+fn reparsed_track_changed() {
     let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
     let mut current_scanned = stale_scanned.clone();
     current_scanned.track.album_id = AlbumId::new("local:album:two");
@@ -203,7 +203,7 @@ fn reparsed_manifest_entry_classifies_album_id_change_as_changed_track() {
 }
 
 #[test]
-fn reparsed_manifest_entry_classifies_comment_change_as_metadata_track() {
+fn comment_track_reparse() {
     let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
     let mut current_scanned = stale_scanned.clone();
     current_scanned.track.comment = Some("alternate edition".to_string());
@@ -220,7 +220,7 @@ fn reparsed_manifest_entry_classifies_comment_change_as_metadata_track() {
 }
 
 #[test]
-fn local_tracks_share_album_cover_ref() {
+fn local_share_ref() {
     let dir = tempfile::tempdir().expect("tempdir");
     let album_id = AlbumId::new("local:album:test");
     let first_cover = LocalCover::Embedded {
@@ -257,7 +257,7 @@ fn local_tracks_share_album_cover_ref() {
     );
 }
 #[tokio::test]
-async fn local_embedded_cover_uses_scanned_bytes() {
+async fn local_use_bytes() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut covers = HashMap::new();
     covers.insert(
@@ -295,7 +295,7 @@ async fn local_embedded_cover_uses_scanned_bytes() {
     assert_eq!(image.content_type.as_deref(), Some("image/png"));
 }
 #[tokio::test]
-async fn local_file_cover_rejects_oversized_file() {
+async fn local_reject_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cover_path = dir.path().join("folder.jpg");
     let file = fs::File::create(&cover_path).expect("cover file");
@@ -334,7 +334,7 @@ async fn local_file_cover_rejects_oversized_file() {
     assert!(error.to_string().contains("local cover exceeded"));
 }
 #[test]
-fn local_cover_item_id_reads_file_cover_from_configured_root() {
+fn local_read_root() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cover_path = dir.path().join("folder.jpg");
     fs::write(&cover_path, [1_u8, 2, 3]).expect("cover file");
@@ -343,15 +343,14 @@ fn local_cover_item_id_reads_file_cover_from_configured_root() {
         revision: None,
     });
 
-    let image =
-        LocalProvider::image_bytes_for_cover_item_id(&item_id, vec![dir.path().to_path_buf()])
-            .expect("local cover");
+    let image = LocalProvider::cover_item_bytes(&item_id, vec![dir.path().to_path_buf()])
+        .expect("local cover");
 
     assert_eq!(image.bytes, vec![1, 2, 3]);
     assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
 }
 #[test]
-fn local_cover_item_id_rejects_paths_outside_configured_roots() {
+fn local_reject_root() {
     let root = tempfile::tempdir().expect("root");
     let outside = tempfile::tempdir().expect("outside");
     let cover_path = outside.path().join("folder.jpg");
@@ -361,14 +360,13 @@ fn local_cover_item_id_rejects_paths_outside_configured_roots() {
         revision: None,
     });
 
-    let error =
-        LocalProvider::image_bytes_for_cover_item_id(&item_id, vec![root.path().to_path_buf()])
-            .expect_err("outside-root cover");
+    let error = LocalProvider::cover_item_bytes(&item_id, vec![root.path().to_path_buf()])
+        .expect_err("outside-root cover");
 
     assert_eq!(error.to_string(), "provider item was not found");
 }
 #[test]
-fn embedded_cover_rejects_oversized_picture_data() {
+fn embedded_reject_picture() {
     let picture = Picture::unchecked(vec![0_u8; LOCAL_COVER_MAX_BYTES + 1]).build();
 
     let error = picture_data_bounded(&picture).expect_err("oversized embedded cover");
@@ -376,7 +374,7 @@ fn embedded_cover_rejects_oversized_picture_data() {
     assert!(error.to_string().contains("embedded cover exceeded"));
 }
 #[test]
-fn folder_cover_uses_single_supported_image_fallback() {
+fn folder_use_fallback() {
     let dir = tempfile::tempdir().expect("tempdir");
     let image = dir.path().join("artwork.png");
     fs::write(&image, [1_u8]).expect("image file");
@@ -384,7 +382,7 @@ fn folder_cover_uses_single_supported_image_fallback() {
     assert_eq!(folder_cover(dir.path()).as_deref(), Some(image.as_path()));
 }
 #[test]
-fn folder_cover_prefers_explicit_name_over_other_images() {
+fn folder_cover_prefers() {
     let dir = tempfile::tempdir().expect("tempdir");
     let booklet = dir.path().join("booklet.png");
     let cover = dir.path().join("Cover.JPG");
@@ -394,7 +392,7 @@ fn folder_cover_prefers_explicit_name_over_other_images() {
     assert_eq!(folder_cover(dir.path()).as_deref(), Some(cover.as_path()));
 }
 #[test]
-fn folder_cover_skips_ambiguous_unnamed_images() {
+fn folder_cover_skips() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(dir.path().join("back.jpg"), [1_u8]).expect("back image");
     fs::write(dir.path().join("booklet.png"), [2_u8]).expect("booklet image");
@@ -402,7 +400,7 @@ fn folder_cover_skips_ambiguous_unnamed_images() {
     assert!(folder_cover(dir.path()).is_none());
 }
 #[test]
-fn local_artist_image_prefers_artist_folder_artwork_over_album_cover() {
+fn local_cover_artist() {
     let dir = tempfile::tempdir().expect("tempdir");
     let album_id = AlbumId::new("local:album:test");
     let artist_dir = dir.path().join("Example Artist");
@@ -444,7 +442,7 @@ fn local_artist_image_prefers_artist_folder_artwork_over_album_cover() {
     );
 }
 #[test]
-fn local_artist_image_falls_back_to_album_cover() {
+fn local_fall_cover() {
     let dir = tempfile::tempdir().expect("tempdir");
     let album_id = AlbumId::new("local:album:test");
     let album_dir = dir.path().join("Example Artist").join("Example Album");
@@ -476,7 +474,7 @@ fn local_artist_image_falls_back_to_album_cover() {
     );
 }
 #[tokio::test]
-async fn local_folder_root_lists_configured_roots() {
+async fn local_root_folder() {
     let first = tempfile::tempdir().expect("first root");
     let second = tempfile::tempdir().expect("second root");
 
@@ -510,7 +508,7 @@ async fn local_folder_root_lists_configured_roots() {
     assert!(folder_names.contains(&second_name));
 }
 #[tokio::test]
-async fn local_folder_nested_view_lists_child_folders_and_direct_tracks() {
+async fn local_track_folders() {
     let root = tempfile::tempdir().expect("root");
     let artist = root.path().join("Artist");
     let album = artist.join("Album");
@@ -542,7 +540,7 @@ async fn local_folder_nested_view_lists_child_folders_and_direct_tracks() {
     assert_eq!(album_detail.tracks[0].title, "album-track");
 }
 #[tokio::test]
-async fn local_folder_rejects_unknown_folder_ids() {
+async fn local_reject_id() {
     let root = tempfile::tempdir().expect("root");
     let provider = LocalProvider::from_root(root.path().to_path_buf()).expect("provider");
     let outside = FolderId::new("local:folder:%2Fetc%2Fmusic");

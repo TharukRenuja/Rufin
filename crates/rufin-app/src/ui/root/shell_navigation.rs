@@ -131,7 +131,7 @@ pub(in crate::ui) fn set_track_table_columns(
     for column in &settings.visible_columns {
         table.append_column(&track_table_column(shell, *column));
     }
-    fit_track_table_columns_to_width(
+    fit_track_columns(
         table,
         &settings.visible_columns,
         super::library::route_column_view_initial_width(shell.as_ref()),
@@ -146,9 +146,9 @@ pub(in crate::ui) fn fit_track_table_columns(
         return;
     }
 
-    fit_track_table_columns_to_width(table, visible_columns, available_width);
+    fit_track_columns(table, visible_columns, available_width);
 }
-pub(in crate::ui) fn fit_track_table_columns_to_width(
+pub(in crate::ui) fn fit_track_columns(
     table: &gtk::ColumnView,
     visible_columns: &[TrackTableColumn],
     available_width: i32,
@@ -952,7 +952,7 @@ pub(in crate::ui) fn install_playlist_entry_context_menu(
         let Some(target) = target_weak.upgrade() else {
             return;
         };
-        present_playlist_entry_track_context_menu(
+        present_track_menu(
             &target,
             &click_shell,
             context_track(&click_shell, &click_track),
@@ -974,7 +974,7 @@ pub(in crate::ui) fn install_playlist_entry_context_menu(
             return glib::Propagation::Proceed;
         }
         if let Some(target) = target_weak.upgrade() {
-            present_playlist_entry_track_context_menu(
+            present_track_menu(
                 &target,
                 &key_shell,
                 context_track(&key_shell, &key_track),

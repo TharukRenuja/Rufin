@@ -251,7 +251,7 @@ impl Shell {
     ) -> gtk::Widget {
         let content_width = route_content_width(self);
         let compact = library_toolbar_compact_for_width(content_width);
-        let stacked = library_toolbar_stacks_for_key_width(key, content_width);
+        let stacked = toolbar_key_stack(key, content_width);
         let toolbar = gtk::Box::new(library_toolbar_orientation_for_width(key, content_width), 8);
         toolbar.add_css_class("track-toolbar");
         toolbar.set_hexpand(true);
@@ -304,7 +304,7 @@ impl Shell {
             sort_dropdown.set_hexpand(true);
             sort_dropdown.set_halign(gtk::Align::Fill);
             sort_dropdown.set_width_request(1);
-        } else if let Some(width) = library_toolbar_sort_width_for_width(key, content_width) {
+        } else if let Some(width) = toolbar_sort_width(key, content_width) {
             sort_dropdown.set_hexpand(false);
             sort_dropdown.set_halign(gtk::Align::End);
             sort_dropdown.set_width_request(width);
@@ -596,26 +596,20 @@ pub(in crate::ui) fn library_toolbar_stacks_for_width(_width: i32) -> bool {
 fn library_toolbar_compact_for_width(width: i32) -> bool {
     width < LIBRARY_TOOLBAR_STACK_WIDTH
 }
-pub(in crate::ui) fn library_toolbar_stacks_for_key_width(
-    _key: LibraryListKey,
-    width: i32,
-) -> bool {
+pub(in crate::ui) fn toolbar_key_stack(_key: LibraryListKey, width: i32) -> bool {
     library_toolbar_stacks_for_width(width)
 }
 pub(in crate::ui) fn library_toolbar_orientation_for_width(
     key: LibraryListKey,
     width: i32,
 ) -> gtk::Orientation {
-    if library_toolbar_stacks_for_key_width(key, width) {
+    if toolbar_key_stack(key, width) {
         gtk::Orientation::Vertical
     } else {
         gtk::Orientation::Horizontal
     }
 }
-pub(in crate::ui) fn library_toolbar_sort_width_for_width(
-    _key: LibraryListKey,
-    width: i32,
-) -> Option<i32> {
+pub(in crate::ui) fn toolbar_sort_width(_key: LibraryListKey, width: i32) -> Option<i32> {
     library_toolbar_compact_for_width(width).then_some((width / 4).clamp(112, 150))
 }
 

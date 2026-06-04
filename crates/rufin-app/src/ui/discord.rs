@@ -660,7 +660,7 @@ mod tests {
     use rufin_playback::PlaybackState;
 
     #[test]
-    fn presence_key_requires_enabled_playback_with_track() {
+    fn discord_track_playback() {
         let mut settings = AppSettings {
             discord_presence_enabled: true,
             ..AppSettings::default()
@@ -699,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn presence_key_ignores_normal_position_ticks() {
+    fn discord_ignore_ticks() {
         let settings = AppSettings {
             discord_presence_enabled: true,
             ..AppSettings::default()
@@ -718,14 +718,14 @@ mod tests {
     }
 
     #[test]
-    fn timeline_changes_only_for_real_seek_drift() {
+    fn discord_change_drift() {
         assert!(!timeline_changed(Some(10_000), Some(11_000)));
         assert!(timeline_changed(Some(10_000), Some(12_000)));
         assert!(timeline_changed(None, Some(12_000)));
     }
 
     #[test]
-    fn lastfm_urls_are_encoded_and_limited() {
+    fn discord_lastfm_limited() {
         assert_eq!(
             lastfm_track_url("M83", "Hurry Up, We're Dreaming", "Midnight City"),
             Some(
@@ -752,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn discord_text_truncates_and_pads_short_values() {
+    fn discord_pad_short() {
         assert_eq!(discord_text("", "A"), "A ");
         assert_eq!(discord_text(&"x".repeat(140), "fallback").len(), 127);
     }
@@ -793,7 +793,7 @@ mod tests {
     }
 
     #[test]
-    fn default_playback_snapshot_stays_stopped_for_presence_tests() {
+    fn discord_stay_tests() {
         let snapshot = PlaybackSnapshot::default();
         assert_eq!(snapshot.state, PlaybackState::Stopped);
         assert_eq!(snapshot.repeat_mode, RepeatMode::All);

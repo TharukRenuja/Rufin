@@ -18,7 +18,7 @@ impl AppController {
         scrub_source_album_image_refs(&saved, std::slice::from_mut(&mut album));
         scrub_source_track_image_refs(&saved, &mut tracks);
         external_metadata::normalize_album_detail(&mut album, &mut tracks, &settings);
-        normalize_local_track_image_refs_from_albums(
+        track_album_refs(
             &self.store,
             &saved,
             &mut tracks,
@@ -40,7 +40,7 @@ impl AppController {
         for tracks in tracks_by_album.values_mut() {
             scrub_source_track_image_refs(&saved, tracks);
             external_metadata::normalize_tracks(tracks, &settings);
-            normalize_local_track_image_refs_from_albums(&self.store, &saved, tracks, &[])?;
+            track_album_refs(&self.store, &saved, tracks, &[])?;
         }
         Ok(tracks_by_album)
     }
@@ -63,12 +63,7 @@ impl AppController {
         scrub_source_album_image_refs(&saved, &mut detail.appears_on);
         scrub_source_track_image_refs(&saved, &mut detail.tracks);
         normalize_artist_detail_image_refs(&mut detail, &settings);
-        normalize_local_track_image_refs_from_albums(
-            &self.store,
-            &saved,
-            &mut detail.tracks,
-            &detail.albums,
-        )?;
+        track_album_refs(&self.store, &saved, &mut detail.tracks, &detail.albums)?;
         Ok(Some(detail))
     }
     pub fn cached_playlist_detail(
@@ -87,7 +82,7 @@ impl AppController {
         };
         scrub_source_track_image_refs(&saved, &mut detail.tracks);
         external_metadata::normalize_tracks(&mut detail.tracks, &settings);
-        normalize_local_track_image_refs_from_albums(&self.store, &saved, &mut detail.tracks, &[])?;
+        track_album_refs(&self.store, &saved, &mut detail.tracks, &[])?;
         let mut entry_tracks = detail
             .entries
             .iter()
@@ -95,7 +90,7 @@ impl AppController {
             .collect::<Vec<_>>();
         scrub_source_track_image_refs(&saved, &mut entry_tracks);
         external_metadata::normalize_tracks(&mut entry_tracks, &settings);
-        normalize_local_track_image_refs_from_albums(&self.store, &saved, &mut entry_tracks, &[])?;
+        track_album_refs(&self.store, &saved, &mut entry_tracks, &[])?;
         for (entry, track) in detail.entries.iter_mut().zip(entry_tracks) {
             entry.track = track;
         }
@@ -119,12 +114,7 @@ impl AppController {
         scrub_source_track_image_refs(&saved, &mut detail.tracks);
         external_metadata::normalize_albums(&mut detail.albums, &settings);
         external_metadata::normalize_tracks(&mut detail.tracks, &settings);
-        normalize_local_track_image_refs_from_albums(
-            &self.store,
-            &saved,
-            &mut detail.tracks,
-            &detail.albums,
-        )?;
+        track_album_refs(&self.store, &saved, &mut detail.tracks, &detail.albums)?;
         Ok(Some(detail))
     }
     pub fn cached_albums_page(
@@ -183,7 +173,7 @@ impl AppController {
         })?;
         scrub_source_track_image_refs(&saved, &mut page.items);
         external_metadata::normalize_tracks(&mut page.items, &settings);
-        normalize_local_track_image_refs_from_albums(&self.store, &saved, &mut page.items, &[])?;
+        track_album_refs(&self.store, &saved, &mut page.items, &[])?;
         Ok(page)
     }
     pub fn cached_track(&self, track_id: &TrackId) -> Result<Option<Track>, String> {
@@ -199,12 +189,7 @@ impl AppController {
         };
         scrub_source_track_image_refs(&saved, std::slice::from_mut(&mut track));
         external_metadata::normalize_track(&mut track, &settings);
-        normalize_local_track_image_refs_from_albums(
-            &self.store,
-            &saved,
-            std::slice::from_mut(&mut track),
-            &[],
-        )?;
+        track_album_refs(&self.store, &saved, std::slice::from_mut(&mut track), &[])?;
         Ok(Some(track))
     }
     pub fn cached_tracks_page_matching(
@@ -230,7 +215,7 @@ impl AppController {
         })?;
         scrub_source_track_image_refs(&saved, &mut page.items);
         external_metadata::normalize_tracks(&mut page.items, &settings);
-        normalize_local_track_image_refs_from_albums(&self.store, &saved, &mut page.items, &[])?;
+        track_album_refs(&self.store, &saved, &mut page.items, &[])?;
         Ok(page)
     }
     pub fn cached_artists_page(
@@ -355,7 +340,7 @@ impl AppController {
         self.store
             .with_store(|store| store.load_smart_playlists(&saved.server.id, offset, limit))
             .map(|mut page| {
-                scrub_source_smart_playlist_image_refs(&saved, &mut page.items);
+                scrub_smart_refs(&saved, &mut page.items);
                 page
             })
     }
@@ -372,10 +357,7 @@ impl AppController {
             })
             .map(|mut detail| {
                 if let Some(detail) = detail.as_mut() {
-                    scrub_source_smart_playlist_image_refs(
-                        &saved,
-                        std::slice::from_mut(&mut detail.smart_playlist),
-                    );
+                    scrub_smart_refs(&saved, std::slice::from_mut(&mut detail.smart_playlist));
                     scrub_source_track_image_refs(&saved, &mut detail.tracks);
                 }
                 detail

@@ -535,7 +535,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                                 .set(local_snapshot_syncing);
                             shell.state.startup_route_render_pending.set(false);
                             shell.state.startup_route_revealed.set(false);
-                            shell.prepare_home_route_for_source_change();
+                            shell.prepare_home_route();
                             shell.render_startup_loading_view();
                             continue;
                         }
@@ -571,7 +571,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         };
                         if queue_matches_library {
                             shell.state.source_switch_preparing.set(false);
-                            shell.prepare_home_route_for_source_change();
+                            shell.prepare_home_route();
                             shell.render_queue_panel();
                             shell.render_lyrics_panel();
                             shell.update_bottom_player();
@@ -594,7 +594,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             continue;
                         }
                         SnapshotRenderDecision::SourceChanged => {
-                            shell.reset_cover_pipeline_for_source_change();
+                            shell.reset_cover_pipeline();
                             shell.navigate(Route::Home);
                         }
                         SnapshotRenderDecision::PreserveScroll => {
@@ -716,7 +716,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         &next_snapshot,
                         previous_track != next_track,
                     );
-                    shell.sync_auto_dj_setting_from_playback(auto_dj_enabled);
+                    shell.sync_auto_dj(auto_dj_enabled);
                     if shell.state.source_switch_preparing.get() {
                         if previous_track != next_track {
                             *shell.state.lyrics.borrow_mut() = None;
@@ -806,11 +806,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     key,
                     external_retry_generation,
                 } => {
-                    if external_retry_generation.is_some_and(|generation| {
-                        !shell
-                            .controller
-                            .external_cover_retry_generation_is_current(generation)
-                    }) {
+                    if external_retry_generation
+                        .is_some_and(|generation| !shell.controller.cover_retry_status(generation))
+                    {
                         continue;
                     }
                     shell.apply_cover_unavailable(&key);

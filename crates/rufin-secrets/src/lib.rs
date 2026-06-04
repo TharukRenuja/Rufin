@@ -571,7 +571,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn memory_secret_store_round_trips_provider_tokens() {
+    fn memory_token_roundtrip() {
         let store = MemorySecretStore::new();
         let server_id = ServerId::fake(1);
 
@@ -585,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_secret_store_namespaces_secret_keys() {
+    fn memory_secret_namespacing() {
         let store = MemorySecretStore::new();
         let server_id = ServerId::fake(1);
 
@@ -615,7 +615,7 @@ mod tests {
     }
 
     #[test]
-    fn config_secret_store_persists_tokens_without_plaintext_values() {
+    fn config_store_redaction() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("secrets.json");
         let store = ConfigSecretStore::new(path.clone());
@@ -689,7 +689,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_secret_store_uses_fallback_after_primary_failure() {
+    fn fallback_store_failover() {
         let primary = Arc::new(FailingSecretStore::default());
         let fallback = Arc::new(MemorySecretStore::new());
         fallback
@@ -751,7 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_secret_store_reuses_loaded_provider_tokens() {
+    fn cached_token_reuse() {
         let inner = Arc::new(CountingSecretStore::default());
         let server_id = ServerId::fake(1);
         inner
@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_secret_store_updates_cache_after_save_and_delete() {
+    fn cached_store_mutations() {
         let inner = Arc::new(CountingSecretStore::default());
         let store = CachedSecretStore::new(inner.clone());
         let server_id = ServerId::fake(1);
@@ -799,7 +799,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn secret_service_provider_token_uses_namespaced_attributes_with_legacy_fallback() {
+    fn secret_service_namespacing() {
         let store = SecretServiceStore::new();
         let server_id = ServerId::fake(1);
         let key = SecretKey::ProviderToken(server_id.clone());
@@ -825,7 +825,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn secret_service_store_is_constructible_without_dbus_work() {
+    fn secret_service_construction() {
         let _store = SecretServiceStore::new();
     }
 

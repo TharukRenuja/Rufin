@@ -13,23 +13,21 @@ pub(super) fn cached_cover_path_for_saved(
     image_ref: &ImageRef,
     size: u32,
 ) -> Result<Option<PathBuf>, String> {
-    if let Some(path) = cached_cover_path_for_saved_size(store, saved, image_ref, size)? {
+    if let Some(path) = saved_cover_path(store, saved, image_ref, size)? {
         return Ok(Some(path));
     }
     for candidate_size in cover_cache_size_candidates(size) {
         if candidate_size == size {
             continue;
         }
-        if let Some(path) =
-            cached_cover_path_for_saved_size(store, saved, image_ref, candidate_size)?
-        {
+        if let Some(path) = saved_cover_path(store, saved, image_ref, candidate_size)? {
             return Ok(Some(path));
         }
     }
     Ok(None)
 }
 
-fn cached_cover_path_for_saved_size(
+fn saved_cover_path(
     store: &StoreHandle,
     saved: &SavedServer,
     image_ref: &ImageRef,

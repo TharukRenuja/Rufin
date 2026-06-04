@@ -1031,7 +1031,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_group_keeps_nested_year_and_genre_rules() {
+    fn new_keep_rules() {
         let mut group = SmartPlaylistRuleGroup {
             mode: SmartPlaylistMatchMode::All,
             rules: vec![
@@ -1107,7 +1107,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_root_group_allows_empty_rules() {
+    fn new_allow_rules() {
         let mut group = SmartPlaylistRuleGroup {
             mode: SmartPlaylistMatchMode::All,
             rules: Vec::new(),
@@ -1119,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_group_drops_invalid_children_without_rejecting_valid_rules() {
+    fn new_drop_rules() {
         let mut group = SmartPlaylistRuleGroup {
             mode: SmartPlaylistMatchMode::All,
             rules: vec![
@@ -1146,7 +1146,7 @@ mod tests {
     }
 
     #[test]
-    fn changing_rule_operator_allows_rerender_to_read_editor_state() {
+    fn new_read_state() {
         let rules = Rc::new(RefCell::new(vec![SmartPlaylistRule {
             field: SmartPlaylistRuleField::Title,
             operator: SmartPlaylistRuleOperator::Contains,
@@ -1169,7 +1169,7 @@ mod tests {
     }
 
     #[test]
-    fn flat_rules_returns_top_level_rules() {
+    fn new_return_rules() {
         let group = SmartPlaylistRuleGroup {
             mode: SmartPlaylistMatchMode::All,
             rules: vec![SmartPlaylistRuleNode::Rule(SmartPlaylistRule {
@@ -1186,7 +1186,7 @@ mod tests {
     }
 
     #[test]
-    fn flat_rules_rejects_nested_groups_for_editor_fallback() {
+    fn new_reject_fallback() {
         let group = SmartPlaylistRuleGroup {
             mode: SmartPlaylistMatchMode::All,
             rules: vec![SmartPlaylistRuleNode::Group(SmartPlaylistRuleGroup {

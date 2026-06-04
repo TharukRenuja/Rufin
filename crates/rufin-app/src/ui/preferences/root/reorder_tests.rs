@@ -1,6 +1,6 @@
 use super::*;
 #[test]
-fn sidebar_drag_reorder_inserts_before_and_after_target_rows() {
+fn reorder_sidebar_target() {
     let mut items = sidebar_settings(&[
         SidebarRouteItem::Home,
         SidebarRouteItem::Favorites,
@@ -48,7 +48,7 @@ fn sidebar_drag_reorder_inserts_before_and_after_target_rows() {
     ));
 }
 #[test]
-fn home_block_drag_reorder_only_moves_visible_blocks() {
+fn reorder_move_blocks() {
     let mut blocks = vec![
         HomeBlockKind::Showcase,
         HomeBlockKind::Explore,

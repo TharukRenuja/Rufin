@@ -2,7 +2,7 @@ use super::*;
 
 impl Shell {
     pub(in crate::ui) fn render_current_route(self: &Rc<Self>) {
-        self.reset_queued_cover_work_for_route_render();
+        self.reset_route_covers();
         self.update_layout();
         self.state.home_section_views.borrow_mut().clear();
         if !self.state.startup_route_revealed.get() && !self.login_screen_active() {

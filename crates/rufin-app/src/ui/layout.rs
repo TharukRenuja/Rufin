@@ -289,7 +289,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn home_album_page_size_uses_stable_content_width() {
+    fn album_page_width() {
         let three_cards_width = HOME_ALBUM_TARGET_SIZE * 3 + HOME_ALBUM_GAP * 2;
         assert_eq!(home_album_page_size(three_cards_width, None), 3);
         assert_eq!(home_album_page_size(three_cards_width + 1, None), 3);
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn home_album_metrics_allow_single_column_tight_panes() {
+    fn layout_allow_panes() {
         let tight_width = HOME_ALBUM_MIN_SIZE + HOME_ALBUM_GAP - 1;
 
         assert_eq!(home_album_page_size(tight_width, None), 1);
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn home_album_page_size_changes_without_bouncing_near_size_bounds() {
+    fn layout_change_bounds() {
         let three_cards_width = HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
         assert_eq!(home_album_page_size(three_cards_width, Some(3)), 3);
         assert_eq!(home_album_page_size(three_cards_width - 1, Some(3)), 3);
@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn home_album_page_size_adds_columns_on_wide_layouts() {
+    fn layout_add_layouts() {
         let ten_target_cards_width = HOME_ALBUM_TARGET_SIZE * 10 + HOME_ALBUM_GAP * 9;
 
         assert_eq!(home_album_page_size(ten_target_cards_width, None), 10);
@@ -335,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn home_album_page_start_stays_on_full_pages() {
+    fn layout_stay_page() {
         assert_eq!(clamp_home_album_page_start(0, 3, 0), 0);
         assert_eq!(clamp_home_album_page_start(3, 3, 10), 3);
         assert_eq!(clamp_home_album_page_start(9, 3, 10), 9);
@@ -343,13 +343,13 @@ mod tests {
     }
 
     #[test]
-    fn home_album_card_size_remains_bounded() {
+    fn layout_home_bounded() {
         assert_eq!(home_album_card_size(10_000, 2), HOME_ALBUM_MAX_SIZE);
         assert_eq!(home_album_card_size(1, 8), 1);
     }
 
     #[test]
-    fn home_album_width_uses_allocated_route_width() {
+    fn album_alloc_width() {
         assert_eq!(
             home_album_content_width_for(900),
             900 - HOME_ALBUM_HORIZONTAL_MARGINS
@@ -361,14 +361,14 @@ mod tests {
     }
 
     #[test]
-    fn route_content_width_caps_stale_allocations_to_resolved_layout_width() {
+    fn layout_cap_width() {
         assert_eq!(route_content_width_for(900, 500), 500);
         assert_eq!(route_content_width_for(900, 1), 900);
         assert_eq!(route_content_width_for(1, 500), 500);
     }
 
     #[test]
-    fn home_album_card_height_reserves_three_text_rows() {
+    fn layout_home_text() {
         assert_eq!(
             home_album_card_height(180),
             180 + HOME_ALBUM_CARD_LABEL_GAP * 3 + card_label_height(3)
@@ -376,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_uses_default_profile_above_threshold() {
+    fn layout_use_default() {
         let settings = LayoutSettings::default();
         let resolved = resolve_layout(&settings, 1_500);
 
@@ -390,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_uses_narrow_profile_below_threshold() {
+    fn layout_use_narrow() {
         let settings = LayoutSettings::default();
         let resolved = resolve_layout(&settings, 950);
 
@@ -401,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_degrades_right_sidebar_before_left_sidebar() {
+    fn layout_degrades_sidebar() {
         let mut settings = LayoutSettings {
             narrow_enabled: false,
             ..Default::default()
@@ -416,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_compacts_left_sidebar_as_final_fallback() {
+    fn layout_compacts_fallback() {
         let mut settings = LayoutSettings::default();
         settings.default_profile.right_sidebar = RightSidebarMode::Hidden;
 
@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn large_popup_sizing_tracks_window_height_and_width_scale() {
+    fn layout_scale_width() {
         assert_eq!(large_popup_content_height(1_000, 640), 850);
         assert_eq!(large_popup_content_height(0, 640), 640);
         assert_eq!(large_popup_content_width(560), 616);

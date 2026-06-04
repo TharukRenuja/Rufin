@@ -227,7 +227,7 @@ impl Store {
                     generation,
                 ])?;
             }
-            refresh_playlist_cover_refs_on_connection(connection, server_id, playlist_id)?;
+            refresh_playlist_refs(connection, server_id, playlist_id)?;
             Ok(())
         })
     }
@@ -781,7 +781,7 @@ impl Store {
         })
     }
 
-    pub fn prune_stale_generated_external_image_cache_entries(
+    pub fn prune_external_images(
         &self,
         server_id: &ServerId,
         live_refs: &[ImageRef],
@@ -1185,9 +1185,7 @@ impl Store {
         Ok(refs_by_id)
     }
     pub(super) fn refresh_collection_cover_refs(&self, server_id: &ServerId) -> StoreResult<()> {
-        self.write_batch(|connection| {
-            refresh_collection_cover_refs_on_connection(connection, server_id)
-        })
+        self.write_batch(|connection| refresh_collection_refs(connection, server_id))
     }
     pub fn ensure_collection_cover_refs(&self, server_id: &ServerId) -> StoreResult<()> {
         let genre_refs_complete =
@@ -1349,7 +1347,7 @@ fn playlist_cover_refs_complete(
         .map_err(Into::into)
 }
 
-pub(super) fn refresh_collection_cover_refs_on_connection(
+pub(super) fn refresh_collection_refs(
     connection: &Connection,
     server_id: &ServerId,
 ) -> StoreResult<()> {
@@ -1365,11 +1363,10 @@ pub(super) fn refresh_collection_cover_refs_on_connection(
             COLLECTION_COVER_PLAYLIST,
         ],
     )?;
-    let genres = genre_cover_cache_sources_on_connection(connection, server_id)?;
+    let genres = genre_cover_sources(connection, server_id)?;
     for (genre_id, genre_name) in genres {
-        let image_refs =
-            genre_cover_image_refs_on_connection(connection, server_id, &genre_id, &genre_name)?;
-        replace_collection_cover_refs_on_connection(
+        let image_refs = genre_cover_refs(connection, server_id, &genre_id, &genre_name)?;
+        replace_collection_refs(
             connection,
             server_id,
             COLLECTION_COVER_GENRE,
@@ -1377,18 +1374,14 @@ pub(super) fn refresh_collection_cover_refs_on_connection(
             &image_refs,
         )?;
     }
-    let playlist_ids = playlist_cover_cache_sources_on_connection(connection, server_id)?;
+    let playlist_ids = playlist_cover_sources(connection, server_id)?;
     for playlist_id in playlist_ids {
-        refresh_playlist_cover_refs_on_connection(
-            connection,
-            server_id,
-            &PlaylistId::new(playlist_id),
-        )?;
+        refresh_playlist_refs(connection, server_id, &PlaylistId::new(playlist_id))?;
     }
     Ok(())
 }
 
-fn genre_cover_cache_sources_on_connection(
+fn genre_cover_sources(
     connection: &Connection,
     server_id: &ServerId,
 ) -> StoreResult<Vec<(String, String)>> {
@@ -1417,7 +1410,7 @@ fn genre_cover_cache_sources_on_connection(
     })?)
 }
 
-fn genre_cover_image_refs_on_connection(
+fn genre_cover_refs(
     connection: &Connection,
     server_id: &ServerId,
     genre_id: &str,
@@ -1485,7 +1478,7 @@ fn genre_cover_image_refs_on_connection(
     Ok(image_refs)
 }
 
-fn playlist_cover_cache_sources_on_connection(
+fn playlist_cover_sources(
     connection: &Connection,
     server_id: &ServerId,
 ) -> StoreResult<Vec<String>> {
@@ -1500,7 +1493,7 @@ fn playlist_cover_cache_sources_on_connection(
     collect_rows(statement.query_map(params![server_id.as_str()], |row| row.get::<_, String>(0))?)
 }
 
-pub(super) fn refresh_playlist_cover_refs_on_connection(
+pub(super) fn refresh_playlist_refs(
     connection: &Connection,
     server_id: &ServerId,
     playlist_id: &PlaylistId,
@@ -1542,7 +1535,7 @@ pub(super) fn refresh_playlist_cover_refs_on_connection(
     } else {
         image_refs
     };
-    replace_collection_cover_refs_on_connection(
+    replace_collection_refs(
         connection,
         server_id,
         COLLECTION_COVER_PLAYLIST,

@@ -1,7 +1,7 @@
 use super::test_support::*;
 
 #[test]
-fn artist_lists_hide_appears_on_only_artists() {
+fn sync_hide_artist() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -71,7 +71,7 @@ fn artist_lists_hide_appears_on_only_artists() {
     assert_eq!(detail.appears_on[0].id, album.id);
 }
 #[test]
-fn cached_pages_rehydrate_metadata_credits_and_genres() {
+fn sync_cache_genre() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -198,7 +198,7 @@ fn search_uses_local_fts_rows() {
     assert_eq!(results.tracks, vec![track]);
 }
 #[test]
-fn sync_generation_prunes_missing_items_after_success() {
+fn sync_prune_success() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -228,7 +228,7 @@ fn sync_generation_prunes_missing_items_after_success() {
     assert_eq!(albums.total, 1);
 }
 #[test]
-fn home_sections_preserve_synced_album_and_track_order() {
+fn sync_track_order() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -281,7 +281,7 @@ fn home_sections_preserve_synced_album_and_track_order() {
     assert_eq!(sections[1].tracks[1].id, track_one.id);
 }
 #[test]
-fn home_sections_without_cached_rows_are_empty() {
+fn sync_home_empty() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -296,7 +296,7 @@ fn home_sections_without_cached_rows_are_empty() {
     assert!(sections.is_empty());
 }
 #[test]
-fn home_section_prefetch_does_not_replace_visible_section() {
+fn sync_replace_section() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -368,7 +368,7 @@ fn cover_cache_index_round_trips() {
     );
 }
 #[test]
-fn cover_cache_index_can_delete_missing_entries() {
+fn sync_delete_entry() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -387,7 +387,7 @@ fn cover_cache_index_can_delete_missing_entries() {
     );
 }
 #[test]
-fn successful_sync_prunes_stale_local_cover_cache_and_misses() {
+fn sync_prune_misses() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -476,7 +476,7 @@ fn successful_sync_prunes_stale_local_cover_cache_and_misses() {
 }
 
 #[test]
-fn generated_external_prune_removes_rows_when_settings_disable_external_lookup() {
+fn sync_disable_lookup() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -501,7 +501,7 @@ fn generated_external_prune_removes_rows_when_settings_disable_external_lookup()
         .expect("save external miss");
 
     let pruned = store
-        .prune_stale_generated_external_image_cache_entries(&saved.server.id, &[], true)
+        .prune_external_images(&saved.server.id, &[], true)
         .expect("prune external");
 
     assert_eq!(pruned, vec![entry.clone()]);
@@ -524,7 +524,7 @@ fn generated_external_prune_removes_rows_when_settings_disable_external_lookup()
 }
 
 #[test]
-fn generated_external_prune_keeps_live_refs_and_ttl_guards_old_misses() {
+fn sync_keep_misses() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -585,11 +585,7 @@ fn generated_external_prune_keeps_live_refs_and_ttl_guards_old_misses() {
         .expect("age stale miss");
 
     let pruned = store
-        .prune_stale_generated_external_image_cache_entries(
-            &saved.server.id,
-            std::slice::from_ref(&live),
-            false,
-        )
+        .prune_external_images(&saved.server.id, std::slice::from_ref(&live), false)
         .expect("prune external");
 
     assert_eq!(pruned, vec![stale_cover.clone()]);
@@ -648,7 +644,7 @@ fn generated_external_prune_keeps_live_refs_and_ttl_guards_old_misses() {
 }
 
 #[test]
-fn successful_sync_keeps_untagged_live_cover_cache_rows() {
+fn sync_keep_cache() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -680,7 +676,7 @@ fn successful_sync_keeps_untagged_live_cover_cache_rows() {
     );
 }
 #[test]
-fn external_image_lookup_miss_index_round_trips() {
+fn sync_trip_index() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -723,7 +719,7 @@ fn external_image_lookup_miss_index_round_trips() {
     );
 }
 #[test]
-fn external_image_lookup_misses_can_be_cleared_for_server() {
+fn sync_external_server() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     let other = saved_server_with_id("other-server");
@@ -767,7 +763,7 @@ fn external_image_lookup_misses_can_be_cleared_for_server() {
     );
 }
 #[test]
-fn cover_cache_success_clears_external_image_lookup_miss() {
+fn sync_clear_miss() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -796,7 +792,7 @@ fn cover_cache_success_clears_external_image_lookup_miss() {
     );
 }
 #[test]
-fn clear_library_cache_removes_library_search_and_cover_rows_only() {
+fn sync_remove_cover() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     let mut queue = QueueEngine::new(saved.server.id.clone());
@@ -869,7 +865,7 @@ fn clear_library_cache_removes_library_search_and_cover_rows_only() {
     assert_eq!(sync_state.last_error, None);
 }
 #[test]
-fn forget_server_removes_server_local_state() {
+fn sync_remove_state() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     let mut queue = QueueEngine::new(saved.server.id.clone());
@@ -906,7 +902,7 @@ fn forget_server_removes_server_local_state() {
     );
 }
 #[test]
-fn cache_keys_are_stable_and_path_safe() {
+fn sync_cache_safe() {
     let server_id = ServerId::new("server:one");
     assert_eq!(
         image_cache_key(&server_id, "album/one", "tag:two", 256),
@@ -918,7 +914,7 @@ fn cache_keys_are_stable_and_path_safe() {
     );
 }
 #[test]
-fn cache_key_parts_are_bounded_for_long_local_cover_ids() {
+fn sync_cache_id() {
     let server_id = ServerId::new("local:server:test");
     let long_item_id = format!("local:cover:embedded:{}", "nested-folder-".repeat(40));
     let key = image_cache_key(&server_id, &long_item_id, "untagged", 256);

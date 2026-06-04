@@ -1,7 +1,7 @@
 use super::*;
 
 impl Shell {
-    pub(in crate::ui) fn reset_queued_cover_work_for_route_render(&self) {
+    pub(in crate::ui) fn reset_route_covers(&self) {
         self.cancel_route_cover_warm();
         self.state.cover_bindings.borrow_mut().clear();
         clear_queued_route_cover_work(
@@ -311,7 +311,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decoded_cover_accepts_source_limited_image_for_requested_size_key() {
+    fn queue_accept_key() {
         assert!(decoded_cover_satisfies_request(
             "library/local_cover_example/untagged/256",
             180,
@@ -320,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn decoded_cover_rejects_smaller_thumbnail_key_for_larger_request() {
+    fn queue_reject_request() {
         assert!(!decoded_cover_satisfies_request(
             "library/local_cover_example/untagged/96",
             96,

@@ -34,7 +34,7 @@ impl AppController {
                         let _sent = events.send(ControllerEvent::Error(error));
                         return;
                     }
-                    if let Err(error) = activate_queue_for_saved_and_emit(
+                    if let Err(error) = activate_saved_queue(
                         &QueueActivationContext {
                             store: &store,
                             queue: &queue,
@@ -76,7 +76,7 @@ impl AppController {
                             return;
                         }
                     };
-                    if let Err(error) = activate_queue_for_saved_and_emit(
+                    if let Err(error) = activate_saved_queue(
                         &QueueActivationContext {
                             store: &store,
                             queue: &queue,

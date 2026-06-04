@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 #[test]
-fn fake_backend_reports_basic_state_transitions() {
+fn playback_report_transitions() {
     let mut backend = FakePlaybackBackend::new();
     let track = track(1);
 
@@ -44,7 +44,7 @@ fn fake_backend_reports_basic_state_transitions() {
     assert!(events.contains(&PlaybackEvent::StateChanged(PlaybackState::Stopped)));
 }
 #[test]
-fn fake_backend_tracks_prepared_next_item() {
+fn playback_track_next() {
     let mut backend = FakePlaybackBackend::new();
     let current = PreparedPlaybackItem::new(track(1), StreamDescriptor::new("fake://track/1"));
     let next = PreparedPlaybackItem::new(track(2), StreamDescriptor::new("fake://track/2"));
@@ -61,20 +61,20 @@ fn fake_backend_tracks_prepared_next_item() {
             settings,
         })
         .expect("play prepared");
-    backend.emit_prepared_track_started_for_test();
+    backend.emit_prepared_track();
 
     let events = backend.drain_events();
     assert!(events.contains(&PlaybackEvent::PreparedTrackStarted(next.track)));
 }
 #[test]
-fn fake_backend_updates_prepared_next_item() {
+fn playback_update_next() {
     let mut backend = FakePlaybackBackend::new();
     let next = PreparedPlaybackItem::new(track(3), StreamDescriptor::new("fake://track/3"));
 
     backend
         .send(PlaybackCommand::PrepareNext(Some(next.clone())))
         .expect("prepare next");
-    backend.emit_prepared_track_started_for_test();
+    backend.emit_prepared_track();
 
     let events = backend.drain_events();
     assert_eq!(
@@ -83,7 +83,7 @@ fn fake_backend_updates_prepared_next_item() {
     );
 }
 #[test]
-fn stream_descriptor_redacts_sensitive_query_values() {
+fn playback_redact_query() {
     let stream = StreamDescriptor::new(
         "https://music.example/Audio/track/stream?UserId=user&api_key=secret-token&DeviceId=device",
     );
@@ -95,7 +95,7 @@ fn stream_descriptor_redacts_sensitive_query_values() {
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
 #[test]
-fn gapless_about_to_finish_preloads_local_next_item() {
+fn gapless_about_finish() {
     let next =
         PreparedPlaybackItem::new(track(2), StreamDescriptor::new("file:///music/next.flac"));
     let mut shared = SharedPlaybackState::new();
@@ -109,7 +109,7 @@ fn gapless_about_to_finish_preloads_local_next_item() {
     assert_eq!(shared.gapless_pending, Some(next));
 }
 #[test]
-fn gapless_about_to_finish_leaves_non_file_streams_for_eos() {
+fn playback_finish_eos() {
     let next = PreparedPlaybackItem::new(
         track(2),
         StreamDescriptor::new("https://music.example/Audio/track/stream?api_key=secret-token"),
@@ -125,7 +125,7 @@ fn gapless_about_to_finish_leaves_non_file_streams_for_eos() {
     assert!(shared.gapless_pending.is_none());
 }
 #[test]
-fn gapless_about_to_finish_without_next_waits_for_eos() {
+fn playback_wait_eos() {
     let mut shared = SharedPlaybackState::new();
     shared.settings.transition_mode = PlaybackTransitionMode::Gapless;
 
@@ -136,7 +136,7 @@ fn gapless_about_to_finish_without_next_waits_for_eos() {
     assert!(shared.gapless_pending.is_none());
 }
 #[test]
-fn same_album_crossfade_about_to_finish_preloads_local_next_item() {
+fn album_crossfade_about() {
     let current = PreparedPlaybackItem::new(
         track_on_album(1, 7),
         StreamDescriptor::new("file:///music/one.flac"),
@@ -158,7 +158,7 @@ fn same_album_crossfade_about_to_finish_preloads_local_next_item() {
     assert_eq!(shared.gapless_pending, Some(next));
 }
 #[test]
-fn same_album_crossfade_exception_ignores_unrelated_next_item() {
+fn playback_ignore_next() {
     let current = PreparedPlaybackItem::new(
         track_on_album(1, 7),
         StreamDescriptor::new("file:///music/one.flac"),
@@ -180,7 +180,7 @@ fn same_album_crossfade_exception_ignores_unrelated_next_item() {
     assert!(shared.gapless_pending.is_none());
 }
 #[test]
-fn same_album_crossfade_exception_matches_album_id_before_text() {
+fn playback_match_text() {
     let current = PreparedPlaybackItem::new(
         PlaybackTrack {
             album: "Album".to_string(),
@@ -208,7 +208,7 @@ fn same_album_crossfade_exception_matches_album_id_before_text() {
     ));
 }
 #[test]
-fn pending_seek_rejects_stale_positions_until_target_or_timeout() {
+fn playback_reject_timeout() {
     let now = Instant::now();
     let pending = PendingSeek::interactive(42_000, PlaybackState::Playing, now);
 
@@ -217,7 +217,7 @@ fn pending_seek_rejects_stale_positions_until_target_or_timeout() {
     assert!(pending.accepts_position(12_000, now + SEEK_SETTLE_WINDOW));
 }
 #[test]
-fn pending_seek_suppresses_transient_state_changes() {
+fn playback_change_state() {
     let now = Instant::now();
     let pending = PendingSeek::interactive(42_000, PlaybackState::Playing, now);
 
@@ -228,7 +228,7 @@ fn pending_seek_suppresses_transient_state_changes() {
     assert!(!pending.suppresses_state(PlaybackState::Paused, now + SEEK_SETTLE_WINDOW));
 }
 #[test]
-fn startup_seek_waits_for_async_done_before_resuming() {
+fn playback_wait_resuming() {
     let now = Instant::now();
     let pending = PendingSeek::startup(42_000, PlaybackState::Buffering, now);
 
@@ -241,7 +241,7 @@ fn startup_seek_waits_for_async_done_before_resuming() {
     assert!(!pending.suppresses_state(PlaybackState::Paused, now + STARTUP_SEEK_SETTLE_WINDOW));
 }
 #[test]
-fn track_start_rejects_previous_position_and_stopped_state() {
+fn playback_reject_state() {
     let mut engine = test_engine_with_pending_seek(42_000);
     engine.pending_seek = Some(PendingSeek::track_start(Instant::now()));
     let events = Arc::clone(&engine.events);
@@ -268,7 +268,7 @@ fn track_start_rejects_previous_position_and_stopped_state() {
     }));
 }
 #[test]
-fn gapless_pending_suppresses_timing_until_stream_start() {
+fn playback_start_stream() {
     let mut engine = test_engine_with_pending_seek(0);
     engine.pending_seek = None;
     let next = PreparedPlaybackItem::new(track(2), StreamDescriptor::new("fake://track/2"));
@@ -314,7 +314,7 @@ fn gapless_pending_suppresses_timing_until_stream_start() {
     }));
 }
 #[test]
-fn ordinary_stream_start_preserves_startup_seek() {
+fn playback_preserve_seek() {
     let mut engine = test_engine_with_pending_seek(42_000);
     let events = Arc::clone(&engine.events);
 
@@ -341,7 +341,7 @@ fn ordinary_stream_start_preserves_startup_seek() {
     }));
 }
 #[test]
-fn seek_during_crossfade_promotes_incoming_track_before_targeting_active_pipeline() {
+fn playback_track_pipeline() {
     let mut engine = test_engine_with_pending_seek(0);
     engine.pending_seek = None;
     let outgoing = PreparedPlaybackItem::new(track(1), StreamDescriptor::new("fake://track/1"));

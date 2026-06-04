@@ -32,7 +32,7 @@ impl Shell {
         });
     }
 
-    pub(super) fn sync_auto_dj_setting_from_playback(&self, enabled: bool) {
+    pub(super) fn sync_auto_dj(&self, enabled: bool) {
         let mut settings = self.state.settings.borrow_mut();
         if settings.auto_dj_enabled != enabled {
             settings.auto_dj_enabled = enabled;
@@ -61,7 +61,7 @@ impl Shell {
             warn!(%error, action = warning_action, "failed to retry external cover lookups");
             return;
         }
-        self.refresh_cover_surfaces_after_metadata_change();
+        self.refresh_cover_surfaces();
     }
 
     pub(super) fn set_external_lyrics_enabled(self: &Rc<Self>, enabled: bool) {
@@ -101,7 +101,7 @@ impl Shell {
         if enabled {
             self.retry_external_cover_lookups("metadata setting");
         } else {
-            self.refresh_cover_surfaces_after_metadata_change();
+            self.refresh_cover_surfaces();
         }
         self.controller.reload_snapshot();
     }
@@ -208,8 +208,8 @@ impl Shell {
         self.update_lyrics_panel_button();
     }
 
-    fn refresh_cover_surfaces_after_metadata_change(self: &Rc<Self>) {
-        self.prepare_cover_retry_for_current_source();
+    fn refresh_cover_surfaces(self: &Rc<Self>) {
+        self.prepare_cover_retry();
         self.render_current_route_preserving_scroll();
         self.update_bottom_player();
         self.update_fullscreen_player();

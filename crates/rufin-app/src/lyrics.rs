@@ -8,7 +8,7 @@ use rufin_provider::{LyricLine, Lyrics};
 
 const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 300;
 const MIN_LYRICS_SCROLL_ANIMATION_MS: u64 = 80;
-const LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS: u64 = 200;
+const LYRICS_SCROLL_MS: u64 = 200;
 const LYRICS_USER_SCROLL_PAUSE_MS: u64 = 3_000;
 
 #[derive(Clone)]
@@ -401,7 +401,7 @@ pub fn lyrics_scroll_animation_millis(
         .and_then(|next_start| {
             next_start
                 .saturating_sub(position_millis)
-                .checked_sub(LYRICS_SCROLL_FINISH_BEFORE_NEXT_MS)
+                .checked_sub(LYRICS_SCROLL_MS)
         });
     budget
         .map(|budget| {
@@ -440,7 +440,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn synced_lyrics_highlight_last_started_line_only() {
+    fn sync_lyrics_started() {
         let lines = vec![
             LyricLine {
                 text: "intro".to_string(),
@@ -469,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn synced_empty_line_advances_highlight_to_next_text_line() {
+    fn lyrics_advance_line() {
         let lines = vec![
             LyricLine {
                 text: "current".to_string(),
@@ -492,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn trailing_empty_line_keeps_last_text_line_active() {
+    fn lyrics_keep_active() {
         let lines = vec![
             LyricLine {
                 text: "last".to_string(),
@@ -509,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn unsynchronized_lyrics_have_no_active_timed_line() {
+    fn unsynchronized_lyrics_timed() {
         let lines = vec![LyricLine {
             text: "plain".to_string(),
             start_millis: None,
@@ -519,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn unsynchronized_lyrics_highlight_every_line() {
+    fn unsynchronized_lyrics_highlight() {
         let lines = vec![
             LyricLine {
                 text: "first".to_string(),
@@ -535,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn synchronized_lyrics_do_not_highlight_every_line() {
+    fn sync_lyrics_every() {
         let lines = vec![
             LyricLine {
                 text: "first".to_string(),
@@ -552,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn synced_lyrics_schedule_next_started_line() {
+    fn lyrics_schedule_line() {
         let lines = vec![
             LyricLine {
                 text: "intro".to_string(),
@@ -580,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn synced_lyrics_schedule_empty_line_boundary() {
+    fn lyrics_schedule_boundary() {
         let lines = vec![
             LyricLine {
                 text: "current".to_string(),
@@ -601,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn lyrics_scroll_animation_finishes_before_next_line() {
+    fn lyrics_finish_line() {
         let lines = vec![
             LyricLine {
                 text: "current".to_string(),
@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn lyrics_follow_scroll_ignores_same_active_line() {
+    fn lyrics_ignore_line() {
         assert_eq!(
             lyrics_follow_scroll_target(Some(3), Some(3), LyricsFollowScrollPause::Inactive),
             None

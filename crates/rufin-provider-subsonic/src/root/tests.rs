@@ -4,7 +4,7 @@ use std::time::Duration;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 #[tokio::test]
-async fn login_uses_salted_token_auth_and_maps_session() {
+async fn login_map_session() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getUser.view"))
@@ -98,7 +98,7 @@ async fn albums_map_subsonic_album_list() {
     assert!(page.items[0].favorite);
 }
 #[tokio::test]
-async fn album_detail_maps_subsonic_song_metadata() {
+async fn album_map_meta() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getAlbum.view"))
@@ -153,7 +153,7 @@ async fn album_detail_maps_subsonic_song_metadata() {
     assert_eq!(detail.tracks[0].comment.as_deref(), Some("Warm note"));
 }
 #[tokio::test]
-async fn random_tracks_use_subsonic_random_song_filters() {
+async fn random_filter_song() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getRandomSongs.view"))
@@ -200,7 +200,7 @@ async fn random_tracks_use_subsonic_random_song_filters() {
     assert_eq!(tracks[0].genres, vec!["Ambient".to_string()]);
 }
 #[tokio::test]
-async fn random_tracks_reject_played_filter_for_subsonic() {
+async fn random_filter_subsonic() {
     let server = MockServer::start().await;
     let provider = provider(&server);
 
@@ -233,7 +233,7 @@ async fn stream_url_redacts_subsonic_credentials() {
     assert!(!stream.redacted_uri().contains("token"));
 }
 #[tokio::test]
-async fn stream_url_includes_max_bitrate_when_limited() {
+async fn stream_include_limited() {
     let server = MockServer::start().await;
     let provider = provider(&server);
 
@@ -279,7 +279,7 @@ async fn image_bytes_fetch_cover_art() {
     assert_eq!(image.content_type.as_deref(), Some("image/jpeg"));
 }
 #[tokio::test]
-async fn delete_playlist_calls_subsonic_delete_playlist() {
+async fn subsonic_delete_playlist() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/deletePlaylist.view"))
@@ -354,7 +354,7 @@ async fn json_reads_reject_oversized_response() {
     );
 }
 #[tokio::test]
-async fn subsonic_json_maps_delayed_response_timeout_to_network_error() {
+async fn subsonic_map_error() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getUser.view"))
@@ -384,7 +384,7 @@ async fn subsonic_json_maps_delayed_response_timeout_to_network_error() {
     assert!(matches!(error, ProviderError::Network(_)));
 }
 #[tokio::test]
-async fn music_folders_load_subsonic_music_folders() {
+async fn music_load_folders() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getMusicFolders.view"))
@@ -410,7 +410,7 @@ async fn music_folders_load_subsonic_music_folders() {
     assert_eq!(folders[0].name, "Music");
 }
 #[tokio::test]
-async fn tracks_in_music_folder_passes_music_folder_id() {
+async fn in_track_id() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/search3.view"))
@@ -447,7 +447,7 @@ async fn tracks_in_music_folder_passes_music_folder_id() {
     assert_eq!(page.items[0].id.as_str(), "subsonic:track:track-one");
 }
 #[tokio::test]
-async fn folder_root_uses_indexes_with_selected_music_folder() {
+async fn root_use_folder() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getIndexes.view"))
@@ -483,7 +483,7 @@ async fn folder_root_uses_indexes_with_selected_music_folder() {
     assert!(detail.tracks.is_empty());
 }
 #[tokio::test]
-async fn folder_nested_music_directory_maps_child_folders_and_tracks() {
+async fn folder_track_folders() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/rest/getMusicDirectory.view"))
