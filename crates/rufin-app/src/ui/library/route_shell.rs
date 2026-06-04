@@ -64,17 +64,14 @@ impl Shell {
         tracks: Vec<Track>,
         total: usize,
     ) -> gtk::Widget {
-        let started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Tracks);
         let complete_page = library_layout_loads_complete_page(LibraryListKey::Tracks, &settings);
 
         let tracks = Rc::new(RefCell::new(tracks));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let populate_started = Instant::now();
         let visible_tracks = tracks_for_settings(&tracks.borrow(), &settings, "", false);
         self.state.route_tracks.replace(visible_tracks.clone());
         replace_tracks_in_model(&model, visible_tracks);
-        let populate_ms = populate_started.elapsed().as_millis();
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
         search.set_hexpand(true);
@@ -183,18 +180,8 @@ impl Shell {
             let settings = settings.clone();
             Rc::new(move |scroller: &gtk::ScrolledWindow| {
                 connect_track_viewport_cover_warm(&shell, scroller, &model, &settings);
-                connect_track_row_contract_observer(&shell, scroller, &model, &settings);
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
-        record_library_route_model_contract(
-            self,
-            "Tracks",
-            &settings,
-            tracks.borrow().len(),
-            total,
-            !complete_page,
-        );
-        let shell_started = Instant::now();
         let play_context = track_collection_play_context(
             self,
             PlaySourceDescriptor::GlobalTracks {
@@ -204,7 +191,7 @@ impl Shell {
             play_query,
             false,
         );
-        let view = self.library_page_shell(LibraryPageShellOptions {
+        self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Tracks,
             empty: tracks.borrow().is_empty(),
             empty_body: "Cached tracks will appear here after the background sync finishes.",
@@ -217,19 +204,7 @@ impl Shell {
             ),
             load_next: if complete_page { None } else { Some(load_next) },
             configure_scroller: Some(track_viewport_warm),
-        });
-        if self.state.perf.is_some() {
-            println!(
-                "RUFIN_PERF_TRACKS_PAGE tracks={} total={} complete={} populate_ms={} shell_ms={} total_ms={}",
-                tracks.borrow().len(),
-                total,
-                complete_page,
-                populate_ms,
-                shell_started.elapsed().as_millis(),
-                started.elapsed().as_millis()
-            );
-        }
-        view
+        })
     }
     pub(in crate::ui) fn library_page_shell(
         self: &Rc<Self>,

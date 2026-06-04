@@ -1,58 +1,4 @@
 use super::*;
-
-pub(in crate::ui) fn ui_perf_next_scroll_value(
-    scenario: UiPerfScenario,
-    adjustment: &gtk::Adjustment,
-    max_value: f64,
-    direction: &Cell<f64>,
-    jump_index: &Cell<usize>,
-) -> f64 {
-    match scenario {
-        UiPerfScenario::HumanScroll => {
-            let step = (adjustment.page_size() * 0.20).clamp(80.0, 180.0);
-            bounce_scroll_value(adjustment.value(), step, max_value, direction)
-        }
-        UiPerfScenario::FastScroll => {
-            let step = (adjustment.page_size() * 0.95).max(260.0);
-            bounce_scroll_value(adjustment.value(), step, max_value, direction)
-        }
-        UiPerfScenario::FullSweep => {
-            let index = jump_index.get();
-            jump_index.set(index.saturating_add(1));
-            let phase_index = index % 48;
-            let phase = (phase_index.min(23) as f64 / 23.0).clamp(0.0, 1.0);
-            let fraction = if phase_index < 24 { phase } else { 1.0 - phase };
-            max_value * fraction
-        }
-        UiPerfScenario::DragSweep => {
-            let index = jump_index.get();
-            jump_index.set(index.saturating_add(1));
-            let phase = (index % 64) as f64 / 63.0;
-            let fraction = if (index / 64).is_multiple_of(2) {
-                phase
-            } else {
-                1.0 - phase
-            };
-            max_value * fraction
-        }
-    }
-}
-pub(in crate::ui) fn bounce_scroll_value(
-    current: f64,
-    step: f64,
-    max_value: f64,
-    direction: &Cell<f64>,
-) -> f64 {
-    let mut next = current + direction.get() * step;
-    if next >= max_value {
-        next = max_value;
-        direction.set(-1.0);
-    } else if next <= 0.0 {
-        next = 0.0;
-        direction.set(1.0);
-    }
-    next
-}
 pub(in crate::ui) fn find_largest_scrolled_window(
     widget: &gtk::Widget,
 ) -> Option<gtk::ScrolledWindow> {
@@ -564,7 +510,7 @@ pub(in crate::ui) fn remove_track_link_cell(list_item: &gtk::ListItem) {
 }
 
 pub(in crate::ui) fn track_column<F>(
-    shell: &Rc<Shell>,
+    _shell: &Rc<Shell>,
     title: &'static str,
     width: i32,
     value: F,
@@ -574,8 +520,6 @@ where
 {
     let factory = gtk::SignalListItemFactory::new();
     let value = Rc::new(value);
-    let shell = Rc::clone(shell);
-
     factory.connect_setup(|_, list_item| {
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -589,7 +533,6 @@ where
     });
 
     factory.connect_bind(move |_, list_item| {
-        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -607,9 +550,6 @@ where
         };
         let track = boxed.borrow::<Track>();
         label.set_text(&value(&track));
-        if let Some(bind_started) = bind_started {
-            shell.record_perf_track_row_bind(title, bind_started.elapsed());
-        }
     });
 
     let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
@@ -748,7 +688,6 @@ pub(in crate::ui) fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnView
     });
 
     factory.connect_bind(move |_, list_item| {
-        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -791,10 +730,6 @@ pub(in crate::ui) fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnView
             cell.artist_label.set_text(&artist_text);
             cell.artist_button.set_visible(false);
             cell.artist_label.set_visible(true);
-        }
-
-        if let Some(bind_started) = bind_started {
-            shell.record_perf_track_row_bind("Title", bind_started.elapsed());
         }
     });
 
@@ -907,7 +842,6 @@ where
     });
 
     factory.connect_bind(move |_, list_item| {
-        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -935,9 +869,6 @@ where
             cell.label.set_text(&text);
             cell.button.set_visible(false);
             cell.label.set_visible(true);
-        }
-        if let Some(bind_started) = bind_started {
-            shell.record_perf_track_row_bind(title, bind_started.elapsed());
         }
     });
 

@@ -48,19 +48,16 @@ impl Shell {
 
         let Some(image_ref) = image_ref else {
             tile.bind_image(seed, None);
-            self.record_perf_coverless_tile();
             return;
         };
         let Some(key) = self.cover_cache_key(image_ref, fetch_size) else {
             tile.bind_image(seed, None);
-            self.record_perf_coverless_tile();
             return;
         };
 
         if let Some((cache_key, pixbuf)) =
             self.decoded_cover_for_ref(image_ref, fetch_size, decode_size)
         {
-            self.record_perf_cover_cache_hit(&cache_key);
             self.touch_decoded_cover(&cache_key, CoverDecodePriority::Visible);
             tile.bind_cover_image(seed, Some(pixbuf));
             return;
@@ -191,7 +188,6 @@ impl Shell {
             Duration::from_millis(COVER_VISIBLE_REQUEST_DELAY_MS),
             move || {
                 if !tile.is_live_generation(generation) || !tile.area.is_mapped() {
-                    shell.record_perf_cover_stale_key(&key);
                     return;
                 }
                 shell.request_cover_for_tile(&tile, key, image_ref, size, fetch_size);
@@ -210,13 +206,10 @@ impl Shell {
         if let Some((cache_key, pixbuf)) =
             self.decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
         {
-            self.record_perf_cover_cache_hit(&cache_key);
             self.touch_decoded_cover(&cache_key, CoverDecodePriority::Visible);
             tile.set_pixbuf_if_current(tile.generation(), pixbuf);
             return;
         }
-
-        self.record_perf_cover_bind_request(&key);
         let generation = tile.generation();
         self.register_cover_bindings_for_ref(&key, &image_ref, fetch_size, tile, generation);
         self.start_cached_cover_path_lookup(CoverPathLookupRequest {

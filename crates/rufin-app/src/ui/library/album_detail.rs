@@ -949,7 +949,6 @@ pub(in crate::ui) fn track_image_column(
     });
 
     factory.connect_bind(move |_, item| {
-        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -967,9 +966,6 @@ pub(in crate::ui) fn track_image_column(
             THUMB_COVER_SIZE,
         );
         *cell.current_track.borrow_mut() = Some(track);
-        if let Some(bind_started) = bind_started {
-            shell.record_perf_track_row_bind(title, bind_started.elapsed());
-        }
     });
 
     factory.connect_unbind(|_, item| {
@@ -1037,7 +1033,6 @@ where
     });
 
     factory.connect_bind(move |_, item| {
-        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -1049,9 +1044,6 @@ where
         };
         cell.label.set_text(&(value)(&track));
         *cell.current_track.borrow_mut() = Some(track);
-        if let Some(bind_started) = bind_started {
-            shell.record_perf_track_row_bind(title, bind_started.elapsed());
-        }
     });
 
     factory.connect_unbind(|_, item| {
@@ -1151,7 +1143,6 @@ where
     });
 
     factory.connect_bind(move |_, item| {
-        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -1173,9 +1164,6 @@ where
         cell.subtitle.set_text(&subtitle);
         cell.subtitle.set_visible(!subtitle.trim().is_empty());
         *cell.current_track.borrow_mut() = Some(track);
-        if let Some(bind_started) = bind_started {
-            shell.record_perf_track_row_bind(title, bind_started.elapsed());
-        }
     });
 
     factory.connect_unbind(|_, item| {
@@ -1287,7 +1275,6 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
     });
 
     factory.connect_bind(move |_, item| {
-        let bind_started = shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -1299,9 +1286,6 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
         };
         set_favorite_button_active(&cell.button, track.favorite);
         *cell.current_track.borrow_mut() = Some(track);
-        if let Some(bind_started) = bind_started {
-            shell.record_perf_track_row_bind("Favorite", bind_started.elapsed());
-        }
     });
 
     factory.connect_unbind(|_, item| {

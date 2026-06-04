@@ -877,7 +877,6 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
 
     let bind_shell = Rc::clone(&shell);
     factory.connect_bind(move |_, list_item| {
-        let bind_started = bind_shell.state.perf.as_ref().map(|_| Instant::now());
         let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -904,10 +903,6 @@ pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnView
 
         set_favorite_button_active(&cell.button, track.favorite);
         *cell.current_track.borrow_mut() = Some(track);
-
-        if let Some(bind_started) = bind_started {
-            bind_shell.record_perf_track_row_bind("Favorite", bind_started.elapsed());
-        }
     });
 
     let unbind_shell = Rc::clone(&shell);

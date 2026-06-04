@@ -1,14 +1,13 @@
 use super::{
     ArtworkTile, COVER_PATH_LOOKUP_MAX_IN_FLIGHT, GRID_COVER_SIZE, GRID_ROUTE_PAGE_SIZE,
     LoadedTrackPlayContext, PRIMARY_ROUTE_MARGIN_START, PagedGridCursor, PlaySourceDescriptor,
-    Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, UiPerfRouteModelContract,
-    UiPerfTrackRowContract, album_favorite_key, album_play_activation, append_albums_to_model,
-    append_artists_to_model, append_genres_to_model, append_playlists_to_model,
-    append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader,
-    favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
-    install_album_context_menu, install_artist_context_menu, install_dynamic_album_context_menu,
-    install_dynamic_track_context_menu, install_playlist_context_menu,
-    install_smart_playlist_context_menu, install_track_context_menu,
+    Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE, album_favorite_key,
+    album_play_activation, append_albums_to_model, append_artists_to_model, append_genres_to_model,
+    append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
+    connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button, finish_grid_page,
+    icon_button, install_album_context_menu, install_artist_context_menu,
+    install_dynamic_album_context_menu, install_dynamic_track_context_menu,
+    install_playlist_context_menu, install_smart_playlist_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     loaded_tracks_window_play_activation, replace_albums_in_model, replace_artists_in_model,
     replace_genres_in_model, replace_playlists_in_model, selected_music_folder_id,
@@ -54,7 +53,6 @@ const ALBUM_DETAIL_TRACK_HEADER_HEIGHT: i32 = 34;
 const ALBUM_DETAIL_META_SPACING: i32 = 6;
 const ALBUM_DETAIL_META_LABEL_HEIGHT: i32 = 20;
 const INITIAL_ROUTE_COVER_WARM_ITEMS: usize = 16;
-const TRACK_ROW_CONTRACT_SCROLL_DELAY_MS: u64 = 250;
 const TRACK_VIEWPORT_COVER_PRIORITY_AHEAD_ROWS: usize = 0;
 const TRACK_VIEWPORT_COVER_PRIORITY_BEHIND_ROWS: usize = 0;
 const TRACK_INTERACTION_VIEWPORT_COVER_PRIORITY_AHEAD_ROWS: usize = 96;
@@ -273,33 +271,6 @@ fn route_viewport_page_size_from_metrics(
 fn library_layout_loads_complete_page(key: LibraryListKey, settings: &LibraryListSettings) -> bool {
     key.supports_layout(settings.layout)
 }
-fn record_library_route_model_contract(
-    shell: &Shell,
-    route: &'static str,
-    settings: &LibraryListSettings,
-    loaded: usize,
-    total: usize,
-    paginated: bool,
-) {
-    let Some(perf) = &shell.state.perf else {
-        return;
-    };
-    perf.record_route_model_contract(UiPerfRouteModelContract {
-        route,
-        layout: library_layout_name(settings.layout),
-        loaded,
-        total,
-        complete: loaded >= total,
-        paginated,
-    });
-}
-fn library_layout_name(layout: LibraryLayout) -> &'static str {
-    match layout {
-        LibraryLayout::Row => "row",
-        LibraryLayout::Grid => "grid",
-        LibraryLayout::Detail => "detail",
-    }
-}
 fn complete_cached_page<T>(
     page: rufin_provider::PagedResponse<T>,
     load_complete: bool,
@@ -430,123 +401,6 @@ fn connect_track_viewport_cover_warm(
             },
         );
     });
-}
-fn connect_track_row_contract_observer(
-    shell: &Rc<Shell>,
-    scroller: &gtk::ScrolledWindow,
-    model: &gio::ListStore,
-    settings: &LibraryListSettings,
-) {
-    if shell.state.perf.is_none() || settings.layout != LibraryLayout::Row {
-        return;
-    }
-    let Some((fetch_size, size)) = track_cover_warm_sizes(shell, settings) else {
-        return;
-    };
-
-    let shell = Rc::clone(shell);
-    let model = model.clone();
-    let adjustment = scroller.vadjustment();
-    let generation = Rc::new(Cell::new(0_u64));
-
-    {
-        let shell = Rc::clone(&shell);
-        let model = model.clone();
-        let adjustment = adjustment.clone();
-        glib::idle_add_local_once(move || {
-            record_track_row_contract_sample(
-                &shell,
-                &model,
-                &adjustment,
-                fetch_size,
-                size,
-                "initial",
-            );
-        });
-    }
-
-    adjustment.connect_value_changed(move |adjustment| {
-        let next_generation = generation.get().saturating_add(1);
-        generation.set(next_generation);
-        let shell = Rc::clone(&shell);
-        let model = model.clone();
-        let adjustment = adjustment.clone();
-        let generation = Rc::clone(&generation);
-        glib::timeout_add_local_once(
-            Duration::from_millis(TRACK_ROW_CONTRACT_SCROLL_DELAY_MS),
-            move || {
-                if generation.get() != next_generation {
-                    return;
-                }
-                record_track_row_contract_sample(
-                    &shell,
-                    &model,
-                    &adjustment,
-                    fetch_size,
-                    size,
-                    "scroll",
-                );
-            },
-        );
-    });
-}
-fn record_track_row_contract_sample(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    fetch_size: u32,
-    size: i32,
-    scenario: &'static str,
-) {
-    if !matches!(shell.state.routes.borrow().current(), Route::Tracks) {
-        return;
-    }
-    let row_height = f64::from(LIBRARY_TABLE_ROW_HEIGHT.max(1));
-    let visible_start = (adjustment.value().max(0.0) / row_height).floor() as usize;
-    let page_size = route_viewport_page_size(shell, adjustment);
-    let visible_rows = (page_size.max(row_height) / row_height).ceil().max(1.0) as usize;
-    let visible_end = visible_start
-        .saturating_add(visible_rows)
-        .min(model.n_items() as usize);
-    if visible_start >= visible_end {
-        return;
-    }
-
-    let decode_size = size.max(fetch_size as i32).max(1);
-    let mut ready = 0_usize;
-    let mut coverless = 0_usize;
-    let mut pending = 0_usize;
-    let missing = 0_usize;
-    for index in visible_start..visible_end {
-        let Some(track) = item_at::<Track>(model, index as u32) else {
-            continue;
-        };
-        let Some(image_ref) = track.image_ref else {
-            coverless = coverless.saturating_add(1);
-            continue;
-        };
-        if shell
-            .decoded_cover_for_ref(&image_ref, fetch_size, decode_size)
-            .is_some()
-        {
-            ready = ready.saturating_add(1);
-        } else if shell.cover_cache_key(&image_ref, fetch_size).is_none() {
-            coverless = coverless.saturating_add(1);
-        } else {
-            pending = pending.saturating_add(1);
-        }
-    }
-    if let Some(perf) = &shell.state.perf {
-        perf.record_tracks_row_contract(UiPerfTrackRowContract {
-            scenario,
-            visible_start,
-            visible_end,
-            ready,
-            coverless,
-            pending,
-            missing,
-        });
-    }
 }
 fn warm_track_cover_model_viewport(
     shell: &Rc<Shell>,

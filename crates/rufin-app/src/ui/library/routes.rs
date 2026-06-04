@@ -36,14 +36,6 @@ impl Shell {
         let complete_load_ms = complete_started.elapsed().as_millis() as u64;
         let page_total = page.total;
         let complete_page = page.items.len() >= page.total;
-        record_library_route_model_contract(
-            self,
-            "Albums",
-            &settings,
-            page.items.len(),
-            page.total,
-            !complete_page,
-        );
         let source_albums = Rc::new(page.items.clone());
         let albums = Rc::new(RefCell::new(page.items));
         let album_count = albums.borrow().len();
@@ -253,19 +245,10 @@ impl Shell {
         view
     }
     pub(in crate::ui) fn library_tracks_route_view(self: &Rc<Self>) -> gtk::Widget {
-        let started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Tracks);
         if library_layout_loads_complete_page(LibraryListKey::Tracks, &settings)
             && let Some(page) = self.complete_track_snapshot_page()
         {
-            if self.state.perf.is_some() {
-                println!(
-                    "RUFIN_PERF_TRACKS_LOAD source=snapshot tracks={} total={} elapsed_ms={}",
-                    page.items.len(),
-                    page.total,
-                    started.elapsed().as_millis()
-                );
-            }
             return self.library_tracks_page(page.items, page.total);
         }
 
@@ -294,14 +277,7 @@ impl Shell {
             |limit| self.controller.cached_tracks_page(0, limit),
             "tracks",
         );
-        if self.state.perf.is_some() {
-            println!(
-                "RUFIN_PERF_TRACKS_LOAD source=store tracks={} total={} elapsed_ms={}",
-                page.items.len(),
-                page.total,
-                started.elapsed().as_millis()
-            );
-        }
+
         self.library_tracks_page(page.items, page.total)
     }
     pub(in crate::ui) fn library_artist_list_view(
@@ -349,18 +325,6 @@ impl Shell {
             "artists",
         );
         let complete_page = page.items.len() >= page.total;
-        record_library_route_model_contract(
-            self,
-            if album_artist {
-                "AlbumArtists"
-            } else {
-                "Artists"
-            },
-            &settings,
-            page.items.len(),
-            page.total,
-            !complete_page,
-        );
         let source_artists = Rc::new(page.items.clone());
         let artists = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -532,14 +496,6 @@ impl Shell {
             "genres",
         );
         let complete_page = page.items.len() >= page.total;
-        record_library_route_model_contract(
-            self,
-            "Genres",
-            &settings,
-            page.items.len(),
-            page.total,
-            !complete_page,
-        );
         let source_genres = Rc::new(page.items.clone());
         let genres = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -709,14 +665,6 @@ impl Shell {
             "playlists",
         );
         let complete_page = page.items.len() >= page.total;
-        record_library_route_model_contract(
-            self,
-            "Playlists",
-            &settings,
-            page.items.len(),
-            page.total,
-            !complete_page,
-        );
         let source_playlists = Rc::new(page.items.clone());
         let playlists = Rc::new(RefCell::new(page.items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -870,17 +818,7 @@ impl Shell {
                 warn!(%error, "failed to load cached smart playlists page");
                 rufin_provider::PagedResponse::new(Vec::new(), 0)
             });
-        let page_total = page.total;
         let items = page.items;
-        let complete_page = items.len() >= page_total;
-        record_library_route_model_contract(
-            self,
-            "SmartPlaylists",
-            &settings,
-            items.len(),
-            page_total,
-            !complete_page,
-        );
         self.state.smart_playlists.replace(items.clone());
         let source_playlists = Rc::new(items.clone());
         let playlists = Rc::new(RefCell::new(items));

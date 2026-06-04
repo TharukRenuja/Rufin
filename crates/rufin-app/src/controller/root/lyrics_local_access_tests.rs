@@ -1237,7 +1237,6 @@ pub(in crate::controller) fn controller_from_store_for_test(
         ))),
         playback_snapshot: Arc::new(Mutex::new(playback_snapshot)),
         playback_activity: Arc::new(Mutex::new(PlaybackActivityState::default())),
-        playback_start_probe: Arc::new(Mutex::new(None)),
         auto_dj_enabled: Arc::new(Mutex::new(settings.auto_dj_enabled)),
         last_progress_snapshot: Arc::new(Mutex::new(None)),
         last_report_snapshot: Arc::new(Mutex::new(None)),
