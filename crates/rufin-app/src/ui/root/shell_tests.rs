@@ -448,7 +448,6 @@ pub(in crate::ui) fn queue_source_waits_until_library_snapshot_matches() {
         shuffle: Default::default(),
         shuffle_order: Vec::new(),
         progress_seconds: 0,
-        source_snapshot: None,
     };
 
     assert!(queue_source_waits_for_snapshot(
@@ -893,13 +892,13 @@ pub(in crate::ui) fn album_activation_keeps_album_order_and_clicked_track_anchor
         panic!("album activation should replace the queue");
     };
     assert_eq!(replacement.items.len(), 3);
-    assert!(matches!(
+    assert_eq!(
         replacement.anchor,
-        QueueAnchor::SourceOccurrence {
-            source_index: 1,
-            ..
+        QueueAnchor::SourcePosition {
+            position: 1,
+            track_id: TrackId::fake(2),
         }
-    ));
+    );
 }
 #[test]
 pub(in crate::ui) fn playlist_drop_index_accounts_for_removed_source_row() {

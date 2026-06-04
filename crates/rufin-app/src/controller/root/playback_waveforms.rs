@@ -648,7 +648,6 @@ mod tests {
             shuffle: rufin_core::ShuffleState::default(),
             shuffle_order: Vec::new(),
             progress_seconds: 0,
-            source_snapshot: None,
         };
 
         let requests =

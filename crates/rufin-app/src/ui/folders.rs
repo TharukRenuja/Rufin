@@ -567,13 +567,13 @@ mod tests {
         let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
             panic!("folder activation should create a queue replacement");
         };
-        assert!(matches!(
+        assert_eq!(
             replacement.anchor,
-            QueueAnchor::SourceOccurrence {
-                source_index: 2,
-                ..
+            QueueAnchor::SourcePosition {
+                position: 2,
+                track_id: TrackId::fake(3),
             }
-        ));
+        );
         assert_eq!(replacement.items.len(), 3);
         let QueueReplacementSource::Source(source) = replacement.source else {
             panic!("folder activation should keep folder source");
