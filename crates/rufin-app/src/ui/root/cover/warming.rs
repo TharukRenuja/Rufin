@@ -1,51 +1,9 @@
 use super::*;
 
 #[derive(Clone, Copy)]
-enum CoverWarmIntent {
-    Route,
-}
-
-#[derive(Clone, Copy)]
 struct CoverWarmSchedule {
-    intent: CoverWarmIntent,
     generation: u64,
     initial_delay_ms: u64,
-}
-
-impl CoverWarmIntent {
-    fn current_generation(self, shell: &Shell) -> u64 {
-        match self {
-            Self::Route => shell.state.cover_warm_generation.get(),
-        }
-    }
-
-    fn batch_size(self) -> usize {
-        match self {
-            Self::Route => COVER_WARM_BATCH_SIZE,
-        }
-    }
-
-    fn interval_ms(self) -> u64 {
-        match self {
-            Self::Route => COVER_WARM_INTERVAL_MS,
-        }
-    }
-
-    fn job_is_decoded(self, shell: &Shell, job: &CoverWarmJob) -> bool {
-        match self {
-            Self::Route => shell.decoded_cover_has_min_size(&job.key, job.size),
-        }
-    }
-}
-
-impl CoverWarmSchedule {
-    fn new(intent: CoverWarmIntent, generation: u64, initial_delay_ms: u64) -> Self {
-        Self {
-            intent,
-            generation,
-            initial_delay_ms,
-        }
-    }
 }
 
 impl Shell {
@@ -120,7 +78,10 @@ impl Shell {
         let generation = self.next_cover_warm_generation();
         self.schedule_cover_warm_jobs(
             Rc::new(RefCell::new(jobs)),
-            CoverWarmSchedule::new(CoverWarmIntent::Route, generation, initial_delay_ms),
+            CoverWarmSchedule {
+                generation,
+                initial_delay_ms,
+            },
         );
     }
 
@@ -220,7 +181,7 @@ impl Shell {
         let shell = Rc::clone(self);
         if schedule.initial_delay_ms == 0 {
             glib::idle_add_local_once(move || {
-                if schedule.intent.current_generation(&shell) == schedule.generation {
+                if shell.state.cover_warm_generation.get() == schedule.generation {
                     shell.start_cover_warm_jobs(jobs, schedule);
                 }
             });
@@ -230,7 +191,7 @@ impl Shell {
         glib::timeout_add_local_once(
             Duration::from_millis(schedule.initial_delay_ms),
             move || {
-                if schedule.intent.current_generation(&shell) == schedule.generation {
+                if shell.state.cover_warm_generation.get() == schedule.generation {
                     shell.start_cover_warm_jobs(jobs, schedule);
                 }
             },
@@ -243,44 +204,41 @@ impl Shell {
         schedule: CoverWarmSchedule,
     ) {
         let shell = Rc::clone(self);
-        glib::timeout_add_local(
-            Duration::from_millis(schedule.intent.interval_ms()),
-            move || {
-                if schedule.intent.current_generation(&shell) != schedule.generation {
-                    return glib::ControlFlow::Break;
-                }
-                if jobs.borrow().is_empty() {
-                    return glib::ControlFlow::Break;
-                }
-                if shell.cover_warm_is_paused() {
-                    return glib::ControlFlow::Continue;
-                }
+        glib::timeout_add_local(Duration::from_millis(COVER_WARM_INTERVAL_MS), move || {
+            if shell.state.cover_warm_generation.get() != schedule.generation {
+                return glib::ControlFlow::Break;
+            }
+            if jobs.borrow().is_empty() {
+                return glib::ControlFlow::Break;
+            }
+            if shell.cover_warm_is_paused() {
+                return glib::ControlFlow::Continue;
+            }
 
-                let in_flight = shell.cover_pipeline_in_flight();
-                if in_flight >= COVER_PATH_LOOKUP_MAX_IN_FLIGHT {
-                    return glib::ControlFlow::Continue;
-                }
+            let in_flight = shell.cover_pipeline_in_flight();
+            if in_flight >= COVER_PATH_LOOKUP_MAX_IN_FLIGHT {
+                return glib::ControlFlow::Continue;
+            }
 
-                let capacity = COVER_PATH_LOOKUP_MAX_IN_FLIGHT.saturating_sub(in_flight);
-                let mut processed = 0;
-                while processed < schedule.intent.batch_size().min(capacity) {
-                    let Some(job) = jobs.borrow_mut().pop_front() else {
-                        break;
-                    };
-                    processed += 1;
-                    if shell.cover_warm_job_is_ready_or_in_flight(&job, schedule.intent) {
-                        continue;
-                    }
-                    shell.start_warm_cover_path_lookup(job);
+            let capacity = COVER_PATH_LOOKUP_MAX_IN_FLIGHT.saturating_sub(in_flight);
+            let mut processed = 0;
+            while processed < COVER_WARM_BATCH_SIZE.min(capacity) {
+                let Some(job) = jobs.borrow_mut().pop_front() else {
+                    break;
+                };
+                processed += 1;
+                if shell.cover_warm_job_is_ready_or_in_flight(&job) {
+                    continue;
                 }
+                shell.start_warm_cover_path_lookup(job);
+            }
 
-                if jobs.borrow().is_empty() {
-                    glib::ControlFlow::Break
-                } else {
-                    glib::ControlFlow::Continue
-                }
-            },
-        );
+            if jobs.borrow().is_empty() {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     fn cover_pipeline_in_flight(&self) -> usize {
@@ -291,12 +249,8 @@ impl Shell {
             .saturating_add(self.state.cover_path_lookups.borrow().len())
     }
 
-    fn cover_warm_job_is_ready_or_in_flight(
-        &self,
-        job: &CoverWarmJob,
-        intent: CoverWarmIntent,
-    ) -> bool {
-        intent.job_is_decoded(self, job)
+    fn cover_warm_job_is_ready_or_in_flight(&self, job: &CoverWarmJob) -> bool {
+        self.decoded_cover_has_min_size(&job.key, job.size)
             || self.state.cover_decodes.borrow().contains_key(&job.key)
             || self
                 .state
