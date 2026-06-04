@@ -393,14 +393,13 @@ impl Store {
             self.upsert_genres(server_id, &delta.dirty_genres, generation)?;
             self.upsert_home_sections(server_id, &delta.home_sections, generation)?;
             prune_stale_local_aggregate_rows(connection, server_id, &delta)?;
-            let pruned_cover_entries =
-                self.complete_local_sync_without_generation_prune(server_id, generation)?;
+            let pruned_cover_entries = self.complete_local_sync(server_id, generation)?;
             self.replace_local_manifest(server_id, generation, &delta.manifest_entries)?;
             Ok(pruned_cover_entries)
         })
     }
 
-    fn complete_local_sync_without_generation_prune(
+    fn complete_local_sync(
         &self,
         server_id: &ServerId,
         generation: i64,
@@ -613,7 +612,7 @@ fn prune_stale_local_aggregate_rows(
         server_id,
         "local_current_genre_ids",
     )?;
-    delete_collection_cover_refs_not_in_temp(
+    delete_stale_refs(
         connection,
         server_id,
         COLLECTION_COVER_GENRE,
@@ -676,7 +675,7 @@ fn delete_fts_not_in_temp(
     Ok(())
 }
 
-fn delete_collection_cover_refs_not_in_temp(
+fn delete_stale_refs(
     connection: &Connection,
     server_id: &ServerId,
     collection_type: &str,

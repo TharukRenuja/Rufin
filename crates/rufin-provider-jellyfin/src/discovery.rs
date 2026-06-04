@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_response_falls_back_to_endpoint_address() {
+    fn discovery_fall_address() {
         let packet = serde_json::json!({
             "Id": "server-one",
             "EndpointAddress": "192.0.2.10:8096"
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_results_keep_distinct_addresses_for_same_server() {
+    fn discovery_keep_server() {
         let mut servers = Vec::new();
         push_discovered_server(
             &mut servers,
@@ -353,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_targets_include_direct_localhost() {
+    fn discovery_include_localhost() {
         let targets = discovery_targets();
 
         assert!(targets.contains(&SocketAddrV4::new(
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn localhost_public_info_accepts_chunked_http_body() {
+    fn discovery_accept_http() {
         let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nf\r\n{\"ServerName\":\"\r\n10\r\nLocal Jellyfin\"}\r\n0\r\n\r\n";
 
         let body = http_response_body(response).expect("response body");

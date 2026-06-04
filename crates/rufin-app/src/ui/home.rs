@@ -375,7 +375,7 @@ mod tests {
     use rufin_provider::SearchResults;
 
     #[test]
-    fn showcase_album_uses_visit_seed_to_rotate_candidates() {
+    fn home_use_candidate() {
         let library = snapshot_with_albums(vec![album(1), album(2), album(3)]);
 
         let first = showcase_album(&library, 0).expect("first showcase album");
@@ -386,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn showcase_album_avoids_first_visible_explore_album_when_possible() {
+    fn home_showcase_possible() {
         let mut library = snapshot_with_albums(vec![album(1), album(2)]);
         library.home_sections = vec![HomeSection {
             kind: HomeSectionKind::Explore,

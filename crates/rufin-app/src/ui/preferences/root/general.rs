@@ -641,7 +641,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         scale.set_digits(1);
         scale.set_width_request(220);
         scale.set_valign(gtk::Align::Center);
-        install_equalizer_vertical_scroll_passthrough(&scale);
+        install_eq_scroll(&scale);
         let band_shell = Rc::clone(shell);
         let scale_reset_guard = Rc::clone(&resetting_equalizer);
         scale.connect_value_changed(move |scale| {
@@ -692,7 +692,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 
     page
 }
-pub(in crate::ui) fn install_equalizer_vertical_scroll_passthrough(scale: &gtk::Scale) {
+pub(in crate::ui) fn install_eq_scroll(scale: &gtk::Scale) {
     let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     let scale_weak = scale.downgrade();

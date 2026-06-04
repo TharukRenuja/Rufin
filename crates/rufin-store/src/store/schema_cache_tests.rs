@@ -19,7 +19,7 @@ fn current_schema_initializes_empty_database() {
     );
 }
 #[test]
-fn current_schema_creates_library_route_indexes() {
+fn schema_create_indexes() {
     let store = Store::open_memory().expect("open store");
     for (table, index) in [
         ("albums", "albums_server_title_nocase_idx"),
@@ -80,7 +80,7 @@ fn local_manifest_entry() -> LocalManifestEntry {
     }
 }
 #[test]
-fn unsupported_file_store_resets_cache_database() {
+fn file_store_reset() {
     let path = std::env::temp_dir().join(format!(
         "rufin-store-test-{}-{}.sqlite",
         std::process::id(),
@@ -138,7 +138,7 @@ fn unsupported_file_store_resets_cache_database() {
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
-fn incomplete_user_version_ten_file_store_resets_cache_database() {
+fn user_version_ten() {
     let path = std::env::temp_dir().join(format!(
         "rufin-store-test-{}-{}.sqlite",
         std::process::id(),
@@ -182,7 +182,7 @@ fn incomplete_user_version_ten_file_store_resets_cache_database() {
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
-fn current_file_store_reopens_without_dropping_servers() {
+fn schema_reopen_servers() {
     let path = std::env::temp_dir().join(format!(
         "rufin-store-test-{}-{}.sqlite",
         std::process::id(),
@@ -211,7 +211,7 @@ fn current_file_store_reopens_without_dropping_servers() {
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
-fn user_version_ten_file_store_upgrades_without_dropping_servers() {
+fn schema_upgrade_servers() {
     let path = std::env::temp_dir().join(format!(
         "rufin-store-test-{}-{}.sqlite",
         std::process::id(),
@@ -274,7 +274,7 @@ fn user_version_ten_file_store_upgrades_without_dropping_servers() {
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
-fn future_user_version_file_store_resets_cache_database() {
+fn future_user_version() {
     let path = std::env::temp_dir().join(format!(
         "rufin-store-test-{}-{}.sqlite",
         std::process::id(),
@@ -301,7 +301,7 @@ fn future_user_version_file_store_resets_cache_database() {
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
 #[test]
-fn file_store_uses_wal_journal_mode() {
+fn schema_use_mode() {
     let path = std::env::temp_dir().join(format!(
         "rufin-store-test-{}-{}.sqlite",
         std::process::id(),
@@ -319,7 +319,7 @@ fn store_configures_busy_timeout() {
     assert_eq!(store.busy_timeout_ms().expect("busy timeout"), 5_000);
 }
 #[test]
-fn queue_snapshot_round_trip_by_server() {
+fn schema_trip_server() {
     let store = Store::open_memory().expect("open store");
     let server_id = ServerId::fake(1);
     let mut queue = QueueEngine::new(server_id.clone());
@@ -341,7 +341,7 @@ fn queue_snapshot_round_trip_by_server() {
     );
 }
 #[test]
-fn active_server_round_trips_without_token() {
+fn schema_trip_token() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -351,7 +351,7 @@ fn active_server_round_trips_without_token() {
     assert_eq!(store.active_server().expect("active server"), Some(saved));
 }
 #[test]
-fn saved_server_loads_requested_server_without_active_source() {
+fn schema_load_source() {
     let store = Store::open_memory().expect("open store");
     let playback = saved_server_with_id("server:playback");
     let active = saved_server_with_id("server:active");
@@ -369,7 +369,7 @@ fn saved_server_loads_requested_server_without_active_source() {
     );
 }
 #[test]
-fn local_manifest_round_trips_and_clears_with_server_lifecycle() {
+fn schema_clear_lifecycle() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server_with_id("local:server:manifest");
     store.save_server(&saved).expect("save server");
@@ -410,7 +410,7 @@ fn local_manifest_round_trips_and_clears_with_server_lifecycle() {
     );
 }
 #[test]
-fn failed_local_delta_commit_does_not_delete_tracks() {
+fn schema_track_commit() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server_with_id("local:server:rollback");
     store.save_server(&saved).expect("save server");
@@ -490,7 +490,7 @@ fn failed_local_delta_commit_does_not_delete_tracks() {
 }
 
 #[test]
-fn local_artwork_delta_updates_image_without_rewriting_track_links_or_fts() {
+fn artwork_delta_update() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -580,7 +580,7 @@ fn local_artwork_delta_updates_image_without_rewriting_track_links_or_fts() {
 }
 
 #[test]
-fn local_metadata_delta_updates_track_row_without_rewriting_track_links_or_fts() {
+fn meta_delta_update() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -690,7 +690,7 @@ fn local_metadata_delta_updates_track_row_without_rewriting_track_links_or_fts()
 }
 
 #[test]
-fn local_changed_track_delta_updates_artist_link_album_id() {
+fn schema_update_id() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -919,7 +919,7 @@ fn track_local_path_round_trips() {
     );
 }
 #[test]
-fn albums_without_image_ref_can_be_loaded_for_external_art_prefetch() {
+fn schema_album_prefetch() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -940,7 +940,7 @@ fn albums_without_image_ref_can_be_loaded_for_external_art_prefetch() {
     );
 }
 #[test]
-fn artists_without_image_ref_can_be_loaded_for_external_art_prefetch() {
+fn schema_artist_prefetch() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -968,7 +968,7 @@ fn artists_without_image_ref_can_be_loaded_for_external_art_prefetch() {
     );
 }
 #[test]
-fn artists_without_provider_images_use_album_cover_fallback() {
+fn artist_image_use() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1013,7 +1013,7 @@ fn artists_without_provider_images_use_album_cover_fallback() {
     assert_eq!(detail.artist.image_ref, album.image_ref);
 }
 #[test]
-fn artist_provider_image_wins_over_album_cover_fallback() {
+fn schema_win_fallback() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1049,7 +1049,7 @@ fn artist_provider_image_wins_over_album_cover_fallback() {
     assert_eq!(detail.artist.image_ref, Some(artist_image));
 }
 #[test]
-fn album_artists_without_provider_images_use_album_cover_fallback() {
+fn album_artist_image() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1087,7 +1087,7 @@ fn album_artists_without_provider_images_use_album_cover_fallback() {
     assert_eq!(matching.image_ref, album.image_ref);
 }
 #[test]
-fn track_local_matches_round_trip_and_replace() {
+fn schema_replace_local() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1166,7 +1166,7 @@ fn track_local_matches_round_trip_and_replace() {
     );
 }
 #[test]
-fn selected_music_folder_filters_cached_tracks_and_search() {
+fn schema_track_search() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1213,7 +1213,7 @@ fn selected_music_folder_filters_cached_tracks_and_search() {
     assert!(favorites.is_empty());
 }
 #[test]
-fn load_track_by_id_ignores_selected_music_folder_filter() {
+fn schema_filter_folder() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1251,7 +1251,7 @@ fn load_track_by_id_ignores_selected_music_folder_filter() {
     assert_eq!(loaded.id, tracks[0].id);
 }
 #[test]
-fn stale_selected_music_folder_is_cleared_after_sync() {
+fn schema_stale_sync() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1291,7 +1291,7 @@ fn stale_selected_music_folder_is_cleared_after_sync() {
     );
 }
 #[test]
-fn cached_album_and_track_pages_round_trip() {
+fn schema_trip_page() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1320,7 +1320,7 @@ fn cached_album_and_track_pages_round_trip() {
     assert_eq!(detail.1, tracks);
 }
 #[test]
-fn image_refs_round_trip_for_cached_library_models() {
+fn schema_trip_model() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1398,7 +1398,7 @@ fn image_refs_round_trip_for_cached_library_models() {
 }
 
 #[test]
-fn collection_cover_refs_are_cached_for_genres_and_playlists() {
+fn schema_collection_playlist() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1414,7 +1414,7 @@ fn collection_cover_refs_are_cached_for_genres_and_playlists() {
         .map(|(index, album)| track(index as u32 + 1, album))
         .collect::<Vec<_>>();
     let playlist = playlist(1, None);
-    let entries = playlist_entries_for_tracks_for_test(
+    let entries = schema_track_test(
         &playlist.id,
         &[
             tracks[0].clone(),
@@ -1493,7 +1493,7 @@ fn collection_cover_refs_are_cached_for_genres_and_playlists() {
 }
 
 #[test]
-fn ensure_collection_cover_refs_repairs_missing_genres_when_playlists_are_cached() {
+fn schema_repair_cache() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1555,7 +1555,7 @@ fn ensure_collection_cover_refs_repairs_missing_genres_when_playlists_are_cached
 }
 
 #[test]
-fn ensure_collection_cover_refs_repairs_partially_cached_genres() {
+fn schema_repair_genre() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1633,10 +1633,7 @@ fn ensure_collection_cover_refs_repairs_partially_cached_genres() {
     );
 }
 
-fn playlist_entries_for_tracks_for_test(
-    playlist_id: &PlaylistId,
-    tracks: &[Track],
-) -> Vec<PlaylistEntry> {
+fn schema_track_test(playlist_id: &PlaylistId, tracks: &[Track]) -> Vec<PlaylistEntry> {
     tracks
         .iter()
         .enumerate()
@@ -1647,7 +1644,7 @@ fn playlist_entries_for_tracks_for_test(
         .collect()
 }
 #[test]
-fn album_reads_use_track_cover_when_album_cover_is_missing() {
+fn schema_track_missing() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1681,7 +1678,7 @@ fn album_reads_use_track_cover_when_album_cover_is_missing() {
     assert_eq!(detail.1, vec![first_track, second_track]);
 }
 #[test]
-fn paged_reads_return_items_beyond_previous_snapshot_caps() {
+fn paged_read_return() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1708,7 +1705,7 @@ fn paged_reads_return_items_beyond_previous_snapshot_caps() {
     assert_eq!(track_page.items.len(), 5);
 }
 #[test]
-fn sorted_track_pages_keep_global_order_across_page_boundaries() {
+fn schema_keep_boundaries() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1785,7 +1782,7 @@ fn sorted_track_pages_keep_global_order_across_page_boundaries() {
     );
 }
 #[test]
-fn paged_search_reads_items_beyond_previous_snapshot_caps() {
+fn paged_search_read() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");

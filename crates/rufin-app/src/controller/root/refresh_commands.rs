@@ -80,7 +80,7 @@ impl AppController {
         let Some(saved) = active else {
             return;
         };
-        start_prefetched_home_section_promotion_thread(
+        start_home_promotion(
             self.store.clone(),
             self.events.clone(),
             saved.server.id,

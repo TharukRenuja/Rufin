@@ -782,15 +782,12 @@ pub(in crate::ui) fn connect_album_detail_virtual_list(
         let adjustment = adjustment.clone();
         let render = Rc::clone(&render);
         let render_serial_for_callback = Rc::clone(&render_serial);
-        if delta >= f64::from(album_detail_fast_scroll_render_delta()) {
-            glib::timeout_add_local_once(
-                Duration::from_millis(ALBUM_DETAIL_FAST_SCROLL_RENDER_DELAY_MS),
-                move || {
-                    if render_serial_for_callback.get() == serial {
-                        render(&adjustment);
-                    }
-                },
-            );
+        if delta >= f64::from(fast_scroll_delta()) {
+            glib::timeout_add_local_once(Duration::from_millis(FAST_SCROLL_DELAY), move || {
+                if render_serial_for_callback.get() == serial {
+                    render(&adjustment);
+                }
+            });
         } else {
             glib::idle_add_local_once(move || {
                 if render_serial_for_callback.get() == serial {
@@ -887,8 +884,8 @@ pub(in crate::ui) fn album_detail_virtual_range(
 pub(in crate::ui) fn album_detail_virtual_overscan_height() -> i32 {
     LIBRARY_TABLE_ROW_HEIGHT * 8
 }
-pub(in crate::ui) const ALBUM_DETAIL_FAST_SCROLL_RENDER_DELAY_MS: u64 = 90;
-pub(in crate::ui) fn album_detail_fast_scroll_render_delta() -> i32 {
+pub(in crate::ui) const FAST_SCROLL_DELAY: u64 = 90;
+pub(in crate::ui) fn fast_scroll_delta() -> i32 {
     album_detail_virtual_overscan_height() / 2
 }
 #[derive(Clone, Default)]
@@ -1556,12 +1553,7 @@ pub(in crate::ui) fn track_card(
 ) -> gtk::Widget {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
     card.set_width_request(size);
-    card.append(&cards::track_cover_tile_with_play_action(
-        shell,
-        track,
-        size,
-        play_action,
-    ));
+    card.append(&cards::track_play_tile(shell, track, size, play_action));
     card.append(&center_label(&track.title, "track-title"));
     for field in shell.library_settings(key).grid_fields {
         let value = track_field(track, field);

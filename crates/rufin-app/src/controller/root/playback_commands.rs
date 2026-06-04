@@ -75,7 +75,7 @@ impl AppController {
         }
         if !moved {
             if had_current {
-                if self.auto_dj_top_up_or_emit_error() {
+                if self.auto_dj_topup() {
                     let result = self.with_queue_mut(|queue| {
                         moved = queue.next_track().is_some();
                         Ok(())
@@ -95,7 +95,7 @@ impl AppController {
             }
         }
         self.record_current_skip_if_needed();
-        self.persist_and_emit_queue_for_playback_start();
+        self.start_queue_emit();
         self.start_current_track();
         self.auto_dj_top_up_deferred();
     }
@@ -123,7 +123,7 @@ impl AppController {
             self.seek(0);
             return;
         }
-        self.persist_and_emit_queue_for_playback_start();
+        self.start_queue_emit();
         self.start_current_track();
         self.auto_dj_top_up_deferred();
     }

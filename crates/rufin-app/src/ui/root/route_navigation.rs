@@ -1,7 +1,7 @@
 use super::*;
 
 impl Shell {
-    pub(in crate::ui) fn reset_cover_pipeline_for_source_change(&self) {
+    pub(in crate::ui) fn reset_cover_pipeline(&self) {
         self.state.cover_bindings.borrow_mut().clear();
         self.state.cover_unavailable.borrow_mut().clear();
         self.state.cover_path_lookups.borrow_mut().clear();
@@ -12,27 +12,21 @@ impl Shell {
             .first_run_cover_prime_pending
             .borrow_mut()
             .clear();
-        self.state
-            .source_route_cover_warm_pending_for
-            .borrow_mut()
-            .take();
-        self.state
-            .source_route_cover_warm_started_for
-            .borrow_mut()
-            .take();
+        self.state.cover_warm_pending.borrow_mut().take();
+        self.state.cover_warm_started.borrow_mut().take();
         self.state.route_tracks.borrow_mut().clear();
         self.state.smart_playlists.borrow_mut().clear();
         self.cancel_cover_warm();
     }
 
-    pub(in crate::ui) fn prepare_cover_retry_for_current_source(&self) {
+    pub(in crate::ui) fn prepare_cover_retry(&self) {
         self.state.cover_unavailable.borrow_mut().clear();
         self.player_controls.cover_key.borrow_mut().take();
         self.fullscreen_player.cover_key.borrow_mut().take();
     }
 
-    pub(in crate::ui) fn prepare_home_route_for_source_change(self: &Rc<Self>) {
-        self.reset_cover_pipeline_for_source_change();
+    pub(in crate::ui) fn prepare_home_route(self: &Rc<Self>) {
+        self.reset_cover_pipeline();
         let previous = self.state.routes.borrow().current().clone();
         self.state.routes.borrow_mut().navigate(Route::Home);
         self.handle_home_route_transition(&previous, &Route::Home);

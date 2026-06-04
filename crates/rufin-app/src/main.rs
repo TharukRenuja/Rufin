@@ -70,7 +70,7 @@ fn main() {
         std::process::exit(2);
     }
     if cli.clear_cache {
-        match controller::AppController::clear_active_server_cache_for_app() {
+        match controller::AppController::clear_app_cache() {
             Ok(()) => info!("cleared active server cache"),
             Err(error) => {
                 eprintln!("Failed to clear active server cache: {error}");
@@ -185,7 +185,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn flatpak_install_prefix_is_used_for_icon_search() {
+    fn main_flatpak_search() {
         let paths =
             app_icon_search_paths_for(None, Some(PathBuf::from("/app/bin/rufin.bin")), None);
 

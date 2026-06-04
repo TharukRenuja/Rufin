@@ -2,7 +2,7 @@ use super::*;
 
 impl AppController {
     pub fn refill_auto_dj_queue(&self) -> bool {
-        if self.auto_dj_top_up_or_emit_error() {
+        if self.auto_dj_topup() {
             self.persist_and_emit_queue();
             return true;
         }

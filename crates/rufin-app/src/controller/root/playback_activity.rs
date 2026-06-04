@@ -55,7 +55,7 @@ impl AppController {
         }
     }
 
-    pub(in crate::controller) fn record_playback_activity_completed_current(&self) {
+    pub(in crate::controller) fn record_playback_activity(&self) {
         let play = {
             let mut state = match self.playback_activity.lock() {
                 Ok(state) => state,
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn playback_threshold_has_floor_except_for_short_tracks() {
+    fn playback_track_short() {
         assert_eq!(play_threshold_seconds(8), 8);
         assert_eq!(play_threshold_seconds(40), 20);
         assert_eq!(play_threshold_seconds(120), 60);
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn local_play_count_records_once_after_threshold() {
+    fn playback_record_threshold() {
         let (controller, _events, _snapshot, _queue, _player) =
             AppController::bootstrap_memory_for_test();
         let server_id = ServerId::new("local:server:test");
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_next_before_threshold_increments_skip_count() {
+    fn playback_manual_count() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap_with_fake(FakeScale::Small);
         let server_id = snapshot.server.as_ref().expect("server").id.clone();
@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_next_after_seek_past_threshold_is_not_a_skip() {
+    fn playback_manual_skip() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap_with_fake(FakeScale::Small);
         let server_id = snapshot.server.as_ref().expect("server").id.clone();
@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn eos_and_errors_do_not_increment_skip_count() {
+    fn playback_eos_count() {
         let (controller, events, snapshot, _queue, _player) =
             AppController::bootstrap_with_fake(FakeScale::Small);
         let server_id = snapshot.server.as_ref().expect("server").id.clone();

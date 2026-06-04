@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn favorite_track_patch_updates_cached_lists() {
+    fn favorite_update_lists() {
         let track_id = TrackId::fake(4);
         let mut library = library_with_track(track_id.clone());
 
@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn favorite_track_patch_updates_home_section_tracks() {
+    fn favorite_track_section() {
         let track_id = TrackId::fake(4);
         let mut library = library_with_track(track_id.clone());
         library.home_sections = vec![HomeSection {
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_album_favorite_does_not_require_route_render() {
+    fn favorite_require_render() {
         let route = Route::Home;
         assert!(!favorite_change_needs_route_render(
             &route,
@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn favorite_track_route_rerenders_when_membership_or_sort_order_changes() {
+    fn favorite_change_order() {
         let track = FavoriteItemId::Track(TrackId::fake(1));
         assert!(favorite_change_needs_route_render(
             &Route::Favorites,

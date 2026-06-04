@@ -5,12 +5,12 @@ use rufin_core::{
 };
 use std::collections::HashMap;
 #[test]
-fn library_table_height_tracks_visible_rows() {
+fn route_track_visible() {
     assert_eq!(super::library_table_content_height(0), 150);
     assert_eq!(super::library_table_content_height(3), 266);
 }
 #[test]
-fn smart_playlist_default_track_columns_fit_compact_pane() {
+fn route_fit_pane() {
     let fields = [
         LibraryField::RowIndex,
         LibraryField::TitleMerged,
@@ -30,22 +30,18 @@ fn smart_playlist_default_track_columns_fit_compact_pane() {
     assert!(smart_width < regular_width);
 }
 #[test]
-fn library_toolbars_stay_on_one_compact_row() {
+fn route_stay_compact() {
     for key in LibraryListKey::all() {
         assert_eq!(
             super::library_toolbar_orientation_for_width(key, 550),
             gtk::Orientation::Horizontal,
             "{key:?}"
         );
-        assert_eq!(
-            super::library_toolbar_sort_width_for_width(key, 550),
-            Some(137),
-            "{key:?}"
-        );
+        assert_eq!(super::toolbar_sort_width(key, 550), Some(137), "{key:?}");
     }
 }
 #[test]
-fn fitted_column_widths_shrink_enabled_columns_to_available_width() {
+fn route_shrink_width() {
     let base_widths = [48, 96, 68, 220, 76];
     let fitted = super::fitted_column_widths(&base_widths, 320);
 
@@ -55,7 +51,7 @@ fn fitted_column_widths_shrink_enabled_columns_to_available_width() {
     assert!(fitted[3] > fitted[0]);
 }
 #[test]
-fn fitted_column_widths_expand_largest_column_when_space_allows() {
+fn route_allow_space() {
     let base_widths = [48, 96, 68];
     let fitted = super::fitted_column_widths(&base_widths, 400);
 
@@ -65,7 +61,7 @@ fn fitted_column_widths_expand_largest_column_when_space_allows() {
     assert_eq!(fitted[2], base_widths[2]);
 }
 #[test]
-fn album_detail_inline_columns_stay_inside_track_area() {
+fn route_track_area() {
     let fields = [
         LibraryField::RowIndex,
         LibraryField::Title,
@@ -80,7 +76,7 @@ fn album_detail_inline_columns_stay_inside_track_area() {
     assert!(field_widths[1].1 > field_widths[0].1);
 }
 #[test]
-fn complete_page_policy_loads_every_supported_library_layout_fully() {
+fn route_load_fully() {
     for key in LibraryListKey::all() {
         for layout in [
             LibraryLayout::Row,
@@ -103,7 +99,7 @@ fn complete_page_policy_loads_every_supported_library_layout_fully() {
     }
 }
 #[test]
-fn track_viewport_cover_ranges_prioritize_visible_rows_over_warm_overscan() {
+fn route_warm_overscan() {
     let ranges =
         super::track_viewport_cover_ranges(2_000, 1_000, 13).expect("track viewport ranges");
 
@@ -116,7 +112,7 @@ fn track_viewport_cover_ranges_prioritize_visible_rows_over_warm_overscan() {
 }
 
 #[test]
-fn track_interaction_viewport_cover_ranges_prime_ahead_of_fast_drag() {
+fn track_interaction_viewport() {
     let ranges = super::track_interaction_viewport_cover_ranges(2_000, 1_000, 13)
         .expect("track interaction viewport ranges");
 
@@ -129,7 +125,7 @@ fn track_interaction_viewport_cover_ranges_prime_ahead_of_fast_drag() {
 }
 
 #[test]
-fn album_interaction_viewport_cover_ranges_prime_ahead_of_fast_drag() {
+fn album_interaction_viewport() {
     let ranges = super::album_interaction_viewport_cover_ranges(265, 143, 18)
         .expect("album interaction viewport ranges");
 
@@ -142,13 +138,13 @@ fn album_interaction_viewport_cover_ranges_prime_ahead_of_fast_drag() {
 }
 
 #[test]
-fn grid_interaction_cover_ranges_prime_far_enough_for_drag_settle() {
+fn route_prime_settle() {
     let ranges = super::viewport_cover_ranges(
         129,
         45,
         15,
-        3 * super::GRID_INTERACTION_VIEWPORT_COVER_PRIORITY_BEHIND_ROWS,
-        3 * super::GRID_INTERACTION_VIEWPORT_COVER_PRIORITY_AHEAD_ROWS,
+        3 * super::GRID_INTERACTION_BEHIND,
+        3 * super::GRID_INTERACTION_AHEAD,
         6,
         18,
     )
@@ -162,7 +158,7 @@ fn grid_interaction_cover_ranges_prime_far_enough_for_drag_settle() {
     assert_eq!(ranges.warm_after_end, 129);
 }
 #[test]
-fn track_viewport_cover_ranges_clip_to_model_bounds() {
+fn route_clip_bounds() {
     let ranges = super::track_viewport_cover_ranges(50, 45, 20).expect("bounded track ranges");
 
     assert_eq!(ranges.priority_start, 30);
@@ -174,18 +170,12 @@ fn track_viewport_cover_ranges_clip_to_model_bounds() {
     assert!(super::track_viewport_cover_ranges(0, 0, 20).is_none());
 }
 #[test]
-fn viewport_page_size_uses_allocated_route_height_when_adjustment_is_stale() {
-    assert_eq!(
-        super::route_viewport_page_size_from_metrics(1.0, 1_044, 900),
-        1_044.0
-    );
-    assert_eq!(
-        super::route_viewport_page_size_from_metrics(760.0, 200, 600),
-        760.0
-    );
+fn route_use_stale() {
+    assert_eq!(super::viewport_page_size(1.0, 1_044, 900), 1_044.0);
+    assert_eq!(super::viewport_page_size(760.0, 200, 600), 760.0);
 }
 #[test]
-fn album_viewport_cover_ranges_prioritize_visible_rows() {
+fn route_prioritize_visible() {
     let ranges = super::album_viewport_cover_ranges(300, 252, 13).expect("album viewport ranges");
 
     assert_eq!(ranges.priority_start, 252);
@@ -196,7 +186,7 @@ fn album_viewport_cover_ranges_prioritize_visible_rows() {
     assert_eq!(ranges.warm_after_end, 297);
 }
 #[test]
-fn viewport_cover_ref_batches_prioritize_visible_range_before_overscan() {
+fn route_prioritize_overscan() {
     let ranges = super::TrackViewportCoverRanges {
         visible_start: 11,
         visible_end: 12,
@@ -208,7 +198,7 @@ fn viewport_cover_ref_batches_prioritize_visible_range_before_overscan() {
         warm_after_end: 15,
     };
 
-    let batches = super::viewport_cover_ref_batches_for_ranges(ranges, |start, end| {
+    let batches = super::viewport_cover_batches(ranges, |start, end| {
         (start..end)
             .map(|index| ImageRef::new(format!("cover-{index}"), None))
             .collect::<Vec<_>>()
@@ -230,7 +220,7 @@ fn viewport_cover_ref_batches_prioritize_visible_range_before_overscan() {
 }
 
 #[test]
-fn viewport_priority_refs_over_limit_continue_in_warm_lane() {
+fn route_warm_lane() {
     let batches = super::ViewportCoverRefBatches {
         visible_priority_len: 3,
         priority_refs: (0..5)
@@ -262,7 +252,7 @@ fn viewport_priority_refs_over_limit_continue_in_warm_lane() {
 }
 
 #[test]
-fn viewport_priority_cap_keeps_visible_refs_priority() {
+fn route_keep_priority() {
     let batches = super::ViewportCoverRefBatches {
         visible_priority_len: 5,
         priority_refs: (0..8)
@@ -300,7 +290,7 @@ fn viewport_priority_cap_keeps_visible_refs_priority() {
     );
 }
 #[test]
-fn playlist_viewport_cover_refs_collect_grouped_refs() {
+fn playlist_viewport_cover() {
     let first = ImageRef::new("playlist-first", None);
     let second = ImageRef::new("playlist-second", None);
     let fallback = ImageRef::new("playlist-fallback", None);
@@ -312,13 +302,13 @@ fn playlist_viewport_cover_refs_collect_grouped_refs() {
         Some(fallback.clone()),
     )));
 
-    let refs = super::playlist_cover_refs_for_model_range(&model, 0, 1);
+    let refs = super::playlist_cover_refs(&model, 0, 1);
 
     assert_eq!(refs, vec![first, second, fallback]);
 }
 
 #[test]
-fn smart_playlist_viewport_cover_refs_collect_grouped_refs() {
+fn smart_playlist_viewport() {
     let first = ImageRef::new("smart-first", None);
     let second = ImageRef::new("smart-second", None);
     let fallback = ImageRef::new("smart-fallback", None);
@@ -332,13 +322,13 @@ fn smart_playlist_viewport_cover_refs_collect_grouped_refs() {
         ),
     ));
 
-    let refs = super::smart_playlist_cover_refs_for_model_range(&model, 0, 1);
+    let refs = super::smart_cover_refs(&model, 0, 1);
 
     assert_eq!(refs, vec![first, second, fallback]);
 }
 
 #[test]
-fn playlist_viewport_cover_ranges_match_genre_grid_behavior() {
+fn route_match_behavior() {
     let playlist_ranges =
         super::viewport_cover_ranges(120, 24, 12, 0, 0, 6, 18).expect("playlist ranges");
     let genre_ranges =
@@ -348,7 +338,7 @@ fn playlist_viewport_cover_ranges_match_genre_grid_behavior() {
 }
 
 #[test]
-fn track_cover_refs_for_settings_include_full_sorted_track_set_once() {
+fn route_track_set() {
     let settings = LibraryListSettings {
         layout: LibraryLayout::Row,
         ..LibraryListSettings::for_key(LibraryListKey::Tracks)
@@ -381,7 +371,7 @@ fn track_cover_refs_for_settings_include_full_sorted_track_set_once() {
     );
 }
 #[test]
-fn album_detail_tracks_keep_disc_track_order() {
+fn disc_track_order() {
     let mut tracks = vec![
         test_track(1, "Second", 1, 2),
         test_track(2, "Third", 2, 1),
@@ -397,7 +387,7 @@ fn album_detail_tracks_keep_disc_track_order() {
     assert_eq!(titles, vec!["First", "Second", "Third"]);
 }
 #[test]
-fn album_detail_items_keep_album_header_and_track_rows_in_display_order() {
+fn album_header_order() {
     let settings = LibraryListSettings {
         layout: LibraryLayout::Detail,
         ..LibraryListSettings::for_key(LibraryListKey::Albums)
@@ -442,7 +432,7 @@ fn album_detail_items_keep_album_header_and_track_rows_in_display_order() {
     ));
 }
 #[test]
-fn album_detail_virtual_range_keeps_boundary_rows_visible() {
+fn route_keep_visible() {
     let rows = vec![
         test_virtual_row(0, 100),
         test_virtual_row(100, 100),
@@ -459,7 +449,7 @@ fn album_detail_virtual_range_keeps_boundary_rows_visible() {
     );
 }
 #[test]
-fn complete_cached_page_expands_partial_page_to_total() {
+fn route_expand_total() {
     let page = rufin_provider::PagedResponse::new(vec![1, 2], 5);
     let page = super::complete_cached_page(
         page,
@@ -477,7 +467,7 @@ fn complete_cached_page_expands_partial_page_to_total() {
     assert_eq!(page.total, 5);
 }
 #[test]
-fn complete_cached_page_leaves_partial_page_when_not_requested() {
+fn route_cache_page() {
     let page = rufin_provider::PagedResponse::new(vec![1, 2], 5);
     let page = super::complete_cached_page(
         page,

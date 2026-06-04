@@ -36,11 +36,9 @@ pub(super) fn fetch_and_cache_cover(
     }
     if saved.server.provider == LOCAL_PROVIDER_ID && image_ref.item_id.starts_with("local:cover:") {
         let settings = load_settings_from_store(store);
-        let image = LocalProvider::image_bytes_for_cover_item_id(
-            &image_ref.item_id,
-            local_folder_paths(&settings),
-        )
-        .map_err(|error| error.to_string())?;
+        let image =
+            LocalProvider::cover_item_bytes(&image_ref.item_id, local_folder_paths(&settings))
+                .map_err(|error| error.to_string())?;
         if image.bytes.is_empty() {
             return Err("cover response was empty".to_string());
         }
@@ -157,7 +155,7 @@ mod tests {
     use super::normalize_cover_bytes;
 
     #[test]
-    fn normalize_cover_bytes_downscales_large_cache_images() {
+    fn fetch_normalize_image() {
         let pixbuf = Pixbuf::new(Colorspace::Rgb, false, 8, 512, 384).expect("pixbuf");
         pixbuf.fill(0x336699ff);
         let bytes = pixbuf.save_to_bufferv("png", &[]).expect("png bytes");

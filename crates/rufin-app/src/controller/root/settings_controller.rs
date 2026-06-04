@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn load_settings_migrates_scrobbling_secrets_to_secret_store() {
+    fn settings_store_secret() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let controller = SettingsController::new(store.clone(), secrets.clone());
@@ -248,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn save_settings_persists_scrobbling_secrets_outside_settings() {
+    fn settings_persist_secret() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let controller = SettingsController::new(store.clone(), secrets.clone());
@@ -294,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn save_settings_does_not_write_scrobbling_secret_when_secret_store_fails() {
+    fn settings_store_fails() {
         let store = StoreHandle::open_memory().expect("memory store");
         let secrets: Arc<dyn SecretStore> = Arc::new(FailingSecretStore);
         let controller = SettingsController::new(store.clone(), secrets);

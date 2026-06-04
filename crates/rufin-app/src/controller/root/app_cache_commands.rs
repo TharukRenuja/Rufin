@@ -1,7 +1,7 @@
 use super::*;
 
 impl AppController {
-    pub fn clear_active_server_cache_for_app() -> Result<(), String> {
+    pub fn clear_app_cache() -> Result<(), String> {
         let store = StoreHandle::open_for_app()?;
         let Some(saved) = store.with_store(|store| store.active_server())? else {
             return Err("No active server is saved.".to_string());

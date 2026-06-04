@@ -302,20 +302,14 @@ pub(in crate::ui) fn replace_tracks_in_model(model: &gio::ListStore, tracks: Vec
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-pub(in crate::ui) fn replace_album_detail_items_in_model(
-    model: &gio::ListStore,
-    rows: Vec<AlbumDetailItem>,
-) {
+pub(in crate::ui) fn replace_album_items(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
     let additions = rows
         .into_iter()
         .map(glib::BoxedAnyObject::new)
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-pub(in crate::ui) fn append_album_detail_items_to_model(
-    model: &gio::ListStore,
-    rows: Vec<AlbumDetailItem>,
-) {
+pub(in crate::ui) fn append_album_items(model: &gio::ListStore, rows: Vec<AlbumDetailItem>) {
     let additions = rows
         .into_iter()
         .map(glib::BoxedAnyObject::new)
@@ -897,7 +891,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_playlist_unknown_stats_are_not_rendered_as_zeroes() {
+    fn cards_smart_zeroes() {
         let unresolved = smart_playlist_with_stats(0, 0);
         assert!(smart_playlist_field(&unresolved, LibraryField::SongCount).is_empty());
         assert!(smart_playlist_field(&unresolved, LibraryField::Duration).is_empty());

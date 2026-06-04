@@ -24,24 +24,24 @@ pub(in crate::ui) fn startup_route_reveal_action(
     StartupRevealAction::Wait
 }
 
-pub(in crate::ui) fn first_run_cover_prime_reveal_action(
+pub(in crate::ui) fn startup_prime_action(
     pending_covers: usize,
     elapsed: Duration,
 ) -> StartupRevealAction {
     if pending_covers == 0 {
         StartupRevealAction::RevealReady
-    } else if elapsed >= Duration::from_millis(FIRST_RUN_COVER_PRIME_TIMEOUT_MS) {
+    } else if elapsed >= Duration::from_millis(PRIME_TIMEOUT_MS) {
         StartupRevealAction::RevealExpired
     } else {
         StartupRevealAction::Wait
     }
 }
 
-pub(in crate::ui) fn source_route_cover_warm_settle_delay_ms() -> u64 {
-    SOURCE_ROUTE_COVER_WARM_SETTLE_DELAY_MS
+pub(in crate::ui) fn cover_warm_delay() -> u64 {
+    WARM_SETTLE_MS
 }
 
-pub(in crate::ui) fn take_matching_source_route_cover_warm_pending(
+pub(in crate::ui) fn take_pending_warm(
     pending: &mut Option<(ServerId, u64)>,
     server_id: &ServerId,
     token: u64,
@@ -234,7 +234,7 @@ impl Shell {
                 shell.update_bottom_player();
                 shell.log_layout_snapshot("startup_reveal_after_render");
                 shell.queue_post_layout_route_render();
-                shell.queue_source_route_cover_warm_after_layout_settles();
+                shell.queue_settled_warm();
             },
         );
     }
@@ -244,31 +244,27 @@ impl Shell {
             let started_at = Instant::now();
             let timeout_logged = Rc::new(Cell::new(false));
             let shell = Rc::clone(self);
-            glib::timeout_add_local(
-                Duration::from_millis(FIRST_RUN_COVER_PRIME_POLL_MS),
-                move || {
-                    if shell.state.first_run_cover_prime_generation.get() != generation {
-                        return glib::ControlFlow::Break;
+            glib::timeout_add_local(Duration::from_millis(PRIME_POLL_MS), move || {
+                if shell.state.first_run_cover_prime_generation.get() != generation {
+                    return glib::ControlFlow::Break;
+                }
+                shell.reconcile_prime_pending();
+                let pending_covers = shell.state.first_run_cover_prime_pending.borrow().len();
+                match startup_prime_action(pending_covers, started_at.elapsed()) {
+                    StartupRevealAction::RevealReady => {
+                        shell.finish_first_run_app_reveal();
+                        glib::ControlFlow::Break
                     }
-                    shell.reconcile_first_run_cover_prime_pending();
-                    let pending_covers = shell.state.first_run_cover_prime_pending.borrow().len();
-                    match first_run_cover_prime_reveal_action(pending_covers, started_at.elapsed())
-                    {
-                        StartupRevealAction::RevealReady => {
-                            shell.finish_first_run_app_reveal();
-                            glib::ControlFlow::Break
+                    StartupRevealAction::RevealExpired => {
+                        if pending_covers > 0 && !timeout_logged.replace(true) {
+                            debug!(pending = pending_covers, "first-run cover prime expired");
                         }
-                        StartupRevealAction::RevealExpired => {
-                            if pending_covers > 0 && !timeout_logged.replace(true) {
-                                debug!(pending = pending_covers, "first-run cover prime expired");
-                            }
-                            shell.finish_first_run_app_reveal();
-                            glib::ControlFlow::Break
-                        }
-                        StartupRevealAction::Wait => glib::ControlFlow::Continue,
+                        shell.finish_first_run_app_reveal();
+                        glib::ControlFlow::Break
                     }
-                },
-            );
+                    StartupRevealAction::Wait => glib::ControlFlow::Continue,
+                }
+            });
             return;
         }
 
@@ -320,12 +316,12 @@ impl Shell {
                     shell.update_bottom_player();
                     shell.log_layout_snapshot("first_run_reveal_after_render");
                     shell.queue_post_layout_route_render();
-                    shell.queue_source_route_cover_warm_after_layout_settles();
+                    shell.queue_settled_warm();
                 },
             );
         });
     }
-    pub(in crate::ui) fn queue_source_route_cover_warm_after_layout_settles(self: &Rc<Self>) {
+    pub(in crate::ui) fn queue_settled_warm(self: &Rc<Self>) {
         let Some(server_id) = self
             .state
             .library
@@ -338,7 +334,7 @@ impl Shell {
         };
         if self
             .state
-            .source_route_cover_warm_pending_for
+            .cover_warm_pending
             .borrow()
             .as_ref()
             .is_some_and(|(pending_server_id, _)| pending_server_id == &server_id)
@@ -347,7 +343,7 @@ impl Shell {
         }
         if self
             .state
-            .source_route_cover_warm_started_for
+            .cover_warm_started
             .borrow()
             .as_ref()
             .is_some_and(|started_server_id| started_server_id == &server_id)
@@ -355,46 +351,39 @@ impl Shell {
             return;
         }
 
-        let token = self
-            .state
-            .source_route_cover_warm_next_token
-            .get()
-            .saturating_add(1);
-        self.state.source_route_cover_warm_next_token.set(token);
-        *self.state.source_route_cover_warm_pending_for.borrow_mut() =
-            Some((server_id.clone(), token));
+        let token = self.state.cover_warm_token.get().saturating_add(1);
+        self.state.cover_warm_token.set(token);
+        *self.state.cover_warm_pending.borrow_mut() = Some((server_id.clone(), token));
 
         let shell = Rc::clone(self);
-        glib::timeout_add_local_once(
-            Duration::from_millis(source_route_cover_warm_settle_delay_ms()),
-            move || {
-                if !take_matching_source_route_cover_warm_pending(
-                    &mut shell.state.source_route_cover_warm_pending_for.borrow_mut(),
-                    &server_id,
-                    token,
-                ) {
-                    return;
-                }
-                let active_server_id = shell
-                    .state
-                    .library
-                    .borrow()
-                    .server
-                    .as_ref()
-                    .map(|server| server.id.clone());
-                if active_server_id.as_ref() != Some(&server_id)
-                    || !shell.state.startup_route_revealed.get()
-                    || shell.state.startup_route_render_pending.get()
-                    || shell.state.routes.borrow().current() != &Route::Home
-                {
-                    return;
-                }
+        glib::timeout_add_local_once(Duration::from_millis(cover_warm_delay()), move || {
+            if !take_pending_warm(
+                &mut shell.state.cover_warm_pending.borrow_mut(),
+                &server_id,
+                token,
+            ) {
+                return;
+            }
+            let active_server_id = shell
+                .state
+                .library
+                .borrow()
+                .server
+                .as_ref()
+                .map(|server| server.id.clone());
+            if active_server_id.as_ref() != Some(&server_id)
+                || !shell.state.startup_route_revealed.get()
+                || shell.state.startup_route_render_pending.get()
+                || shell.state.routes.borrow().current() != &Route::Home
+            {
+                return;
+            }
 
-                let smart_playlists = if sidebar_route_visible(
-                    &shell.state.settings.borrow(),
-                    SidebarRouteItem::SmartPlaylists,
-                ) {
-                    Some(
+            let smart_playlists = if sidebar_route_visible(
+                &shell.state.settings.borrow(),
+                SidebarRouteItem::SmartPlaylists,
+            ) {
+                Some(
                         shell
                             .controller
                             .cached_smart_playlists_page(0, 1_000)
@@ -404,41 +393,39 @@ impl Shell {
                                 Vec::new()
                             }),
                     )
-                } else {
-                    None
-                };
-                let active_server_id = shell
-                    .state
-                    .library
-                    .borrow()
-                    .server
-                    .as_ref()
-                    .map(|server| server.id.clone());
-                if active_server_id.as_ref() != Some(&server_id) {
-                    return;
-                }
-                if let Some(smart_playlists) = smart_playlists.as_ref() {
-                    *shell.state.smart_playlists.borrow_mut() = smart_playlists.clone();
-                }
+            } else {
+                None
+            };
+            let active_server_id = shell
+                .state
+                .library
+                .borrow()
+                .server
+                .as_ref()
+                .map(|server| server.id.clone());
+            if active_server_id.as_ref() != Some(&server_id) {
+                return;
+            }
+            if let Some(smart_playlists) = smart_playlists.as_ref() {
+                *shell.state.smart_playlists.borrow_mut() = smart_playlists.clone();
+            }
 
-                let targets = source_route_cover_warm_targets_from_snapshot(
-                    &shell.state.library.borrow(),
-                    smart_playlists.as_deref().unwrap_or_default(),
-                    &shell.state.settings.borrow(),
-                    shell.source_route_initial_cover_metrics(),
+            let targets = source_warm_targets(
+                &shell.state.library.borrow(),
+                smart_playlists.as_deref().unwrap_or_default(),
+                &shell.state.settings.borrow(),
+                shell.source_route_initial_cover_metrics(),
+            );
+            let target_count = targets.len();
+            let queued = shell.schedule_warm_targets(targets);
+            *shell.state.cover_warm_started.borrow_mut() = Some(server_id.clone());
+            if target_count > 0 {
+                debug!(
+                    targets = target_count,
+                    queued, "started source route cover warm"
                 );
-                let target_count = targets.len();
-                let queued = shell.schedule_source_route_cover_warm_targets(targets);
-                *shell.state.source_route_cover_warm_started_for.borrow_mut() =
-                    Some(server_id.clone());
-                if target_count > 0 {
-                    debug!(
-                        targets = target_count,
-                        queued, "started source route cover warm"
-                    );
-                }
-            },
-        );
+            }
+        });
     }
     fn source_route_initial_cover_metrics(&self) -> InitialRouteCoverMetrics {
         let (grid_columns, grid_card_size) = self.responsive_card_grid_metrics();

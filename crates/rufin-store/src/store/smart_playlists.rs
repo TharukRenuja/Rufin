@@ -1,6 +1,6 @@
 use super::servers::{
-    COLLECTION_COVER_SMART_PLAYLIST, bool_to_i64, collect_rows,
-    replace_collection_cover_refs_on_connection, track_from_row, u32_from_i64,
+    COLLECTION_COVER_SMART_PLAYLIST, bool_to_i64, collect_rows, replace_collection_refs,
+    track_from_row, u32_from_i64,
 };
 use super::*;
 
@@ -451,7 +451,7 @@ impl Store {
                 params![server_id.as_str(), COLLECTION_COVER_SMART_PLAYLIST],
             )?;
             for (smart_playlist_id, image_refs) in cover_refs {
-                replace_collection_cover_refs_on_connection(
+                replace_collection_refs(
                     connection,
                     server_id,
                     COLLECTION_COVER_SMART_PLAYLIST,
@@ -1135,7 +1135,7 @@ mod tests {
     use crate::store::test_support::{album, album_with_image, saved_server, track};
 
     #[test]
-    fn smart_playlist_defaults_seed_once_and_can_be_restored() {
+    fn smart_playlist_restored() {
         let store = Store::open_memory().expect("store");
         let saved = saved_server();
         store.save_server(&saved).expect("save server");
@@ -1169,7 +1169,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_playlist_reorder_persists_manual_position() {
+    fn smart_persist_position() {
         let store = Store::open_memory().expect("store");
         let saved = saved_server();
         store.save_server(&saved).expect("save server");
@@ -1199,7 +1199,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_playlist_index_resolves_track_stats_and_image() {
+    fn smart_track_image() {
         let store = Store::open_memory().expect("store");
         let saved = saved_server();
         store.save_server(&saved).expect("save server");
@@ -1250,7 +1250,7 @@ mod tests {
     }
 
     #[test]
-    fn retired_default_smart_playlists_are_removed_from_existing_sources() {
+    fn smart_retired_sources() {
         let store = Store::open_memory().expect("store");
         let saved = saved_server();
         store.save_server(&saved).expect("save server");
@@ -1295,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_playlist_rules_filter_nested_comments_genres_and_activity() {
+    fn smart_filter_activity() {
         let store = Store::open_memory().expect("store");
         let saved = saved_server();
         store.save_server(&saved).expect("save server");
@@ -1366,7 +1366,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_playlist_rules_filter_date_ranges() {
+    fn smart_filter_range() {
         let store = Store::open_memory().expect("store");
         let saved = saved_server();
         store.save_server(&saved).expect("save server");
@@ -1412,7 +1412,7 @@ mod tests {
     }
 
     #[test]
-    fn smart_playlist_rules_filter_year_range_and_genre() {
+    fn smart_filter_genre() {
         let store = Store::open_memory().expect("store");
         let saved = saved_server();
         store.save_server(&saved).expect("save server");

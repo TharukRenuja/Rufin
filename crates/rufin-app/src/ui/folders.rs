@@ -542,7 +542,7 @@ mod tests {
     };
 
     #[test]
-    fn folder_activation_preserves_source_order_with_clicked_anchor() {
+    fn folders_preserve_anchor() {
         let tracks = [track(1), track(2), track(3)];
         let source_key = super::folder_play_source_key(
             &[FolderPathItem {
@@ -585,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn name_column_width_uses_content_without_unbounded_growth() {
+    fn folders_use_growth() {
         let folders = Vec::new();
         let tracks = vec![
             rufin_core::Track {

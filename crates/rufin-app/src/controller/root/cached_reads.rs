@@ -64,7 +64,7 @@ fn source_scoped_home_section(server_id: &ServerId, section: &HomeSection) -> Ho
     section.albums.retain(|album| is_local_album_id(&album.id));
     section.tracks.retain(|track| is_local_track_id(&track.id));
     let saved = local_source_saved();
-    scrub_source_home_section_image_refs(&saved, &mut section);
+    scrub_home_refs(&saved, &mut section);
     section
 }
 pub(in crate::controller) fn sync_page_finished(
@@ -239,15 +239,15 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         &mut playlists,
         &mut favorites,
     );
-    normalize_local_album_image_refs_from_tracks(store, &saved, &mut albums)?;
-    normalize_local_track_image_refs_from_albums(store, &saved, &mut tracks, &albums)?;
+    album_track_refs(store, &saved, &mut albums)?;
+    track_album_refs(store, &saved, &mut tracks, &albums)?;
     for section in &mut home_sections {
-        normalize_home_section_local_image_refs(store, &saved, section)?;
+        home_local_refs(store, &saved, section)?;
     }
     if let Some(section) = &mut prefetched_explore {
-        normalize_home_section_local_image_refs(store, &saved, section)?;
+        home_local_refs(store, &saved, section)?;
     }
-    normalize_local_track_image_refs_from_albums(store, &saved, &mut favorites, &albums)?;
+    track_album_refs(store, &saved, &mut favorites, &albums)?;
     let status = sync_state
         .as_ref()
         .map(sync_status_text)
@@ -340,10 +340,10 @@ pub(in crate::controller) fn normalize_artist_collection_image_refs(
     for album in fallback_albums.values_mut() {
         scrub_source_image_ref(saved, &mut album.image_ref);
     }
-    apply_artist_album_fallback_image_refs(artists, fallback_albums, settings);
+    artist_album_fallback(artists, fallback_albums, settings);
     Ok(())
 }
-pub(in crate::controller) fn apply_artist_album_fallback_image_refs(
+pub(in crate::controller) fn artist_album_fallback(
     artists: &mut [Artist],
     mut fallback_albums: HashMap<ArtistId, Album>,
     settings: &AppSettings,
@@ -372,7 +372,7 @@ pub(in crate::controller) fn artist_fallback_image_ref(
         .next()
         .or_else(|| tracks.iter().find_map(|track| track.image_ref.clone()))
 }
-pub(in crate::controller) fn normalize_local_track_image_refs_from_albums(
+pub(in crate::controller) fn track_album_refs(
     store: &StoreHandle,
     saved: &SavedServer,
     tracks: &mut [Track],
@@ -413,7 +413,7 @@ pub(in crate::controller) fn normalize_local_track_image_refs_from_albums(
     }
     Ok(())
 }
-pub(in crate::controller) fn normalize_local_album_image_refs_from_tracks(
+pub(in crate::controller) fn album_track_refs(
     store: &StoreHandle,
     saved: &SavedServer,
     albums: &mut [Album],
@@ -446,27 +446,27 @@ pub(in crate::controller) fn normalize_local_album_image_refs_from_tracks(
     }
     Ok(())
 }
-pub(in crate::controller) fn normalize_home_section_image_refs_for_saved(
+pub(in crate::controller) fn home_image_refs(
     store: &StoreHandle,
     saved: &SavedServer,
     section: &mut HomeSection,
 ) -> Result<(), String> {
     let metadata_settings = load_settings_for_saved(store, saved);
-    scrub_source_home_section_image_refs(saved, section);
+    scrub_home_refs(saved, section);
     external_metadata::normalize_home_section(section, &metadata_settings);
-    scrub_source_home_section_image_refs(saved, section);
-    normalize_home_section_local_image_refs(store, saved, section)
+    scrub_home_refs(saved, section);
+    home_local_refs(store, saved, section)
 }
-fn normalize_home_section_local_image_refs(
+fn home_local_refs(
     store: &StoreHandle,
     saved: &SavedServer,
     section: &mut HomeSection,
 ) -> Result<(), String> {
-    normalize_local_album_image_refs_from_tracks(store, saved, &mut section.albums)?;
+    album_track_refs(store, saved, &mut section.albums)?;
     let albums = section.albums.clone();
-    normalize_local_track_image_refs_from_albums(store, saved, &mut section.tracks, &albums)
+    track_album_refs(store, saved, &mut section.tracks, &albums)
 }
-pub(in crate::controller) fn normalize_local_queue_image_refs_from_albums(
+pub(in crate::controller) fn queue_album_refs(
     store: &StoreHandle,
     server: &ServerIdentity,
     entries: &mut [QueueEntry],
@@ -488,7 +488,7 @@ pub(in crate::controller) fn normalize_local_queue_image_refs_from_albums(
     }
     let mut image_refs =
         store.with_store(|store| store.load_album_image_refs(&server.id, &missing_album_ids))?;
-    image_refs.retain(|_, image_ref| source_image_ref_allowed_for_server(server, image_ref));
+    image_refs.retain(|_, image_ref| image_ref_allowed(server, image_ref));
     for entry in entries {
         let Some(album_id) = &entry.album_id else {
             continue;
@@ -604,9 +604,7 @@ pub(in crate::controller) fn restore_queue(
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
         Ok(Some(mut snapshot)) => {
             external_metadata::normalize_queue_snapshot(&mut snapshot, &settings);
-            if let Err(error) =
-                normalize_local_queue_image_refs_from_albums(store, server, &mut snapshot.entries)
-            {
+            if let Err(error) = queue_album_refs(store, server, &mut snapshot.entries) {
                 warn!(%error, "failed to normalize local queue image refs");
             }
             Some(QueueEngine::restore(snapshot))
@@ -668,7 +666,7 @@ pub(in crate::controller) fn activate_logged_in_server(
     settings.migrate_defaults();
     context.store.save_settings(&settings)?;
 
-    activate_queue_for_saved_and_emit(context, &saved)?;
+    activate_saved_queue(context, &saved)?;
     let _sent = context.events.send(ControllerEvent::LoginStatus(
         "Connected. Loading cached library...".to_string(),
     ));
@@ -676,7 +674,7 @@ pub(in crate::controller) fn activate_logged_in_server(
     Ok(saved)
 }
 
-pub(in crate::controller) fn save_token_and_activate_logged_in_server(
+pub(in crate::controller) fn activate_with_token(
     context: &LoginActivationContext<'_>,
     secrets: &Arc<dyn SecretStore>,
     request: LoginActivationRequest<'_>,
@@ -699,7 +697,7 @@ pub(in crate::controller) fn save_token_and_activate_logged_in_server(
         }
     }
 }
-pub(in crate::controller) fn activate_queue_for_saved_and_emit(
+pub(in crate::controller) fn activate_saved_queue(
     context: &QueueActivationContext<'_>,
     saved: &SavedServer,
 ) -> Result<(), String> {
@@ -1100,14 +1098,14 @@ pub(in crate::controller) fn prune_successful_sync_image_cache(
     server_id: &ServerId,
     mut pruned_entries: Vec<CoverCacheEntry>,
 ) {
-    match stale_generated_external_image_cache_entries(store, server_id) {
+    match stale_external_images(store, server_id) {
         Ok(mut entries) => pruned_entries.append(&mut entries),
         Err(error) => warn!(%error, "failed to prune generated external image cache entries"),
     }
     prune_disk_cover_cache_entries(&pruned_entries);
 }
 
-fn stale_generated_external_image_cache_entries(
+fn stale_external_images(
     store: &StoreHandle,
     server_id: &ServerId,
 ) -> Result<Vec<CoverCacheEntry>, String> {
@@ -1122,13 +1120,7 @@ fn stale_generated_external_image_cache_entries(
     } else {
         generated_external_image_refs(store, server_id, &settings)?
     };
-    store.with_store(|store| {
-        store.prune_stale_generated_external_image_cache_entries(
-            server_id,
-            &live_refs,
-            prune_all_external,
-        )
-    })
+    store.with_store(|store| store.prune_external_images(server_id, &live_refs, prune_all_external))
 }
 
 fn generated_external_image_refs(
@@ -1136,8 +1128,8 @@ fn generated_external_image_refs(
     server_id: &ServerId,
     settings: &AppSettings,
 ) -> Result<Vec<ImageRef>, String> {
-    let mut albums = load_all_cached_albums_for_external_prune(store, server_id)?;
-    let mut tracks = load_all_cached_tracks_for_external_prune(store, server_id)?;
+    let mut albums = external_prune_albums(store, server_id)?;
+    let mut tracks = external_prune_tracks(store, server_id)?;
     external_metadata::normalize_albums(&mut albums, settings);
     external_metadata::normalize_tracks(&mut tracks, settings);
     let mut seen = HashSet::<(String, Option<String>)>::new();
@@ -1157,10 +1149,7 @@ fn generated_external_image_refs(
     Ok(refs)
 }
 
-fn load_all_cached_albums_for_external_prune(
-    store: &StoreHandle,
-    server_id: &ServerId,
-) -> Result<Vec<Album>, String> {
+fn external_prune_albums(store: &StoreHandle, server_id: &ServerId) -> Result<Vec<Album>, String> {
     let mut albums = Vec::new();
     let mut offset = 0;
     loop {
@@ -1174,10 +1163,7 @@ fn load_all_cached_albums_for_external_prune(
     }
 }
 
-fn load_all_cached_tracks_for_external_prune(
-    store: &StoreHandle,
-    server_id: &ServerId,
-) -> Result<Vec<Track>, String> {
+fn external_prune_tracks(store: &StoreHandle, server_id: &ServerId) -> Result<Vec<Track>, String> {
     let mut tracks = Vec::new();
     let mut offset = 0;
     loop {
@@ -1221,14 +1207,11 @@ fn local_cover_cache_missing(
             if album_count == 0 && track_count == 0 {
                 return Ok(missing_library_requires_prefetch);
             }
-            local_provider_cover_refs_missing_in_store(store, server_id)
+            missing_provider_refs(store, server_id)
         })
         .unwrap_or(true)
 }
-fn local_provider_cover_refs_missing_in_store(
-    store: &Store,
-    server_id: &ServerId,
-) -> Result<bool, StoreError> {
+fn missing_provider_refs(store: &Store, server_id: &ServerId) -> Result<bool, StoreError> {
     let mut seen = HashSet::new();
     if local_album_cover_refs_missing(store, server_id, &mut seen)? {
         return Ok(true);
@@ -1403,7 +1386,7 @@ pub(in crate::controller) fn scrub_source_playlist_image_refs(
         scrub_source_image_ref_vec(saved, &mut playlist.image_refs);
     }
 }
-pub(in crate::controller) fn scrub_source_smart_playlist_image_refs(
+pub(in crate::controller) fn scrub_smart_refs(
     saved: &SavedServer,
     playlists: &mut [SmartPlaylist],
 ) {
@@ -1412,10 +1395,7 @@ pub(in crate::controller) fn scrub_source_smart_playlist_image_refs(
         scrub_source_image_ref_vec(saved, &mut playlist.image_refs);
     }
 }
-pub(in crate::controller) fn scrub_source_home_section_image_refs(
-    saved: &SavedServer,
-    section: &mut HomeSection,
-) {
+pub(in crate::controller) fn scrub_home_refs(saved: &SavedServer, section: &mut HomeSection) {
     if saved.server.provider == LOCAL_PROVIDER_ID {
         section.albums.retain(|album| is_local_album_id(&album.id));
         section.tracks.retain(|track| is_local_track_id(&track.id));
@@ -1437,10 +1417,10 @@ fn scrub_snapshot_image_refs(
     favorites: &mut [Track],
 ) {
     for section in home_sections {
-        scrub_source_home_section_image_refs(saved, section);
+        scrub_home_refs(saved, section);
     }
     if let Some(section) = prefetched_explore {
-        scrub_source_home_section_image_refs(saved, section);
+        scrub_home_refs(saved, section);
     }
     scrub_source_album_image_refs(saved, albums);
     scrub_source_track_image_refs(saved, tracks);
@@ -1463,9 +1443,9 @@ fn scrub_source_image_ref_vec(saved: &SavedServer, image_refs: &mut Vec<ImageRef
     image_refs.retain(|image_ref| source_image_ref_allowed(saved, image_ref));
 }
 fn source_image_ref_allowed(saved: &SavedServer, image_ref: &ImageRef) -> bool {
-    source_image_ref_allowed_for_server(&saved.server, image_ref)
+    image_ref_allowed(&saved.server, image_ref)
 }
-fn source_image_ref_allowed_for_server(server: &ServerIdentity, image_ref: &ImageRef) -> bool {
+fn image_ref_allowed(server: &ServerIdentity, image_ref: &ImageRef) -> bool {
     if server.provider == LOCAL_PROVIDER_ID {
         return is_local_provider_image_ref(image_ref);
     }
@@ -1529,7 +1509,7 @@ pub(in crate::controller) fn next_queue_entry_after_current(
     queue.next_after_end_of_stream().cloned()
 }
 
-pub(in crate::controller) fn queue_state_matches_current_playback_request(
+pub(in crate::controller) fn current_request_match(
     queue: Option<&QueueEngine>,
     server_id: &ServerId,
     entry: &QueueEntry,
@@ -1544,16 +1524,17 @@ pub(in crate::controller) fn queue_state_matches_current_playback_request(
         .current()
         .is_some_and(|current| current.id == entry.id && current.track_id == entry.track_id)
 }
-pub(in crate::controller) fn current_playback_request_is_still_current(
+pub(in crate::controller) fn current_request_valid(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     server_id: &ServerId,
     entry: &QueueEntry,
 ) -> bool {
-    queue.lock().ok().is_some_and(|queue| {
-        queue_state_matches_current_playback_request(queue.as_ref(), server_id, entry)
-    })
+    queue
+        .lock()
+        .ok()
+        .is_some_and(|queue| current_request_match(queue.as_ref(), server_id, entry))
 }
-pub(in crate::controller) fn current_playback_request_matches_generation(
+pub(in crate::controller) fn request_generation_match(
     playback_request_generation: &Arc<AtomicU64>,
     request_generation: u64,
     queue: &Arc<Mutex<Option<QueueEngine>>>,
@@ -1561,7 +1542,7 @@ pub(in crate::controller) fn current_playback_request_matches_generation(
     entry: &QueueEntry,
 ) -> bool {
     playback_request_generation_matches(playback_request_generation, request_generation)
-        && current_playback_request_is_still_current(queue, server_id, entry)
+        && current_request_valid(queue, server_id, entry)
 }
 
 #[derive(Clone, Debug)]
@@ -1573,10 +1554,7 @@ pub(in crate::controller) struct NextPreloadRequest {
     pub(in crate::controller) playback_settings: PlaybackSettings,
 }
 
-fn queue_state_matches_next_preload_request(
-    queue: Option<&QueueEngine>,
-    request: &NextPreloadRequest,
-) -> bool {
+fn preload_request_match(queue: Option<&QueueEngine>, request: &NextPreloadRequest) -> bool {
     let Some(queue) = queue else {
         return false;
     };
@@ -1724,7 +1702,7 @@ pub(in crate::controller) fn resolve_prepared_item(
     )?;
     Ok(prepared_item_from_entry(entry, stream))
 }
-pub(in crate::controller) fn send_prepared_next_if_queue_matches(
+pub(in crate::controller) fn send_prepared_next(
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     events: &Sender<ControllerEvent>,
@@ -1734,7 +1712,7 @@ pub(in crate::controller) fn send_prepared_next_if_queue_matches(
     let Ok(queue) = queue.lock() else {
         return false;
     };
-    if !queue_state_matches_next_preload_request(queue.as_ref(), request) {
+    if !preload_request_match(queue.as_ref(), request) {
         return false;
     }
     let track_id = prepared.track.id.clone();
@@ -1798,8 +1776,7 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
             elapsed_ms = preload_started_at.elapsed().as_millis(),
             "resolved next playback stream"
         );
-        let _sent =
-            send_prepared_next_if_queue_matches(&playback, &queue, &events, &request, prepared);
+        let _sent = send_prepared_next(&playback, &queue, &events, &request, prepared);
     });
 }
 pub(in crate::controller) fn next_preload_request_from_queue(

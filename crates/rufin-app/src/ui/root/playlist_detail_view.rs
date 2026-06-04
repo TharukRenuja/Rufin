@@ -11,22 +11,20 @@ pub(in crate::ui) fn playlist_detail_compact_for_width(width: i32) -> bool {
     width < PLAYLIST_DETAIL_COMPACT_WIDTH
 }
 
-pub(in crate::ui) fn playlist_detail_route_margin_for_width(width: i32) -> i32 {
+pub(in crate::ui) fn playlist_route_margin(width: i32) -> i32 {
     if playlist_detail_compact_for_width(width) {
         PLAYLIST_DETAIL_COMPACT_ROUTE_MARGIN
     } else {
         PLAYLIST_DETAIL_WIDE_ROUTE_MARGIN
     }
 }
-pub(in crate::ui) fn playlist_detail_header_orientation_for_width(_width: i32) -> gtk::Orientation {
+pub(in crate::ui) fn playlist_header_orientation(_width: i32) -> gtk::Orientation {
     gtk::Orientation::Horizontal
 }
-pub(in crate::ui) fn playlist_detail_toolbar_orientation_for_width(
-    _width: i32,
-) -> gtk::Orientation {
+pub(in crate::ui) fn playlist_toolbar_orientation(_width: i32) -> gtk::Orientation {
     gtk::Orientation::Horizontal
 }
-pub(in crate::ui) fn playlist_detail_sort_width_for_width(width: i32) -> i32 {
+pub(in crate::ui) fn playlist_sort_width(width: i32) -> i32 {
     if playlist_detail_compact_for_width(width) {
         (width / 3).clamp(112, 150)
     } else {
@@ -36,7 +34,7 @@ pub(in crate::ui) fn playlist_detail_sort_width_for_width(width: i32) -> i32 {
 pub(in crate::ui) fn playlist_detail_cover_fetch_size() -> u32 {
     PLAYLIST_DETAIL_COVER_FETCH_SIZE
 }
-pub(in crate::ui) fn playlist_detail_cover_size_for_width(width: i32) -> i32 {
+pub(in crate::ui) fn playlist_cover_size(width: i32) -> i32 {
     if playlist_detail_compact_for_width(width) {
         PLAYLIST_DETAIL_COMPACT_COVER_SIZE
     } else {
@@ -83,8 +81,8 @@ impl Shell {
         );
         let content_width = route_content_width(self);
         let compact = playlist_detail_compact_for_width(content_width);
-        let route_margin = playlist_detail_route_margin_for_width(content_width);
-        let cover_size = playlist_detail_cover_size_for_width(content_width);
+        let route_margin = playlist_route_margin(content_width);
+        let cover_size = playlist_cover_size(content_width);
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
         wrapper.add_css_class("route-content");
         wrapper.set_hexpand(true);
@@ -95,7 +93,7 @@ impl Shell {
         wrapper.set_margin_bottom(36);
 
         let header = gtk::Box::new(
-            playlist_detail_header_orientation_for_width(content_width),
+            playlist_header_orientation(content_width),
             if compact { 20 } else { 28 },
         );
         header.add_css_class("playlist-detail-showcase");
@@ -222,8 +220,8 @@ impl Shell {
         );
         let content_width = route_content_width(self);
         let compact = playlist_detail_compact_for_width(content_width);
-        let route_margin = playlist_detail_route_margin_for_width(content_width);
-        let cover_size = playlist_detail_cover_size_for_width(content_width);
+        let route_margin = playlist_route_margin(content_width);
+        let cover_size = playlist_cover_size(content_width);
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
@@ -240,7 +238,7 @@ impl Shell {
         wrapper.set_margin_end(route_margin);
 
         let header = gtk::Box::new(
-            playlist_detail_header_orientation_for_width(content_width),
+            playlist_header_orientation(content_width),
             if compact { 20 } else { 28 },
         );
         header.add_css_class("playlist-detail-showcase");
@@ -369,10 +367,7 @@ impl Shell {
         wrapper.set_width_request(1);
 
         let content_width = route_content_width(self);
-        let toolbar = gtk::Box::new(
-            playlist_detail_toolbar_orientation_for_width(content_width),
-            8,
-        );
+        let toolbar = gtk::Box::new(playlist_toolbar_orientation(content_width), 8);
         toolbar.add_css_class("track-toolbar");
         toolbar.set_hexpand(true);
         toolbar.set_halign(gtk::Align::Fill);
@@ -392,7 +387,7 @@ impl Shell {
         let sort_dropdown = gtk::DropDown::new(Some(sort_options), None::<gtk::Expression>);
         sort_dropdown.set_hexpand(false);
         sort_dropdown.set_halign(gtk::Align::End);
-        sort_dropdown.set_width_request(playlist_detail_sort_width_for_width(content_width));
+        sort_dropdown.set_width_request(playlist_sort_width(content_width));
 
         let direction = gtk::Button::from_icon_name("view-sort-ascending-symbolic");
         direction.add_css_class("flat");

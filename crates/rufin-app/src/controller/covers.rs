@@ -25,7 +25,7 @@ use fetch::fetch_and_cache_cover;
 pub(super) use fetch::is_provider_not_found_error;
 pub(super) use prefetch::{
     ExternalCoverPrefetchRequest, ProviderCoverPrefetchRequest,
-    prefetch_initial_provider_cover_cache, start_external_metadata_cover_prefetch_thread,
+    prefetch_initial_provider_cover_cache, start_cover_prefetch,
 };
 
 const EXTERNAL_PREFETCH_PAGE_SIZE: usize = 500;
@@ -81,10 +81,7 @@ pub(super) fn unmark_cover_in_flight_generation(
     }
 }
 
-fn external_cover_retry_generation_is_current(
-    external_cover_retry_generation: &AtomicU64,
-    generation: u64,
-) -> bool {
+fn cover_retry_check(external_cover_retry_generation: &AtomicU64, generation: u64) -> bool {
     external_cover_retry_generation.load(Ordering::SeqCst) == generation
 }
 
@@ -120,11 +117,8 @@ impl AppController {
         cached_cover_path_for_key(key)
     }
 
-    pub fn external_cover_retry_generation_is_current(&self, generation: u64) -> bool {
-        external_cover_retry_generation_is_current(
-            &self.external_cover_retry_generation,
-            generation,
-        )
+    pub fn cover_retry_status(&self, generation: u64) -> bool {
+        cover_retry_check(&self.external_cover_retry_generation, generation)
     }
 
     pub fn external_cover_lookup_known_missing(&self, image_ref: &ImageRef, size: u32) -> bool {
@@ -165,7 +159,7 @@ impl AppController {
         };
         self.store
             .with_store(|store| store.clear_external_image_lookup_misses(&saved.server.id))?;
-        start_external_metadata_cover_prefetch_thread(ExternalCoverPrefetchRequest {
+        start_cover_prefetch(ExternalCoverPrefetchRequest {
             store: self.store.clone(),
             runtime: Arc::clone(&self.runtime),
             secrets: Arc::clone(&self.secrets),
@@ -292,10 +286,7 @@ impl AppController {
                     if is_external_cover
                         && external_lookup_miss_cached(&store, &saved, &image_ref, size)?
                     {
-                        if !external_cover_retry_generation_is_current(
-                            &external_cover_retry_generation,
-                            retry_generation,
-                        ) {
+                        if !cover_retry_check(&external_cover_retry_generation, retry_generation) {
                             return Ok(CoverRequestOutcome::Deferred);
                         }
                         return Ok(CoverRequestOutcome::TerminalMissing {
@@ -319,7 +310,7 @@ impl AppController {
                                 let _in_flight = cover_in_flight.lock().map_err(|_| {
                                     "cover in-flight lock was poisoned.".to_string()
                                 })?;
-                                if !external_cover_retry_generation_is_current(
+                                if !cover_retry_check(
                                     &external_cover_retry_generation,
                                     retry_generation,
                                 ) {
@@ -363,10 +354,7 @@ impl AppController {
                     external_retry_generation,
                 }) => {
                     if external_retry_generation.is_some_and(|generation| {
-                        !external_cover_retry_generation_is_current(
-                            &external_cover_retry_generation,
-                            generation,
-                        )
+                        !cover_retry_check(&external_cover_retry_generation, generation)
                     }) {
                         return;
                     }
@@ -407,7 +395,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn cover_terminal_errors_exclude_retryable_external_failures() {
+    fn cover_exclude_failure() {
         assert!(cover_error_is_terminal(
             "jellyfin",
             true,
@@ -426,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn local_missing_file_is_terminal_cover_unavailable() {
+    fn cover_local_unavailable() {
         assert!(cover_error_is_terminal(
             rufin_provider_local::LOCAL_PROVIDER_ID,
             false,
@@ -435,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_cover_in_flight_release_keeps_newer_generation() {
+    fn cover_keep_generation() {
         let in_flight = Arc::new(Mutex::new(HashMap::new()));
         let key = "server::cover::256";
 

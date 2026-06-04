@@ -1262,7 +1262,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn cached_player_cover_replacements_keep_current_art_visible() {
+    fn player_keep_visible() {
         assert!(super::player_cover_replacement_is_ready(true, false));
         assert!(super::player_cover_replacement_is_ready(false, true));
         assert!(super::player_cover_replacement_is_ready(true, true));
@@ -1270,7 +1270,7 @@ mod tests {
     }
 
     #[test]
-    fn volume_width_scales_down_when_bottom_player_narrows() {
+    fn player_scale_narrows() {
         assert_eq!(super::bottom_player_volume_width(2560), 160);
         assert_eq!(super::bottom_player_volume_width(1920), 120);
         assert_eq!(super::bottom_player_volume_width(960), 60);
@@ -1278,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn now_playing_wall_does_not_propagate_text_width() {
+    fn player_now_width() {
         let spec = super::player_wall_spec();
 
         assert_eq!(spec.horizontal_policy, gtk::PolicyType::External);

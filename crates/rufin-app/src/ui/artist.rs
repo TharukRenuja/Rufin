@@ -214,7 +214,7 @@ impl Shell {
         add_album_seed_gradient_class(&header, seed);
 
         let image_ref = super::library::artist_cover_image_ref(self, artist);
-        self.prime_cover_ref_from_cache_now(image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
+        self.prime_cached_cover(image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
         let cover = self.cover_tile_for(image_ref.as_ref(), seed, cover_size, DETAIL_COVER_SIZE);
         cover.add_css_class("detail-showcase-cover");
         cover.add_css_class("artist-detail-cover");
@@ -545,7 +545,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artist_summary_counts_appears_on_albums() {
+    fn artist_summary_album() {
         let summary = artist_summary_text(0, 1, 3);
 
         assert!(summary.contains("0 albums"));
@@ -554,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn artist_appears_on_from_tracks_excludes_primary_albums() {
+    fn artist_exclude_album() {
         let artist_id = ArtistId::fake(7);
         let mut primary = test_album("Artist", Some(artist_id.clone()));
         primary.id = AlbumId::fake(1);
@@ -582,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn artist_appears_on_from_tracks_uses_name_when_artist_id_is_missing() {
+    fn artist_use_missing() {
         let artist_id = ArtistId::fake(7);
         let appears_on = test_album("Other Artist", Some(ArtistId::fake(8)));
         let mut featured_track = test_track("Artist", None);

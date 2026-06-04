@@ -121,7 +121,7 @@ mod tests {
     use super::{Route, RouteStack};
 
     #[test]
-    fn route_stack_tracks_back_and_forward_history() {
+    fn route_track_history() {
         let mut stack = RouteStack::new(Route::Home);
 
         stack.navigate(Route::Albums);
@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn route_stack_supports_opaque_string_ids() {
+    fn route_support_id() {
         let album_route = Route::AlbumDetail(crate::domain::AlbumId::new("jellyfin:album:abc"));
         let mut stack = RouteStack::new(Route::Home);
 
@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn route_stack_keeps_folder_navigation_history() {
+    fn route_keep_history() {
         let root = Route::Folders { path: Vec::new() };
         let nested = Route::Folders {
             path: vec![super::FolderPathItem {

@@ -154,10 +154,10 @@ fn load_local_manifest_cache(
 pub(in crate::controller) fn ensure_jellyfin_device_id(
     store: &StoreHandle,
 ) -> Result<String, String> {
-    ensure_jellyfin_device_id_with_generator(store, generate_jellyfin_device_id)
+    ensure_device_id(store, generate_jellyfin_device_id)
 }
 
-pub(in crate::controller) fn ensure_jellyfin_device_id_with_generator(
+pub(in crate::controller) fn ensure_device_id(
     store: &StoreHandle,
     generate: impl FnOnce() -> Result<String, String>,
 ) -> Result<String, String> {
@@ -425,11 +425,11 @@ pub(in crate::controller) fn cache_dir() -> Option<PathBuf> {
 
 pub(in crate::controller) fn app_cache_database_path() -> PathBuf {
     cache_dir()
-        .map(|dir| app_cache_database_path_for_cache_dir(&dir))
+        .map(|dir| cache_db_path(&dir))
         .unwrap_or_else(|| PathBuf::from(CACHE_DATABASE_FILE_NAME))
 }
 
-pub(in crate::controller) fn app_cache_database_path_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn cache_db_path(cache_dir: &Path) -> PathBuf {
     cache_dir
         .join(STORE_DIR_NAME)
         .join(CACHE_DATABASE_FILE_NAME)
@@ -437,57 +437,55 @@ pub(in crate::controller) fn app_cache_database_path_for_cache_dir(cache_dir: &P
 
 pub(in crate::controller) fn app_settings_path() -> PathBuf {
     config_dir()
-        .map(|dir| app_settings_path_for_config_dir(&dir))
+        .map(|dir| settings_file_path(&dir))
         .unwrap_or_else(|| PathBuf::from(SETTINGS_FILE_NAME))
 }
 
-pub(in crate::controller) fn app_settings_path_for_config_dir(config_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn settings_file_path(config_dir: &Path) -> PathBuf {
     config_dir.join(SETTINGS_FILE_NAME)
 }
 
 pub(in crate::controller) fn config_secrets_path() -> PathBuf {
     config_dir()
-        .map(|dir| config_secrets_path_for_config_dir(&dir))
+        .map(|dir| config_secret_path(&dir))
         .unwrap_or_else(|| PathBuf::from(CONFIG_SECRETS_FILE_NAME))
 }
 
-pub(in crate::controller) fn config_secrets_path_for_config_dir(config_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn config_secret_path(config_dir: &Path) -> PathBuf {
     config_dir.join(CONFIG_SECRETS_FILE_NAME)
 }
 
 pub(in crate::controller) fn cover_cache_dir() -> Option<PathBuf> {
-    cache_dir().map(|dir| cover_cache_dir_for_cache_dir(&dir))
+    cache_dir().map(|dir| cover_cache_path(&dir))
 }
 
-pub(in crate::controller) fn cover_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn cover_cache_path(cache_dir: &Path) -> PathBuf {
     cache_dir.join(COVER_CACHE_DIR_NAME)
 }
 
-pub(in crate::controller) fn lyrics_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn lyrics_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(LYRICS_CACHE_DIR_NAME)
 }
 
-pub(in crate::controller) fn playback_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn playback_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(PLAYBACK_CACHE_DIR_NAME)
 }
 
-pub(in crate::controller) fn waveform_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
-    playback_cache_dir_for_cache_dir(cache_dir).join(WAVEFORM_CACHE_DIR_NAME)
+pub(in crate::controller) fn waveform_cache_dir(cache_dir: &Path) -> PathBuf {
+    playback_cache_dir(cache_dir).join(WAVEFORM_CACHE_DIR_NAME)
 }
 
-pub(in crate::controller) fn tmp_cache_dir_for_cache_dir(cache_dir: &Path) -> PathBuf {
+pub(in crate::controller) fn tmp_cache_dir(cache_dir: &Path) -> PathBuf {
     cache_dir.join(TMP_CACHE_DIR_NAME)
 }
 
 pub(in crate::controller) fn ensure_app_cache_dirs(cache_dir: &Path) -> Result<(), String> {
     for dir in [
-        app_cache_database_path_for_cache_dir(cache_dir)
-            .parent()
-            .map(Path::to_path_buf),
-        Some(cover_cache_dir_for_cache_dir(cache_dir)),
-        Some(lyrics_cache_dir_for_cache_dir(cache_dir)),
-        Some(playback_cache_dir_for_cache_dir(cache_dir)),
-        Some(tmp_cache_dir_for_cache_dir(cache_dir)),
+        cache_db_path(cache_dir).parent().map(Path::to_path_buf),
+        Some(cover_cache_path(cache_dir)),
+        Some(lyrics_cache_dir(cache_dir)),
+        Some(playback_cache_dir(cache_dir)),
+        Some(tmp_cache_dir(cache_dir)),
     ]
     .into_iter()
     .flatten()
@@ -502,7 +500,7 @@ pub(in crate::controller) fn cover_cache_path_for_key(key: &str) -> Option<PathB
 }
 
 pub(in crate::controller) fn waveform_cache_path_for_key(key: &str) -> Option<PathBuf> {
-    cache_dir().map(|dir| waveform_cache_dir_for_cache_dir(&dir).join(key))
+    cache_dir().map(|dir| waveform_cache_dir(&dir).join(key))
 }
 
 pub(in crate::controller) fn restrict_settings_file(path: &Path) -> std::io::Result<()> {
@@ -530,10 +528,10 @@ pub(in crate::controller) fn prune_disk_cover_cache_entries(entries: &[CoverCach
     let Some(root) = cover_cache_dir() else {
         return;
     };
-    prune_disk_cover_cache_entries_in_dir(entries, &root);
+    prune_disk_covers(entries, &root);
 }
 
-fn prune_disk_cover_cache_entries_in_dir(entries: &[CoverCacheEntry], root: &Path) {
+fn prune_disk_covers(entries: &[CoverCacheEntry], root: &Path) {
     let Ok(root) = root.canonicalize() else {
         return;
     };
@@ -593,9 +591,9 @@ fn remove_safe_cover_cache_file(path: &Path, root: &Path) -> Result<bool, String
 }
 
 pub(in crate::controller) fn clear_disk_waveform_cache(server_id: &ServerId) -> Result<(), String> {
-    let Some(path) = cache_dir().map(|dir| {
-        waveform_cache_dir_for_cache_dir(&dir).join(encode_key_part(server_id.as_str()))
-    }) else {
+    let Some(path) =
+        cache_dir().map(|dir| waveform_cache_dir(&dir).join(encode_key_part(server_id.as_str())))
+    else {
         return Ok(());
     };
     remove_dir_if_exists(&path)
@@ -661,7 +659,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prune_disk_cover_cache_entries_removes_only_safe_expected_files() {
+    fn queue_remove_files() {
         let root = unique_test_dir("cover-prune-root");
         let outside = unique_test_dir("cover-prune-outside").join("stale-cover");
         fs::create_dir_all(&root).expect("cover root");
@@ -704,7 +702,7 @@ mod tests {
             },
         ];
 
-        prune_disk_cover_cache_entries_in_dir(&entries, &root);
+        prune_disk_covers(&entries, &root);
 
         assert!(!expected_path.exists());
         assert!(mismatched_path.exists());

@@ -174,7 +174,7 @@ pub(super) fn install_tray(shell: &Rc<Shell>) {
         } else {
             false
         };
-        if should_hide_on_close_for_exit_to_tray(&settings, tray_available) {
+        if exit_tray_hide(&settings, tray_available) {
             close_shell.save_window_state();
             close_shell.window.set_visible(false);
             glib::Propagation::Stop
@@ -189,10 +189,7 @@ pub(super) fn install_tray(shell: &Rc<Shell>) {
     });
 }
 
-pub(super) fn should_hide_on_close_for_exit_to_tray(
-    settings: &AppSettings,
-    tray_available: bool,
-) -> bool {
+pub(super) fn exit_tray_hide(settings: &AppSettings, tray_available: bool) -> bool {
     settings.tray_enabled && settings.exit_to_tray && tray_available
 }
 
@@ -427,7 +424,7 @@ mod tests {
     use ksni::menu::MenuItem;
 
     #[test]
-    fn tray_menu_uses_plain_items_with_playback_controls() {
+    fn tray_use_controls() {
         let (sender, _receiver) = channel();
         let tray = RufinTray::new(sender, false);
         let items = tray.menu();
@@ -455,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn tray_private_mode_item_label_matches_current_state() {
+    fn tray_match_state() {
         let (sender, _receiver) = channel();
         let disabled = RufinTray::new(sender.clone(), false);
         let enabled = RufinTray::new(sender, true);
@@ -465,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn tray_playback_menu_items_send_controller_commands() {
+    fn tray_playback_command() {
         let (sender, receiver) = channel();
         let mut tray = RufinTray::new(sender, false);
         let mut items = tray.menu();
@@ -482,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn tray_icon_pixmap_contains_panel_sizes() {
+    fn tray_icon_size() {
         let sizes = tray_icon_pixmaps()
             .iter()
             .map(|icon| (icon.width, icon.height))

@@ -7,7 +7,7 @@ use super::{
     SidebarRouteItem, TrackSortKey, TrackTableColumn, sanitized_window_size,
 };
 #[test]
-fn settings_default_remote_reporting_features_disabled() {
+fn settings_default_disabled() {
     let settings = AppSettings::default();
 
     assert!(settings.sources.selected.is_none());
@@ -29,7 +29,7 @@ fn settings_default_remote_reporting_features_disabled() {
     assert_eq!(settings.scrobbling.listenbrainz.user_token, "");
 }
 #[test]
-fn playback_settings_sanitize_clamps_crossfade_to_supported_range() {
+fn settings_clamp_range() {
     let mut settings = super::PlaybackSettings {
         crossfade_seconds: 0,
         ..super::PlaybackSettings::default()
@@ -43,7 +43,7 @@ fn playback_settings_sanitize_clamps_crossfade_to_supported_range() {
     assert_eq!(settings.crossfade_seconds, MAX_CROSSFADE_SECONDS);
 }
 #[test]
-fn app_settings_migrate_defaults_clamps_auto_dj_refill_threshold() {
+fn settings_clamp_threshold() {
     let mut settings = AppSettings {
         auto_dj_refill_threshold: 0,
         ..AppSettings::default()
@@ -63,7 +63,7 @@ fn app_settings_migrate_defaults_clamps_auto_dj_refill_threshold() {
     );
 }
 #[test]
-fn app_settings_migrate_defaults_clears_dependent_tray_settings_when_tray_is_off() {
+fn settings_clear_tray() {
     let mut settings = AppSettings {
         exit_to_tray: true,
         start_minimized: true,
@@ -82,7 +82,7 @@ fn app_settings_migrate_defaults_clears_dependent_tray_settings_when_tray_is_off
     assert!(settings.start_minimized);
 }
 #[test]
-fn app_settings_sanitize_local_library_folders() {
+fn settings_sanitize_folders() {
     let mut settings = AppSettings {
         sources: super::LibrarySourceSettings {
             selected: None,
@@ -163,7 +163,7 @@ fn settings_restore_without_window_geometry() {
 }
 
 #[test]
-fn app_settings_migrates_new_sidebar_routes_into_legacy_preferences() {
+fn settings_migrate_preferences() {
     let mut settings = AppSettings::default();
     settings.sidebar.route_items.retain(|entry| {
         !matches!(
@@ -207,7 +207,7 @@ fn app_settings_sanitize_language_preference() {
     assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
 }
 #[test]
-fn window_size_restore_rejects_tiny_and_clamps_huge_geometry() {
+fn settings_clamp_geometry() {
     assert_eq!(sanitized_window_size(None, Some(700)), None);
     assert_eq!(sanitized_window_size(Some(400), Some(700)), None);
     assert_eq!(
@@ -224,7 +224,7 @@ fn window_size_restore_rejects_tiny_and_clamps_huge_geometry() {
     );
 }
 #[test]
-fn settings_share_lastfm_api_key_when_only_one_value_exists() {
+fn settings_share_exists() {
     let mut from_global_key = AppSettings {
         lastfm_api_key: "global-key".to_string(),
         ..AppSettings::default()
@@ -247,7 +247,7 @@ fn settings_share_lastfm_api_key_when_only_one_value_exists() {
 }
 
 #[test]
-fn settings_use_global_lastfm_api_key_when_values_conflict() {
+fn settings_use_conflict() {
     let mut settings = AppSettings {
         lastfm_api_key: "cover-key".to_string(),
         scrobbling: ScrobblingSettings {
@@ -266,7 +266,7 @@ fn settings_use_global_lastfm_api_key_when_values_conflict() {
     assert_eq!(settings.scrobbling.lastfm.api_key, "cover-key");
 }
 #[test]
-fn settings_migrate_legacy_home_sections_to_home_blocks() {
+fn settings_migrate_blocks() {
     let json = r#"{
             "theme_preference":"System",
             "private_mode":false,
@@ -297,13 +297,13 @@ fn settings_migrate_legacy_home_sections_to_home_blocks() {
     );
 }
 #[test]
-fn library_layout_unknown_values_fall_back_to_grid() {
+fn settings_fall_grid() {
     let layout = serde_json::from_str::<LibraryLayout>("\"weird\"").expect("deserialize layout");
 
     assert_eq!(layout, LibraryLayout::Grid);
 }
 #[test]
-fn library_list_settings_migrate_old_playlist_defaults_without_duration() {
+fn settings_migrate_duration() {
     let mut settings = AppSettings {
         library_lists: vec![super::LibraryListSettingsEntry {
             key: LibraryListKey::Playlists,
@@ -339,7 +339,7 @@ fn library_list_settings_migrate_old_playlist_defaults_without_duration() {
     assert_eq!(playlists.grid_fields, vec![LibraryField::SongCount]);
 }
 #[test]
-fn library_list_settings_migrate_smart_playlists_to_manual_order() {
+fn settings_migrate_order() {
     let mut settings = AppSettings {
         library_lists: vec![super::LibraryListSettingsEntry {
             key: LibraryListKey::SmartPlaylists,
@@ -371,7 +371,7 @@ fn library_list_settings_migrate_smart_playlists_to_manual_order() {
     );
 }
 #[test]
-fn library_list_settings_sanitize_fields_and_layouts() {
+fn settings_sanitize_layouts() {
     let mut settings = AppSettings {
         library_lists: vec![super::LibraryListSettingsEntry {
             key: LibraryListKey::Genres,
@@ -401,7 +401,7 @@ fn library_list_settings_sanitize_fields_and_layouts() {
     assert_eq!(genres.sort_key, LibraryField::Title);
 }
 #[test]
-fn library_list_settings_keep_a_usable_row_field() {
+fn settings_keep_field() {
     let mut settings = AppSettings {
         library_lists: vec![super::LibraryListSettingsEntry {
             key: LibraryListKey::Tracks,
@@ -425,7 +425,7 @@ fn library_list_settings_keep_a_usable_row_field() {
     assert!(tracks.detail_track_fields.contains(&LibraryField::Title));
 }
 #[test]
-fn settings_migrate_legacy_queue_lyrics_split_state() {
+fn settings_migrate_state() {
     let mut settings = AppSettings {
         queue_lyrics_position: Some(160),
         queue_lyrics_ratio: Some(0.3),
@@ -440,7 +440,7 @@ fn settings_migrate_legacy_queue_lyrics_split_state() {
     assert_eq!(settings.queue_lyrics_layout_version, 3);
 }
 #[test]
-fn settings_migrate_empty_discord_identity_defaults() {
+fn settings_migrate_defaults() {
     let mut settings = AppSettings {
         discord_presence_enabled: false,
         discord_client_id: String::new(),
@@ -453,7 +453,7 @@ fn settings_migrate_empty_discord_identity_defaults() {
     assert!(settings.discord_presence_enabled);
 }
 #[test]
-fn settings_restore_previous_application_display_value() {
+fn settings_restore_display() {
     let legacy_value = std::str::from_utf8(LEGACY_APPLICATION_DISPLAY_BYTES).expect("legacy value");
     let json = format!("\"{}\"", legacy_value);
 
@@ -463,7 +463,7 @@ fn settings_restore_previous_application_display_value() {
     assert_eq!(restored, DiscordDisplayType::Application);
 }
 #[test]
-fn settings_migrate_legacy_track_table_columns_to_current_defaults() {
+fn settings_track_defaults() {
     for json in [
         r#"{
             "visible_columns":["TrackNumber","Title","Artist","Album","Year","Duration","Favorite"],

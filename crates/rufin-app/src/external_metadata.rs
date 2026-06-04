@@ -43,18 +43,18 @@ pub fn normalize_album(album: &mut Album, settings: &AppSettings) {
 }
 
 pub fn normalize_track(track: &mut Track, settings: &AppSettings) {
-    normalize_track_with_album_image_ref(track, None, settings);
+    normalize_track_ref(track, None, settings);
 }
 
 pub fn normalize_album_detail(album: &mut Album, tracks: &mut [Track], settings: &AppSettings) {
     normalize_album(album, settings);
     let album_image_ref = album.image_ref.as_ref();
     for track in tracks {
-        normalize_track_with_album_image_ref(track, album_image_ref, settings);
+        normalize_track_ref(track, album_image_ref, settings);
     }
 }
 
-fn normalize_track_with_album_image_ref(
+fn normalize_track_ref(
     track: &mut Track,
     album_image_ref: Option<&ImageRef>,
     settings: &AppSettings,
@@ -76,11 +76,7 @@ fn normalize_track_with_album_image_ref(
 }
 
 pub fn normalize_artist(artist: &mut Artist, settings: &AppSettings) {
-    if artist
-        .image_ref
-        .as_ref()
-        .is_some_and(is_stale_external_artist_image_ref)
-    {
+    if artist.image_ref.as_ref().is_some_and(stale_artist_ref) {
         artist.image_ref = None;
         return;
     }
@@ -170,7 +166,7 @@ fn normalize_image_ref(image_ref: &mut Option<ImageRef>, settings: &AppSettings)
     }
 }
 
-fn is_stale_external_artist_image_ref(image_ref: &ImageRef) -> bool {
+fn stale_artist_ref(image_ref: &ImageRef) -> bool {
     image_ref.item_id.starts_with("external:artist:")
 }
 
@@ -285,7 +281,7 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    fn external_metadata_requires_setting_and_non_private_mode() {
+    fn metadata_require_mode() {
         let mut settings = AppSettings {
             external_metadata_enabled: true,
             ..AppSettings::default()
@@ -298,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn album_external_cover_refs_round_trip_lookup_values() {
+    fn metadata_trip_lookup() {
         let mut album = album_without_cover("Hurry Up, We're Dreaming", "M83");
         normalize_album(
             &mut album,
@@ -320,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_external_metadata_strips_synthetic_refs() {
+    fn metadata_strip_refs() {
         let enabled_settings = AppSettings {
             external_metadata_enabled: true,
             ..AppSettings::default()
@@ -341,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn tracks_with_untagged_jellyfin_album_refs_use_external_album_fallback() {
+    fn track_untagged_jellyfin() {
         let mut track = track_without_cover("Example Track", "Example Artist", "Example Album");
         track.album_id = AlbumId::new("jellyfin:album:one");
         track.image_ref = Some(ImageRef::new("jellyfin:album:one", None));
@@ -366,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn album_detail_tracks_without_images_use_album_image_ref() {
+    fn metadata_use_ref() {
         let mut album = album_without_cover("Example Album", "Example Artist");
         let album_image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
         album.id = AlbumId::new("jellyfin:album:one");
@@ -392,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn album_detail_tracks_share_external_album_image_ref() {
+    fn metadata_share_ref() {
         let mut album = album_without_cover("Example Album", "Example Artist");
         let mut tracks = vec![track_without_cover(
             "Example Track",
@@ -414,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn tagged_or_non_jellyfin_track_refs_are_kept() {
+    fn metadata_track_kept() {
         let settings = AppSettings {
             external_metadata_enabled: true,
             ..AppSettings::default()
@@ -438,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_entries_with_untagged_jellyfin_album_refs_use_external_album_fallback() {
+    fn queue_entry_untagged() {
         let mut entry =
             queue_entry_without_cover("Example Track", "Example Artist", "Example Album");
         entry.album_id = Some(AlbumId::new("jellyfin:album:one"));
@@ -464,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn artists_do_not_create_external_image_refs() {
+    fn metadata_create_refs() {
         let mut artist = artist_without_cover("Slowdive");
         normalize_artist(
             &mut artist,
@@ -488,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_artist_external_image_refs_are_removed() {
+    fn metadata_stale_removed() {
         let mut artist = artist_without_cover("Slowdive");
         artist.image_ref = Some(ImageRef::new(
             "external:artist:Slowdive",
@@ -507,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_album_metadata_does_not_create_external_cover_ref() {
+    fn metadata_create_ref() {
         let mut album = album_without_cover("Unknown Album", "Unknown Artist");
         normalize_album(
             &mut album,
@@ -521,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn lastfm_album_image_url_uses_largest_available_image() {
+    fn metadata_use_image() {
         let value = json!({
             "album": {
                 "image": [
@@ -539,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn lastfm_album_not_found_is_a_lookup_miss() {
+    fn metadata_lastfm_miss() {
         let value = json!({
             "error": 6,
             "message": "Album not found"
@@ -552,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn lastfm_placeholder_image_url_does_not_hide_real_fallback_image() {
+    fn metadata_hide_image() {
         let value = json!({
             "album": {
                 "image": [
@@ -572,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn musicbrainz_id_extraction_deduplicates_empty_and_repeated_ids() {
+    fn metadata_dedupe_id() {
         let value = json!({
             "release-groups": [
                 { "id": "first" },
@@ -586,14 +582,14 @@ mod tests {
     }
 
     #[test]
-    fn cover_art_archive_thumbnail_size_uses_supported_steps() {
+    fn metadata_use_steps() {
         assert_eq!(cover_art_size_path(96), "front-250");
         assert_eq!(cover_art_size_path(250), "front-250");
         assert_eq!(cover_art_size_path(256), "front-500");
     }
 
     #[test]
-    fn expected_lookup_misses_exclude_network_and_service_errors() {
+    fn metadata_exclude_error() {
         assert!(is_expected_lookup_miss(
             "external cover image failed with status 404 Not Found"
         ));
@@ -609,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn external_metadata_body_reads_stop_at_limit() {
+    fn metadata_read_limit() {
         let mut body = Cursor::new(vec![b'a'; 9]);
 
         let error = read_bounded(&mut body, 8, "metadata body").expect_err("oversized body");

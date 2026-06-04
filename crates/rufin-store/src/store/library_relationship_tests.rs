@@ -2,7 +2,7 @@ use super::test_support::*;
 use rufin_core::{PlaySourceDescriptor, PlaySourceKey, PlaylistEntrySortDescriptor, SourceOrder};
 
 #[test]
-fn playlist_entries_allow_duplicate_tracks_and_keep_entry_ids() {
+fn relation_keep_id() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -45,7 +45,7 @@ fn playlist_entries_allow_duplicate_tracks_and_keep_entry_ids() {
 }
 
 #[test]
-fn playlist_source_window_preserves_duplicate_occurrences_in_display_order() {
+fn relation_preserve_order() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -208,7 +208,7 @@ fn playlist_source_window_preserves_duplicate_occurrences_in_display_order() {
     );
 }
 #[test]
-fn lyrics_cache_round_trips_by_server_and_track() {
+fn relation_track_server() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -246,7 +246,7 @@ fn lyrics_cache_round_trips_by_server_and_track() {
     );
 }
 #[test]
-fn delete_remote_lyrics_preserves_server_lyrics() {
+fn relation_preserve_lyrics() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -307,7 +307,7 @@ fn delete_remote_lyrics_preserves_server_lyrics() {
     );
 }
 #[test]
-fn favorite_flag_updates_refresh_cached_models_and_favorite_tracks() {
+fn relation_track_favorite() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -370,7 +370,7 @@ fn favorite_flag_updates_refresh_cached_models_and_favorite_tracks() {
     );
 }
 #[test]
-fn genre_detail_returns_linked_albums_and_tracks() {
+fn genre_detail_tracks() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -406,7 +406,7 @@ fn genre_detail_returns_linked_albums_and_tracks() {
     assert_eq!(detail.tracks, vec![track]);
 }
 #[test]
-fn genre_list_only_returns_music_linked_genres() {
+fn relation_return_genre() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -437,7 +437,7 @@ fn genre_list_only_returns_music_linked_genres() {
     assert_eq!(genres.items[0].track_count, 0);
 }
 #[test]
-fn genre_counts_use_linked_music_items_instead_of_provider_counts() {
+fn relation_use_counts() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -480,7 +480,7 @@ fn genre_counts_use_linked_music_items_instead_of_provider_counts() {
 }
 
 #[test]
-fn genre_counts_derive_albums_from_track_only_links() {
+fn track_only_counts() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -527,7 +527,7 @@ fn genre_counts_derive_albums_from_track_only_links() {
 }
 
 #[test]
-fn genre_counts_exclude_missing_album_rows_for_track_only_links() {
+fn missing_album_counts() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -571,7 +571,7 @@ fn genre_counts_exclude_missing_album_rows_for_track_only_links() {
 }
 
 #[test]
-fn refresh_library_counts_repairs_missing_linked_genre_rows() {
+fn relation_repair_genre() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -597,7 +597,7 @@ fn refresh_library_counts_repairs_missing_linked_genre_rows() {
     assert_eq!(genres.items[0].track_count, 1);
 }
 #[test]
-fn album_detail_falls_back_to_tracks_when_album_row_is_missing() {
+fn relation_track_missing() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -618,7 +618,7 @@ fn album_detail_falls_back_to_tracks_when_album_row_is_missing() {
     assert_eq!(detail.1, tracks);
 }
 #[test]
-fn refresh_library_counts_uses_cached_tracks() {
+fn relation_track_cache() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -692,7 +692,7 @@ fn refresh_library_counts_uses_cached_tracks() {
     assert_eq!(album_artist.track_count, 2);
 }
 #[test]
-fn refresh_library_counts_repairs_missing_linked_artist_rows() {
+fn relation_repair_artist() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -730,7 +730,7 @@ fn refresh_library_counts_repairs_missing_linked_artist_rows() {
     assert_eq!(search.artists, vec![artist]);
 }
 #[test]
-fn refresh_library_counts_preserves_provider_counts_without_relationships() {
+fn relation_preserve_relationships() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -766,7 +766,7 @@ fn refresh_library_counts_preserves_provider_counts_without_relationships() {
     assert_eq!(artist.track_count, 18);
 }
 #[test]
-fn artist_detail_uses_album_artist_albums_and_tracks() {
+fn artist_detail_primary() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -809,7 +809,7 @@ fn artist_detail_uses_album_artist_albums_and_tracks() {
     assert_eq!(detail.tracks, vec![track]);
 }
 #[test]
-fn artist_detail_falls_back_to_track_links_when_artist_row_is_missing() {
+fn artist_track_fallback() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -836,7 +836,7 @@ fn artist_detail_falls_back_to_track_links_when_artist_row_is_missing() {
     assert_eq!(detail.tracks, tracks);
 }
 #[test]
-fn artist_detail_falls_back_to_album_links_when_artist_row_is_missing() {
+fn relation_fall_missing() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -864,7 +864,7 @@ fn artist_detail_falls_back_to_album_links_when_artist_row_is_missing() {
     assert_eq!(detail.tracks, vec![track]);
 }
 #[test]
-fn artist_detail_groups_non_primary_track_albums_as_appears_on() {
+fn nonprimary_appearance() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -910,7 +910,7 @@ fn artist_detail_groups_non_primary_track_albums_as_appears_on() {
     assert_eq!(detail.tracks, vec![track]);
 }
 #[test]
-fn artist_detail_uses_album_name_when_artist_ids_are_missing() {
+fn relation_use_missing() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -952,7 +952,7 @@ fn artist_detail_uses_album_name_when_artist_ids_are_missing() {
     assert_eq!(detail.tracks, vec![track]);
 }
 #[test]
-fn artist_detail_groups_name_matched_track_albums_as_appears_on() {
+fn matched_track_appearance() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -997,7 +997,7 @@ fn artist_detail_groups_name_matched_track_albums_as_appears_on() {
     assert_eq!(detail.tracks, vec![track]);
 }
 #[test]
-fn artist_detail_uses_track_artist_links_as_appears_on() {
+fn track_artist_appearance() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1033,7 +1033,7 @@ fn artist_detail_uses_track_artist_links_as_appears_on() {
     assert_eq!(detail.tracks[0].id, track.id);
 }
 #[test]
-fn artist_detail_uses_album_artist_links_as_primary_albums() {
+fn relation_use_album() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
@@ -1077,7 +1077,7 @@ fn artist_detail_uses_album_artist_links_as_primary_albums() {
     assert_eq!(detail.tracks[0].id, track.id);
 }
 #[test]
-fn artist_detail_matches_album_artist_name_when_link_is_missing() {
+fn relation_match_missing() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
     store.save_server(&saved).expect("save server");

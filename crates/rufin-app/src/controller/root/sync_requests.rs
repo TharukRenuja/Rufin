@@ -24,9 +24,7 @@ pub(in crate::controller) fn resolve_stream(
             track_id.as_str()
         )));
     }
-    if let Some(local_path) =
-        local_audio_path_for_saved_track(store, &saved.server, server_id, track_id)
-    {
+    if let Some(local_path) = saved_track_path(store, &saved.server, server_id, track_id) {
         let url = reqwest::Url::from_file_path(&local_path).map_err(|()| {
             format!(
                 "Could not turn local track path into a file URI: {}",
@@ -552,7 +550,7 @@ pub(in crate::controller) fn local_audio_path_for_track(
         .flatten()?;
     local_audio_path_from_lookup(&lookup)
 }
-fn local_audio_path_for_saved_track(
+fn saved_track_path(
     store: &StoreHandle,
     server: &ServerIdentity,
     server_id: &ServerId,

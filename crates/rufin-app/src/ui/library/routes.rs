@@ -831,7 +831,7 @@ impl Shell {
         let source_playlists = Rc::new(items.clone());
         let playlists = Rc::new(RefCell::new(items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-        warm_smart_playlist_covers_for_settings(self, &playlists.borrow(), &settings);
+        warm_smart_settings(self, &playlists.borrow(), &settings);
         populate_smart_playlist_model(&model, &playlists.borrow(), &settings);
 
         let search = gtk::SearchEntry::new();
@@ -853,7 +853,7 @@ impl Shell {
                     .collect::<Vec<_>>();
                 shell.state.smart_playlists.replace(values.clone());
                 *playlists.borrow_mut() = values;
-                warm_smart_playlist_covers_for_settings(
+                warm_smart_settings(
                     &shell,
                     &playlists.borrow(),
                     &shell.library_settings(LibraryListKey::SmartPlaylists),
@@ -871,7 +871,7 @@ impl Shell {
             let model = model.clone();
             let settings = settings.clone();
             Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                connect_smart_playlist_viewport_cover_warm(&shell, scroller, &model, &settings);
+                connect_smart_warm(&shell, scroller, &model, &settings);
                 scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
                 scroller.set_min_content_width(0);
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>

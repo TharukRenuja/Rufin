@@ -589,7 +589,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn scrobble_threshold_follows_common_service_rules() {
+    fn external_follow_rules() {
         assert_eq!(scrobble_threshold_seconds(30), None);
         assert_eq!(scrobble_threshold_seconds(31), Some(15));
         assert_eq!(scrobble_threshold_seconds(180), Some(90));
@@ -599,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn state_emits_now_playing_then_one_scrobble_per_track() {
+    fn external_track_per() {
         let mut state = ExternalScrobbleState::default();
         let entry = queue_entry("track-one");
         let mut snapshot = PlaybackSnapshot {
@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn api_signature_sorts_params_and_excludes_format() {
+    fn external_exclude_format() {
         let params = vec![
             ("track".to_string(), "Track".to_string()),
             ("format".to_string(), "json".to_string()),
@@ -656,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn lastfm_auth_url_uses_api_key_and_token() {
+    fn lastfm_auth_case() {
         assert_eq!(
             lastfm_auth_url("api-key", "auth-token"),
             "https://www.last.fm/api/auth/?api_key=api-key&token=auth-token"
@@ -664,7 +664,7 @@ mod tests {
     }
 
     #[test]
-    fn librefm_auth_url_uses_default_api_key_and_token() {
+    fn librefm_auth_case() {
         assert_eq!(
             librefm_auth_url("auth-token"),
             "https://libre.fm/api/auth/?api_key=rufin&token=auth-token"
@@ -672,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn audioscrobbler_session_parses_mobile_session_response() {
+    fn external_audioscrobbler_session() {
         let value = json!({
             "session": {
                 "name": "listener",
@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn audioscrobbler_error_value_parses_lastfm_error_response() {
+    fn external_audioscrobbler_error() {
         let value = json!({
             "error": 14,
             "message": "Unauthorized Token",
@@ -703,7 +703,7 @@ mod tests {
     }
 
     #[test]
-    fn listenbrainz_authorization_header_uses_token_scheme() {
+    fn external_use_scheme() {
         assert_eq!(
             listenbrainz_authorization_header(" user-token "),
             "Token user-token"

@@ -166,7 +166,7 @@ pub(super) fn collection_cover_ref_from_row(
         tag: row.get(tag_index)?,
     })
 }
-pub(super) fn replace_collection_cover_refs_on_connection(
+pub(super) fn replace_collection_refs(
     connection: &Connection,
     server_id: &ServerId,
     collection_type: &str,

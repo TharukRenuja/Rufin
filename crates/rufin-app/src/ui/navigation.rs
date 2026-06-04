@@ -324,7 +324,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn playlist_and_smart_playlist_routes_have_distinct_nav_classes() {
+    fn navigation_playlist_classes() {
         assert_eq!(
             nav_route_class(&Route::Playlists),
             Some(NAV_ROUTE_PLAYLISTS_CLASS)
@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_sidebar_icons_have_installed_assets() {
+    fn navigation_bundled_assets() {
         for item in SidebarRouteItem::all() {
             let nav = nav_item(item);
             if !nav.icon_name.starts_with("rufin-") {
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn genres_route_uses_bundled_sidebar_icon() {
+    fn navigation_use_icon() {
         let nav = nav_item(SidebarRouteItem::Genres);
         assert!(
             nav.icon_name.starts_with("rufin-"),

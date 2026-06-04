@@ -163,7 +163,7 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        self.persist_and_emit_queue_for_playback_start();
+        self.start_queue_emit();
         self.start_current_track();
         self.auto_dj_top_up_deferred();
     }
@@ -191,7 +191,7 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        self.persist_and_emit_queue_for_playback_start();
+        self.start_queue_emit();
         self.start_current_track();
         self.auto_dj_top_up_deferred();
     }
@@ -210,7 +210,7 @@ impl AppController {
                 self.play_activation(Self::album_play_activation(
                     album.id,
                     tracks,
-                    Self::selected_music_folder_id_for_active_server(&self.store),
+                    Self::active_music_folder(&self.store),
                 ));
             }
             Ok(None) => {
@@ -263,7 +263,7 @@ impl AppController {
         }
     }
 
-    fn selected_music_folder_id_for_active_server(store: &StoreHandle) -> Option<MusicFolderId> {
+    fn active_music_folder(store: &StoreHandle) -> Option<MusicFolderId> {
         store
             .with_store(|store| {
                 let Some(saved) = store.active_server()? else {
@@ -330,7 +330,7 @@ impl AppController {
             self.clear_playback_activity();
         }
         if removed_current && has_current_after_remove {
-            self.persist_and_emit_queue_for_playback_start();
+            self.start_queue_emit();
             self.start_current_track();
         } else {
             self.persist_and_emit_queue();
@@ -360,7 +360,7 @@ impl AppController {
         {
             self.record_current_skip_if_needed();
         }
-        self.persist_and_emit_queue_for_playback_start();
+        self.start_queue_emit();
         self.start_current_track();
         self.auto_dj_top_up_deferred();
     }
@@ -463,7 +463,7 @@ fn normalize_store_backed_window_tracks(
         .collect::<Vec<_>>();
     scrub_source_track_image_refs(saved, &mut tracks);
     external_metadata::normalize_tracks(&mut tracks, settings);
-    normalize_local_track_image_refs_from_albums(store, saved, &mut tracks, &[])?;
+    track_album_refs(store, saved, &mut tracks, &[])?;
     for (item, track) in window.items.iter_mut().zip(tracks) {
         item.track = track;
     }
@@ -522,7 +522,7 @@ mod tests {
     use rufin_provider::PlaylistEntry;
 
     #[test]
-    fn store_backed_playlist_activation_replaces_queue_with_clicked_occurrence() {
+    fn queue_replace_occurrence() {
         let (controller, events, ..) = AppController::bootstrap_memory_for_test();
         let saved = SavedServer {
             server: ServerIdentity {
@@ -627,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_store_backed_activation_does_not_replace_queue_after_clear() {
+    fn queue_clear_activation() {
         let (controller, events, ..) = AppController::bootstrap_memory_for_test();
         let saved = SavedServer {
             server: ServerIdentity {
@@ -693,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn random_append_cancels_stale_store_backed_activation() {
+    fn queue_store_activation() {
         let (controller, events, snapshot, ..) =
             AppController::bootstrap_with_fake(FakeScale::Small);
         let saved = snapshot.server.expect("server");

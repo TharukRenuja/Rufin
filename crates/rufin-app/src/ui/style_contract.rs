@@ -119,7 +119,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secondary_metadata_color_meets_contrast_in_light_and_dark_themes() {
+    fn style_secondary_themes() {
         for selector in [
             ".muted",
             ".home-showcase .muted",
@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_link_hover_color_meets_contrast_in_light_and_dark_themes() {
+    fn style_meta_themes() {
         for selector in [".table-link:hover .table-link-label", ".hovered-link"] {
             assert_eq!(
                 selector_color(APP_STYLE, selector),
@@ -164,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn tooltip_text_has_stable_foreground_and_background() {
+    fn style_tooltip_background() {
         assert_eq!(
             selector_property(APP_STYLE, "tooltip.background", "background"),
             Some(TOOLTIP_BACKGROUND.to_string())

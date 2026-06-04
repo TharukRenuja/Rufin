@@ -101,7 +101,7 @@ impl Shell {
             });
         };
     }
-    pub(in crate::ui) fn prime_cover_ref_from_cache_now(
+    pub(in crate::ui) fn prime_cached_cover(
         self: &Rc<Self>,
         image_ref: Option<&ImageRef>,
         fetch_size: u32,

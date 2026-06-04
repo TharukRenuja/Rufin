@@ -431,7 +431,7 @@ mod tests {
     use rufin_core::ServerId;
 
     #[test]
-    fn provider_capabilities_default_to_read_only_library() {
+    fn capabilities_read_library() {
         let capabilities = ProviderCapabilities::default();
 
         assert!(capabilities.albums);
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_provider_session_keeps_token_separate_from_store_models() {
+    fn saved_store_model() {
         let session = super::SavedProviderSession {
             server: rufin_core::ServerIdentity {
                 id: ServerId::new("jellyfin:server:one"),

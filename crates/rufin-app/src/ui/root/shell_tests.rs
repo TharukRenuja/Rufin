@@ -5,9 +5,8 @@ use super::right_panel::{
     queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
 };
 use super::startup_reveal::{
-    StartupRevealAction, first_run_cover_prime_reveal_action,
-    source_route_cover_warm_settle_delay_ms, startup_loading_status_label,
-    startup_route_reveal_action, take_matching_source_route_cover_warm_pending,
+    StartupRevealAction, cover_warm_delay, startup_loading_status_label, startup_prime_action,
+    startup_route_reveal_action, take_pending_warm,
 };
 use super::{
     AutoLyricsRequest, LocalSourceCacheGateAction, PlaylistEntryListState, PlaylistEntrySort,
@@ -16,10 +15,9 @@ use super::{
     current_playback_track_id, home_visible_sections::changed_visible_home_section_kinds,
     local_source_cache_gate_action, local_source_snapshot_is_syncing, lyrics_result_subtitle,
     lyrics_result_subtitle_markup, lyrics_result_title_markup,
-    lyrics_search_response_matches_query, playlist_detail_compact_for_width,
-    playlist_detail_route_margin_for_width, playlist_detail_sort_width_for_width,
-    playlist_drop_index, playlist_entries_for_state, playlist_play_activation,
-    preferences_login_status_toast_message, queue_source_waits_for_snapshot,
+    lyrics_search_response_matches_query, playlist_detail_compact_for_width, playlist_drop_index,
+    playlist_entries_for_state, playlist_play_activation, playlist_route_margin,
+    playlist_sort_width, preferences_login_status_toast_message, queue_source_waits_for_snapshot,
     seekbar_target_seconds, snapshot_event_outcome,
 };
 use crate::controller::{
@@ -42,31 +40,23 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 #[test]
-fn close_request_hides_only_when_exit_to_tray_is_enabled_and_available() {
+fn shell_hide_available() {
     let mut settings = AppSettings::default();
 
-    assert!(!super::tray::should_hide_on_close_for_exit_to_tray(
-        &settings, true
-    ));
+    assert!(!super::tray::exit_tray_hide(&settings, true));
 
     settings.exit_to_tray = true;
 
-    assert!(!super::tray::should_hide_on_close_for_exit_to_tray(
-        &settings, true
-    ));
+    assert!(!super::tray::exit_tray_hide(&settings, true));
 
     settings.tray_enabled = true;
 
-    assert!(super::tray::should_hide_on_close_for_exit_to_tray(
-        &settings, true
-    ));
-    assert!(!super::tray::should_hide_on_close_for_exit_to_tray(
-        &settings, false
-    ));
+    assert!(super::tray::exit_tray_hide(&settings, true));
+    assert!(!super::tray::exit_tray_hide(&settings, false));
 }
 
 #[test]
-fn startup_hides_only_when_start_minimized_is_enabled_and_tray_is_available() {
+fn shell_start_available() {
     let mut settings = AppSettings::default();
 
     assert!(!super::tray::should_start_minimized(&settings, true));
@@ -82,7 +72,7 @@ fn startup_hides_only_when_start_minimized_is_enabled_and_tray_is_available() {
 }
 
 #[test]
-pub(in crate::ui) fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
+pub(in crate::ui) fn shell_reuse_cover() {
     let candidates = super::decoded_cover_candidate_sizes(super::DETAIL_COVER_SIZE);
 
     assert!(candidates.contains(&super::DETAIL_COVER_SIZE));
@@ -97,7 +87,7 @@ pub(in crate::ui) fn detail_cover_lookup_can_reuse_prefetched_grid_cover() {
     );
 }
 #[test]
-pub(in crate::ui) fn playback_artwork_path_uses_prefetched_grid_cover_for_thumbnail() {
+pub(in crate::ui) fn shell_use_thumbnail() {
     let server_id = ServerId::new("server:one");
     let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
     let grid_key = rufin_store::image_cache_key(
@@ -121,7 +111,7 @@ pub(in crate::ui) fn playback_artwork_path_uses_prefetched_grid_cover_for_thumbn
 }
 
 #[test]
-pub(in crate::ui) fn playback_artwork_key_match_accepts_candidate_cover_sizes() {
+pub(in crate::ui) fn shell_accept_size() {
     let server_id = ServerId::new("server:one");
     let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
     let grid_key = rufin_store::image_cache_key(
@@ -152,12 +142,11 @@ pub(in crate::ui) fn playback_artwork_key_match_accepts_candidate_cover_sizes() 
 }
 
 #[test]
-pub(in crate::ui) fn playback_notification_icon_bytes_are_square_for_portals() {
+pub(in crate::ui) fn shell_playback_portals() {
     let cover = Pixbuf::new(Colorspace::Rgb, false, 8, 320, 180).expect("cover pixbuf");
     cover.fill(0x336699ff);
 
-    let bytes =
-        super::playback_notification_icon_bytes_from_pixbuf(&cover).expect("notification bytes");
+    let bytes = super::notification_icon_pixbuf(&cover).expect("notification bytes");
     let icon = Pixbuf::from_read(Cursor::new(bytes)).expect("notification pixbuf");
 
     assert_eq!(icon.width(), super::THUMB_COVER_SIZE as i32);
@@ -165,7 +154,7 @@ pub(in crate::ui) fn playback_notification_icon_bytes_are_square_for_portals() {
 }
 
 #[test]
-pub(in crate::ui) fn visible_cover_lookup_reuses_and_upgrades_warm_lookup() {
+pub(in crate::ui) fn shell_warm_lookup() {
     let mut lookups = HashMap::new();
 
     assert!(record_cover_path_lookup_request(
@@ -199,7 +188,7 @@ pub(in crate::ui) fn visible_cover_lookup_reuses_and_upgrades_warm_lookup() {
     );
 }
 #[test]
-pub(in crate::ui) fn home_refresh_targets_only_changed_visible_sections() {
+pub(in crate::ui) fn shell_home_sections() {
     let explore = test_home_album_section(HomeSectionKind::Explore, 1);
     let most_played = test_home_album_section(HomeSectionKind::MostPlayed, 2);
     let previous = vec![explore.clone(), most_played.clone()];
@@ -224,7 +213,7 @@ pub(in crate::ui) fn home_refresh_targets_only_changed_visible_sections() {
     );
 }
 #[test]
-pub(in crate::ui) fn snapshot_event_outcome_prioritizes_first_run_completion() {
+pub(in crate::ui) fn shell_prioritize_completion() {
     let previous_source = None;
     let next_source = Some(LibrarySourceSelection::Local);
 
@@ -234,7 +223,7 @@ pub(in crate::ui) fn snapshot_event_outcome_prioritizes_first_run_completion() {
     assert!(!outcome.entered_first_run);
 }
 #[test]
-pub(in crate::ui) fn snapshot_event_outcome_navigates_when_source_changes() {
+pub(in crate::ui) fn shell_change_source() {
     let previous_source = None;
     let next_source = Some(LibrarySourceSelection::Local);
 
@@ -245,7 +234,7 @@ pub(in crate::ui) fn snapshot_event_outcome_navigates_when_source_changes() {
     assert!(!outcome.entered_first_run);
 }
 #[test]
-pub(in crate::ui) fn snapshot_event_outcome_preserves_scroll_for_stable_source() {
+pub(in crate::ui) fn shell_preserve_source() {
     let source = Some(LibrarySourceSelection::Local);
 
     let outcome = snapshot_event_outcome(false, false, &source, &source, false, false);
@@ -254,7 +243,7 @@ pub(in crate::ui) fn snapshot_event_outcome_preserves_scroll_for_stable_source()
     assert!(!outcome.entered_first_run);
 }
 #[test]
-pub(in crate::ui) fn snapshot_event_outcome_marks_first_run_entry() {
+pub(in crate::ui) fn shell_snapshot_entry() {
     let source = None::<LibrarySourceSelection>;
 
     let outcome = snapshot_event_outcome(false, true, &source, &source, false, false);
@@ -263,7 +252,7 @@ pub(in crate::ui) fn snapshot_event_outcome_marks_first_run_entry() {
     assert!(outcome.entered_first_run);
 }
 #[test]
-pub(in crate::ui) fn local_source_cache_gate_maps_local_snapshot_states() {
+pub(in crate::ui) fn shell_map_states() {
     let cases = [
         (
             "cached library stays visible",
@@ -321,7 +310,7 @@ pub(in crate::ui) fn local_source_cache_gate_maps_local_snapshot_states() {
 }
 
 #[test]
-pub(in crate::ui) fn local_source_cache_gate_cancels_when_source_leaves_local() {
+pub(in crate::ui) fn shell_source_local() {
     let source = Some(LibrarySourceSelection::Server(rufin_core::ServerId::new(
         "jellyfin:server:test",
     )));
@@ -340,7 +329,7 @@ pub(in crate::ui) fn local_source_cache_gate_cancels_when_source_leaves_local() 
     );
 }
 #[test]
-pub(in crate::ui) fn queue_source_waits_until_library_snapshot_matches() {
+pub(in crate::ui) fn shell_match_snapshot() {
     let old_source = ServerId::new("jellyfin:server:old");
     let next_source = ServerId::new("local:source");
     let queue = QueueSnapshot {
@@ -364,13 +353,13 @@ pub(in crate::ui) fn queue_source_waits_until_library_snapshot_matches() {
     assert!(!queue_source_waits_for_snapshot(None, Some(&old_source)));
 }
 #[test]
-pub(in crate::ui) fn startup_loading_uses_root_stack_until_route_reveal() {
+pub(in crate::ui) fn shell_use_reveal() {
     assert!(startup_loading_screen_active(false, false));
     assert!(!startup_loading_screen_active(true, false));
     assert!(!startup_loading_screen_active(false, true));
 }
 #[test]
-pub(in crate::ui) fn startup_route_reveal_expires_pending_cover_prime() {
+pub(in crate::ui) fn startup_route_reveal() {
     assert_eq!(
         startup_route_reveal_action(
             true,
@@ -389,17 +378,14 @@ pub(in crate::ui) fn startup_route_reveal_expires_pending_cover_prime() {
     );
 }
 #[test]
-pub(in crate::ui) fn first_run_cover_prime_expires_pending_cover_prime() {
+pub(in crate::ui) fn run_cover_prime() {
     assert_eq!(
-        first_run_cover_prime_reveal_action(
-            3,
-            Duration::from_millis(super::FIRST_RUN_COVER_PRIME_TIMEOUT_MS)
-        ),
+        startup_prime_action(3, Duration::from_millis(super::PRIME_TIMEOUT_MS)),
         StartupRevealAction::RevealExpired
     );
 }
 #[test]
-pub(in crate::ui) fn startup_loading_status_hides_idle_cache_status() {
+pub(in crate::ui) fn shell_hide_status() {
     assert_eq!(startup_loading_status_label(""), None);
     assert_eq!(startup_loading_status_label("Cached library ready"), None);
     assert_eq!(
@@ -408,7 +394,7 @@ pub(in crate::ui) fn startup_loading_status_hides_idle_cache_status() {
     );
 }
 #[test]
-pub(in crate::ui) fn startup_prime_targets_stay_to_home_visible_covers() {
+pub(in crate::ui) fn shell_stay_cover() {
     let mut library = test_library_snapshot();
     let home_ref = test_image_ref("home");
     let mut home_album = test_album("Home Artist", Some(ArtistId::fake(90)));
@@ -443,7 +429,7 @@ pub(in crate::ui) fn startup_prime_targets_stay_to_home_visible_covers() {
         home_blocks: vec![HomeBlockKind::Explore],
         ..Default::default()
     };
-    let targets = super::startup_cover_prime_targets_from_snapshot(&library, &settings, 0);
+    let targets = super::startup_cover_targets(&library, &settings, 0);
     let target_refs = targets
         .iter()
         .map(|target| target.image_ref.item_id.as_str())
@@ -453,8 +439,7 @@ pub(in crate::ui) fn startup_prime_targets_stay_to_home_visible_covers() {
     assert!(!target_refs.contains(&first_track_ref.item_id.as_str()));
     assert!(!target_refs.contains(&first_album_ref.item_id.as_str()));
 
-    let home_targets =
-        super::startup_home_cover_prime_targets_from_snapshot(&library, &settings, 0);
+    let home_targets = super::startup_prime_targets(&library, &settings, 0);
     let home_target_refs = home_targets
         .iter()
         .map(|target| target.image_ref.item_id.as_str())
@@ -465,7 +450,7 @@ pub(in crate::ui) fn startup_prime_targets_stay_to_home_visible_covers() {
 }
 
 #[test]
-pub(in crate::ui) fn source_route_warm_targets_cover_top_level_route_matrix() {
+pub(in crate::ui) fn shell_warm_matrix() {
     let mut library = test_library_snapshot();
     library.server = Some(test_server("source"));
     let first_track_ref = test_image_ref("track-a");
@@ -489,12 +474,8 @@ pub(in crate::ui) fn source_route_warm_targets_cover_top_level_route_matrix() {
     library.albums = vec![second_album, first_album];
 
     let settings = AppSettings::default();
-    let targets = super::source_route_cover_warm_targets_from_snapshot(
-        &library,
-        &[],
-        &settings,
-        test_initial_route_metrics(),
-    );
+    let targets =
+        super::source_warm_targets(&library, &[], &settings, test_initial_route_metrics());
     let target_refs = targets
         .iter()
         .map(|target| target.image_ref.item_id.as_str())
@@ -520,7 +501,7 @@ pub(in crate::ui) fn source_route_warm_targets_cover_top_level_route_matrix() {
 }
 
 #[test]
-pub(in crate::ui) fn source_route_warm_targets_include_genre_group_refs_once() {
+pub(in crate::ui) fn shell_include_refs() {
     let shared = test_image_ref("shared-art");
     let genre_only = test_image_ref("genre-only");
     let mut library = test_library_snapshot();
@@ -538,12 +519,8 @@ pub(in crate::ui) fn source_route_warm_targets_include_genre_group_refs_once() {
     }];
 
     let settings = AppSettings::default();
-    let targets = super::source_route_cover_warm_targets_from_snapshot(
-        &library,
-        &[],
-        &settings,
-        test_initial_route_metrics(),
-    );
+    let targets =
+        super::source_warm_targets(&library, &[], &settings, test_initial_route_metrics());
 
     assert_eq!(
         targets
@@ -560,7 +537,7 @@ pub(in crate::ui) fn source_route_warm_targets_include_genre_group_refs_once() {
 }
 
 #[test]
-pub(in crate::ui) fn source_route_warm_targets_include_playlists_and_smart_playlists() {
+pub(in crate::ui) fn shell_include_playlist() {
     let playlist_ref = test_image_ref("playlist-group");
     let smart_ref = test_image_ref("smart-group");
     let mut library = test_library_snapshot();
@@ -569,7 +546,7 @@ pub(in crate::ui) fn source_route_warm_targets_include_playlists_and_smart_playl
     let smart_playlists = vec![test_smart_playlist("Smart", smart_ref.clone())];
 
     let settings = AppSettings::default();
-    let targets = super::source_route_cover_warm_targets_from_snapshot(
+    let targets = super::source_warm_targets(
         &library,
         &smart_playlists,
         &settings,
@@ -585,7 +562,7 @@ pub(in crate::ui) fn source_route_warm_targets_include_playlists_and_smart_playl
 }
 
 #[test]
-pub(in crate::ui) fn source_route_warm_targets_skip_hidden_sidebar_routes() {
+pub(in crate::ui) fn shell_warm_route() {
     let genre_ref = test_image_ref("hidden-genre");
     let playlist_ref = test_image_ref("hidden-playlist");
     let mut library = test_library_snapshot();
@@ -609,12 +586,8 @@ pub(in crate::ui) fn source_route_warm_targets_skip_hidden_sidebar_routes() {
         }
     }
 
-    let targets = super::source_route_cover_warm_targets_from_snapshot(
-        &library,
-        &[],
-        &settings,
-        test_initial_route_metrics(),
-    );
+    let targets =
+        super::source_warm_targets(&library, &[], &settings, test_initial_route_metrics());
     let target_refs = targets
         .iter()
         .map(|target| target.image_ref.item_id.as_str())
@@ -625,40 +598,28 @@ pub(in crate::ui) fn source_route_warm_targets_skip_hidden_sidebar_routes() {
 }
 
 #[test]
-pub(in crate::ui) fn source_route_warm_is_anchored_after_startup_layout_settlement() {
-    assert!(source_route_cover_warm_settle_delay_ms() > super::RESPONSIVE_RENDER_DELAY_MS * 4);
+pub(in crate::ui) fn shell_warm_settlement() {
+    assert!(cover_warm_delay() > super::RESPONSIVE_RENDER_DELAY_MS * 4);
 }
 
 #[test]
-pub(in crate::ui) fn source_route_warm_stale_callback_does_not_clear_new_source_pending() {
+pub(in crate::ui) fn shell_clear_pending() {
     let first = ServerId::new("source:first");
     let second = ServerId::new("source:second");
     let mut pending = Some((second.clone(), 2));
 
-    assert!(!take_matching_source_route_cover_warm_pending(
-        &mut pending,
-        &first,
-        1
-    ));
+    assert!(!take_pending_warm(&mut pending, &first, 1));
     assert_eq!(pending, Some((second, 2)));
 
     let mut pending = Some((first.clone(), 3));
-    assert!(!take_matching_source_route_cover_warm_pending(
-        &mut pending,
-        &first,
-        1
-    ));
+    assert!(!take_pending_warm(&mut pending, &first, 1));
     assert_eq!(pending, Some((first.clone(), 3)));
-    assert!(take_matching_source_route_cover_warm_pending(
-        &mut pending,
-        &first,
-        3
-    ));
+    assert!(take_pending_warm(&mut pending, &first, 3));
     assert_eq!(pending, None);
 }
 
 #[test]
-pub(in crate::ui) fn cover_group_slots_repeat_ordered_refs_without_unique_collage_rules() {
+pub(in crate::ui) fn shell_cover_rules() {
     let first = test_image_ref("first");
     let second = test_image_ref("second");
     let duplicate = first.clone();
@@ -680,7 +641,7 @@ pub(in crate::ui) fn cover_group_slots_repeat_ordered_refs_without_unique_collag
     );
 }
 #[test]
-pub(in crate::ui) fn visible_range_clamps_exact_bottom_to_last_row_window() {
+pub(in crate::ui) fn row_bottom_clamp() {
     let (visible_start, visible_end) = super::visible_index_range_from_metrics(
         100,
         LibraryLayout::Row,
@@ -694,7 +655,7 @@ pub(in crate::ui) fn visible_range_clamps_exact_bottom_to_last_row_window() {
     assert_eq!((visible_start, visible_end), (90, 100));
 }
 #[test]
-pub(in crate::ui) fn initial_visible_count_uses_viewport_geometry() {
+pub(in crate::ui) fn shell_use_geometry() {
     assert_eq!(
         super::initial_visible_count_from_metrics(LibraryLayout::Row, 900, 720, 4, 160,),
         17
@@ -705,7 +666,7 @@ pub(in crate::ui) fn initial_visible_count_uses_viewport_geometry() {
     );
 }
 #[test]
-pub(in crate::ui) fn visible_range_clamps_exact_bottom_to_last_grid_window() {
+pub(in crate::ui) fn grid_bottom_clamp() {
     let (visible_start, visible_end) = super::visible_index_range_from_metrics(
         100,
         LibraryLayout::Grid,
@@ -719,7 +680,7 @@ pub(in crate::ui) fn visible_range_clamps_exact_bottom_to_last_grid_window() {
     assert_eq!((visible_start, visible_end), (84, 100));
 }
 #[test]
-pub(in crate::ui) fn queue_lyrics_position_clamps_to_available_height() {
+pub(in crate::ui) fn shell_clamp_height() {
     assert_eq!(clamp_queue_lyrics_position(800, 1701), 500);
     assert_eq!(clamp_queue_lyrics_position(800, 10), 120);
     assert_eq!(clamp_queue_lyrics_position(200, 1701), 120);
@@ -738,7 +699,7 @@ pub(in crate::ui) fn queue_lyrics_position_clamps_to_available_height() {
     );
 }
 #[test]
-pub(in crate::ui) fn current_playback_track_id_uses_restored_current_entry() {
+pub(in crate::ui) fn shell_use_entry() {
     let track_id = TrackId::fake(7);
     let snapshot = super::PlaybackSnapshot {
         current: Some(QueueEntry {
@@ -767,7 +728,7 @@ pub(in crate::ui) fn current_playback_track_id_uses_restored_current_entry() {
     );
 }
 #[test]
-pub(in crate::ui) fn playlist_entry_search_and_sort_use_track_fields() {
+pub(in crate::ui) fn shell_track_field() {
     let mut first = test_track("Artist B", None);
     first.title = "Alpha".to_string();
     first.album = "Plain Album".to_string();
@@ -811,17 +772,17 @@ pub(in crate::ui) fn playlist_entry_search_and_sort_use_track_fields() {
     assert_eq!(sorted[1].1.entry_id, "entry-beta");
 }
 #[test]
-pub(in crate::ui) fn playlist_detail_layout_tightens_for_sidebar_panes() {
+pub(in crate::ui) fn shell_playlist_panes() {
     assert!(playlist_detail_compact_for_width(550));
-    assert_eq!(playlist_detail_route_margin_for_width(550), 16);
+    assert_eq!(playlist_route_margin(550), 16);
     assert!(!playlist_detail_compact_for_width(760));
-    assert_eq!(playlist_detail_route_margin_for_width(760), 24);
-    assert_eq!(playlist_detail_sort_width_for_width(360), 120);
-    assert_eq!(playlist_detail_sort_width_for_width(550), 150);
-    assert_eq!(playlist_detail_sort_width_for_width(760), 170);
+    assert_eq!(playlist_route_margin(760), 24);
+    assert_eq!(playlist_sort_width(360), 120);
+    assert_eq!(playlist_sort_width(550), 150);
+    assert_eq!(playlist_sort_width(760), 170);
 }
 #[test]
-pub(in crate::ui) fn playlist_activation_distinguishes_duplicate_track_occurrences() {
+pub(in crate::ui) fn shell_track_occurrences() {
     let mut duplicate = test_track("Artist", None);
     duplicate.id = TrackId::fake(7);
     let activation = playlist_play_activation(
@@ -854,7 +815,7 @@ pub(in crate::ui) fn playlist_activation_distinguishes_duplicate_track_occurrenc
     ));
 }
 #[test]
-pub(in crate::ui) fn album_activation_keeps_album_order_and_clicked_track_anchor() {
+pub(in crate::ui) fn shell_track_anchor() {
     let tracks = (1..=3)
         .map(|number| {
             let mut track = test_track("Artist", None);
@@ -880,7 +841,7 @@ pub(in crate::ui) fn album_activation_keeps_album_order_and_clicked_track_anchor
     );
 }
 #[test]
-pub(in crate::ui) fn playlist_drop_index_accounts_for_removed_source_row() {
+pub(in crate::ui) fn shell_drop_source() {
     let entries = ["a", "b", "c"]
         .into_iter()
         .enumerate()
@@ -900,7 +861,7 @@ pub(in crate::ui) fn playlist_drop_index_accounts_for_removed_source_row() {
     assert_eq!(playlist_drop_index(&entries, "b", 1, false), None);
 }
 #[test]
-pub(in crate::ui) fn track_artist_route_prefers_detail_and_falls_back_to_artist_search() {
+pub(in crate::ui) fn track_artist_route() {
     let track = test_track("Track Artist", Some(ArtistId::fake(3)));
     assert_eq!(
         super::track_artist_route(&track),
@@ -919,7 +880,7 @@ pub(in crate::ui) fn track_artist_route_prefers_detail_and_falls_back_to_artist_
     assert_eq!(super::track_artist_route(&test_track("   ", None)), None);
 }
 #[test]
-pub(in crate::ui) fn album_artist_route_prefers_detail_and_falls_back_to_artist_search() {
+pub(in crate::ui) fn album_artist_route() {
     let album = test_album("Album Artist", Some(ArtistId::fake(5)));
     assert_eq!(
         super::album_artist_route(&album),
@@ -938,7 +899,7 @@ pub(in crate::ui) fn album_artist_route_prefers_detail_and_falls_back_to_artist_
     assert_eq!(super::album_artist_route(&test_album("", None)), None);
 }
 #[test]
-pub(in crate::ui) fn artist_track_sort_honors_favorite_first_option() {
+pub(in crate::ui) fn shell_track_option() {
     assert_eq!(
         sorted_artist_track_titles(true),
         vec!["Bravo".to_string(), "Zulu".to_string(), "Alpha".to_string()]
@@ -949,7 +910,7 @@ pub(in crate::ui) fn artist_track_sort_honors_favorite_first_option() {
     );
 }
 #[test]
-pub(in crate::ui) fn seekbar_target_seconds_uses_committed_clamped_value() {
+pub(in crate::ui) fn shell_use_clamped() {
     assert_eq!(seekbar_target_seconds(42.4, 180), 42);
     assert_eq!(seekbar_target_seconds(42.5, 180), 43);
     assert_eq!(seekbar_target_seconds(-10.0, 180), 0);
@@ -980,7 +941,7 @@ fn sorted_artist_track_titles(favorite_first: bool) -> Vec<String> {
     tracks.into_iter().map(|track| track.title).collect()
 }
 #[test]
-pub(in crate::ui) fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_external_tracks() {
+pub(in crate::ui) fn shell_track_external() {
     let track_id = TrackId::fake(11);
     let mut settings = AppSettings {
         external_lyrics_enabled: true,
@@ -1033,7 +994,7 @@ pub(in crate::ui) fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_exter
     ));
 }
 #[test]
-pub(in crate::ui) fn auto_lyrics_skip_action_is_hidden_for_server_lyrics() {
+pub(in crate::ui) fn shell_auto_lyrics() {
     let track_id = TrackId::fake(13);
     let settings = AppSettings {
         external_lyrics_enabled: true,
@@ -1068,7 +1029,7 @@ pub(in crate::ui) fn auto_lyrics_skip_action_is_hidden_for_server_lyrics() {
     ));
 }
 #[test]
-pub(in crate::ui) fn auto_lyrics_request_keeps_server_lookup_when_external_search_is_suppressed() {
+pub(in crate::ui) fn shell_keep_suppressed() {
     let track_id = TrackId::fake(12);
     let mut settings = AppSettings {
         external_lyrics_enabled: true,
@@ -1114,7 +1075,7 @@ pub(in crate::ui) fn auto_lyrics_request_keeps_server_lookup_when_external_searc
     );
 }
 #[test]
-pub(in crate::ui) fn loaded_lyrics_allows_revisit_to_check_cache() {
+pub(in crate::ui) fn shell_allow_cache() {
     let track_id = TrackId::fake(13);
     let previous_failed_track_id = TrackId::fake(14);
     let mut attempted = HashSet::from([track_id.clone(), previous_failed_track_id.clone()]);
@@ -1135,7 +1096,7 @@ pub(in crate::ui) fn loaded_lyrics_allows_revisit_to_check_cache() {
     assert!(attempted.contains(&previous_failed_track_id));
 }
 #[test]
-pub(in crate::ui) fn preferences_toast_only_uses_server_settings_statuses() {
+pub(in crate::ui) fn shell_use_statuses() {
     assert_eq!(
         preferences_login_status_toast_message("Checking Jellyfin server..."),
         Some("Checking Jellyfin server...")
@@ -1158,7 +1119,7 @@ pub(in crate::ui) fn preferences_toast_only_uses_server_settings_statuses() {
     );
 }
 #[test]
-pub(in crate::ui) fn lyrics_search_results_ignore_queries_from_previous_fields() {
+pub(in crate::ui) fn shell_ignore_field() {
     assert!(lyrics_search_response_matches_query(
         "", "Opening", "", "Opening",
     ));
@@ -1188,7 +1149,7 @@ pub(in crate::ui) fn lyrics_search_results_ignore_queries_from_previous_fields()
     ));
 }
 #[test]
-pub(in crate::ui) fn lyrics_search_result_subtitle_prefers_synced_when_both_texts_exist() {
+pub(in crate::ui) fn shell_lyrics_exist() {
     let result = LyricsSearchResult {
         id: 12,
         track_name: "Example Track".to_string(),
@@ -1205,7 +1166,7 @@ pub(in crate::ui) fn lyrics_search_result_subtitle_prefers_synced_when_both_text
     );
 }
 #[test]
-pub(in crate::ui) fn lyrics_search_result_markup_escapes_external_text() {
+pub(in crate::ui) fn shell_lyrics_text() {
     let result = LyricsSearchResult {
         id: 13,
         track_name: "Poker Face (Piano & Voice Version) [Live]".to_string(),
@@ -1226,14 +1187,14 @@ pub(in crate::ui) fn lyrics_search_result_markup_escapes_external_text() {
     );
 }
 #[test]
-pub(in crate::ui) fn cover_draw_rect_crops_portrait_images_to_square_targets() {
+pub(in crate::ui) fn portrait_cover_crop() {
     let rect = super::cover_draw_rect(100, 200, 34, 34);
     assert!((rect.scale - 0.34).abs() < f64::EPSILON);
     assert!((rect.x - 0.0).abs() < f64::EPSILON);
     assert!((rect.y + 17.0).abs() < f64::EPSILON);
 }
 #[test]
-pub(in crate::ui) fn cover_draw_rect_crops_landscape_images_to_square_targets() {
+pub(in crate::ui) fn landscape_cover_crop() {
     let rect = super::cover_draw_rect(200, 100, 44, 44);
     assert!((rect.scale - 0.44).abs() < f64::EPSILON);
     assert!((rect.x + 22.0).abs() < f64::EPSILON);

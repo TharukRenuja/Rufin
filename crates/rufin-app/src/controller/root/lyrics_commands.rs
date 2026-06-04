@@ -2,13 +2,13 @@ use super::*;
 
 impl AppController {
     pub fn request_lyrics_for_current(&self) {
-        self.request_lyrics_for_current_with_cache(true);
+        self.lyrics_cache(true);
     }
     pub fn request_server_lyrics_for_current(&self) {
-        self.request_lyrics_for_current_with_search(true, JellyfinLyricsSearch::ServerOnly);
+        self.lyrics_search(true, JellyfinLyricsSearch::ServerOnly);
     }
     pub fn refresh_lyrics_for_current(&self) {
-        self.request_lyrics_for_current_with_cache(false);
+        self.lyrics_cache(false);
     }
     pub fn clear_remote_lyrics_for_current(&self) {
         let Some((server_id, entry, _position)) = self.current_queue_entry() else {
@@ -27,14 +27,11 @@ impl AppController {
             }
         }
     }
-    pub(in crate::controller) fn request_lyrics_for_current_with_cache(&self, use_cache: bool) {
+    pub(in crate::controller) fn lyrics_cache(&self, use_cache: bool) {
         let settings = load_settings_from_store(&self.store);
-        self.request_lyrics_for_current_with_search(
-            use_cache,
-            lyrics_search_for_settings(&settings),
-        );
+        self.lyrics_search(use_cache, lyrics_search_for_settings(&settings));
     }
-    pub(in crate::controller) fn request_lyrics_for_current_with_search(
+    pub(in crate::controller) fn lyrics_search(
         &self,
         use_cache: bool,
         search: JellyfinLyricsSearch,

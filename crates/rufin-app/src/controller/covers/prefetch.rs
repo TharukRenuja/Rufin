@@ -22,10 +22,9 @@ use super::cache::{
     save_external_lookup_miss,
 };
 use super::candidates::{
-    external_album_image_refs_from_albums, provider_artist_image_refs_from_artists,
-    push_provider_album_image_refs, push_provider_artist_image_refs,
-    push_provider_genre_image_refs, push_provider_playlist_image_refs,
-    push_provider_track_image_refs,
+    external_album_refs, provider_artist_refs, push_provider_album_image_refs,
+    push_provider_artist_image_refs, push_provider_genre_image_refs,
+    push_provider_playlist_image_refs, push_provider_track_image_refs,
 };
 use super::fetch::{
     fetch_and_cache_cover, fetch_and_cache_provider_cover, is_provider_not_found_error,
@@ -105,7 +104,7 @@ pub(in crate::controller) struct ProviderCoverPrefetchRequest<'a> {
     pub(in crate::controller) provider: &'a dyn MusicProvider,
 }
 
-fn mark_external_cover_prefetch_in_flight(
+fn mark_prefetch_flight(
     external_cover_prefetch_in_flight: &Arc<Mutex<HashMap<ServerId, u64>>>,
     server_id: &ServerId,
     generation: u64,
@@ -125,7 +124,7 @@ fn mark_external_cover_prefetch_in_flight(
         .unwrap_or(false)
 }
 
-fn unmark_external_cover_prefetch_in_flight_generation(
+fn clear_prefetch_generation(
     external_cover_prefetch_in_flight: &Arc<Mutex<HashMap<ServerId, u64>>>,
     server_id: &ServerId,
     generation: u64,
@@ -153,9 +152,7 @@ impl SyncedImagePrefetchOutcome {
     }
 }
 
-pub(in crate::controller) fn start_external_metadata_cover_prefetch_thread(
-    request: ExternalCoverPrefetchRequest,
-) {
+pub(in crate::controller) fn start_cover_prefetch(request: ExternalCoverPrefetchRequest) {
     let ExternalCoverPrefetchRequest {
         store,
         runtime,
@@ -173,7 +170,7 @@ pub(in crate::controller) fn start_external_metadata_cover_prefetch_thread(
     }
 
     let server_id = saved.server.id.clone();
-    if !mark_external_cover_prefetch_in_flight(
+    if !mark_prefetch_flight(
         &external_cover_prefetch_in_flight,
         &server_id,
         retry_generation,
@@ -238,7 +235,7 @@ pub(in crate::controller) fn start_external_metadata_cover_prefetch_thread(
                 );
             }
         }
-        unmark_external_cover_prefetch_in_flight_generation(
+        clear_prefetch_generation(
             &external_cover_prefetch_in_flight,
             &server_id,
             retry_generation,
@@ -504,7 +501,7 @@ fn prefetch_synced_album_covers(
         }
         let album_count = page.items.len();
         stats.album_rows += album_count;
-        let image_refs = external_album_image_refs_from_albums(page.items, &settings);
+        let image_refs = external_album_refs(page.items, &settings);
         stats.album_image_refs += image_refs.len();
         for image_ref in image_refs {
             if !external_metadata::enabled(&load_settings_from_store(context.store))
@@ -555,7 +552,7 @@ fn prefetch_synced_artist_covers(
         } else {
             stats.artist_rows += artist_count;
         }
-        let image_refs = provider_artist_image_refs_from_artists(artists);
+        let image_refs = provider_artist_refs(artists);
         if album_artist {
             stats.album_artist_image_refs += image_refs.len();
         } else {
@@ -700,32 +697,22 @@ fn active_server_changed(store: &StoreHandle, saved: &SavedServer) -> Result<boo
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        mark_external_cover_prefetch_in_flight, unmark_external_cover_prefetch_in_flight_generation,
-    };
+    use super::{clear_prefetch_generation, mark_prefetch_flight};
     use rufin_core::ServerId;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn external_prefetch_retry_generation_replaces_running_generation() {
+    fn prefetch_replace_generation() {
         let in_flight = Arc::new(Mutex::new(HashMap::new()));
         let server_id = ServerId::new("jellyfin:server:test");
 
-        assert!(mark_external_cover_prefetch_in_flight(
-            &in_flight, &server_id, 1
-        ));
-        assert!(!mark_external_cover_prefetch_in_flight(
-            &in_flight, &server_id, 1
-        ));
-        assert!(mark_external_cover_prefetch_in_flight(
-            &in_flight, &server_id, 2
-        ));
-        assert!(!mark_external_cover_prefetch_in_flight(
-            &in_flight, &server_id, 1
-        ));
+        assert!(mark_prefetch_flight(&in_flight, &server_id, 1));
+        assert!(!mark_prefetch_flight(&in_flight, &server_id, 1));
+        assert!(mark_prefetch_flight(&in_flight, &server_id, 2));
+        assert!(!mark_prefetch_flight(&in_flight, &server_id, 1));
 
-        unmark_external_cover_prefetch_in_flight_generation(&in_flight, &server_id, 1);
+        clear_prefetch_generation(&in_flight, &server_id, 1);
         assert_eq!(
             in_flight
                 .lock()
@@ -735,7 +722,7 @@ mod tests {
             Some(2)
         );
 
-        unmark_external_cover_prefetch_in_flight_generation(&in_flight, &server_id, 2);
+        clear_prefetch_generation(&in_flight, &server_id, 2);
         assert!(
             in_flight
                 .lock()

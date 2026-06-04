@@ -707,7 +707,7 @@ impl GstEngine {
     }
 
     fn handle_async_done(&mut self) {
-        if self.retry_pending_seek_after_async_done() {
+        if self.retry_pending_seek() {
             return;
         }
         if let Some(position) = self.active_pipeline().position() {
@@ -715,7 +715,7 @@ impl GstEngine {
         }
     }
 
-    fn retry_pending_seek_after_async_done(&mut self) -> bool {
+    fn retry_pending_seek(&mut self) -> bool {
         let Some(pending) = self.pending_seek.as_mut() else {
             return false;
         };

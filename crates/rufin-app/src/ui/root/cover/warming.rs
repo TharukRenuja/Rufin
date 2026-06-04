@@ -16,7 +16,7 @@ impl Shell {
         self.schedule_route_cover_warm_refs(image_refs, fetch_size, size, 0);
     }
 
-    pub(in crate::ui) fn schedule_source_route_cover_warm_targets(
+    pub(in crate::ui) fn schedule_warm_targets(
         self: &Rc<Self>,
         targets: Vec<CoverWarmTarget>,
     ) -> usize {
@@ -267,18 +267,18 @@ impl Shell {
             }
 
             let in_flight = shell.cover_pipeline_in_flight();
-            if in_flight >= COVER_PATH_LOOKUP_MAX_IN_FLIGHT {
+            if in_flight >= COVER_LOOKUP_LIMIT {
                 return glib::ControlFlow::Continue;
             }
 
-            let capacity = COVER_PATH_LOOKUP_MAX_IN_FLIGHT.saturating_sub(in_flight);
+            let capacity = COVER_LOOKUP_LIMIT.saturating_sub(in_flight);
             let mut processed = 0;
             while processed < COVER_WARM_BATCH_SIZE.min(capacity) {
                 let Some(job) = jobs.borrow_mut().pop_front() else {
                     break;
                 };
                 processed += 1;
-                if shell.cover_warm_job_is_ready_or_in_flight(&job) {
+                if shell.cover_job_active(&job) {
                     continue;
                 }
                 shell.start_warm_cover_path_lookup(job);
@@ -300,7 +300,7 @@ impl Shell {
             .saturating_add(self.state.cover_path_lookups.borrow().len())
     }
 
-    fn cover_warm_job_is_ready_or_in_flight(&self, job: &CoverWarmJob) -> bool {
+    fn cover_job_active(&self, job: &CoverWarmJob) -> bool {
         self.decoded_cover_has_min_size(&job.key, job.size)
             || self.state.cover_decodes.borrow().contains_key(&job.key)
             || self

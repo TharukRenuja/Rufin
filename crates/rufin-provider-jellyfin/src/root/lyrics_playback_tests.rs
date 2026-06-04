@@ -4,7 +4,7 @@ use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
-fn auth_header_uses_configured_device_id() {
+fn lyrics_use_id() {
     let config = JellyfinClientConfig::new(
         "https://library.example.test",
         false,
@@ -15,7 +15,7 @@ fn auth_header_uses_configured_device_id() {
 }
 
 #[tokio::test]
-async fn lyrics_use_local_first_and_remote_fallback_when_enabled() {
+async fn lyrics_use_enabled() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Audio/track-local/Lyrics"))
@@ -72,7 +72,7 @@ async fn lyrics_use_local_first_and_remote_fallback_when_enabled() {
     assert_eq!(remote.lines[0].start_millis, Some(34_000));
 }
 #[tokio::test]
-async fn lyrics_can_search_remote_before_local() {
+async fn lyrics_search_local() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Audio/track-prefer-remote/Lyrics"))
@@ -143,7 +143,7 @@ async fn lyrics_can_search_remote_before_local() {
     assert_eq!(fallback.lines[0].text, "fallback local line");
 }
 #[tokio::test]
-async fn playback_reporting_posts_expected_payloads() {
+async fn lyrics_playback_payloads() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/Sessions/Playing"))
@@ -217,7 +217,7 @@ async fn playback_reporting_posts_expected_payloads() {
         .expect("stopped report");
 }
 #[tokio::test]
-async fn auth_and_server_errors_are_distinct() {
+async fn lyrics_auth_error() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/Items"))
@@ -234,7 +234,7 @@ async fn auth_and_server_errors_are_distinct() {
     assert!(matches!(error, ProviderError::Auth(_)));
 }
 #[tokio::test]
-async fn stream_url_uses_direct_audio_endpoint_and_redacts_token() {
+async fn lyrics_redact_token() {
     let server = MockServer::start().await;
     let provider = provider(&server, "secret-token");
 
@@ -254,7 +254,7 @@ async fn stream_url_uses_direct_audio_endpoint_and_redacts_token() {
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
 #[tokio::test]
-async fn stream_url_adds_transcode_parameters_when_bitrate_limited() {
+async fn lyrics_add_limited() {
     let server = MockServer::start().await;
     let provider = provider(&server, "secret-token");
 

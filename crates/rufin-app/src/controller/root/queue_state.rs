@@ -2,12 +2,12 @@ use super::*;
 
 impl AppController {
     pub(in crate::controller) fn persist_and_emit_queue(&self) {
-        self.persist_and_emit_queue_with_next_preload(true);
+        self.preload_queue_emit(true);
     }
-    pub(in crate::controller) fn persist_and_emit_queue_for_playback_start(&self) {
-        self.persist_and_emit_queue_with_next_preload(false);
+    pub(in crate::controller) fn start_queue_emit(&self) {
+        self.preload_queue_emit(false);
     }
-    fn persist_and_emit_queue_with_next_preload(&self, prepare_next: bool) {
+    fn preload_queue_emit(&self, prepare_next: bool) {
         let queue_snapshot = self.queue_snapshot();
         if let Some(snapshot) = &queue_snapshot {
             self.persist_queue_snapshot_deferred(snapshot.clone());
@@ -32,7 +32,7 @@ impl AppController {
             return;
         }
 
-        persist_queue_snapshot_deferred_from_handles(
+        defer_queue_snapshot(
             self.store.clone(),
             self.events.clone(),
             Arc::clone(&self.queue_persist_generation),
@@ -91,11 +91,7 @@ impl AppController {
         }
     }
     pub(in crate::controller) fn sync_playback_snapshot_from_queue(&self) {
-        sync_playback_snapshot_from_queue_handles(
-            &self.queue,
-            &self.playback_snapshot,
-            &self.auto_dj_enabled,
-        );
+        sync_queue_snapshot(&self.queue, &self.playback_snapshot, &self.auto_dj_enabled);
     }
     pub(in crate::controller) fn emit_playback_snapshot(&self) {
         let snapshot = self
@@ -109,7 +105,7 @@ impl AppController {
     }
 }
 
-pub(in crate::controller) fn sync_playback_snapshot_from_queue_handles(
+pub(in crate::controller) fn sync_queue_snapshot(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
     auto_dj_enabled: &Arc<Mutex<bool>>,
@@ -145,7 +141,7 @@ pub(in crate::controller) fn sync_playback_snapshot_from_queue_handles(
     }
 }
 
-pub(in crate::controller) fn persist_queue_snapshot_deferred_from_handles(
+pub(in crate::controller) fn defer_queue_snapshot(
     store: StoreHandle,
     events: Sender<ControllerEvent>,
     generation: Arc<AtomicU64>,

@@ -111,7 +111,7 @@ impl Shell {
             intent,
             CoverPathLookupIntent::Priority | CoverPathLookupIntent::StartupPrime
         ) {
-            cached_cover_candidate_path_from_memory_or_disk(
+            cover_candidate_path(
                 &candidate_keys,
                 |candidate_key| {
                     self.state
@@ -201,7 +201,7 @@ impl Shell {
                         size,
                         CoverDecodePriority::Visible,
                     );
-                } else if self.visible_cover_cache_miss_should_fetch(&key, &image_ref, fetch_size) {
+                } else if self.should_fetch_cover(&key, &image_ref, fetch_size) {
                     self.request_cover_for_key(key, image_ref, fetch_size);
                 } else {
                     self.apply_cover_unavailable(&key);
@@ -216,7 +216,7 @@ impl Shell {
                         size,
                         CoverDecodePriority::Visible,
                     );
-                } else if self.visible_cover_cache_miss_should_fetch(&key, &image_ref, fetch_size) {
+                } else if self.should_fetch_cover(&key, &image_ref, fetch_size) {
                     self.request_cover_for_key(key, image_ref, fetch_size);
                 } else {
                     self.state
@@ -247,7 +247,7 @@ impl Shell {
         path: Option<PathBuf>,
     ) {
         let Some(path) = path else {
-            if self.visible_cover_cache_miss_should_fetch(&key, &image_ref, fetch_size) {
+            if self.should_fetch_cover(&key, &image_ref, fetch_size) {
                 self.request_cover_for_key(key, image_ref, fetch_size);
                 return;
             }
@@ -269,12 +269,7 @@ impl Shell {
             .unwrap_or(size);
         self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
     }
-    fn visible_cover_cache_miss_should_fetch(
-        &self,
-        key: &str,
-        image_ref: &ImageRef,
-        fetch_size: u32,
-    ) -> bool {
+    fn should_fetch_cover(&self, key: &str, image_ref: &ImageRef, fetch_size: u32) -> bool {
         let provider = self
             .state
             .library
@@ -364,7 +359,7 @@ impl Shell {
         );
         self.remove_stale_cover_prime_pending(stale);
     }
-    pub(in crate::ui) fn reconcile_first_run_cover_prime_pending(&self) {
+    pub(in crate::ui) fn reconcile_prime_pending(&self) {
         let stale = self.stale_cover_prime_pending_keys(
             &self
                 .state
@@ -378,12 +373,12 @@ impl Shell {
     }
     fn stale_cover_prime_pending_keys(&self, keys: &[String]) -> Vec<String> {
         keys.iter()
-            .filter(|key| !self.cover_prime_pending_key_should_wait(key))
+            .filter(|key| !self.prime_key_wait(key))
             .cloned()
             .collect()
     }
-    fn cover_prime_pending_key_should_wait(&self, key: &str) -> bool {
-        startup_prime_pending_key_should_wait(
+    fn prime_key_wait(&self, key: &str) -> bool {
+        startup_prime_wait(
             self.decoded_cover_has_min_size(key, cover_size_from_cache_key(key).unwrap_or(1)),
             self.state.cover_unavailable.borrow().contains(key),
             self.state.cover_path_lookups.borrow().contains_key(key),
@@ -486,7 +481,7 @@ impl Shell {
     }
 }
 
-pub(in crate::ui) fn startup_prime_pending_key_should_wait(
+pub(in crate::ui) fn startup_prime_wait(
     decoded: bool,
     unavailable: bool,
     path_lookup: bool,
@@ -529,7 +524,7 @@ pub(in crate::ui) fn cached_cover_candidate_path(
     candidate_keys.iter().find_map(|key| key_lookup(key))
 }
 
-pub(in crate::ui) fn cached_cover_candidate_path_from_memory_or_disk(
+pub(in crate::ui) fn cover_candidate_path(
     candidate_keys: &[String],
     mut memory_lookup: impl FnMut(&str) -> Option<PathBuf>,
     mut disk_lookup: impl FnMut(&str) -> Option<PathBuf>,
@@ -552,7 +547,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cover_path_lookup_uses_size_fallback_when_candidate_key_files_miss() {
+    fn cover_use_miss() {
         let fallback = PathBuf::from("/tmp/rufin-cached-cover.jpg");
         let keys = vec!["cover-96".to_string(), "cover-256".to_string()];
 
@@ -563,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn cover_path_lookup_prefers_candidate_key_files() {
+    fn cover_path_files() {
         let key_path = PathBuf::from("/tmp/rufin-key-cover.jpg");
         let fallback = PathBuf::from("/tmp/rufin-cached-cover.jpg");
         let keys = vec!["cover-96".to_string(), "cover-256".to_string()];
@@ -579,12 +574,12 @@ mod tests {
     }
 
     #[test]
-    fn priority_cover_path_lookup_uses_disk_candidate_before_async_fallback() {
+    fn cover_use_fallback() {
         let disk_path = PathBuf::from("/tmp/rufin-disk-candidate.jpg");
         let keys = vec!["cover-96".to_string(), "cover-256".to_string()];
 
         assert_eq!(
-            cached_cover_candidate_path_from_memory_or_disk(
+            cover_candidate_path(
                 &keys,
                 |_| None,
                 |key| (key == "cover-96").then(|| disk_path.clone())
@@ -594,32 +589,20 @@ mod tests {
     }
 
     #[test]
-    fn startup_prime_pending_key_waits_only_for_live_work() {
-        assert!(startup_prime_pending_key_should_wait(
-            false, false, true, false, false, false
-        ));
-        assert!(startup_prime_pending_key_should_wait(
-            false, false, false, true, false, false
-        ));
-        assert!(startup_prime_pending_key_should_wait(
-            false, false, false, false, true, false
-        ));
-        assert!(startup_prime_pending_key_should_wait(
-            false, false, false, false, false, true
-        ));
-        assert!(!startup_prime_pending_key_should_wait(
-            true, false, true, true, false, false
-        ));
-        assert!(!startup_prime_pending_key_should_wait(
-            false, true, true, true, false, false
-        ));
-        assert!(!startup_prime_pending_key_should_wait(
+    fn cover_wait_work() {
+        assert!(startup_prime_wait(false, false, true, false, false, false));
+        assert!(startup_prime_wait(false, false, false, true, false, false));
+        assert!(startup_prime_wait(false, false, false, false, true, false));
+        assert!(startup_prime_wait(false, false, false, false, false, true));
+        assert!(!startup_prime_wait(true, false, true, true, false, false));
+        assert!(!startup_prime_wait(false, true, true, true, false, false));
+        assert!(!startup_prime_wait(
             false, false, false, false, false, false
         ));
     }
 
     #[test]
-    fn local_visible_cache_miss_fetches_from_local_provider() {
+    fn cover_fetch_local() {
         let local_cover = ImageRef::new("local:cover:file%3A%2F%2Fcover.jpg", None);
 
         assert_eq!(
@@ -634,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_visible_cache_miss_can_fetch_when_not_known_missing() {
+    fn cover_fetch_missing() {
         let provider_cover = ImageRef::new("album-1", None);
 
         assert_eq!(
@@ -644,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_local_cover_cache_miss_is_final_on_remote_source() {
+    fn cover_stale_source() {
         let local_cover = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftrack.flac", None);
 
         assert_eq!(
@@ -654,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn known_missing_visible_cache_miss_is_final() {
+    fn cover_missing_final() {
         let external_cover = ImageRef::new("external:album:artist:album", None);
 
         assert_eq!(

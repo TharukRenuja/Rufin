@@ -89,7 +89,7 @@ impl AppController {
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let events = self.events.clone();
         thread::spawn(move || {
-            if !current_playback_request_matches_generation(
+            if !request_generation_match(
                 &playback_request_generation,
                 request_generation,
                 &queue,
@@ -109,7 +109,7 @@ impl AppController {
             ) {
                 Ok(item) => item,
                 Err(error) => {
-                    if current_playback_request_matches_generation(
+                    if request_generation_match(
                         &playback_request_generation,
                         request_generation,
                         &queue,
@@ -126,7 +126,7 @@ impl AppController {
                     return;
                 }
             };
-            if !current_playback_request_matches_generation(
+            if !request_generation_match(
                 &playback_request_generation,
                 request_generation,
                 &queue,
