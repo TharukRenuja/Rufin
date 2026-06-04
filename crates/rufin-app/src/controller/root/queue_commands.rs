@@ -5,7 +5,7 @@ impl AppController {
         let generation = self.next_play_activation_generation();
         let PlayActivation { action, target } = activation;
         if let PlayTarget::StoreBackedSource { source_key, anchor } = target {
-            self.play_store_backed_source_activation(action, source_key, anchor, generation);
+            self.play_store_backed_source_activation(source_key, anchor, generation);
             return;
         }
 
@@ -20,17 +20,12 @@ impl AppController {
                 return;
             }
         };
-        match (activation.action, activation.target) {
-            (PlayAction::ReplaceNow, NormalizedPlayTarget::TrackOnly(track)) => {
+        match activation.target {
+            NormalizedPlayTarget::TrackOnly(track) => {
                 self.play_now(*track);
             }
-            (PlayAction::ReplaceNow, NormalizedPlayTarget::Replacement(replacement)) => {
+            NormalizedPlayTarget::Replacement(replacement) => {
                 self.replace_queue_from_activation(replacement);
-            }
-            _ => {
-                let _sent = self.events.send(ControllerEvent::Error(
-                    "This play action is not available for the selected source.".to_string(),
-                ));
             }
         }
     }
@@ -55,18 +50,10 @@ impl AppController {
 
     fn play_store_backed_source_activation(
         &self,
-        action: PlayAction,
         source_key: PlaySourceKey,
         anchor: PlayAnchor,
         generation: u64,
     ) {
-        if action != PlayAction::ReplaceNow {
-            let _sent = self.events.send(ControllerEvent::Error(
-                "This play action is not available for the selected source.".to_string(),
-            ));
-            return;
-        }
-
         let controller = self.clone();
         thread::spawn(move || {
             if !controller.play_activation_generation_matches(generation) {
