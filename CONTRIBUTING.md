@@ -2,6 +2,12 @@
 
 Thank you for your interest in contributing to Rufin! This document has some simple guidelines for contributing.
 
+## Commits
+
+For commit names and PRs, you may use
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/#summary).
+This is not enforced, but it keeps the history easier to scan.
+
 ## Building on Linux
 
 Install the usual desktop app build dependencies. Package names vary by distro,
@@ -69,16 +75,3 @@ scripts/test-rust.sh
 
 `scripts/test-rust.sh` uses `cargo-nextest` when it is installed and falls back
 to `cargo test`.
-
-## Commits
-
-For commit names and PRs, you may use
-[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/#summary).
-This is not enforced, but it keeps the history easier to scan.
-
-## Translations
-
-Each language lives in one file: `po/<locale>.po`. To start a translation, copy
-`po/rufin.pot` to a new locale file, a full locale id like `tr_TR.po`,
-`de_DE.po`, or `pt_BR.po`, set `Language: locale_id \n`, and translate
-`msgstr ""` values.

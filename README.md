@@ -76,6 +76,12 @@ Refer to [CONTRIBUTING.md](CONTRIBUTING.md)
 
 To contribute code, docs, or translations, please see [CONTRIBUTING.md](CONTRIBUTING.md)
 
+# Translations
+
+The app is translated on [Hosted Weblate](https://hosted.weblate.org/projects/rufin/app/).
+
+[![Translation status](https://hosted.weblate.org/widgets/rufin/-/multi-auto.svg)](https://hosted.weblate.org/engage/rufin/?utm_source=widget)
+
 # Credits
 
 Built with [GTK 4](https://www.gtk.org/), [libadwaita](https://gitlab.gnome.org/GNOME/libadwaita/), [gtk-rs](https://gtk-rs.org/), [GStreamer](https://gstreamer.freedesktop.org/)

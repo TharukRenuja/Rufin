@@ -415,7 +415,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Save Server Settings");
     let _ = tr("Connect");
     let _ = tr("Connect to Music Server");
-    let _ = tr("Preparing library...");
+    let _ = tr("Preparing library…");
     let _ = tr("Library sync complete");
     let _ = tr("Choose a provider, pick a server, or enter the address manually");
     let _ = tr("Choose a provider, pick a discovered server, or enter the address manually");
@@ -511,7 +511,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Song");
     let _ = tr("Ready");
     let _ = tr("Enter an artist or song.");
-    let _ = tr("Searching...");
+    let _ = tr("Searching…");
     let _ = tr("No lyrics found.");
     let _ = tr("Search failed.");
     let _ = tr("results");
@@ -546,13 +546,13 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Connected");
     let _ = tr("Connected as");
     let _ = tr("Enter API credentials first");
-    let _ = tr("Opening Last.fm authorization...");
+    let _ = tr("Opening Last.fm authorization…");
     let _ = tr("Timed out waiting for Last.fm authorization.");
     let _ = tr("Now playing updates");
     let _ = tr("Libre.fm");
     let _ = tr("If the page doesn't load, then Libre.fm blocks your IP range/VPN");
     let _ = tr("Libre.fm scrobbling");
-    let _ = tr("Opening Libre.fm authorization...");
+    let _ = tr("Opening Libre.fm authorization…");
     let _ = tr("Timed out waiting for Libre.fm authorization");
     let _ = tr("ListenBrainz");
     let _ = tr("ListenBrainz scrobbling");
@@ -618,7 +618,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Artist detail will use cached album and track groups");
     let _ = tr("Genre detail keeps albums above tracks");
     let _ = tr("Playlist detail will use the track table");
-    let _ = tr("Loading folders...");
+    let _ = tr("Loading folders…");
     let _ = tr("Search current folder");
     let _ = tr("Artist / Album");
     let _ = tr("Folder browsing failed");

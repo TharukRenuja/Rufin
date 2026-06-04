@@ -36,7 +36,7 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
     thread::spawn(move || {
         let provider_name = provider_display_name(&saved.server.provider);
         let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
-            "Syncing {provider_name} library..."
+            "Syncing {provider_name} library…"
         )));
         let sync_result = run_sync_job(&context, &saved, generation, prefetch_initial_covers);
         drop(permit);
@@ -392,7 +392,7 @@ pub(in crate::controller) fn run_sync_job(
     sync_loaded_provider_generation(context, saved, generation, &provider, progress)?;
     if prefetch_initial_covers {
         let _sent = context.events.send(ControllerEvent::LoginStatus(
-            "Caching library artwork...".to_string(),
+            "Caching library artwork…".to_string(),
         ));
         covers::prefetch_initial_provider_cover_cache(covers::ProviderCoverPrefetchRequest {
             store: &context.store,
@@ -1006,7 +1006,7 @@ impl SyncProgressReporter {
         self.emit_status(
             true,
             format!(
-                "Caching library... This may take some time. Fetching {} for {} ({})",
+                "Caching library… This may take some time. Fetching {} for {} ({})",
                 collection.label(),
                 self.source_label(),
                 elapsed_label(self.total_elapsed())
@@ -1025,7 +1025,7 @@ impl SyncProgressReporter {
         self.emit_status(
             false,
             format!(
-                "Caching library... This may take some time. Fetching {} page {page_number} for {}, {count} fetched ({})",
+                "Caching library… This may take some time. Fetching {} page {page_number} for {}, {count} fetched ({})",
                 collection.label(),
                 self.source_label(),
                 elapsed_label(self.total_elapsed())
@@ -1039,7 +1039,7 @@ impl SyncProgressReporter {
         self.emit_status(
             progress.finished,
             format!(
-                "Caching library... This may take some time. Cached {} {page} for {}, {fetched} fetched, {} cached ({})",
+                "Caching library… This may take some time. Cached {} {page} for {}, {fetched} fetched, {} cached ({})",
                 progress.collection.label(),
                 self.source_label(),
                 formatted_count(progress.written),
@@ -1064,7 +1064,7 @@ impl SyncProgressReporter {
         self.emit_status(
             true,
             format!(
-                "Caching library... This may take some time. Finalizing cache for {} ({})",
+                "Caching library… This may take some time. Finalizing cache for {} ({})",
                 self.source_label(),
                 elapsed_label(self.total_elapsed())
             ),

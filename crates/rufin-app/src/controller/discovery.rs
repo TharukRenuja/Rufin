@@ -31,7 +31,7 @@ impl AppController {
         thread::spawn(move || {
             let _sent = events.send(ControllerEvent::ServerDiscovery {
                 servers: Vec::new(),
-                status: "Searching for Jellyfin servers on the local network...".to_string(),
+                status: "Searching for Jellyfin servers on the local network…".to_string(),
                 running: true,
             });
 

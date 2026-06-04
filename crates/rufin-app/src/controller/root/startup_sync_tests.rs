@@ -429,7 +429,7 @@ pub(in crate::controller) fn startup_add_syncs() {
         .expect("active server")
         .expect("active server");
     assert_eq!(active.server.id.as_str(), LOCAL_SOURCE_SERVER_ID);
-    assert_eq!(wait_for_status(&events), "Syncing Local library...");
+    assert_eq!(wait_for_status(&events), "Syncing Local library…");
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -466,13 +466,13 @@ pub(in crate::controller) fn startup_start_refresh() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Local)
     );
-    assert_eq!(snapshot.sync_status, "Syncing library...");
+    assert_eq!(snapshot.sync_status, "Syncing library…");
     let state = controller
         .store
         .with_store(|store| store.sync_state(&local.server.id))
         .expect("sync state");
     assert!(state.generation > generation);
-    assert_eq!(wait_for_status(&events), "Syncing Local library...");
+    assert_eq!(wait_for_status(&events), "Syncing Local library…");
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -516,9 +516,9 @@ pub(in crate::controller) fn startup_reuse_cache() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Local)
     );
-    assert_eq!(snapshot.sync_status, "Syncing library...");
+    assert_eq!(snapshot.sync_status, "Syncing library…");
     assert_eq!(snapshot.cached_album_count, 1);
-    assert_eq!(wait_for_status(&events), "Syncing Local library...");
+    assert_eq!(wait_for_status(&events), "Syncing Local library…");
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -888,7 +888,7 @@ pub(in crate::controller) fn startup_removing_cache() {
         snapshot.selected_source,
         Some(LibrarySourceSelection::Server(remote.server.id.clone()))
     );
-    assert_eq!(wait_for_status(&events), "Syncing Local library...");
+    assert_eq!(wait_for_status(&events), "Syncing Local library…");
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let total = controller
@@ -1148,7 +1148,7 @@ pub(in crate::controller) fn startup_emit_timing() {
         })
         .collect::<Vec<_>>();
     assert!(statuses.iter().any(|status| status.contains(
-        "Caching library... This may take some time. Cached tracks page 5/5 for Fake Library (Music Server), 2,400/2,400 fetched, 2,400 cached"
+        "Caching library… This may take some time. Cached tracks page 5/5 for Fake Library (Music Server), 2,400/2,400 fetched, 2,400 cached"
     )));
     assert!(
         statuses
@@ -1175,7 +1175,7 @@ pub(in crate::controller) fn startup_cache_total() {
 
     let status = wait_for_status(&receiver);
     assert!(status.contains(
-        "Caching library... This may take some time. Cached tracks page 2 for Local Music (Local)"
+        "Caching library… This may take some time. Cached tracks page 2 for Local Music (Local)"
     ));
     assert!(status.contains("620 fetched, 620 cached"));
     assert!(!status.contains("620/"));

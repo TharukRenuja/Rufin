@@ -148,7 +148,7 @@ impl AppController {
         thread::spawn(move || {
             let provider_name = provider.title();
             let _sent = events.send(ControllerEvent::LoginStatus(format!(
-                "Checking {provider_name} server..."
+                "Checking {provider_name} server…"
             )));
             let device_id = if provider == StreamingProvider::Jellyfin {
                 match ensure_jellyfin_device_id(&store) {

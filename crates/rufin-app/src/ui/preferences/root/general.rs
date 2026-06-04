@@ -120,7 +120,7 @@ pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage 
             return;
         }
         button.set_sensitive(false);
-        lastfm_connection_row.set_subtitle(&tr("Opening Last.fm authorization..."));
+        lastfm_connection_row.set_subtitle(&tr("Opening Last.fm authorization…"));
         let shell = Rc::clone(&lastfm_connect_shell);
         let row = lastfm_connection_row.clone();
         let button = button.clone();
@@ -201,7 +201,7 @@ pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage 
     let librefm_connection_row = librefm_connection.clone();
     librefm_connect.connect_clicked(move |button| {
         button.set_sensitive(false);
-        librefm_connection_row.set_subtitle(&tr("Opening Libre.fm authorization..."));
+        librefm_connection_row.set_subtitle(&tr("Opening Libre.fm authorization…"));
         let shell = Rc::clone(&librefm_connect_shell);
         let row = librefm_connection_row.clone();
         let button = button.clone();
