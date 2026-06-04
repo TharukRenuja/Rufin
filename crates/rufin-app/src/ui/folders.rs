@@ -40,7 +40,7 @@ impl Shell {
         wrapper.append(&folder_breadcrumbs(self, &path));
 
         if state.loading {
-            wrapper.append(&self.route_empty_view("Loading folders..."));
+            wrapper.append(&self.route_empty_view("Loading folders…"));
             return wrapper.upcast();
         }
 

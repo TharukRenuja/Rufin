@@ -495,7 +495,7 @@ msgid "Connect to Music Server"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:402
-msgid "Preparing library..."
+msgid "Preparing library…"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:403
@@ -921,7 +921,7 @@ msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:494 crates/rufin-app/src/ui/login.rs:494
 #: crates/rufin-app/src/ui/root/cover_startup.rs:85
-msgid "Searching..."
+msgid "Searching…"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:495
@@ -1089,7 +1089,7 @@ msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:528
 #: crates/rufin-app/src/ui/preferences/root/general.rs:123
-msgid "Opening Last.fm authorization..."
+msgid "Opening Last.fm authorization…"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:529
@@ -1121,7 +1121,7 @@ msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:534
 #: crates/rufin-app/src/ui/preferences/root/general.rs:204
-msgid "Opening Libre.fm authorization..."
+msgid "Opening Libre.fm authorization…"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:535
@@ -1295,7 +1295,7 @@ msgid "Playlist detail will use the track table"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:577
-msgid "Loading folders..."
+msgid "Loading folders…"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:578 crates/rufin-app/src/ui/folders.rs:58
@@ -1448,11 +1448,11 @@ msgid "Password"
 msgstr ""
 
 #: crates/rufin-app/src/ui/login.rs:208
-msgid "Caching local library..."
+msgid "Caching local library…"
 msgstr ""
 
 #: crates/rufin-app/src/ui/login.rs:222
-msgid "Connecting to music server..."
+msgid "Connecting to music server…"
 msgstr ""
 
 #: crates/rufin-app/src/ui/login.rs:405

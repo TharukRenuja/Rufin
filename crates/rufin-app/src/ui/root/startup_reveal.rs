@@ -83,7 +83,7 @@ impl Shell {
         spinner.start();
         wrapper.append(&spinner);
         let status = if self.state.source_switch_preparing.get() {
-            Some(tr("Switching library..."))
+            Some(tr("Switching library…"))
         } else {
             startup_loading_status_label(self.state.library.borrow().sync_status.as_str())
         };

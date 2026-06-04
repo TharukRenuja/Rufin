@@ -232,7 +232,7 @@ impl Shell {
                     status_input.set_visible(true);
                     return;
                 }
-                let message = tr("Caching local library...");
+                let message = tr("Caching local library…");
                 accept_connect_attempt(&message);
                 shell.begin_first_run_connection(&message);
                 controller.add_local_server_folders(roots);
@@ -242,7 +242,7 @@ impl Shell {
                     status_input.set_visible(true);
                     return;
                 }
-                let message = tr("Connecting to music server...");
+                let message = tr("Connecting to music server…");
                 accept_connect_attempt(&message);
                 shell.begin_first_run_connection(&message);
                 controller.login(LoginRequest {
@@ -445,7 +445,7 @@ impl Shell {
         }
         self.state.server_discovery_running.set(true);
         *self.state.server_discovery_status.borrow_mut() =
-            "Searching for Jellyfin servers on the local network...".to_string();
+            "Searching for Jellyfin servers on the local network…".to_string();
         self.controller.discover_servers();
     }
 
@@ -456,7 +456,7 @@ impl Shell {
         self.state.server_discovery_running.set(true);
         *self.state.discovered_servers.borrow_mut() = Vec::new();
         *self.state.server_discovery_status.borrow_mut() =
-            "Searching for Jellyfin servers on the local network...".to_string();
+            "Searching for Jellyfin servers on the local network…".to_string();
         self.controller.discover_servers();
         self.render_current_route();
     }
@@ -509,7 +509,7 @@ impl Shell {
         }
 
         let search_title = if running {
-            tr("Searching...")
+            tr("Searching…")
         } else {
             tr("Search Again")
         };

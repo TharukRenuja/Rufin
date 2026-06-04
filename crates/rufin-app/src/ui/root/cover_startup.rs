@@ -74,7 +74,7 @@ pub(in crate::ui) fn submit_lyrics_search(shell: &Rc<Shell>) {
         return;
     }
     clear_list_box(&dialog.list);
-    dialog.status.set_text(&tr("Searching..."));
+    dialog.status.set_text(&tr("Searching…"));
     debug!(
         artist_name = %artist_name,
         track_name = %track_name,
@@ -112,7 +112,7 @@ pub(in crate::ui) enum AutoLyricsRequest {
 }
 pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Option<&str> {
     let status = status.trim();
-    let server_check = status.starts_with("Checking ") && status.ends_with(" server...");
+    let server_check = status.starts_with("Checking ") && status.ends_with(" server…");
     let server_saved = status.starts_with("Server settings saved.");
     if server_check || server_saved || status == "No changes to save." {
         Some(status)
@@ -203,7 +203,7 @@ pub(in crate::ui) fn library_source_is_local(
     matches!(source, Some(rufin_core::LibrarySourceSelection::Local))
 }
 pub(in crate::ui) fn local_source_snapshot_is_syncing(sync_status: &str) -> bool {
-    sync_status == "Syncing library..."
+    sync_status == "Syncing library…"
 }
 pub(in crate::ui) fn queue_source_waits_for_snapshot(
     queue: Option<&QueueSnapshot>,

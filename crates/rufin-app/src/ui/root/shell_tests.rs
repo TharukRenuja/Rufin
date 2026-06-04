@@ -278,12 +278,12 @@ pub(in crate::ui) fn shell_map_states() {
         ),
         (
             "uncached local sync waits behind gate",
-            LocalCacheGateInput::uncached(false, false, "Syncing library..."),
+            LocalCacheGateInput::uncached(false, false, "Syncing library…"),
             LocalSourceCacheGateAction::Enter,
         ),
         (
             "cached sync stays visible",
-            LocalCacheGateInput::cached(false, false, "Syncing library..."),
+            LocalCacheGateInput::cached(false, false, "Syncing library…"),
             LocalSourceCacheGateAction::None,
         ),
         (
@@ -293,7 +293,7 @@ pub(in crate::ui) fn shell_map_states() {
         ),
         (
             "preparing waits while snapshot is syncing",
-            LocalCacheGateInput::uncached(true, true, "Syncing library..."),
+            LocalCacheGateInput::uncached(true, true, "Syncing library…"),
             LocalSourceCacheGateAction::Wait,
         ),
         (
@@ -303,7 +303,7 @@ pub(in crate::ui) fn shell_map_states() {
         ),
     ];
 
-    assert!(local_source_snapshot_is_syncing("Syncing library..."));
+    assert!(local_source_snapshot_is_syncing("Syncing library…"));
     for (name, input, expected) in cases {
         assert_eq!(local_cache_gate_action(input), expected, "{name}");
     }
@@ -389,8 +389,8 @@ pub(in crate::ui) fn shell_hide_status() {
     assert_eq!(startup_loading_status_label(""), None);
     assert_eq!(startup_loading_status_label("Cached library ready"), None);
     assert_eq!(
-        startup_loading_status_label("Syncing Local library..."),
-        Some("Syncing Local library...".to_string())
+        startup_loading_status_label("Syncing Local library…"),
+        Some("Syncing Local library…".to_string())
     );
 }
 #[test]
@@ -1098,16 +1098,16 @@ pub(in crate::ui) fn shell_allow_cache() {
 #[test]
 pub(in crate::ui) fn shell_use_statuses() {
     assert_eq!(
-        preferences_login_status_toast_message("Checking Jellyfin server..."),
-        Some("Checking Jellyfin server...")
+        preferences_login_status_toast_message("Checking Jellyfin server…"),
+        Some("Checking Jellyfin server…")
     );
     assert_eq!(
         preferences_login_status_toast_message("Server settings saved."),
         Some("Server settings saved.")
     );
     assert_eq!(
-        preferences_login_status_toast_message("Server settings saved. Resyncing library..."),
-        Some("Server settings saved. Resyncing library...")
+        preferences_login_status_toast_message("Server settings saved. Resyncing library…"),
+        Some("Server settings saved. Resyncing library…")
     );
     assert_eq!(
         preferences_login_status_toast_message("No changes to save."),
