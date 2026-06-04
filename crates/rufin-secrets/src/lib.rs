@@ -4,6 +4,7 @@ use std::fs;
 use std::future::Future;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 #[cfg(unix)]
 use std::time::Duration;
@@ -15,7 +16,8 @@ use thiserror::Error;
 
 const CONFIG_SECRET_FORMAT: &str = "config-base64";
 #[cfg(unix)]
-const SECRET_SERVICE_TIMEOUT: Duration = Duration::from_secs(15);
+const SECRET_SERVICE_TIMEOUT: Duration = Duration::from_secs(2);
+static FALLBACK_PRIMARY_AVAILABLE: AtomicBool = AtomicBool::new(true);
 // oo7's Flatpak file backend protects the keyring file per Keyring instance.
 // Reuse one process-wide instance so concurrent Rufin token reads share that lock.
 #[cfg(unix)]
@@ -134,43 +136,31 @@ impl SecretStore for CachedSecretStore {
 pub struct FallbackSecretStore {
     primary: Arc<dyn SecretStore>,
     fallback: Arc<dyn SecretStore>,
-    primary_available: Arc<Mutex<bool>>,
 }
 
 impl FallbackSecretStore {
     pub fn new(primary: Arc<dyn SecretStore>, fallback: Arc<dyn SecretStore>) -> Self {
-        Self {
-            primary,
-            fallback,
-            primary_available: Arc::new(Mutex::new(true)),
-        }
+        Self { primary, fallback }
     }
 
-    fn primary_available(&self) -> SecretResult<bool> {
-        self.primary_available
-            .lock()
-            .map(|available| *available)
-            .map_err(|_| SecretError::Locked)
+    fn primary_available(&self) -> bool {
+        FALLBACK_PRIMARY_AVAILABLE.load(Ordering::Acquire)
     }
 
-    fn disable_primary(&self) -> SecretResult<()> {
-        *self
-            .primary_available
-            .lock()
-            .map_err(|_| SecretError::Locked)? = false;
-        Ok(())
+    fn disable_primary(&self) {
+        FALLBACK_PRIMARY_AVAILABLE.store(false, Ordering::Release);
     }
 }
 
 impl SecretStore for FallbackSecretStore {
     fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
-        if self.primary_available()? {
+        if self.primary_available() {
             match self.primary.save_secret(key, secret) {
                 Ok(()) => {
                     self.fallback.delete_secret(key)?;
                     return Ok(());
                 }
-                Err(_) => self.disable_primary()?,
+                Err(_) => self.disable_primary(),
             }
         }
 
@@ -178,11 +168,11 @@ impl SecretStore for FallbackSecretStore {
     }
 
     fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
-        if self.primary_available()? {
+        if self.primary_available() {
             match self.primary.load_secret(key) {
                 Ok(Some(secret)) => return Ok(Some(secret)),
                 Ok(None) => return self.fallback.load_secret(key),
-                Err(_) => self.disable_primary()?,
+                Err(_) => self.disable_primary(),
             }
         }
 
@@ -190,10 +180,10 @@ impl SecretStore for FallbackSecretStore {
     }
 
     fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
-        if self.primary_available()? {
+        if self.primary_available() {
             match self.primary.delete_secret(key) {
                 Ok(()) => {}
-                Err(_) => self.disable_primary()?,
+                Err(_) => self.disable_primary(),
             }
         }
 
@@ -721,6 +711,14 @@ mod tests {
         );
         assert_eq!(primary.load_count(), 1);
         assert_eq!(primary.save_count(), 0);
+
+        let second_primary = Arc::new(FailingSecretStore::default());
+        let second_fallback = Arc::new(MemorySecretStore::new());
+        let second_store = FallbackSecretStore::new(second_primary.clone(), second_fallback);
+        second_store
+            .save_secret(&SecretKey::LibreFmSession, "librefm-session")
+            .expect("save fallback scrobbling token");
+        assert_eq!(second_primary.save_count(), 0);
     }
 
     #[derive(Default)]
