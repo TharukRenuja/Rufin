@@ -67,7 +67,7 @@ pub struct PlayAnchor {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NormalizedPlayTarget {
-    TrackOnly(Track),
+    TrackOnly(Box<Track>),
     Replacement(QueueReplacement),
 }
 
@@ -82,7 +82,7 @@ pub fn normalize_loaded_source_activation(
 ) -> Result<NormalizedPlayActivation, String> {
     let PlayActivation { action, target } = activation;
     let target = match target {
-        PlayTarget::TrackOnly(track) => NormalizedPlayTarget::TrackOnly(track),
+        PlayTarget::TrackOnly(track) => NormalizedPlayTarget::TrackOnly(Box::new(track)),
         PlayTarget::LoadedSource {
             source_key,
             completeness,
@@ -107,9 +107,9 @@ fn normalize_loaded_source_target(
     let anchor_position = matching_anchor_position(&items, &anchor)?;
 
     if *action == PlayAction::ReplaceNow && completeness == LoadedCompleteness::Snippet {
-        return Ok(NormalizedPlayTarget::TrackOnly(
+        return Ok(NormalizedPlayTarget::TrackOnly(Box::new(
             items[anchor_position].track.clone(),
-        ));
+        )));
     }
 
     let (materialized_start, materialized_end) = materialized_range(items.len(), anchor_position);
@@ -117,25 +117,18 @@ fn normalize_loaded_source_target(
         .iter()
         .map(|item| QueueItemInput::Source {
             track: item.track.clone(),
-            source_index: item.source_index,
-            source_item_id: item.source_item_id.clone(),
         })
         .collect::<Vec<_>>();
-    let materialized_len = materialized_items.len();
     let source = QueueSourceInput {
         source_key,
-        total_source_items: total_source_items(&completeness, items.len()),
         materialized_start: items[materialized_start].source_index,
-        materialized_len,
-        capped: materialized_len < items.len(),
     };
     Ok(NormalizedPlayTarget::Replacement(QueueReplacement {
         source: QueueReplacementSource::Source(source),
         items: materialized_items,
-        anchor: QueueAnchor::SourceOccurrence {
+        anchor: QueueAnchor::SourcePosition {
+            position: anchor_position - materialized_start,
             track_id: anchor.track_id,
-            source_index: anchor.source_index,
-            source_item_id: anchor.source_item_id,
         },
     }))
 }
@@ -201,14 +194,6 @@ fn materialized_range(item_count: usize, anchor_position: usize) -> (usize, usiz
     let preferred_start = anchor_position.saturating_sub(MATERIALIZED_WINDOW_BEFORE_ANCHOR);
     let start = preferred_start.min(last_window_start);
     (start, start + MATERIALIZED_WINDOW_LIMIT)
-}
-
-fn total_source_items(completeness: &LoadedCompleteness, loaded_len: usize) -> Option<usize> {
-    match completeness {
-        LoadedCompleteness::Complete => Some(loaded_len),
-        LoadedCompleteness::Window { total, .. } => *total,
-        LoadedCompleteness::Snippet => None,
-    }
 }
 
 #[cfg(test)]
@@ -308,15 +293,11 @@ mod tests {
             panic!("expected source replacement");
         };
         assert_eq!(source.materialized_start, 630);
-        assert_eq!(source.materialized_len, MATERIALIZED_WINDOW_LIMIT);
-        assert_eq!(source.total_source_items, Some(1_200));
-        assert!(source.capped);
         assert_eq!(
             replacement.anchor,
-            QueueAnchor::SourceOccurrence {
+            QueueAnchor::SourcePosition {
+                position: 20,
                 track_id: TrackId::fake(650),
-                source_index: 650,
-                source_item_id: Some("item-650".to_string()),
             }
         );
     }
@@ -345,8 +326,13 @@ mod tests {
             panic!("expected source replacement");
         };
         assert_eq!(source.materialized_start, 230);
-        assert_eq!(source.total_source_items, Some(500));
-        assert!(source.capped);
+        assert_eq!(
+            replacement.anchor,
+            QueueAnchor::SourcePosition {
+                position: 20,
+                track_id: TrackId::fake(250),
+            }
+        );
     }
 
     #[test]
@@ -481,10 +467,9 @@ mod tests {
         };
         assert_eq!(
             replacement.anchor,
-            QueueAnchor::SourceOccurrence {
+            QueueAnchor::SourcePosition {
+                position: 1,
                 track_id: duplicate_id,
-                source_index: 1,
-                source_item_id: Some("second".to_string()),
             }
         );
     }

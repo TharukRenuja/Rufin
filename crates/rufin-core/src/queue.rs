@@ -51,22 +51,6 @@ impl Default for ShuffleState {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct QueueBatchKey(String);
-
-impl QueueBatchKey {
-    #[allow(dead_code)]
-    fn new(value: impl Into<String>) -> Self {
-        let value = value.into();
-        assert!(!value.is_empty(), "QueueBatchKey cannot be empty");
-        Self(value)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct QueueShuffleKey(String);
 
 impl QueueShuffleKey {
@@ -197,26 +181,10 @@ pub struct PlaySourceKey {
     pub order: SourceOrder,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct QueueSourceSnapshot {
-    pub source_key: PlaySourceKey,
-    pub batch_key: QueueBatchKey,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub total_source_items: Option<usize>,
-    pub materialized_start: usize,
-    pub materialized_len: usize,
-    pub anchor_index: usize,
-    pub capped: bool,
-    pub materialized_track_ids: Vec<TrackId>,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueueSourceInput {
     pub source_key: PlaySourceKey,
-    pub total_source_items: Option<usize>,
     pub materialized_start: usize,
-    pub materialized_len: usize,
-    pub capped: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -235,9 +203,6 @@ pub struct QueueInsertion {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QueueInsertionSource {
     Manual,
-    Source {
-        source_key: PlaySourceKey,
-    },
     AutoDj {
         generated_from_track_id: TrackId,
         reason: AutoDjReason,
@@ -255,8 +220,6 @@ pub enum QueueReplacementSource {
 pub enum QueueItemInput {
     Source {
         track: Track,
-        source_index: usize,
-        source_item_id: Option<String>,
     },
     Manual {
         track: Track,
@@ -269,31 +232,20 @@ pub enum QueueItemInput {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QueueAnchor {
-    SourceOccurrence {
-        track_id: TrackId,
-        source_index: usize,
-        source_item_id: Option<String>,
-    },
     Position(usize),
+    SourcePosition { position: usize, track_id: TrackId },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QueueError {
     EmptyReplacement,
     AnchorNotFound,
-    SourceLengthMismatch,
-    SourceIndexMismatch,
     WrongItemKind,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum QueueEntryOrigin {
     Source {
-        source_key: PlaySourceKey,
-        occurrence_key: String,
-        source_index: usize,
-        source_item_id: Option<String>,
-        batch_key: QueueBatchKey,
         shuffle_key: QueueShuffleKey,
     },
     Manual {
@@ -373,8 +325,6 @@ pub struct QueueSnapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shuffle_order: Vec<usize>,
     pub progress_seconds: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_snapshot: Option<QueueSourceSnapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -387,9 +337,6 @@ pub struct QueueEngine {
     shuffle_order: Vec<usize>,
     shuffle_position: Option<usize>,
     next_entry_number: u64,
-    source_snapshot: Option<QueueSourceSnapshot>,
-    #[allow(dead_code)]
-    next_batch_number: u64,
     progress_seconds: u32,
 }
 
@@ -404,8 +351,6 @@ impl QueueEngine {
             shuffle_order: Vec::new(),
             shuffle_position: None,
             next_entry_number: 1,
-            source_snapshot: None,
-            next_batch_number: 1,
             progress_seconds: 0,
         }
     }
@@ -419,14 +364,12 @@ impl QueueEngine {
         let mut engine = Self {
             server_id: snapshot.server_id,
             next_entry_number: next_entry_number(&entries),
-            next_batch_number: next_batch_number(&entries),
             entries,
             current_index,
             repeat_mode: snapshot.repeat_mode,
             shuffle: snapshot.shuffle,
             shuffle_order: snapshot.shuffle_order,
             shuffle_position: None,
-            source_snapshot: snapshot.source_snapshot,
             progress_seconds: snapshot.progress_seconds,
         };
         if engine.shuffle.enabled
@@ -452,7 +395,6 @@ impl QueueEngine {
                 Vec::new()
             },
             progress_seconds: self.progress_seconds,
-            source_snapshot: self.source_snapshot.clone(),
         }
     }
 
@@ -697,7 +639,6 @@ impl QueueEngine {
         self.current_index = None;
         self.shuffle_order.clear();
         self.shuffle_position = None;
-        self.source_snapshot = None;
         self.progress_seconds = 0;
     }
 
@@ -789,12 +730,6 @@ impl QueueEngine {
         entry
     }
 
-    fn next_batch_key(&mut self) -> QueueBatchKey {
-        let batch_key = QueueBatchKey::new(format!("batch-{}", self.next_batch_number));
-        self.next_batch_number += 1;
-        batch_key
-    }
-
     fn entries_from_insertion(
         &mut self,
         insertion: QueueInsertion,
@@ -819,48 +754,6 @@ impl QueueEngine {
                         let mut entry = self.entry_from_track(&track);
                         entry.origin = Some(QueueEntryOrigin::Manual {
                             shuffle_key: manual_shuffle_key(&entry),
-                        });
-                        entry
-                    })
-                    .collect())
-            }
-            QueueInsertionSource::Source { source_key } => {
-                let mut source_items = Vec::with_capacity(insertion.items.len());
-                for item in insertion.items {
-                    let QueueItemInput::Source {
-                        track,
-                        source_index,
-                        source_item_id,
-                    } = item
-                    else {
-                        return Err(QueueError::WrongItemKind);
-                    };
-                    source_items.push((track, source_index, source_item_id));
-                }
-
-                let batch_key = self.next_batch_key();
-                Ok(source_items
-                    .into_iter()
-                    .map(|(track, source_index, source_item_id)| {
-                        let mut entry = self.entry_from_track(&track);
-                        entry.origin = Some(QueueEntryOrigin::Source {
-                            source_key: source_key.clone(),
-                            occurrence_key: source_occurrence_key(
-                                &source_key,
-                                source_index,
-                                source_item_id.as_deref(),
-                                &track.id,
-                            ),
-                            source_index,
-                            source_item_id: source_item_id.clone(),
-                            batch_key: batch_key.clone(),
-                            shuffle_key: source_insertion_shuffle_key(
-                                &source_key,
-                                &batch_key,
-                                source_index,
-                                source_item_id.as_deref(),
-                                &track.id,
-                            ),
                         });
                         entry
                     })
@@ -910,87 +803,39 @@ impl QueueEngine {
         items: Vec<QueueItemInput>,
         anchor: QueueAnchor,
     ) -> Result<QueueEntryId, QueueError> {
-        if items.len() != source.materialized_len {
-            return Err(QueueError::SourceLengthMismatch);
-        }
-        let QueueAnchor::SourceOccurrence {
+        let QueueAnchor::SourcePosition {
+            position: anchor_index,
             track_id: anchor_track_id,
-            source_index: anchor_source_index,
-            source_item_id: anchor_source_item_id,
         } = anchor
         else {
             return Err(QueueError::AnchorNotFound);
         };
+        if anchor_index >= items.len() {
+            return Err(QueueError::AnchorNotFound);
+        }
 
-        let mut source_items = Vec::with_capacity(items.len());
-        let mut anchor_index = None;
-        let mut matching_anchors = 0usize;
-        for (materialized_index, item) in items.into_iter().enumerate() {
-            let QueueItemInput::Source {
-                track,
-                source_index,
-                source_item_id,
-            } = item
-            else {
+        let mut tracks = Vec::with_capacity(items.len());
+        for item in items {
+            let QueueItemInput::Source { track } = item else {
                 return Err(QueueError::WrongItemKind);
             };
-            let Some(expected_source_index) =
-                source.materialized_start.checked_add(materialized_index)
-            else {
-                return Err(QueueError::SourceIndexMismatch);
-            };
-            if source_index != expected_source_index {
-                return Err(QueueError::SourceIndexMismatch);
-            }
-            if track.id == anchor_track_id
-                && source_index == anchor_source_index
-                && source_item_id == anchor_source_item_id
-            {
-                matching_anchors += 1;
-                anchor_index = Some(materialized_index);
-            }
-            source_items.push((track, source_index, source_item_id));
+            tracks.push(track);
         }
-
-        if matching_anchors != 1 {
-            return Err(QueueError::AnchorNotFound);
-        }
-        let anchor_index = anchor_index.expect("matching anchor records its index");
-        let Some(expected_anchor_source_index) =
-            source.materialized_start.checked_add(anchor_index)
-        else {
-            return Err(QueueError::SourceIndexMismatch);
-        };
-        if expected_anchor_source_index != anchor_source_index {
+        if tracks
+            .get(anchor_index)
+            .is_none_or(|track| track.id != anchor_track_id)
+        {
             return Err(QueueError::AnchorNotFound);
         }
 
-        let batch_key = self.next_batch_key();
-        let materialized_track_ids = source_items
-            .iter()
-            .map(|(track, _, _)| track.id.clone())
-            .collect::<Vec<_>>();
-        let entries = source_items
+        let entries = tracks
             .into_iter()
-            .map(|(track, source_index, source_item_id)| {
+            .enumerate()
+            .map(|(materialized_index, track)| {
                 let mut entry = self.entry_from_track(&track);
+                let source_index = source.materialized_start.saturating_add(materialized_index);
                 entry.origin = Some(QueueEntryOrigin::Source {
-                    source_key: source.source_key.clone(),
-                    occurrence_key: source_occurrence_key(
-                        &source.source_key,
-                        source_index,
-                        source_item_id.as_deref(),
-                        &track.id,
-                    ),
-                    source_index,
-                    source_item_id: source_item_id.clone(),
-                    batch_key: batch_key.clone(),
-                    shuffle_key: source_shuffle_key(
-                        &source.source_key,
-                        source_index,
-                        source_item_id.as_deref(),
-                        &track.id,
-                    ),
+                    shuffle_key: source_shuffle_key(&source.source_key, source_index, &track.id),
                 });
                 entry
             })
@@ -998,16 +843,6 @@ impl QueueEngine {
 
         self.entries = entries;
         let anchored_id = self.entries[anchor_index].id.clone();
-        self.source_snapshot = Some(QueueSourceSnapshot {
-            source_key: source.source_key,
-            batch_key,
-            total_source_items: source.total_source_items,
-            materialized_start: source.materialized_start,
-            materialized_len: source.materialized_len,
-            anchor_index,
-            capped: source.capped,
-            materialized_track_ids,
-        });
         self.current_index = Some(anchor_index);
         self.progress_seconds = 0;
         self.rebuild_shuffle_order();
@@ -1045,7 +880,6 @@ impl QueueEngine {
             })
             .collect();
         let anchored_id = self.entries[anchor_index].id.clone();
-        self.source_snapshot = None;
         self.current_index = Some(anchor_index);
         self.progress_seconds = 0;
         self.rebuild_shuffle_order();
@@ -1090,7 +924,6 @@ impl QueueEngine {
             })
             .collect();
         let anchored_id = self.entries[anchor_index].id.clone();
-        self.source_snapshot = None;
         self.current_index = Some(anchor_index);
         self.progress_seconds = 0;
         self.rebuild_shuffle_order();
@@ -1238,266 +1071,21 @@ fn entry_shuffle_key(entry: &QueueEntry) -> &str {
     }
 }
 
-fn source_occurrence_key(
-    source_key: &PlaySourceKey,
-    source_index: usize,
-    source_item_id: Option<&str>,
-    track_id: &TrackId,
-) -> String {
-    stable_source_entry_key(
-        "source-occurrence",
-        source_key,
-        source_index,
-        source_item_id,
-        track_id,
-    )
-}
-
 fn source_shuffle_key(
     source_key: &PlaySourceKey,
     source_index: usize,
-    source_item_id: Option<&str>,
-    track_id: &TrackId,
-) -> QueueShuffleKey {
-    QueueShuffleKey::new(stable_source_entry_key(
-        "source-shuffle",
-        source_key,
-        source_index,
-        source_item_id,
-        track_id,
-    ))
-}
-
-fn source_insertion_shuffle_key(
-    source_key: &PlaySourceKey,
-    batch_key: &QueueBatchKey,
-    source_index: usize,
-    source_item_id: Option<&str>,
     track_id: &TrackId,
 ) -> QueueShuffleKey {
     QueueShuffleKey::new(format!(
-        "source-insertion-shuffle|source={}|batch={}|source-index={}|source-item={}|track={}",
+        "source-shuffle|source={}|source-index={}|track={}",
         stable_play_source_key(source_key),
-        escape_component(batch_key.as_str()),
         source_index,
-        stable_optional_str(source_item_id),
         escape_component(track_id.as_str())
     ))
 }
 
-fn stable_source_entry_key(
-    prefix: &str,
-    source_key: &PlaySourceKey,
-    source_index: usize,
-    source_item_id: Option<&str>,
-    track_id: &TrackId,
-) -> String {
-    format!(
-        "{}|source={}|source-index={}|source-item={}|track={}",
-        prefix,
-        stable_play_source_key(source_key),
-        source_index,
-        stable_optional_str(source_item_id),
-        escape_component(track_id.as_str())
-    )
-}
-
 fn stable_play_source_key(source_key: &PlaySourceKey) -> String {
-    format!(
-        "descriptor={};order={}",
-        stable_play_source_descriptor(&source_key.descriptor),
-        stable_source_order(&source_key.order)
-    )
-}
-
-fn stable_play_source_descriptor(descriptor: &PlaySourceDescriptor) -> String {
-    match descriptor {
-        PlaySourceDescriptor::Album {
-            album_id,
-            selected_music_folder_id,
-        } => format!(
-            "album;album-id={};music-folder={}",
-            escape_component(album_id.as_str()),
-            stable_optional_id(selected_music_folder_id.as_ref().map(MusicFolderId::as_str))
-        ),
-        PlaySourceDescriptor::Playlist { playlist_id } => {
-            format!(
-                "playlist;playlist-id={}",
-                escape_component(playlist_id.as_str())
-            )
-        }
-        PlaySourceDescriptor::SmartPlaylist {
-            smart_playlist_id,
-            definition_fingerprint,
-            selected_music_folder_id,
-        } => format!(
-            "smart-playlist;smart-playlist-id={};definition-fingerprint={};music-folder={}",
-            escape_component(smart_playlist_id.as_str()),
-            escape_component(definition_fingerprint),
-            stable_optional_id(selected_music_folder_id.as_ref().map(MusicFolderId::as_str))
-        ),
-        PlaySourceDescriptor::FolderLoaded {
-            path,
-            selected_music_folder_id,
-        } => format!(
-            "folder-loaded;path={};music-folder={}",
-            stable_string_list(path),
-            stable_optional_id(selected_music_folder_id.as_ref().map(MusicFolderId::as_str))
-        ),
-        PlaySourceDescriptor::ArtistTracks {
-            artist_id,
-            scope,
-            selected_music_folder_id,
-        } => format!(
-            "artist-tracks;artist-id={};scope={};music-folder={}",
-            escape_component(artist_id.as_str()),
-            stable_artist_track_scope(scope),
-            stable_optional_id(selected_music_folder_id.as_ref().map(MusicFolderId::as_str))
-        ),
-        PlaySourceDescriptor::GenreTracks {
-            genre_id,
-            selected_music_folder_id,
-        } => format!(
-            "genre-tracks;genre-id={};music-folder={}",
-            escape_component(genre_id.as_str()),
-            stable_optional_id(selected_music_folder_id.as_ref().map(MusicFolderId::as_str))
-        ),
-        PlaySourceDescriptor::FavoriteTracks {
-            selected_music_folder_id,
-        } => format!(
-            "favorite-tracks;music-folder={}",
-            stable_optional_id(selected_music_folder_id.as_ref().map(MusicFolderId::as_str))
-        ),
-        PlaySourceDescriptor::SearchResults {
-            query,
-            selected_music_folder_id,
-        } => format!(
-            "search-results;query={};music-folder={}",
-            escape_component(query),
-            stable_optional_id(selected_music_folder_id.as_ref().map(MusicFolderId::as_str))
-        ),
-        PlaySourceDescriptor::GlobalTracks {
-            selected_music_folder_id,
-        } => format!(
-            "global-tracks;music-folder={}",
-            stable_optional_id(selected_music_folder_id.as_ref().map(MusicFolderId::as_str))
-        ),
-        PlaySourceDescriptor::HomeCollection { section_id, source } => format!(
-            "home-collection;section-id={};source={}",
-            escape_component(section_id),
-            stable_play_source_descriptor(source)
-        ),
-    }
-}
-
-fn stable_artist_track_scope(scope: &ArtistTrackScope) -> &'static str {
-    match scope {
-        ArtistTrackScope::MainArtist => "main-artist",
-        ArtistTrackScope::AllCredits => "all-credits",
-    }
-}
-
-fn stable_source_order(order: &SourceOrder) -> String {
-    match order {
-        SourceOrder::Canonical => "canonical".to_string(),
-        SourceOrder::LibraryDisplayed { filter_key, sort } => format!(
-            "library-displayed;filter-key={};sort={}",
-            stable_optional_str(filter_key.as_deref()),
-            stable_track_sort(sort)
-        ),
-        SourceOrder::PlaylistDisplayed {
-            query,
-            sort,
-            descending,
-        } => format!(
-            "playlist-displayed;query={};sort={};descending={}",
-            stable_optional_str(query.as_deref()),
-            stable_playlist_entry_sort(sort),
-            descending
-        ),
-        SourceOrder::FolderDisplayed {
-            query,
-            filter_key,
-            sort,
-        } => format!(
-            "folder-displayed;query={};filter-key={};sort={}",
-            stable_optional_str(query.as_deref()),
-            stable_optional_str(filter_key.as_deref()),
-            stable_track_sort(sort)
-        ),
-        SourceOrder::SearchDisplayed { sort } => {
-            format!("search-displayed;sort={}", stable_search_sort(sort))
-        }
-        SourceOrder::SmartPlaylistDefinition {
-            sort,
-            limit,
-            skip_count,
-        } => format!(
-            "smart-playlist-definition;sort={};limit={};skip-count={}",
-            stable_smart_playlist_sort(sort),
-            stable_optional_usize(*limit),
-            skip_count
-        ),
-    }
-}
-
-fn stable_track_sort(sort: &TrackSortDescriptor) -> &'static str {
-    match sort {
-        TrackSortDescriptor::Album => "album",
-        TrackSortDescriptor::Artist => "artist",
-        TrackSortDescriptor::DateAdded => "date-added",
-        TrackSortDescriptor::Title => "title",
-        TrackSortDescriptor::TrackNumber => "track-number",
-    }
-}
-
-fn stable_playlist_entry_sort(sort: &PlaylistEntrySortDescriptor) -> &'static str {
-    match sort {
-        PlaylistEntrySortDescriptor::Position => "position",
-        PlaylistEntrySortDescriptor::Title => "title",
-        PlaylistEntrySortDescriptor::Album => "album",
-        PlaylistEntrySortDescriptor::Artist => "artist",
-    }
-}
-
-fn stable_search_sort(sort: &SearchSortDescriptor) -> &'static str {
-    match sort {
-        SearchSortDescriptor::Relevance => "relevance",
-        SearchSortDescriptor::Title => "title",
-    }
-}
-
-fn stable_smart_playlist_sort(sort: &SmartPlaylistSortDescriptor) -> &'static str {
-    match sort {
-        SmartPlaylistSortDescriptor::Definition => "definition",
-    }
-}
-
-fn stable_optional_id(value: Option<&str>) -> String {
-    stable_optional_str(value)
-}
-
-fn stable_optional_str(value: Option<&str>) -> String {
-    match value {
-        Some(value) => format!("present:{}", escape_component(value)),
-        None => "absent".to_string(),
-    }
-}
-
-fn stable_optional_usize(value: Option<usize>) -> String {
-    match value {
-        Some(value) => format!("present:{value}"),
-        None => "absent".to_string(),
-    }
-}
-
-fn stable_string_list(values: &[String]) -> String {
-    let mut output = format!("len={}", values.len());
-    for value in values {
-        output.push(':');
-        output.push_str(&escape_component(value));
-    }
-    output
+    serde_json::to_string(source_key).unwrap_or_else(|_| "unavailable".to_string())
 }
 
 fn escape_component(value: &str) -> String {
@@ -1572,24 +1160,6 @@ fn repair_missing_origins(entries: &mut [QueueEntry]) {
     }
 }
 
-fn next_batch_number(entries: &[QueueEntry]) -> u64 {
-    entries
-        .iter()
-        .filter_map(|entry| entry.origin.as_ref())
-        .filter_map(|origin| match origin {
-            QueueEntryOrigin::Source { batch_key, .. } => Some(batch_key),
-            QueueEntryOrigin::Manual { .. }
-            | QueueEntryOrigin::Random { .. }
-            | QueueEntryOrigin::AutoDj { .. }
-            | QueueEntryOrigin::RestoredUnknown { .. } => None,
-        })
-        .filter_map(|batch_key| batch_key.as_str().strip_prefix("batch-"))
-        .filter_map(|number| number.parse::<u64>().ok())
-        .max()
-        .unwrap_or(0)
-        + 1
-}
-
 fn valid_shuffle_order(shuffle_order: &[usize], entries_len: usize) -> bool {
     if shuffle_order.len() != entries_len {
         return false;
@@ -1656,12 +1226,8 @@ mod tests {
         }
     }
 
-    fn source_item(track: Track, source_index: usize, id: &str) -> QueueItemInput {
-        QueueItemInput::Source {
-            track,
-            source_index,
-            source_item_id: Some(id.to_string()),
-        }
+    fn source_item(track: Track) -> QueueItemInput {
+        QueueItemInput::Source { track }
     }
 
     #[test]
@@ -1671,21 +1237,17 @@ mod tests {
             .replace_all(QueueReplacement {
                 source: QueueReplacementSource::Source(QueueSourceInput {
                     source_key: source_key("playlist"),
-                    total_source_items: Some(4),
                     materialized_start: 0,
-                    materialized_len: 4,
-                    capped: false,
                 }),
                 items: vec![
-                    source_item(track(1), 0, "a"),
-                    source_item(track(2), 1, "b"),
-                    source_item(track(3), 2, "c"),
-                    source_item(track(4), 3, "d"),
+                    source_item(track(1)),
+                    source_item(track(2)),
+                    source_item(track(3)),
+                    source_item(track(4)),
                 ],
-                anchor: QueueAnchor::SourceOccurrence {
+                anchor: QueueAnchor::SourcePosition {
+                    position: 2,
                     track_id: TrackId::fake(3),
-                    source_index: 2,
-                    source_item_id: Some("c".to_string()),
                 },
             })
             .expect("source queue replacement should be valid");
@@ -1712,7 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_all_source_rejects_anchor_with_wrong_occurrence_id() {
+    fn replace_all_source_rejects_stale_position_anchor() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(9));
         let before = queue.snapshot();
@@ -1720,121 +1282,17 @@ mod tests {
         let result = queue.replace_all(QueueReplacement {
             source: QueueReplacementSource::Source(QueueSourceInput {
                 source_key: source_key("playlist"),
-                total_source_items: Some(2),
                 materialized_start: 0,
-                materialized_len: 2,
-                capped: false,
             }),
-            items: vec![source_item(track(1), 0, "a"), source_item(track(1), 1, "b")],
-            anchor: QueueAnchor::SourceOccurrence {
+            items: vec![source_item(track(1)), source_item(track(2))],
+            anchor: QueueAnchor::SourcePosition {
+                position: 1,
                 track_id: TrackId::fake(1),
-                source_index: 1,
-                source_item_id: Some("a".to_string()),
             },
         });
 
         assert_eq!(result, Err(QueueError::AnchorNotFound));
         assert_eq!(queue.snapshot(), before);
-    }
-
-    #[test]
-    fn snapshots_persist_source_snapshot() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
-        let source = QueueSourceInput {
-            source_key: source_key("album-order"),
-            total_source_items: Some(3),
-            materialized_start: 0,
-            materialized_len: 3,
-            capped: false,
-        };
-        let replacement = QueueReplacement {
-            source: QueueReplacementSource::Source(source.clone()),
-            items: vec![
-                QueueItemInput::Source {
-                    track: track(1),
-                    source_index: 0,
-                    source_item_id: Some("entry-a".to_string()),
-                },
-                QueueItemInput::Source {
-                    track: track(2),
-                    source_index: 1,
-                    source_item_id: Some("entry-b".to_string()),
-                },
-                QueueItemInput::Source {
-                    track: track(3),
-                    source_index: 2,
-                    source_item_id: Some("entry-c".to_string()),
-                },
-            ],
-            anchor: QueueAnchor::SourceOccurrence {
-                track_id: TrackId::fake(2),
-                source_index: 1,
-                source_item_id: Some("entry-b".to_string()),
-            },
-        };
-
-        queue
-            .replace_all(replacement)
-            .expect("source queue replacement should be valid");
-        let snapshot = queue.snapshot();
-
-        assert_eq!(
-            snapshot
-                .source_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.anchor_index),
-            Some(1)
-        );
-        assert_eq!(
-            snapshot
-                .source_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.materialized_track_ids.clone()),
-            Some(vec![TrackId::fake(1), TrackId::fake(2), TrackId::fake(3)])
-        );
-    }
-
-    #[test]
-    fn source_origin_keys_use_stable_components() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
-        queue
-            .replace_all(QueueReplacement {
-                source: QueueReplacementSource::Source(QueueSourceInput {
-                    source_key: source_key("stable|origin"),
-                    total_source_items: Some(1),
-                    materialized_start: 2,
-                    materialized_len: 1,
-                    capped: false,
-                }),
-                items: vec![source_item(track(3), 2, "entry:c")],
-                anchor: QueueAnchor::SourceOccurrence {
-                    track_id: TrackId::fake(3),
-                    source_index: 2,
-                    source_item_id: Some("entry:c".to_string()),
-                },
-            })
-            .expect("source queue replacement should be valid");
-
-        let Some(QueueEntryOrigin::Source {
-            occurrence_key,
-            shuffle_key,
-            ..
-        }) = queue.current().and_then(|entry| entry.origin.as_ref())
-        else {
-            panic!("source replacement should assign source origin");
-        };
-        let shuffle_key = shuffle_key.as_str();
-
-        for key in [occurrence_key.as_str(), shuffle_key] {
-            assert!(!key.contains("PlaySource"));
-            assert!(!key.contains("Some("));
-            assert!(!key.contains("TrackId"));
-            assert!(!key.contains('"'));
-            assert!(key.contains("playlist-7"));
-            assert!(key.contains("track-3"));
-            assert!(key.contains("source-item=present:entry%3Ac"));
-            assert!(key.contains("query=present:stable%7Corigin"));
-        }
     }
 
     #[test]
@@ -1847,7 +1305,6 @@ mod tests {
         for entry in &mut snapshot.entries {
             entry.origin = None;
         }
-        snapshot.source_snapshot = None;
 
         let restored = QueueEngine::restore(snapshot);
 
@@ -1911,127 +1368,6 @@ mod tests {
             queue.next_track().map(|entry| &entry.track_id),
             Some(&TrackId::fake(3))
         );
-    }
-
-    #[test]
-    fn source_insert_next_keeps_first_inserted_entry_next_under_shuffle() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
-        queue.append(&track(1));
-        queue.append(&track(4));
-        queue.set_shuffle(true, 19);
-
-        let inserted = queue
-            .insert_next(QueueInsertion {
-                source: QueueInsertionSource::Source {
-                    source_key: source_key("insert"),
-                },
-                items: vec![source_item(track(2), 1, "b"), source_item(track(3), 2, "c")],
-            })
-            .expect("source insertion should be valid");
-
-        assert_eq!(inserted.len(), 2);
-        assert_eq!(
-            queue.next_track().map(|entry| &entry.track_id),
-            Some(&TrackId::fake(2))
-        );
-    }
-
-    #[test]
-    fn source_insert_next_keeps_inserted_batch_before_older_future_under_shuffle() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
-        queue.append(&track(1));
-        queue.append(&track(4));
-        queue.set_shuffle(true, 19);
-
-        queue
-            .insert_next(QueueInsertion {
-                source: QueueInsertionSource::Source {
-                    source_key: source_key("insert"),
-                },
-                items: vec![source_item(track(2), 1, "b"), source_item(track(3), 2, "c")],
-            })
-            .expect("source insertion should be valid");
-
-        assert_eq!(
-            queue.next_track().map(|entry| &entry.track_id),
-            Some(&TrackId::fake(2))
-        );
-        assert_eq!(
-            queue.next_track().map(|entry| &entry.track_id),
-            Some(&TrackId::fake(3))
-        );
-        assert_eq!(
-            queue.next_track().map(|entry| &entry.track_id),
-            Some(&TrackId::fake(4))
-        );
-    }
-
-    #[test]
-    fn repeated_source_insertions_get_distinct_batch_keys() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
-        queue.append(&track(1));
-        queue
-            .insert_next(QueueInsertion {
-                source: QueueInsertionSource::Source {
-                    source_key: source_key("insert"),
-                },
-                items: vec![source_item(track(2), 1, "b")],
-            })
-            .expect("source insertion should be valid");
-        queue
-            .insert_next(QueueInsertion {
-                source: QueueInsertionSource::Source {
-                    source_key: source_key("insert"),
-                },
-                items: vec![source_item(track(2), 1, "b")],
-            })
-            .expect("source insertion should be valid");
-
-        let batch_keys = queue
-            .entries()
-            .iter()
-            .filter_map(|entry| match entry.origin.as_ref()? {
-                QueueEntryOrigin::Source { batch_key, .. } => Some(batch_key.as_str().to_string()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        assert_ne!(batch_keys[0], batch_keys[1]);
-    }
-
-    #[test]
-    fn repeated_source_insertions_get_distinct_shuffle_keys() {
-        let mut queue = QueueEngine::new(ServerId::fake(1));
-        queue.append(&track(1));
-        queue
-            .insert_next(QueueInsertion {
-                source: QueueInsertionSource::Source {
-                    source_key: source_key("insert"),
-                },
-                items: vec![source_item(track(2), 1, "b")],
-            })
-            .expect("source insertion should be valid");
-        queue
-            .insert_next(QueueInsertion {
-                source: QueueInsertionSource::Source {
-                    source_key: source_key("insert"),
-                },
-                items: vec![source_item(track(2), 1, "b")],
-            })
-            .expect("source insertion should be valid");
-
-        let shuffle_keys = queue
-            .entries()
-            .iter()
-            .filter_map(|entry| match entry.origin.as_ref()? {
-                QueueEntryOrigin::Source { shuffle_key, .. } => {
-                    Some(shuffle_key.as_str().to_string())
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        assert_ne!(shuffle_keys[0], shuffle_keys[1]);
     }
 
     #[test]
@@ -2239,23 +1575,19 @@ mod tests {
     fn same_source_and_seed_shuffle_is_independent_of_prior_queue_history() {
         let source = QueueSourceInput {
             source_key: source_key("shuffle"),
-            total_source_items: Some(4),
             materialized_start: 0,
-            materialized_len: 4,
-            capped: false,
         };
         let replacement = || QueueReplacement {
             source: QueueReplacementSource::Source(source.clone()),
             items: vec![
-                source_item(track(1), 0, "a"),
-                source_item(track(2), 1, "b"),
-                source_item(track(3), 2, "c"),
-                source_item(track(4), 3, "d"),
+                source_item(track(1)),
+                source_item(track(2)),
+                source_item(track(3)),
+                source_item(track(4)),
             ],
-            anchor: QueueAnchor::SourceOccurrence {
+            anchor: QueueAnchor::SourcePosition {
+                position: 1,
                 track_id: TrackId::fake(2),
-                source_index: 1,
-                source_item_id: Some("b".to_string()),
             },
         };
 
@@ -2287,20 +1619,16 @@ mod tests {
             .replace_all(QueueReplacement {
                 source: QueueReplacementSource::Source(QueueSourceInput {
                     source_key: source_key("display"),
-                    total_source_items: Some(3),
                     materialized_start: 0,
-                    materialized_len: 3,
-                    capped: false,
                 }),
                 items: vec![
-                    source_item(track(1), 0, "a"),
-                    source_item(track(2), 1, "b"),
-                    source_item(track(3), 2, "c"),
+                    source_item(track(1)),
+                    source_item(track(2)),
+                    source_item(track(3)),
                 ],
-                anchor: QueueAnchor::SourceOccurrence {
+                anchor: QueueAnchor::SourcePosition {
+                    position: 1,
                     track_id: TrackId::fake(2),
-                    source_index: 1,
-                    source_item_id: Some("b".to_string()),
                 },
             })
             .expect("source queue replacement should be valid");
