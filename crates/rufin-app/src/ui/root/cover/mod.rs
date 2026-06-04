@@ -6,9 +6,6 @@ mod size_helpers;
 mod tiles;
 mod warming;
 
-pub(in crate::ui) use cache_lookup::{
-    VisibleCoverCacheMissAction, visible_cover_cache_miss_action,
-};
 use size_helpers::*;
 
 #[derive(Clone)]

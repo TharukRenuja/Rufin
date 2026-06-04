@@ -350,16 +350,7 @@ pub enum ControllerEvent {
         running: bool,
     },
     LoginStatus(String),
-    PlaybackPerf(PlaybackPerfEvent),
     Error(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlaybackPerfEvent {
-    pub phase: &'static str,
-    pub server_id: ServerId,
-    pub track_id: TrackId,
-    pub elapsed_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -386,7 +377,6 @@ pub struct AppController {
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     playback_activity: Arc<Mutex<PlaybackActivityState>>,
-    playback_start_probe: Arc<Mutex<Option<PlaybackStartProbe>>>,
     auto_dj_enabled: Arc<Mutex<bool>>,
     last_progress_snapshot: Arc<Mutex<Option<(ServerId, u32)>>>,
     last_report_snapshot: Arc<Mutex<Option<(TrackId, u32)>>>,
@@ -402,11 +392,6 @@ pub struct AppController {
     pub(in crate::controller) cover_slots: Arc<(Mutex<usize>, Condvar)>,
     #[cfg(test)]
     _test_permit: Option<ControllerTestPermit>,
-}
-struct PlaybackStartProbe {
-    server_id: ServerId,
-    track_id: TrackId,
-    started_at: std::time::Instant,
 }
 #[cfg(test)]
 #[derive(Clone)]

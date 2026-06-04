@@ -13,7 +13,6 @@ impl Shell {
     pub(in crate::ui) fn drain_cover_decode_queue(self: &Rc<Self>) {
         while let Some(job) = self.next_cover_decode_job() {
             if job.requires_live_binding && !self.cover_binding_has_live(&job.key) {
-                self.record_perf_cover_stale_key(&job.key);
                 continue;
             }
             if self.apply_decoded_cover_if_available(&job.key, job.size, job.priority) {
@@ -66,30 +65,24 @@ impl Shell {
                 priority,
                 requires_live_binding: _,
             } = job;
-            shell.record_perf_cover_decode_start(&key);
             match load_cover_pixbuf(path.clone(), size, priority.glib_priority()).await {
                 Ok(pixbuf) => {
                     shell.finish_cover_decode(&key);
-                    shell.record_perf_cover_decode_ok(&key);
                     let pixbuf = shell.remember_decoded_cover(key.clone(), pixbuf, priority);
                     let bindings = shell.take_live_cover_bindings(&key);
                     apply_pixbuf_to_bindings(bindings, pixbuf);
                 }
                 Err(error) => {
                     shell.finish_cover_decode(&key);
-                    shell.record_perf_cover_decode_error(&key);
                     warn!(%error, path = %path.display(), "failed to load cached cover");
                     for binding in shell.take_live_cover_bindings(&key) {
                         if !binding.clear_on_failure {
                             continue;
                         }
-                        let cleared = binding
+                        let _ = binding
                             .tile
                             .upgrade()
                             .is_some_and(|tile| tile.clear_image_if_current(binding.generation));
-                        if !cleared {
-                            shell.record_perf_cover_stale_ignored();
-                        }
                     }
                 }
             }
@@ -126,27 +119,17 @@ impl Shell {
         let Some(bindings) = self.state.cover_bindings.borrow_mut().remove(key) else {
             return Vec::new();
         };
-        self.live_cover_bindings(key, bindings)
+        self.live_cover_bindings(bindings)
     }
     pub(in crate::ui) fn live_cover_bindings(
         &self,
-        key: &str,
         bindings: Vec<CoverBinding>,
     ) -> Vec<CoverBinding> {
         let mut live = Vec::with_capacity(bindings.len());
-        let mut stale = 0_usize;
         for binding in bindings {
             if binding.tile.is_current_generation(binding.generation) {
                 live.push(binding);
-            } else {
-                stale = stale.saturating_add(1);
             }
-        }
-        if stale > 0 {
-            self.record_perf_cover_stale_ignored_by(stale);
-        }
-        if live.is_empty() {
-            self.record_perf_cover_stale_key(key);
         }
         live
     }

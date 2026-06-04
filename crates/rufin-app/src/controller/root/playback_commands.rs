@@ -11,7 +11,6 @@ impl AppController {
             PlaybackState::Playing | PlaybackState::Buffering => {
                 if state == PlaybackState::Buffering {
                     invalidate_playback_requests(&self.playback_request_generation);
-                    self.clear_playback_start_probe();
                 }
                 if let Err(error) = self.send_playback_command(PlaybackCommand::Pause) {
                     let _sent = self.events.send(ControllerEvent::Error(error));
@@ -43,7 +42,6 @@ impl AppController {
     pub fn stop(&self) {
         self.invalidate_play_activation_requests();
         invalidate_playback_requests(&self.playback_request_generation);
-        self.clear_playback_start_probe();
         self.report_playback(PlaybackReportKind::Stopped, false);
         let _result = self.with_queue_mut(|queue| {
             queue.set_progress_seconds(0);
@@ -224,18 +222,10 @@ impl AppController {
                     if track_boundary_handled {
                         continue;
                     }
-                    let playback_perf_event = if state == PlaybackState::Playing {
-                        self.playback_started_perf_event()
-                    } else {
-                        None
-                    };
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.state = state;
                         snapshot.buffering_percent = None;
                     });
-                    if let Some(event) = playback_perf_event {
-                        let _sent = self.events.send(ControllerEvent::PlaybackPerf(event));
-                    }
                 }
                 PlaybackEvent::PositionChanged {
                     track_id,
@@ -305,9 +295,6 @@ impl AppController {
                     });
                 }
                 PlaybackEvent::Error(error) => {
-                    if let Ok(mut probe) = self.playback_start_probe.lock() {
-                        *probe = None;
-                    }
                     self.report_playback(PlaybackReportKind::Stopped, true);
                     self.clear_playback_activity();
                     self.update_playback_snapshot(|snapshot| {
@@ -320,42 +307,6 @@ impl AppController {
             }
         }
         self.emit_playback_snapshot();
-    }
-
-    fn playback_started_perf_event(&self) -> Option<PlaybackPerfEvent> {
-        let mut probe = self.playback_start_probe.lock().ok()?;
-        let probe = probe.take()?;
-        let matches_current = self
-            .queue
-            .lock()
-            .ok()
-            .and_then(|queue| {
-                let queue = queue.as_ref()?;
-                let snapshot = queue.snapshot();
-                let current = queue.current()?;
-                Some(snapshot.server_id == probe.server_id && current.track_id == probe.track_id)
-            })
-            .unwrap_or(false);
-        if !matches_current {
-            return None;
-        }
-
-        Some(PlaybackPerfEvent {
-            phase: "playing",
-            server_id: probe.server_id,
-            track_id: probe.track_id,
-            elapsed_ms: probe
-                .started_at
-                .elapsed()
-                .as_millis()
-                .min(u128::from(u64::MAX)) as u64,
-        })
-    }
-
-    fn clear_playback_start_probe(&self) {
-        if let Ok(mut probe) = self.playback_start_probe.lock() {
-            *probe = None;
-        }
     }
 }
 

@@ -23,7 +23,6 @@ pub(in crate::ui) fn post_route_visible_warm_targets(
 
 impl Shell {
     pub(in crate::ui) fn render_current_route(self: &Rc<Self>) {
-        let render_started = Instant::now();
         self.reset_queued_cover_work_for_route_render();
         self.update_layout();
         self.state.home_section_views.borrow_mut().clear();
@@ -39,13 +38,10 @@ impl Shell {
             while let Some(child) = self.login_host.first_child() {
                 self.login_host.remove(&child);
             }
-            let route_name = "FirstRun".to_string();
             self.route_title.set_title(&tr("Connect to Music Server"));
             self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
             self.login_host.append(&view);
-            self.observe_route_scroll(&route_name);
-            self.record_perf_route_render(route_name, render_started.elapsed());
             return;
         }
 
@@ -55,7 +51,6 @@ impl Shell {
         }
 
         let route = self.state.routes.borrow().current().clone();
-        let route_name = format!("{route:?}");
         self.route_title.set_title(&tr(route.title()));
         self.set_history_buttons_sensitive(
             self.state.routes.borrow().can_back(),
@@ -70,7 +65,6 @@ impl Shell {
             self.state.responsive_route_render_width.set(0);
         }
 
-        let view_started = Instant::now();
         let view = match route.clone() {
             Route::Home => self.home_view(),
             Route::Albums => self.library_albums_view(),
@@ -96,15 +90,9 @@ impl Shell {
                 self.search_view(&query, library)
             }
         };
-        let view_ms = view_started.elapsed().as_millis() as u64;
 
-        let append_started = Instant::now();
         self.route_host
             .append(&route_boundary_for_route(&route, view));
-        let append_ms = append_started.elapsed().as_millis() as u64;
-        let observe_started = Instant::now();
-        self.observe_route_scroll(&route_name);
-        let observe_ms = observe_started.elapsed().as_millis() as u64;
         self.prime_route_visible_cover_window(&route);
         {
             let shell = Rc::clone(self);
@@ -114,17 +102,6 @@ impl Shell {
             });
         }
         self.schedule_post_route_visible_cover_warm(&route);
-        if self.state.perf.is_some() {
-            println!(
-                "RUFIN_PERF_ROUTE_PHASE route={} view_ms={} append_ms={} observe_ms={} total_ms={}",
-                route_name,
-                view_ms,
-                append_ms,
-                observe_ms,
-                render_started.elapsed().as_millis() as u64
-            );
-        }
-        self.record_perf_route_render(route_name, render_started.elapsed());
     }
     fn schedule_post_route_visible_cover_warm(self: &Rc<Self>, route: &Route) {
         let targets = post_route_visible_warm_targets(route);
@@ -140,16 +117,10 @@ impl Shell {
                     return;
                 }
                 for target in targets {
-                    let refs = shell.prime_route_leading_and_warm_anchor_cover_windows(
+                    shell.prime_route_leading_and_warm_anchor_cover_windows(
                         &target.route,
                         target.leading_rows,
                     );
-                    if shell.state.perf.is_some() {
-                        println!(
-                            "RUFIN_ROUTE_POST_WARM source={source_route:?} target={:?} refs={refs}",
-                            target.route
-                        );
-                    }
                 }
             },
         );
@@ -171,34 +142,6 @@ impl Shell {
             restore_scrolled_window_value(&route_host.clone().upcast(), value);
             glib::timeout_add_local_once(Duration::from_millis(16), move || {
                 restore_scrolled_window_value(&route_host.clone().upcast(), value);
-            });
-        });
-    }
-    pub(in crate::ui) fn observe_route_scroll(&self, route: &str) {
-        let Some(perf) = self
-            .state
-            .perf
-            .as_ref()
-            .filter(|perf| perf.options.observe_scroll)
-            .cloned()
-        else {
-            return;
-        };
-        let host = if self.login_screen_active() {
-            self.login_host.clone().upcast::<gtk::Widget>()
-        } else {
-            self.route_host.clone().upcast::<gtk::Widget>()
-        };
-        let route = route.to_string();
-        glib::idle_add_local_once(move || {
-            let Some(scroller) = find_largest_scrolled_window(&host) else {
-                perf.record_scroll_note(&route, "no_scrolled_window");
-                return;
-            };
-            let adjustment = scroller.vadjustment();
-            adjustment.connect_value_changed(move |adjustment| {
-                let max_adjustment = (adjustment.upper() - adjustment.page_size()).max(0.0);
-                perf.record_manual_scroll_step(&route, adjustment.value(), max_adjustment);
             });
         });
     }

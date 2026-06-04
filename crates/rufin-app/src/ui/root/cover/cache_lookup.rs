@@ -223,7 +223,6 @@ impl Shell {
                         .cover_unavailable
                         .borrow_mut()
                         .insert(key.clone());
-                    self.record_perf_cover_stale_key(&key);
                     self.state
                         .startup_cover_prime_pending
                         .borrow_mut()
@@ -258,7 +257,6 @@ impl Shell {
         self.state.cover_unavailable.borrow_mut().remove(&key);
 
         if !self.cover_binding_has_live(&key) {
-            self.record_perf_cover_stale_key(&key);
             return;
         }
 
@@ -269,8 +267,6 @@ impl Shell {
                 cover_decode_size(pending_size, fetch_size).max(size)
             })
             .unwrap_or(size);
-        self.record_perf_cover_path_ready(&key);
-        self.record_perf_cover_ready(&key);
         self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
     }
     fn visible_cover_cache_miss_should_fetch(
@@ -309,7 +305,6 @@ impl Shell {
             .cover_path_cache
             .borrow_mut()
             .insert(key.to_string(), path.to_path_buf());
-        self.record_perf_cover_ready(key);
         let size = self
             .pending_cover_size(key)
             .unwrap_or(GRID_COVER_SIZE as i32);
@@ -354,13 +349,7 @@ impl Shell {
                 .is_some_and(|tile| tile.clear_image_if_current(binding.generation))
             {
                 cleared = cleared.saturating_add(1);
-            } else {
-                self.record_perf_cover_stale_ignored();
             }
-        }
-        self.record_perf_cover_stale_key(key);
-        if cleared > 0 {
-            self.record_perf_coverless_tile();
         }
     }
     pub(in crate::ui) fn reconcile_startup_cover_prime_pending(&self) {
@@ -418,7 +407,6 @@ impl Shell {
             startup_pending.remove(&key);
             first_run_pending.remove(&key);
             unavailable.insert(key.clone());
-            self.record_perf_cover_stale_key(&key);
         }
     }
     pub(in crate::ui) fn start_cover_decode_from_path(

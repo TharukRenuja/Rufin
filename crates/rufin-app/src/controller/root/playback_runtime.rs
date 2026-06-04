@@ -60,21 +60,6 @@ impl AppController {
         };
         let request_generation =
             next_playback_request_generation(&self.playback_request_generation);
-        let playback_request_started_at = Instant::now();
-        if let Ok(mut probe) = self.playback_start_probe.lock() {
-            *probe = Some(PlaybackStartProbe {
-                server_id: server_id.clone(),
-                track_id: entry.track_id.clone(),
-                started_at: playback_request_started_at,
-            });
-        }
-        emit_playback_perf_event(
-            &self.events,
-            "request_buffering",
-            &server_id,
-            &entry.track_id,
-            playback_request_started_at,
-        );
         self.update_playback_snapshot(|snapshot| {
             snapshot.current = Some(entry.clone());
             snapshot.state = PlaybackState::Buffering;
@@ -160,13 +145,6 @@ impl AppController {
                 elapsed_ms = resolve_started.elapsed().as_millis(),
                 "resolved current playback stream"
             );
-            emit_playback_perf_event(
-                &events,
-                "resolve_stream",
-                &server_id,
-                &entry.track_id,
-                playback_request_started_at,
-            );
             let waveform_item = item.clone();
             let has_next = next_entry.is_some();
             let command = PlaybackCommand::PlayPrepared {
@@ -191,13 +169,6 @@ impl AppController {
                 track_id = %entry.track_id.as_str(),
                 elapsed_ms = resolve_started.elapsed().as_millis(),
                 "sent playback command"
-            );
-            emit_playback_perf_event(
-                &events,
-                "send_command",
-                &server_id,
-                &entry.track_id,
-                playback_request_started_at,
             );
             if has_next {
                 prepare_next_stream_from_handles(
@@ -260,20 +231,4 @@ impl AppController {
             self.events.clone(),
         );
     }
-}
-
-pub(in crate::controller) fn emit_playback_perf_event(
-    events: &Sender<ControllerEvent>,
-    phase: &'static str,
-    server_id: &ServerId,
-    track_id: &TrackId,
-    started_at: Instant,
-) {
-    let elapsed_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-    let _sent = events.send(ControllerEvent::PlaybackPerf(PlaybackPerfEvent {
-        phase,
-        server_id: server_id.clone(),
-        track_id: track_id.clone(),
-        elapsed_ms,
-    }));
 }

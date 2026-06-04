@@ -55,7 +55,7 @@ use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, FULL_LOADED_LIMIT, LibrarySnapshot,
     LoadedCompleteness, LyricsSearchResult, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
     MATERIALIZED_WINDOW_LIMIT, PlayAction, PlayActivation, PlayAnchor, PlaySourceItem, PlayTarget,
-    PlaybackPerfEvent, PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
+    PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
 };
 use crate::external_metadata;
 use crate::i18n::{self, tr};
@@ -94,18 +94,20 @@ use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use preferences::{present_library_preferences_dialog, present_preferences_dialog};
 use queue::connect_queue_panel_controls;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
+#[cfg(test)]
+use rufin_core::SidebarRouteItem;
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH, FolderPathItem, Genre, HomeBlockKind, HomeSection, HomeSectionKind,
     ImageRef, LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
     MusicFolderId, PlaySourceDescriptor, PlaySourceKey, Playlist, PlaylistEntrySortDescriptor,
     PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind,
-    ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
-    SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField,
-    SmartPlaylistRuleGroup, SmartPlaylistRuleNode, SmartPlaylistRuleOperator,
-    SmartPlaylistRuleValue, SmartPlaylistSortDescriptor, SmartPlaylistSortField, SourceOrder,
-    Track, TrackId, TrackSortDescriptor, TrackSortKey, TrackTableColumn, TrackTableSettings,
-    format_duration, sanitized_window_size,
+    ServerId, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistId,
+    SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup,
+    SmartPlaylistRuleNode, SmartPlaylistRuleOperator, SmartPlaylistRuleValue,
+    SmartPlaylistSortDescriptor, SmartPlaylistSortField, SourceOrder, Track, TrackId,
+    TrackSortDescriptor, TrackSortKey, TrackTableColumn, TrackTableSettings, format_duration,
+    sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
@@ -115,7 +117,6 @@ use rufin_test_support::FakeScale;
 use source_selector::{ServerSelector, build_server_selector};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -141,7 +142,6 @@ mod lyrics_panel;
 mod lyrics_playback_state;
 mod new_playlist_dialog;
 mod new_smart_playlist_dialog;
-mod perf_recording;
 mod playlist_detail_view;
 mod playlist_rename_dialog;
 mod responsive_layout_state;
@@ -199,11 +199,8 @@ pub(in crate::ui) const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
 pub(in crate::ui) const COVER_VISIBLE_REQUEST_DELAY_MS: u64 = 48;
 pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
 pub(in crate::ui) const COVER_VISIBLE_DECODE_MAX_IN_FLIGHT: usize = 16;
-pub(in crate::ui) const UI_PERF_MANUAL_SCROLL_IDLE_MS: u64 = 750;
-pub(in crate::ui) const UI_PERF_TRACK_ROW_BIND_SLOW_US: u64 = 4_000;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
-pub(in crate::ui) const UI_PERF_STARTUP_REVEAL_BUDGET_MS: u64 = STARTUP_ROUTE_REVEAL_MAX_MS;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
 pub(in crate::ui) const STARTUP_HOME_SECTION_LIMIT: usize = 3;
 pub(in crate::ui) const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
@@ -230,42 +227,11 @@ pub(in crate::ui) const PLAY_NEXT_ICON: &str = "view-sort-ascending-symbolic";
 pub(in crate::ui) const PLAY_LATER_ICON: &str = "view-sort-descending-symbolic";
 pub(in crate::ui) const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AppOptions {
     #[cfg(feature = "dev-tools")]
     pub fake_scale: Option<FakeScale>,
     pub smoke_exit_ms: Option<u64>,
-    pub ui_perf_run: bool,
-    pub ui_perf_observe: bool,
-    pub ui_perf_route_probe: bool,
-    pub ui_perf_max_gap_ms: u64,
-    pub ui_perf_route_ms: u64,
-    pub ui_perf_route_ready_ms: u64,
-    pub ui_perf_drag_ms: u64,
-    pub ui_perf_duration_ms: u64,
-    pub ui_perf_asset_ms: u64,
-    pub ui_perf_output: Option<PathBuf>,
-    pub launch_started_at: Instant,
-}
-impl Default for AppOptions {
-    fn default() -> Self {
-        Self {
-            #[cfg(feature = "dev-tools")]
-            fake_scale: None,
-            smoke_exit_ms: None,
-            ui_perf_run: false,
-            ui_perf_observe: false,
-            ui_perf_route_probe: false,
-            ui_perf_max_gap_ms: 120,
-            ui_perf_route_ms: 650,
-            ui_perf_route_ready_ms: 250,
-            ui_perf_drag_ms: 900,
-            ui_perf_duration_ms: 15_000,
-            ui_perf_asset_ms: 300,
-            ui_perf_output: None,
-            launch_started_at: Instant::now(),
-        }
-    }
 }
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
@@ -342,7 +308,6 @@ pub(in crate::ui) struct AppState {
     favorite_controls: FavoriteControls,
     folder_request_generation: Cell<u64>,
     folder_state: RefCell<FolderRouteState>,
-    perf: Option<Rc<UiPerfMonitor>>,
 }
 #[derive(Clone)]
 pub(in crate::ui) struct LyricsSearchDialog {
@@ -403,232 +368,6 @@ pub(in crate::ui) struct TrackTableOptions {
     max_visible_rows: Option<usize>,
     favorite_first: bool,
     source_descriptor: Option<PlaySourceDescriptor>,
-}
-pub(in crate::ui) struct UiPerfOptions {
-    max_gap_ms: u64,
-    route_ms: u64,
-    route_ready_ms: u64,
-    drag_ms: u64,
-    duration_ms: u64,
-    asset_ms: u64,
-    require_assets: bool,
-    terminal_events: bool,
-    observe_scroll: bool,
-    strict_contracts: bool,
-    launch_started_at: Instant,
-    output: Option<PathBuf>,
-}
-pub(in crate::ui) struct UiPerfMonitor {
-    options: UiPerfOptions,
-    started_at: Instant,
-    inner: RefCell<UiPerfInner>,
-}
-#[derive(Default)]
-pub(in crate::ui) struct UiPerfInner {
-    ticks: usize,
-    max_gap_ms: u64,
-    max_idle_gap_ms: u64,
-    over_budget_ticks: usize,
-    over_budget_idle_ticks: usize,
-    startup_reveal_ms: Option<u64>,
-    route_ready_samples: Vec<UiPerfRouteReadySample>,
-    route_renders: Vec<UiPerfRouteRender>,
-    route_scrolls: Vec<UiPerfRouteScroll>,
-    active_scroll: Option<UiPerfActiveScroll>,
-    last_route_hint: Option<String>,
-    gap_samples: Vec<UiPerfGapSample>,
-    cover_pending: HashMap<String, Instant>,
-    cover_path_ready: HashMap<String, u64>,
-    cover_decode_started: HashMap<String, u64>,
-    cover_latencies: Vec<UiPerfAssetLatency>,
-    max_cover_latency_ms: u64,
-    over_budget_assets: usize,
-    coverless_tiles: usize,
-    cover_bind_requests: usize,
-    cover_cache_hits: usize,
-    cover_ready_events: usize,
-    cover_decode_ok: usize,
-    cover_decode_error: usize,
-    cover_stale_ignored: usize,
-    track_row_binds: HashMap<&'static str, UiPerfBindStats>,
-    route_model_contracts: Vec<UiPerfRouteModelContractSample>,
-    route_model_contract_samples: usize,
-    route_model_contract_failures: usize,
-    track_row_contracts: Vec<UiPerfTrackRowContractSample>,
-    tracks_row_contract_samples: usize,
-    tracks_row_contract_failures: usize,
-    route_visible_contracts: Vec<UiPerfRouteVisibleContractSample>,
-    route_visible_contract_samples: usize,
-    route_visible_contract_failures: usize,
-    playback_events: Vec<UiPerfPlaybackEvent>,
-}
-#[derive(Default)]
-pub(in crate::ui) struct UiPerfBindStats {
-    samples: usize,
-    total_us: u64,
-    max_us: u64,
-    slow_samples: usize,
-}
-pub(in crate::ui) struct UiPerfTrackRowContract {
-    scenario: &'static str,
-    visible_start: usize,
-    visible_end: usize,
-    ready: usize,
-    coverless: usize,
-    pending: usize,
-    missing: usize,
-}
-pub(in crate::ui) struct UiPerfRouteModelContract {
-    route: &'static str,
-    layout: &'static str,
-    loaded: usize,
-    total: usize,
-    complete: bool,
-    paginated: bool,
-}
-pub(in crate::ui) struct UiPerfRouteModelContractSample {
-    route: &'static str,
-    layout: &'static str,
-    loaded: usize,
-    total: usize,
-    complete: bool,
-    paginated: bool,
-    failed: bool,
-}
-pub(in crate::ui) struct UiPerfRouteVisibleContract {
-    phase: &'static str,
-    route: String,
-    layout: &'static str,
-    visible_start: usize,
-    visible_end: usize,
-    expected_visible: usize,
-    ready: usize,
-    final_missing: usize,
-    pending: usize,
-    rendered_expected: usize,
-    rendered_ready: usize,
-    rendered_final_missing: usize,
-    rendered_fallback: usize,
-    fallback_after_reveal: usize,
-    pending_assets: usize,
-    active_decodes: usize,
-    queued_decodes: usize,
-    path_lookups: usize,
-    pending_samples: Vec<UiPerfRouteVisiblePendingSample>,
-}
-#[derive(Clone)]
-pub(in crate::ui) struct UiPerfRouteVisiblePendingSample {
-    key_hash: u64,
-    kind: &'static str,
-    state: &'static str,
-    fetch_size: u32,
-    decode_size: i32,
-}
-pub(in crate::ui) struct UiPerfRouteVisibleContractSample {
-    phase: &'static str,
-    route: String,
-    layout: &'static str,
-    visible_start: usize,
-    visible_end: usize,
-    expected_visible: usize,
-    ready: usize,
-    final_missing: usize,
-    pending: usize,
-    rendered_expected: usize,
-    rendered_ready: usize,
-    rendered_final_missing: usize,
-    rendered_fallback: usize,
-    fallback_after_reveal: usize,
-    pending_assets: usize,
-    active_decodes: usize,
-    queued_decodes: usize,
-    path_lookups: usize,
-    pending_samples: Vec<UiPerfRouteVisiblePendingSample>,
-    failed: bool,
-}
-pub(in crate::ui) struct UiPerfRouteReadySample {
-    route: String,
-    elapsed_ms: u64,
-    gate_wait_ms: u64,
-    failed: bool,
-}
-pub(in crate::ui) struct UiPerfTrackRowContractSample {
-    scenario: &'static str,
-    visible_start: usize,
-    visible_end: usize,
-    ready: usize,
-    coverless: usize,
-    pending: usize,
-    missing: usize,
-    failed: bool,
-}
-pub(in crate::ui) struct UiPerfActiveScroll {
-    route: String,
-    scenario: &'static str,
-    started_at: Instant,
-    last_step_at: Instant,
-    steps: usize,
-    max_gap_ms: u64,
-    over_budget_ticks: usize,
-    max_adjustment: f64,
-    min_value: f64,
-    max_value: f64,
-    covers_ready_at_start: usize,
-    decodes_at_start: usize,
-}
-pub(in crate::ui) struct UiPerfRouteRender {
-    route: String,
-    elapsed_ms: u64,
-}
-pub(in crate::ui) struct UiPerfRouteScroll {
-    route: String,
-    scenario: &'static str,
-    elapsed_ms: u64,
-    steps: usize,
-    max_gap_ms: u64,
-    over_budget_ticks: usize,
-    max_adjustment: f64,
-    min_value: f64,
-    max_value: f64,
-    covers_ready: usize,
-    decoded_covers: usize,
-}
-pub(in crate::ui) struct UiPerfGapSample {
-    phase: &'static str,
-    route: String,
-    scenario: &'static str,
-    elapsed_ms: u64,
-    gap_ms: u64,
-}
-pub(in crate::ui) struct UiPerfAssetLatency {
-    key: String,
-    elapsed_ms: u64,
-    path_ready_ms: Option<u64>,
-    queue_wait_ms: Option<u64>,
-    decode_ms: Option<u64>,
-}
-pub(in crate::ui) struct UiPerfPlaybackEvent {
-    phase: &'static str,
-    server_id: String,
-    track_id: String,
-    elapsed_ms: u64,
-}
-#[derive(Clone, Copy)]
-pub(in crate::ui) enum UiPerfScenario {
-    HumanScroll,
-    FastScroll,
-    FullSweep,
-    DragSweep,
-}
-impl UiPerfScenario {
-    fn name(self) -> &'static str {
-        match self {
-            Self::HumanScroll => "human_scroll",
-            Self::FastScroll => "fast_scroll",
-            Self::FullSweep => "full_sweep",
-            Self::DragSweep => "drag_sweep",
-        }
-    }
 }
 pub(in crate::ui) struct GroupedDetailData {
     title: String,
@@ -717,14 +456,9 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         "loaded cached music library snapshot"
     );
     let first_run = library.first_run;
-    let perf_observe =
-        options.ui_perf_observe && !options.ui_perf_run && !options.ui_perf_route_probe;
-    let perf_enabled = options.ui_perf_run || perf_observe || options.ui_perf_route_probe;
     let defer_initial_route = !first_run;
     let language_preference = i18n::effective_language_preference(&settings.language);
     i18n::set_language_preference(&language_preference);
-    let perf_requires_assets =
-        perf_enabled && !using_fake_library && library_has_image_refs(&library);
     let prefetched_explore = prefetched_explore_from_snapshot(&library);
 
     let state = AppState {
@@ -802,30 +536,6 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         favorite_controls: RefCell::new(HashMap::new()),
         folder_request_generation: Cell::new(0),
         folder_state: RefCell::new(FolderRouteState::default()),
-        perf: perf_enabled.then(|| {
-            Rc::new(UiPerfMonitor::new(UiPerfOptions {
-                max_gap_ms: options.ui_perf_max_gap_ms,
-                route_ms: options.ui_perf_route_ms,
-                route_ready_ms: options.ui_perf_route_ready_ms,
-                drag_ms: options.ui_perf_drag_ms,
-                duration_ms: options.ui_perf_duration_ms.max(1_000),
-                asset_ms: options.ui_perf_asset_ms,
-                require_assets: perf_requires_assets,
-                terminal_events: options.ui_perf_run || options.ui_perf_route_probe,
-                observe_scroll: perf_observe,
-                strict_contracts: options.ui_perf_route_probe,
-                launch_started_at: options.launch_started_at,
-                output: options.ui_perf_output.clone().or_else(|| {
-                    if perf_observe {
-                        default_ui_perf_output_path("rufin-ui-observe")
-                    } else if options.ui_perf_route_probe {
-                        default_ui_perf_output_path("rufin-ui-route-probe")
-                    } else {
-                        default_ui_perf_output_path("rufin-ui-perf")
-                    }
-                }),
-            }))
-        }),
     };
 
     let (window_width, window_height) =
@@ -993,7 +703,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         shell.controller.request_waveform_for_current();
     }
 
-    if !using_fake_library && !options.ui_perf_run && !options.ui_perf_route_probe {
+    if !using_fake_library {
         schedule_startup_sync(&shell);
     }
 
@@ -1006,11 +716,7 @@ pub fn build(app: &adw::Application, options: AppOptions) {
     }
 
     #[cfg(unix)]
-    if !options.ui_perf_run && !options.ui_perf_route_probe && !perf_observe {
-        tray::present_initial_window(&shell);
-    } else {
-        shell.window.present();
-    }
+    tray::present_initial_window(&shell);
     #[cfg(not(unix))]
     shell.window.present();
     if defer_initial_route {
@@ -1021,12 +727,4 @@ pub fn build(app: &adw::Application, options: AppOptions) {
         layout_shell.update_layout();
     });
     shell.queue_responsive_route_render();
-
-    if options.ui_perf_run {
-        start_ui_perf_run(&shell, app);
-    } else if options.ui_perf_route_probe {
-        start_ui_perf_route_probe(&shell, app);
-    } else if perf_observe {
-        start_ui_perf_observe(&shell, app);
-    }
 }

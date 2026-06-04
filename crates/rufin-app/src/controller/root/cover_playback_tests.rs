@@ -417,7 +417,6 @@ pub(in crate::controller) fn known_external_cover_miss_emits_unavailable() {
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
             | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::PlaybackPerf(_)
             | ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }

@@ -8,9 +8,6 @@ mod lyrics;
 mod providers;
 mod ui;
 
-use std::path::PathBuf;
-use std::time::Instant;
-
 use adw::prelude::*;
 use clap::Parser;
 #[cfg(feature = "dev-tools")]
@@ -18,6 +15,7 @@ use clap::ValueEnum;
 use gtk::gio;
 #[cfg(feature = "dev-tools")]
 use rufin_test_support::FakeScale;
+use std::path::PathBuf;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -34,36 +32,6 @@ struct Cli {
     #[cfg(feature = "dev-tools")]
     #[arg(long)]
     smoke_exit_ms: Option<u64>,
-
-    #[arg(long)]
-    ui_perf_run: bool,
-
-    #[arg(long)]
-    ui_perf_observe: bool,
-
-    #[arg(long)]
-    ui_perf_route_probe: bool,
-
-    #[arg(long, default_value_t = 120)]
-    ui_perf_max_gap_ms: u64,
-
-    #[arg(long, default_value_t = 650)]
-    ui_perf_route_ms: u64,
-
-    #[arg(long, default_value_t = 250)]
-    ui_perf_route_ready_ms: u64,
-
-    #[arg(long, default_value_t = 900)]
-    ui_perf_drag_ms: u64,
-
-    #[arg(long, default_value_t = 15_000)]
-    ui_perf_duration_ms: u64,
-
-    #[arg(long, default_value_t = 300)]
-    ui_perf_asset_ms: u64,
-
-    #[arg(long)]
-    ui_perf_output: Option<PathBuf>,
 
     #[arg(long)]
     clear_cache: bool,
@@ -93,7 +61,6 @@ impl From<FakeScaleArg> for FakeScale {
 }
 
 fn main() {
-    let launch_started_at = Instant::now();
     let cli = Cli::parse();
     if cli.validate_runtime {
         return;
@@ -106,19 +73,6 @@ fn main() {
         eprintln!("Use only one maintenance flag at a time.");
         std::process::exit(2);
     }
-    let ui_perf_mode_count = [
-        cli.ui_perf_run,
-        cli.ui_perf_observe,
-        cli.ui_perf_route_probe,
-    ]
-    .into_iter()
-    .filter(|enabled| *enabled)
-    .count();
-    if ui_perf_mode_count > 1 {
-        eprintln!("Use only one UI perf mode at a time.");
-        std::process::exit(2);
-    }
-
     if cli.clear_cache {
         match controller::AppController::clear_active_server_cache_for_app() {
             Ok(()) => info!("cleared active server cache"),
@@ -148,17 +102,6 @@ fn main() {
         smoke_exit_ms: cli.smoke_exit_ms,
         #[cfg(not(feature = "dev-tools"))]
         smoke_exit_ms: None,
-        ui_perf_run: cli.ui_perf_run,
-        ui_perf_observe: cli.ui_perf_observe,
-        ui_perf_route_probe: cli.ui_perf_route_probe,
-        ui_perf_max_gap_ms: cli.ui_perf_max_gap_ms,
-        ui_perf_route_ms: cli.ui_perf_route_ms,
-        ui_perf_route_ready_ms: cli.ui_perf_route_ready_ms,
-        ui_perf_drag_ms: cli.ui_perf_drag_ms,
-        ui_perf_duration_ms: cli.ui_perf_duration_ms,
-        ui_perf_asset_ms: cli.ui_perf_asset_ms,
-        ui_perf_output: cli.ui_perf_output,
-        launch_started_at,
     };
 
     info!(?options, "starting Rufin native shell");
@@ -170,15 +113,9 @@ fn main() {
         .expect("failed to create async runtime");
     let _runtime_guard = runtime.enter();
 
-    let app_flags = if options.ui_perf_run || options.ui_perf_observe || options.ui_perf_route_probe
-    {
-        gio::ApplicationFlags::NON_UNIQUE
-    } else {
-        gio::ApplicationFlags::empty()
-    };
     let app = adw::Application::builder()
         .application_id(APP_ID)
-        .flags(app_flags)
+        .flags(gio::ApplicationFlags::empty())
         .build();
     app.connect_startup(|_| configure_app_icon());
     app.connect_activate(move |app| ui::build(app, options.clone()));
