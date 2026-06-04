@@ -37,6 +37,28 @@ pub(in crate::ui) fn first_run_cover_prime_reveal_action(
     }
 }
 
+pub(in crate::ui) fn source_route_cover_warm_settle_delay_ms() -> u64 {
+    SOURCE_ROUTE_COVER_WARM_SETTLE_DELAY_MS
+}
+
+pub(in crate::ui) fn take_matching_source_route_cover_warm_pending(
+    pending: &mut Option<(ServerId, u64)>,
+    server_id: &ServerId,
+    token: u64,
+) -> bool {
+    if pending
+        .as_ref()
+        .is_some_and(|(pending_server_id, pending_token)| {
+            pending_server_id == server_id && *pending_token == token
+        })
+    {
+        pending.take();
+        true
+    } else {
+        false
+    }
+}
+
 impl Shell {
     pub(in crate::ui) fn render_startup_loading_view(&self) {
         self.route_title.set_title("Rufin");
@@ -212,10 +234,7 @@ impl Shell {
                 shell.update_bottom_player();
                 shell.log_layout_snapshot("startup_reveal_after_render");
                 shell.queue_post_layout_route_render();
-                let shell_for_tracks = Rc::clone(&shell);
-                glib::idle_add_local_once(move || {
-                    shell_for_tracks.prime_route_visible_cover_window(&Route::Tracks);
-                });
+                shell.queue_source_route_cover_warm_after_layout_settles();
             },
         );
     }
@@ -301,9 +320,135 @@ impl Shell {
                     shell.update_bottom_player();
                     shell.log_layout_snapshot("first_run_reveal_after_render");
                     shell.queue_post_layout_route_render();
+                    shell.queue_source_route_cover_warm_after_layout_settles();
                 },
             );
         });
+    }
+    pub(in crate::ui) fn queue_source_route_cover_warm_after_layout_settles(self: &Rc<Self>) {
+        let Some(server_id) = self
+            .state
+            .library
+            .borrow()
+            .server
+            .as_ref()
+            .map(|server| server.id.clone())
+        else {
+            return;
+        };
+        if self
+            .state
+            .source_route_cover_warm_pending_for
+            .borrow()
+            .as_ref()
+            .is_some_and(|(pending_server_id, _)| pending_server_id == &server_id)
+        {
+            return;
+        }
+        if self
+            .state
+            .source_route_cover_warm_started_for
+            .borrow()
+            .as_ref()
+            .is_some_and(|started_server_id| started_server_id == &server_id)
+        {
+            return;
+        }
+
+        let token = self
+            .state
+            .source_route_cover_warm_next_token
+            .get()
+            .saturating_add(1);
+        self.state.source_route_cover_warm_next_token.set(token);
+        *self.state.source_route_cover_warm_pending_for.borrow_mut() =
+            Some((server_id.clone(), token));
+
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(source_route_cover_warm_settle_delay_ms()),
+            move || {
+                if !take_matching_source_route_cover_warm_pending(
+                    &mut shell.state.source_route_cover_warm_pending_for.borrow_mut(),
+                    &server_id,
+                    token,
+                ) {
+                    return;
+                }
+                let active_server_id = shell
+                    .state
+                    .library
+                    .borrow()
+                    .server
+                    .as_ref()
+                    .map(|server| server.id.clone());
+                if active_server_id.as_ref() != Some(&server_id)
+                    || !shell.state.startup_route_revealed.get()
+                    || shell.state.startup_route_render_pending.get()
+                    || shell.state.routes.borrow().current() != &Route::Home
+                {
+                    return;
+                }
+
+                let smart_playlists = if sidebar_route_visible(
+                    &shell.state.settings.borrow(),
+                    SidebarRouteItem::SmartPlaylists,
+                ) {
+                    Some(
+                        shell
+                            .controller
+                            .cached_smart_playlists_page(0, 1_000)
+                            .map(|page| page.items)
+                            .unwrap_or_else(|error| {
+                                warn!(%error, "failed to load cached smart playlists for source cover warm");
+                                Vec::new()
+                            }),
+                    )
+                } else {
+                    None
+                };
+                let active_server_id = shell
+                    .state
+                    .library
+                    .borrow()
+                    .server
+                    .as_ref()
+                    .map(|server| server.id.clone());
+                if active_server_id.as_ref() != Some(&server_id) {
+                    return;
+                }
+                if let Some(smart_playlists) = smart_playlists.as_ref() {
+                    *shell.state.smart_playlists.borrow_mut() = smart_playlists.clone();
+                }
+
+                let targets = source_route_cover_warm_targets_from_snapshot(
+                    &shell.state.library.borrow(),
+                    smart_playlists.as_deref().unwrap_or_default(),
+                    &shell.state.settings.borrow(),
+                    shell.source_route_initial_cover_metrics(),
+                );
+                let target_count = targets.len();
+                let queued = shell.schedule_source_route_cover_warm_targets(targets);
+                *shell.state.source_route_cover_warm_started_for.borrow_mut() =
+                    Some(server_id.clone());
+                if target_count > 0 {
+                    debug!(
+                        targets = target_count,
+                        queued, "started source route cover warm"
+                    );
+                }
+            },
+        );
+    }
+    fn source_route_initial_cover_metrics(&self) -> InitialRouteCoverMetrics {
+        let (grid_columns, grid_card_size) = self.responsive_card_grid_metrics();
+        InitialRouteCoverMetrics {
+            route_height: self.route_host.height(),
+            app_height: self.app_root.height(),
+            grid_columns,
+            grid_card_size,
+            home_showcase_seed: self.state.home_showcase_seed.get(),
+        }
     }
     pub(in crate::ui) fn begin_first_run_cover_prime(self: &Rc<Self>) -> Option<u64> {
         let generation = self

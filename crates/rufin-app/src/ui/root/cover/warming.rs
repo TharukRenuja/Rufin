@@ -16,6 +16,27 @@ impl Shell {
         self.schedule_route_cover_warm_refs(image_refs, fetch_size, size, 0);
     }
 
+    pub(in crate::ui) fn schedule_source_route_cover_warm_targets(
+        self: &Rc<Self>,
+        targets: Vec<CoverWarmTarget>,
+    ) -> usize {
+        let jobs = self.cover_warm_jobs_from_targets(targets);
+        let queued = jobs.len();
+        if jobs.is_empty() {
+            return 0;
+        }
+
+        let generation = self.next_cover_warm_generation();
+        self.schedule_cover_warm_jobs(
+            Rc::new(RefCell::new(jobs)),
+            CoverWarmSchedule {
+                generation,
+                initial_delay_ms: 0,
+            },
+        );
+        queued
+    }
+
     pub(in crate::ui) fn prime_cover_refs_now(
         self: &Rc<Self>,
         image_refs: Vec<ImageRef>,
@@ -166,6 +187,36 @@ impl Shell {
                 key,
                 image_ref,
                 fetch_size,
+                size: decode_size,
+            });
+        }
+
+        jobs
+    }
+
+    pub(in crate::ui) fn cover_warm_jobs_from_targets(
+        &self,
+        targets: Vec<CoverWarmTarget>,
+    ) -> VecDeque<CoverWarmJob> {
+        let mut seen = HashSet::new();
+        let mut jobs = VecDeque::new();
+
+        for target in targets {
+            let decode_size = cover_decode_size(target.size, target.fetch_size);
+            let Some(key) = self.cover_cache_key(&target.image_ref, target.fetch_size) else {
+                continue;
+            };
+            if !seen.insert(key.clone())
+                || self
+                    .decoded_cover_for_ref(&target.image_ref, target.fetch_size, decode_size)
+                    .is_some()
+            {
+                continue;
+            }
+            jobs.push_back(CoverWarmJob {
+                key,
+                image_ref: target.image_ref,
+                fetch_size: target.fetch_size,
                 size: decode_size,
             });
         }

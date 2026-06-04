@@ -905,23 +905,6 @@ impl Shell {
         self.prime_visible_cover_window(window)
     }
 
-    pub(in crate::ui) fn prime_route_leading_and_warm_anchor_cover_windows(
-        self: &Rc<Self>,
-        route: &Route,
-        leading_rows: usize,
-    ) -> usize {
-        let window = match route {
-            Route::Tracks => track_leading_cover_window(self, leading_rows),
-            _ => visible_cover_window(self, route),
-        };
-        let mut refs = self.prime_visible_cover_window(window);
-        if matches!(route, Route::Tracks) {
-            let anchors = track_anchor_cover_window(self);
-            refs = refs.saturating_add(self.warm_visible_cover_window(anchors));
-        }
-        refs
-    }
-
     fn prime_visible_cover_window(self: &Rc<Self>, window: VisibleCoverWindow) -> usize {
         let mut groups = HashMap::<(u32, i32), Vec<ImageRef>>::new();
         for cover_ref in window.refs {
@@ -934,22 +917,6 @@ impl Shell {
         for ((fetch_size, size), image_refs) in groups {
             refs = refs.saturating_add(image_refs.len());
             self.prime_cover_refs_now(image_refs, fetch_size, size);
-        }
-        refs
-    }
-
-    fn warm_visible_cover_window(self: &Rc<Self>, window: VisibleCoverWindow) -> usize {
-        let mut groups = HashMap::<(u32, i32), Vec<ImageRef>>::new();
-        for cover_ref in window.refs {
-            groups
-                .entry((cover_ref.fetch_size, cover_ref.size))
-                .or_default()
-                .push(cover_ref.image_ref);
-        }
-        let mut refs = 0_usize;
-        for ((fetch_size, size), image_refs) in groups {
-            refs = refs.saturating_add(image_refs.len());
-            self.warm_cover_refs_now(image_refs, fetch_size, size);
         }
         refs
     }
@@ -1025,62 +992,6 @@ fn track_visible_cover_window(
             size,
         })
         .collect::<Vec<_>>();
-    VisibleCoverWindow { refs }
-}
-
-fn track_leading_cover_window(shell: &Shell, leading_rows: usize) -> VisibleCoverWindow {
-    let key = LibraryListKey::Tracks;
-    let settings = shell.library_settings(key);
-    let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
-        return VisibleCoverWindow { refs: Vec::new() };
-    };
-    let mut tracks = shell.state.library.borrow().tracks.clone();
-    library::sort_tracks(&mut tracks, &settings, false);
-    let visible_end = leading_rows.min(tracks.len());
-    let visible_tracks = &tracks[..visible_end];
-    let refs = visible_tracks
-        .iter()
-        .filter_map(|track| track.image_ref.clone())
-        .map(|image_ref| VisibleCoverRef {
-            image_ref,
-            fetch_size,
-            size,
-        })
-        .collect::<Vec<_>>();
-    VisibleCoverWindow { refs }
-}
-
-fn track_anchor_cover_window(shell: &Shell) -> VisibleCoverWindow {
-    let key = LibraryListKey::Tracks;
-    let settings = shell.library_settings(key);
-    let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
-        return VisibleCoverWindow { refs: Vec::new() };
-    };
-    let mut tracks = shell.state.library.borrow().tracks.clone();
-    library::sort_tracks(&mut tracks, &settings, false);
-    let total = tracks.len();
-    if total == 0 {
-        return VisibleCoverWindow { refs: Vec::new() };
-    }
-
-    let visible_rows = initial_visible_count(shell, settings.layout)
-        .max(1)
-        .min(total);
-    let mut refs = Vec::new();
-    for numerator in [1_usize, 2, 3, 4] {
-        let start = total.saturating_sub(visible_rows).saturating_mul(numerator) / 4;
-        let end = start.saturating_add(visible_rows).min(total);
-        for track in &tracks[start..end] {
-            if let Some(image_ref) = track.image_ref.clone() {
-                refs.push(VisibleCoverRef {
-                    image_ref,
-                    fetch_size,
-                    size,
-                });
-            }
-        }
-    }
-
     VisibleCoverWindow { refs }
 }
 

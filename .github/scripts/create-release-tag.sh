@@ -415,24 +415,6 @@ fast_forward_default_branch() {
   git merge --ff-only "origin/$default_branch"
 }
 
-mark_pre_pr_review() {
-  local marker="${RUFIN_PR_REVIEW_GATE_MARKER:-}"
-
-  if [[ -z "$marker" ]]; then
-    local default_marker="$HOME/.codex/skills/rufin-git-workflow/scripts/rufin-pr-review-gate.py"
-    if [[ -x "$default_marker" ]]; then
-      marker="$default_marker"
-    fi
-  fi
-
-  if [[ -z "$marker" ]]; then
-    return
-  fi
-
-  printf '\nMarking reviewed release HEAD for PR creation...\n'
-  "$marker" mark
-}
-
 open_release_pr() {
   local branch="$1"
   local title="$2"
@@ -513,7 +495,6 @@ push_branch_open_pr_and_merge() {
   printf '\nPushing %s to %s for PR Checks...\n' "$sha" "$branch"
   git push --force-with-lease origin "HEAD:refs/heads/$branch"
 
-  mark_pre_pr_review
   pr_number="$(open_release_pr "$branch" "$title")"
   merge_release_pr_after_checks "$pr_number" "$phase"
   fast_forward_default_branch

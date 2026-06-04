@@ -29,10 +29,6 @@ struct Cli {
     #[arg(long, value_enum)]
     fake_scale: Option<FakeScaleArg>,
 
-    #[cfg(feature = "dev-tools")]
-    #[arg(long)]
-    smoke_exit_ms: Option<u64>,
-
     #[arg(long)]
     clear_cache: bool,
 
@@ -98,10 +94,6 @@ fn main() {
     let options = ui::AppOptions {
         #[cfg(feature = "dev-tools")]
         fake_scale: cli.fake_scale.map(Into::into),
-        #[cfg(feature = "dev-tools")]
-        smoke_exit_ms: cli.smoke_exit_ms,
-        #[cfg(not(feature = "dev-tools"))]
-        smoke_exit_ms: None,
     };
 
     info!(?options, "starting Rufin native shell");

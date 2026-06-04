@@ -796,6 +796,17 @@ impl Shell {
             }) as Rc<dyn Fn()>
         };
 
+        let configure_scroller = {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let settings = settings.clone();
+            Rc::new(move |scroller: &gtk::ScrolledWindow| {
+                connect_playlist_viewport_cover_warm(&shell, scroller, &model, &settings);
+                scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
+                scroller.set_min_content_width(0);
+            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
+        };
+
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::Playlists,
             empty: playlists.borrow().is_empty(),
@@ -803,10 +814,7 @@ impl Shell {
             search,
             content: playlist_collection_widget(self, model),
             load_next: if complete_page { None } else { Some(load_next) },
-            configure_scroller: Some(Rc::new(|scroller| {
-                scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-                scroller.set_min_content_width(0);
-            })),
+            configure_scroller: Some(configure_scroller),
         })
     }
     pub(in crate::ui) fn library_smart_playlists_view(self: &Rc<Self>) -> gtk::Widget {
@@ -823,6 +831,7 @@ impl Shell {
         let source_playlists = Rc::new(items.clone());
         let playlists = Rc::new(RefCell::new(items));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        warm_smart_playlist_covers_for_settings(self, &playlists.borrow(), &settings);
         populate_smart_playlist_model(&model, &playlists.borrow(), &settings);
 
         let search = gtk::SearchEntry::new();
@@ -844,6 +853,11 @@ impl Shell {
                     .collect::<Vec<_>>();
                 shell.state.smart_playlists.replace(values.clone());
                 *playlists.borrow_mut() = values;
+                warm_smart_playlist_covers_for_settings(
+                    &shell,
+                    &playlists.borrow(),
+                    &shell.library_settings(LibraryListKey::SmartPlaylists),
+                );
                 populate_smart_playlist_model(
                     &model,
                     &playlists.borrow(),
@@ -852,6 +866,17 @@ impl Shell {
             });
         }
 
+        let configure_scroller = {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let settings = settings.clone();
+            Rc::new(move |scroller: &gtk::ScrolledWindow| {
+                connect_smart_playlist_viewport_cover_warm(&shell, scroller, &model, &settings);
+                scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
+                scroller.set_min_content_width(0);
+            }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
+        };
+
         self.library_page_shell(LibraryPageShellOptions {
             key: LibraryListKey::SmartPlaylists,
             empty: playlists.borrow().is_empty(),
@@ -859,10 +884,7 @@ impl Shell {
             search,
             content: smart_playlist_collection_widget(self, model),
             load_next: None,
-            configure_scroller: Some(Rc::new(|scroller| {
-                scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-                scroller.set_min_content_width(0);
-            })),
+            configure_scroller: Some(configure_scroller),
         })
     }
     pub(in crate::ui) fn library_tracks_panel_with_source(

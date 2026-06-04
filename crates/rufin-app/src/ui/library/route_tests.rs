@@ -1,6 +1,7 @@
 use rufin_core::{
     Album, AlbumId, ImageRef, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
-    Track, TrackId,
+    Playlist, PlaylistId, SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId,
+    SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track, TrackId,
 };
 use std::collections::HashMap;
 #[test]
@@ -299,6 +300,54 @@ fn viewport_priority_cap_keeps_visible_refs_priority() {
     );
 }
 #[test]
+fn playlist_viewport_cover_refs_collect_grouped_refs() {
+    let first = ImageRef::new("playlist-first", None);
+    let second = ImageRef::new("playlist-second", None);
+    let fallback = ImageRef::new("playlist-fallback", None);
+    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
+    model.append(&gtk::glib::BoxedAnyObject::new(test_playlist_with_refs(
+        1,
+        "Regular",
+        vec![first.clone(), second.clone(), first.clone()],
+        Some(fallback.clone()),
+    )));
+
+    let refs = super::playlist_cover_refs_for_model_range(&model, 0, 1);
+
+    assert_eq!(refs, vec![first, second, fallback]);
+}
+
+#[test]
+fn smart_playlist_viewport_cover_refs_collect_grouped_refs() {
+    let first = ImageRef::new("smart-first", None);
+    let second = ImageRef::new("smart-second", None);
+    let fallback = ImageRef::new("smart-fallback", None);
+    let model = gtk::gio::ListStore::new::<gtk::glib::BoxedAnyObject>();
+    model.append(&gtk::glib::BoxedAnyObject::new(
+        test_smart_playlist_with_refs(
+            1,
+            "Smart",
+            vec![first.clone(), second.clone(), first.clone()],
+            Some(fallback.clone()),
+        ),
+    ));
+
+    let refs = super::smart_playlist_cover_refs_for_model_range(&model, 0, 1);
+
+    assert_eq!(refs, vec![first, second, fallback]);
+}
+
+#[test]
+fn playlist_viewport_cover_ranges_match_genre_grid_behavior() {
+    let playlist_ranges =
+        super::viewport_cover_ranges(120, 24, 12, 0, 0, 6, 18).expect("playlist ranges");
+    let genre_ranges =
+        super::viewport_cover_ranges(120, 24, 12, 0, 0, 6, 18).expect("genre ranges");
+
+    assert_eq!(playlist_ranges, genre_ranges);
+}
+
+#[test]
 fn track_cover_refs_for_settings_include_full_sorted_track_set_once() {
     let settings = LibraryListSettings {
         layout: LibraryLayout::Row,
@@ -505,5 +554,46 @@ fn test_album(id: u32, title: &str) -> Album {
         color_seed: id,
         image_ref: None,
         genres: Vec::new(),
+    }
+}
+fn test_playlist_with_refs(
+    id: u32,
+    name: &str,
+    image_refs: Vec<ImageRef>,
+    image_ref: Option<ImageRef>,
+) -> Playlist {
+    Playlist {
+        id: PlaylistId::fake(id),
+        name: name.to_string(),
+        track_count: 1,
+        duration_seconds: 180,
+        image_refs,
+        image_ref,
+    }
+}
+fn test_smart_playlist_with_refs(
+    id: u32,
+    name: &str,
+    image_refs: Vec<ImageRef>,
+    image_ref: Option<ImageRef>,
+) -> SmartPlaylist {
+    SmartPlaylist {
+        id: SmartPlaylistId::fake(id),
+        name: name.to_string(),
+        position: 0,
+        builtin: None,
+        definition: SmartPlaylistDefinition {
+            root: SmartPlaylistRuleGroup {
+                mode: SmartPlaylistMatchMode::All,
+                rules: Vec::new(),
+            },
+            sort_field: SmartPlaylistSortField::Title,
+            descending: false,
+            limit: None,
+        },
+        track_count: 1,
+        duration_seconds: 180,
+        image_refs,
+        image_ref,
     }
 }
