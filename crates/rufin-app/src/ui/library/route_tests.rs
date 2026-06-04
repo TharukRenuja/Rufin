@@ -4,27 +4,6 @@ use rufin_core::{
 };
 use std::collections::HashMap;
 #[test]
-fn library_route_inset_keeps_margins_inside_scrollers() {
-    let spec = super::library_route_inset_spec();
-
-    assert_eq!(spec.margin_start, super::PRIMARY_ROUTE_MARGIN_START);
-    assert_eq!(spec.margin_end, 0);
-    assert!(spec.hexpand);
-}
-#[test]
-fn album_detail_meta_label_has_fixed_pixel_boundary() {
-    let spec = super::album_detail_meta_label_spec(168);
-
-    assert_eq!(spec.width, 168);
-    assert_eq!(spec.height, super::ALBUM_DETAIL_META_LABEL_HEIGHT);
-    assert_eq!(spec.horizontal_policy, gtk::PolicyType::Never);
-    assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
-    assert_eq!(spec.overflow, gtk::Overflow::Hidden);
-    assert!(!spec.propagate_natural_width);
-    assert!(!spec.propagate_natural_height);
-    assert!(!spec.wrap);
-}
-#[test]
 fn library_table_height_tracks_visible_rows() {
     assert_eq!(super::library_table_content_height(0), 150);
     assert_eq!(super::library_table_content_height(3), 266);

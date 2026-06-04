@@ -140,142 +140,83 @@ async fn manifest_scan_updates_folder_art_revision_without_tag_reads() {
 
 #[test]
 fn reparsed_manifest_entry_classifies_cover_only_change_as_artwork_track() {
-    let facts = test_file_facts("/tmp/rufin-track-cover.flac");
-    let stale = manifest_entry_for_scanned(
-        &facts,
-        &scanned_test_track(
-            1,
-            AlbumId::new("local:album:one"),
-            Some(LocalCover::File {
-                path: PathBuf::from("/tmp/cover.jpg"),
-                revision: Some("cover-one".to_string()),
-            }),
-        ),
+    let stale = scanned_test_track(
+        1,
+        AlbumId::new("local:album:one"),
+        Some(LocalCover::File {
+            path: PathBuf::from("/tmp/cover.jpg"),
+            revision: Some("cover-one".to_string()),
+        }),
     );
-    let current = manifest_entry_for_scanned(
-        &facts,
-        &scanned_test_track(
-            1,
-            AlbumId::new("local:album:one"),
-            Some(LocalCover::File {
-                path: PathBuf::from("/tmp/cover.jpg"),
-                revision: Some("cover-two".to_string()),
-            }),
-        ),
+    let current = scanned_test_track(
+        1,
+        AlbumId::new("local:album:one"),
+        Some(LocalCover::File {
+            path: PathBuf::from("/tmp/cover.jpg"),
+            revision: Some("cover-two".to_string()),
+        }),
     );
-    let mut changed_track_ids = Vec::new();
-    let mut metadata_track_ids = Vec::new();
-    let mut artwork_track_ids = Vec::new();
-    let mut retained_track_ids = Vec::new();
-    let mut counters = LocalScanCounters::default();
+    let classification =
+        classify_reparsed_manifest_entry("/tmp/rufin-track-cover.flac", &stale, &current);
 
-    assert!(classify_reparsed_track(
-        Some(&stale),
-        &current,
-        &mut changed_track_ids,
-        &mut metadata_track_ids,
-        &mut artwork_track_ids,
-        &mut retained_track_ids,
-        &mut counters,
-    ));
-
-    assert!(changed_track_ids.is_empty());
-    assert!(metadata_track_ids.is_empty());
-    assert_eq!(artwork_track_ids, vec![TrackId::fake(1)]);
-    assert!(retained_track_ids.is_empty());
-    assert_eq!(counters.artwork_changed, 1);
+    assert!(classification.changed_track_ids.is_empty());
+    assert!(classification.metadata_track_ids.is_empty());
+    assert_eq!(classification.artwork_track_ids, vec![TrackId::fake(1)]);
+    assert!(classification.retained_track_ids.is_empty());
+    assert_eq!(classification.counters.artwork_changed, 1);
 }
 
 #[test]
 fn reparsed_manifest_entry_classifies_non_search_metadata_change_as_metadata_track() {
-    let facts = test_file_facts("/tmp/rufin-track-duration.flac");
     let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
-    let stale = manifest_entry_for_scanned(&facts, &stale_scanned);
-    let mut current_scanned = stale_scanned;
+    let mut current_scanned = stale_scanned.clone();
     current_scanned.track.duration_seconds += 1;
-    let current = manifest_entry_for_scanned(&facts, &current_scanned);
-    let mut changed_track_ids = Vec::new();
-    let mut metadata_track_ids = Vec::new();
-    let mut artwork_track_ids = Vec::new();
-    let mut retained_track_ids = Vec::new();
-    let mut counters = LocalScanCounters::default();
+    let classification = classify_reparsed_manifest_entry(
+        "/tmp/rufin-track-duration.flac",
+        &stale_scanned,
+        &current_scanned,
+    );
 
-    assert!(classify_reparsed_track(
-        Some(&stale),
-        &current,
-        &mut changed_track_ids,
-        &mut metadata_track_ids,
-        &mut artwork_track_ids,
-        &mut retained_track_ids,
-        &mut counters,
-    ));
-
-    assert!(changed_track_ids.is_empty());
-    assert_eq!(metadata_track_ids, vec![TrackId::fake(1)]);
-    assert!(artwork_track_ids.is_empty());
-    assert!(retained_track_ids.is_empty());
-    assert_eq!(counters.artwork_changed, 0);
+    assert!(classification.changed_track_ids.is_empty());
+    assert_eq!(classification.metadata_track_ids, vec![TrackId::fake(1)]);
+    assert!(classification.artwork_track_ids.is_empty());
+    assert!(classification.retained_track_ids.is_empty());
+    assert_eq!(classification.counters.artwork_changed, 0);
 }
 
 #[test]
 fn reparsed_manifest_entry_classifies_album_id_change_as_changed_track() {
-    let facts = test_file_facts("/tmp/rufin-track-album-id.flac");
     let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
-    let stale = manifest_entry_for_scanned(&facts, &stale_scanned);
-    let mut current_scanned = stale_scanned;
+    let mut current_scanned = stale_scanned.clone();
     current_scanned.track.album_id = AlbumId::new("local:album:two");
-    let current = manifest_entry_for_scanned(&facts, &current_scanned);
-    let mut changed_track_ids = Vec::new();
-    let mut metadata_track_ids = Vec::new();
-    let mut artwork_track_ids = Vec::new();
-    let mut retained_track_ids = Vec::new();
-    let mut counters = LocalScanCounters::default();
+    let classification = classify_reparsed_manifest_entry(
+        "/tmp/rufin-track-album-id.flac",
+        &stale_scanned,
+        &current_scanned,
+    );
 
-    assert!(classify_reparsed_track(
-        Some(&stale),
-        &current,
-        &mut changed_track_ids,
-        &mut metadata_track_ids,
-        &mut artwork_track_ids,
-        &mut retained_track_ids,
-        &mut counters,
-    ));
-
-    assert_eq!(changed_track_ids, vec![TrackId::fake(1)]);
-    assert!(metadata_track_ids.is_empty());
-    assert!(artwork_track_ids.is_empty());
-    assert!(retained_track_ids.is_empty());
-    assert_eq!(counters.artwork_changed, 0);
+    assert_eq!(classification.changed_track_ids, vec![TrackId::fake(1)]);
+    assert!(classification.metadata_track_ids.is_empty());
+    assert!(classification.artwork_track_ids.is_empty());
+    assert!(classification.retained_track_ids.is_empty());
+    assert_eq!(classification.counters.artwork_changed, 0);
 }
 
 #[test]
 fn reparsed_manifest_entry_classifies_comment_change_as_metadata_track() {
-    let facts = test_file_facts("/tmp/rufin-track-comment.flac");
     let stale_scanned = scanned_test_track(1, AlbumId::new("local:album:one"), None);
-    let stale = manifest_entry_for_scanned(&facts, &stale_scanned);
-    let mut current_scanned = stale_scanned;
+    let mut current_scanned = stale_scanned.clone();
     current_scanned.track.comment = Some("alternate edition".to_string());
-    let current = manifest_entry_for_scanned(&facts, &current_scanned);
-    let mut changed_track_ids = Vec::new();
-    let mut metadata_track_ids = Vec::new();
-    let mut artwork_track_ids = Vec::new();
-    let mut retained_track_ids = Vec::new();
-    let mut counters = LocalScanCounters::default();
+    let classification = classify_reparsed_manifest_entry(
+        "/tmp/rufin-track-comment.flac",
+        &stale_scanned,
+        &current_scanned,
+    );
 
-    assert!(classify_reparsed_track(
-        Some(&stale),
-        &current,
-        &mut changed_track_ids,
-        &mut metadata_track_ids,
-        &mut artwork_track_ids,
-        &mut retained_track_ids,
-        &mut counters,
-    ));
-
-    assert!(changed_track_ids.is_empty());
-    assert_eq!(metadata_track_ids, vec![TrackId::fake(1)]);
-    assert!(artwork_track_ids.is_empty());
-    assert!(retained_track_ids.is_empty());
+    assert!(classification.changed_track_ids.is_empty());
+    assert_eq!(classification.metadata_track_ids, vec![TrackId::fake(1)]);
+    assert!(classification.artwork_track_ids.is_empty());
+    assert!(classification.retained_track_ids.is_empty());
 }
 
 #[test]
@@ -609,6 +550,42 @@ async fn local_folder_rejects_unknown_folder_ids() {
     let result = provider.folder(Some(&outside), None).await;
 
     assert!(matches!(result, Err(ProviderError::NotFound)));
+}
+
+struct ReparsedClassification {
+    changed_track_ids: Vec<TrackId>,
+    metadata_track_ids: Vec<TrackId>,
+    artwork_track_ids: Vec<TrackId>,
+    retained_track_ids: Vec<TrackId>,
+    counters: LocalScanCounters,
+}
+
+fn classify_reparsed_manifest_entry(
+    facts_path: &str,
+    stale_scanned: &ScannedTrack,
+    current_scanned: &ScannedTrack,
+) -> ReparsedClassification {
+    let facts = test_file_facts(facts_path);
+    let stale = manifest_entry_for_scanned(&facts, stale_scanned);
+    let current = manifest_entry_for_scanned(&facts, current_scanned);
+    let mut result = ReparsedClassification {
+        changed_track_ids: Vec::new(),
+        metadata_track_ids: Vec::new(),
+        artwork_track_ids: Vec::new(),
+        retained_track_ids: Vec::new(),
+        counters: LocalScanCounters::default(),
+    };
+
+    assert!(classify_reparsed_track(
+        Some(&stale),
+        &current,
+        &mut result.changed_track_ids,
+        &mut result.metadata_track_ids,
+        &mut result.artwork_track_ids,
+        &mut result.retained_track_ids,
+        &mut result.counters,
+    ));
+    result
 }
 
 fn scanned_test_track(number: u32, album_id: AlbumId, cover: Option<LocalCover>) -> ScannedTrack {

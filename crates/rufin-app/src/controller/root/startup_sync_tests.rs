@@ -10,9 +10,9 @@ use super::{
     sync_provider, sync_provider_with_events,
 };
 use rufin_core::{
-    AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
+    Album, AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
     LibrarySourceSelection, LocalLibraryFolder, Playlist, PlaylistId, ServerId, ServerIdentity,
-    TrackId,
+    Track, TrackId,
 };
 use rufin_playback::{
     PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
@@ -1520,29 +1520,17 @@ pub(in crate::controller) fn local_snapshot_reuses_album_image_for_stale_track_i
     let mut settings = AppSettings::default();
     settings.sources.selected = Some(LibrarySourceSelection::Local);
     store.save_settings(&settings).expect("save settings");
-    store
-        .with_store(|store| {
-            store.save_server(&local)?;
-            store.set_active_server(&local.server.id)?;
-            let generation = store.begin_sync(&local.server.id)?;
-            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(
-                &local.server.id,
-                &[favorite_track.clone(), tracks[1].clone()],
-                generation,
-            )?;
-            store.upsert_home_sections(
-                &local.server.id,
-                &[HomeSection {
-                    kind: HomeSectionKind::MostPlayed,
-                    albums: Vec::new(),
-                    tracks: vec![favorite_track.clone()],
-                }],
-                generation,
-            )?;
-            store.complete_sync(&local.server.id, generation)
-        })
-        .expect("seed local cache");
+    seed_cached_library(
+        &store,
+        &local,
+        std::slice::from_ref(&album),
+        &[favorite_track.clone(), tracks[1].clone()],
+        &[HomeSection {
+            kind: HomeSectionKind::MostPlayed,
+            albums: Vec::new(),
+            tracks: vec![favorite_track],
+        }],
+    );
 
     let snapshot = load_snapshot(&store).expect("load snapshot");
 
@@ -1578,16 +1566,13 @@ pub(in crate::controller) fn local_home_section_payload_reuses_track_fallback_fo
     let mut settings = AppSettings::default();
     settings.sources.selected = Some(LibrarySourceSelection::Local);
     store.save_settings(&settings).expect("save settings");
-    store
-        .with_store(|store| {
-            store.save_server(&local)?;
-            store.set_active_server(&local.server.id)?;
-            let generation = store.begin_sync(&local.server.id)?;
-            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.server.id, std::slice::from_ref(&track), generation)?;
-            store.complete_sync(&local.server.id, generation)
-        })
-        .expect("seed local cache");
+    seed_cached_library(
+        &store,
+        &local,
+        std::slice::from_ref(&album),
+        std::slice::from_ref(&track),
+        &[],
+    );
     let mut section = HomeSection {
         kind: HomeSectionKind::Explore,
         albums: vec![section_album],
@@ -1620,17 +1605,13 @@ pub(in crate::controller) fn local_cached_tracks_page_reuses_album_image_for_sta
             ImageRef::new("local:cover:embedded%3A%2Fmusic%2Ftwo.flac", None),
         ),
     ];
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&local)?;
-            store.set_active_server(&local.server.id)?;
-            let generation = store.begin_sync(&local.server.id)?;
-            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.server.id, &tracks, generation)?;
-            store.complete_sync(&local.server.id, generation)
-        })
-        .expect("seed local cache");
+    seed_cached_library(
+        &controller.store,
+        &local,
+        std::slice::from_ref(&album),
+        &tracks,
+        &[],
+    );
 
     let page = controller
         .cached_tracks_page(0, 10)
@@ -1663,17 +1644,13 @@ pub(in crate::controller) fn auto_dj_local_candidates_reuse_album_image_for_stal
             )
         })
         .collect::<Vec<_>>();
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&local)?;
-            store.set_active_server(&local.server.id)?;
-            let generation = store.begin_sync(&local.server.id)?;
-            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.server.id, &tracks, generation)?;
-            store.complete_sync(&local.server.id, generation)
-        })
-        .expect("seed local cache");
+    seed_cached_library(
+        &controller.store,
+        &local,
+        std::slice::from_ref(&album),
+        &tracks,
+        &[],
+    );
     let mut queue = QueueEngine::new(local.server.id.clone());
     queue.play_now(&tracks[0]);
     *controller.queue.lock().expect("queue") = Some(queue);
@@ -1704,14 +1681,15 @@ pub(in crate::controller) fn restored_local_queue_reuses_album_image_for_stale_t
         &album,
         ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fone.flac", None),
     );
+    seed_cached_library(
+        &store,
+        &local,
+        std::slice::from_ref(&album),
+        std::slice::from_ref(&track),
+        &[],
+    );
     store
         .with_store(|store| {
-            store.save_server(&local)?;
-            store.set_active_server(&local.server.id)?;
-            let generation = store.begin_sync(&local.server.id)?;
-            store.upsert_albums(&local.server.id, std::slice::from_ref(&album), generation)?;
-            store.upsert_tracks(&local.server.id, std::slice::from_ref(&track), generation)?;
-            store.complete_sync(&local.server.id, generation)?;
             let mut queue = QueueEngine::new(local.server.id.clone());
             queue.play_now(&track);
             store.save_queue_snapshot(&queue.snapshot())
@@ -1746,21 +1724,13 @@ pub(in crate::controller) fn local_sync_refreshes_active_queue_and_playback_imag
     let old_album = local_album_with_image_ref(old_image_ref.clone());
     let new_album = local_album_with_image_ref(new_image_ref.clone());
     let track = local_track_with_image_ref(1, &old_album, old_image_ref);
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&local)?;
-            store.set_active_server(&local.server.id)?;
-            let generation = store.begin_sync(&local.server.id)?;
-            store.upsert_albums(
-                &local.server.id,
-                std::slice::from_ref(&new_album),
-                generation,
-            )?;
-            store.upsert_tracks(&local.server.id, std::slice::from_ref(&track), generation)?;
-            store.complete_sync(&local.server.id, generation)
-        })
-        .expect("seed refreshed local cache");
+    seed_cached_library(
+        &controller.store,
+        &local,
+        std::slice::from_ref(&new_album),
+        std::slice::from_ref(&track),
+        &[],
+    );
     let mut queue = QueueEngine::new(local.server.id.clone());
     queue.play_now(&track);
     *controller.queue.lock().expect("queue") = Some(queue);
@@ -1797,21 +1767,13 @@ pub(in crate::controller) fn local_sync_queue_image_refresh_preserves_progress_c
     let old_album = local_album_with_image_ref(old_image_ref.clone());
     let new_album = local_album_with_image_ref(new_image_ref.clone());
     let track = local_track_with_image_ref(1, &old_album, old_image_ref);
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&local)?;
-            store.set_active_server(&local.server.id)?;
-            let generation = store.begin_sync(&local.server.id)?;
-            store.upsert_albums(
-                &local.server.id,
-                std::slice::from_ref(&new_album),
-                generation,
-            )?;
-            store.upsert_tracks(&local.server.id, std::slice::from_ref(&track), generation)?;
-            store.complete_sync(&local.server.id, generation)
-        })
-        .expect("seed refreshed local cache");
+    seed_cached_library(
+        &controller.store,
+        &local,
+        std::slice::from_ref(&new_album),
+        std::slice::from_ref(&track),
+        &[],
+    );
     let mut queue = QueueEngine::new(local.server.id.clone());
     queue.play_now(&track);
     *controller.queue.lock().expect("queue") = Some(queue);
@@ -2045,6 +2007,32 @@ pub(in crate::controller) fn cached_remote_sync_skips_initial_artwork_cache() {
 
     assert!(!initial_cover_cache_required(&store, &saved.server.id));
 }
+fn seed_cached_library(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    albums: &[Album],
+    tracks: &[Track],
+    home_sections: &[HomeSection],
+) {
+    store
+        .with_store(|store| {
+            store.save_server(saved)?;
+            store.set_active_server(&saved.server.id)?;
+            let generation = store.begin_sync(&saved.server.id)?;
+            if !albums.is_empty() {
+                store.upsert_albums(&saved.server.id, albums, generation)?;
+            }
+            if !tracks.is_empty() {
+                store.upsert_tracks(&saved.server.id, tracks, generation)?;
+            }
+            if !home_sections.is_empty() {
+                store.upsert_home_sections(&saved.server.id, home_sections, generation)?;
+            }
+            store.complete_sync(&saved.server.id, generation)
+        })
+        .expect("seed library cache");
+}
+
 fn local_album_with_image_ref(image_ref: ImageRef) -> Album {
     Album {
         id: AlbumId::new("local:album:one"),
