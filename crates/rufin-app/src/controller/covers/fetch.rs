@@ -33,8 +33,6 @@ pub(super) fn fetch_and_cache_cover(
         let bytes =
             external_metadata::fetch_album_cover(&art, size, settings.lastfm_api_key.trim())?;
         return save_cover_bytes(store, saved, image_ref, size, bytes);
-    } else if external_metadata::is_external_artist_image_ref(&image_ref) {
-        return Err("external artist image lookup is disabled".to_string());
     }
     if saved.server.provider == LOCAL_PROVIDER_ID && image_ref.item_id.starts_with("local:cover:") {
         let settings = load_settings_from_store(store);

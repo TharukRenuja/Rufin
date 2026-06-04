@@ -187,20 +187,6 @@ mod tests {
     }
 
     #[test]
-    fn synced_provider_artist_cover_candidates_skip_synthetic_external_refs() {
-        assert!(
-            provider_artist_image_refs_from_artists(vec![Artist {
-                image_ref: Some(ImageRef::new(
-                    "external:artist:Slowdive",
-                    Some("external-artist-v1-old".to_string()),
-                )),
-                ..artist_without_cover(1, "Slowdive")
-            }])
-            .is_empty()
-        );
-    }
-
-    #[test]
     fn initial_provider_cover_candidates_include_track_refs_once() {
         let mut refs = Vec::new();
         let mut seen = HashSet::new();

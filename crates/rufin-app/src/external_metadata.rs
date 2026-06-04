@@ -8,7 +8,6 @@ mod album_lookup;
 pub use album_lookup::fetch_album_cover;
 
 const EXTERNAL_ALBUM_IMAGE_PREFIX: &str = "external:album:";
-const EXTERNAL_ARTIST_IMAGE_PREFIX: &str = "external:artist:";
 const EXTERNAL_ALBUM_IMAGE_TAG_VERSION: &str = "external-v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,11 +22,6 @@ pub fn enabled(settings: &AppSettings) -> bool {
 
 pub fn is_external_image_ref(image_ref: &ImageRef) -> bool {
     image_ref.item_id.starts_with(EXTERNAL_ALBUM_IMAGE_PREFIX)
-        || image_ref.item_id.starts_with(EXTERNAL_ARTIST_IMAGE_PREFIX)
-}
-
-pub fn is_external_artist_image_ref(image_ref: &ImageRef) -> bool {
-    image_ref.item_id.starts_with(EXTERNAL_ARTIST_IMAGE_PREFIX)
 }
 
 pub fn album_art_from_image_ref(image_ref: &ImageRef) -> Option<ExternalAlbumArt> {
@@ -85,7 +79,7 @@ pub fn normalize_artist(artist: &mut Artist, settings: &AppSettings) {
     if artist
         .image_ref
         .as_ref()
-        .is_some_and(is_external_artist_image_ref)
+        .is_some_and(is_stale_external_artist_image_ref)
     {
         artist.image_ref = None;
         return;
@@ -165,7 +159,6 @@ pub fn is_expected_lookup_miss(error: &str) -> bool {
     error.contains("404 Not Found")
         || error.contains("did not return album art")
         || error.contains("did not return matching")
-        || error.contains("external artist image lookup is disabled")
 }
 
 fn normalize_image_ref(image_ref: &mut Option<ImageRef>, settings: &AppSettings) {
@@ -175,6 +168,10 @@ fn normalize_image_ref(image_ref: &mut Option<ImageRef>, settings: &AppSettings)
     {
         *image_ref = None;
     }
+}
+
+fn is_stale_external_artist_image_ref(image_ref: &ImageRef) -> bool {
+    image_ref.item_id.starts_with("external:artist:")
 }
 
 fn has_untagged_jellyfin_album_ref(image_ref: &Option<ImageRef>, album_id: &str) -> bool {
