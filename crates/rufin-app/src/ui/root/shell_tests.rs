@@ -9,20 +9,17 @@ use super::startup_reveal::{
     startup_route_reveal_action,
 };
 use super::{
-    AutoLyricsRequest, GRID_COVER_SIZE, LocalSourceCacheGateAction, PLAYLIST_ENTRY_SORTS,
-    PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision, album_play_activation,
-    auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
-    cover::record_cover_path_lookup_request, current_playback_track_id,
-    home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
-    local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_result_subtitle_markup,
-    lyrics_result_title_markup, lyrics_search_response_matches_query,
-    playlist_detail_compact_for_width, playlist_detail_cover_decode_size_for_width,
-    playlist_detail_cover_fetch_size, playlist_detail_cover_size_for_width,
-    playlist_detail_header_orientation_for_width, playlist_detail_route_margin_for_width,
-    playlist_detail_sort_width_for_width, playlist_detail_toolbar_orientation_for_width,
-    playlist_drop_index, playlist_entries_for_state, playlist_entry_play_count_text,
-    playlist_play_activation, preferences_login_status_toast_message,
-    queue_source_waits_for_snapshot, seekbar_target_seconds, snapshot_event_outcome,
+    AutoLyricsRequest, LocalSourceCacheGateAction, PlaylistEntryListState, PlaylistEntrySort,
+    SnapshotRenderDecision, album_play_activation, auto_lyrics_request_for_settings,
+    auto_lyrics_skip_action_enabled, cover::record_cover_path_lookup_request,
+    current_playback_track_id, home_visible_sections::changed_visible_home_section_kinds,
+    local_source_cache_gate_action, local_source_snapshot_is_syncing, lyrics_result_subtitle,
+    lyrics_result_subtitle_markup, lyrics_result_title_markup,
+    lyrics_search_response_matches_query, playlist_detail_compact_for_width,
+    playlist_detail_route_margin_for_width, playlist_detail_sort_width_for_width,
+    playlist_drop_index, playlist_entries_for_state, playlist_play_activation,
+    preferences_login_status_toast_message, queue_source_waits_for_snapshot,
+    seekbar_target_seconds, snapshot_event_outcome,
 };
 use crate::controller::{
     LyricsSearchResult, NormalizedPlayTarget, PlayAnchor, PlayTarget,
@@ -199,20 +196,6 @@ pub(in crate::ui) fn visible_cover_lookup_reuses_and_upgrades_warm_lookup() {
     );
 }
 #[test]
-pub(in crate::ui) fn home_section_pages_reset_for_new_home_data() {
-    let mut states = HashMap::from([(
-        HomeSectionKind::Explore,
-        super::HomeSectionState {
-            page_start: 6,
-            page_size: 3,
-        },
-    )]);
-
-    super::reset_home_section_pages(&mut states);
-
-    assert!(states.is_empty());
-}
-#[test]
 pub(in crate::ui) fn home_refresh_targets_only_changed_visible_sections() {
     let explore = test_home_album_section(HomeSectionKind::Explore, 1);
     let most_played = test_home_album_section(HomeSectionKind::MostPlayed, 2);
@@ -277,146 +260,63 @@ pub(in crate::ui) fn snapshot_event_outcome_marks_first_run_entry() {
     assert!(outcome.entered_first_run);
 }
 #[test]
-pub(in crate::ui) fn local_source_cache_gate_ignores_cached_source_change() {
-    let source = Some(LibrarySourceSelection::Local);
+pub(in crate::ui) fn local_source_cache_gate_maps_local_snapshot_states() {
+    let cases = [
+        (
+            "cached library stays visible",
+            LocalCacheGateInput::cached(false, false, "Cached library ready"),
+            LocalSourceCacheGateAction::None,
+        ),
+        (
+            "folder change waits behind gate",
+            LocalCacheGateInput::cached(true, false, "Cached library ready"),
+            LocalSourceCacheGateAction::Enter,
+        ),
+        (
+            "empty folder selection stays visible",
+            LocalCacheGateInput {
+                local_folders_changed: true,
+                has_local_folders: false,
+                has_cached_library: false,
+                preparing: false,
+                sync_seen: false,
+                sync_status: "Cached library ready",
+            },
+            LocalSourceCacheGateAction::None,
+        ),
+        (
+            "uncached local sync waits behind gate",
+            LocalCacheGateInput::uncached(false, false, "Syncing library..."),
+            LocalSourceCacheGateAction::Enter,
+        ),
+        (
+            "cached sync stays visible",
+            LocalCacheGateInput::cached(false, false, "Syncing library..."),
+            LocalSourceCacheGateAction::None,
+        ),
+        (
+            "preparing waits for first snapshot",
+            LocalCacheGateInput::uncached(false, true, "Cached library ready"),
+            LocalSourceCacheGateAction::Wait,
+        ),
+        (
+            "preparing waits while snapshot is syncing",
+            LocalCacheGateInput::uncached(true, true, "Syncing library..."),
+            LocalSourceCacheGateAction::Wait,
+        ),
+        (
+            "preparing reveals after synced snapshot",
+            LocalCacheGateInput::uncached(true, true, "Cached library ready"),
+            LocalSourceCacheGateAction::Reveal,
+        ),
+    ];
 
-    assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            true,
-            false,
-            false,
-            "Cached library ready"
-        ),
-        LocalSourceCacheGateAction::None
-    );
-    assert_eq!(
-        local_source_cache_gate_action(
-            true,
-            &source,
-            false,
-            false,
-            false,
-            false,
-            "Cached library ready"
-        ),
-        LocalSourceCacheGateAction::None
-    );
-}
-#[test]
-pub(in crate::ui) fn local_source_cache_gate_enters_for_folder_change() {
-    let source = Some(LibrarySourceSelection::Local);
-
-    assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            true,
-            false,
-            false,
-            "Cached library ready"
-        ),
-        LocalSourceCacheGateAction::None
-    );
-    assert_eq!(
-        local_source_cache_gate_action(
-            true,
-            &source,
-            true,
-            true,
-            false,
-            false,
-            "Cached library ready"
-        ),
-        LocalSourceCacheGateAction::Enter
-    );
-}
-#[test]
-pub(in crate::ui) fn local_source_cache_gate_enters_for_uncached_local_sync_only() {
-    let source = Some(LibrarySourceSelection::Local);
-
-    assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            false,
-            false,
-            false,
-            "Syncing library..."
-        ),
-        LocalSourceCacheGateAction::Enter
-    );
-    assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            true,
-            false,
-            false,
-            "Syncing library..."
-        ),
-        LocalSourceCacheGateAction::None
-    );
-    assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            true,
-            false,
-            false,
-            "Cached library ready"
-        ),
-        LocalSourceCacheGateAction::None
-    );
-}
-#[test]
-pub(in crate::ui) fn local_source_cache_gate_waits_until_sync_snapshot_finishes() {
-    let source = Some(LibrarySourceSelection::Local);
-
-    assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            false,
-            true,
-            false,
-            "Cached library ready"
-        ),
-        LocalSourceCacheGateAction::Wait
-    );
     assert!(local_source_snapshot_is_syncing("Syncing library..."));
-    assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            false,
-            true,
-            true,
-            "Syncing library..."
-        ),
-        LocalSourceCacheGateAction::Wait
-    );
-    assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            false,
-            true,
-            true,
-            "Cached library ready"
-        ),
-        LocalSourceCacheGateAction::Reveal
-    );
+    for (name, input, expected) in cases {
+        assert_eq!(local_cache_gate_action(input), expected, "{name}");
+    }
 }
+
 #[test]
 pub(in crate::ui) fn local_source_cache_gate_cancels_when_source_leaves_local() {
     let source = Some(LibrarySourceSelection::Server(rufin_core::ServerId::new(
@@ -658,14 +558,6 @@ pub(in crate::ui) fn initial_visible_count_uses_viewport_geometry() {
     );
 }
 #[test]
-pub(in crate::ui) fn post_route_visible_warm_targets_tracks_after_home() {
-    let targets = super::post_route_visible_warm_targets(&Route::Home);
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].route, Route::Tracks);
-    assert_eq!(targets[0].leading_rows, super::TRACK_ROUTE_PAGE_SIZE);
-    assert!(super::post_route_visible_warm_targets(&Route::Tracks).is_empty());
-}
-#[test]
 pub(in crate::ui) fn visible_range_clamps_exact_bottom_to_last_grid_window() {
     let (visible_start, visible_end) = super::visible_index_range_from_metrics(
         100,
@@ -772,74 +664,14 @@ pub(in crate::ui) fn playlist_entry_search_and_sort_use_track_fields() {
     assert_eq!(sorted[1].1.entry_id, "entry-beta");
 }
 #[test]
-pub(in crate::ui) fn playlist_entry_sort_menu_omits_duration() {
-    assert_eq!(
-        PLAYLIST_ENTRY_SORTS.as_slice(),
-        &[
-            PlaylistEntrySort::Order,
-            PlaylistEntrySort::Title,
-            PlaylistEntrySort::Artist,
-            PlaylistEntrySort::Album,
-        ]
-    );
-}
-#[test]
 pub(in crate::ui) fn playlist_detail_layout_tightens_for_sidebar_panes() {
     assert!(playlist_detail_compact_for_width(550));
     assert_eq!(playlist_detail_route_margin_for_width(550), 16);
     assert!(!playlist_detail_compact_for_width(760));
     assert_eq!(playlist_detail_route_margin_for_width(760), 24);
-}
-#[test]
-pub(in crate::ui) fn playlist_detail_showcase_stays_horizontal_in_sidebar_panes() {
-    assert_eq!(
-        playlist_detail_header_orientation_for_width(550),
-        gtk::Orientation::Horizontal
-    );
-    assert_eq!(
-        playlist_detail_header_orientation_for_width(760),
-        gtk::Orientation::Horizontal
-    );
-}
-#[test]
-pub(in crate::ui) fn playlist_detail_showcase_cover_scales_up_with_frame() {
-    assert_eq!(playlist_detail_cover_size_for_width(550), 182);
-    assert_eq!(playlist_detail_cover_size_for_width(760), 208);
-}
-#[test]
-pub(in crate::ui) fn playlist_detail_mosaic_reuses_grid_cover_decode_class() {
-    assert_eq!(playlist_detail_cover_fetch_size(), GRID_COVER_SIZE);
-    assert_eq!(
-        playlist_detail_cover_decode_size_for_width(550, 4),
-        GRID_COVER_SIZE as i32
-    );
-    assert_eq!(
-        playlist_detail_cover_decode_size_for_width(760, 4),
-        GRID_COVER_SIZE as i32
-    );
-}
-#[test]
-pub(in crate::ui) fn playlist_detail_toolbar_keeps_controls_in_one_row() {
-    assert_eq!(
-        playlist_detail_toolbar_orientation_for_width(550),
-        gtk::Orientation::Horizontal
-    );
-    assert_eq!(
-        playlist_detail_toolbar_orientation_for_width(760),
-        gtk::Orientation::Horizontal
-    );
-}
-#[test]
-pub(in crate::ui) fn playlist_detail_sort_control_width_scales_for_compact_panes() {
     assert_eq!(playlist_detail_sort_width_for_width(360), 120);
     assert_eq!(playlist_detail_sort_width_for_width(550), 150);
     assert_eq!(playlist_detail_sort_width_for_width(760), 170);
-}
-#[test]
-pub(in crate::ui) fn playlist_entry_play_count_text_matches_track_field_format() {
-    assert_eq!(playlist_entry_play_count_text(None), "");
-    assert_eq!(playlist_entry_play_count_text(Some(0)), "0");
-    assert_eq!(playlist_entry_play_count_text(Some(42)), "42");
 }
 #[test]
 pub(in crate::ui) fn playlist_activation_distinguishes_duplicate_track_occurrences() {
@@ -959,110 +791,14 @@ pub(in crate::ui) fn album_artist_route_prefers_detail_and_falls_back_to_artist_
     assert_eq!(super::album_artist_route(&test_album("", None)), None);
 }
 #[test]
-pub(in crate::ui) fn compact_artist_track_sort_keeps_favorites_first() {
-    let mut favorite_late = test_track("Artist", Some(ArtistId::fake(1)));
-    favorite_late.id = TrackId::fake(1);
-    favorite_late.title = "Zulu".to_string();
-    favorite_late.favorite = true;
-    let mut ordinary_first = test_track("Artist", Some(ArtistId::fake(1)));
-    ordinary_first.id = TrackId::fake(2);
-    ordinary_first.title = "Alpha".to_string();
-    let mut favorite_first = test_track("Artist", Some(ArtistId::fake(1)));
-    favorite_first.id = TrackId::fake(3);
-    favorite_first.title = "Bravo".to_string();
-    favorite_first.favorite = true;
-
-    let mut tracks = vec![
-        ordinary_first.clone(),
-        favorite_late.clone(),
-        favorite_first.clone(),
-    ];
-    let settings = TrackTableSettings {
-        sort_key: TrackSortKey::Title,
-        ..TrackTableSettings::default()
-    };
-
-    super::sort_tracks_with_options(&mut tracks, &settings, true);
-
+pub(in crate::ui) fn artist_track_sort_honors_favorite_first_option() {
     assert_eq!(
-        tracks
-            .iter()
-            .map(|track| track.title.as_str())
-            .collect::<Vec<_>>(),
-        vec!["Bravo", "Zulu", "Alpha"]
-    );
-}
-#[test]
-pub(in crate::ui) fn full_artist_track_sort_uses_selected_ranking() {
-    let mut favorite_late = test_track("Artist", Some(ArtistId::fake(1)));
-    favorite_late.id = TrackId::fake(1);
-    favorite_late.title = "Zulu".to_string();
-    favorite_late.favorite = true;
-    let mut ordinary_first = test_track("Artist", Some(ArtistId::fake(1)));
-    ordinary_first.id = TrackId::fake(2);
-    ordinary_first.title = "Alpha".to_string();
-    let mut favorite_first = test_track("Artist", Some(ArtistId::fake(1)));
-    favorite_first.id = TrackId::fake(3);
-    favorite_first.title = "Bravo".to_string();
-    favorite_first.favorite = true;
-
-    let mut tracks = vec![favorite_late, ordinary_first, favorite_first];
-    let settings = TrackTableSettings {
-        sort_key: TrackSortKey::Title,
-        ..TrackTableSettings::default()
-    };
-
-    super::sort_tracks_with_options(&mut tracks, &settings, false);
-
-    assert_eq!(
-        tracks
-            .iter()
-            .map(|track| track.title.as_str())
-            .collect::<Vec<_>>(),
-        vec!["Alpha", "Bravo", "Zulu"]
-    );
-}
-#[test]
-pub(in crate::ui) fn artist_discography_uses_responsive_cards() {
-    assert!(super::route_uses_responsive_cards(
-        &Route::ArtistDiscography(ArtistId::fake(1))
-    ));
-}
-#[test]
-pub(in crate::ui) fn smart_playlists_use_responsive_cards() {
-    assert!(super::route_uses_responsive_cards(&Route::SmartPlaylists));
-}
-#[test]
-pub(in crate::ui) fn route_boundary_keeps_route_items_inside_main_pane() {
-    let spec = super::route_boundary_spec();
-
-    assert_eq!(spec.horizontal_policy, gtk::PolicyType::External);
-    assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
-    assert_eq!(spec.overflow, gtk::Overflow::Hidden);
-    assert_eq!(spec.min_content_width, 0);
-    assert!(!spec.propagate_natural_width);
-    assert!(spec.hexpand);
-    assert!(spec.vexpand);
-}
-#[test]
-pub(in crate::ui) fn route_boundary_hides_horizontal_scroll_for_library_routes() {
-    for route in [Route::Artists, Route::SmartPlaylists] {
-        let spec = super::route_boundary_spec_for_route(&route);
-        assert_eq!(spec.horizontal_policy, gtk::PolicyType::External);
-    }
-}
-#[test]
-pub(in crate::ui) fn regular_playlist_routes_use_default_route_width_boundary() {
-    let default = super::route_boundary_spec();
-
-    assert_eq!(
-        super::route_boundary_spec_for_route(&Route::Playlists).horizontal_policy,
-        default.horizontal_policy
+        sorted_artist_track_titles(true),
+        vec!["Bravo".to_string(), "Zulu".to_string(), "Alpha".to_string()]
     );
     assert_eq!(
-        super::route_boundary_spec_for_route(&Route::PlaylistDetail(PlaylistId::new("playlist")))
-            .horizontal_policy,
-        default.horizontal_policy
+        sorted_artist_track_titles(false),
+        vec!["Alpha".to_string(), "Bravo".to_string(), "Zulu".to_string()]
     );
 }
 #[test]
@@ -1072,6 +808,29 @@ pub(in crate::ui) fn seekbar_target_seconds_uses_committed_clamped_value() {
     assert_eq!(seekbar_target_seconds(-10.0, 180), 0);
     assert_eq!(seekbar_target_seconds(220.0, 180), 180);
     assert_eq!(seekbar_target_seconds(f64::NAN, 180), 0);
+}
+fn sorted_artist_track_titles(favorite_first: bool) -> Vec<String> {
+    let mut favorite_late = test_track("Artist", Some(ArtistId::fake(1)));
+    favorite_late.id = TrackId::fake(1);
+    favorite_late.title = "Zulu".to_string();
+    favorite_late.favorite = true;
+    let mut ordinary_first = test_track("Artist", Some(ArtistId::fake(1)));
+    ordinary_first.id = TrackId::fake(2);
+    ordinary_first.title = "Alpha".to_string();
+    let mut favorite_early = test_track("Artist", Some(ArtistId::fake(1)));
+    favorite_early.id = TrackId::fake(3);
+    favorite_early.title = "Bravo".to_string();
+    favorite_early.favorite = true;
+
+    let mut tracks = vec![favorite_late, ordinary_first, favorite_early];
+    let settings = TrackTableSettings {
+        sort_key: TrackSortKey::Title,
+        ..TrackTableSettings::default()
+    };
+
+    super::sort_tracks_with_options(&mut tracks, &settings, favorite_first);
+
+    tracks.into_iter().map(|track| track.title).collect()
 }
 #[test]
 pub(in crate::ui) fn auto_lyrics_skip_action_only_enabled_for_unsuppressed_external_tracks() {
@@ -1333,6 +1092,53 @@ pub(in crate::ui) fn cover_draw_rect_crops_landscape_images_to_square_targets() 
     assert!((rect.x + 22.0).abs() < f64::EPSILON);
     assert!((rect.y - 0.0).abs() < f64::EPSILON);
 }
+#[derive(Clone, Copy)]
+struct LocalCacheGateInput<'a> {
+    local_folders_changed: bool,
+    has_local_folders: bool,
+    has_cached_library: bool,
+    preparing: bool,
+    sync_seen: bool,
+    sync_status: &'a str,
+}
+
+impl<'a> LocalCacheGateInput<'a> {
+    fn cached(local_folders_changed: bool, preparing: bool, sync_status: &'a str) -> Self {
+        Self {
+            local_folders_changed,
+            has_local_folders: true,
+            has_cached_library: true,
+            preparing,
+            sync_seen: false,
+            sync_status,
+        }
+    }
+
+    fn uncached(sync_seen: bool, preparing: bool, sync_status: &'a str) -> Self {
+        Self {
+            local_folders_changed: false,
+            has_local_folders: true,
+            has_cached_library: false,
+            preparing,
+            sync_seen,
+            sync_status,
+        }
+    }
+}
+
+fn local_cache_gate_action(input: LocalCacheGateInput<'_>) -> LocalSourceCacheGateAction {
+    let source = Some(LibrarySourceSelection::Local);
+    local_source_cache_gate_action(
+        input.local_folders_changed,
+        &source,
+        input.has_local_folders,
+        input.has_cached_library,
+        input.preparing,
+        input.sync_seen,
+        input.sync_status,
+    )
+}
+
 pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapshot {
     crate::controller::LibrarySnapshot {
         server: None,

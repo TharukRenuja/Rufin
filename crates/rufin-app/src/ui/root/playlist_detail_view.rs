@@ -36,20 +36,6 @@ pub(in crate::ui) fn playlist_detail_sort_width_for_width(width: i32) -> i32 {
 pub(in crate::ui) fn playlist_detail_cover_fetch_size() -> u32 {
     PLAYLIST_DETAIL_COVER_FETCH_SIZE
 }
-#[cfg(test)]
-pub(in crate::ui) fn playlist_detail_cover_decode_size_for_width(
-    width: i32,
-    cover_ref_count: usize,
-) -> i32 {
-    let cover_size = playlist_detail_cover_size_for_width(width);
-    let display_size = if cover_ref_count > 1 {
-        (cover_size / 2).max(1)
-    } else {
-        cover_size
-    };
-    cover_decode_size(display_size, playlist_detail_cover_fetch_size())
-}
-
 pub(in crate::ui) fn playlist_detail_cover_size_for_width(width: i32) -> i32 {
     if playlist_detail_compact_for_width(width) {
         PLAYLIST_DETAIL_COMPACT_COVER_SIZE

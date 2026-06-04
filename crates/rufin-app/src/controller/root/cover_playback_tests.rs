@@ -70,6 +70,79 @@ pub(in crate::controller) fn wait_for_token_deleted(
     assert_eq!(secrets.load_token(server_id).expect("load token"), None);
 }
 
+fn provider_cover_ref() -> ImageRef {
+    ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()))
+}
+
+fn external_cover_ref() -> ImageRef {
+    ImageRef::new(
+        "external:album:Example%20Artist:Example%20Album",
+        Some("external-v1-test".to_string()),
+    )
+}
+
+fn test_cover_path(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "rufin-cover-test-{}-{label}.jpg",
+        std::process::id()
+    ))
+}
+
+fn seed_cover_cache(
+    controller: &AppController,
+    image_ref: &ImageRef,
+    size: u32,
+    path: &std::path::Path,
+) -> ServerId {
+    let saved = saved_server();
+    let server_id = saved.server.id.clone();
+    let image_tag = image_ref
+        .tag
+        .as_deref()
+        .unwrap_or(IMAGE_TAG_UNTAGGED)
+        .to_string();
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&server_id)?;
+            store.save_cover_cache_entry(&CoverCacheEntry {
+                server_id: server_id.clone(),
+                item_id: image_ref.item_id.clone(),
+                image_tag,
+                size,
+                path: path.to_string_lossy().to_string(),
+            })
+        })
+        .expect("seed cover cache");
+    server_id
+}
+
+fn seed_external_cover_miss(
+    controller: &AppController,
+    image_ref: &ImageRef,
+    size: u32,
+) -> ServerId {
+    let saved = saved_server();
+    let server_id = saved.server.id.clone();
+    let image_tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&server_id)?;
+            store.save_external_image_lookup_miss(
+                &server_id,
+                &image_ref.item_id,
+                image_tag,
+                size,
+                "external cover lookup found no usable image",
+            )
+        })
+        .expect("seed external miss");
+    server_id
+}
+
 #[test]
 pub(in crate::controller) fn startup_sync_policy_uses_empty_fresh_and_error_cache_states() {
     let (controller, events, snapshot, _queue, _player) =
@@ -89,39 +162,10 @@ pub(in crate::controller) fn startup_sync_policy_uses_empty_fresh_and_error_cach
 pub(in crate::controller) fn cached_cover_request_emits_cover_ready_without_fetching() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
-    let server_id = ServerId::new("jellyfin:server:test");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: server_id.clone(),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    };
-    let path = std::env::temp_dir().join(format!(
-        "rufin-cover-ready-{}-{}.jpg",
-        std::process::id(),
-        "cached"
-    ));
+    let path = test_cover_path("ready-cached");
     fs::write(&path, [1_u8, 2, 3]).expect("write cover");
-    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
-            store.save_cover_cache_entry(&CoverCacheEntry {
-                server_id: server_id.clone(),
-                item_id: image_ref.item_id.clone(),
-                image_tag: "tag-one".to_string(),
-                size: 256,
-                path: path.to_string_lossy().to_string(),
-            })
-        })
-        .expect("seed cover cache");
+    let image_ref = provider_cover_ref();
+    seed_cover_cache(&controller, &image_ref, 256, &path);
     let key = controller.cover_key(&image_ref, 256).expect("cover key");
     controller.request_cover(image_ref, 256);
     assert_eq!(wait_for_cover_ready(&events, &key), path);
@@ -194,42 +238,10 @@ pub(in crate::controller) fn local_cover_request_fetches_provider_artwork_when_c
 pub(in crate::controller) fn external_cached_cover_reuses_available_size() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
-    let server_id = ServerId::new("jellyfin:server:test");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: server_id.clone(),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    };
-    let path = std::env::temp_dir().join(format!(
-        "rufin-external-cover-{}-{}.jpg",
-        std::process::id(),
-        "cached"
-    ));
+    let path = test_cover_path("external-cached");
     fs::write(&path, [1_u8, 2, 3]).expect("write cover");
-    let image_ref = ImageRef::new(
-        "external:album:Example%20Artist:Example%20Album",
-        Some("external-v1-test".to_string()),
-    );
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
-            store.save_cover_cache_entry(&CoverCacheEntry {
-                server_id: server_id.clone(),
-                item_id: image_ref.item_id.clone(),
-                image_tag: "external-v1-test".to_string(),
-                size: 256,
-                path: path.to_string_lossy().to_string(),
-            })
-        })
-        .expect("seed cover cache");
+    let image_ref = external_cover_ref();
+    seed_cover_cache(&controller, &image_ref, 256, &path);
     assert_eq!(
         controller.cached_cover_path(&image_ref, 512),
         Some(path.clone())
@@ -244,36 +256,8 @@ pub(in crate::controller) fn external_cached_cover_reuses_available_size() {
 pub(in crate::controller) fn external_cover_known_miss_applies_to_route_visible_sizes() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
-    let server_id = ServerId::new("jellyfin:server:test");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: server_id.clone(),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    };
-    let image_ref = ImageRef::new(
-        "external:album:Example%20Artist:Example%20Album",
-        Some("external-v1-test".to_string()),
-    );
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
-            store.save_external_image_lookup_miss(
-                &server_id,
-                &image_ref.item_id,
-                "external-v1-test",
-                256,
-                "external cover lookup found no usable image",
-            )
-        })
-        .expect("seed external miss");
+    let image_ref = external_cover_ref();
+    seed_external_cover_miss(&controller, &image_ref, 256);
 
     assert!(controller.external_cover_lookup_known_missing(&image_ref, 96));
     assert!(controller.external_cover_lookup_known_missing(&image_ref, 512));
@@ -287,36 +271,8 @@ pub(in crate::controller) fn external_cover_known_miss_applies_to_route_visible_
 pub(in crate::controller) fn retry_external_cover_lookups_clears_misses_and_running_keys() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
-    let server_id = ServerId::new("jellyfin:server:test");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: server_id.clone(),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    };
-    let image_ref = ImageRef::new(
-        "external:album:Example%20Artist:Example%20Album",
-        Some("external-v1-test".to_string()),
-    );
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
-            store.save_external_image_lookup_miss(
-                &server_id,
-                &image_ref.item_id,
-                "external-v1-test",
-                256,
-                "external cover lookup found no usable image",
-            )
-        })
-        .expect("seed external miss");
+    let image_ref = external_cover_ref();
+    seed_external_cover_miss(&controller, &image_ref, 256);
     let key = controller.cover_key(&image_ref, 256).expect("cover key");
     let generation_before = controller
         .external_cover_retry_generation
@@ -351,36 +307,8 @@ pub(in crate::controller) fn retry_external_cover_lookups_clears_misses_and_runn
 pub(in crate::controller) fn known_external_cover_miss_emits_unavailable() {
     let (controller, events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
-    let server_id = ServerId::new("jellyfin:server:test");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: server_id.clone(),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    };
-    let image_ref = ImageRef::new(
-        "external:album:Example%20Artist:Example%20Album",
-        Some("external-v1-test".to_string()),
-    );
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
-            store.save_external_image_lookup_miss(
-                &server_id,
-                &image_ref.item_id,
-                "external-v1-test",
-                256,
-                "external cover lookup found no usable image",
-            )
-        })
-        .expect("seed external miss");
+    let image_ref = external_cover_ref();
+    seed_external_cover_miss(&controller, &image_ref, 256);
     let key = controller.cover_key(&image_ref, 256).expect("cover key");
 
     controller.request_cover_for_key(key.clone(), image_ref, 256);
@@ -426,39 +354,10 @@ pub(in crate::controller) fn known_external_cover_miss_emits_unavailable() {
 pub(in crate::controller) fn provider_cached_cover_reuses_available_size() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
-    let server_id = ServerId::new("jellyfin:server:test");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: server_id.clone(),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    };
-    let path = std::env::temp_dir().join(format!(
-        "rufin-provider-cover-{}-{}.jpg",
-        std::process::id(),
-        "cached"
-    ));
+    let path = test_cover_path("provider-cached");
     fs::write(&path, [1_u8, 2, 3]).expect("write cover");
-    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
-            store.save_cover_cache_entry(&CoverCacheEntry {
-                server_id: server_id.clone(),
-                item_id: image_ref.item_id.clone(),
-                image_tag: "tag-one".to_string(),
-                size: 256,
-                path: path.to_string_lossy().to_string(),
-            })
-        })
-        .expect("seed cover cache");
+    let image_ref = provider_cover_ref();
+    seed_cover_cache(&controller, &image_ref, 256, &path);
     assert_eq!(
         controller.cached_cover_path(&image_ref, 512),
         Some(path.clone())
@@ -473,39 +372,10 @@ pub(in crate::controller) fn provider_cached_cover_reuses_available_size() {
 pub(in crate::controller) fn thumbnail_cached_cover_does_not_satisfy_grid_request() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
-    let server_id = ServerId::new("jellyfin:server:test");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: server_id.clone(),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    };
-    let path = std::env::temp_dir().join(format!(
-        "rufin-provider-cover-{}-{}.jpg",
-        std::process::id(),
-        "thumbnail"
-    ));
+    let path = test_cover_path("thumbnail");
     fs::write(&path, [1_u8, 2, 3]).expect("write cover");
-    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
-            store.save_cover_cache_entry(&CoverCacheEntry {
-                server_id: server_id.clone(),
-                item_id: image_ref.item_id.clone(),
-                image_tag: "tag-one".to_string(),
-                size: 96,
-                path: path.to_string_lossy().to_string(),
-            })
-        })
-        .expect("seed cover cache");
+    let image_ref = provider_cover_ref();
+    seed_cover_cache(&controller, &image_ref, 96, &path);
     assert_eq!(controller.cached_cover_path(&image_ref, 256), None);
     assert_eq!(
         controller.cached_cover_path(&image_ref, 96),
@@ -517,39 +387,10 @@ pub(in crate::controller) fn thumbnail_cached_cover_does_not_satisfy_grid_reques
 pub(in crate::controller) fn missing_cached_cover_file_lookup_stays_read_only() {
     let (controller, _events, _snapshot, _queue, _player) =
         AppController::bootstrap_memory_for_test();
-    let server_id = ServerId::new("jellyfin:server:test");
-    let saved = SavedServer {
-        server: ServerIdentity {
-            id: server_id.clone(),
-            provider: "jellyfin".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        },
-        user_id: "user".to_string(),
-        username: "demo".to_string(),
-        trust_invalid_cert: false,
-    };
-    let path = std::env::temp_dir().join(format!(
-        "rufin-missing-cover-{}-{}.jpg",
-        std::process::id(),
-        "cached"
-    ));
+    let path = test_cover_path("missing-cached");
     let _cleanup = fs::remove_file(&path);
-    let image_ref = ImageRef::new("jellyfin:album:one", Some("tag-one".to_string()));
-    controller
-        .store
-        .with_store(|store| {
-            store.save_server(&saved)?;
-            store.set_active_server(&server_id)?;
-            store.save_cover_cache_entry(&CoverCacheEntry {
-                server_id: server_id.clone(),
-                item_id: image_ref.item_id.clone(),
-                image_tag: "tag-one".to_string(),
-                size: 256,
-                path: path.to_string_lossy().to_string(),
-            })
-        })
-        .expect("seed cover cache");
+    let image_ref = provider_cover_ref();
+    let server_id = seed_cover_cache(&controller, &image_ref, 256, &path);
     assert_eq!(controller.cached_cover_path(&image_ref, 256), None);
     assert_eq!(
         controller

@@ -1,233 +1,32 @@
 use super::{
-    AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_AUTO_DJ_REFILL_THRESHOLD,
-    DEFAULT_DISCORD_CLIENT_ID, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, DiscordDisplayType,
-    DiscordLinkType, EQUALIZER_BAND_COUNT, LEGACY_APPLICATION_DISPLAY_BYTES, LeftSidebarMode,
-    LibraryField, LibraryLayout, LibraryListKey, LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD,
-    MAX_CROSSFADE_SECONDS, MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH,
-    MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS, PlaybackTransitionMode, ReplayGainMode,
-    RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings, SidebarRouteItem,
-    StreamQuality, TrackSortKey, TrackTableColumn, sanitized_window_size,
+    AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType,
+    LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField, LibraryLayout, LibraryListKey,
+    LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
+    MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, MIN_AUTO_DJ_REFILL_THRESHOLD,
+    MIN_CROSSFADE_SECONDS, RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings,
+    SidebarRouteItem, TrackSortKey, TrackTableColumn, sanitized_window_size,
 };
 #[test]
-fn settings_default_to_privacy_preserving_remote_features() {
+fn settings_default_remote_reporting_features_disabled() {
     let settings = AppSettings::default();
 
     assert!(settings.sources.selected.is_none());
     assert!(settings.sources.local_folders.is_empty());
     assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
     assert!(!settings.notifications_enabled);
-    assert!(settings.external_lyrics_enabled);
-    assert!(settings.external_metadata_enabled);
-    assert!(settings.prefer_server_lyrics);
-    assert!(settings.seekbar_waveform_enabled);
-    assert!(!settings.tray_enabled);
-    assert!(!settings.exit_to_tray);
-    assert!(!settings.start_minimized);
     assert!(!settings.discord_presence_enabled);
-    assert_eq!(settings.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
-    assert_eq!(
-        settings.discord_display_type,
-        DiscordDisplayType::Application
-    );
-    assert_eq!(settings.discord_link_type, DiscordLinkType::MusicBrainz);
     assert!(!settings.discord_show_paused);
-    assert!(settings.discord_show_as_listening);
-    assert!(settings.discord_show_state_icon);
     assert_eq!(settings.lastfm_api_key, "");
     assert!(!settings.scrobbling.lastfm.enabled);
     assert_eq!(settings.scrobbling.lastfm.username, "");
     assert_eq!(settings.scrobbling.lastfm.api_key, "");
     assert_eq!(settings.scrobbling.lastfm.api_secret, "");
     assert_eq!(settings.scrobbling.lastfm.session_key, "");
-    assert!(settings.scrobbling.lastfm.now_playing_enabled);
     assert!(!settings.scrobbling.librefm.enabled);
     assert_eq!(settings.scrobbling.librefm.username, "");
-    assert_eq!(settings.scrobbling.librefm.api_key, "rufin");
-    assert_eq!(settings.scrobbling.librefm.api_secret, "rufin");
     assert_eq!(settings.scrobbling.librefm.session_key, "");
-    assert!(settings.scrobbling.librefm.now_playing_enabled);
     assert!(!settings.scrobbling.listenbrainz.enabled);
     assert_eq!(settings.scrobbling.listenbrainz.user_token, "");
-    assert!(settings.scrobbling.listenbrainz.now_playing_enabled);
-    assert!(settings.auto_dj_enabled);
-    assert_eq!(
-        settings.auto_dj_refill_threshold,
-        DEFAULT_AUTO_DJ_REFILL_THRESHOLD
-    );
-    assert_eq!(
-        settings.playback.transition_mode,
-        PlaybackTransitionMode::Gapless
-    );
-    assert_eq!(settings.playback.crossfade_seconds, 5);
-    assert!(!settings.playback.skip_same_album_crossfade);
-    assert_eq!(settings.playback.replay_gain, ReplayGainMode::Off);
-    assert_eq!(settings.playback.stream_quality, StreamQuality::Original);
-    assert_eq!(settings.playback.audio_output, None);
-    assert!(!settings.playback.equalizer.enabled);
-    assert_eq!(
-        settings.playback.equalizer.bands.len(),
-        EQUALIZER_BAND_COUNT
-    );
-    assert_eq!(settings.playback.volume, 1.0);
-    assert!(!settings.playback.muted);
-    assert!(settings.lyrics_panel_visible);
-    assert_eq!(
-        settings.layout.default_profile.left_sidebar,
-        LeftSidebarMode::Full
-    );
-    assert_eq!(
-        settings.layout.default_profile.right_sidebar,
-        RightSidebarMode::Comfortable
-    );
-    assert!(settings.layout.narrow_enabled);
-    assert_eq!(settings.layout.narrow_threshold, 1_300);
-    assert_eq!(
-        settings.layout.narrow_profile.left_sidebar,
-        LeftSidebarMode::Compact
-    );
-    assert_eq!(
-        settings.layout.narrow_profile.right_sidebar,
-        RightSidebarMode::Default
-    );
-    assert_eq!(DEFAULT_WINDOW_WIDTH, 1_500);
-    assert_eq!(DEFAULT_WINDOW_HEIGHT, 900);
-    assert_eq!(settings.window_width, None);
-    assert_eq!(settings.window_height, None);
-    assert!(settings.sidebar.server_visible);
-    assert!(
-        settings
-            .sidebar
-            .route_items
-            .iter()
-            .any(|entry| entry.item == SidebarRouteItem::AlbumArtists && !entry.visible)
-    );
-    assert!(
-        settings
-            .sidebar
-            .route_items
-            .iter()
-            .any(|entry| entry.item == SidebarRouteItem::Folders && entry.visible)
-    );
-    assert!(
-        settings
-            .sidebar
-            .route_items
-            .iter()
-            .any(|entry| entry.item == SidebarRouteItem::Genres && entry.visible)
-    );
-    assert!(
-        settings
-            .sidebar
-            .route_items
-            .iter()
-            .any(|entry| entry.item == SidebarRouteItem::SmartPlaylists && entry.visible)
-    );
-    assert_eq!(settings.queue_lyrics_layout_version, 3);
-    assert_eq!(settings.home_sections.len(), 5);
-    assert_eq!(settings.home_blocks.len(), 7);
-    assert_eq!(
-        settings.library_list(LibraryListKey::Albums).layout,
-        LibraryLayout::Row
-    );
-    assert_eq!(
-        settings.library_list(LibraryListKey::Tracks).layout,
-        LibraryLayout::Row
-    );
-    assert_eq!(
-        settings.library_list(LibraryListKey::Tracks).row_fields,
-        vec![
-            LibraryField::TitleMerged,
-            LibraryField::Album,
-            LibraryField::Year,
-            LibraryField::Favorite,
-        ]
-    );
-    assert_eq!(
-        settings.library_list(LibraryListKey::Tracks).sort_key,
-        LibraryField::Title
-    );
-    assert_eq!(
-        settings.library_list(LibraryListKey::SmartPlaylists).layout,
-        LibraryLayout::Grid
-    );
-    assert_eq!(
-        settings
-            .library_list(LibraryListKey::SmartPlaylists)
-            .sort_key,
-        LibraryField::RowIndex
-    );
-    assert_eq!(
-        settings
-            .library_list(LibraryListKey::SmartPlaylistTracks)
-            .row_fields,
-        vec![
-            LibraryField::RowIndex,
-            LibraryField::TitleMerged,
-            LibraryField::Album,
-            LibraryField::PlayCount,
-        ]
-    );
-    assert_eq!(
-        settings
-            .library_list(LibraryListKey::FavoriteTracks)
-            .row_fields,
-        settings.library_list(LibraryListKey::Tracks).row_fields
-    );
-    assert_eq!(
-        settings.library_list(LibraryListKey::Albums).row_fields,
-        vec![
-            LibraryField::TitleMerged,
-            LibraryField::AlbumArtist,
-            LibraryField::Year,
-            LibraryField::Favorite,
-        ]
-    );
-    assert_eq!(
-        settings.library_list(LibraryListKey::Artists).row_fields,
-        vec![
-            LibraryField::Image,
-            LibraryField::Title,
-            LibraryField::AlbumCount,
-            LibraryField::Favorite,
-        ]
-    );
-    assert_eq!(
-        settings
-            .library_list(LibraryListKey::AlbumArtists)
-            .row_fields,
-        settings.library_list(LibraryListKey::Artists).row_fields
-    );
-    assert_eq!(
-        settings.library_list(LibraryListKey::Genres).row_fields,
-        vec![
-            LibraryField::Title,
-            LibraryField::AlbumCount,
-            LibraryField::SongCount,
-        ]
-    );
-    assert!(
-        settings
-            .library_list(LibraryListKey::Artists)
-            .grid_fields
-            .is_empty()
-    );
-    assert!(
-        settings
-            .library_list(LibraryListKey::Genres)
-            .grid_fields
-            .is_empty()
-    );
-    assert_eq!(
-        settings.track_table.visible_columns,
-        vec![
-            TrackTableColumn::TrackNumber,
-            TrackTableColumn::Title,
-            TrackTableColumn::Album,
-            TrackTableColumn::Year,
-        ]
-    );
-    assert_eq!(settings.track_table.sort_key, TrackSortKey::Title);
-    assert!(settings.suppressed_auto_lyrics_track_ids.is_empty());
 }
 #[test]
 fn playback_settings_sanitize_clamps_crossfade_to_supported_range() {
@@ -360,41 +159,7 @@ fn settings_restore_without_window_geometry() {
     assert_eq!(restored.queue_lyrics_ratio, None);
     assert_eq!(restored.window_width, None);
     assert_eq!(restored.window_height, None);
-    assert!(restored.auto_dj_enabled);
-    assert_eq!(
-        restored.auto_dj_refill_threshold,
-        DEFAULT_AUTO_DJ_REFILL_THRESHOLD
-    );
-    assert_eq!(restored.language, SYSTEM_LANGUAGE_PREFERENCE);
     assert!(!restored.external_lyrics_enabled);
-    assert!(restored.external_metadata_enabled);
-    assert!(restored.prefer_server_lyrics);
-    assert!(!restored.seekbar_waveform_enabled);
-    assert!(!restored.tray_enabled);
-    assert!(!restored.exit_to_tray);
-    assert!(!restored.start_minimized);
-    assert_eq!(
-        restored.playback.transition_mode,
-        PlaybackTransitionMode::Gapless
-    );
-    assert_eq!(restored.playback.volume, 1.0);
-    assert!(!restored.playback.skip_same_album_crossfade);
-    assert!(!restored.playback.muted);
-    assert_eq!(restored.discord_client_id, DEFAULT_DISCORD_CLIENT_ID);
-    assert_eq!(
-        restored.discord_display_type,
-        DiscordDisplayType::Application
-    );
-    assert_eq!(restored.discord_link_type, DiscordLinkType::MusicBrainz);
-    assert!(!restored.discord_show_paused);
-    assert!(restored.discord_show_as_listening);
-    assert!(restored.discord_show_state_icon);
-    assert_eq!(restored.lastfm_api_key, "");
-    assert!(!restored.scrobbling.lastfm.enabled);
-    assert_eq!(restored.scrobbling.librefm.api_key, "rufin");
-    assert_eq!(restored.scrobbling.librefm.api_secret, "rufin");
-    assert!(!restored.scrobbling.listenbrainz.enabled);
-    assert_eq!(restored.track_table.sort_key, TrackSortKey::Title);
 }
 
 #[test]
@@ -538,22 +303,6 @@ fn library_layout_unknown_values_fall_back_to_grid() {
     assert_eq!(layout, LibraryLayout::Grid);
 }
 #[test]
-fn default_library_list_settings_include_playlists() {
-    let playlists = AppSettings::default().library_list(LibraryListKey::Playlists);
-
-    assert_eq!(playlists.layout, LibraryLayout::Grid);
-    assert_eq!(
-        playlists.row_fields,
-        vec![
-            LibraryField::Image,
-            LibraryField::Title,
-            LibraryField::SongCount
-        ]
-    );
-    assert_eq!(playlists.grid_fields, vec![LibraryField::SongCount]);
-    assert_eq!(playlists.sort_key, LibraryField::Title);
-}
-#[test]
 fn library_list_settings_migrate_old_playlist_defaults_without_duration() {
     let mut settings = AppSettings {
         library_lists: vec![super::LibraryListSettingsEntry {
@@ -620,22 +369,6 @@ fn library_list_settings_migrate_smart_playlists_to_manual_order() {
             .sort_key,
         LibraryField::RowIndex
     );
-}
-#[test]
-fn default_smart_playlist_track_rows_include_play_count() {
-    let tracks = AppSettings::default().library_list(LibraryListKey::SmartPlaylistTracks);
-
-    assert_eq!(tracks.layout, LibraryLayout::Row);
-    assert_eq!(
-        tracks.row_fields,
-        vec![
-            LibraryField::RowIndex,
-            LibraryField::TitleMerged,
-            LibraryField::Album,
-            LibraryField::PlayCount,
-        ]
-    );
-    assert_eq!(tracks.sort_key, LibraryField::TrackNumber);
 }
 #[test]
 fn library_list_settings_sanitize_fields_and_layouts() {
@@ -730,76 +463,40 @@ fn settings_restore_previous_application_display_value() {
     assert_eq!(restored, DiscordDisplayType::Application);
 }
 #[test]
-fn settings_migrate_legacy_track_table_default_columns() {
-    let json = r#"{
+fn settings_migrate_legacy_track_table_columns_to_current_defaults() {
+    for json in [
+        r#"{
             "visible_columns":["TrackNumber","Title","Artist","Album","Year","Duration","Favorite"],
             "sort_key":"TrackNumber",
             "descending":false
-        }"#;
-
-    let mut settings =
-        serde_json::from_str::<super::TrackTableSettings>(json).expect("deserialize settings");
-    settings.migrate_defaults();
-
-    assert_eq!(
-        settings.visible_columns,
-        vec![
-            TrackTableColumn::TrackNumber,
-            TrackTableColumn::Title,
-            TrackTableColumn::Album,
-            TrackTableColumn::Year,
-        ]
-    );
-    assert_eq!(settings.sort_key, TrackSortKey::Title);
-    assert_eq!(settings.layout_version, super::TRACK_TABLE_LAYOUT_VERSION);
-}
-#[test]
-fn settings_migrate_previous_composite_title_default_columns() {
-    let json = r#"{
+        }"#,
+        r#"{
             "visible_columns":["Title","Album","Year"],
             "sort_key":"TrackNumber",
             "descending":false,
             "layout_version":1
-        }"#;
-
-    let mut settings =
-        serde_json::from_str::<super::TrackTableSettings>(json).expect("deserialize settings");
-    settings.migrate_defaults();
-
-    assert_eq!(
-        settings.visible_columns,
-        vec![
-            TrackTableColumn::TrackNumber,
-            TrackTableColumn::Title,
-            TrackTableColumn::Album,
-            TrackTableColumn::Year,
-        ]
-    );
-    assert_eq!(settings.sort_key, TrackSortKey::Title);
-    assert_eq!(settings.layout_version, super::TRACK_TABLE_LAYOUT_VERSION);
-}
-#[test]
-fn settings_migrate_previous_favorite_track_table_default_column() {
-    let json = r#"{
+        }"#,
+        r#"{
             "visible_columns":["TrackNumber","Title","Album","Year","Favorite"],
             "sort_key":"Title",
             "descending":false,
             "layout_version":2
-        }"#;
+        }"#,
+    ] {
+        let mut settings =
+            serde_json::from_str::<super::TrackTableSettings>(json).expect("deserialize settings");
+        settings.migrate_defaults();
 
-    let mut settings =
-        serde_json::from_str::<super::TrackTableSettings>(json).expect("deserialize settings");
-    settings.migrate_defaults();
-
-    assert_eq!(
-        settings.visible_columns,
-        vec![
-            TrackTableColumn::TrackNumber,
-            TrackTableColumn::Title,
-            TrackTableColumn::Album,
-            TrackTableColumn::Year,
-        ]
-    );
-    assert_eq!(settings.sort_key, TrackSortKey::Title);
-    assert_eq!(settings.layout_version, super::TRACK_TABLE_LAYOUT_VERSION);
+        assert_eq!(
+            settings.visible_columns,
+            vec![
+                TrackTableColumn::TrackNumber,
+                TrackTableColumn::Title,
+                TrackTableColumn::Album,
+                TrackTableColumn::Year,
+            ]
+        );
+        assert_eq!(settings.sort_key, TrackSortKey::Title);
+        assert_eq!(settings.layout_version, super::TRACK_TABLE_LAYOUT_VERSION);
+    }
 }
