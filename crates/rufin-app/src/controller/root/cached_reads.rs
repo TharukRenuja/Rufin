@@ -619,16 +619,6 @@ pub(in crate::controller) fn restore_queue(
     }
 }
 
-pub(in crate::controller) struct LoginActivationContext<'a> {
-    pub(in crate::controller) store: &'a StoreHandle,
-    pub(in crate::controller) queue: &'a Arc<Mutex<Option<QueueEngine>>>,
-    pub(in crate::controller) playback_request_generation: &'a Arc<AtomicU64>,
-    pub(in crate::controller) playback: &'a Arc<Mutex<Box<dyn PlaybackBackend>>>,
-    pub(in crate::controller) playback_snapshot: &'a Arc<Mutex<PlaybackSnapshot>>,
-    pub(in crate::controller) auto_dj_enabled: &'a Arc<Mutex<bool>>,
-    pub(in crate::controller) events: &'a Sender<ControllerEvent>,
-}
-
 pub(in crate::controller) struct QueueActivationContext<'a> {
     pub(in crate::controller) store: &'a StoreHandle,
     pub(in crate::controller) queue: &'a Arc<Mutex<Option<QueueEngine>>>,
@@ -638,6 +628,8 @@ pub(in crate::controller) struct QueueActivationContext<'a> {
     pub(in crate::controller) auto_dj_enabled: &'a Arc<Mutex<bool>>,
     pub(in crate::controller) events: &'a Sender<ControllerEvent>,
 }
+
+pub(in crate::controller) type LoginActivationContext<'a> = QueueActivationContext<'a>;
 
 #[derive(Clone, Copy)]
 pub(in crate::controller) struct LoginActivationRequest<'a> {
@@ -676,18 +668,7 @@ pub(in crate::controller) fn activate_logged_in_server(
     settings.migrate_defaults();
     context.store.save_settings(&settings)?;
 
-    activate_queue_for_saved_and_emit(
-        &QueueActivationContext {
-            store: context.store,
-            queue: context.queue,
-            playback_request_generation: context.playback_request_generation,
-            playback: context.playback,
-            playback_snapshot: context.playback_snapshot,
-            auto_dj_enabled: context.auto_dj_enabled,
-            events: context.events,
-        },
-        &saved,
-    )?;
+    activate_queue_for_saved_and_emit(context, &saved)?;
     let _sent = context.events.send(ControllerEvent::LoginStatus(
         "Connected. Loading cached library...".to_string(),
     ));

@@ -13,15 +13,9 @@ pub struct PlayActivation {
     pub target: PlayTarget,
 }
 
-// Route conversion will construct every action after this normalization seam is wired.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlayAction {
     ReplaceNow,
-    InsertNext,
-    AppendLast,
-    ActivateQueueEntry,
-    MoveQueueEntryAfterCurrent,
 }
 
 // Track-only activations are accepted by the seam before route conversion emits them.
@@ -73,14 +67,13 @@ pub enum NormalizedPlayTarget {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NormalizedPlayActivation {
-    pub action: PlayAction,
     pub target: NormalizedPlayTarget,
 }
 
 pub fn normalize_loaded_source_activation(
     activation: PlayActivation,
 ) -> Result<NormalizedPlayActivation, String> {
-    let PlayActivation { action, target } = activation;
+    let PlayActivation { target, .. } = activation;
     let target = match target {
         PlayTarget::TrackOnly(track) => NormalizedPlayTarget::TrackOnly(Box::new(track)),
         PlayTarget::LoadedSource {
@@ -88,16 +81,15 @@ pub fn normalize_loaded_source_activation(
             completeness,
             items,
             anchor,
-        } => normalize_loaded_source_target(&action, source_key, completeness, items, anchor)?,
+        } => normalize_loaded_source_target(source_key, completeness, items, anchor)?,
         PlayTarget::StoreBackedSource { .. } => {
             return Err("The selected source could not be resolved.".to_string());
         }
     };
-    Ok(NormalizedPlayActivation { action, target })
+    Ok(NormalizedPlayActivation { target })
 }
 
 fn normalize_loaded_source_target(
-    action: &PlayAction,
     source_key: PlaySourceKey,
     completeness: LoadedCompleteness,
     items: Vec<PlaySourceItem>,
@@ -106,7 +98,7 @@ fn normalize_loaded_source_target(
     validate_loaded_items(&completeness, &items)?;
     let anchor_position = matching_anchor_position(&items, &anchor)?;
 
-    if *action == PlayAction::ReplaceNow && completeness == LoadedCompleteness::Snippet {
+    if completeness == LoadedCompleteness::Snippet {
         return Ok(NormalizedPlayTarget::TrackOnly(Box::new(
             items[anchor_position].track.clone(),
         )));
