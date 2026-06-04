@@ -34,7 +34,7 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.server.id) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
@@ -106,7 +106,7 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            if let Err(error) = clear_disk_cover_cache(&saved.server.id) {
+            if let Err(error) = clear_store_disk_cover_cache(&store, &saved.server.id) {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
