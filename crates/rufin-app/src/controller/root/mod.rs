@@ -586,6 +586,10 @@ impl StoreHandle {
             .map_err(|error| error.to_string())
     }
 
+    pub(in crate::controller) fn uses_disk_storage(&self) -> bool {
+        matches!(self, Self::Path { .. })
+    }
+
     pub(in crate::controller) fn with_store<T>(
         &self,
         operation: impl FnOnce(&Store) -> Result<T, StoreError>,

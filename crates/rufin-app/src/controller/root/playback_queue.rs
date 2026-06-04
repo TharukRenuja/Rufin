@@ -513,12 +513,32 @@ pub(in crate::controller) fn restrict_settings_file(path: &Path) -> std::io::Res
     Ok(())
 }
 
+#[track_caller]
 pub(in crate::controller) fn clear_disk_cover_cache(server_id: &ServerId) -> Result<(), String> {
     let Some(path) = cover_cache_dir().map(|dir| dir.join(encode_key_part(server_id.as_str())))
     else {
         return Ok(());
     };
+    let caller = std::panic::Location::caller();
+    info!(
+        server_id = %server_id,
+        path = %path.display(),
+        caller_file = caller.file(),
+        caller_line = caller.line(),
+        "clearing disk cover cache"
+    );
     remove_dir_if_exists(&path)
+}
+
+#[track_caller]
+pub(in crate::controller) fn clear_store_disk_cover_cache(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<(), String> {
+    if !store.uses_disk_storage() {
+        return Ok(());
+    }
+    clear_disk_cover_cache(server_id)
 }
 
 pub(in crate::controller) fn prune_disk_cover_cache_entries(entries: &[CoverCacheEntry]) {
@@ -590,13 +610,33 @@ fn remove_safe_cover_cache_file(path: &Path, root: &Path) -> Result<bool, String
     }
 }
 
+#[track_caller]
 pub(in crate::controller) fn clear_disk_waveform_cache(server_id: &ServerId) -> Result<(), String> {
     let Some(path) =
         cache_dir().map(|dir| waveform_cache_dir(&dir).join(encode_key_part(server_id.as_str())))
     else {
         return Ok(());
     };
+    let caller = std::panic::Location::caller();
+    info!(
+        server_id = %server_id,
+        path = %path.display(),
+        caller_file = caller.file(),
+        caller_line = caller.line(),
+        "clearing disk waveform cache"
+    );
     remove_dir_if_exists(&path)
+}
+
+#[track_caller]
+pub(in crate::controller) fn clear_store_disk_waveform_cache(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<(), String> {
+    if !store.uses_disk_storage() {
+        return Ok(());
+    }
+    clear_disk_waveform_cache(server_id)
 }
 
 pub(in crate::controller) fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
