@@ -10,7 +10,8 @@ message includes commits since the previous release tag. VERSION may be vX.Y.Z
 or X.Y.Z. With --push, opens empty-body release PRs, waits for Checks to pass,
 merges them, pushes the signed tag, gates and verifies the AUR follow-up the
 same way, publishes the GitHub Release from the tag using the authenticated gh
-user, then watches the release-triggered AUR, Flatpak, and Nix workflows.
+user, opens or updates the Flathub repository PR, then watches the
+release-triggered AUR, Flatpak, and Nix workflows.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
@@ -531,6 +532,15 @@ publish_github_release() {
   printf '\nPublished GitHub Release %s with the authenticated gh user.\n' "$version"
 }
 
+open_flathub_pr() {
+  if [[ "$skip_flathub" == "1" ]]; then
+    return
+  fi
+
+  printf '\nOpening Flathub pull request for %s...\n' "$version"
+  bash .github/scripts/open-flathub-pr.sh "$version"
+}
+
 release_run_id_for_workflow() {
   local workflow="$1"
 
@@ -660,5 +670,6 @@ if [[ "$push_tag" == "1" ]]; then
   fi
   check_aur_stable_package
   publish_github_release
+  open_flathub_pr
   watch_release_workflows
 fi
