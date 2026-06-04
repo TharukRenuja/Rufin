@@ -1,13 +1,19 @@
 use std::collections::HashMap;
+use std::fs;
 #[cfg(unix)]
 use std::future::Future;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 #[cfg(unix)]
 use std::time::Duration;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use rufin_core::ServerId;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+const CONFIG_SECRET_FORMAT: &str = "config-base64";
 #[cfg(unix)]
 const SECRET_SERVICE_TIMEOUT: Duration = Duration::from_secs(15);
 // oo7's Flatpak file backend protects the keyring file per Keyring instance.
@@ -23,6 +29,8 @@ pub enum SecretError {
     Locked,
     #[error("secret service failed: {0}")]
     Backend(String),
+    #[error("config secret store failed: {0}")]
+    Config(String),
     #[error("secret was not valid utf-8")]
     Utf8,
 }
@@ -41,6 +49,18 @@ pub enum SecretKey {
 impl SecretKey {
     fn provider_token(server_id: &ServerId) -> Self {
         Self::ProviderToken(server_id.clone())
+    }
+
+    fn config_key(&self) -> String {
+        match self {
+            Self::ProviderToken(server_id) => {
+                format!("provider-token:{}", server_id.as_str())
+            }
+            Self::LastFmApiSecret => "scrobbling:lastfm-api-secret".to_string(),
+            Self::LastFmSession => "scrobbling:lastfm-session".to_string(),
+            Self::LibreFmSession => "scrobbling:librefm-session".to_string(),
+            Self::ListenBrainzToken => "scrobbling:listenbrainz-token".to_string(),
+        }
     }
 }
 
@@ -108,6 +128,187 @@ impl SecretStore for CachedSecretStore {
         secrets.insert(key.clone(), None);
         Ok(())
     }
+}
+
+#[derive(Clone)]
+pub struct FallbackSecretStore {
+    primary: Arc<dyn SecretStore>,
+    fallback: Arc<dyn SecretStore>,
+    primary_available: Arc<Mutex<bool>>,
+}
+
+impl FallbackSecretStore {
+    pub fn new(primary: Arc<dyn SecretStore>, fallback: Arc<dyn SecretStore>) -> Self {
+        Self {
+            primary,
+            fallback,
+            primary_available: Arc::new(Mutex::new(true)),
+        }
+    }
+
+    fn primary_available(&self) -> SecretResult<bool> {
+        self.primary_available
+            .lock()
+            .map(|available| *available)
+            .map_err(|_| SecretError::Locked)
+    }
+
+    fn disable_primary(&self) -> SecretResult<()> {
+        *self
+            .primary_available
+            .lock()
+            .map_err(|_| SecretError::Locked)? = false;
+        Ok(())
+    }
+}
+
+impl SecretStore for FallbackSecretStore {
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        if self.primary_available()? {
+            match self.primary.save_secret(key, secret) {
+                Ok(()) => {
+                    self.fallback.delete_secret(key)?;
+                    return Ok(());
+                }
+                Err(_) => self.disable_primary()?,
+            }
+        }
+
+        self.fallback.save_secret(key, secret)
+    }
+
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        if self.primary_available()? {
+            match self.primary.load_secret(key) {
+                Ok(Some(secret)) => return Ok(Some(secret)),
+                Ok(None) => return self.fallback.load_secret(key),
+                Err(_) => self.disable_primary()?,
+            }
+        }
+
+        self.fallback.load_secret(key)
+    }
+
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        if self.primary_available()? {
+            match self.primary.delete_secret(key) {
+                Ok(()) => {}
+                Err(_) => self.disable_primary()?,
+            }
+        }
+
+        self.fallback.delete_secret(key)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigSecretStore {
+    path: PathBuf,
+    lock: Arc<Mutex<()>>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ConfigSecretFile {
+    #[serde(default = "config_secret_format")]
+    format: String,
+    #[serde(default)]
+    secrets: HashMap<String, String>,
+}
+
+impl Default for ConfigSecretFile {
+    fn default() -> Self {
+        Self {
+            format: config_secret_format(),
+            secrets: HashMap::new(),
+        }
+    }
+}
+
+impl ConfigSecretStore {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            lock: Arc::new(Mutex::new(())),
+        }
+    }
+
+    fn read_file(&self) -> SecretResult<ConfigSecretFile> {
+        match fs::read_to_string(&self.path) {
+            Ok(value) => serde_json::from_str(&value).map_err(config_error),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(ConfigSecretFile::default()),
+            Err(error) => Err(config_error(error)),
+        }
+    }
+
+    fn write_file(&self, mut file: ConfigSecretFile) -> SecretResult<()> {
+        file.format = config_secret_format();
+        if let Some(parent) = self.path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(config_error)?;
+        }
+        let value = serde_json::to_string_pretty(&file).map_err(config_error)?;
+        let temp_path = self.path.with_extension("json.tmp");
+        fs::write(&temp_path, format!("{value}\n")).map_err(config_error)?;
+        restrict_config_secret_file(&temp_path).map_err(config_error)?;
+        fs::rename(&temp_path, &self.path).map_err(config_error)?;
+        Ok(())
+    }
+}
+
+impl SecretStore for ConfigSecretStore {
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        let _guard = self.lock.lock().map_err(|_| SecretError::Locked)?;
+        let mut file = self.read_file()?;
+        file.secrets.insert(key.config_key(), BASE64.encode(secret));
+        self.write_file(file)
+    }
+
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        let _guard = self.lock.lock().map_err(|_| SecretError::Locked)?;
+        let file = self.read_file()?;
+        file.secrets
+            .get(&key.config_key())
+            .map(|secret| {
+                BASE64
+                    .decode(secret)
+                    .map_err(config_error)
+                    .and_then(|bytes| String::from_utf8(bytes).map_err(|_| SecretError::Utf8))
+            })
+            .transpose()
+    }
+
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        let _guard = self.lock.lock().map_err(|_| SecretError::Locked)?;
+        match fs::metadata(&self.path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(config_error(error)),
+        }
+        let mut file = self.read_file()?;
+        if file.secrets.remove(&key.config_key()).is_some() {
+            return self.write_file(file);
+        }
+        Ok(())
+    }
+}
+
+fn config_secret_format() -> String {
+    CONFIG_SECRET_FORMAT.to_string()
+}
+
+fn config_error(error: impl std::fmt::Display) -> SecretError {
+    SecretError::Config(error.to_string())
+}
+
+fn restrict_config_secret_file(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Default)]
@@ -358,9 +559,11 @@ mod tests {
     #[cfg(unix)]
     use super::SecretServiceStore;
     use super::{
-        CachedSecretStore, MemorySecretStore, SecretError, SecretKey, SecretResult, SecretStore,
+        CachedSecretStore, ConfigSecretStore, FallbackSecretStore, MemorySecretStore, SecretError,
+        SecretKey, SecretResult, SecretStore,
     };
     use rufin_core::ServerId;
+    use std::fs;
     #[cfg(unix)]
     use std::future;
     use std::sync::{Arc, Mutex};
@@ -409,6 +612,115 @@ mod tests {
                 .expect("load listenbrainz token"),
             None
         );
+    }
+
+    #[test]
+    fn config_secret_store_persists_tokens_without_plaintext_values() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("secrets.json");
+        let store = ConfigSecretStore::new(path.clone());
+        let server_id = ServerId::fake(1);
+
+        store
+            .save_token(&server_id, "provider-secret-value")
+            .expect("save provider token");
+        store
+            .save_secret(&SecretKey::LastFmSession, "scrobble-secret-value")
+            .expect("save scrobbling token");
+
+        assert_eq!(
+            store.load_token(&server_id).expect("load provider token"),
+            Some("provider-secret-value".to_string())
+        );
+        assert_eq!(
+            store
+                .load_secret(&SecretKey::LastFmSession)
+                .expect("load scrobbling token"),
+            Some("scrobble-secret-value".to_string())
+        );
+        let raw = fs::read_to_string(&path).expect("read config secrets");
+        assert!(raw.contains("config-base64"));
+        assert!(!raw.contains("provider-secret-value"));
+        assert!(!raw.contains("scrobble-secret-value"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = fs::metadata(&path)
+                .expect("config secret metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[derive(Default)]
+    struct FailingSecretStore {
+        loads: Mutex<usize>,
+        saves: Mutex<usize>,
+    }
+
+    impl FailingSecretStore {
+        fn load_count(&self) -> usize {
+            *self.loads.lock().expect("load count")
+        }
+
+        fn save_count(&self) -> usize {
+            *self.saves.lock().expect("save count")
+        }
+    }
+
+    impl SecretStore for FailingSecretStore {
+        fn save_secret(&self, _key: &SecretKey, _secret: &str) -> SecretResult<()> {
+            *self.saves.lock().map_err(|_| SecretError::Locked)? += 1;
+            Err(SecretError::Backend("unavailable".to_string()))
+        }
+
+        fn load_secret(&self, _key: &SecretKey) -> SecretResult<Option<String>> {
+            *self.loads.lock().map_err(|_| SecretError::Locked)? += 1;
+            Err(SecretError::Backend("unavailable".to_string()))
+        }
+
+        fn delete_secret(&self, _key: &SecretKey) -> SecretResult<()> {
+            Err(SecretError::Backend("unavailable".to_string()))
+        }
+    }
+
+    #[test]
+    fn fallback_secret_store_uses_fallback_after_primary_failure() {
+        let primary = Arc::new(FailingSecretStore::default());
+        let fallback = Arc::new(MemorySecretStore::new());
+        fallback
+            .save_secret(&SecretKey::LastFmSession, "lastfm-session")
+            .expect("seed fallback secret");
+        let store = FallbackSecretStore::new(primary.clone(), fallback.clone());
+
+        assert_eq!(
+            store
+                .load_secret(&SecretKey::LastFmSession)
+                .expect("load fallback secret"),
+            Some("lastfm-session".to_string())
+        );
+        assert_eq!(
+            store
+                .load_secret(&SecretKey::ListenBrainzToken)
+                .expect("load missing fallback secret"),
+            None
+        );
+        let server_id = ServerId::fake(1);
+        store
+            .save_token(&server_id, "provider-token")
+            .expect("save fallback provider token");
+        assert_eq!(
+            fallback
+                .load_token(&server_id)
+                .expect("load fallback token"),
+            Some("provider-token".to_string())
+        );
+        assert_eq!(primary.load_count(), 1);
+        assert_eq!(primary.save_count(), 0);
     }
 
     #[derive(Default)]

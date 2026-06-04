@@ -1677,13 +1677,17 @@ pub(in crate::controller) fn playback_backend(fake: bool) -> Box<dyn PlaybackBac
     Box::new(LazyGStreamerPlaybackBackend::new())
 }
 pub(in crate::controller) fn platform_secret_store() -> Arc<dyn SecretStore> {
+    let fallback: Arc<dyn SecretStore> = Arc::new(ConfigSecretStore::new(config_secrets_path()));
     #[cfg(unix)]
     {
-        Arc::new(CachedSecretStore::new(Arc::new(SecretServiceStore::new())))
+        let primary: Arc<dyn SecretStore> = Arc::new(SecretServiceStore::new());
+        Arc::new(CachedSecretStore::new(Arc::new(FallbackSecretStore::new(
+            primary, fallback,
+        ))))
     }
     #[cfg(not(unix))]
     {
-        Arc::new(CachedSecretStore::new(Arc::new(MemorySecretStore::new())))
+        Arc::new(CachedSecretStore::new(fallback))
     }
 }
 pub(in crate::controller) fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {

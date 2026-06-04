@@ -2725,8 +2725,12 @@ dependencies = [
 name = "rufin-secrets"
 version = "0.5.6"
 dependencies = [
+ "base64",
  "oo7",
  "rufin-core",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
