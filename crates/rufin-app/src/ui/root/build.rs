@@ -34,6 +34,7 @@ impl InitialRouteCoverMetrics {
 
 const STARTUP_QUEUE_ROW_HEIGHT: i32 = 58;
 const STARTUP_QUEUE_COVER_SIZE: i32 = 50;
+const SOURCE_BACKGROUND_COVER_WARM_LIMIT: usize = DECODED_COVER_CACHE_LIMIT;
 
 pub(in crate::ui) fn startup_cover_prime_jobs(shell: &Shell) -> Vec<CoverWarmJob> {
     startup_cover_jobs_from_targets(
@@ -523,6 +524,7 @@ fn push_source_route_warm_targets(
             route_metrics,
         );
     }
+    push_source_background_warm_targets(targets, library, smart_playlists, settings, route_metrics);
     dedupe_warm_targets(targets, server_id);
 }
 fn push_track_source_warm_targets(
@@ -609,7 +611,7 @@ fn push_genre_source_warm_targets(
     settings: &LibraryListSettings,
     route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+    let Some((fetch_size, size)) = source_collection_route_cover_size(settings) else {
         return;
     };
     library::sort_genres(&mut genres, settings);
@@ -629,7 +631,7 @@ fn push_playlist_source_warm_targets(
     settings: &LibraryListSettings,
     route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+    let Some((fetch_size, size)) = source_collection_route_cover_size(settings) else {
         return;
     };
     library::sort_playlists(&mut playlists, settings);
@@ -649,7 +651,7 @@ fn push_smart_targets(
     settings: &LibraryListSettings,
     route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+    let Some((fetch_size, size)) = source_collection_route_cover_size(settings) else {
         return;
     };
     library::sort_smart_playlists(&mut playlists, settings);
@@ -663,6 +665,186 @@ fn push_smart_targets(
         push_startup_cover_target(targets, playlist.image_ref.as_ref(), fetch_size, size);
     }
 }
+fn push_source_background_warm_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    library: &LibrarySnapshot,
+    smart_playlists: &[SmartPlaylist],
+    settings: &AppSettings,
+    route_metrics: InitialRouteCoverMetrics,
+) {
+    let mut seen = HashSet::new();
+    let mut remaining = SOURCE_BACKGROUND_COVER_WARM_LIMIT;
+
+    if sidebar_route_visible(settings, SidebarRouteItem::Albums) {
+        let list_settings = settings.library_list(LibraryListKey::Albums);
+        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+            push_background_cover_refs(
+                targets,
+                &mut seen,
+                &mut remaining,
+                library
+                    .albums
+                    .iter()
+                    .filter_map(|album| album.image_ref.as_ref()),
+                fetch_size,
+                size,
+            );
+        }
+    }
+    if sidebar_route_visible(settings, SidebarRouteItem::Artists) {
+        let list_settings = settings.library_list(LibraryListKey::Artists);
+        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+            push_background_cover_refs(
+                targets,
+                &mut seen,
+                &mut remaining,
+                library
+                    .artists
+                    .iter()
+                    .filter_map(|artist| artist.image_ref.as_ref()),
+                fetch_size,
+                size,
+            );
+        }
+    }
+    if sidebar_route_visible(settings, SidebarRouteItem::AlbumArtists) {
+        let list_settings = settings.library_list(LibraryListKey::AlbumArtists);
+        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+            push_background_cover_refs(
+                targets,
+                &mut seen,
+                &mut remaining,
+                library
+                    .album_artists
+                    .iter()
+                    .filter_map(|artist| artist.image_ref.as_ref()),
+                fetch_size,
+                size,
+            );
+        }
+    }
+    if sidebar_route_visible(settings, SidebarRouteItem::Genres) {
+        let list_settings = settings.library_list(LibraryListKey::Genres);
+        if let Some((fetch_size, size)) = source_collection_route_cover_size(&list_settings) {
+            push_background_cover_refs(
+                targets,
+                &mut seen,
+                &mut remaining,
+                library
+                    .genres
+                    .iter()
+                    .flat_map(|genre| genre.image_refs.iter().chain(genre.image_ref.iter())),
+                fetch_size,
+                size,
+            );
+        }
+    }
+    if sidebar_route_visible(settings, SidebarRouteItem::Playlists) {
+        let list_settings = settings.library_list(LibraryListKey::Playlists);
+        if let Some((fetch_size, size)) = source_collection_route_cover_size(&list_settings) {
+            push_background_cover_refs(
+                targets,
+                &mut seen,
+                &mut remaining,
+                library.playlists.iter().flat_map(|playlist| {
+                    playlist.image_refs.iter().chain(playlist.image_ref.iter())
+                }),
+                fetch_size,
+                size,
+            );
+        }
+    }
+    if sidebar_route_visible(settings, SidebarRouteItem::SmartPlaylists) {
+        let list_settings = settings.library_list(LibraryListKey::SmartPlaylists);
+        if let Some((fetch_size, size)) = source_collection_route_cover_size(&list_settings) {
+            push_background_cover_refs(
+                targets,
+                &mut seen,
+                &mut remaining,
+                smart_playlists.iter().flat_map(|playlist| {
+                    playlist.image_refs.iter().chain(playlist.image_ref.iter())
+                }),
+                fetch_size,
+                size,
+            );
+        }
+    }
+    if sidebar_route_visible(settings, SidebarRouteItem::Tracks) {
+        let list_settings = settings.library_list(LibraryListKey::Tracks);
+        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+            push_background_cover_refs(
+                targets,
+                &mut seen,
+                &mut remaining,
+                library
+                    .tracks
+                    .iter()
+                    .filter_map(|track| track.image_ref.as_ref()),
+                fetch_size,
+                size,
+            );
+        }
+    }
+    if sidebar_route_visible(settings, SidebarRouteItem::Favorites) {
+        let list_settings = settings.library_list(LibraryListKey::FavoriteTracks);
+        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+            push_background_cover_refs(
+                targets,
+                &mut seen,
+                &mut remaining,
+                library
+                    .favorites
+                    .iter()
+                    .filter_map(|track| track.image_ref.as_ref()),
+                fetch_size,
+                size,
+            );
+        }
+    }
+}
+fn push_background_cover_refs<'a>(
+    targets: &mut Vec<CoverWarmTarget>,
+    seen: &mut HashSet<String>,
+    remaining: &mut usize,
+    image_refs: impl IntoIterator<Item = &'a ImageRef>,
+    fetch_size: u32,
+    size: i32,
+) {
+    for image_ref in image_refs {
+        push_background_cover_target(targets, seen, remaining, image_ref, fetch_size, size);
+        if *remaining == 0 {
+            break;
+        }
+    }
+}
+fn push_background_cover_target(
+    targets: &mut Vec<CoverWarmTarget>,
+    seen: &mut HashSet<String>,
+    remaining: &mut usize,
+    image_ref: &ImageRef,
+    fetch_size: u32,
+    size: i32,
+) {
+    if *remaining == 0 {
+        return;
+    }
+    if !seen.insert(background_warm_key(image_ref)) {
+        return;
+    }
+    targets.push(CoverWarmTarget {
+        image_ref: image_ref.clone(),
+        fetch_size,
+        size,
+    });
+    *remaining = (*remaining).saturating_sub(1);
+}
+fn background_warm_key(image_ref: &ImageRef) -> String {
+    format!(
+        "{}\u{1f}{}",
+        image_ref.item_id,
+        image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
+    )
+}
 fn source_route_cover_size(
     settings: &LibraryListSettings,
     route_metrics: InitialRouteCoverMetrics,
@@ -670,6 +852,15 @@ fn source_route_cover_size(
     match settings.layout {
         LibraryLayout::Grid => Some((GRID_COVER_SIZE, route_metrics.grid_card_size)),
         LibraryLayout::Detail => Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32)),
+        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row => None,
+    }
+}
+fn source_collection_route_cover_size(settings: &LibraryListSettings) -> Option<(u32, i32)> {
+    match settings.layout {
+        LibraryLayout::Grid | LibraryLayout::Detail => {
+            Some((THUMB_COVER_SIZE, THUMB_COVER_SIZE as i32))
+        }
         LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
     }

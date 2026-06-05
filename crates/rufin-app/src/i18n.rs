@@ -2,6 +2,8 @@ use std::{
     collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
+    sync::OnceLock,
 };
 
 use directories::ProjectDirs;
@@ -16,6 +18,7 @@ use rufin_core::{
 const DOMAIN: &str = "rufin";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const ENGLISH_LANGUAGE_PREFERENCE: &str = "en";
+static INSTALLED_LOCALE_IDS: OnceLock<Vec<String>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LanguageOption {
@@ -126,16 +129,64 @@ fn locale_candidates(language_preference: &str) -> Vec<String> {
     let mut candidates = Vec::new();
     push_candidate(&mut candidates, language_preference);
     push_candidate(&mut candidates, normalized.clone());
+    if let Some(territory) = default_language_territory(&normalized) {
+        push_candidate(&mut candidates, format!("{normalized}_{territory}"));
+    }
+    for candidate in installed_locale_candidates(&normalized) {
+        push_candidate(&mut candidates, candidate);
+    }
     if !normalized.contains('.') {
         for codeset in ["UTF-8", "utf8"] {
             if let Some((base, modifier)) = normalized.split_once('@') {
                 push_candidate(&mut candidates, format!("{base}.{codeset}@{modifier}"));
             } else {
                 push_candidate(&mut candidates, format!("{normalized}.{codeset}"));
+                if let Some(territory) = default_language_territory(&normalized) {
+                    push_candidate(
+                        &mut candidates,
+                        format!("{normalized}_{territory}.{codeset}"),
+                    );
+                }
             }
         }
     }
     candidates
+}
+
+fn installed_locale_candidates(language_preference: &str) -> Vec<String> {
+    let code = language_code(language_preference);
+    if code != language_preference {
+        return Vec::new();
+    }
+    installed_locale_ids()
+        .iter()
+        .filter(|locale| locale_matches_language_code(locale, code))
+        .cloned()
+        .collect()
+}
+
+fn installed_locale_ids() -> &'static Vec<String> {
+    INSTALLED_LOCALE_IDS.get_or_init(|| {
+        let Ok(output) = Command::new("locale").arg("-a").output() else {
+            return Vec::new();
+        };
+        if !output.status.success() {
+            return Vec::new();
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect()
+    })
+}
+
+fn locale_matches_language_code(locale: &str, code: &str) -> bool {
+    let Some(rest) = locale.strip_prefix(code) else {
+        return false;
+    };
+    rest.starts_with(['_', '-'])
 }
 
 fn push_candidate(candidates: &mut Vec<String>, candidate: impl Into<String>) {
@@ -150,6 +201,54 @@ fn is_english_language(language_preference: &str) -> bool {
     matches!(language_preference.as_str(), "C" | "POSIX" | "en")
         || language_preference.starts_with("en_")
         || language_preference.starts_with("en.")
+}
+
+fn default_language_territory(language_preference: &str) -> Option<&'static str> {
+    let code = language_code(language_preference);
+    if code != language_preference {
+        return None;
+    }
+    match code {
+        "ar" => Some("SA"),
+        "bg" => Some("BG"),
+        "ca" => Some("ES"),
+        "cs" => Some("CZ"),
+        "da" => Some("DK"),
+        "de" => Some("DE"),
+        "el" => Some("GR"),
+        "es" => Some("ES"),
+        "et" => Some("EE"),
+        "eu" => Some("ES"),
+        "fa" => Some("IR"),
+        "fi" => Some("FI"),
+        "fr" => Some("FR"),
+        "gl" => Some("ES"),
+        "he" => Some("IL"),
+        "hi" => Some("IN"),
+        "hr" => Some("HR"),
+        "hu" => Some("HU"),
+        "id" => Some("ID"),
+        "it" => Some("IT"),
+        "ja" => Some("JP"),
+        "ko" => Some("KR"),
+        "lt" => Some("LT"),
+        "lv" => Some("LV"),
+        "ms" => Some("MY"),
+        "nb" => Some("NO"),
+        "nl" => Some("NL"),
+        "pl" => Some("PL"),
+        "pt" => Some("PT"),
+        "ro" => Some("RO"),
+        "ru" => Some("RU"),
+        "sk" => Some("SK"),
+        "sl" => Some("SI"),
+        "sr" => Some("RS"),
+        "sv" => Some("SE"),
+        "uk" => Some("UA"),
+        "vi" => Some("VN"),
+        "zh" => Some("CN"),
+        _ => None,
+    }
 }
 
 fn locale_dir() -> PathBuf {
@@ -267,6 +366,7 @@ fn language_name(code: &str) -> Option<&'static str> {
         "de" => Some("German"),
         "el" => Some("Greek"),
         "es" => Some("Spanish"),
+        "et" => Some("Estonian"),
         "eu" => Some("Basque"),
         "fa" => Some("Persian"),
         "fi" => Some("Finnish"),
@@ -596,6 +696,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Play next");
     let _ = tr("Play Next");
     let _ = tr("Play Later");
+    let _ = tr("Add to Favorites");
+    let _ = tr("Remove from Favorites");
     let _ = tr("Go to Artist");
     let _ = tr("Go to Album");
     let _ = tr("Add to queue");
@@ -646,6 +748,19 @@ mod tests {
             locale_candidates("de-DE"),
             vec!["de-DE", "de_DE", "de_DE.UTF-8", "de_DE.utf8"]
         );
+        let et_candidates = locale_candidates("et");
+        for candidate in [
+            "et",
+            "et_EE",
+            "et.UTF-8",
+            "et_EE.UTF-8",
+            "et.utf8",
+            "et_EE.utf8",
+        ] {
+            assert!(et_candidates.iter().any(|existing| existing == candidate));
+        }
+        assert!(locale_matches_language_code("et_EE.utf8", "et"));
+        assert!(!locale_matches_language_code("en_US.utf8", "et"));
     }
 
     #[test]

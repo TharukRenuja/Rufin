@@ -7,6 +7,8 @@ mod tiles;
 mod warming;
 
 use size_helpers::*;
+#[cfg(test)]
+pub(in crate::ui) use tiles::{collection_cover_decode_extent, cover_group_collage_ready};
 
 #[derive(Clone)]
 pub(in crate::ui) struct CoverBinding {

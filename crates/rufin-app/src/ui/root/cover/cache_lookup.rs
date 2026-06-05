@@ -192,6 +192,8 @@ impl Shell {
             CoverPathLookupIntent::Warm => {
                 if let Some(path) = path {
                     self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Warm);
+                } else if self.should_fetch_warm_cover(&key, &image_ref, fetch_size) {
+                    self.request_cover_for_key(key, image_ref, fetch_size);
                 }
             }
             CoverPathLookupIntent::Priority => {
@@ -288,6 +290,25 @@ impl Shell {
             .controller
             .external_cover_lookup_known_missing(image_ref, fetch_size);
         visible_cover_cache_miss_action(
+            provider.as_deref(),
+            image_ref,
+            unavailable,
+            external_known_missing,
+        ) == VisibleCoverCacheMissAction::Fetch
+    }
+    fn should_fetch_warm_cover(&self, key: &str, image_ref: &ImageRef, fetch_size: u32) -> bool {
+        let provider = self
+            .state
+            .library
+            .borrow()
+            .server
+            .as_ref()
+            .map(|server| server.provider.clone());
+        let unavailable = self.state.cover_unavailable.borrow().contains(key);
+        let external_known_missing = self
+            .controller
+            .external_cover_lookup_known_missing(image_ref, fetch_size);
+        warm_cover_cache_miss_action(
             provider.as_deref(),
             image_ref,
             unavailable,
@@ -392,23 +413,6 @@ impl Shell {
                 .collect::<Vec<_>>(),
         );
         self.remove_stale_cover_prime_pending(stale);
-    }
-    pub(in crate::ui) fn reconcile_route_cover_prime_pending(&self) {
-        let stale = self
-            .state
-            .route_cover_prime_pending
-            .borrow()
-            .iter()
-            .filter(|key| !self.prime_key_wait(key))
-            .cloned()
-            .collect::<Vec<_>>();
-        if stale.is_empty() {
-            return;
-        }
-        let mut pending = self.state.route_cover_prime_pending.borrow_mut();
-        for key in stale {
-            pending.remove(&key);
-        }
     }
     fn stale_cover_prime_pending_keys(&self, keys: &[String]) -> Vec<String> {
         keys.iter()
@@ -560,6 +564,18 @@ pub(in crate::ui) fn visible_cover_cache_miss_action(
     VisibleCoverCacheMissAction::Fetch
 }
 
+pub(in crate::ui) fn warm_cover_cache_miss_action(
+    provider: Option<&str>,
+    image_ref: &ImageRef,
+    unavailable: bool,
+    external_known_missing: bool,
+) -> VisibleCoverCacheMissAction {
+    if external_metadata::is_external_image_ref(image_ref) {
+        return VisibleCoverCacheMissAction::FinalMissing;
+    }
+    visible_cover_cache_miss_action(provider, image_ref, unavailable, external_known_missing)
+}
+
 pub(in crate::ui) fn cached_cover_candidate_path(
     candidate_keys: &[String],
     mut key_lookup: impl FnMut(&str) -> Option<PathBuf>,
@@ -685,6 +701,26 @@ mod tests {
 
         assert_eq!(
             visible_cover_cache_miss_action(Some("jellyfin"), &external_cover, false, true),
+            VisibleCoverCacheMissAction::FinalMissing
+        );
+    }
+
+    #[test]
+    fn warm_cover_fetches_provider() {
+        let provider_cover = ImageRef::new("album-1", None);
+
+        assert_eq!(
+            warm_cover_cache_miss_action(Some("jellyfin"), &provider_cover, false, false),
+            VisibleCoverCacheMissAction::Fetch
+        );
+    }
+
+    #[test]
+    fn warm_cover_skips_external() {
+        let external_cover = ImageRef::new("external:album:artist:album", None);
+
+        assert_eq!(
+            warm_cover_cache_miss_action(Some("jellyfin"), &external_cover, false, false),
             VisibleCoverCacheMissAction::FinalMissing
         );
     }

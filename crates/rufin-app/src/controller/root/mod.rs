@@ -31,7 +31,7 @@ use rufin_provider::{
 };
 #[cfg(test)]
 use rufin_provider::{LyricLine, LyricsSource, PlayedFilter};
-use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
+use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider, LocalScanProgress, LocalScanStage};
 #[cfg(any(test, feature = "dev-tools"))]
 use rufin_secrets::MemorySecretStore;
 use rufin_secrets::{CachedSecretStore, ConfigSecretStore, SecretKey, SecretStore};

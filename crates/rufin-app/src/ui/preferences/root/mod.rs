@@ -49,6 +49,44 @@ enum PreferencesInitialPage {
     Library,
 }
 fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: PreferencesInitialPage) {
+    if let Some(dialog) = shell.state.preferences_dialog.borrow().as_ref().cloned() {
+        rebuild_preferences_dialog(shell, &dialog, initial_page);
+        dialog.present(Some(&shell.window));
+        return;
+    }
+
+    let dialog = adw::Dialog::builder()
+        .title(tr("Preferences"))
+        .content_width(large_popup_content_width(PREFERENCES_DIALOG_WIDTH))
+        .content_height(large_popup_content_height(
+            shell.window.height(),
+            PREFERENCES_DIALOG_HEIGHT,
+        ))
+        .build();
+    dialog.add_css_class("preferences");
+    *shell.state.preferences_dialog.borrow_mut() = Some(dialog.clone());
+    rebuild_preferences_dialog(shell, &dialog, initial_page);
+
+    let shell_for_close = Rc::clone(shell);
+    let dialog_for_close = dialog.clone();
+    dialog.connect_closed(move |_| {
+        let mut active_dialog = shell_for_close.state.preferences_dialog.borrow_mut();
+        if active_dialog.as_ref() == Some(&dialog_for_close) {
+            *active_dialog = None;
+            *shell_for_close.state.preferences_toast_overlay.borrow_mut() = None;
+        }
+    });
+
+    dialog.present(Some(&shell.window));
+}
+
+fn rebuild_preferences_dialog(
+    shell: &Rc<Shell>,
+    dialog: &adw::Dialog,
+    initial_page: PreferencesInitialPage,
+) {
+    dialog.set_title(&tr("Preferences"));
+
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new(&tr("Preferences"), "")));
@@ -71,31 +109,13 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
 
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.set_child(Some(&toolbar));
-
-    let dialog = adw::Dialog::builder()
-        .title(tr("Preferences"))
-        .content_width(large_popup_content_width(PREFERENCES_DIALOG_WIDTH))
-        .content_height(large_popup_content_height(
-            shell.window.height(),
-            PREFERENCES_DIALOG_HEIGHT,
-        ))
-        .child(&toast_overlay)
-        .build();
-    dialog.add_css_class("preferences");
     *shell.state.preferences_toast_overlay.borrow_mut() = Some(toast_overlay.clone());
-    let shell_for_close = Rc::clone(shell);
-    dialog.connect_closed(move |_| {
-        let mut overlay = shell_for_close.state.preferences_toast_overlay.borrow_mut();
-        if overlay.as_ref() == Some(&toast_overlay) {
-            *overlay = None;
-        }
-    });
 
-    let general_page = general_page(shell, &dialog);
+    let general_page = general_page(shell, dialog);
     let layout_page = layout_page(shell);
     let scrobbling_page = scrobbling_page(shell);
     let playback_page = playback_page(shell);
-    let library_page = library::library_page(shell, &dialog);
+    let library_page = library::library_page(shell, dialog);
     stack.add_titled_with_icon(
         &general_page,
         Some("general"),
@@ -130,7 +150,7 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
         stack.set_visible_child_name("library");
     }
 
-    dialog.present(Some(&shell.window));
+    dialog.set_child(Some(&toast_overlay));
 }
 fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
@@ -166,14 +186,11 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         };
         let language = option.id.clone();
         if language_shell.set_language_preference(language) {
-            let reopen_shell = Rc::clone(&language_shell);
-            dialog_for_language.close();
-            gtk::glib::idle_add_local_once(move || {
-                present_preferences_dialog_with_page(
-                    &reopen_shell,
-                    PreferencesInitialPage::General,
-                );
-            });
+            rebuild_preferences_dialog(
+                &language_shell,
+                &dialog_for_language,
+                PreferencesInitialPage::General,
+            );
         }
     });
     language_group.add(&language_row);

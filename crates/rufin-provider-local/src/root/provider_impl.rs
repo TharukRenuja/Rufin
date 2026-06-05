@@ -16,6 +16,7 @@ pub(super) fn build_library(
 
     for mut scanned_track in scanned {
         let cover = scanned_track.cover.take();
+        let embedded_cover_path = scanned_track.embedded_cover_path.take();
         let track = &mut scanned_track.track;
         let track_path = track.local_path.as_deref().map(Path::new);
         let album_entry =
@@ -47,14 +48,17 @@ pub(super) fn build_library(
                     },
                     album_artist_keys: BTreeSet::new(),
                     artist_keys: BTreeSet::new(),
+                    embedded_cover_path: None,
                 });
-        if album_entry.album.image_ref.is_none()
-            && let Some(cover) = cover
-        {
-            let cover_id = cover_id(&cover);
-            let revision = cover_revision(&cover);
-            covers.entry(cover_id.clone()).or_insert(cover);
-            album_entry.album.image_ref = Some(ImageRef::new(cover_id, revision));
+        if album_entry.album.image_ref.is_none() {
+            if let Some(cover) = cover {
+                let cover_id = cover_id(&cover);
+                let revision = cover_revision(&cover);
+                covers.entry(cover_id.clone()).or_insert(cover);
+                album_entry.album.image_ref = Some(ImageRef::new(cover_id, revision));
+            } else if album_entry.embedded_cover_path.is_none() {
+                album_entry.embedded_cover_path = embedded_cover_path;
+            }
         }
         album_entry.album.track_count = album_entry.album.track_count.saturating_add(1);
         album_entry.album.duration_seconds = album_entry
@@ -119,6 +123,21 @@ pub(super) fn build_library(
             genre.tracks.insert(track.id.clone());
         }
         tracks.push(track.clone());
+    }
+
+    for album_entry in albums.values_mut() {
+        if album_entry.album.image_ref.is_some() {
+            continue;
+        }
+        let Some(path) = album_entry.embedded_cover_path.as_ref() else {
+            continue;
+        };
+        if let Some(cover) = embedded_cover_from_path(path) {
+            let cover_id = cover_id(&cover);
+            let revision = cover_revision(&cover);
+            covers.entry(cover_id.clone()).or_insert(cover);
+            album_entry.album.image_ref = Some(ImageRef::new(cover_id, revision));
+        }
     }
 
     let album_image_refs = albums
@@ -404,17 +423,22 @@ pub(super) fn embedded_cover(
     tagged_file: Option<&lofty::file::TaggedFile>,
     tag: Option<&Tag>,
 ) -> Option<LocalCover> {
-    let picture = tag
+    let _picture = tag
         .and_then(|tag| select_best_picture(tag.pictures()))
         .or_else(|| tagged_file.and_then(|file| select_best_picture_from_tags(file.tags())))?;
-    let bytes = picture_data_bounded(picture).ok()?;
-    let revision = embedded_cover_revision(&bytes, picture.mime_type().map(ToString::to_string));
     Some(LocalCover::Embedded {
         path: path.to_path_buf(),
-        bytes: Arc::from(bytes),
-        content_type: picture.mime_type().map(ToString::to_string),
-        revision: Some(revision),
+        bytes: Arc::<[u8]>::from([]),
+        content_type: None,
+        revision: Some(file_revision(path).unwrap_or_else(|| path_revision_fallback(path))),
     })
+}
+pub(super) fn embedded_cover_from_path(path: &Path) -> Option<LocalCover> {
+    let tagged_file = Probe::open(path).and_then(|probe| probe.read()).ok()?;
+    let tag = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag());
+    embedded_cover(path, Some(&tagged_file), tag)
 }
 pub(super) fn select_best_picture(pictures: &[Picture]) -> Option<&Picture> {
     pictures
@@ -569,14 +593,6 @@ pub(super) fn stable_hash(value: &str) -> u64 {
     }
     hash
 }
-pub(super) fn stable_hash_bytes(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
 pub(super) fn hash_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for part in parts {
@@ -653,12 +669,6 @@ pub(super) fn file_revision(path: &Path) -> Option<String> {
 }
 fn path_revision_fallback(path: &Path) -> String {
     format!("path:{:016x}", stable_hash(&path.to_string_lossy()))
-}
-fn embedded_cover_revision(bytes: &[u8], content_type: Option<String>) -> String {
-    let mut hash_input = content_type.unwrap_or_default().into_bytes();
-    hash_input.push(0);
-    hash_input.extend_from_slice(bytes);
-    format!("embedded:{:016x}", stable_hash_bytes(&hash_input))
 }
 pub(super) fn normalize_search(value: &str) -> String {
     value

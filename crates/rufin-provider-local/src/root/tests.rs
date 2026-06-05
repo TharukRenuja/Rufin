@@ -95,6 +95,38 @@ async fn manifest_scan_reuse() {
         1
     );
 }
+#[test]
+fn local_scan_reports_progress() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("track.mp3"), []).expect("track file");
+    let server = LocalProvider::identity_for_root(dir.path()).expect("identity");
+    let mut reports = Vec::new();
+
+    let provider = LocalProvider::from_roots_with_manifest_cache_and_progress(
+        vec![dir.path().to_path_buf()],
+        server,
+        Vec::new(),
+        |progress| reports.push(progress),
+    )
+    .expect("provider");
+
+    assert_eq!(provider.manifest_scan().counters.audio_candidates, 1);
+    assert!(reports.iter().any(
+        |progress| progress.stage == LocalScanStage::Walking && progress.audio_candidates == 1
+    ));
+    assert!(
+        reports
+            .iter()
+            .any(|progress| progress.stage == LocalScanStage::ReadingTags
+                && progress.total_tracks == Some(1))
+    );
+    assert!(
+        reports
+            .iter()
+            .any(|progress| progress.stage == LocalScanStage::BuildingLibrary
+                && progress.processed_tracks == 1)
+    );
+}
 #[tokio::test]
 async fn manifest_scan_update() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -620,6 +652,7 @@ fn scanned_test_track(number: u32, album_id: AlbumId, cover: Option<LocalCover>)
         },
         album_artist: "Example Artist".to_string(),
         cover,
+        embedded_cover_path: None,
     }
 }
 

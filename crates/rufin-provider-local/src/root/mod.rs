@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use lofty::config::ParseOptions;
 use lofty::file::TaggedFileExt;
 use lofty::picture::{Picture, PictureType};
 use lofty::prelude::*;
@@ -21,7 +22,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::thread;
 use std::time::{Instant, UNIX_EPOCH};
 use url::Url;
 use walkdir::WalkDir;
@@ -77,12 +79,35 @@ struct ScannedTrack {
     track: Track,
     album_artist: String,
     cover: Option<LocalCover>,
+    embedded_cover_path: Option<PathBuf>,
+}
+#[derive(Clone, Debug)]
+struct LocalParseJob {
+    index: usize,
+    facts: LocalFileFacts,
+    stale_entry: Option<LocalManifestEntry>,
+}
+#[derive(Clone, Debug)]
+struct LocalParsedTrack {
+    index: usize,
+    facts: LocalFileFacts,
+    stale_entry: Option<LocalManifestEntry>,
+    scanned_track: Option<ScannedTrack>,
+    parse_elapsed_ms: u64,
+}
+#[derive(Clone, Debug)]
+struct LocalReusedTrack {
+    track_id: TrackId,
+    scanned_track: ScannedTrack,
+    entry: LocalManifestEntry,
+    artwork_changed: bool,
 }
 #[derive(Clone, Debug)]
 struct AlbumAccumulator {
     album: Album,
     album_artist_keys: BTreeSet<String>,
     artist_keys: BTreeSet<String>,
+    embedded_cover_path: Option<PathBuf>,
 }
 #[derive(Clone, Debug, Default)]
 struct ArtistAccumulator {
@@ -96,6 +121,21 @@ struct GenreAccumulator {
     name: String,
     albums: BTreeSet<AlbumId>,
     tracks: BTreeSet<TrackId>,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalScanStage {
+    Walking,
+    ReadingTags,
+    BuildingLibrary,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalScanProgress {
+    pub stage: LocalScanStage,
+    pub roots_walked: u64,
+    pub directory_entries_visited: u64,
+    pub audio_candidates: u64,
+    pub processed_tracks: usize,
+    pub total_tracks: Option<usize>,
 }
 impl LocalProvider {
     pub fn from_root(root: PathBuf) -> ProviderResult<Self> {
@@ -122,7 +162,7 @@ impl LocalProvider {
         roots: Vec<PathBuf>,
         server: ServerIdentity,
     ) -> ProviderResult<Self> {
-        let (library, manifest_scan) = scan_library(&roots, Vec::new());
+        let (library, manifest_scan) = scan_library(&roots, Vec::new(), None);
         Ok(Self {
             identity: ProviderIdentity { server },
             capabilities: local_capabilities(),
@@ -136,8 +176,17 @@ impl LocalProvider {
         server: ServerIdentity,
         cache: Vec<LocalManifestEntry>,
     ) -> ProviderResult<Self> {
+        Self::from_roots_with_manifest_cache_and_progress(roots, server, cache, |_| {})
+    }
+
+    pub fn from_roots_with_manifest_cache_and_progress(
+        roots: Vec<PathBuf>,
+        server: ServerIdentity,
+        cache: Vec<LocalManifestEntry>,
+        mut progress: impl FnMut(LocalScanProgress),
+    ) -> ProviderResult<Self> {
         let roots = normalize_roots(roots)?;
-        let (library, manifest_scan) = scan_library(&roots, cache);
+        let (library, manifest_scan) = scan_library(&roots, cache, Some(&mut progress));
         Ok(Self {
             identity: ProviderIdentity { server },
             capabilities: local_capabilities(),
@@ -148,7 +197,7 @@ impl LocalProvider {
 
     pub fn from_server(server: ServerIdentity) -> ProviderResult<Self> {
         let root = normalize_root(PathBuf::from(&server.base_url))?;
-        let (library, manifest_scan) = scan_library(&[root], Vec::new());
+        let (library, manifest_scan) = scan_library(&[root], Vec::new(), None);
         Ok(Self {
             identity: ProviderIdentity { server },
             capabilities: local_capabilities(),
@@ -717,10 +766,11 @@ fn local_capabilities() -> ProviderCapabilities {
 fn scan_library(
     roots: &[PathBuf],
     cache: Vec<LocalManifestEntry>,
+    mut progress: Option<&mut dyn FnMut(LocalScanProgress)>,
 ) -> (LocalLibrary, LocalManifestScan) {
     let mut counters = LocalScanCounters::default();
     let walk_started = Instant::now();
-    let facts = discover_audio_files(roots, &mut counters);
+    let facts = discover_audio_files(roots, &mut counters, &mut progress);
     counters.filesystem_walk_elapsed_ms = elapsed_ms(walk_started);
 
     let compare_started = Instant::now();
@@ -740,7 +790,18 @@ fn scan_library(
     let mut dirty_genre_names = BTreeSet::new();
     let mut library_changed = false;
 
-    for facts in facts {
+    let total_tracks = facts.len();
+    let mut reused_tracks = HashMap::new();
+    let mut parse_jobs = Vec::new();
+    emit_local_scan_progress(
+        &mut progress,
+        LocalScanStage::ReadingTags,
+        &counters,
+        0,
+        Some(total_tracks),
+        true,
+    );
+    for (index, facts) in facts.into_iter().enumerate() {
         let cached = cache_by_path.remove(&facts.path);
         let stale_entry = match cached {
             Some(cached) if local_file_facts_match(&cached.facts, &facts) => {
@@ -748,22 +809,23 @@ fn scan_library(
                 let (scanned_track, entry, artwork_changed) = reuse_manifest_track(facts, cached);
                 counters.unchanged_reused = counters.unchanged_reused.saturating_add(1);
                 counters.reused_track_rows = counters.reused_track_rows.saturating_add(1);
-                if artwork_changed {
-                    counters.artwork_changed = counters.artwork_changed.saturating_add(1);
-                    artwork_track_ids.push(track_id);
-                    mark_track_aggregate_dirty(
-                        &entry.track,
-                        &mut dirty_album_ids,
-                        &mut dirty_artist_ids,
-                        &mut dirty_album_artist_ids,
-                        &mut dirty_genre_names,
-                    );
-                    library_changed = true;
-                } else {
-                    retained_track_ids.push(track_id);
-                }
-                scanned.push(scanned_track);
-                entries.push(entry);
+                reused_tracks.insert(
+                    index,
+                    LocalReusedTrack {
+                        track_id,
+                        scanned_track,
+                        entry,
+                        artwork_changed,
+                    },
+                );
+                emit_local_scan_progress(
+                    &mut progress,
+                    LocalScanStage::ReadingTags,
+                    &counters,
+                    reused_tracks.len(),
+                    Some(total_tracks),
+                    false,
+                );
                 continue;
             }
             Some(cached) => {
@@ -776,16 +838,59 @@ fn scan_library(
             }
         };
         library_changed = true;
-        let parse_started = Instant::now();
         counters.tag_reads = counters.tag_reads.saturating_add(1);
-        match read_track(facts.path.clone()) {
+        parse_jobs.push(LocalParseJob {
+            index,
+            facts,
+            stale_entry,
+        });
+    }
+    let parsed_tracks =
+        parse_local_tracks(parse_jobs, reused_tracks.len(), total_tracks, |count| {
+            emit_local_scan_progress(
+                &mut progress,
+                LocalScanStage::ReadingTags,
+                &counters,
+                count,
+                Some(total_tracks),
+                false,
+            );
+        });
+    let mut parsed_tracks = parsed_tracks
+        .into_iter()
+        .map(|parsed| (parsed.index, parsed))
+        .collect::<HashMap<_, _>>();
+    for index in 0..total_tracks {
+        if let Some(reused) = reused_tracks.remove(&index) {
+            if reused.artwork_changed {
+                counters.artwork_changed = counters.artwork_changed.saturating_add(1);
+                artwork_track_ids.push(reused.track_id);
+                mark_track_aggregate_dirty(
+                    &reused.entry.track,
+                    &mut dirty_album_ids,
+                    &mut dirty_artist_ids,
+                    &mut dirty_album_artist_ids,
+                    &mut dirty_genre_names,
+                );
+                library_changed = true;
+            } else {
+                retained_track_ids.push(reused.track_id);
+            }
+            scanned.push(reused.scanned_track);
+            entries.push(reused.entry);
+            continue;
+        }
+        let Some(parsed) = parsed_tracks.remove(&index) else {
+            continue;
+        };
+        counters.tag_parse_elapsed_ms = counters
+            .tag_parse_elapsed_ms
+            .saturating_add(parsed.parse_elapsed_ms);
+        match parsed.scanned_track {
             Some(scanned_track) => {
-                counters.tag_parse_elapsed_ms = counters
-                    .tag_parse_elapsed_ms
-                    .saturating_add(elapsed_ms(parse_started));
-                let entry = manifest_entry_for_scanned(&facts, &scanned_track);
+                let entry = manifest_entry_for_scanned(&parsed.facts, &scanned_track);
                 let track_changed = classify_reparsed_track(
-                    stale_entry.as_ref(),
+                    parsed.stale_entry.as_ref(),
                     &entry,
                     &mut changed_track_ids,
                     &mut metadata_track_ids,
@@ -794,7 +899,7 @@ fn scan_library(
                     &mut counters,
                 );
                 if track_changed {
-                    if let Some(stale_entry) = &stale_entry {
+                    if let Some(stale_entry) = &parsed.stale_entry {
                         mark_track_aggregate_dirty(
                             &stale_entry.track,
                             &mut dirty_album_ids,
@@ -844,6 +949,14 @@ fn scan_library(
     }
     counters.manifest_compare_elapsed_ms = elapsed_ms(compare_started);
 
+    emit_local_scan_progress(
+        &mut progress,
+        LocalScanStage::BuildingLibrary,
+        &counters,
+        scanned.len(),
+        Some(total_tracks),
+        true,
+    );
     scanned.sort_by(local_scanned_track_sort);
     let library_started = Instant::now();
     let (root_entries, folders) = scan_folders(roots);
@@ -893,6 +1006,54 @@ fn mark_track_aggregate_dirty(
     }
 }
 
+fn parse_local_tracks(
+    jobs: Vec<LocalParseJob>,
+    reused_count: usize,
+    total_tracks: usize,
+    mut progress: impl FnMut(usize),
+) -> Vec<LocalParsedTrack> {
+    if jobs.is_empty() {
+        return Vec::new();
+    }
+    let worker_count = thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .clamp(1, 4)
+        .min(jobs.len());
+    let chunk_size = jobs.len().div_ceil(worker_count).max(1);
+    let (tx, rx) = mpsc::channel();
+    thread::scope(|scope| {
+        for chunk in jobs.chunks(chunk_size) {
+            let tx = tx.clone();
+            let chunk = chunk.to_vec();
+            scope.spawn(move || {
+                for job in chunk {
+                    let _sent = tx.send(parse_local_track(job));
+                }
+            });
+        }
+        drop(tx);
+        let mut parsed_tracks = Vec::new();
+        for parsed in rx {
+            parsed_tracks.push(parsed);
+            progress((reused_count + parsed_tracks.len()).min(total_tracks));
+        }
+        parsed_tracks
+    })
+}
+
+fn parse_local_track(job: LocalParseJob) -> LocalParsedTrack {
+    let parse_started = Instant::now();
+    let scanned_track = read_track(job.facts.path.clone());
+    LocalParsedTrack {
+        index: job.index,
+        facts: job.facts,
+        stale_entry: job.stale_entry,
+        scanned_track,
+        parse_elapsed_ms: elapsed_ms(parse_started),
+    }
+}
+
 fn classify_reparsed_track(
     stale_entry: Option<&LocalManifestEntry>,
     entry: &LocalManifestEntry,
@@ -929,8 +1090,10 @@ fn classify_reparsed_track(
 fn discover_audio_files(
     roots: &[PathBuf],
     counters: &mut LocalScanCounters,
+    progress: &mut Option<&mut dyn FnMut(LocalScanProgress)>,
 ) -> Vec<LocalFileFacts> {
     let mut facts = Vec::new();
+    emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, true);
     for root in roots {
         counters.roots_walked = counters.roots_walked.saturating_add(1);
         for entry in WalkDir::new(root).follow_links(true).into_iter() {
@@ -949,11 +1112,44 @@ fn discover_audio_files(
             if let Some(file_facts) = local_file_facts_from_path(root, entry.path()) {
                 facts.push(file_facts);
             }
+            emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, false);
         }
     }
     facts.sort_by(|left, right| left.path.cmp(&right.path));
     facts.dedup_by(|left, right| left.path == right.path);
+    emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, true);
     facts
+}
+fn emit_local_scan_progress(
+    progress: &mut Option<&mut dyn FnMut(LocalScanProgress)>,
+    stage: LocalScanStage,
+    counters: &LocalScanCounters,
+    processed_tracks: usize,
+    total_tracks: Option<usize>,
+    force: bool,
+) {
+    let Some(progress) = progress.as_deref_mut() else {
+        return;
+    };
+    if !force {
+        let count = match stage {
+            LocalScanStage::Walking => counters.audio_candidates,
+            LocalScanStage::ReadingTags | LocalScanStage::BuildingLibrary => {
+                processed_tracks.min(u64::MAX as usize) as u64
+            }
+        };
+        if count == 0 || count % 25 != 0 {
+            return;
+        }
+    }
+    progress(LocalScanProgress {
+        stage,
+        roots_walked: counters.roots_walked,
+        directory_entries_visited: counters.directory_entries_visited,
+        audio_candidates: counters.audio_candidates,
+        processed_tracks,
+        total_tracks,
+    });
 }
 fn reuse_manifest_track(
     facts: LocalFileFacts,
@@ -967,6 +1163,7 @@ fn reuse_manifest_track(
         track: track.clone(),
         album_artist: cached.album_artist.clone(),
         cover: current_cover.as_ref().map(local_cover_from_manifest),
+        embedded_cover_path: None,
     };
     let entry = LocalManifestEntry {
         facts,
@@ -1072,7 +1269,9 @@ fn folder_sort(left: &Folder, right: &Folder) -> std::cmp::Ordering {
         .then_with(|| left.id.cmp(&right.id))
 }
 fn read_track(path: PathBuf) -> Option<ScannedTrack> {
-    let tagged_file = Probe::open(&path).and_then(|probe| probe.read()).ok();
+    let tagged_file = Probe::open(&path)
+        .and_then(|probe| probe.options(local_scan_parse_options()).read())
+        .ok();
     let tag = tagged_file
         .as_ref()
         .and_then(|file| file.primary_tag().or_else(|| file.first_tag()));
@@ -1132,8 +1331,8 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
         .and_then(|tag| tag.get_string(ItemKey::Comment))
         .map(ToString::to_string)
         .filter(|value| !value.trim().is_empty());
-    let cover = embedded_cover(&path, tagged_file.as_ref(), tag)
-        .or_else(|| path.parent().and_then(folder_cover).map(local_file_cover));
+    let cover = path.parent().and_then(folder_cover).map(local_file_cover);
+    let embedded_cover_path = cover.is_none().then(|| path.clone());
     let year = tag
         .and_then(|tag| tag.date())
         .map(|date| date.year)
@@ -1182,7 +1381,12 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
         },
         album_artist,
         cover,
+        embedded_cover_path,
     })
+}
+
+fn local_scan_parse_options() -> ParseOptions {
+    ParseOptions::new().read_cover_art(false)
 }
 fn local_file_facts_from_path(root: &Path, path: &Path) -> Option<LocalFileFacts> {
     let metadata = fs::metadata(path).ok()?;

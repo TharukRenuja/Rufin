@@ -119,12 +119,6 @@ impl Shell {
         self.cancel_queued_warm_cover_decodes();
     }
 
-    pub(in crate::ui) fn cancel_route_cover_warm(&self) {
-        self.state
-            .cover_warm_generation
-            .set(self.state.cover_warm_generation.get().saturating_add(1));
-    }
-
     pub(in crate::ui) fn pause_cover_warm_for_interaction(self: &Rc<Self>) {
         self.state.cover_warm_paused_until.set(Some(
             Instant::now() + Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
@@ -279,6 +273,9 @@ impl Shell {
                 };
                 processed += 1;
                 if shell.cover_job_active(&job) {
+                    continue;
+                }
+                if !shell.decoded_cover_has_warm_capacity(job.size) {
                     continue;
                 }
                 shell.start_warm_cover_path_lookup(job);
