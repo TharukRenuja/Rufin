@@ -30,28 +30,44 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.6/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.6/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.6/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.6/data/play_random.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/play_random.png</image>
     </screenshot>
     <screenshot>
       <caption>Tune playback settings</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.5.6/data/playback.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.0" date="2026-06-05">
+      <description>
+        <p>The heaviest release so far, a lot of fundamentals have changed for the better, thanks everyone reporting issues! There was a compatability problem with using the keyring, which caused issues for several systems, therefore we migrated to a local storage. This unfortunately means that you will need to login again to your servers, and enter API credentials again, but this is an one-time thing. I hope the improvements make up for this inconvenience:</p>
+        <ul>
+          <li>Improved local library caching with visible scan/metadata progress and smarter handling of artworks, which reduces the initial scan time greatly</li>
+          <li>Adapted a shared cover caching model, this dramatically reduces repeated cover lookups when navigation routes as well as memory usage</li>
+          <li>Library changes are applied smartly, app only tries to do the minimal required database changes</li>
+          <li>Added Weblate link for translations</li>
+          <li>Added Estonian translation (Priit Jõerüüt)</li>
+          <li>Fixed several bugs for lyrics fetching that made the section look stale</li>
+          <li>Favorites now load from the saved library cache</li>
+          <li>Library and home content can now update without forcing a full page reload</li>
+          <li>Made the app store tokens as base64 in case secret service is not available</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.6" date="2026-06-02">
       <description>
         <ul>
