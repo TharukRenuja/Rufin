@@ -1,12 +1,13 @@
 use super::*;
 
 use super::{
-    AppController, ControllerEvent, LOCAL_SOURCE_SERVER_ID, LibrarySnapshot,
+    AppController, ControllerEvent, LOCAL_SOURCE_SERVER_ID, LibrarySnapshot, LibrarySyncStatus,
     LoginActivationContext, LoginActivationRequest, SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT,
     StoreHandle, activate_logged_in_server, activate_with_token, home_refresh_completed_event,
     load_snapshot, prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
     refresh_home_sections, refresh_home_sections_without_explore, refresh_playlist_pages,
-    sync_local_provider_with_events, sync_page_finished, sync_provider, sync_provider_with_events,
+    sync_local_provider_with_events, sync_page_finished, sync_provider, sync_provider_outcome,
+    sync_provider_with_events,
 };
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
@@ -21,6 +22,7 @@ use rufin_secrets::SecretStore;
 use rufin_store::SavedServer;
 use rufin_test_support::{FakeProvider, FakeScale};
 use std::fs;
+use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -522,6 +524,53 @@ pub(in crate::controller) fn startup_reuse_cache() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
+pub(in crate::controller) fn startup_source_sync_running_emits_snapshot() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_server();
+    let local = local_source_saved();
+    let root = unique_test_dir("running-local-source-selection");
+    fs::create_dir_all(&root).expect("create root");
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Server(remote.server.id.clone()));
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&remote)?;
+            store.save_server(&local)?;
+            store.set_active_server(&remote.server.id)?;
+            let generation = store.begin_sync(&local.server.id)?;
+            store.upsert_albums(
+                &local.server.id,
+                &[local_album_with_image_ref(ImageRef::new(
+                    "local:cover:file%3A%2F%2Fmissing-cover",
+                    None,
+                ))],
+                generation,
+            )?;
+            store.complete_sync(&local.server.id, generation)
+        })
+        .expect("seed local cache");
+    let (controller, events) = controller_from_store_for_test(store);
+    let _permit = controller
+        .sync_in_flight
+        .acquire(local.server.id.clone())
+        .expect("sync guard")
+        .expect("sync permit");
+
+    controller.select_source(LibrarySourceSelection::Local);
+
+    let snapshot = wait_for_snapshot(&events);
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Local)
+    );
+    assert_eq!(snapshot.cached_album_count, 1);
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
 pub(in crate::controller) fn startup_track_deleted() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
@@ -725,6 +774,78 @@ pub(in crate::controller) fn startup_advance_generation() {
     assert_eq!(state.status, "idle");
     assert_eq!(state.generation, committed_generation);
     let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn startup_cached_local_noop_uses_status() {
+    let (store, local, root, generation) = seed_cached_local_source("local-noop-status");
+    let (controller, events) = controller_from_store_for_test(store);
+
+    controller.start_sync(local);
+
+    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
+    assert_eq!(status.last_error, None);
+    assert!(status.delta.is_empty());
+    let state = controller
+        .store
+        .with_store(|store| store.sync_state(&status.server_id))
+        .expect("final sync state");
+    assert_eq!(state.generation, generation);
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn startup_cached_local_delta_uses_status_delta() {
+    let (store, local, root, _generation) = seed_cached_local_source("local-delta-snapshot");
+    let album_dir = root.join("Artist").join("Album");
+    fs::write(album_dir.join("Second.mp3"), []).expect("audio");
+    let (controller, events) = controller_from_store_for_test(store);
+
+    controller.start_sync(local);
+
+    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
+    assert!(!status.delta.tracks.added.is_empty());
+    assert_eq!(status.counts.tracks, 2);
+    let _cleanup = fs::remove_dir_all(root);
+}
+
+fn seed_cached_local_source(label: &str) -> (StoreHandle, SavedServer, PathBuf, i64) {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let root = unique_test_dir(label);
+    let album_dir = root.join("Artist").join("Album");
+    fs::create_dir_all(&album_dir).expect("create album dir");
+    fs::write(album_dir.join("Track.mp3"), []).expect("audio");
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&local)?;
+            store.set_active_server(&local.server.id)
+        })
+        .expect("save local server");
+    let runtime = Runtime::new().expect("runtime");
+    let (seed_events, _seed_receiver) = channel();
+    let cold = LocalProvider::from_roots_with_identity(vec![root.clone()], local.server.clone())
+        .expect("cold local provider");
+    runtime
+        .block_on(sync_local_provider_with_events(
+            &store,
+            &local.server.id,
+            &cold,
+            seed_events,
+        ))
+        .expect("cold local sync");
+    let generation = store
+        .with_store(|store| {
+            store
+                .sync_state(&local.server.id)
+                .map(|state| state.generation)
+        })
+        .expect("sync state");
+    (store, local, root, generation)
 }
 #[test]
 pub(in crate::controller) fn startup_change_audio() {
@@ -970,6 +1091,64 @@ pub(in crate::controller) fn startup_record_state() {
         .expect("active server")
         .expect("active server");
     assert_eq!(active.server.id, remote.server.id);
+}
+#[test]
+pub(in crate::controller) fn startup_cached_sync_error_uses_status() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_server();
+    let album = remote_album_with_image_ref(ImageRef::new("album:one", Some("tag".to_string())));
+    let track = local_track_with_image_ref(
+        1,
+        &album,
+        ImageRef::new("track:one", Some("tag".to_string())),
+    );
+    seed_cached_library(&store, &saved, &[album], &[track], &[]);
+    let (controller, events) = controller_from_store_for_test(store);
+
+    controller.start_sync(saved);
+
+    let status = wait_for_sync_status_without_snapshot(&events, "Action failed");
+    assert_eq!(status.sync_status, "Action failed");
+    assert_eq!(
+        status.last_error.as_deref(),
+        Some("No saved token found for the active server.")
+    );
+}
+
+fn wait_for_sync_status_without_snapshot(
+    events: &std::sync::mpsc::Receiver<ControllerEvent>,
+    expected_status: &str,
+) -> LibrarySyncStatus {
+    loop {
+        match events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("controller event")
+        {
+            ControllerEvent::LibrarySyncStatus(status) if status.sync_status == expected_status => {
+                return *status;
+            }
+            ControllerEvent::Snapshot(_) => panic!("cached same-source sync emitted snapshot"),
+            ControllerEvent::LibrarySyncStatus(_)
+            | ControllerEvent::HomeSectionsUpdated { .. }
+            | ControllerEvent::PlaylistChanged { .. }
+            | ControllerEvent::SmartPlaylistChanged { .. }
+            | ControllerEvent::FavoriteChanged { .. }
+            | ControllerEvent::Queue(_)
+            | ControllerEvent::Playback(_)
+            | ControllerEvent::Lyrics(_)
+            | ControllerEvent::LyricsSearchResults { .. }
+            | ControllerEvent::LyricsSearchFailed { .. }
+            | ControllerEvent::LyricsSaved { .. }
+            | ControllerEvent::FolderLoaded { .. }
+            | ControllerEvent::FolderLoadFailed { .. }
+            | ControllerEvent::HomeSectionPrefetched { .. }
+            | ControllerEvent::ServerDiscovery { .. }
+            | ControllerEvent::CoverReady { .. }
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::LoginStatus(_) => {}
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+        }
+    }
 }
 
 #[test]
@@ -1545,6 +1724,12 @@ pub(in crate::controller) fn snapshot_reuse_album() {
         snapshot.favorites[0].image_ref.as_ref(),
         Some(&album_image_ref)
     );
+    let (controller, _events) = controller_from_store_for_test(store);
+    let favorites = controller
+        .cached_favorite_tracks()
+        .expect("cached favorite tracks");
+    assert_eq!(favorites.len(), 1);
+    assert_eq!(favorites[0].image_ref.as_ref(), Some(&album_image_ref));
 }
 #[test]
 pub(in crate::controller) fn startup_track_cards() {
@@ -1995,6 +2180,62 @@ pub(in crate::controller) fn startup_remote_cache() {
         .expect("sync remote cache");
 
     assert!(!initial_cover_cache_required(&store, &saved.server.id));
+}
+#[test]
+pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
+    let runtime = Runtime::new().expect("runtime");
+    let store = StoreHandle::open_memory().expect("memory store");
+    let provider = FakeProvider::new(FakeScale::Small);
+    let saved = SavedServer {
+        server: provider.identity().server.clone(),
+        user_id: "fake-user".to_string(),
+        username: "fake".to_string(),
+        trust_invalid_cert: false,
+    };
+    store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)
+        })
+        .expect("save server");
+    runtime
+        .block_on(sync_provider(&store, &saved.server.id, &provider))
+        .expect("seed remote cache");
+
+    let noop = runtime
+        .block_on(sync_provider_outcome(&store, &saved.server.id, &provider))
+        .expect("same remote sync");
+    assert!(noop.delta.is_empty());
+
+    let mut stale_album = runtime
+        .block_on(provider.albums(PagedRequest::new(0, 1)))
+        .expect("provider albums")
+        .items
+        .into_iter()
+        .next()
+        .expect("album");
+    stale_album.title = "Stale Album Title".to_string();
+    let generation = store
+        .with_store(|store| {
+            store
+                .sync_state(&saved.server.id)
+                .map(|state| state.generation)
+        })
+        .expect("sync state");
+    store
+        .with_store(|store| {
+            store.upsert_albums(
+                &saved.server.id,
+                std::slice::from_ref(&stale_album),
+                generation,
+            )
+        })
+        .expect("seed stale album");
+
+    let changed = runtime
+        .block_on(sync_provider_outcome(&store, &saved.server.id, &provider))
+        .expect("changed remote sync");
+    assert!(changed.delta.albums.fields.contains(&stale_album.id));
 }
 fn seed_cached_library(
     store: &StoreHandle,

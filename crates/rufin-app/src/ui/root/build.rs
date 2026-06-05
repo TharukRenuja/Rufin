@@ -31,6 +31,10 @@ impl InitialRouteCoverMetrics {
         }
     }
 }
+
+const STARTUP_QUEUE_ROW_HEIGHT: i32 = 58;
+const STARTUP_QUEUE_COVER_SIZE: i32 = 50;
+
 pub(in crate::ui) fn startup_cover_prime_jobs(shell: &Shell) -> Vec<CoverWarmJob> {
     startup_cover_jobs_from_targets(
         shell,
@@ -79,12 +83,231 @@ pub(in crate::ui) fn sidebar_route_visible(settings: &AppSettings, item: Sidebar
         .any(|entry| entry.item == item && entry.visible)
 }
 pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<CoverWarmTarget> {
-    startup_cover_targets(
-        &shell.state.library.borrow(),
-        &shell.state.settings.borrow(),
-        shell.state.home_showcase_seed.get(),
-    )
+    let mut targets = startup_home_cover_prime_targets(shell);
+    push_startup_playback_targets(&mut targets, &shell.state.player.borrow());
+    push_startup_queue_targets(
+        &mut targets,
+        shell.state.queue.borrow().as_ref(),
+        shell.state.queue_filter.borrow().trim(),
+        shell.state.resolved_right_sidebar.get().is_visible(),
+        shell.state.fullscreen_player_visible.get(),
+        shell.app_root.height(),
+        shell
+            .state
+            .library
+            .borrow()
+            .server
+            .as_ref()
+            .map(|server| &server.id),
+    );
+    let route = shell.state.routes.borrow().current().clone();
+    if matches!(route, Route::SmartPlaylists) && shell.state.smart_playlists.borrow().is_empty() {
+        let playlists = shell
+            .controller
+            .cached_smart_playlists_page(0, 1_000)
+            .map(|page| page.items)
+            .unwrap_or_else(|error| {
+                warn!(%error, "failed to load cached smart playlists for startup cover prime");
+                Vec::new()
+            });
+        *shell.state.smart_playlists.borrow_mut() = playlists;
+    }
+    targets.extend(startup_route_cover_targets(shell, &route));
+    let Some(server_id) = shell
+        .state
+        .library
+        .borrow()
+        .server
+        .as_ref()
+        .map(|server| server.id.clone())
+    else {
+        return targets;
+    };
+    dedupe_warm_targets(&mut targets, &server_id);
+    targets
 }
+
+pub(in crate::ui) fn push_startup_playback_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    player: &PlaybackSnapshot,
+) {
+    push_startup_cover_target(
+        targets,
+        player
+            .current
+            .as_ref()
+            .and_then(|entry| entry.image_ref.as_ref()),
+        THUMB_COVER_SIZE,
+        player::BOTTOM_PLAYER_COVER_SIZE,
+    );
+}
+
+pub(in crate::ui) fn push_startup_queue_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    queue: Option<&QueueSnapshot>,
+    filter: &str,
+    right_visible: bool,
+    fullscreen_visible: bool,
+    app_height: i32,
+    active_server_id: Option<&ServerId>,
+) {
+    if !right_visible && !fullscreen_visible {
+        return;
+    }
+    let Some(queue) = queue else {
+        return;
+    };
+    if active_server_id.is_some_and(|server_id| server_id != &queue.server_id) {
+        return;
+    }
+    let count = startup_queue_visible_count(app_height);
+    let filter = filter.trim().to_lowercase();
+    if right_visible {
+        push_queue_entry_targets(targets, queue, &filter, count);
+    }
+    if fullscreen_visible {
+        push_queue_entry_targets(targets, queue, "", count);
+    }
+}
+
+fn push_queue_entry_targets(
+    targets: &mut Vec<CoverWarmTarget>,
+    queue: &QueueSnapshot,
+    filter: &str,
+    count: usize,
+) {
+    for entry in queue
+        .entries
+        .iter()
+        .filter(|entry| queue_entry_matches_startup_filter(entry, filter))
+        .take(count)
+    {
+        push_startup_cover_target(
+            targets,
+            entry.image_ref.as_ref(),
+            THUMB_COVER_SIZE,
+            STARTUP_QUEUE_COVER_SIZE,
+        );
+    }
+}
+
+fn queue_entry_matches_startup_filter(entry: &QueueEntry, filter: &str) -> bool {
+    filter.is_empty()
+        || entry.title.to_lowercase().contains(filter)
+        || entry.artist.to_lowercase().contains(filter)
+        || entry.album.to_lowercase().contains(filter)
+        || (entry.year != 0 && entry.year.to_string().contains(filter))
+}
+
+fn startup_queue_visible_count(app_height: i32) -> usize {
+    let height = app_height
+        .saturating_sub(player::BOTTOM_PLAYER_HEIGHT)
+        .max(STARTUP_QUEUE_ROW_HEIGHT);
+    (height / STARTUP_QUEUE_ROW_HEIGHT).saturating_add(2) as usize
+}
+
+fn startup_route_cover_targets(shell: &Shell, route: &Route) -> Vec<CoverWarmTarget> {
+    let targets = route_visible_cover_targets(shell, route);
+    if !targets.is_empty() {
+        return targets;
+    }
+    startup_route_cover_fallback_targets(shell, route)
+}
+
+fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<CoverWarmTarget> {
+    let library = shell.state.library.borrow();
+    let settings = shell.state.settings.borrow();
+    let metrics = shell.source_route_initial_cover_metrics();
+    let mut targets = Vec::new();
+    match route {
+        Route::Tracks if library.tracks.is_empty() && library.cached_track_count > 0 => {
+            let list_settings = settings.library_list(LibraryListKey::Tracks);
+            let limit = metrics.initial_visible_count(list_settings.layout);
+            drop(settings);
+            drop(library);
+            if let Ok(page) = shell.controller.cached_tracks_page(0, limit) {
+                push_track_source_warm_targets(
+                    &mut targets,
+                    page.items,
+                    &list_settings,
+                    false,
+                    metrics,
+                );
+            }
+        }
+        Route::Favorites if library.favorites.is_empty() && library.cached_track_count > 0 => {
+            let list_settings = settings.library_list(LibraryListKey::FavoriteTracks);
+            drop(settings);
+            drop(library);
+            if let Ok(tracks) = shell.controller.cached_favorite_tracks() {
+                push_track_source_warm_targets(&mut targets, tracks, &list_settings, true, metrics);
+            }
+        }
+        Route::Albums if library.albums.is_empty() && library.cached_album_count > 0 => {
+            let list_settings = settings.library_list(LibraryListKey::Albums);
+            let limit = metrics.initial_visible_count(list_settings.layout);
+            drop(settings);
+            drop(library);
+            if let Ok(page) = shell.controller.cached_albums_page(0, limit) {
+                push_album_source_warm_targets(&mut targets, page.items, &list_settings, metrics);
+            }
+        }
+        Route::Artists if library.artists.is_empty() && library.cached_artist_count > 0 => {
+            let list_settings = settings.library_list(LibraryListKey::Artists);
+            let limit = metrics.initial_visible_count(list_settings.layout);
+            drop(settings);
+            drop(library);
+            if let Ok(page) = shell.controller.cached_artists_page(false, 0, limit) {
+                push_artist_source_warm_targets(&mut targets, page.items, &list_settings, metrics);
+            }
+        }
+        Route::AlbumArtists
+            if library.album_artists.is_empty() && library.cached_album_artist_count > 0 =>
+        {
+            let list_settings = settings.library_list(LibraryListKey::AlbumArtists);
+            let limit = metrics.initial_visible_count(list_settings.layout);
+            drop(settings);
+            drop(library);
+            if let Ok(page) = shell.controller.cached_artists_page(true, 0, limit) {
+                push_artist_source_warm_targets(&mut targets, page.items, &list_settings, metrics);
+            }
+        }
+        Route::Genres if library.genres.is_empty() && library.cached_genre_count > 0 => {
+            let list_settings = settings.library_list(LibraryListKey::Genres);
+            let limit = metrics.initial_visible_count(list_settings.layout);
+            drop(settings);
+            drop(library);
+            if let Ok(page) = shell.controller.cached_genres_page(0, limit) {
+                push_genre_source_warm_targets(&mut targets, page.items, &list_settings, metrics);
+            }
+        }
+        Route::Playlists if library.playlists.is_empty() && library.cached_playlist_count > 0 => {
+            let list_settings = settings.library_list(LibraryListKey::Playlists);
+            let limit = metrics.initial_visible_count(list_settings.layout);
+            drop(settings);
+            drop(library);
+            if let Ok(page) = shell.controller.cached_playlists_page(0, limit) {
+                push_playlist_source_warm_targets(
+                    &mut targets,
+                    page.items,
+                    &list_settings,
+                    metrics,
+                );
+            }
+        }
+        Route::SmartPlaylists if shell.state.smart_playlists.borrow().is_empty() => {
+            let list_settings = settings.library_list(LibraryListKey::SmartPlaylists);
+            drop(settings);
+            drop(library);
+            let playlists = shell.state.smart_playlists.borrow().clone();
+            push_smart_targets(&mut targets, playlists, &list_settings, metrics);
+        }
+        _ => {}
+    }
+    targets
+}
+
+#[cfg(test)]
 pub(in crate::ui) fn startup_cover_targets(
     library: &LibrarySnapshot,
     settings: &AppSettings,

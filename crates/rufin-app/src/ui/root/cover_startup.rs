@@ -465,6 +465,91 @@ pub(in crate::ui) fn schedule_startup_sync(shell: &Rc<Shell>) {
         shell.controller.start_background_sync_for_active();
     });
 }
+pub(in crate::ui) fn apply_library_sync_status(
+    library: &mut LibrarySnapshot,
+    status: LibrarySyncStatus,
+) -> bool {
+    let Some(server_id) = library.server.as_ref().map(|server| server.id.clone()) else {
+        return false;
+    };
+    if server_id != status.server_id {
+        return false;
+    }
+
+    invalidate_sync_snapshot_pages(library, &status.delta);
+    library.sync_status = status.sync_status;
+    library.last_error = status.last_error;
+    library.cached_album_count = status.counts.albums;
+    library.cached_track_count = status.counts.tracks;
+    library.cached_artist_count = status.counts.artists;
+    library.cached_album_artist_count = status.counts.album_artists;
+    library.cached_genre_count = status.counts.genres;
+    library.cached_playlist_count = status.counts.playlists;
+    if let Some(home) = status.home {
+        library.home_sections = home.sections;
+        library.prefetched_explore = home.prefetched_explore;
+    }
+    if let Some(source) = library
+        .server_local_access
+        .iter_mut()
+        .find(|source| source.server_id == server_id)
+    {
+        source.sync_status = library.sync_status.clone();
+        source.cached_album_count = library.cached_album_count;
+        source.cached_track_count = library.cached_track_count;
+    }
+    true
+}
+
+fn invalidate_sync_snapshot_pages(library: &mut LibrarySnapshot, delta: &LibraryDelta) {
+    if delta.is_empty() {
+        return;
+    }
+    if delta.reset.is_some() {
+        library.tracks.clear();
+        library.albums.clear();
+        library.artists.clear();
+        library.album_artists.clear();
+        library.genres.clear();
+        library.playlists.clear();
+        library.favorites.clear();
+        library.search = rufin_provider::SearchResults::default();
+        return;
+    }
+    if !delta.tracks.is_empty() {
+        library.tracks.clear();
+        library.favorites.clear();
+        library.search = rufin_provider::SearchResults::default();
+    }
+    if !delta.albums.is_empty() {
+        library.albums.clear();
+        library.search = rufin_provider::SearchResults::default();
+    }
+    if !delta.artists.is_empty() {
+        library.artists.clear();
+        library.search = rufin_provider::SearchResults::default();
+    }
+    if !delta.album_artists.is_empty() {
+        library.album_artists.clear();
+        library.search = rufin_provider::SearchResults::default();
+    }
+    if !delta.genres.is_empty() {
+        library.genres.clear();
+        library.search = rufin_provider::SearchResults::default();
+    }
+    if playlist_snapshot_changed(delta) {
+        library.playlists.clear();
+        library.search = rufin_provider::SearchResults::default();
+    }
+}
+
+fn playlist_snapshot_changed(delta: &LibraryDelta) -> bool {
+    !delta.playlists.added.is_empty()
+        || !delta.playlists.deleted.is_empty()
+        || !delta.playlists.fields.is_empty()
+        || !delta.playlists.cover_refs.is_empty()
+}
+
 pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local(Duration::from_millis(33), move || {
@@ -600,6 +685,39 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         SnapshotRenderDecision::PreserveScroll => {
                             shell.render_current_route_preserving_scroll();
                         }
+                    }
+                }
+                ControllerEvent::LibrarySyncStatus(status) => {
+                    let last_error = status.last_error.clone();
+                    let delta = status.delta.clone();
+                    let applied = {
+                        let mut library = shell.state.library.borrow_mut();
+                        apply_library_sync_status(&mut library, *status)
+                    };
+                    if !applied {
+                        continue;
+                    }
+                    shell.update_server_selector();
+                    if let Some(error) = last_error {
+                        warn!(%error, "library sync update reported an error");
+                        shell.show_preferences_toast(&error);
+                    }
+                    if shell.state.local_source_preparing.get() {
+                        let syncing = {
+                            let library = shell.state.library.borrow();
+                            local_source_snapshot_is_syncing(&library.sync_status)
+                        };
+                        if syncing {
+                            shell.render_startup_loading_view();
+                        } else {
+                            shell.state.local_source_preparing.set(false);
+                            shell.state.local_source_sync_seen.set(false);
+                            shell.state.source_switch_preparing.set(false);
+                            shell.log_layout_snapshot("local_source_status_ready");
+                            shell.schedule_startup_route_reveal();
+                        }
+                    } else {
+                        shell.apply_library_delta(delta);
                     }
                 }
                 ControllerEvent::HomeSectionsUpdated {
@@ -918,6 +1036,21 @@ impl Shell {
         }
         refs
     }
+}
+
+pub(in crate::ui) fn route_visible_cover_targets(
+    shell: &Shell,
+    route: &Route,
+) -> Vec<CoverWarmTarget> {
+    visible_cover_window(shell, route)
+        .refs
+        .into_iter()
+        .map(|cover_ref| CoverWarmTarget {
+            image_ref: cover_ref.image_ref,
+            fetch_size: cover_ref.fetch_size,
+            size: cover_ref.size,
+        })
+        .collect()
 }
 
 fn visible_cover_window(shell: &Shell, route: &Route) -> VisibleCoverWindow {

@@ -38,8 +38,9 @@ use rufin_secrets::{CachedSecretStore, ConfigSecretStore, SecretKey, SecretStore
 #[cfg(unix)]
 use rufin_secrets::{FallbackSecretStore, SecretServiceStore};
 use rufin_store::{
-    CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, LocalLibraryDelta, SavedServer,
-    ServerLocalAccess, Store, StoreBackedSourceWindow, StoreError, StoreResult, SyncState,
+    CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, LibraryDelta, LibraryDeltaCollector,
+    LocalLibraryDelta, SavedServer, ServerLocalAccess, Store, StoreBackedSourceWindow, StoreError,
+    StoreResult, SyncState,
 };
 #[cfg(any(test, feature = "dev-tools"))]
 use rufin_test_support::{FakeProvider, FakeScale};
@@ -178,6 +179,29 @@ pub struct LibrarySnapshot {
     pub favorites: Vec<Track>,
     pub search: SearchResults,
 }
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LibraryCounts {
+    pub albums: usize,
+    pub tracks: usize,
+    pub artists: usize,
+    pub album_artists: usize,
+    pub genres: usize,
+    pub playlists: usize,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LibraryHomeUpdate {
+    pub sections: Vec<HomeSection>,
+    pub prefetched_explore: Option<HomeSection>,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LibrarySyncStatus {
+    pub server_id: ServerId,
+    pub sync_status: String,
+    pub last_error: Option<String>,
+    pub counts: LibraryCounts,
+    pub home: Option<LibraryHomeUpdate>,
+    pub delta: LibraryDelta,
+}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerLocalAccessSnapshot {
     pub server_id: ServerId,
@@ -285,6 +309,7 @@ impl LibrarySnapshot {
 #[derive(Clone, Debug)]
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
+    LibrarySyncStatus(Box<LibrarySyncStatus>),
     HomeSectionsUpdated {
         snapshot: Box<LibrarySnapshot>,
         include_explore: bool,

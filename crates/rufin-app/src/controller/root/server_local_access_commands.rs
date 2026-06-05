@@ -145,7 +145,7 @@ impl AppController {
                     let _sent = events.send(ControllerEvent::LoginStatus(
                         server_settings_status_message(status).to_string(),
                     ));
-                    start_sync_thread(sync_context, saved);
+                    start_sync_thread_with_snapshots(sync_context, saved);
                 }
                 Ok(outcome) if outcome.changed => {
                     if server_settings_status_for_outcome(&outcome)
@@ -159,7 +159,7 @@ impl AppController {
                             server_settings_status_message(ServerSettingsStatus::Resyncing)
                                 .to_string(),
                         ));
-                        start_sync_thread(sync_context, saved);
+                        start_sync_thread_with_snapshots(sync_context, saved);
                         return;
                     }
                     let _sent = events.send(ControllerEvent::LoginStatus(

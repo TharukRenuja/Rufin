@@ -46,7 +46,8 @@ pub(in crate::controller) fn wait_for_snapshot(
             | ControllerEvent::HomeSectionsUpdated { snapshot, .. }
             | ControllerEvent::PlaylistChanged { snapshot, .. }
             | ControllerEvent::SmartPlaylistChanged { snapshot, .. } => return *snapshot,
-            ControllerEvent::Queue(_)
+            ControllerEvent::LibrarySyncStatus(_)
+            | ControllerEvent::Queue(_)
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::Playback(_)
             | ControllerEvent::Lyrics(_)
@@ -78,6 +79,7 @@ pub(in crate::controller) fn wait_for_favorite_changed(
                 snapshot,
             } => return (item_id, favorite, *snapshot),
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
@@ -111,6 +113,7 @@ pub(in crate::controller) fn wait_for_playlist_changed(
                 snapshot,
             } => return (playlist_id, *snapshot),
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
             | ControllerEvent::FavoriteChanged { .. }
@@ -139,6 +142,7 @@ pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>)
         {
             ControllerEvent::LoginStatus(status) => return status,
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
@@ -169,6 +173,7 @@ pub(in crate::controller) fn wait_for_queue(
         {
             ControllerEvent::Queue(queue) => return *queue,
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
@@ -223,6 +228,7 @@ pub(in crate::controller) fn wait_for_cover_ready(
         {
             ControllerEvent::CoverReady { key, path } if key == expected_key => return path,
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
@@ -254,6 +260,7 @@ pub(in crate::controller) fn wait_for_lyrics(
         {
             ControllerEvent::Lyrics(lyrics) => return *lyrics,
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
@@ -322,6 +329,7 @@ pub(in crate::controller) fn wait_for_playback_state(
                 | ControllerEvent::CoverReady { .. }
                 | ControllerEvent::CoverUnavailable { .. } => {}
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::LibrarySyncStatus(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::SmartPlaylistChanged { .. }
@@ -361,6 +369,7 @@ pub(in crate::controller) fn wait_for_playback_position(
             | ControllerEvent::CoverReady { .. }
             | ControllerEvent::CoverUnavailable { .. } => {}
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
@@ -395,6 +404,7 @@ pub(in crate::controller) fn wait_for_playback_auto_dj(
             | ControllerEvent::CoverReady { .. }
             | ControllerEvent::CoverUnavailable { .. } => {}
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
@@ -439,6 +449,7 @@ pub(in crate::controller) fn wait_for_playback_current_favorite(
                 | ControllerEvent::CoverReady { .. }
                 | ControllerEvent::CoverUnavailable { .. } => {}
                 ControllerEvent::Snapshot(_)
+                | ControllerEvent::LibrarySyncStatus(_)
                 | ControllerEvent::HomeSectionsUpdated { .. }
                 | ControllerEvent::PlaylistChanged { .. }
                 | ControllerEvent::SmartPlaylistChanged { .. }

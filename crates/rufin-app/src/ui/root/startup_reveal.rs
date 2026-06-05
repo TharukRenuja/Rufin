@@ -427,7 +427,7 @@ impl Shell {
             }
         });
     }
-    fn source_route_initial_cover_metrics(&self) -> InitialRouteCoverMetrics {
+    pub(in crate::ui) fn source_route_initial_cover_metrics(&self) -> InitialRouteCoverMetrics {
         let (grid_columns, grid_card_size) = self.responsive_card_grid_metrics();
         InitialRouteCoverMetrics {
             route_height: self.route_host.height(),

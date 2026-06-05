@@ -21,19 +21,20 @@ use super::{
     seekbar_target_seconds, snapshot_event_outcome,
 };
 use crate::controller::{
-    LyricsSearchResult, NormalizedPlayTarget, PlayAnchor, PlayTarget,
-    normalize_loaded_source_activation,
+    LibraryCounts, LibraryHomeUpdate, LibrarySyncStatus, LyricsSearchResult, NormalizedPlayTarget,
+    PlayAnchor, PlayTarget, normalize_loaded_source_activation,
 };
 use gdk_pixbuf::{Colorspace, Pixbuf};
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistId, Genre, GenreId, HomeBlockKind, HomeSection,
     HomeSectionKind, ImageRef, LibraryLayout, LibrarySourceSelection, Playlist, PlaylistId,
     QueueAnchor, QueueEntry, QueueEntryId, QueueSnapshot, RepeatMode, Route, SearchKind, ServerId,
-    ServerIdentity, SidebarRouteItem, SmartPlaylist, SmartPlaylistDefinition, SmartPlaylistId,
-    SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track, TrackId,
-    TrackSortKey, TrackTableSettings,
+    ServerIdentity, ShuffleState, SidebarRouteItem, SmartPlaylist, SmartPlaylistDefinition,
+    SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track,
+    TrackId, TrackSortKey, TrackTableSettings,
 };
 use rufin_provider::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
+use rufin_store::LibraryDelta;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -243,6 +244,151 @@ pub(in crate::ui) fn shell_preserve_source() {
     assert!(!outcome.entered_first_run);
 }
 #[test]
+pub(in crate::ui) fn shell_apply_sync_status() {
+    let mut library = test_library_snapshot();
+    let server = test_server("active");
+    library.server = Some(server.clone());
+    library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
+    library.cached_track_count = 2;
+
+    let applied = super::apply_library_sync_status(
+        &mut library,
+        LibrarySyncStatus {
+            server_id: server.id.clone(),
+            sync_status: "Cached library ready".to_string(),
+            last_error: None,
+            counts: LibraryCounts {
+                tracks: 2,
+                ..LibraryCounts::default()
+            },
+            home: None,
+            delta: LibraryDelta::default(),
+        },
+    );
+
+    assert!(applied);
+    assert_eq!(library.sync_status, "Cached library ready");
+    assert_eq!(library.cached_track_count, 2);
+}
+#[test]
+pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
+    let mut library = test_library_snapshot();
+    let server = test_server("active");
+    let section = HomeSection {
+        kind: HomeSectionKind::Explore,
+        albums: Vec::new(),
+        tracks: Vec::new(),
+    };
+    let track = test_track("Track", Some(ArtistId::fake(1)));
+    library.server = Some(server.clone());
+    library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
+    library.tracks = vec![track.clone()];
+    library.favorites = vec![track.clone()];
+    library.search = SearchResults {
+        tracks: vec![track.clone()],
+        ..SearchResults::default()
+    };
+
+    let applied = super::apply_library_sync_status(
+        &mut library,
+        LibrarySyncStatus {
+            server_id: server.id.clone(),
+            sync_status: "Cached library ready".to_string(),
+            last_error: None,
+            counts: LibraryCounts {
+                tracks: 30_000,
+                playlists: 40,
+                ..LibraryCounts::default()
+            },
+            home: Some(LibraryHomeUpdate {
+                sections: vec![section.clone()],
+                prefetched_explore: None,
+            }),
+            delta: LibraryDelta {
+                tracks: rufin_store::TrackDelta {
+                    fields: vec![track.id.clone()],
+                    ..Default::default()
+                },
+                home_changed: true,
+                ..LibraryDelta::default()
+            },
+        },
+    );
+
+    assert!(applied);
+    assert!(library.tracks.is_empty());
+    assert!(library.favorites.is_empty());
+    assert!(library.search.tracks.is_empty());
+    assert_eq!(library.cached_track_count, 30_000);
+    assert_eq!(library.cached_playlist_count, 40);
+    assert_eq!(library.home_sections, vec![section]);
+}
+
+#[test]
+pub(in crate::ui) fn shell_apply_sync_playlist_entries_keep_playlist_page() {
+    let mut library = test_library_snapshot();
+    let server = test_server("active");
+    let playlist = test_playlist("Regular", test_image_ref("playlist"));
+    library.server = Some(server.clone());
+    library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
+    library.playlists = vec![playlist.clone()];
+
+    let applied = super::apply_library_sync_status(
+        &mut library,
+        LibrarySyncStatus {
+            server_id: server.id.clone(),
+            sync_status: "Cached library ready".to_string(),
+            last_error: None,
+            counts: LibraryCounts {
+                playlists: 1,
+                ..LibraryCounts::default()
+            },
+            home: None,
+            delta: LibraryDelta {
+                playlists: rufin_store::PlaylistDelta {
+                    entries: vec![playlist.id.clone()],
+                    ..Default::default()
+                },
+                ..LibraryDelta::default()
+            },
+        },
+    );
+
+    assert!(applied);
+    assert_eq!(library.playlists, vec![playlist]);
+    assert_eq!(library.cached_playlist_count, 1);
+}
+#[test]
+pub(in crate::ui) fn shell_ignore_stale_sync_status() {
+    let mut library = test_library_snapshot();
+    let server = test_server("active");
+    library.server = Some(server.clone());
+    library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
+    library.sync_status = "Cached library ready".to_string();
+
+    let applied = super::apply_library_sync_status(
+        &mut library,
+        LibrarySyncStatus {
+            server_id: ServerId::new("server:stale"),
+            sync_status: "Sync needs attention".to_string(),
+            last_error: Some("sync failed".to_string()),
+            counts: LibraryCounts {
+                tracks: 10,
+                ..LibraryCounts::default()
+            },
+            home: None,
+            delta: LibraryDelta {
+                home_changed: true,
+                ..LibraryDelta::default()
+            },
+        },
+    );
+
+    assert!(!applied);
+    assert_eq!(library.sync_status, "Cached library ready");
+    assert_eq!(library.last_error, None);
+}
+#[test]
 pub(in crate::ui) fn shell_snapshot_entry() {
     let source = None::<LibrarySourceSelection>;
 
@@ -447,6 +593,81 @@ pub(in crate::ui) fn shell_stay_cover() {
     assert!(home_target_refs.contains(&home_ref.item_id.as_str()));
     assert!(!home_target_refs.contains(&first_track_ref.item_id.as_str()));
     assert!(!home_target_refs.contains(&first_album_ref.item_id.as_str()));
+}
+
+#[test]
+pub(in crate::ui) fn shell_startup_playback_cover_target() {
+    let playback_ref = test_image_ref("playback");
+    let mut targets = Vec::new();
+    let player = super::PlaybackSnapshot {
+        current: Some(test_queue_entry("Now", playback_ref.clone())),
+        ..super::PlaybackSnapshot::default()
+    };
+
+    super::push_startup_playback_targets(&mut targets, &player);
+
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].image_ref, playback_ref);
+    assert_eq!(targets[0].fetch_size, super::THUMB_COVER_SIZE);
+    assert_eq!(targets[0].size, super::player::BOTTOM_PLAYER_COVER_SIZE);
+}
+
+#[test]
+pub(in crate::ui) fn shell_startup_queue_cover_targets() {
+    let first_ref = test_image_ref("queue-first");
+    let second_ref = test_image_ref("queue-second");
+    let queue = QueueSnapshot {
+        server_id: ServerId::new("server:active"),
+        entries: vec![
+            test_queue_entry("Visible Song", first_ref.clone()),
+            test_queue_entry("Hidden Song", second_ref.clone()),
+        ],
+        current_index: Some(0),
+        repeat_mode: RepeatMode::Off,
+        shuffle: ShuffleState::default(),
+        shuffle_order: Vec::new(),
+        progress_seconds: 0,
+    };
+    let mut targets = Vec::new();
+
+    super::push_startup_queue_targets(
+        &mut targets,
+        Some(&queue),
+        "visible",
+        true,
+        false,
+        720,
+        Some(&ServerId::new("server:active")),
+    );
+
+    let target_refs = targets
+        .iter()
+        .map(|target| target.image_ref.item_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(target_refs, vec![first_ref.item_id.as_str()]);
+
+    targets.clear();
+    super::push_startup_queue_targets(
+        &mut targets,
+        Some(&queue),
+        "",
+        false,
+        false,
+        720,
+        Some(&ServerId::new("server:active")),
+    );
+    assert!(targets.is_empty());
+
+    super::push_startup_queue_targets(
+        &mut targets,
+        Some(&queue),
+        "",
+        true,
+        false,
+        720,
+        Some(&ServerId::new("server:stale")),
+    );
+    assert!(targets.is_empty());
 }
 
 #[test]
@@ -1329,6 +1550,24 @@ fn test_smart_playlist(name: &str, image_ref: ImageRef) -> SmartPlaylist {
         duration_seconds: 180,
         image_refs: vec![image_ref],
         image_ref: None,
+    }
+}
+fn test_queue_entry(title: &str, image_ref: ImageRef) -> QueueEntry {
+    QueueEntry {
+        id: QueueEntryId::new(format!("queue:{title}")),
+        track_id: TrackId::fake(1),
+        album_id: None,
+        title: title.to_string(),
+        artist: "Artist".to_string(),
+        artist_id: None,
+        album: "Album".to_string(),
+        year: 2026,
+        duration_seconds: 180,
+        favorite: false,
+        image_ref: Some(image_ref),
+        local_path: None,
+        source_format: None,
+        origin: None,
     }
 }
 pub(in crate::ui) fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Album {

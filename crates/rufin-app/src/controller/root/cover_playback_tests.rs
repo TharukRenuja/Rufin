@@ -329,6 +329,7 @@ pub(in crate::controller) fn cover_emit_unavailable() {
                 panic!("known missing cover unexpectedly became ready");
             }
             ControllerEvent::Snapshot(_)
+            | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }
