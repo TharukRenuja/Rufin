@@ -5,17 +5,40 @@ use std::time::{Duration, Instant};
 const SYNC_PROGRESS_MIN_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
+    start_sync_thread_inner(context, saved, false);
+}
+
+pub(in crate::controller) fn start_sync_thread_with_snapshots(
+    context: SyncContext,
+    saved: SavedServer,
+) {
+    start_sync_thread_inner(context, saved, true);
+}
+
+fn start_sync_thread_inner(context: SyncContext, saved: SavedServer, force_snapshots: bool) {
     let server_id = saved.server.id.clone();
+    let skip_sync_snapshots = !force_snapshots
+        && sync_target_is_current(&context.store, &server_id)
+        && cached_library_exists(&context.store, &server_id);
     let permit = match context.sync_in_flight.acquire(server_id.clone()) {
         Ok(Some(permit)) => permit,
         Ok(None) => {
             let _sent = context.events.send(ControllerEvent::LoginStatus(
                 "Sync already running.".to_string(),
             ));
+            if force_snapshots {
+                emit_snapshot(&context.store, &context.events);
+            }
             return;
         }
         Err(error) => {
-            let _sent = context.events.send(ControllerEvent::Error(error));
+            send_sync_error(
+                &context.store,
+                &context.events,
+                &saved,
+                error,
+                skip_sync_snapshots,
+            );
             return;
         }
     };
@@ -27,21 +50,35 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
     {
         Ok(generation) => generation,
         Err(error) => {
-            let _sent = context.events.send(ControllerEvent::Error(error));
+            send_sync_error(
+                &context.store,
+                &context.events,
+                &saved,
+                error,
+                skip_sync_snapshots,
+            );
             return;
         }
     };
-    emit_snapshot(&context.store, &context.events);
+    if !skip_sync_snapshots {
+        emit_snapshot(&context.store, &context.events);
+    }
 
     thread::spawn(move || {
         let provider_name = provider_display_name(&saved.server.provider);
         let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
             "Syncing {provider_name} library…"
         )));
-        let sync_result = run_sync_job(&context, &saved, generation, prefetch_initial_covers);
+        let sync_result = run_sync_job(
+            &context,
+            &saved,
+            generation,
+            prefetch_initial_covers,
+            skip_sync_snapshots,
+        );
         drop(permit);
         match sync_result {
-            Ok(()) => {
+            Ok(outcome) => {
                 if !sync_target_is_current(&context.store, &server_id) {
                     return;
                 }
@@ -64,18 +101,17 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
                     cover_slots: Arc::clone(&context.cover_slots),
                     saved: saved.clone(),
                 });
-                let _sent = context.events.send(ControllerEvent::LoginStatus(
-                    "Library sync complete".to_string(),
-                ));
-                match load_snapshot(&context.store) {
-                    Ok(snapshot) => {
-                        let _sent = context
-                            .events
-                            .send(ControllerEvent::Snapshot(Box::new(snapshot)));
-                    }
-                    Err(error) => {
-                        let _sent = context.events.send(ControllerEvent::Error(error));
-                    }
+                if skip_sync_snapshots {
+                    send_library_sync_status(
+                        &context.store,
+                        &context.events,
+                        &saved,
+                        "Cached library ready".to_string(),
+                        None,
+                        outcome.delta,
+                    );
+                } else {
+                    emit_sync_complete_snapshot(&context.store, &context.events);
                 }
             }
             Err(error) => {
@@ -86,10 +122,102 @@ pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: Save
                 if !sync_target_is_current(&context.store, &server_id) {
                     return;
                 }
-                let _sent = context.events.send(ControllerEvent::Error(error));
+                send_sync_error(
+                    &context.store,
+                    &context.events,
+                    &saved,
+                    error,
+                    skip_sync_snapshots,
+                );
             }
         }
     });
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::controller) struct SyncJobOutcome {
+    pub(in crate::controller) delta: LibraryDelta,
+}
+impl SyncJobOutcome {
+    fn unchanged() -> Self {
+        Self {
+            delta: LibraryDelta::default(),
+        }
+    }
+
+    fn changed(delta: LibraryDelta) -> Self {
+        Self { delta }
+    }
+}
+
+fn send_library_sync_status(
+    store: &StoreHandle,
+    events: &Sender<ControllerEvent>,
+    saved: &SavedServer,
+    sync_status: String,
+    last_error: Option<String>,
+    delta: LibraryDelta,
+) {
+    let server_id = &saved.server.id;
+    let counts = load_library_counts(store, server_id).unwrap_or_else(|error| {
+        warn!(%error, "failed to load library counts for sync update");
+        LibraryCounts::default()
+    });
+    let home = if delta.home_changed {
+        load_home_update(store, saved)
+            .map(Some)
+            .unwrap_or_else(|error| {
+                warn!(%error, "failed to load home sections for sync update");
+                None
+            })
+    } else {
+        None
+    };
+    let _sent = events.send(ControllerEvent::LibrarySyncStatus(Box::new(
+        LibrarySyncStatus {
+            server_id: server_id.clone(),
+            sync_status,
+            last_error,
+            counts,
+            home,
+            delta,
+        },
+    )));
+}
+
+fn send_sync_error(
+    store: &StoreHandle,
+    events: &Sender<ControllerEvent>,
+    saved: &SavedServer,
+    error: String,
+    status_only: bool,
+) {
+    if status_only {
+        send_library_sync_status(
+            store,
+            events,
+            saved,
+            "Action failed".to_string(),
+            Some(error),
+            LibraryDelta::default(),
+        );
+    } else {
+        let _sent = events.send(ControllerEvent::Error(error));
+    }
+}
+
+fn emit_sync_complete_snapshot(store: &StoreHandle, events: &Sender<ControllerEvent>) {
+    let _sent = events.send(ControllerEvent::LoginStatus(
+        "Library sync complete".to_string(),
+    ));
+    match load_snapshot(store) {
+        Ok(snapshot) => {
+            let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+        }
+        Err(error) => {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+    }
 }
 
 pub(in crate::controller) fn refresh_queue_refs(context: &SyncContext, saved: &SavedServer) {
@@ -382,14 +510,22 @@ pub(in crate::controller) fn run_sync_job(
     saved: &SavedServer,
     generation: i64,
     prefetch_initial_covers: bool,
-) -> Result<(), String> {
+    detect_unchanged: bool,
+) -> Result<SyncJobOutcome, String> {
     let provider = provider_for_saved(&context.store, &context.runtime, &context.secrets, saved)?;
     let progress = SyncProgressReporter::new(
         Some(context.events.clone()),
         saved.server.name.clone(),
         provider_display_name(&saved.server.provider).to_string(),
     );
-    sync_loaded_provider_generation(context, saved, generation, &provider, progress)?;
+    let outcome = sync_loaded_provider_generation(
+        context,
+        saved,
+        generation,
+        &provider,
+        progress,
+        detect_unchanged,
+    )?;
     if prefetch_initial_covers {
         let _sent = context.events.send(ControllerEvent::LoginStatus(
             "Caching library artwork…".to_string(),
@@ -409,7 +545,7 @@ pub(in crate::controller) fn run_sync_job(
             provider: provider.as_music_provider(),
         })?;
     }
-    Ok(())
+    Ok(outcome)
 }
 fn sync_loaded_provider_generation(
     context: &SyncContext,
@@ -417,7 +553,8 @@ fn sync_loaded_provider_generation(
     generation: i64,
     provider: &LoadedProvider,
     progress: SyncProgressReporter,
-) -> Result<(), String> {
+    detect_unchanged: bool,
+) -> Result<SyncJobOutcome, String> {
     match provider {
         LoadedProvider::Local(local) => {
             sync_local_provider_generation(context, &saved.server.id, local, generation, progress)
@@ -428,6 +565,7 @@ fn sync_loaded_provider_generation(
             provider.as_music_provider(),
             generation,
             progress,
+            detect_unchanged,
         )),
     }
 }
@@ -437,7 +575,7 @@ fn sync_local_provider_generation(
     provider: &LocalProvider,
     generation: i64,
     progress: SyncProgressReporter,
-) -> Result<(), String> {
+) -> Result<SyncJobOutcome, String> {
     let scan = provider.manifest_scan();
     info!(
         generation,
@@ -465,7 +603,7 @@ async fn sync_local_provider_store_generation(
     provider: &LocalProvider,
     generation: i64,
     mut progress: SyncProgressReporter,
-) -> Result<(), String> {
+) -> Result<SyncJobOutcome, String> {
     let scan = provider.manifest_scan();
     let snapshot = collect_local_provider_snapshot(provider, &mut progress).await?;
     let aggregate_dirty = local_aggregate_image_dirty(store, server_id, &snapshot)?;
@@ -477,7 +615,7 @@ async fn sync_local_provider_store_generation(
             generation,
             "completed unchanged local sync without library row writes"
         );
-        return Ok(());
+        return Ok(SyncJobOutcome::unchanged());
     }
     info!(
         generation,
@@ -491,6 +629,7 @@ async fn sync_local_provider_store_generation(
     progress.finalizing();
     let finalize_started = Instant::now();
     let delta = local_library_delta(provider.manifest_scan(), snapshot, aggregate_dirty);
+    let sync_delta = local_store_delta(&delta, scan.library_changed);
     let pruned_cover_entries =
         store.with_store(|store| store.commit_local_library_delta(server_id, generation, delta))?;
     prune_successful_sync_image_cache(store, server_id, pruned_cover_entries);
@@ -501,7 +640,53 @@ async fn sync_local_provider_store_generation(
         total_elapsed_ms = progress.total_elapsed().as_millis() as u64,
         "completed manifest-delta local sync"
     );
-    Ok(())
+    Ok(SyncJobOutcome::changed(sync_delta))
+}
+
+fn local_store_delta(local: &LocalLibraryDelta, home_changed: bool) -> LibraryDelta {
+    let mut delta = LibraryDelta::default();
+    delta.tracks.added = local
+        .changed_tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect();
+    delta.tracks.fields = local
+        .metadata_tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect();
+    delta.tracks.cover_refs = local
+        .artwork_tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect();
+    delta.tracks.deleted = local.deleted_track_ids.clone();
+    delta.albums.links = local
+        .dirty_albums
+        .iter()
+        .map(|album| album.id.clone())
+        .collect();
+    delta.albums.cover_refs = delta.albums.links.clone();
+    delta.artists.links = local
+        .dirty_artists
+        .iter()
+        .map(|artist| artist.id.clone())
+        .collect();
+    delta.artists.cover_refs = delta.artists.links.clone();
+    delta.album_artists.links = local
+        .dirty_album_artists
+        .iter()
+        .map(|artist| artist.id.clone())
+        .collect();
+    delta.album_artists.cover_refs = delta.album_artists.links.clone();
+    delta.genres.links = local
+        .dirty_genres
+        .iter()
+        .map(|genre| genre.id.clone())
+        .collect();
+    delta.genres.cover_refs = delta.genres.links.clone();
+    delta.home_changed = home_changed;
+    delta
 }
 #[derive(Clone, Debug, Default)]
 struct LocalProviderSnapshot {
@@ -842,8 +1027,10 @@ pub(in crate::controller) async fn sync_provider(
         provider,
         generation,
         SyncProgressReporter::silent(provider),
+        false,
     )
     .await
+    .map(|_| ())
 }
 #[cfg(test)]
 pub(in crate::controller) async fn sync_provider_with_events(
@@ -859,6 +1046,25 @@ pub(in crate::controller) async fn sync_provider_with_events(
         provider,
         generation,
         SyncProgressReporter::for_provider(provider, Some(events)),
+        false,
+    )
+    .await
+    .map(|_| ())
+}
+#[cfg(test)]
+pub(in crate::controller) async fn sync_provider_outcome(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &(impl MusicProvider + ?Sized),
+) -> Result<SyncJobOutcome, String> {
+    let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    sync_provider_generation(
+        store,
+        server_id,
+        provider,
+        generation,
+        SyncProgressReporter::silent(provider),
+        true,
     )
     .await
 }
@@ -878,6 +1084,7 @@ pub(in crate::controller) async fn sync_local_provider_with_events(
         SyncProgressReporter::for_provider(provider, Some(events)),
     )
     .await
+    .map(|_| ())
 }
 #[instrument(skip(store, provider, progress), fields(server_id = %server_id.as_str(), generation))]
 async fn sync_provider_generation(
@@ -886,40 +1093,75 @@ async fn sync_provider_generation(
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
     mut progress: SyncProgressReporter,
-) -> Result<(), String> {
+    _detect_unchanged: bool,
+) -> Result<SyncJobOutcome, String> {
+    let mut collector = LibraryDeltaCollector::new();
     info!(generation, "started provider cache sync");
-    sync_album_pages(store, server_id, provider, generation, &mut progress).await?;
-    sync_track_pages(store, server_id, provider, generation, &mut progress).await?;
+    sync_album_pages(
+        store,
+        server_id,
+        provider,
+        generation,
+        &mut progress,
+        &mut collector,
+    )
+    .await?;
+    sync_track_pages(
+        store,
+        server_id,
+        provider,
+        generation,
+        &mut progress,
+        &mut collector,
+    )
+    .await?;
     progress.collection_started(SyncCollection::MusicFolders);
-    sync_music_folders(store, server_id, provider, generation).await?;
+    let folders_changed = sync_music_folders(store, server_id, provider, generation).await?;
+    if folders_changed {
+        collector.merge(LibraryDelta {
+            folders_changed: true,
+            ..LibraryDelta::default()
+        });
+    }
     progress.collection_started(SyncCollection::Artists);
-    sync_artist_pages(store, server_id, provider, generation, false).await?;
+    sync_artist_pages(
+        store,
+        server_id,
+        provider,
+        generation,
+        false,
+        &mut collector,
+    )
+    .await?;
     progress.collection_started(SyncCollection::AlbumArtists);
-    sync_artist_pages(store, server_id, provider, generation, true).await?;
+    sync_artist_pages(store, server_id, provider, generation, true, &mut collector).await?;
     progress.collection_started(SyncCollection::Genres);
-    sync_genre_pages(store, server_id, provider, generation).await?;
+    sync_genre_pages(store, server_id, provider, generation, &mut collector).await?;
     progress.collection_started(SyncCollection::Playlists);
-    sync_playlist_pages(store, server_id, provider, generation).await?;
+    sync_playlist_pages(store, server_id, provider, generation, &mut collector).await?;
     progress.collection_started(SyncCollection::HomeSections);
-    sync_home_sections(store, server_id, provider, generation).await?;
+    collector.merge(sync_home_sections(store, server_id, provider, generation).await?);
     progress.finalizing();
     let finalize_started = Instant::now();
     store.with_store(|store| store.refresh_library_counts(server_id))?;
-    let pruned_cover_entries =
-        store.with_store(|store| store.complete_sync(server_id, generation))?;
-    prune_successful_sync_image_cache(store, server_id, pruned_cover_entries);
+    let completion = store.with_store(|store| store.complete_sync_delta(server_id, generation))?;
+    collector.merge(completion.delta);
+    prune_successful_sync_image_cache(store, server_id, completion.pruned_cover_entries);
     let finalize_elapsed = finalize_started.elapsed();
     progress.finished();
     if let Err(error) = refresh_local_track_matches(store, server_id, Some(generation)).await {
         warn!(%error, "failed to refresh local track matches");
     }
+    let delta = collector.finish();
+    let library_changed = !delta.is_empty();
     info!(
         generation,
         finalize_elapsed_ms = finalize_elapsed.as_millis() as u64,
         total_elapsed_ms = progress.total_elapsed().as_millis() as u64,
+        library_changed,
         "completed provider cache sync"
     );
-    Ok(())
+    Ok(SyncJobOutcome::changed(delta))
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::controller) enum SyncCollection {
@@ -1169,6 +1411,7 @@ async fn sync_album_pages(
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
     progress: &mut SyncProgressReporter,
+    collector: &mut LibraryDeltaCollector,
 ) -> Result<(), String> {
     progress.collection_started(SyncCollection::Albums);
     let mut offset = 0;
@@ -1188,7 +1431,11 @@ async fn sync_album_pages(
         .map_err(|error| error.to_string())?;
         let fetch_elapsed = fetch_started.elapsed();
         let write_started = Instant::now();
-        store.with_store(|store| store.upsert_albums(server_id, &page.items, generation))?;
+        collector.merge(
+            store.with_store(|store| {
+                store.upsert_albums_delta(server_id, &page.items, generation)
+            })?,
+        );
         let write_elapsed = write_started.elapsed();
         let item_count = page.items.len();
         offset += item_count;
@@ -1214,6 +1461,7 @@ async fn sync_track_pages(
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
     progress: &mut SyncProgressReporter,
+    collector: &mut LibraryDeltaCollector,
 ) -> Result<(), String> {
     progress.collection_started(SyncCollection::Tracks);
     let mut offset = 0;
@@ -1233,7 +1481,11 @@ async fn sync_track_pages(
         .map_err(|error| error.to_string())?;
         let fetch_elapsed = fetch_started.elapsed();
         let write_started = Instant::now();
-        store.with_store(|store| store.upsert_tracks(server_id, &page.items, generation))?;
+        collector.merge(
+            store.with_store(|store| {
+                store.upsert_tracks_delta(server_id, &page.items, generation)
+            })?,
+        );
         let write_elapsed = write_started.elapsed();
         let item_count = page.items.len();
         offset += item_count;
@@ -1258,14 +1510,16 @@ async fn sync_music_folders(
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if !provider.capabilities().music_folders {
-        return Ok(());
+        return Ok(false);
     }
+    let before = store.with_store(|store| store.list_music_folders(server_id))?;
     let folders = provider
         .music_folders()
         .await
         .map_err(|error| error.to_string())?;
+    let changed = before != folders;
     store.with_store(|store| store.upsert_music_folders(server_id, &folders, generation))?;
     for folder in folders {
         let mut offset = 0;
@@ -1290,7 +1544,7 @@ async fn sync_music_folders(
             }
         }
     }
-    Ok(())
+    Ok(changed)
 }
 pub(in crate::controller) async fn refresh_local_track_matches(
     store: &StoreHandle,
@@ -1531,6 +1785,7 @@ async fn sync_artist_pages(
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
     album_artist: bool,
+    collector: &mut LibraryDeltaCollector,
 ) -> Result<(), String> {
     let mut offset = 0;
     loop {
@@ -1542,9 +1797,9 @@ async fn sync_artist_pages(
             provider.artists(PagedRequest::new(offset, PAGE_SIZE)).await
         }
         .map_err(|error| error.to_string())?;
-        store.with_store(|store| {
-            store.upsert_artists(server_id, &page.items, album_artist, generation)
-        })?;
+        collector.merge(store.with_store(|store| {
+            store.upsert_artists_delta(server_id, &page.items, album_artist, generation)
+        })?);
         let item_count = page.items.len();
         offset += item_count;
         if sync_page_finished(item_count, page.total, offset) {
@@ -1557,6 +1812,7 @@ async fn sync_genre_pages(
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
+    collector: &mut LibraryDeltaCollector,
 ) -> Result<(), String> {
     let mut offset = 0;
     loop {
@@ -1564,7 +1820,11 @@ async fn sync_genre_pages(
             .genres(PagedRequest::new(offset, PAGE_SIZE))
             .await
             .map_err(|error| error.to_string())?;
-        store.with_store(|store| store.upsert_genres(server_id, &page.items, generation))?;
+        collector.merge(
+            store.with_store(|store| {
+                store.upsert_genres_delta(server_id, &page.items, generation)
+            })?,
+        );
         let item_count = page.items.len();
         offset += item_count;
         if sync_page_finished(item_count, page.total, offset) {
@@ -1577,6 +1837,7 @@ async fn sync_playlist_pages(
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
+    collector: &mut LibraryDeltaCollector,
 ) -> Result<(), String> {
     let mut offset = 0;
     loop {
@@ -1584,22 +1845,30 @@ async fn sync_playlist_pages(
             .playlists(PagedRequest::new(offset, PAGE_SIZE))
             .await
             .map_err(|error| error.to_string())?;
-        store.with_store(|store| store.upsert_playlists(server_id, &page.items, generation))?;
+        collector.merge(store.with_store(|store| {
+            store.upsert_playlists_delta(server_id, &page.items, generation)
+        })?);
         for playlist in &page.items {
             let detail = provider
                 .playlist_detail(&playlist.id)
                 .await
                 .map_err(|error| error.to_string())?;
-            store.with_store(|store| {
-                store.upsert_tracks(server_id, &detail.tracks, generation)?;
-                store.upsert_playlist_entries(
-                    server_id,
-                    &detail.playlist.id,
-                    &detail.entries,
-                    generation,
-                )?;
-                Ok(())
-            })?;
+            store
+                .with_store(|store| {
+                    Ok((
+                        store.upsert_tracks_delta(server_id, &detail.tracks, generation)?,
+                        store.upsert_playlist_entries_delta(
+                            server_id,
+                            &detail.playlist.id,
+                            &detail.entries,
+                            generation,
+                        )?,
+                    ))
+                })
+                .map(|(track_delta, entries_delta)| {
+                    collector.merge(track_delta);
+                    collector.merge(entries_delta);
+                })?;
         }
         let item_count = page.items.len();
         offset += item_count;
@@ -1655,12 +1924,12 @@ async fn sync_home_sections(
     server_id: &ServerId,
     provider: &(impl MusicProvider + ?Sized),
     generation: i64,
-) -> Result<(), String> {
+) -> Result<LibraryDelta, String> {
     let sections = provider
         .home_sections()
         .await
         .map_err(|error| error.to_string())?;
-    cache_home_sections(store, server_id, &sections, generation)
+    store.with_store(|store| store.upsert_home_sections_delta(server_id, &sections, generation))
 }
 #[cfg(test)]
 pub(in crate::controller) async fn refresh_home_sections(

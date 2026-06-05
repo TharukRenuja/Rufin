@@ -12,6 +12,7 @@ pub(in crate::controller) fn promote_prefetched_home_section(
     store.with_store(|store| store.clear_home_section_prefetch(server_id, section.kind))?;
     Ok(())
 }
+#[cfg(test)]
 pub(in crate::controller) fn cache_home_sections(
     store: &StoreHandle,
     server_id: &ServerId,
@@ -50,6 +51,7 @@ pub(in crate::controller) fn cache_home_section_items(
     }
     Ok(())
 }
+#[cfg(test)]
 fn source_scoped_home_sections(server_id: &ServerId, sections: &[HomeSection]) -> Vec<HomeSection> {
     sections
         .iter()
@@ -519,6 +521,53 @@ pub(in crate::controller) fn sync_status_text(state: &SyncState) -> String {
         "error" => "Sync needs attention".to_string(),
         _ => "Cached library ready".to_string(),
     }
+}
+pub(in crate::controller) fn cached_library_exists(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> bool {
+    store
+        .with_store(|store| {
+            let albums = store.load_albums(server_id, 0, 1)?.total;
+            let tracks = store.load_tracks(server_id, 0, 1)?.total;
+            Ok(albums.saturating_add(tracks) > 0)
+        })
+        .unwrap_or(false)
+}
+pub(in crate::controller) fn load_library_counts(
+    store: &StoreHandle,
+    server_id: &ServerId,
+) -> Result<LibraryCounts, String> {
+    store.with_store(|store| {
+        Ok(LibraryCounts {
+            albums: store.load_albums(server_id, 0, 0)?.total,
+            tracks: store.load_tracks(server_id, 0, 0)?.total,
+            artists: store.load_artists(server_id, false, 0, 0)?.total,
+            album_artists: store.load_artists(server_id, true, 0, 0)?.total,
+            genres: store.load_genres(server_id, 0, 0)?.total,
+            playlists: store.load_playlists(server_id, 0, 0)?.total,
+        })
+    })
+}
+pub(in crate::controller) fn load_home_update(
+    store: &StoreHandle,
+    saved: &SavedServer,
+) -> Result<LibraryHomeUpdate, String> {
+    store.with_store(|store| store.ensure_collection_cover_refs(&saved.server.id))?;
+    let mut sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
+    let mut prefetched_explore = store.with_store(|store| {
+        store.load_home_section_prefetch(&saved.server.id, HomeSectionKind::Explore)
+    })?;
+    for section in &mut sections {
+        home_image_refs(store, saved, section)?;
+    }
+    if let Some(section) = &mut prefetched_explore {
+        home_image_refs(store, saved, section)?;
+    }
+    Ok(LibraryHomeUpdate {
+        sections,
+        prefetched_explore,
+    })
 }
 #[cfg(any(test, feature = "dev-tools"))]
 pub(in crate::controller) fn seed_fake_cache(

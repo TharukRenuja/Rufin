@@ -53,7 +53,7 @@ mod tray;
 
 use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, FULL_LOADED_LIMIT, LibrarySnapshot,
-    LoadedCompleteness, LyricsSearchResult, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
+    LibrarySyncStatus, LoadedCompleteness, LyricsSearchResult, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
     MATERIALIZED_WINDOW_LIMIT, PlayAction, PlayActivation, PlayAnchor, PlaySourceItem, PlayTarget,
     PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
 };
@@ -109,7 +109,7 @@ use rufin_core::{
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
-use rufin_store::{CachedGenreDetail, image_cache_key};
+use rufin_store::{CachedGenreDetail, LibraryDelta, image_cache_key};
 #[cfg(feature = "dev-tools")]
 use rufin_test_support::FakeScale;
 use source_selector::{ServerSelector, build_server_selector};
@@ -269,6 +269,7 @@ pub(in crate::ui) struct AppState {
     smart_playlists: RefCell<Vec<SmartPlaylist>>,
     playlist_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
+    open_routes: RefCell<HashMap<String, OpenRouteState>>,
     startup_route_revealed: Cell<bool>,
     startup_route_render_pending: Cell<bool>,
     source_switch_preparing: Cell<bool>,
@@ -305,6 +306,11 @@ pub(in crate::ui) struct AppState {
     folder_request_generation: Cell<u64>,
     folder_state: RefCell<FolderRouteState>,
 }
+#[derive(Clone, Debug)]
+pub(in crate::ui) struct OpenRouteState {
+    scroll: Option<f64>,
+}
+
 #[derive(Clone)]
 pub(in crate::ui) struct LyricsSearchDialog {
     dialog: adw::Dialog,
@@ -500,6 +506,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         smart_playlists: RefCell::new(Vec::new()),
         playlist_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
+        open_routes: RefCell::new(HashMap::new()),
         startup_route_revealed: Cell::new(!defer_initial_route),
         startup_route_render_pending: Cell::new(false),
         source_switch_preparing: Cell::new(false),

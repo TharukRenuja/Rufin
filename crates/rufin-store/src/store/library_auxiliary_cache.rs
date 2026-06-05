@@ -231,6 +231,51 @@ impl Store {
             Ok(())
         })
     }
+
+    pub fn upsert_playlist_entries_delta(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+        entries: &[PlaylistEntry],
+        generation: i64,
+    ) -> StoreResult<LibraryDelta> {
+        let before = self.playlist_entry_keys(server_id, playlist_id)?;
+        self.upsert_playlist_entries(server_id, playlist_id, entries, generation)?;
+        let after = self.playlist_entry_keys(server_id, playlist_id)?;
+        let changed = before != after;
+        Ok(LibraryDelta {
+            playlists: PlaylistDelta {
+                entries: changed.then(|| playlist_id.clone()).into_iter().collect(),
+                cover_refs: changed.then(|| playlist_id.clone()).into_iter().collect(),
+                ..PlaylistDelta::default()
+            },
+            ..LibraryDelta::default()
+        })
+    }
+
+    fn playlist_entry_keys(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+    ) -> StoreResult<Vec<(String, TrackId)>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT entry_id, track_id
+            FROM playlist_tracks
+            WHERE server_id = ?1 AND playlist_id = ?2
+            ORDER BY position
+            ",
+        )?;
+        collect_rows(statement.query_map(
+            params![server_id.as_str(), playlist_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    TrackId::new(row.get::<_, String>(1)?),
+                ))
+            },
+        )?)
+    }
     pub fn load_playlist_detail(
         &self,
         server_id: &ServerId,

@@ -1,7 +1,239 @@
 use super::servers::*;
 use super::*;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncCompleteDelta {
+    pub pruned_cover_entries: Vec<CoverCacheEntry>,
+    pub delta: LibraryDelta,
+}
+
 impl Store {
+    pub fn complete_sync_delta(
+        &self,
+        server_id: &ServerId,
+        generation: i64,
+    ) -> StoreResult<SyncCompleteDelta> {
+        let deleted = self.stale_library_ids(server_id, generation)?;
+        let pruned_cover_entries = self.complete_sync(server_id, generation)?;
+        Ok(SyncCompleteDelta {
+            pruned_cover_entries,
+            delta: deleted,
+        })
+    }
+
+    pub fn upsert_albums_delta(
+        &self,
+        server_id: &ServerId,
+        albums: &[Album],
+        generation: i64,
+    ) -> StoreResult<LibraryDelta> {
+        let mut delta = LibraryDelta::default();
+        for album in albums {
+            match self.load_album_for_delta(server_id, &album.id)? {
+                Some(existing) if existing == *album => {}
+                Some(existing) => {
+                    if album_stats_changed(&existing, album) {
+                        delta.albums.stats.push(album.id.clone());
+                    }
+                    if album_links_changed(&existing, album) {
+                        delta.albums.links.push(album.id.clone());
+                    }
+                    if existing.image_ref != album.image_ref {
+                        delta.albums.cover_refs.push(album.id.clone());
+                    }
+                    if album_fields_changed(&existing, album) {
+                        delta.albums.fields.push(album.id.clone());
+                    }
+                }
+                None => delta.albums.added.push(album.id.clone()),
+            }
+        }
+        self.upsert_albums(server_id, albums, generation)?;
+        Ok(delta)
+    }
+
+    pub fn upsert_tracks_delta(
+        &self,
+        server_id: &ServerId,
+        tracks: &[Track],
+        generation: i64,
+    ) -> StoreResult<LibraryDelta> {
+        let mut delta = LibraryDelta::default();
+        for track in tracks {
+            match self.load_track_for_delta(server_id, &track.id)? {
+                Some(existing) => {
+                    if !track_changed(&existing, track) {
+                        continue;
+                    }
+                    if existing.favorite != track.favorite {
+                        delta.tracks.favorite.push(track.id.clone());
+                    }
+                    if existing.image_ref != track.image_ref {
+                        delta.tracks.cover_refs.push(track.id.clone());
+                    }
+                    if track_fields_changed(&existing, track) {
+                        delta.tracks.fields.push(track.id.clone());
+                    }
+                    if existing.album_id != track.album_id {
+                        delta.albums.links.push(existing.album_id.clone());
+                        delta.albums.links.push(track.album_id.clone());
+                    }
+                    if track_artist_links_changed(&existing, track) {
+                        if let Some(artist_id) = existing.artist_id.clone() {
+                            delta.artists.links.push(artist_id);
+                        }
+                        if let Some(artist_id) = track.artist_id.clone() {
+                            delta.artists.links.push(artist_id);
+                        }
+                    }
+                    if existing.genres != track.genres {
+                        delta.genres.links.extend(
+                            existing
+                                .genres
+                                .iter()
+                                .chain(track.genres.iter())
+                                .map(|name| GenreId::new(name.clone())),
+                        );
+                    }
+                }
+                None => {
+                    delta.tracks.added.push(track.id.clone());
+                    delta.albums.links.push(track.album_id.clone());
+                    if let Some(artist_id) = track.artist_id.clone() {
+                        delta.artists.links.push(artist_id);
+                    }
+                    delta
+                        .genres
+                        .links
+                        .extend(track.genres.iter().map(|name| GenreId::new(name.clone())));
+                }
+            }
+        }
+        self.upsert_tracks(server_id, tracks, generation)?;
+        Ok(delta)
+    }
+
+    pub fn upsert_artists_delta(
+        &self,
+        server_id: &ServerId,
+        artists: &[Artist],
+        album_artist: bool,
+        generation: i64,
+    ) -> StoreResult<LibraryDelta> {
+        let mut delta = LibraryDelta::default();
+        for artist in artists {
+            match self.load_artist_for_delta(server_id, &artist.id, album_artist)? {
+                Some(existing) if existing == *artist => {}
+                Some(existing) => {
+                    let entity = if album_artist {
+                        &mut delta.album_artists
+                    } else {
+                        &mut delta.artists
+                    };
+                    if existing.album_count != artist.album_count
+                        || existing.track_count != artist.track_count
+                    {
+                        entity.stats.push(artist.id.clone());
+                    }
+                    if existing.image_ref != artist.image_ref {
+                        entity.cover_refs.push(artist.id.clone());
+                    }
+                    if existing != *artist {
+                        entity.fields.push(artist.id.clone());
+                    }
+                }
+                None => {
+                    if album_artist {
+                        delta.album_artists.added.push(artist.id.clone());
+                    } else {
+                        delta.artists.added.push(artist.id.clone());
+                    }
+                }
+            }
+        }
+        self.upsert_artists(server_id, artists, album_artist, generation)?;
+        Ok(delta)
+    }
+
+    pub fn upsert_genres_delta(
+        &self,
+        server_id: &ServerId,
+        genres: &[Genre],
+        generation: i64,
+    ) -> StoreResult<LibraryDelta> {
+        let mut delta = LibraryDelta::default();
+        for genre in genres {
+            match self.load_genre_for_delta(server_id, &genre.id)? {
+                Some(existing) if existing == *genre => {}
+                Some(existing) => {
+                    if existing.album_count != genre.album_count
+                        || existing.track_count != genre.track_count
+                    {
+                        delta.genres.stats.push(genre.id.clone());
+                    }
+                    if existing.image_ref != genre.image_ref
+                        || existing.image_refs != genre.image_refs
+                    {
+                        delta.genres.cover_refs.push(genre.id.clone());
+                    }
+                    if existing != *genre {
+                        delta.genres.fields.push(genre.id.clone());
+                    }
+                }
+                None => delta.genres.added.push(genre.id.clone()),
+            }
+        }
+        self.upsert_genres(server_id, genres, generation)?;
+        Ok(delta)
+    }
+
+    pub fn upsert_playlists_delta(
+        &self,
+        server_id: &ServerId,
+        playlists: &[Playlist],
+        generation: i64,
+    ) -> StoreResult<LibraryDelta> {
+        let mut delta = LibraryDelta::default();
+        for playlist in playlists {
+            match self.load_playlist_for_delta(server_id, &playlist.id)? {
+                Some(existing) if existing == *playlist => {}
+                Some(existing) => {
+                    if existing.track_count != playlist.track_count
+                        || existing.duration_seconds != playlist.duration_seconds
+                    {
+                        delta.playlists.entries.push(playlist.id.clone());
+                    }
+                    if existing.image_ref != playlist.image_ref
+                        || existing.image_refs != playlist.image_refs
+                    {
+                        delta.playlists.cover_refs.push(playlist.id.clone());
+                    }
+                    if existing.name != playlist.name {
+                        delta.playlists.fields.push(playlist.id.clone());
+                    }
+                }
+                None => delta.playlists.added.push(playlist.id.clone()),
+            }
+        }
+        self.upsert_playlists(server_id, playlists, generation)?;
+        Ok(delta)
+    }
+
+    pub fn upsert_home_sections_delta(
+        &self,
+        server_id: &ServerId,
+        sections: &[HomeSection],
+        generation: i64,
+    ) -> StoreResult<LibraryDelta> {
+        let before = self.load_home_sections(server_id)?;
+        self.upsert_home_sections(server_id, sections, generation)?;
+        let after = self.load_home_sections(server_id)?;
+        Ok(LibraryDelta {
+            home_changed: home_keys(&before) != home_keys(&after),
+            ..LibraryDelta::default()
+        })
+    }
+
     pub fn complete_sync(
         &self,
         server_id: &ServerId,
@@ -879,6 +1111,270 @@ impl Store {
         }
         Ok(())
     }
+}
+
+impl Store {
+    fn load_album_for_delta(
+        &self,
+        server_id: &ServerId,
+        album_id: &AlbumId,
+    ) -> StoreResult<Option<Album>> {
+        let mut album = self
+            .connection
+            .query_row(
+                "
+                SELECT album_id, title, artist, artist_id, year, release_date, date_added,
+                       last_played, play_count, user_rating, track_count, duration_seconds,
+                       favorite, color_seed, image_item_id, image_tag
+                FROM albums
+                WHERE server_id = ?1 AND album_id = ?2
+                ",
+                params![server_id.as_str(), album_id.as_str()],
+                album_from_row,
+            )
+            .optional()?;
+        if let Some(album) = album.as_mut() {
+            self.attach_album_genres(server_id, std::slice::from_mut(album))?;
+            let credits = self.load_artist_links(
+                server_id,
+                "album_artist_links",
+                "album_id",
+                &[album.id.as_str().to_string()],
+            )?;
+            album.album_artist_credits =
+                credits.get(album.id.as_str()).cloned().unwrap_or_default();
+        }
+        Ok(album)
+    }
+
+    fn load_artist_for_delta(
+        &self,
+        server_id: &ServerId,
+        artist_id: &ArtistId,
+        album_artist: bool,
+    ) -> StoreResult<Option<Artist>> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let sql = format!(
+            "
+            SELECT artist_id, name, album_count, track_count, favorite,
+                   last_played, play_count, user_rating, image_item_id, image_tag
+            FROM {table}
+            WHERE server_id = ?1 AND artist_id = ?2
+            "
+        );
+        self.connection
+            .query_row(
+                &sql,
+                params![server_id.as_str(), artist_id.as_str()],
+                artist_from_row,
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
+    fn load_track_for_delta(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<Track>> {
+        let mut track = self
+            .connection
+            .query_row(
+                "
+                SELECT track_id, album_id, title, artist, artist_id, album, year,
+                       release_date, date_added, last_played, play_count, user_rating,
+                       duration_seconds, favorite, disc_number, track_number,
+                       image_item_id, image_tag, local_path, source_format, comment, skip_count
+                FROM tracks
+                WHERE server_id = ?1 AND track_id = ?2
+                ",
+                params![server_id.as_str(), track_id.as_str()],
+                track_from_row,
+            )
+            .optional()?;
+        if let Some(track) = track.as_mut() {
+            self.attach_track_metadata(server_id, std::slice::from_mut(track))?;
+        }
+        Ok(track)
+    }
+
+    fn load_genre_for_delta(
+        &self,
+        server_id: &ServerId,
+        genre_id: &GenreId,
+    ) -> StoreResult<Option<Genre>> {
+        let genre = self
+            .connection
+            .query_row(
+                "
+                SELECT genre_id, name, album_count, track_count, image_item_id, image_tag
+                FROM genres
+                WHERE server_id = ?1 AND genre_id = ?2
+                ",
+                params![server_id.as_str(), genre_id.as_str()],
+                genre_from_row,
+            )
+            .optional()?;
+        Ok(genre)
+    }
+
+    fn load_playlist_for_delta(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+    ) -> StoreResult<Option<Playlist>> {
+        let playlist = self
+            .connection
+            .query_row(
+                "
+                SELECT playlist_id, name, track_count, duration_seconds, image_item_id, image_tag
+                FROM playlists
+                WHERE server_id = ?1 AND playlist_id = ?2
+                ",
+                params![server_id.as_str(), playlist_id.as_str()],
+                playlist_from_row,
+            )
+            .optional()?;
+        Ok(playlist)
+    }
+
+    fn stale_library_ids(
+        &self,
+        server_id: &ServerId,
+        generation: i64,
+    ) -> StoreResult<LibraryDelta> {
+        let mut delta = LibraryDelta::default();
+        delta.tracks.deleted =
+            self.stale_ids(server_id, "tracks", "track_id", generation, TrackId::new)?;
+        delta.albums.deleted =
+            self.stale_ids(server_id, "albums", "album_id", generation, AlbumId::new)?;
+        delta.artists.deleted =
+            self.stale_ids(server_id, "artists", "artist_id", generation, ArtistId::new)?;
+        delta.album_artists.deleted = self.stale_ids(
+            server_id,
+            "album_artists",
+            "artist_id",
+            generation,
+            ArtistId::new,
+        )?;
+        delta.genres.deleted =
+            self.stale_ids(server_id, "genres", "genre_id", generation, GenreId::new)?;
+        delta.playlists.deleted = self.stale_ids(
+            server_id,
+            "playlists",
+            "playlist_id",
+            generation,
+            PlaylistId::new,
+        )?;
+        Ok(delta)
+    }
+
+    fn stale_ids<Id>(
+        &self,
+        server_id: &ServerId,
+        table: &str,
+        column: &str,
+        generation: i64,
+        id: impl Fn(String) -> Id,
+    ) -> StoreResult<Vec<Id>> {
+        let sql = format!(
+            "
+            SELECT {column}
+            FROM {table}
+            WHERE server_id = ?1 AND sync_generation < ?2
+            ORDER BY {column}
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        collect_rows(
+            statement.query_map(params![server_id.as_str(), generation], |row| {
+                row.get::<_, String>(0).map(&id)
+            })?,
+        )
+    }
+}
+
+fn album_stats_changed(left: &Album, right: &Album) -> bool {
+    let provider_counts_changed = (right.track_count > left.track_count
+        && left.track_count != right.track_count)
+        || (right.duration_seconds > left.duration_seconds
+            && left.duration_seconds != right.duration_seconds);
+    provider_counts_changed
+        || left.play_count != right.play_count
+        || left.last_played != right.last_played
+        || left.user_rating != right.user_rating
+}
+
+fn album_links_changed(left: &Album, right: &Album) -> bool {
+    left.artist_id != right.artist_id
+        || left.album_artist_credits != right.album_artist_credits
+        || left.artist_credits != right.artist_credits
+        || left.genres != right.genres
+}
+
+fn album_fields_changed(left: &Album, right: &Album) -> bool {
+    left.title != right.title
+        || left.artist != right.artist
+        || left.year != right.year
+        || left.release_date != right.release_date
+        || left.date_added != right.date_added
+        || left.favorite != right.favorite
+        || left.color_seed != right.color_seed
+}
+
+fn track_changed(left: &Track, right: &Track) -> bool {
+    track_fields_changed(left, right)
+        || left.album_id != right.album_id
+        || track_artist_links_changed(left, right)
+        || left.genres != right.genres
+        || left.favorite != right.favorite
+        || left.image_ref != right.image_ref
+}
+
+fn track_fields_changed(left: &Track, right: &Track) -> bool {
+    left.title != right.title
+        || left.artist != right.artist
+        || left.album != right.album
+        || left.year != right.year
+        || left.release_date != right.release_date
+        || left.date_added != right.date_added
+        || left.last_played != right.last_played
+        || left.play_count != right.play_count
+        || left.user_rating != right.user_rating
+        || left.duration_seconds != right.duration_seconds
+        || left.disc_number != right.disc_number
+        || left.track_number != right.track_number
+        || left.local_path != right.local_path
+        || left.source_format != right.source_format
+        || left.comment != right.comment
+        || left.skip_count != right.skip_count
+}
+
+fn track_artist_links_changed(left: &Track, right: &Track) -> bool {
+    left.artist_id != right.artist_id
+        || (!right.artist_credits.is_empty() && left.artist_credits != right.artist_credits)
+}
+
+fn home_keys(sections: &[HomeSection]) -> Vec<(HomeSectionKind, &'static str, String)> {
+    sections
+        .iter()
+        .flat_map(|section| {
+            section
+                .albums
+                .iter()
+                .map(|album| (section.kind, "album", album.id.as_str().to_string()))
+                .chain(
+                    section
+                        .tracks
+                        .iter()
+                        .map(|track| (section.kind, "track", track.id.as_str().to_string())),
+                )
+        })
+        .collect()
 }
 
 fn refresh_genre_counts_on_connection(

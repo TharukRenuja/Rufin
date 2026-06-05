@@ -16,6 +16,7 @@ impl Shell {
         self.state.cover_warm_started.borrow_mut().take();
         self.state.route_tracks.borrow_mut().clear();
         self.state.smart_playlists.borrow_mut().clear();
+        self.state.open_routes.borrow_mut().clear();
         self.cancel_cover_warm();
     }
 
@@ -28,6 +29,7 @@ impl Shell {
     pub(in crate::ui) fn prepare_home_route(self: &Rc<Self>) {
         self.reset_cover_pipeline();
         let previous = self.state.routes.borrow().current().clone();
+        self.save_current_route_state();
         self.state.routes.borrow_mut().navigate(Route::Home);
         self.handle_home_route_transition(&previous, &Route::Home);
     }
@@ -35,6 +37,7 @@ impl Shell {
     pub(in crate::ui) fn navigate(self: &Rc<Self>, route: Route) {
         debug!(?route, "navigate");
         let previous = self.state.routes.borrow().current().clone();
+        self.save_current_route_state();
         self.refresh_search_results_for_route(&route);
         self.state.routes.borrow_mut().navigate(route.clone());
         self.handle_home_route_transition(&previous, &route);
@@ -48,6 +51,7 @@ impl Shell {
     }
     pub(in crate::ui) fn go_back(self: &Rc<Self>) {
         let previous = self.state.routes.borrow().current().clone();
+        self.save_current_route_state();
         let route = self.state.routes.borrow_mut().back().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate back");
@@ -64,6 +68,7 @@ impl Shell {
     }
     pub(in crate::ui) fn go_forward(self: &Rc<Self>) {
         let previous = self.state.routes.borrow().current().clone();
+        self.save_current_route_state();
         let route = self.state.routes.borrow_mut().forward().cloned();
         if let Some(route) = route {
             debug!(?route, "navigate forward");

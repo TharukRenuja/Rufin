@@ -1,6 +1,7 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
+    hash::Hash,
     path::{Path, PathBuf},
 };
 
@@ -74,6 +75,188 @@ pub struct CoverCacheEntry {
     pub image_tag: String,
     pub size: u32,
     pub path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EntityDelta<Id> {
+    pub added: Vec<Id>,
+    pub deleted: Vec<Id>,
+    pub fields: Vec<Id>,
+    pub stats: Vec<Id>,
+    pub links: Vec<Id>,
+    pub cover_refs: Vec<Id>,
+}
+
+impl<Id> Default for EntityDelta<Id> {
+    fn default() -> Self {
+        Self {
+            added: Vec::new(),
+            deleted: Vec::new(),
+            fields: Vec::new(),
+            stats: Vec::new(),
+            links: Vec::new(),
+            cover_refs: Vec::new(),
+        }
+    }
+}
+
+impl<Id> EntityDelta<Id>
+where
+    Id: Clone + Eq + Hash,
+{
+    fn merge(&mut self, other: Self) {
+        merge_ids(&mut self.added, other.added);
+        merge_ids(&mut self.deleted, other.deleted);
+        merge_ids(&mut self.fields, other.fields);
+        merge_ids(&mut self.stats, other.stats);
+        merge_ids(&mut self.links, other.links);
+        merge_ids(&mut self.cover_refs, other.cover_refs);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty()
+            && self.deleted.is_empty()
+            && self.fields.is_empty()
+            && self.stats.is_empty()
+            && self.links.is_empty()
+            && self.cover_refs.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrackDelta {
+    pub added: Vec<TrackId>,
+    pub deleted: Vec<TrackId>,
+    pub fields: Vec<TrackId>,
+    pub favorite: Vec<TrackId>,
+    pub cover_refs: Vec<TrackId>,
+}
+
+impl TrackDelta {
+    fn merge(&mut self, other: Self) {
+        merge_ids(&mut self.added, other.added);
+        merge_ids(&mut self.deleted, other.deleted);
+        merge_ids(&mut self.fields, other.fields);
+        merge_ids(&mut self.favorite, other.favorite);
+        merge_ids(&mut self.cover_refs, other.cover_refs);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty()
+            && self.deleted.is_empty()
+            && self.fields.is_empty()
+            && self.favorite.is_empty()
+            && self.cover_refs.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PlaylistDelta {
+    pub added: Vec<PlaylistId>,
+    pub deleted: Vec<PlaylistId>,
+    pub fields: Vec<PlaylistId>,
+    pub entries: Vec<PlaylistId>,
+    pub cover_refs: Vec<PlaylistId>,
+}
+
+impl PlaylistDelta {
+    fn merge(&mut self, other: Self) {
+        merge_ids(&mut self.added, other.added);
+        merge_ids(&mut self.deleted, other.deleted);
+        merge_ids(&mut self.fields, other.fields);
+        merge_ids(&mut self.entries, other.entries);
+        merge_ids(&mut self.cover_refs, other.cover_refs);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty()
+            && self.deleted.is_empty()
+            && self.fields.is_empty()
+            && self.entries.is_empty()
+            && self.cover_refs.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LibraryReset {
+    Source,
+    Scope,
+    Schema,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LibraryDelta {
+    pub tracks: TrackDelta,
+    pub albums: EntityDelta<AlbumId>,
+    pub artists: EntityDelta<ArtistId>,
+    pub album_artists: EntityDelta<ArtistId>,
+    pub genres: EntityDelta<GenreId>,
+    pub playlists: PlaylistDelta,
+    pub home_changed: bool,
+    pub folders_changed: bool,
+    pub local_matches_changed: bool,
+    pub reset: Option<LibraryReset>,
+}
+
+impl LibraryDelta {
+    pub fn is_empty(&self) -> bool {
+        self.tracks.is_empty()
+            && self.albums.is_empty()
+            && self.artists.is_empty()
+            && self.album_artists.is_empty()
+            && self.genres.is_empty()
+            && self.playlists.is_empty()
+            && !self.home_changed
+            && !self.folders_changed
+            && !self.local_matches_changed
+            && self.reset.is_none()
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        self.tracks.merge(other.tracks);
+        self.albums.merge(other.albums);
+        self.artists.merge(other.artists);
+        self.album_artists.merge(other.album_artists);
+        self.genres.merge(other.genres);
+        self.playlists.merge(other.playlists);
+        self.home_changed |= other.home_changed;
+        self.folders_changed |= other.folders_changed;
+        self.local_matches_changed |= other.local_matches_changed;
+        if self.reset.is_none() {
+            self.reset = other.reset;
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LibraryDeltaCollector {
+    delta: LibraryDelta,
+}
+
+impl LibraryDeltaCollector {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn merge(&mut self, delta: LibraryDelta) {
+        self.delta.merge(delta);
+    }
+
+    pub fn finish(self) -> LibraryDelta {
+        self.delta
+    }
+}
+
+fn merge_ids<Id>(target: &mut Vec<Id>, incoming: Vec<Id>)
+where
+    Id: Clone + Eq + Hash,
+{
+    let mut seen = target.iter().cloned().collect::<HashSet<_>>();
+    for id in incoming {
+        if seen.insert(id.clone()) {
+            target.push(id);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

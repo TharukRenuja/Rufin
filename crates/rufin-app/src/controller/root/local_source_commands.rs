@@ -99,7 +99,7 @@ impl AppController {
             }
             emit_snapshot(&store, &events);
             if select_local {
-                start_sync_thread(sync_context, saved);
+                start_sync_thread_with_snapshots(sync_context, saved);
             }
         });
     }
@@ -223,7 +223,11 @@ impl AppController {
                 }
             }
             if !no_local_folders {
-                start_sync_thread(sync_context, saved);
+                if selected_local {
+                    start_sync_thread_with_snapshots(sync_context, saved);
+                } else {
+                    start_sync_thread(sync_context, saved);
+                }
             }
         });
     }
