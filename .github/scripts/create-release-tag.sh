@@ -476,7 +476,7 @@ merge_release_pr_after_checks() {
     exit 1
   fi
 
-  bash .github/scripts/watch-pr-checks.sh \
+  bash .local/scripts/watch-pr-checks.sh \
     --repo "$repo_slug" \
     "$pr_number" \
     "$phase"
@@ -519,7 +519,7 @@ open_flathub_pr() {
   fi
 
   printf '\nOpening Flathub pull request for %s...\n' "$version"
-  bash .github/scripts/open-flathub-pr.sh "$version"
+  bash .local/scripts/open-flathub-pr.sh "$version"
 }
 
 release_run_id_for_workflow() {
