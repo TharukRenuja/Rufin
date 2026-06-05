@@ -724,7 +724,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     #[cfg(not(unix))]
     shell.window.present();
     if !using_fake_library {
-        shell.controller.import_legacy_active_token_after_startup();
+        shell.controller.import_legacy_tokens_after_startup();
     }
     if defer_initial_route {
         shell.schedule_startup_route_reveal();

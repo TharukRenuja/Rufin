@@ -106,8 +106,8 @@ impl AppController {
             settings.auto_dj_enabled,
             &settings.playback,
         );
-        let secrets = platform_token_store();
-        let scrobbling_secrets = platform_secret_store();
+        let secrets = platform_config_secret_store();
+        let scrobbling_secrets = Arc::clone(&secrets);
         let controller = Self {
             settings: super::settings_controller::SettingsController::new(
                 store.clone(),
