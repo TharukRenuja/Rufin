@@ -98,6 +98,20 @@ fn route_load_fully() {
         }
     }
 }
+
+#[test]
+fn route_load_fully_for_fallback_layouts() {
+    let settings = LibraryListSettings {
+        layout: LibraryLayout::Detail,
+        ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+    };
+
+    assert!(super::library_layout_loads_complete_page(
+        LibraryListKey::Tracks,
+        &settings
+    ));
+}
+
 #[test]
 fn route_warm_overscan() {
     let ranges =

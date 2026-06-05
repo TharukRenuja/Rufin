@@ -1155,6 +1155,80 @@ impl Store {
         }
         Ok(())
     }
+    pub fn load_genre_fallback_albums(
+        &self,
+        server_id: &ServerId,
+        genres: &[Genre],
+    ) -> StoreResult<HashMap<GenreId, Album>> {
+        let mut fallback_by_genre = HashMap::<GenreId, Album>::new();
+        if genres.is_empty() {
+            return Ok(fallback_by_genre);
+        }
+
+        for chunk in genres.chunks(250) {
+            let values_placeholders = std::iter::repeat_n("(?, ?)", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "
+                WITH wanted(genre_id, genre_name) AS (VALUES {values_placeholders}),
+                     candidates AS (
+                        SELECT w.genre_id AS fallback_genre_id, a.album_id, a.title, a.artist,
+                               a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
+                               a.play_count, a.user_rating, a.track_count, a.duration_seconds,
+                               a.favorite, a.color_seed, a.image_item_id, a.image_tag,
+                               0 AS priority
+                        FROM wanted w
+                        JOIN album_genres ag
+                            ON ag.genre_name = w.genre_name
+                        JOIN albums a
+                            ON a.server_id = ag.server_id AND a.album_id = ag.album_id
+                        WHERE ag.server_id = ?
+                        UNION ALL
+                        SELECT w.genre_id AS fallback_genre_id, a.album_id, a.title, a.artist,
+                               a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
+                               a.play_count, a.user_rating, a.track_count, a.duration_seconds,
+                               a.favorite, a.color_seed, a.image_item_id, a.image_tag,
+                               1 AS priority
+                        FROM wanted w
+                        JOIN track_genres tg
+                            ON tg.genre_name = w.genre_name
+                        JOIN tracks t
+                            ON t.server_id = tg.server_id AND t.track_id = tg.track_id
+                        JOIN albums a
+                            ON a.server_id = t.server_id AND a.album_id = t.album_id
+                        WHERE tg.server_id = ?
+                     )
+                SELECT album_id, title, artist, artist_id, year, release_date, date_added,
+                       last_played, play_count, user_rating, track_count, duration_seconds,
+                       favorite, color_seed, image_item_id, image_tag, fallback_genre_id
+                FROM candidates
+                ORDER BY fallback_genre_id, priority, year, title COLLATE NOCASE
+                "
+            );
+            let mut values = Vec::with_capacity(chunk.len().saturating_mul(2).saturating_add(2));
+            for genre in chunk {
+                values.push(Value::Text(genre.id.as_str().to_string()));
+                values.push(Value::Text(genre.name.clone()));
+            }
+            values.push(Value::Text(server_id.as_str().to_string()));
+            values.push(Value::Text(server_id.as_str().to_string()));
+
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                Ok((
+                    GenreId::new(row.get::<_, String>(16)?),
+                    album_from_row(row)?,
+                ))
+            })?;
+            for row in rows {
+                let (genre_id, album) = row?;
+                fallback_by_genre.entry(genre_id).or_insert(album);
+            }
+        }
+
+        Ok(fallback_by_genre)
+    }
     pub(super) fn attach_playlist_cover_image_refs(
         &self,
         server_id: &ServerId,
@@ -1472,7 +1546,7 @@ fn genre_cover_refs(
           AND ag.genre_name = ?2
           AND a.image_item_id IS NOT NULL
         ORDER BY a.title COLLATE NOCASE
-        LIMIT 4
+        LIMIT 16
         ",
     )?;
     let album_refs = collect_rows(
@@ -1480,10 +1554,7 @@ fn genre_cover_refs(
             collection_cover_ref_from_row(row, 0, 1)
         })?,
     )?;
-    image_refs.extend(album_refs.into_iter().take(4));
-    if image_refs.len() >= 4 {
-        return Ok(image_refs);
-    }
+    image_refs.extend(album_refs);
 
     let mut track_statement = connection.prepare(
         "
@@ -1505,14 +1576,11 @@ fn genre_cover_refs(
         LIMIT ?3
         ",
     )?;
-    let track_refs = collect_rows(track_statement.query_map(
-        params![
-            server_id.as_str(),
-            genre_name,
-            (4usize.saturating_sub(image_refs.len())) as i64,
-        ],
-        |row| collection_cover_ref_from_row(row, 0, 1),
-    )?)?;
+    let track_refs = collect_rows(
+        track_statement.query_map(params![server_id.as_str(), genre_name, 16_i64,], |row| {
+            collection_cover_ref_from_row(row, 0, 1)
+        })?,
+    )?;
     image_refs.extend(track_refs);
     if image_refs.is_empty()
         && let Some(image_ref) =
@@ -1559,7 +1627,7 @@ pub(super) fn refresh_playlist_refs(
           AND pt.playlist_id = ?2
           AND COALESCE(t.image_item_id, a.image_item_id) IS NOT NULL
         ORDER BY pt.position
-        LIMIT 4
+        LIMIT 16
         ",
     )?;
     let image_refs = collect_rows(

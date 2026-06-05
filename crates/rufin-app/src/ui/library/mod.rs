@@ -9,9 +9,10 @@ use super::{
     install_dynamic_album_context_menu, install_dynamic_track_context_menu,
     install_playlist_context_menu, install_smart_playlist_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
-    loaded_tracks_window_play_activation, replace_albums_in_model, replace_artists_in_model,
-    replace_genres_in_model, replace_playlists_in_model, selected_music_folder_id,
-    set_favorite_button_active, stable_seed, text_button, track_collection_play_context,
+    loaded_tracks_window_play_activation, mark_route_scroll_owner, replace_albums_in_model,
+    replace_artists_in_model, replace_genres_in_model, replace_playlists_in_model,
+    selected_music_folder_id, set_favorite_button_active, stable_seed, text_button,
+    track_collection_play_context,
 };
 use crate::i18n::tr;
 use adw::prelude::*;
@@ -268,8 +269,11 @@ fn viewport_page_size(
         .max(f64::from(app_root_height))
         .max(1.0)
 }
-fn library_layout_loads_complete_page(key: LibraryListKey, settings: &LibraryListSettings) -> bool {
-    key.supports_layout(settings.layout)
+fn library_layout_loads_complete_page(
+    _key: LibraryListKey,
+    _settings: &LibraryListSettings,
+) -> bool {
+    true
 }
 pub(in crate::ui) fn complete_cached_page<T>(
     page: rufin_provider::PagedResponse<T>,
@@ -1080,7 +1084,7 @@ fn warm_genre_covers_for_settings(
     warm_genre_cover(shell, genres, settings);
 }
 fn warm_genre_cover(shell: &Rc<Shell>, genres: &[Genre], settings: &LibraryListSettings) {
-    let Some((fetch_size, size)) = grid_row_sizes(shell, settings) else {
+    let Some((fetch_size, size)) = collection_cover_warm_sizes(settings) else {
         return;
     };
     let mut values = genres.to_vec();
@@ -1104,7 +1108,7 @@ fn warm_playlist_covers_for_settings(
     warm_playlist_cover(shell, playlists, settings);
 }
 fn warm_playlist_cover(shell: &Rc<Shell>, playlists: &[Playlist], settings: &LibraryListSettings) {
-    let Some((fetch_size, size)) = grid_row_sizes(shell, settings) else {
+    let Some((fetch_size, size)) = collection_cover_warm_sizes(settings) else {
         return;
     };
     let mut values = playlists.to_vec();
@@ -1132,7 +1136,7 @@ fn warm_smart_covers(
     playlists: &[SmartPlaylist],
     settings: &LibraryListSettings,
 ) {
-    let Some((fetch_size, size)) = grid_row_sizes(shell, settings) else {
+    let Some((fetch_size, size)) = collection_cover_warm_sizes(settings) else {
         return;
     };
     let mut values = playlists.to_vec();
@@ -1174,6 +1178,15 @@ fn grid_row_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(
     match settings.layout {
         LibraryLayout::Grid | LibraryLayout::Detail => {
             Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1))
+        }
+        LibraryLayout::Row if album_row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row => None,
+    }
+}
+fn collection_cover_warm_sizes(settings: &LibraryListSettings) -> Option<(u32, i32)> {
+    match settings.layout {
+        LibraryLayout::Grid | LibraryLayout::Detail => {
+            Some((THUMB_COVER_SIZE, THUMB_COVER_SIZE as i32))
         }
         LibraryLayout::Row if album_row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,

@@ -178,7 +178,7 @@ fn has_untagged_jellyfin_album_ref(image_ref: &Option<ImageRef>, album_id: &str)
     })
 }
 
-fn external_album_image_ref(artist: &str, album: &str) -> Option<ImageRef> {
+pub fn external_album_image_ref(artist: &str, album: &str) -> Option<ImageRef> {
     let artist = normalized_lookup_value(artist)?;
     let album = normalized_lookup_value(album)?;
     let item_id = format!(

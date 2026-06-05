@@ -1468,9 +1468,9 @@ fn schema_collection_playlist() {
         playlist_page.items[0].image_refs,
         vec![
             tracks[0].image_ref.clone().expect("first cover"),
-            tracks[0].image_ref.clone().expect("repeated cover"),
             tracks[1].image_ref.clone().expect("second cover"),
             tracks[2].image_ref.clone().expect("third cover"),
+            tracks[3].image_ref.clone().expect("fourth cover"),
         ]
     );
 

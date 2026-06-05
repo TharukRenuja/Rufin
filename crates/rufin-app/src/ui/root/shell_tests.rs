@@ -1,3 +1,4 @@
+use super::cover::{collection_cover_decode_extent, cover_group_collage_ready};
 use super::lyrics_playback_state::allow_loaded_lyrics_cache_revisit;
 use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
@@ -5,7 +6,8 @@ use super::right_panel::{
     queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
 };
 use super::startup_reveal::{
-    StartupRevealAction, cover_warm_delay, startup_loading_status_label, startup_prime_action,
+    StartupRevealAction, connection_progress_status_label, cover_warm_delay,
+    startup_loading_status_label, startup_loading_status_parts, startup_prime_action,
     startup_route_reveal_action, take_pending_warm,
 };
 use super::{
@@ -548,6 +550,53 @@ pub(in crate::ui) fn shell_hide_status() {
     );
 }
 #[test]
+pub(in crate::ui) fn shell_split_status_detail() {
+    assert_eq!(
+        startup_loading_status_parts(
+            "Caching local library… This may take some time. Reading track metadata for Local, 25/2,567 tracks processed (12s)"
+        ),
+        (
+            "Caching local library… This may take some time.".to_string(),
+            Some("Reading track metadata for Local, 25/2,567 tracks processed (12s)".to_string())
+        )
+    );
+}
+#[test]
+pub(in crate::ui) fn shell_connection_progress_detail() {
+    assert_eq!(
+        connection_progress_status_label(
+            "Caching library… This may take some time. Fetching music folders for Desktop (Jellyfin) (20s elapsed)"
+        ),
+        Some("Fetching music folders for Desktop (Jellyfin) (20s elapsed)".to_string())
+    );
+    assert_eq!(
+        connection_progress_status_label(
+            "Library cache ready for Desktop (Jellyfin) in 44s elapsed"
+        ),
+        Some("Preparing library…".to_string())
+    );
+}
+#[test]
+pub(in crate::ui) fn shell_group_cover_waits_for_multiple_ready_slots() {
+    assert!(!cover_group_collage_ready(0, 0));
+    assert!(!cover_group_collage_ready(1, 1));
+    assert!(!cover_group_collage_ready(2, 0));
+    assert!(!cover_group_collage_ready(2, 1));
+    assert!(cover_group_collage_ready(2, 2));
+    assert!(cover_group_collage_ready(4, 2));
+}
+#[test]
+pub(in crate::ui) fn shell_collection_cover_uses_thumbnail_extent() {
+    assert_eq!(
+        collection_cover_decode_extent(super::THUMB_COVER_SIZE, 180),
+        96
+    );
+    assert_eq!(
+        collection_cover_decode_extent(super::GRID_COVER_SIZE, 180),
+        180
+    );
+}
+#[test]
 pub(in crate::ui) fn shell_stay_cover() {
     let mut library = test_library_snapshot();
     let home_ref = test_image_ref("home");
@@ -788,6 +837,39 @@ pub(in crate::ui) fn shell_include_playlist() {
 
     assert!(target_refs.contains(&playlist_ref.item_id.as_str()));
     assert!(target_refs.contains(&smart_ref.item_id.as_str()));
+}
+
+#[test]
+pub(in crate::ui) fn shell_warm_background_refs() {
+    let mut library = test_library_snapshot();
+    library.server = Some(test_server("source"));
+    let background_ref = test_image_ref("background-album");
+    library.albums = (0..24)
+        .map(|index| {
+            let mut album = test_album("Route Artist", Some(ArtistId::fake(index + 1)));
+            album.id = AlbumId::fake(index + 1);
+            album.title = format!("Album {index:02}");
+            album.image_ref = Some(if index == 23 {
+                background_ref.clone()
+            } else {
+                test_image_ref(&format!("album-{index:02}"))
+            });
+            album
+        })
+        .collect();
+
+    let targets = super::source_warm_targets(
+        &library,
+        &[],
+        &AppSettings::default(),
+        test_initial_route_metrics(),
+    );
+
+    assert!(
+        targets
+            .iter()
+            .any(|target| target.image_ref.item_id == background_ref.item_id)
+    );
 }
 
 #[test]

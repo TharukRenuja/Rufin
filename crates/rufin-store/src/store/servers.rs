@@ -195,7 +195,15 @@ pub(super) fn replace_collection_refs(
             updated_at = excluded.updated_at
         ",
     )?;
-    for (position, image_ref) in image_refs.iter().take(4).enumerate() {
+    let mut seen = HashSet::<(String, Option<String>)>::new();
+    let mut position = 0usize;
+    for image_ref in image_refs {
+        if !seen.insert((image_ref.item_id.clone(), image_ref.tag.clone())) {
+            continue;
+        }
+        if position >= 4 {
+            break;
+        }
         let (image_item_id, image_tag) = image_ref_parts(Some(image_ref));
         insert.execute(params![
             server_id.as_str(),
@@ -205,6 +213,7 @@ pub(super) fn replace_collection_refs(
             image_item_id,
             image_tag,
         ])?;
+        position += 1;
     }
     Ok(())
 }

@@ -14,6 +14,7 @@ use rufin_core::ServerId;
 use super::{
     Shell, icon_button,
     layout::{large_popup_content_height, large_popup_content_width},
+    startup_reveal::connection_progress_status_label,
     text_button,
 };
 
@@ -209,7 +210,10 @@ impl Shell {
         let discovered_group = self.discovered_servers_group(&provider, &url);
         content.append(&discovered_group);
 
-        let status_text = self.state.library.borrow().sync_status.clone();
+        let status_text = {
+            let library = self.state.library.borrow();
+            connection_progress_status_label(&library.sync_status).unwrap_or_default()
+        };
         let status = gtk::Label::new(Some(&status_text));
         status.add_css_class("muted");
         status.set_wrap(true);
@@ -672,8 +676,9 @@ fn connect_add_server_status_watcher(watcher: AddServerStatusWatcher<'_>) {
 
         if pending {
             status.remove_css_class("error-text");
-            status.set_text(&sync_status);
-            status.set_visible(!sync_status.trim().is_empty());
+            let text = connection_progress_status_label(&sync_status).unwrap_or_default();
+            status.set_text(&text);
+            status.set_visible(!text.trim().is_empty());
             login.set_sensitive(false);
             return gtk::glib::ControlFlow::Continue;
         }

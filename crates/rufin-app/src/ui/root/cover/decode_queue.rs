@@ -2,7 +2,6 @@ use super::*;
 
 impl Shell {
     pub(in crate::ui) fn reset_route_covers(&self) {
-        self.cancel_route_cover_warm();
         self.state.cover_bindings.borrow_mut().clear();
         clear_queued_route_cover_work(
             &mut self.state.cover_path_lookups.borrow_mut(),

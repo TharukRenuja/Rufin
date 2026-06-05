@@ -231,6 +231,7 @@ impl Shell {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
+            mark_route_scroll_owner(&scroller);
             configure_library_route_scroller(self, &scroller);
             scroller.set_child(Some(&library_route_inset(content)));
             if let Some(configure_scroller) = configure_scroller {

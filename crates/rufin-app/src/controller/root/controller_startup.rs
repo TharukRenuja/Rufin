@@ -516,12 +516,19 @@ pub(in crate::controller) fn run_sync_job(
     prefetch_initial_covers: bool,
     detect_unchanged: bool,
 ) -> Result<SyncJobOutcome, String> {
-    let provider = provider_for_saved(&context.store, &context.runtime, &context.secrets, saved)?;
-    let progress = SyncProgressReporter::new(
+    let mut progress = SyncProgressReporter::new(
         Some(context.events.clone()),
         saved.server.name.clone(),
         provider_display_name(&saved.server.provider).to_string(),
     );
+    let mut local_scan_progress = |scan| progress.local_scan_progress(scan);
+    let provider = provider_for_saved_with_local_scan_progress(
+        &context.store,
+        &context.runtime,
+        &context.secrets,
+        saved,
+        Some(&mut local_scan_progress),
+    )?;
     let outcome = sync_loaded_provider_generation(
         context,
         saved,
@@ -1273,6 +1280,40 @@ impl SyncProgressReporter {
             format!(
                 "Caching library… This may take some time. Fetching {} page {page_number} for {}, {count} fetched ({})",
                 collection.label(),
+                self.source_label(),
+                elapsed_label(self.total_elapsed())
+            ),
+        );
+    }
+
+    fn local_scan_progress(&mut self, progress: LocalScanProgress) {
+        let count = match progress.stage {
+            LocalScanStage::Walking => format!(
+                "{} audio files found, {} entries checked",
+                formatted_count(progress.audio_candidates.min(usize::MAX as u64) as usize),
+                formatted_count(progress.directory_entries_visited.min(usize::MAX as u64) as usize)
+            ),
+            LocalScanStage::ReadingTags => format!(
+                "{} tracks processed",
+                progress_count_label(progress.processed_tracks, progress.total_tracks)
+            ),
+            LocalScanStage::BuildingLibrary => format!(
+                "{} tracks ready",
+                progress_count_label(progress.processed_tracks, progress.total_tracks)
+            ),
+        };
+        let action = match progress.stage {
+            LocalScanStage::Walking => "Scanning folders",
+            LocalScanStage::ReadingTags => "Reading track metadata",
+            LocalScanStage::BuildingLibrary => "Preparing local cache",
+        };
+        let force = progress.stage != LocalScanStage::Walking
+            || progress.audio_candidates == 0
+            || progress.audio_candidates.is_multiple_of(100);
+        self.emit_status(
+            force,
+            format!(
+                "Caching local library… This may take some time. {action} for {}, {count} ({})",
                 self.source_label(),
                 elapsed_label(self.total_elapsed())
             ),

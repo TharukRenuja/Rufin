@@ -176,6 +176,14 @@ impl PendingSeek {
                 PendingSeekKind::Interactive | PendingSeekKind::Startup
             )
     }
+
+    pub(super) fn is_track_start(&self) -> bool {
+        self.kind == PendingSeekKind::TrackStart
+    }
+
+    pub(super) fn blocks_timing_query(&self) -> bool {
+        self.kind == PendingSeekKind::TrackStart
+    }
 }
 #[derive(Debug)]
 pub(super) struct SharedPlaybackState {
@@ -183,6 +191,7 @@ pub(super) struct SharedPlaybackState {
     pub(super) current: Option<PreparedPlaybackItem>,
     pub(super) next: Option<PreparedPlaybackItem>,
     pub(super) gapless_pending: Option<PreparedPlaybackItem>,
+    pub(super) about_to_finish_pending: bool,
     pub(super) active: Slot,
     pub(super) crossfade: Option<CrossfadeState>,
     pub(super) volume: f64,
@@ -195,6 +204,7 @@ impl SharedPlaybackState {
             current: None,
             next: None,
             gapless_pending: None,
+            about_to_finish_pending: false,
             active: Slot::Primary,
             crossfade: None,
             volume: settings.volume,
@@ -398,12 +408,7 @@ impl GstEngine {
                 start_position_seconds,
                 settings,
             } => self.play_prepared(item, next, start_position_seconds, settings),
-            PlaybackCommand::PrepareNext(next) => {
-                if let Ok(mut shared) = self.shared.lock() {
-                    shared.next = next;
-                }
-                Ok(())
-            }
+            PlaybackCommand::PrepareNext(next) => self.prepare_next(next),
             PlaybackCommand::UpdateSettings(mut settings) => {
                 settings.sanitize();
                 if let Ok(mut shared) = self.shared.lock() {
@@ -441,6 +446,7 @@ impl GstEngine {
                     shared.current = None;
                     shared.next = None;
                     shared.gapless_pending = None;
+                    shared.about_to_finish_pending = false;
                     shared.crossfade = None;
                     shared.active = Slot::Primary;
                 }
@@ -503,6 +509,7 @@ impl GstEngine {
             shared.current = Some(item.clone());
             shared.next = next;
             shared.gapless_pending = None;
+            shared.about_to_finish_pending = false;
             shared.crossfade = None;
             shared.active = Slot::Primary;
             shared.volume = volume;
@@ -522,6 +529,47 @@ impl GstEngine {
             self.start_playback_seek(start_millis);
         } else {
             self.pending_seek = Some(PendingSeek::track_start(Instant::now()));
+        }
+        Ok(())
+    }
+
+    fn prepare_next(&mut self, next: Option<PreparedPlaybackItem>) -> Result<(), String> {
+        let Some(next) = next else {
+            if let Ok(mut shared) = self.shared.lock() {
+                shared.next = None;
+                shared.about_to_finish_pending = false;
+            }
+            return Ok(());
+        };
+
+        let mut late_preload = None;
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.next = Some(next.clone());
+            if shared.about_to_finish_pending && gapless_preload_should_run(&shared, &next) {
+                if gapless_preload_source_is_supported(next.stream.uri()) {
+                    let item = shared
+                        .next
+                        .take()
+                        .expect("late gapless preload just stored next item");
+                    shared.gapless_pending = Some(item.clone());
+                    shared.about_to_finish_pending = false;
+                    late_preload = Some(item);
+                }
+                shared.about_to_finish_pending = false;
+            }
+            if shared.about_to_finish_pending && !gapless_preload_should_run(&shared, &next) {
+                shared.about_to_finish_pending = false;
+            }
+        }
+        if let Some(item) = late_preload {
+            info!(
+                track_id = %item.track.id.as_str(),
+                uri = %item.stream.redacted_uri(),
+                "preloading late gapless next stream"
+            );
+            self.active_pipeline()
+                .pipeline
+                .set_property("uri", item.stream.uri());
         }
         Ok(())
     }
@@ -634,6 +682,7 @@ impl GstEngine {
         let started = self.shared.lock().ok().and_then(|mut shared| {
             let item = shared.gapless_pending.take()?;
             shared.current = Some(item.clone());
+            shared.about_to_finish_pending = false;
             Some(item.track)
         });
         self.handle_stream_started_track(started);
@@ -683,6 +732,14 @@ impl GstEngine {
         {
             self.pending_seek = None;
         }
+        if state == PlaybackState::Playing
+            && self
+                .pending_seek
+                .as_ref()
+                .is_some_and(PendingSeek::is_track_start)
+        {
+            self.pending_seek = None;
+        }
         self.push_state(state);
     }
 
@@ -708,6 +765,13 @@ impl GstEngine {
 
     fn handle_async_done(&mut self) {
         if self.retry_pending_seek() {
+            return;
+        }
+        if self
+            .pending_seek
+            .as_ref()
+            .is_some_and(PendingSeek::blocks_timing_query)
+        {
             return;
         }
         if let Some(position) = self.active_pipeline().position() {
@@ -811,6 +875,13 @@ impl GstEngine {
         if self.last_position_tick.elapsed() >= Duration::from_millis(500) {
             self.last_position_tick = Instant::now();
             if self.gapless_timing_is_pending() {
+                return;
+            }
+            if self
+                .pending_seek
+                .as_ref()
+                .is_some_and(PendingSeek::blocks_timing_query)
+            {
                 return;
             }
             if let Some(position) = self.active_pipeline().position() {
@@ -1011,6 +1082,7 @@ impl GstEngine {
             shared.current = Some(crossfade.item);
             shared.crossfade = None;
             shared.gapless_pending = None;
+            shared.about_to_finish_pending = false;
         }
     }
 
@@ -1105,6 +1177,7 @@ impl GstEngine {
         if let Ok(mut shared) = self.shared.lock() {
             shared.next = None;
             shared.gapless_pending = None;
+            shared.about_to_finish_pending = false;
             shared.crossfade = None;
             shared.active = Slot::Primary;
         }
@@ -1192,10 +1265,12 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
     }
 
     let Some(next) = shared.next.as_ref() else {
+        shared.about_to_finish_pending = true;
         return AboutToFinishAction::Ignore;
     };
 
     if !gapless_preload_should_run(shared, next) {
+        shared.about_to_finish_pending = false;
         return AboutToFinishAction::Ignore;
     }
 
@@ -1205,6 +1280,7 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
             uri = %next.stream.redacted_uri(),
             "skipping gapless preload for non-local stream"
         );
+        shared.about_to_finish_pending = false;
         return AboutToFinishAction::Ignore;
     }
 
@@ -1213,6 +1289,7 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
         .take()
         .expect("gapless preload checked that next item exists");
     shared.gapless_pending = Some(next.clone());
+    shared.about_to_finish_pending = false;
     AboutToFinishAction::Preload(next)
 }
 
@@ -1256,7 +1333,7 @@ fn same_album_text(current: &PlaybackTrack, next: &PlaybackTrack) -> bool {
 }
 
 pub(super) fn gapless_preload_source_is_supported(uri: &str) -> bool {
-    uri.starts_with("file://")
+    uri.starts_with("file://") || uri.starts_with("http://") || uri.starts_with("https://")
 }
 fn make_playbin(name: &str) -> Result<gst::Element, String> {
     gst::ElementFactory::make("playbin3")
