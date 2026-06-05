@@ -1717,6 +1717,11 @@ pub(in crate::controller) fn platform_secret_store() -> Arc<dyn SecretStore> {
         Arc::new(CachedSecretStore::new(fallback))
     }
 }
+pub(in crate::controller) fn platform_token_store() -> Arc<dyn SecretStore> {
+    Arc::new(CachedSecretStore::new(Arc::new(ConfigSecretStore::new(
+        config_secrets_path(),
+    ))))
+}
 pub(in crate::controller) fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {
     PlaybackTrack {
         id: entry.track_id.clone(),

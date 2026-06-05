@@ -1,6 +1,61 @@
 use super::*;
 
 impl AppController {
+    pub fn import_legacy_active_token_after_startup(&self) {
+        let context = self.sync_context();
+        thread::spawn(move || {
+            let Some(saved) = context
+                .store
+                .with_store(|store| store.active_server())
+                .unwrap_or(None)
+            else {
+                return;
+            };
+            if saved.server.provider == LOCAL_PROVIDER_ID || saved.server.provider == "fake" {
+                return;
+            }
+            match context.secrets.load_token(&saved.server.id) {
+                Ok(Some(_)) => return,
+                Ok(None) => {}
+                Err(error) => {
+                    warn!(
+                        %error,
+                        server_id = %saved.server.id,
+                        "failed to check config token before legacy import"
+                    );
+                    return;
+                }
+            }
+
+            let legacy = platform_secret_store();
+            let token = match legacy.load_token(&saved.server.id) {
+                Ok(Some(token)) => token,
+                Ok(None) => return,
+                Err(error) => {
+                    warn!(
+                        %error,
+                        server_id = %saved.server.id,
+                        "failed to import legacy secure token"
+                    );
+                    return;
+                }
+            };
+            if let Err(error) = context.secrets.save_token(&saved.server.id, &token) {
+                warn!(
+                    %error,
+                    server_id = %saved.server.id,
+                    "failed to save imported legacy token"
+                );
+                return;
+            }
+            info!(
+                server_id = %saved.server.id,
+                "imported legacy secure token to config storage"
+            );
+            start_sync_thread(context, saved);
+        });
+    }
+
     #[cfg(test)]
     pub fn forget_active_server(&self) {
         let store = self.store.clone();
