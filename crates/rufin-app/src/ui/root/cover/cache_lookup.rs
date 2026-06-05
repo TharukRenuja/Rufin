@@ -109,7 +109,9 @@ impl Shell {
         let candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
         let fast_path = if matches!(
             intent,
-            CoverPathLookupIntent::Priority | CoverPathLookupIntent::StartupPrime
+            CoverPathLookupIntent::Priority
+                | CoverPathLookupIntent::StartupPrime
+                | CoverPathLookupIntent::RoutePrime
         ) {
             cover_candidate_path(
                 &candidate_keys,
@@ -207,7 +209,7 @@ impl Shell {
                     self.apply_cover_unavailable(&key);
                 }
             }
-            CoverPathLookupIntent::StartupPrime => {
+            CoverPathLookupIntent::StartupPrime | CoverPathLookupIntent::RoutePrime => {
                 if let Some(path) = path {
                     self.state.cover_unavailable.borrow_mut().remove(&key);
                     self.start_cover_decode_from_path(
@@ -229,6 +231,10 @@ impl Shell {
                         .remove(&key);
                     self.state
                         .first_run_cover_prime_pending
+                        .borrow_mut()
+                        .remove(&key);
+                    self.state
+                        .route_cover_prime_pending
                         .borrow_mut()
                         .remove(&key);
                 }
@@ -305,6 +311,18 @@ impl Shell {
             .unwrap_or(GRID_COVER_SIZE as i32);
         if let Some(cover) = self.cloned_decoded_cover(key, size) {
             self.touch_decoded_cover(key, CoverDecodePriority::Visible);
+            self.state
+                .startup_cover_prime_pending
+                .borrow_mut()
+                .remove(key);
+            self.state
+                .first_run_cover_prime_pending
+                .borrow_mut()
+                .remove(key);
+            self.state
+                .route_cover_prime_pending
+                .borrow_mut()
+                .remove(key);
             let bindings = self.take_live_cover_bindings(key);
             apply_pixbuf_to_bindings(bindings, cover.pixbuf);
             return;
@@ -329,6 +347,10 @@ impl Shell {
             .remove(key);
         self.state
             .first_run_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
+        self.state
+            .route_cover_prime_pending
             .borrow_mut()
             .remove(key);
 
@@ -370,6 +392,23 @@ impl Shell {
                 .collect::<Vec<_>>(),
         );
         self.remove_stale_cover_prime_pending(stale);
+    }
+    pub(in crate::ui) fn reconcile_route_cover_prime_pending(&self) {
+        let stale = self
+            .state
+            .route_cover_prime_pending
+            .borrow()
+            .iter()
+            .filter(|key| !self.prime_key_wait(key))
+            .cloned()
+            .collect::<Vec<_>>();
+        if stale.is_empty() {
+            return;
+        }
+        let mut pending = self.state.route_cover_prime_pending.borrow_mut();
+        for key in stale {
+            pending.remove(&key);
+        }
     }
     fn stale_cover_prime_pending_keys(&self, keys: &[String]) -> Vec<String> {
         keys.iter()
@@ -473,6 +512,10 @@ impl Shell {
             .remove(key);
         self.state
             .first_run_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
+        self.state
+            .route_cover_prime_pending
             .borrow_mut()
             .remove(key);
         let bindings = self.take_live_cover_bindings(key);

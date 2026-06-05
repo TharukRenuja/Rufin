@@ -618,6 +618,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Artist detail will use cached album and track groups");
     let _ = tr("Genre detail keeps albums above tracks");
     let _ = tr("Playlist detail will use the track table");
+    let _ = tr("Loading…");
     let _ = tr("Loading folders…");
     let _ = tr("Search current folder");
     let _ = tr("Artist / Album");

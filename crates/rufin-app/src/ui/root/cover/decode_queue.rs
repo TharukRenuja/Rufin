@@ -99,6 +99,10 @@ impl Shell {
             .first_run_cover_prime_pending
             .borrow_mut()
             .remove(key);
+        self.state
+            .route_cover_prime_pending
+            .borrow_mut()
+            .remove(key);
     }
     pub(in crate::ui) fn cancel_queued_warm_cover_decodes(&self) {
         self.state

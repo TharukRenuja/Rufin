@@ -57,6 +57,7 @@ pub(in crate::ui) enum CoverPathLookupIntent {
     Visible,
     Priority,
     StartupPrime,
+    RoutePrime,
     Warm,
 }
 
@@ -66,6 +67,7 @@ impl CoverPathLookupIntent {
             (Self::Visible, _) | (_, Self::Visible) => Self::Visible,
             (Self::Priority, _) | (_, Self::Priority) => Self::Priority,
             (Self::StartupPrime, _) | (_, Self::StartupPrime) => Self::StartupPrime,
+            (Self::RoutePrime, _) | (_, Self::RoutePrime) => Self::RoutePrime,
             _ => Self::Warm,
         }
     }
@@ -115,7 +117,9 @@ pub(in crate::ui) fn retain_current_priority_cover_work(
     lookups.retain(|key, intent| {
         !matches!(
             intent,
-            CoverPathLookupIntent::Priority | CoverPathLookupIntent::StartupPrime
+            CoverPathLookupIntent::Priority
+                | CoverPathLookupIntent::StartupPrime
+                | CoverPathLookupIntent::RoutePrime
         ) || keep.contains(key)
     });
     queue.retain(|job| {
