@@ -1,29 +1,34 @@
 use super::*;
+
+const ROUTE_SCROLL_OWNER_CLASS: &str = "route-scroll-owner";
+
+pub(in crate::ui) fn mark_route_scroll_owner(scroller: &gtk::ScrolledWindow) {
+    scroller.add_css_class(ROUTE_SCROLL_OWNER_CLASS);
+}
+
 pub(in crate::ui) fn find_largest_scrolled_window(
     widget: &gtk::Widget,
 ) -> Option<gtk::ScrolledWindow> {
     let mut best = None;
-    collect_largest_scrolled_window(widget, &mut best);
+    collect_scrolled_window(widget, 0, &mut best);
     best.map(|(scroller, _)| scroller)
 }
-pub(in crate::ui) fn restore_scrolled_window_value(widget: &gtk::Widget, value: f64) {
-    let Some(scroller) = find_largest_scrolled_window(widget) else {
-        return;
-    };
-    let adjustment = scroller.vadjustment();
-    let max_value = (adjustment.upper() - adjustment.page_size()).max(0.0);
-    adjustment.set_value(value.clamp(0.0, max_value));
-}
-pub(in crate::ui) fn collect_largest_scrolled_window(
+fn collect_scrolled_window(
     widget: &gtk::Widget,
-    best: &mut Option<(gtk::ScrolledWindow, f64)>,
+    depth: usize,
+    best: &mut Option<(gtk::ScrolledWindow, ScrollerScore)>,
 ) {
     if let Ok(scroller) = widget.clone().downcast::<gtk::ScrolledWindow>() {
         let adjustment = scroller.vadjustment();
-        let score = (adjustment.upper() - adjustment.page_size()).max(0.0);
+        let score = ScrollerScore {
+            owner: scroller.has_css_class(ROUTE_SCROLL_OWNER_CLASS),
+            vertical: scroller.vscrollbar_policy() != gtk::PolicyType::Never,
+            range: (adjustment.upper() - adjustment.page_size()).max(0.0),
+            depth,
+        };
         if best
             .as_ref()
-            .is_none_or(|(_, best_score)| score > *best_score)
+            .is_none_or(|(_, best_score)| scroller_score_is_better(score, *best_score))
         {
             *best = Some((scroller, score));
         }
@@ -31,9 +36,31 @@ pub(in crate::ui) fn collect_largest_scrolled_window(
 
     let mut child = widget.first_child();
     while let Some(widget) = child {
-        collect_largest_scrolled_window(&widget, best);
+        collect_scrolled_window(&widget, depth.saturating_add(1), best);
         child = widget.next_sibling();
     }
+}
+
+#[derive(Clone, Copy)]
+struct ScrollerScore {
+    owner: bool,
+    vertical: bool,
+    range: f64,
+    depth: usize,
+}
+
+fn scroller_score_is_better(candidate: ScrollerScore, current: ScrollerScore) -> bool {
+    (
+        candidate.owner,
+        candidate.vertical,
+        candidate.range,
+        candidate.depth,
+    ) > (
+        current.owner,
+        current.vertical,
+        current.range,
+        current.depth,
+    )
 }
 pub(in crate::ui) fn replace_albums_in_model(
     model: &gio::ListStore,
@@ -946,9 +973,9 @@ pub(in crate::ui) fn install_playlist_entry_context_menu(
     let click_shell = Rc::clone(shell);
     let click_track = track.clone();
     let click_remove_action = remove_action.clone();
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
+    let click = context_click_gesture();
+    click.connect_pressed(move |click, _, x, y| {
+        claim_context_click(click);
         let Some(target) = target_weak.upgrade() else {
             return;
         };
@@ -995,9 +1022,9 @@ pub(in crate::ui) fn install_dynamic_track_context_menu(
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
     let click_track = Rc::clone(&track);
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
+    let click = context_click_gesture();
+    click.connect_pressed(move |click, _, x, y| {
+        claim_context_click(click);
         let Some(target) = target_weak.upgrade() else {
             return;
         };
@@ -1053,9 +1080,9 @@ pub(in crate::ui) fn install_dynamic_album_context_menu(
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
     let click_album = Rc::clone(&album);
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
+    let click = context_click_gesture();
+    click.connect_pressed(move |click, _, x, y| {
+        claim_context_click(click);
         let Some(target) = target_weak.upgrade() else {
             return;
         };
@@ -1104,9 +1131,9 @@ pub(in crate::ui) fn install_playlist_context_menu(
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
     let click_playlist = playlist.clone();
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
+    let click = context_click_gesture();
+    click.connect_pressed(move |click, _, x, y| {
+        claim_context_click(click);
         if let Some(target) = target_weak.upgrade() {
             present_playlist_context_menu(
                 &target,
@@ -1143,9 +1170,9 @@ pub(in crate::ui) fn install_smart_playlist_context_menu(
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
     let click_playlist = playlist.clone();
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
+    let click = context_click_gesture();
+    click.connect_pressed(move |click, _, x, y| {
+        claim_context_click(click);
         if let Some(target) = target_weak.upgrade() {
             present_smart_playlist_context_menu(
                 &target,
@@ -1182,9 +1209,9 @@ pub(in crate::ui) fn install_artist_context_menu(
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
     let click_artist = artist.clone();
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
+    let click = context_click_gesture();
+    click.connect_pressed(move |click, _, x, y| {
+        claim_context_click(click);
         let Some(target) = target_weak.upgrade() else {
             return;
         };
@@ -1226,9 +1253,9 @@ pub(in crate::ui) fn install_current_track_context_menu(
     let target = target.as_ref();
     let target_weak = target.downgrade();
     let click_shell = Rc::clone(shell);
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
+    let click = context_click_gesture();
+    click.connect_pressed(move |click, _, x, y| {
+        claim_context_click(click);
         let Some(target) = target_weak.upgrade() else {
             return;
         };
@@ -1255,4 +1282,56 @@ pub(in crate::ui) fn install_current_track_context_menu(
         glib::Propagation::Stop
     });
     target.add_controller(key);
+}
+
+fn context_click_gesture() -> gtk::GestureClick {
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    click
+}
+
+fn claim_context_click(click: &gtk::GestureClick) {
+    click.set_state(gtk::EventSequenceState::Claimed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn route_scroller_wins_before_bounds() {
+        let wrapper = ScrollerScore {
+            owner: false,
+            vertical: false,
+            range: 0.0,
+            depth: 1,
+        };
+        let route = ScrollerScore {
+            owner: false,
+            vertical: true,
+            range: 0.0,
+            depth: 2,
+        };
+
+        assert!(scroller_score_is_better(route, wrapper));
+    }
+
+    #[test]
+    fn route_owner_wins_over_nested_scroller() {
+        let nested = ScrollerScore {
+            owner: false,
+            vertical: true,
+            range: 2000.0,
+            depth: 5,
+        };
+        let route = ScrollerScore {
+            owner: true,
+            vertical: true,
+            range: 0.0,
+            depth: 2,
+        };
+
+        assert!(scroller_score_is_better(route, nested));
+    }
 }

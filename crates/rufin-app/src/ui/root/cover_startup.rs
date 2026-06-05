@@ -952,7 +952,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     if let Some(message) = preferences_login_status_toast_message(&status) {
                         shell.show_preferences_toast(message);
                     }
-                    let sync_complete = status == LIBRARY_SYNC_COMPLETE_STATUS;
+                    let sync_complete = login_status_marks_sync_complete(&status);
                     if sync_complete {
                         shell.state.first_run_connection_ready.set(true);
                         if shell.state.local_source_preparing.get() {
@@ -1003,6 +1003,11 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
         }
         glib::ControlFlow::Continue
     });
+}
+
+fn login_status_marks_sync_complete(status: &str) -> bool {
+    let status = status.trim();
+    status == LIBRARY_SYNC_COMPLETE_STATUS || status.starts_with("Library cache ready for ")
 }
 struct VisibleCoverRef {
     image_ref: ImageRef,
@@ -1184,7 +1189,7 @@ fn artist_visible_cover_window(shell: &Shell, album_artist: bool) -> VisibleCove
 
 fn genre_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     let settings = shell.library_settings(LibraryListKey::Genres);
-    let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
+    let Some((fetch_size, size)) = collection_cover_prime_sizes(&settings) else {
         return VisibleCoverWindow { refs: Vec::new() };
     };
     let library = shell.state.library.borrow();
@@ -1212,7 +1217,7 @@ fn genre_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
 
 fn playlist_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     let settings = shell.library_settings(LibraryListKey::Playlists);
-    let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
+    let Some((fetch_size, size)) = collection_cover_prime_sizes(&settings) else {
         return VisibleCoverWindow { refs: Vec::new() };
     };
     let mut playlists = shell.state.library.borrow().playlists.clone();
@@ -1240,7 +1245,7 @@ fn playlist_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
 
 fn smart_playlist_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     let settings = shell.library_settings(LibraryListKey::SmartPlaylists);
-    let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
+    let Some((fetch_size, size)) = collection_cover_prime_sizes(&settings) else {
         return VisibleCoverWindow { refs: Vec::new() };
     };
     let mut playlists = shell.state.smart_playlists.borrow().clone();
@@ -1273,6 +1278,16 @@ pub(in crate::ui) fn cover_prime_sizes(
     match settings.layout {
         LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1)),
         LibraryLayout::Detail => Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32)),
+        LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
+        LibraryLayout::Row => None,
+    }
+}
+
+fn collection_cover_prime_sizes(settings: &LibraryListSettings) -> Option<(u32, i32)> {
+    match settings.layout {
+        LibraryLayout::Grid | LibraryLayout::Detail => {
+            Some((THUMB_COVER_SIZE, THUMB_COVER_SIZE as i32))
+        }
         LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
     }

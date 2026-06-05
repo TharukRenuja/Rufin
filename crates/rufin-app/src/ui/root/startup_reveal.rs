@@ -88,11 +88,19 @@ impl Shell {
             startup_loading_status_label(self.state.library.borrow().sync_status.as_str())
         };
         if let Some(status) = status {
-            let label = gtk::Label::new(Some(&status));
+            let (title, detail) = startup_loading_status_parts(&status);
+            let label = gtk::Label::new(Some(&title));
             label.add_css_class("dim-label");
             label.add_css_class("startup-loading-status");
             label.set_wrap(true);
             wrapper.append(&label);
+            if let Some(detail) = detail {
+                let detail_label = gtk::Label::new(Some(&detail));
+                detail_label.add_css_class("dim-label");
+                detail_label.add_css_class("startup-loading-status-detail");
+                detail_label.set_wrap(true);
+                wrapper.append(&detail_label);
+            }
         }
         wrapper.upcast()
     }
@@ -168,6 +176,9 @@ impl Shell {
         let jobs = startup_cover_prime_jobs(self);
         let mut pending = HashSet::new();
         for job in jobs {
+            if external_metadata::is_external_image_ref(&job.image_ref) {
+                continue;
+            }
             if self
                 .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
                 .is_some()
@@ -374,7 +385,6 @@ impl Shell {
             if active_server_id.as_ref() != Some(&server_id)
                 || !shell.state.startup_route_revealed.get()
                 || shell.state.startup_route_render_pending.get()
-                || shell.state.routes.borrow().current() != &Route::Home
             {
                 return;
             }
@@ -456,6 +466,9 @@ impl Shell {
 
         let mut pending = HashSet::new();
         for job in jobs {
+            if external_metadata::is_external_image_ref(&job.image_ref) {
+                continue;
+            }
             if self
                 .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
                 .is_some()
@@ -508,10 +521,30 @@ pub(in crate::ui) fn startup_loading_status_label(sync_status: &str) -> Option<S
     if status.is_empty()
         || status == LIBRARY_SYNC_COMPLETE_STATUS
         || status == "Cached library ready"
+        || status.starts_with("Library cache ready for ")
         || status == tr(LIBRARY_SYNC_COMPLETE_STATUS)
     {
         None
     } else {
         Some(status.to_string())
     }
+}
+
+pub(in crate::ui) fn startup_loading_status_parts(status: &str) -> (String, Option<String>) {
+    const DETAIL_MARKER: &str = " This may take some time. ";
+    let Some((title, detail)) = status.split_once(DETAIL_MARKER) else {
+        return (status.to_string(), None);
+    };
+    (
+        format!("{title} This may take some time."),
+        (!detail.trim().is_empty()).then(|| detail.trim().to_string()),
+    )
+}
+
+pub(in crate::ui) fn connection_progress_status_label(sync_status: &str) -> Option<String> {
+    let Some(status) = startup_loading_status_label(sync_status) else {
+        return Some(tr(LIBRARY_PREPARING_STATUS));
+    };
+    let (_title, detail) = startup_loading_status_parts(&status);
+    Some(detail.unwrap_or(status))
 }

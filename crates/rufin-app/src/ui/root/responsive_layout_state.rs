@@ -56,12 +56,10 @@ impl Shell {
         self.right_panel_slot.set_visible(
             !login_active && !startup_loading_active && resolved.right_sidebar.is_visible(),
         );
-        self.right_panel_slot
-            .set_width_request(resolved.right_sidebar_width);
-        self.right_panel_slot
-            .set_min_content_width(resolved.right_sidebar_width);
-        self.right_panel_slot
-            .set_max_content_width(resolved.right_sidebar_width);
+        set_scrolled_window_exact_content_width(
+            &self.right_panel_slot,
+            resolved.right_sidebar_width,
+        );
         self.right_panel
             .set_width_request(resolved.right_sidebar_width);
         self.right_panel.set_visible(
@@ -136,6 +134,13 @@ impl Shell {
             "layout snapshot"
         );
     }
+}
+
+fn set_scrolled_window_exact_content_width(scroller: &gtk::ScrolledWindow, width: i32) {
+    scroller.set_width_request(width);
+    scroller.set_max_content_width(-1);
+    scroller.set_min_content_width(width);
+    scroller.set_max_content_width(width);
 }
 
 pub(in crate::ui) fn startup_loading_screen_active(

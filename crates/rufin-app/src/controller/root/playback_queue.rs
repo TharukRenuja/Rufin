@@ -101,26 +101,46 @@ pub(in crate::controller) fn provider_for_saved(
     secrets: &Arc<dyn SecretStore>,
     saved: &SavedServer,
 ) -> Result<LoadedProvider, String> {
+    provider_for_saved_with_local_scan_progress(store, runtime, secrets, saved, None)
+}
+
+pub(in crate::controller) fn provider_for_saved_with_local_scan_progress(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedServer,
+    mut local_scan_progress: Option<&mut dyn FnMut(LocalScanProgress)>,
+) -> Result<LoadedProvider, String> {
     let _unused = runtime;
     if saved.server.provider == LOCAL_PROVIDER_ID
         && saved.server.id.as_str() == LOCAL_SOURCE_SERVER_ID
     {
         let settings = load_settings_from_store(store);
         let manifest_cache = load_local_manifest_cache(store, &saved.server.id)?;
-        return LocalProvider::from_roots_with_manifest_cache(
+        return LocalProvider::from_roots_with_manifest_cache_and_progress(
             local_folder_paths(&settings),
             saved.server.clone(),
             manifest_cache,
+            |progress| {
+                if let Some(callback) = local_scan_progress.as_deref_mut() {
+                    callback(progress);
+                }
+            },
         )
         .map(LoadedProvider::Local)
         .map_err(|error| error.to_string());
     }
     if saved.server.provider == LOCAL_PROVIDER_ID {
         let manifest_cache = load_local_manifest_cache(store, &saved.server.id)?;
-        return LocalProvider::from_roots_with_manifest_cache(
+        return LocalProvider::from_roots_with_manifest_cache_and_progress(
             vec![PathBuf::from(&saved.server.base_url)],
             saved.server.clone(),
             manifest_cache,
+            |progress| {
+                if let Some(callback) = local_scan_progress.as_deref_mut() {
+                    callback(progress);
+                }
+            },
         )
         .map(LoadedProvider::Local)
         .map_err(|error| error.to_string());

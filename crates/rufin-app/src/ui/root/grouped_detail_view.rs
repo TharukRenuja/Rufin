@@ -16,6 +16,7 @@ impl Shell {
             source_descriptor,
         } = data;
         let scroller = gtk::ScrolledWindow::new();
+        mark_route_scroll_owner(&scroller);
         scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);

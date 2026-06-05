@@ -635,6 +635,58 @@ pub(in crate::controller) fn prepared_send_reject() {
     assert!(commands.lock().expect("commands").is_empty());
 }
 #[test]
+pub(in crate::controller) fn prepared_skip_current_repeat() {
+    let (_controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let track = snapshot.tracks[0].clone();
+    let mut engine = QueueEngine::new(server_id);
+    engine.play_now(&track);
+    let queue = Arc::new(Mutex::new(Some(engine)));
+
+    assert!(next_preload_request_from_queue(&queue, PlaybackSettings::default()).is_none());
+}
+#[test]
+pub(in crate::controller) fn prepared_uses_shuffled_next() {
+    let (_controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    let third = snapshot.tracks[2].clone();
+    let mut engine = QueueEngine::new(server_id);
+    engine.play_now(&first);
+    engine.append(&second);
+    engine.append(&third);
+    engine.set_shuffle(true, 19);
+    let expected = next_queue_entry_after_current(&engine)
+        .expect("shuffled queue should have next")
+        .id;
+    let queue = Arc::new(Mutex::new(Some(engine)));
+
+    let request =
+        next_preload_request_from_queue(&queue, PlaybackSettings::default()).expect("request");
+
+    assert_eq!(request.next_entry_id, expected);
+}
+#[test]
+pub(in crate::controller) fn prepared_uses_appended_next() {
+    let (_controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    let mut engine = QueueEngine::new(server_id);
+    engine.play_now(&first);
+    let appended = engine.append(&second);
+    let queue = Arc::new(Mutex::new(Some(engine)));
+
+    let request =
+        next_preload_request_from_queue(&queue, PlaybackSettings::default()).expect("request");
+
+    assert_eq!(request.next_entry_id, appended);
+}
+#[test]
 pub(in crate::controller) fn cover_reject_switch() {
     let (_controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);

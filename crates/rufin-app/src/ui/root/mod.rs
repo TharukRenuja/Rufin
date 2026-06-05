@@ -240,6 +240,7 @@ pub(in crate::ui) struct AppState {
     lyrics_track_id: RefCell<Option<rufin_core::TrackId>>,
     lyrics_auto_search_attempted: RefCell<HashSet<rufin_core::TrackId>>,
     lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
+    preferences_dialog: RefCell<Option<adw::Dialog>>,
     preferences_toast_overlay: RefCell<Option<adw::ToastOverlay>>,
     reconnect_toasts_shown: RefCell<HashSet<ServerId>>,
     lyrics_timing_generation: Cell<u64>,
@@ -270,7 +271,6 @@ pub(in crate::ui) struct AppState {
     smart_playlists: RefCell<Vec<SmartPlaylist>>,
     playlist_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
-    open_routes: RefCell<HashMap<String, OpenRouteState>>,
     route_load_generation: Cell<u64>,
     startup_route_revealed: Cell<bool>,
     startup_route_render_pending: Cell<bool>,
@@ -310,11 +310,6 @@ pub(in crate::ui) struct AppState {
     folder_request_generation: Cell<u64>,
     folder_state: RefCell<FolderRouteState>,
 }
-#[derive(Clone, Debug)]
-pub(in crate::ui) struct OpenRouteState {
-    scroll: Option<f64>,
-}
-
 #[derive(Clone)]
 pub(in crate::ui) struct LyricsSearchDialog {
     dialog: adw::Dialog,
@@ -482,6 +477,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         lyrics_track_id: RefCell::new(None),
         lyrics_auto_search_attempted: RefCell::new(HashSet::new()),
         lyrics_search_dialog: RefCell::new(None),
+        preferences_dialog: RefCell::new(None),
         preferences_toast_overlay: RefCell::new(None),
         reconnect_toasts_shown: RefCell::new(HashSet::new()),
         lyrics_timing_generation: Cell::new(0),
@@ -512,7 +508,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         smart_playlists: RefCell::new(Vec::new()),
         playlist_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
-        open_routes: RefCell::new(HashMap::new()),
         route_load_generation: Cell::new(0),
         startup_route_revealed: Cell::new(!defer_initial_route),
         startup_route_render_pending: Cell::new(false),

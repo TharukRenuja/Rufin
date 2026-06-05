@@ -286,13 +286,6 @@ impl Shell {
 
         self.library_tracks_page(page.items, page.total)
     }
-    pub(in crate::ui) fn library_tracks_route_view_from_page(
-        self: &Rc<Self>,
-        page: rufin_provider::PagedResponse<Track>,
-    ) -> gtk::Widget {
-        self.library_tracks_page(page.items, page.total)
-    }
-
     pub(in crate::ui) fn library_artist_list_view(
         self: &Rc<Self>,
         album_artist: bool,
@@ -980,6 +973,7 @@ impl Shell {
         wrapper.append(&toolbar);
 
         let scroller = gtk::ScrolledWindow::new();
+        mark_route_scroll_owner(&scroller);
         configure_library_route_scroller(self, &scroller);
         connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
         scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
@@ -1019,6 +1013,7 @@ impl Shell {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
         } else {
             let scroller = gtk::ScrolledWindow::new();
+            mark_route_scroll_owner(&scroller);
             configure_library_route_scroller(self, &scroller);
             connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
             scroller.set_child(Some(&library_route_inset(view)));

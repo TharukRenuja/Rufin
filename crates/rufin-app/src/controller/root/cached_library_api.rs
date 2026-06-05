@@ -301,12 +301,13 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
-        self.store
-            .with_store(|store| store.load_genres(&saved.server.id, offset, limit))
-            .map(|mut page| {
-                scrub_source_genre_image_refs(&saved, &mut page.items);
-                page
-            })
+        let settings = load_settings_for_saved(&self.store, &saved);
+        let mut page = self
+            .store
+            .with_store(|store| store.load_genres(&saved.server.id, offset, limit))?;
+        scrub_source_genre_image_refs(&saved, &mut page.items);
+        normalize_genre_collection_image_refs(&self.store, &saved, &mut page.items, &settings)?;
+        Ok(page)
     }
     pub fn cached_genres_page_matching(
         &self,
@@ -317,12 +318,13 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
-        self.store
-            .with_store(|store| store.load_genres_matching(&saved.server.id, query, offset, limit))
-            .map(|mut page| {
-                scrub_source_genre_image_refs(&saved, &mut page.items);
-                page
-            })
+        let settings = load_settings_for_saved(&self.store, &saved);
+        let mut page = self.store.with_store(|store| {
+            store.load_genres_matching(&saved.server.id, query, offset, limit)
+        })?;
+        scrub_source_genre_image_refs(&saved, &mut page.items);
+        normalize_genre_collection_image_refs(&self.store, &saved, &mut page.items, &settings)?;
+        Ok(page)
     }
     pub fn cached_playlists_page(
         &self,

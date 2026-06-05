@@ -20,7 +20,26 @@ impl Shell {
     ) -> gtk::Widget {
         let tile = ArtworkTile::new_sized(width, height, seed);
         let widget = tile.widget();
-        self.bind_cover_tile_for_dimensions(&tile, image_ref, seed, width, height, fetch_size);
+        self.bind_cover_tile_for_dimensions(&tile, image_ref, seed, width.max(height), fetch_size);
+        widget
+    }
+
+    pub(in crate::ui) fn cover_collection_tile_for(
+        self: &Rc<Self>,
+        image_ref: Option<&ImageRef>,
+        seed: u32,
+        size: i32,
+        fetch_size: u32,
+    ) -> gtk::Widget {
+        let tile = ArtworkTile::new_sized(size, size, seed);
+        let widget = tile.widget();
+        self.bind_cover_tile_for_dimensions(
+            &tile,
+            image_ref,
+            seed,
+            collection_cover_decode_extent(fetch_size, size),
+            fetch_size,
+        );
         widget
     }
 
@@ -32,7 +51,7 @@ impl Shell {
         size: i32,
         fetch_size: u32,
     ) {
-        self.bind_cover_tile_for_dimensions(tile, image_ref, seed, size, size, fetch_size);
+        self.bind_cover_tile_for_dimensions(tile, image_ref, seed, size, fetch_size);
     }
 
     pub(in crate::ui) fn bind_cover_tile_for_dimensions(
@@ -40,11 +59,10 @@ impl Shell {
         tile: &ArtworkTile,
         image_ref: Option<&ImageRef>,
         seed: u32,
-        width: i32,
-        height: i32,
+        decode_extent: i32,
         fetch_size: u32,
     ) {
-        let decode_size = cover_decode_size(width.max(height), fetch_size);
+        let decode_size = cover_decode_size(decode_extent, fetch_size);
 
         let Some(image_ref) = image_ref else {
             tile.bind_image(seed, None);
@@ -143,9 +161,17 @@ impl Shell {
         fetch_size: u32,
     ) -> gtk::Widget {
         let image_refs = cover_group_slots(&image_refs);
+        if !self.cover_group_ready_for_collage(&image_refs, fetch_size, size) {
+            return self.cover_collection_tile_for(
+                image_refs.first().or(fallback_image_ref),
+                seed,
+                size,
+                fetch_size,
+            );
+        }
         match image_refs.len() {
-            0 => self.cover_tile_for(fallback_image_ref, seed, size, fetch_size),
-            1 => self.cover_tile_for(image_refs.first(), seed, size, fetch_size),
+            0 => self.cover_collection_tile_for(fallback_image_ref, seed, size, fetch_size),
+            1 => self.cover_collection_tile_for(image_refs.first(), seed, size, fetch_size),
             _ => {
                 let grid = gtk::Grid::new();
                 grid.add_css_class("cover-tile");
@@ -173,6 +199,34 @@ impl Shell {
                 grid.upcast()
             }
         }
+    }
+    pub(in crate::ui) fn cover_group_ready_for_collage(
+        &self,
+        image_refs: &[ImageRef],
+        fetch_size: u32,
+        size: i32,
+    ) -> bool {
+        let cell_size = (size / 2).max(1);
+        let decode_size = cover_decode_size(cell_size, fetch_size);
+        let mut unique_keys = HashSet::new();
+        let mut unique_refs = 0;
+        let mut ready = 0;
+        for image_ref in image_refs.iter().take(4) {
+            let Some(key) = self.cover_cache_key(image_ref, fetch_size) else {
+                continue;
+            };
+            if !unique_keys.insert(key) {
+                continue;
+            }
+            unique_refs += 1;
+            if self
+                .decoded_cover_for_ref(image_ref, fetch_size, decode_size)
+                .is_some()
+            {
+                ready += 1;
+            }
+        }
+        cover_group_collage_ready(unique_refs, ready)
     }
     fn schedule_cover_request_for_tile(
         self: &Rc<Self>,
@@ -255,5 +309,20 @@ impl Shell {
             generation,
             clear_on_failure,
         });
+    }
+}
+
+pub(in crate::ui) fn cover_group_collage_ready(
+    unique_ref_count: usize,
+    ready_count: usize,
+) -> bool {
+    unique_ref_count >= 2 && ready_count >= 2
+}
+
+pub(in crate::ui) fn collection_cover_decode_extent(fetch_size: u32, size: i32) -> i32 {
+    if fetch_size <= THUMB_COVER_SIZE {
+        THUMB_COVER_SIZE as i32
+    } else {
+        size
     }
 }

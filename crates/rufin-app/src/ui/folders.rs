@@ -7,7 +7,8 @@ use rufin_provider::FolderDetail;
 use super::{
     PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, THUMB_COVER_SIZE,
     folder_play_source_key, install_track_context_menu, loaded_tracks_window_play_activation,
-    selected_music_folder_id, sort_tracks_with_options, stable_seed, track_matches_query,
+    mark_route_scroll_owner, selected_music_folder_id, sort_tracks_with_options, stable_seed,
+    track_matches_query,
 };
 use crate::i18n::tr;
 
@@ -87,6 +88,7 @@ impl Shell {
         populate_folder_table(self, &table, &path, &detail, "");
 
         let table_scroller = gtk::ScrolledWindow::new();
+        mark_route_scroll_owner(&table_scroller);
         table_scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         table_scroller.set_min_content_width(0);
         table_scroller.set_hexpand(true);

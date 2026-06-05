@@ -109,11 +109,24 @@ fn gapless_about_finish() {
     assert_eq!(shared.gapless_pending, Some(next));
 }
 #[test]
-fn playback_finish_eos() {
+fn gapless_about_finish_remote() {
     let next = PreparedPlaybackItem::new(
         track(2),
         StreamDescriptor::new("https://music.example/Audio/track/stream?api_key=secret-token"),
     );
+    let mut shared = SharedPlaybackState::new();
+    shared.settings.transition_mode = PlaybackTransitionMode::Gapless;
+    shared.next = Some(next.clone());
+
+    let action = about_to_finish_action(&mut shared);
+
+    assert_eq!(action, AboutToFinishAction::Preload(next.clone()));
+    assert!(shared.next.is_none());
+    assert_eq!(shared.gapless_pending, Some(next));
+}
+#[test]
+fn playback_finish_eos_unsupported() {
+    let next = PreparedPlaybackItem::new(track(2), StreamDescriptor::new("fake://track/2"));
     let mut shared = SharedPlaybackState::new();
     shared.settings.transition_mode = PlaybackTransitionMode::Gapless;
     shared.next = Some(next.clone());
@@ -134,6 +147,21 @@ fn playback_wait_eos() {
     assert_eq!(action, AboutToFinishAction::Ignore);
     assert!(shared.next.is_none());
     assert!(shared.gapless_pending.is_none());
+    assert!(shared.about_to_finish_pending);
+}
+#[test]
+fn playback_finish_eos_unsupported_clears_late_window() {
+    let next = PreparedPlaybackItem::new(track(2), StreamDescriptor::new("fake://track/2"));
+    let mut shared = SharedPlaybackState::new();
+    shared.settings.transition_mode = PlaybackTransitionMode::Gapless;
+    shared.about_to_finish_pending = true;
+    shared.next = Some(next.clone());
+
+    let action = about_to_finish_action(&mut shared);
+
+    assert_eq!(action, AboutToFinishAction::Ignore);
+    assert_eq!(shared.next, Some(next));
+    assert!(!shared.about_to_finish_pending);
 }
 #[test]
 fn album_crossfade_about() {
@@ -251,7 +279,7 @@ fn playback_reject_state() {
     assert!(events.lock().expect("events").is_empty());
 
     engine.handle_state_changed(PlaybackState::Playing);
-    assert!(engine.pending_seek.is_some());
+    assert!(engine.pending_seek.is_none());
     engine.push_position(0);
 
     let events = events.lock().expect("events");

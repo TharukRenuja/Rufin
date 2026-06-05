@@ -300,7 +300,8 @@ fn prefetch_synced_provider_covers(
     let mut seen = HashSet::new();
     let image_refs = synced_provider_cover_refs(context.store, context.saved, &mut seen, stats)?;
     stats.image_refs = image_refs.len();
-    for image_ref in image_refs {
+    emit_initial_cover_prefetch_status(context, 0, stats.image_refs);
+    for (index, image_ref) in image_refs.into_iter().enumerate() {
         if active_server_changed(context.store, context.saved)? {
             info!(
                 server_id = %context.saved.server.id,
@@ -310,8 +311,25 @@ fn prefetch_synced_provider_covers(
         }
         let outcome = prefetch_provider_image_ref(context, provider, image_ref)?;
         record_provider_cover_prefetch_outcome(stats, outcome);
+        let processed = index + 1;
+        if processed == stats.image_refs || processed % 25 == 0 {
+            emit_initial_cover_prefetch_status(context, processed, stats.image_refs);
+        }
     }
     Ok(())
+}
+
+fn emit_initial_cover_prefetch_status(
+    context: &CoverPrefetchContext<'_>,
+    processed: usize,
+    total: usize,
+) {
+    if total == 0 {
+        return;
+    }
+    let _sent = context.events.send(ControllerEvent::LoginStatus(format!(
+        "Caching library artwork… {processed}/{total} covers checked"
+    )));
 }
 
 fn synced_provider_cover_refs(

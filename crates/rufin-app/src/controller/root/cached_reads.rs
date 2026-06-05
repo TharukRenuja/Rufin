@@ -228,6 +228,7 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         true,
         &metadata_settings,
     )?;
+    normalize_genre_collection_image_refs(store, &saved, &mut genres, &metadata_settings)?;
     external_metadata::normalize_tracks(&mut favorites, &metadata_settings);
     scrub_snapshot_image_refs(
         &saved,
@@ -384,6 +385,54 @@ pub(in crate::controller) fn artist_album_fallback(
         artist.image_ref = album.image_ref;
         external_metadata::normalize_artist(artist, settings);
     }
+}
+pub(in crate::controller) fn normalize_genre_collection_image_refs(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    genres: &mut [Genre],
+    settings: &AppSettings,
+) -> Result<(), String> {
+    if !external_metadata::enabled(settings) {
+        return Ok(());
+    }
+    let missing = genres
+        .iter()
+        .filter(|genre| genre.image_ref.is_none() && genre.image_refs.is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut fallback_albums =
+        store.with_store(|store| store.load_genre_fallback_albums(&saved.server.id, &missing))?;
+    for album in fallback_albums.values_mut() {
+        scrub_source_image_ref(saved, &mut album.image_ref);
+        external_metadata::normalize_album(album, settings);
+    }
+    let cached_refs = store.with_store(|store| {
+        let mut cached_refs = HashMap::<GenreId, ImageRef>::new();
+        for (genre_id, album) in &fallback_albums {
+            let Some(image_ref) = album.image_ref.as_ref() else {
+                continue;
+            };
+            if !external_metadata::is_external_image_ref(image_ref) {
+                continue;
+            }
+            if cached_image_ref_exists(store, &saved.server.id, image_ref)? {
+                cached_refs.insert(genre_id.clone(), image_ref.clone());
+            }
+        }
+        Ok::<_, StoreError>(cached_refs)
+    })?;
+    for genre in genres {
+        if genre.image_ref.is_none()
+            && genre.image_refs.is_empty()
+            && let Some(image_ref) = cached_refs.get(&genre.id)
+        {
+            genre.image_ref = Some(image_ref.clone());
+        }
+    }
+    Ok(())
 }
 pub(in crate::controller) fn artist_fallback_image_ref(
     albums: &[Album],
@@ -1393,13 +1442,26 @@ fn local_image_ref_cache_missing(
         return Ok(false);
     }
     for size in [256, 512] {
-        if local_cover_cache_entry_exists(store, server_id, image_ref, &tag, size)? {
+        if cover_cache_entry_exists(store, server_id, image_ref, &tag, size)? {
             return Ok(false);
         }
     }
     Ok(true)
 }
-fn local_cover_cache_entry_exists(
+fn cached_image_ref_exists(
+    store: &Store,
+    server_id: &ServerId,
+    image_ref: &ImageRef,
+) -> Result<bool, StoreError> {
+    let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+    for size in [96, 256, 512] {
+        if cover_cache_entry_exists(store, server_id, image_ref, tag, size)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+fn cover_cache_entry_exists(
     store: &Store,
     server_id: &ServerId,
     image_ref: &ImageRef,
@@ -1888,6 +1950,9 @@ pub(in crate::controller) fn next_preload_request_from_queue(
         let current_entry_id = queue.current()?.id.clone();
         let next_entry = next_queue_entry_after_current(queue)?;
         let next_entry_id = next_entry.id.clone();
+        if next_entry_id == current_entry_id {
+            return None;
+        }
         Some(NextPreloadRequest {
             server_id,
             current_entry_id,

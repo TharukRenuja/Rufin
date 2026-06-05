@@ -94,6 +94,11 @@ listview.album-detail-list row:selected {
   margin-top: 2px;
 }
 
+.startup-loading-status-detail {
+  font-size: 0.9em;
+  opacity: 0.82;
+}
+
 .first-run-content statuspage {
   margin-bottom: 4px;
 }

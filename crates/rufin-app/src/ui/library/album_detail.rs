@@ -148,7 +148,7 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
         genre.image_ref.as_ref(),
         stable_seed(genre.id.as_str()),
         size,
-        GRID_COVER_SIZE,
+        THUMB_COVER_SIZE,
     )));
     let open_shell = Rc::clone(shell);
     let open_genre_id = genre.id.clone();

@@ -13,6 +13,7 @@ use super::cards::{render_home_album_page, render_home_track_page};
 use super::{
     GRID_COVER_SIZE, HOME_ALBUM_GAP, PLAY_LATER_ICON, PLAY_NEXT_ICON, PRIMARY_ROUTE_MARGIN_END,
     PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class, icon_button,
+    mark_route_scroll_owner,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -66,6 +67,7 @@ fn home_showcase_facts(album: &Album) -> String {
 impl Shell {
     pub(super) fn home_view(self: &Rc<Self>) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
+        mark_route_scroll_owner(&scroller);
         scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         scroller.set_min_content_width(0);
         scroller.set_vexpand(true);

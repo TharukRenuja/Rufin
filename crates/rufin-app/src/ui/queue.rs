@@ -544,6 +544,14 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
     menu.append(Some(&tr("Remove from Queue")), Some("queue.remove"));
     menu.append(Some(&tr("Play Now")), Some("queue.play-now"));
     menu.append(Some(&tr("Play Next")), Some("queue.play-next"));
+    menu.append(
+        Some(&tr(if entry.favorite {
+            "Remove from Favorites"
+        } else {
+            "Add to Favorites"
+        })),
+        Some("queue.favorite"),
+    );
     let artist_route = queue_artist_route(entry);
     if artist_route.is_some() {
         menu.append(Some(&tr("Go to Artist")), Some("queue.go-artist"));
@@ -596,6 +604,19 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
     });
     actions.add_action(&play_next);
 
+    let favorite = gio::SimpleAction::new("favorite", None);
+    let favorite_controller = controller.clone();
+    let favorite_track_id = entry.track_id.clone();
+    let favorite_value = !entry.favorite;
+    let favorite_popover = popover.downgrade();
+    favorite.connect_activate(move |_, _| {
+        if let Some(popover) = favorite_popover.upgrade() {
+            popover.popdown();
+        }
+        favorite_controller.set_track_favorite(favorite_track_id.clone(), favorite_value);
+    });
+    actions.add_action(&favorite);
+
     if let Some(artist_route) = artist_route {
         let go_artist = gio::SimpleAction::new("go-artist", None);
         let action_shell = Rc::clone(shell);
@@ -630,7 +651,9 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
     let click_popover = popover.downgrade();
     let click = gtk::GestureClick::new();
     click.set_button(3);
-    click.connect_pressed(move |_, _, x, y| {
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    click.connect_pressed(move |click, _, x, y| {
+        click.set_state(gtk::EventSequenceState::Claimed);
         if let Some(popover) = click_popover.upgrade() {
             let rect = gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
             popover.set_pointing_to(Some(&rect));
