@@ -11,19 +11,20 @@
   <url type="homepage">https://github.com/screwys/Rufin</url>
   <url type="bugtracker">https://github.com/screwys/Rufin/issues</url>
   <url type="vcs-browser">https://github.com/screwys/Rufin</url>
+  <url type="translate">https://hosted.weblate.org/projects/rufin</url>
   <branding>
     <color type="primary" scheme_preference="light">#8ecad6</color>
     <color type="primary" scheme_preference="dark">#28596b</color>
   </branding>
   <description>
-    <p>Native music client for your music servers or local folders with built-in scrobbling and advanced customization settings.</p>
+    <p>Native music client for your music servers and local music folders, with built-in Discord and Last.fm integration</p>
     <ul>
       <li>Can connect to multiple Jellyfin, Subsonic, Navidrome servers as well as multiple local folders, and can seamlessly switch between them</li>
       <li>Built-in Last.fm, Libre.fm, and ListenBrainz scrobbling</li>
       <li>Discord Rich Presence</li>
-      <li>Automatic lyrics/Cover art lookup</li>
-      <li>Music player basics like ReplayGain, Gapless, CrossFade and an equalizer</li>
+      <li>Automatic lyrics/cover art lookup</li>
       <li>Smart playlists that support multiple combinations</li>
+      <li>And other music player basics</li>
     </ul>
   </description>
   <screenshots>
