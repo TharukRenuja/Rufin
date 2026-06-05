@@ -1377,7 +1377,7 @@ pub(in crate::controller) fn startup_local_cache() {
         })
         .expect("seed local cache");
 
-    assert!(initial_cover_cache_required(&store, &local.server.id));
+    assert!(!initial_cover_cache_required(&store, &local.server.id));
     assert!(!active_server_needs_sync(&store, &local.server.id));
     let readiness = active_source_readiness(&store, &local.server.id).expect("readiness");
     assert!(!readiness.artwork_fresh);
@@ -1573,7 +1573,7 @@ pub(in crate::controller) fn startup_local_artwork() {
         })
         .expect("save local server");
 
-    assert!(initial_cover_cache_required(&store, &local.server.id));
+    assert!(!initial_cover_cache_required(&store, &local.server.id));
     assert!(!active_server_needs_sync(&store, &local.server.id));
     let readiness = active_source_readiness(&store, &local.server.id).expect("readiness");
     assert!(!readiness.artwork_fresh);

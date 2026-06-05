@@ -2,9 +2,7 @@ use super::*;
 
 impl Shell {
     pub(in crate::ui) fn library_albums_view(self: &Rc<Self>) -> gtk::Widget {
-        let view_started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Albums);
-        let load_started = Instant::now();
         let page = self.complete_album_snapshot_page().unwrap_or_else(|| {
             self.controller
                 .cached_albums_page(0, GRID_ROUTE_PAGE_SIZE)
@@ -25,15 +23,23 @@ impl Shell {
                     )
                 })
         });
-        let initial_load_ms = load_started.elapsed().as_millis() as u64;
-        let complete_started = Instant::now();
         let page = complete_cached_page(
             page,
             library_layout_loads_complete_page(LibraryListKey::Albums, &settings),
             |limit| self.controller.cached_albums_page(0, limit),
             "albums",
         );
-        let complete_load_ms = complete_started.elapsed().as_millis() as u64;
+        self.library_albums_view_from_page(page)
+    }
+
+    pub(in crate::ui) fn library_albums_view_from_page(
+        self: &Rc<Self>,
+        page: rufin_provider::PagedResponse<Album>,
+    ) -> gtk::Widget {
+        let view_started = Instant::now();
+        let settings = self.library_settings(LibraryListKey::Albums);
+        let initial_load_ms = 0;
+        let complete_load_ms = 0;
         let page_total = page.total;
         let complete_page = page.items.len() >= page.total;
         let source_albums = Rc::new(page.items.clone());
@@ -280,6 +286,13 @@ impl Shell {
 
         self.library_tracks_page(page.items, page.total)
     }
+    pub(in crate::ui) fn library_tracks_route_view_from_page(
+        self: &Rc<Self>,
+        page: rufin_provider::PagedResponse<Track>,
+    ) -> gtk::Widget {
+        self.library_tracks_page(page.items, page.total)
+    }
+
     pub(in crate::ui) fn library_artist_list_view(
         self: &Rc<Self>,
         album_artist: bool,
@@ -288,11 +301,6 @@ impl Shell {
             LibraryListKey::AlbumArtists
         } else {
             LibraryListKey::Artists
-        };
-        let route = if album_artist {
-            Route::AlbumArtists
-        } else {
-            Route::Artists
         };
         let settings = self.library_settings(key);
         let page = self
@@ -324,6 +332,25 @@ impl Shell {
             |limit| self.controller.cached_artists_page(album_artist, 0, limit),
             "artists",
         );
+        self.library_artist_list_view_from_page(album_artist, page)
+    }
+
+    pub(in crate::ui) fn library_artist_list_view_from_page(
+        self: &Rc<Self>,
+        album_artist: bool,
+        page: rufin_provider::PagedResponse<Artist>,
+    ) -> gtk::Widget {
+        let key = if album_artist {
+            LibraryListKey::AlbumArtists
+        } else {
+            LibraryListKey::Artists
+        };
+        let route = if album_artist {
+            Route::AlbumArtists
+        } else {
+            Route::Artists
+        };
+        let settings = self.library_settings(key);
         let complete_page = page.items.len() >= page.total;
         let source_artists = Rc::new(page.items.clone());
         let artists = Rc::new(RefCell::new(page.items));
@@ -495,6 +522,14 @@ impl Shell {
             |limit| self.controller.cached_genres_page(0, limit),
             "genres",
         );
+        self.library_genre_list_view_from_page(page)
+    }
+
+    pub(in crate::ui) fn library_genre_list_view_from_page(
+        self: &Rc<Self>,
+        page: rufin_provider::PagedResponse<Genre>,
+    ) -> gtk::Widget {
+        let settings = self.library_settings(LibraryListKey::Genres);
         let complete_page = page.items.len() >= page.total;
         let source_genres = Rc::new(page.items.clone());
         let genres = Rc::new(RefCell::new(page.items));
@@ -664,6 +699,14 @@ impl Shell {
             |limit| self.controller.cached_playlists_page(0, limit),
             "playlists",
         );
+        self.library_playlists_view_from_page(page)
+    }
+
+    pub(in crate::ui) fn library_playlists_view_from_page(
+        self: &Rc<Self>,
+        page: rufin_provider::PagedResponse<Playlist>,
+    ) -> gtk::Widget {
+        let settings = self.library_settings(LibraryListKey::Playlists);
         let complete_page = page.items.len() >= page.total;
         let source_playlists = Rc::new(page.items.clone());
         let playlists = Rc::new(RefCell::new(page.items));

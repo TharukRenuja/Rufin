@@ -47,7 +47,7 @@ const LIBRARY_CONFIG_DIALOG_WIDTH: i32 = 620;
 const LIBRARY_CONFIG_DIALOG_HEIGHT: i32 = 560;
 const LIBRARY_TABLE_HEADER_HEIGHT: i32 = 92;
 pub(in crate::ui) const LIBRARY_TABLE_ROW_HEIGHT: i32 = 58;
-const LIBRARY_ROUTE_BOTTOM_MARGIN: i32 = 8;
+pub(in crate::ui) const LIBRARY_ROUTE_BOTTOM_MARGIN: i32 = 8;
 const ALBUM_DETAIL_INLINE_TRACK_ROWS: usize = 8;
 const ALBUM_DETAIL_TRACK_HEADER_HEIGHT: i32 = 34;
 const ALBUM_DETAIL_META_SPACING: i32 = 6;
@@ -271,7 +271,7 @@ fn viewport_page_size(
 fn library_layout_loads_complete_page(key: LibraryListKey, settings: &LibraryListSettings) -> bool {
     key.supports_layout(settings.layout)
 }
-fn complete_cached_page<T>(
+pub(in crate::ui) fn complete_cached_page<T>(
     page: rufin_provider::PagedResponse<T>,
     load_complete: bool,
     mut load_all: impl FnMut(usize) -> Result<rufin_provider::PagedResponse<T>, String>,

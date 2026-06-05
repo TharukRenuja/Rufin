@@ -139,6 +139,17 @@ pub(in crate::ui) struct SnapshotEventOutcome {
     pub entered_first_run: bool,
     pub render: SnapshotRenderDecision,
 }
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui) struct LocalSourceCacheGateInput<'a> {
+    pub local_folders_changed: bool,
+    pub next_source: &'a Option<rufin_core::LibrarySourceSelection>,
+    pub has_local_folders: bool,
+    pub has_cached_library: bool,
+    pub startup_route_revealed: bool,
+    pub preparing: bool,
+    pub sync_seen: bool,
+    pub sync_status: &'a str,
+}
 pub(in crate::ui) fn snapshot_event_outcome(
     previous_first_run: bool,
     next_first_run: bool,
@@ -163,35 +174,28 @@ pub(in crate::ui) fn snapshot_event_outcome(
     }
 }
 pub(in crate::ui) fn local_source_cache_gate_action(
-    local_folders_changed: bool,
-    next_source: &Option<rufin_core::LibrarySourceSelection>,
-    has_local_folders: bool,
-    has_cached_library: bool,
-    preparing: bool,
-    sync_seen: bool,
-    sync_status: &str,
+    input: LocalSourceCacheGateInput<'_>,
 ) -> LocalSourceCacheGateAction {
-    if !library_source_is_local(next_source) {
-        return if preparing {
+    if !library_source_is_local(input.next_source) {
+        return if input.preparing {
             LocalSourceCacheGateAction::Cancel
         } else {
             LocalSourceCacheGateAction::None
         };
     }
 
-    if !preparing
-        && has_local_folders
-        && (local_folders_changed
-            || (local_source_snapshot_is_syncing(sync_status) && !has_cached_library))
-    {
+    let uncached_local_wait = !input.has_cached_library
+        && (input.local_folders_changed || local_source_snapshot_is_syncing(input.sync_status));
+    let startup_folder_wait = input.local_folders_changed && !input.startup_route_revealed;
+    if !input.preparing && input.has_local_folders && (uncached_local_wait || startup_folder_wait) {
         return LocalSourceCacheGateAction::Enter;
     }
 
-    if !preparing {
+    if !input.preparing {
         return LocalSourceCacheGateAction::None;
     }
 
-    if local_source_snapshot_is_syncing(sync_status) || !sync_seen {
+    if local_source_snapshot_is_syncing(input.sync_status) || !input.sync_seen {
         LocalSourceCacheGateAction::Wait
     } else {
         LocalSourceCacheGateAction::Reveal
@@ -577,18 +581,19 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     ) {
                         LocalSourceCacheGateAction::None
                     } else {
-                        local_source_cache_gate_action(
+                        local_source_cache_gate_action(LocalSourceCacheGateInput {
                             local_folders_changed,
-                            &snapshot.selected_source,
-                            !snapshot.local_folders.is_empty(),
-                            snapshot
+                            next_source: &snapshot.selected_source,
+                            has_local_folders: !snapshot.local_folders.is_empty(),
+                            has_cached_library: snapshot
                                 .cached_album_count
                                 .saturating_add(snapshot.cached_track_count)
                                 > 0,
-                            shell.state.local_source_preparing.get(),
-                            shell.state.local_source_sync_seen.get(),
-                            &snapshot.sync_status,
-                        )
+                            startup_route_revealed: shell.state.startup_route_revealed.get(),
+                            preparing: shell.state.local_source_preparing.get(),
+                            sync_seen: shell.state.local_source_sync_seen.get(),
+                            sync_status: &snapshot.sync_status,
+                        })
                     };
                     let local_snapshot_syncing =
                         local_source_snapshot_is_syncing(&snapshot.sync_status);
@@ -1010,7 +1015,7 @@ struct VisibleCoverWindow {
 }
 
 impl Shell {
-    fn show_preferences_toast(&self, message: &str) {
+    pub(in crate::ui) fn show_preferences_toast(&self, message: &str) {
         if let Some(overlay) = self.state.preferences_toast_overlay.borrow().as_ref() {
             overlay.add_toast(adw::Toast::new(message));
         }
@@ -1261,7 +1266,10 @@ fn smart_playlist_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     VisibleCoverWindow { refs }
 }
 
-fn cover_prime_sizes(shell: &Shell, settings: &LibraryListSettings) -> Option<(u32, i32)> {
+pub(in crate::ui) fn cover_prime_sizes(
+    shell: &Shell,
+    settings: &LibraryListSettings,
+) -> Option<(u32, i32)> {
     match settings.layout {
         LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1)),
         LibraryLayout::Detail => Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32)),
@@ -1270,7 +1278,11 @@ fn cover_prime_sizes(shell: &Shell, settings: &LibraryListSettings) -> Option<(u
     }
 }
 
-fn visible_index_range(shell: &Shell, total: usize, layout: LibraryLayout) -> (usize, usize) {
+pub(in crate::ui) fn visible_index_range(
+    shell: &Shell,
+    total: usize,
+    layout: LibraryLayout,
+) -> (usize, usize) {
     if total == 0 {
         return (0, 0);
     }

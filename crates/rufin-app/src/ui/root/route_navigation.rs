@@ -12,6 +12,7 @@ impl Shell {
             .first_run_cover_prime_pending
             .borrow_mut()
             .clear();
+        self.state.route_cover_prime_pending.borrow_mut().clear();
         self.state.cover_warm_pending.borrow_mut().take();
         self.state.cover_warm_started.borrow_mut().take();
         self.state.route_tracks.borrow_mut().clear();
@@ -41,7 +42,7 @@ impl Shell {
         self.refresh_search_results_for_route(&route);
         self.state.routes.borrow_mut().navigate(route.clone());
         self.handle_home_route_transition(&previous, &route);
-        self.render_current_route();
+        self.request_current_route_render();
         if matches!(route, Route::Home) {
             self.refresh_home_for_current_visit();
         }
@@ -57,7 +58,7 @@ impl Shell {
             debug!(?route, "navigate back");
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
-            self.render_current_route();
+            self.request_current_route_render();
             if matches!(route, Route::Home) {
                 self.refresh_home_for_current_visit();
             }
@@ -74,7 +75,7 @@ impl Shell {
             debug!(?route, "navigate forward");
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
-            self.render_current_route();
+            self.request_current_route_render();
             if matches!(route, Route::Home) {
                 self.refresh_home_for_current_visit();
             }

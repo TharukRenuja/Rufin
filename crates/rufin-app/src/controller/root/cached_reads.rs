@@ -1236,10 +1236,10 @@ pub(in crate::controller) fn settings_for_server(
     settings
 }
 pub(in crate::controller) fn local_initial_cover_cache_required(
-    store: &StoreHandle,
-    server_id: &ServerId,
+    _store: &StoreHandle,
+    _server_id: &ServerId,
 ) -> bool {
-    local_cover_cache_missing(store, server_id, true)
+    false
 }
 fn local_cover_cache_missing(
     store: &StoreHandle,

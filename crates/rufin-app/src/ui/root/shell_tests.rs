@@ -9,15 +9,16 @@ use super::startup_reveal::{
     startup_route_reveal_action, take_pending_warm,
 };
 use super::{
-    AutoLyricsRequest, LocalSourceCacheGateAction, PlaylistEntryListState, PlaylistEntrySort,
-    SnapshotRenderDecision, album_play_activation, auto_lyrics_request_for_settings,
-    auto_lyrics_skip_action_enabled, cover::record_cover_path_lookup_request,
-    current_playback_track_id, home_visible_sections::changed_visible_home_section_kinds,
-    local_source_cache_gate_action, local_source_snapshot_is_syncing, lyrics_result_subtitle,
-    lyrics_result_subtitle_markup, lyrics_result_title_markup,
-    lyrics_search_response_matches_query, playlist_detail_compact_for_width, playlist_drop_index,
-    playlist_entries_for_state, playlist_play_activation, playlist_route_margin,
-    playlist_sort_width, preferences_login_status_toast_message, queue_source_waits_for_snapshot,
+    AutoLyricsRequest, LocalSourceCacheGateAction, LocalSourceCacheGateInput,
+    PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision, album_play_activation,
+    auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
+    cover::record_cover_path_lookup_request, current_playback_track_id,
+    home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
+    local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_result_subtitle_markup,
+    lyrics_result_title_markup, lyrics_search_response_matches_query,
+    playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
+    playlist_play_activation, playlist_route_margin, playlist_sort_width,
+    preferences_login_status_toast_message, queue_source_waits_for_snapshot,
     seekbar_target_seconds, snapshot_event_outcome,
 };
 use crate::controller::{
@@ -407,8 +408,13 @@ pub(in crate::ui) fn shell_map_states() {
         ),
         (
             "folder change waits behind gate",
-            LocalCacheGateInput::cached(true, false, "Cached library ready"),
+            LocalCacheGateInput::cached_startup(true, false, "Cached library ready"),
             LocalSourceCacheGateAction::Enter,
+        ),
+        (
+            "revealed cached folder change stays visible",
+            LocalCacheGateInput::cached(true, false, "Cached library ready"),
+            LocalSourceCacheGateAction::None,
         ),
         (
             "empty folder selection stays visible",
@@ -416,6 +422,7 @@ pub(in crate::ui) fn shell_map_states() {
                 local_folders_changed: true,
                 has_local_folders: false,
                 has_cached_library: false,
+                startup_route_revealed: true,
                 preparing: false,
                 sync_seen: false,
                 sync_status: "Cached library ready",
@@ -462,15 +469,16 @@ pub(in crate::ui) fn shell_source_local() {
     )));
 
     assert_eq!(
-        local_source_cache_gate_action(
-            false,
-            &source,
-            true,
-            true,
-            true,
-            true,
-            "Cached library ready"
-        ),
+        local_source_cache_gate_action(LocalSourceCacheGateInput {
+            local_folders_changed: false,
+            next_source: &source,
+            has_local_folders: true,
+            has_cached_library: true,
+            startup_route_revealed: true,
+            preparing: true,
+            sync_seen: true,
+            sync_status: "Cached library ready",
+        }),
         LocalSourceCacheGateAction::Cancel
     );
 }
@@ -1426,6 +1434,7 @@ struct LocalCacheGateInput<'a> {
     local_folders_changed: bool,
     has_local_folders: bool,
     has_cached_library: bool,
+    startup_route_revealed: bool,
     preparing: bool,
     sync_seen: bool,
     sync_status: &'a str,
@@ -1433,10 +1442,24 @@ struct LocalCacheGateInput<'a> {
 
 impl<'a> LocalCacheGateInput<'a> {
     fn cached(local_folders_changed: bool, preparing: bool, sync_status: &'a str) -> Self {
+        Self::cached_inner(local_folders_changed, true, preparing, sync_status)
+    }
+
+    fn cached_startup(local_folders_changed: bool, preparing: bool, sync_status: &'a str) -> Self {
+        Self::cached_inner(local_folders_changed, false, preparing, sync_status)
+    }
+
+    fn cached_inner(
+        local_folders_changed: bool,
+        startup_route_revealed: bool,
+        preparing: bool,
+        sync_status: &'a str,
+    ) -> Self {
         Self {
             local_folders_changed,
             has_local_folders: true,
             has_cached_library: true,
+            startup_route_revealed,
             preparing,
             sync_seen: false,
             sync_status,
@@ -1448,6 +1471,7 @@ impl<'a> LocalCacheGateInput<'a> {
             local_folders_changed: false,
             has_local_folders: true,
             has_cached_library: false,
+            startup_route_revealed: true,
             preparing,
             sync_seen,
             sync_status,
@@ -1457,15 +1481,16 @@ impl<'a> LocalCacheGateInput<'a> {
 
 fn local_cache_gate_action(input: LocalCacheGateInput<'_>) -> LocalSourceCacheGateAction {
     let source = Some(LibrarySourceSelection::Local);
-    local_source_cache_gate_action(
-        input.local_folders_changed,
-        &source,
-        input.has_local_folders,
-        input.has_cached_library,
-        input.preparing,
-        input.sync_seen,
-        input.sync_status,
-    )
+    local_source_cache_gate_action(LocalSourceCacheGateInput {
+        local_folders_changed: input.local_folders_changed,
+        next_source: &source,
+        has_local_folders: input.has_local_folders,
+        has_cached_library: input.has_cached_library,
+        startup_route_revealed: input.startup_route_revealed,
+        preparing: input.preparing,
+        sync_seen: input.sync_seen,
+        sync_status: input.sync_status,
+    })
 }
 
 pub(in crate::ui) fn test_library_snapshot() -> crate::controller::LibrarySnapshot {
