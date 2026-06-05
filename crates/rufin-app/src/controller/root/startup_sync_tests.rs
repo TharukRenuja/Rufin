@@ -469,12 +469,12 @@ pub(in crate::controller) fn startup_start_refresh() {
         Some(LibrarySourceSelection::Local)
     );
     assert_eq!(snapshot.sync_status, "Syncing library…");
+    assert_eq!(wait_for_status(&events), "Syncing Local library…");
     let state = controller
         .store
         .with_store(|store| store.sync_state(&local.server.id))
         .expect("sync state");
     assert!(state.generation > generation);
-    assert_eq!(wait_for_status(&events), "Syncing Local library…");
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
