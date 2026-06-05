@@ -4,10 +4,10 @@ use super::{
     AppController, ControllerEvent, LOCAL_SOURCE_SERVER_ID, LibrarySnapshot, LibrarySyncStatus,
     LoginActivationContext, LoginActivationRequest, SNAPSHOT_GRID_LIMIT, SNAPSHOT_TRACK_LIMIT,
     StoreHandle, activate_logged_in_server, activate_with_token, home_refresh_completed_event,
-    load_snapshot, prefetch_home_section, promote_prefetched_home_section, refresh_home_section,
-    refresh_home_sections, refresh_home_sections_without_explore, refresh_playlist_pages,
-    sync_local_provider_with_events, sync_page_finished, sync_provider, sync_provider_outcome,
-    sync_provider_with_events,
+    load_runtime_snapshot, load_snapshot, prefetch_home_section, promote_prefetched_home_section,
+    refresh_home_section, refresh_home_sections, refresh_home_sections_without_explore,
+    refresh_playlist_pages, sync_local_provider_with_events, sync_page_finished, sync_provider,
+    sync_provider_outcome, sync_provider_with_events,
 };
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistCredit, Genre, GenreId, HomeSection, HomeSectionKind,
@@ -18,7 +18,7 @@ use rufin_playback::{
     PlaybackBackend, PlaybackCommand, PlaybackError, PlaybackEvent, PlaybackState,
 };
 use rufin_provider::{MusicProvider, PagedRequest, PlaylistEntry, ProviderSession};
-use rufin_secrets::SecretStore;
+use rufin_secrets::{MemorySecretStore, SecretStore};
 use rufin_store::SavedServer;
 use rufin_test_support::{FakeProvider, FakeScale};
 use std::fs;
@@ -449,6 +449,93 @@ pub(in crate::controller) fn startup_load_source() {
         .expect("active server");
     assert_eq!(active_after.server.id, selected_saved.server.id);
 }
+
+#[test]
+pub(in crate::controller) fn startup_missing_token_reconnects_saved_remote() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_server();
+    store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)
+        })
+        .expect("save server");
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+    let snapshot = load_runtime_snapshot(&store, &secrets).expect("load runtime snapshot");
+
+    assert!(snapshot.first_run);
+    assert_eq!(
+        snapshot.server.as_ref().map(|server| server.id.clone()),
+        Some(saved.server.id.clone())
+    );
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Server(saved.server.id.clone()))
+    );
+    assert_eq!(snapshot.username.as_deref(), Some(saved.username.as_str()));
+    assert_eq!(
+        snapshot.sync_status,
+        "Connect once more to continue using this server."
+    );
+    assert!(snapshot.last_error.is_none());
+}
+
+#[test]
+pub(in crate::controller) fn startup_config_token_keeps_saved_remote_active() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = saved_server();
+    store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)
+        })
+        .expect("save server");
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    secrets
+        .save_token(&saved.server.id, "cached-session-token")
+        .expect("save token");
+
+    let snapshot = load_runtime_snapshot(&store, &secrets).expect("load runtime snapshot");
+
+    assert!(!snapshot.first_run);
+    assert_eq!(
+        snapshot.server.as_ref().map(|server| server.id.clone()),
+        Some(saved.server.id.clone())
+    );
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Server(saved.server.id))
+    );
+}
+
+#[test]
+pub(in crate::controller) fn startup_local_source_does_not_require_secret() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let root = unique_test_dir("local-source-runtime-snapshot");
+    fs::create_dir_all(&root).expect("create root");
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save settings");
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+    let snapshot = load_runtime_snapshot(&store, &secrets).expect("load runtime snapshot");
+
+    assert!(!snapshot.first_run);
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Local)
+    );
+    assert_eq!(
+        snapshot.server.expect("server").id.as_str(),
+        LOCAL_SOURCE_SERVER_ID
+    );
+    let _cleanup = fs::remove_dir_all(root);
+}
+
 #[test]
 pub(in crate::controller) fn startup_add_syncs() {
     let store = StoreHandle::open_memory().expect("memory store");

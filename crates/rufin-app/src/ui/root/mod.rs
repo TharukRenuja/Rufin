@@ -241,6 +241,7 @@ pub(in crate::ui) struct AppState {
     lyrics_auto_search_attempted: RefCell<HashSet<rufin_core::TrackId>>,
     lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
     preferences_toast_overlay: RefCell<Option<adw::ToastOverlay>>,
+    reconnect_toasts_shown: RefCell<HashSet<ServerId>>,
     lyrics_timing_generation: Cell<u64>,
     lyrics_timing_source: RefCell<Option<glib::SourceId>>,
     #[cfg(unix)]
@@ -389,6 +390,7 @@ pub(in crate::ui) struct Shell {
     controller: AppController,
     application: adw::Application,
     window: adw::ApplicationWindow,
+    toast_overlay: adw::ToastOverlay,
     root_stack: gtk::Stack,
     app_root: gtk::Box,
     app_content_stack: gtk::Stack,
@@ -481,6 +483,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         lyrics_auto_search_attempted: RefCell::new(HashSet::new()),
         lyrics_search_dialog: RefCell::new(None),
         preferences_toast_overlay: RefCell::new(None),
+        reconnect_toasts_shown: RefCell::new(HashSet::new()),
         lyrics_timing_generation: Cell::new(0),
         lyrics_timing_source: RefCell::new(None),
         #[cfg(unix)]
@@ -643,13 +646,16 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     root_stack.add_named(&login_host, Some("login"));
     root_stack.add_named(&startup_loading_host, Some("startup-loading"));
     root_stack.add_named(&app_root, Some("app"));
-    window.set_content(Some(&root_stack));
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&root_stack));
+    window.set_content(Some(&toast_overlay));
 
     let shell = Rc::new(Shell {
         state,
         controller,
         application: app.clone(),
         window,
+        toast_overlay,
         root_stack,
         app_root,
         app_content_stack,
@@ -723,9 +729,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     tray::present_initial_window(&shell);
     #[cfg(not(unix))]
     shell.window.present();
-    if !using_fake_library {
-        shell.controller.import_legacy_tokens_after_startup();
-    }
     if defer_initial_route {
         shell.schedule_startup_route_reveal();
     }

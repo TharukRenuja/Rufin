@@ -27,7 +27,7 @@ fn start_sync_thread_inner(context: SyncContext, saved: SavedServer, force_snaps
                 "Sync already running.".to_string(),
             ));
             if force_snapshots {
-                emit_snapshot(&context.store, &context.events);
+                emit_runtime_snapshot(&context.store, &context.secrets, &context.events);
             }
             return;
         }
@@ -61,7 +61,7 @@ fn start_sync_thread_inner(context: SyncContext, saved: SavedServer, force_snaps
         }
     };
     if !skip_sync_snapshots {
-        emit_snapshot(&context.store, &context.events);
+        emit_runtime_snapshot(&context.store, &context.secrets, &context.events);
     }
 
     thread::spawn(move || {
@@ -111,7 +111,7 @@ fn start_sync_thread_inner(context: SyncContext, saved: SavedServer, force_snaps
                         outcome.delta,
                     );
                 } else {
-                    emit_sync_complete_snapshot(&context.store, &context.events);
+                    emit_sync_complete_snapshot(&context.store, &context.secrets, &context.events);
                 }
             }
             Err(error) => {
@@ -206,11 +206,15 @@ fn send_sync_error(
     }
 }
 
-fn emit_sync_complete_snapshot(store: &StoreHandle, events: &Sender<ControllerEvent>) {
+fn emit_sync_complete_snapshot(
+    store: &StoreHandle,
+    secrets: &Arc<dyn SecretStore>,
+    events: &Sender<ControllerEvent>,
+) {
     let _sent = events.send(ControllerEvent::LoginStatus(
         "Library sync complete".to_string(),
     ));
-    match load_snapshot(store) {
+    match load_runtime_snapshot(store, secrets) {
         Ok(snapshot) => {
             let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
         }
