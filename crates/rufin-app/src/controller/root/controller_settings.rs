@@ -19,7 +19,8 @@ impl AppController {
     }
     pub fn reload_snapshot(&self) {
         let store = self.store.clone();
+        let secrets = Arc::clone(&self.secrets);
         let events = self.events.clone();
-        thread::spawn(move || emit_snapshot(&store, &events));
+        thread::spawn(move || emit_runtime_snapshot(&store, &secrets, &events));
     }
 }

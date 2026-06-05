@@ -76,6 +76,18 @@ impl AppController {
                             return;
                         }
                     };
+                    if saved_server_needs_auth(&sync_context.secrets, &saved) {
+                        clear_queue_and_stop_playback(
+                            &queue,
+                            &playback_request_generation,
+                            &playback,
+                            &playback_snapshot,
+                            &auto_dj_enabled,
+                            &events,
+                        );
+                        emit_runtime_snapshot(&store, &sync_context.secrets, &events);
+                        return;
+                    }
                     if let Err(error) = activate_saved_queue(
                         &QueueActivationContext {
                             store: &store,
@@ -98,7 +110,7 @@ impl AppController {
             if let Some(saved) = selected_saved_needing_sync {
                 start_sync_thread_with_snapshots(sync_context, saved);
             } else {
-                emit_snapshot(&store, &events);
+                emit_runtime_snapshot(&store, &sync_context.secrets, &events);
             }
         });
     }

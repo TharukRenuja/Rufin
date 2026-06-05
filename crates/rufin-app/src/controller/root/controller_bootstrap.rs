@@ -94,19 +94,23 @@ impl AppController {
                 panic!("failed to open memory store: {memory_error}")
             })
         });
-        let snapshot = load_snapshot(&store).unwrap_or_else(|error| {
+        let secrets = platform_config_secret_store();
+        let snapshot = load_runtime_snapshot(&store, &secrets).unwrap_or_else(|error| {
             warn!(%error, "failed to load app snapshot");
             LibrarySnapshot::first_run()
         });
         let settings = load_settings_from_store(&store);
-        let queue = restore_queue(&store, snapshot.server.as_ref());
+        let queue = if snapshot.first_run && snapshot.server.is_some() {
+            None
+        } else {
+            restore_queue(&store, snapshot.server.as_ref())
+        };
         let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
         let playback_snapshot = playback_snapshot_from_queue(
             queue.as_ref(),
             settings.auto_dj_enabled,
             &settings.playback,
         );
-        let secrets = platform_config_secret_store();
         let scrobbling_secrets = Arc::clone(&secrets);
         let controller = Self {
             settings: super::settings_controller::SettingsController::new(

@@ -23,6 +23,7 @@ impl Shell {
             self.set_history_buttons_sensitive(false, false);
             let view = self.add_server_view();
             self.login_host.append(&view);
+            self.show_reconnect_notice_if_needed();
             return;
         }
 

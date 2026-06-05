@@ -7,6 +7,14 @@ impl AppController {
             .with_store(|store| store.active_server())
             .unwrap_or(None);
         if let Some(saved) = active {
+            if saved_server_needs_auth(&self.secrets, &saved) {
+                debug!(
+                    server_id = %saved.server.id,
+                    provider = %saved.server.provider,
+                    "skipping background sync until server sign-in completes"
+                );
+                return;
+            }
             self.start_sync(saved);
         }
     }
@@ -48,6 +56,9 @@ impl AppController {
             .with_store(|store| store.active_server())
             .unwrap_or(None);
         if let Some(saved) = active {
+            if saved_server_needs_auth(&self.secrets, &saved) {
+                return;
+            }
             self.start_home_refresh_for_saved(saved, HomeRefreshTarget::Section(kind));
         }
     }
@@ -57,6 +68,9 @@ impl AppController {
             .with_store(|store| store.active_server())
             .unwrap_or(None);
         if let Some(saved) = active {
+            if saved_server_needs_auth(&self.secrets, &saved) {
+                return;
+            }
             self.start_playlist_refresh_for_saved(saved);
         }
     }
@@ -66,6 +80,9 @@ impl AppController {
             .with_store(|store| store.active_server())
             .unwrap_or(None);
         if let Some(saved) = active {
+            if saved_server_needs_auth(&self.secrets, &saved) {
+                return;
+            }
             self.start_explore_prefetch_for_saved(saved);
         }
     }
@@ -154,14 +171,11 @@ impl AppController {
             .with_store(|store| store.active_server())
             .ok()
             .flatten()?;
-        if saved.server.provider != LOCAL_PROVIDER_ID
-            && saved.server.provider != "fake"
-            && !config_token_available(&self.secrets, &saved.server.id)
-        {
+        if saved_server_needs_auth(&self.secrets, &saved) {
             debug!(
                 server_id = %saved.server.id,
                 provider = %saved.server.provider,
-                "skipping startup sync until legacy token import completes"
+                "skipping startup sync until server sign-in completes"
             );
             return None;
         }
@@ -177,16 +191,5 @@ impl AppController {
             "evaluated active source readiness"
         );
         readiness.startup_delay_ms
-    }
-}
-
-fn config_token_available(secrets: &Arc<dyn SecretStore>, server_id: &ServerId) -> bool {
-    match secrets.load_token(server_id) {
-        Ok(Some(_)) => true,
-        Ok(None) => false,
-        Err(error) => {
-            warn!(%error, server_id = %server_id, "failed to load config token");
-            false
-        }
     }
 }

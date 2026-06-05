@@ -1,60 +1,6 @@
 use super::*;
 
 impl AppController {
-    pub fn import_legacy_tokens_after_startup(&self) {
-        let context = self.sync_context();
-        thread::spawn(move || {
-            let (servers, active_id) = match context.store.with_store(|store| {
-                Ok((
-                    store.list_servers()?,
-                    store.active_server()?.map(|saved| saved.server.id),
-                ))
-            }) {
-                Ok(value) => value,
-                Err(error) => {
-                    warn!(%error, "failed to load saved servers for legacy token import");
-                    return;
-                }
-            };
-            let legacy = platform_secret_store();
-            import_legacy_scrobbling_secrets(&context.secrets, &legacy);
-            let mut imported_active = None;
-            for saved in servers {
-                if saved.server.provider == LOCAL_PROVIDER_ID || saved.server.provider == "fake" {
-                    continue;
-                }
-                if !import_legacy_secret(
-                    &context.secrets,
-                    &legacy,
-                    SecretKey::ProviderToken(saved.server.id.clone()),
-                ) {
-                    continue;
-                }
-                info!(
-                    server_id = %saved.server.id,
-                    "imported legacy secure token to config storage"
-                );
-                if active_id.as_ref() == Some(&saved.server.id) {
-                    imported_active = Some(saved);
-                }
-            }
-            let Some(saved) = imported_active else {
-                return;
-            };
-            let Some(active) = context
-                .store
-                .with_store(|store| store.active_server())
-                .unwrap_or(None)
-            else {
-                return;
-            };
-            if active.server.id != saved.server.id {
-                return;
-            }
-            start_sync_thread(context, saved);
-        });
-    }
-
     #[cfg(test)]
     pub fn forget_active_server(&self) {
         let store = self.store.clone();
@@ -174,7 +120,7 @@ impl AppController {
                     &events,
                 );
             }
-            emit_snapshot(&store, &events);
+            emit_runtime_snapshot(&store, &secrets, &events);
             delete_token_after_forget(secrets, saved.server.id);
         });
     }
@@ -261,47 +207,6 @@ impl AppController {
     }
 }
 
-fn import_legacy_scrobbling_secrets(config: &Arc<dyn SecretStore>, legacy: &Arc<dyn SecretStore>) {
-    for key in [
-        SecretKey::LastFmApiSecret,
-        SecretKey::LastFmSession,
-        SecretKey::LibreFmSession,
-        SecretKey::ListenBrainzToken,
-    ] {
-        if import_legacy_secret(config, legacy, key.clone()) {
-            info!(?key, "imported legacy scrobbling secret to config storage");
-        }
-    }
-}
-
-fn import_legacy_secret(
-    config: &Arc<dyn SecretStore>,
-    legacy: &Arc<dyn SecretStore>,
-    key: SecretKey,
-) -> bool {
-    match config.load_secret(&key) {
-        Ok(Some(_)) => return false,
-        Ok(None) => {}
-        Err(error) => {
-            warn!(%error, ?key, "failed to check config secret before legacy import");
-            return false;
-        }
-    }
-    let secret = match legacy.load_secret(&key) {
-        Ok(Some(secret)) => secret,
-        Ok(None) => return false,
-        Err(error) => {
-            warn!(%error, ?key, "failed to import legacy secure secret");
-            return false;
-        }
-    };
-    if let Err(error) = config.save_secret(&key, &secret) {
-        warn!(%error, ?key, "failed to save imported legacy secret");
-        return false;
-    }
-    true
-}
-
 pub(in crate::controller) fn delete_token_after_forget(
     secrets: Arc<dyn SecretStore>,
     server_id: ServerId,
@@ -311,61 +216,4 @@ pub(in crate::controller) fn delete_token_after_forget(
             warn!(%error, server_id = %server_id, "failed to delete forgotten server token");
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn legacy_import_copies_scrobbling_secrets_to_config() {
-        let config: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        let legacy: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        legacy
-            .save_secret(&SecretKey::LastFmSession, "lastfm-session")
-            .expect("seed lastfm session");
-        legacy
-            .save_secret(&SecretKey::ListenBrainzToken, "listenbrainz-token")
-            .expect("seed listenbrainz token");
-
-        import_legacy_scrobbling_secrets(&config, &legacy);
-
-        assert_eq!(
-            config
-                .load_secret(&SecretKey::LastFmSession)
-                .expect("load lastfm session"),
-            Some("lastfm-session".to_string())
-        );
-        assert_eq!(
-            config
-                .load_secret(&SecretKey::ListenBrainzToken)
-                .expect("load listenbrainz token"),
-            Some("listenbrainz-token".to_string())
-        );
-    }
-
-    #[test]
-    fn legacy_import_keeps_existing_config_secret() {
-        let config: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        let legacy: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        config
-            .save_secret(&SecretKey::LastFmSession, "config-session")
-            .expect("seed config session");
-        legacy
-            .save_secret(&SecretKey::LastFmSession, "legacy-session")
-            .expect("seed legacy session");
-
-        assert!(!import_legacy_secret(
-            &config,
-            &legacy,
-            SecretKey::LastFmSession
-        ));
-
-        assert_eq!(
-            config
-                .load_secret(&SecretKey::LastFmSession)
-                .expect("load lastfm session"),
-            Some("config-session".to_string())
-        );
-    }
 }

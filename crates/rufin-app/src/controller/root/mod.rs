@@ -35,8 +35,6 @@ use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider};
 #[cfg(any(test, feature = "dev-tools"))]
 use rufin_secrets::MemorySecretStore;
 use rufin_secrets::{CachedSecretStore, ConfigSecretStore, SecretKey, SecretStore};
-#[cfg(unix)]
-use rufin_secrets::{FallbackSecretStore, SecretServiceStore};
 use rufin_store::{
     CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, LibraryDelta, LibraryDeltaCollector,
     LocalLibraryDelta, SavedServer, ServerLocalAccess, Store, StoreBackedSourceWindow, StoreError,

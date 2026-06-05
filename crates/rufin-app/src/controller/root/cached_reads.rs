@@ -288,6 +288,29 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         search: SearchResults::default(),
     })
 }
+
+pub(in crate::controller) fn load_runtime_snapshot(
+    store: &StoreHandle,
+    secrets: &Arc<dyn SecretStore>,
+) -> Result<LibrarySnapshot, String> {
+    let mut snapshot = load_snapshot(store)?;
+    if active_server_needs_auth(&snapshot, secrets) {
+        snapshot.first_run = true;
+        snapshot.sync_status = "Connect once more to continue using this server.".to_string();
+        snapshot.last_error = None;
+    }
+    Ok(snapshot)
+}
+
+fn active_server_needs_auth(snapshot: &LibrarySnapshot, secrets: &Arc<dyn SecretStore>) -> bool {
+    let Some(server) = snapshot.server.as_ref() else {
+        return false;
+    };
+    if server.provider == LOCAL_PROVIDER_ID || server.provider == "fake" {
+        return false;
+    }
+    !config_token_available(secrets, &server.id)
+}
 pub(crate) fn grouped_cover_refs_for_items(albums: &[Album], tracks: &[Track]) -> Vec<ImageRef> {
     let mut image_refs = Vec::new();
     for album in albums {
@@ -1703,24 +1726,46 @@ pub(in crate::controller) fn playback_backend(fake: bool) -> Box<dyn PlaybackBac
     }
     Box::new(LazyGStreamerPlaybackBackend::new())
 }
-pub(in crate::controller) fn platform_secret_store() -> Arc<dyn SecretStore> {
-    let fallback: Arc<dyn SecretStore> = Arc::new(ConfigSecretStore::new(config_secrets_path()));
-    #[cfg(unix)]
-    {
-        let primary: Arc<dyn SecretStore> = Arc::new(SecretServiceStore::new());
-        Arc::new(CachedSecretStore::new(Arc::new(FallbackSecretStore::new(
-            primary, fallback,
-        ))))
-    }
-    #[cfg(not(unix))]
-    {
-        Arc::new(CachedSecretStore::new(fallback))
-    }
-}
 pub(in crate::controller) fn platform_config_secret_store() -> Arc<dyn SecretStore> {
     Arc::new(CachedSecretStore::new(Arc::new(ConfigSecretStore::new(
         config_secrets_path(),
     ))))
+}
+pub(in crate::controller) fn saved_server_needs_auth(
+    secrets: &Arc<dyn SecretStore>,
+    saved: &SavedServer,
+) -> bool {
+    if saved.server.provider == LOCAL_PROVIDER_ID || saved.server.provider == "fake" {
+        return false;
+    }
+    !config_token_available(secrets, &saved.server.id)
+}
+pub(in crate::controller) fn config_token_available(
+    secrets: &Arc<dyn SecretStore>,
+    server_id: &ServerId,
+) -> bool {
+    match secrets.load_token(server_id) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(error) => {
+            warn!(%error, server_id = %server_id, "failed to load config token");
+            false
+        }
+    }
+}
+pub(in crate::controller) fn emit_runtime_snapshot(
+    store: &StoreHandle,
+    secrets: &Arc<dyn SecretStore>,
+    events: &Sender<ControllerEvent>,
+) {
+    match load_runtime_snapshot(store, secrets) {
+        Ok(snapshot) => {
+            let _sent = events.send(ControllerEvent::Snapshot(Box::new(snapshot)));
+        }
+        Err(error) => {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+    }
 }
 pub(in crate::controller) fn playback_track_from_entry(entry: &QueueEntry) -> PlaybackTrack {
     PlaybackTrack {

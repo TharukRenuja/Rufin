@@ -9,6 +9,7 @@ use crate::controller::LoginRequest;
 use crate::i18n::tr;
 use crate::providers::StreamingProvider;
 use adw::prelude::*;
+use rufin_core::ServerId;
 
 use super::{
     Shell, icon_button,
@@ -19,6 +20,16 @@ use super::{
 const ADD_SERVER_DIALOG_WIDTH: i32 = 620;
 const ADD_SERVER_DIALOG_HEIGHT: i32 = 680;
 const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
+const RECONNECT_NOTICE: &str = "Rufin no longer relies on the system keyring. Connect once more to continue using this server.";
+
+#[derive(Clone)]
+struct ServerFormPreset {
+    server_id: ServerId,
+    provider: StreamingProvider,
+    url: String,
+    username: String,
+    trust_invalid_cert: bool,
+}
 
 impl Shell {
     pub(super) fn present_add_server_dialog(self: &Rc<Self>) {
@@ -77,6 +88,7 @@ impl Shell {
             return self.connection_progress_view();
         }
 
+        let preset = self.saved_server_form_preset();
         self.start_server_discovery_once();
 
         let scroller = gtk::ScrolledWindow::new();
@@ -124,18 +136,35 @@ impl Shell {
         let provider = adw::ComboRow::builder()
             .title(tr("Provider"))
             .model(&provider_options)
-            .selected(0)
+            .selected(
+                preset
+                    .as_ref()
+                    .map(|preset| provider_index(preset.provider))
+                    .unwrap_or(0),
+            )
             .build();
         let url = adw::EntryRow::builder().title(tr("Server Address")).build();
-        url.set_text("http://");
+        url.set_text(
+            preset
+                .as_ref()
+                .map(|preset| preset.url.as_str())
+                .unwrap_or("http://"),
+        );
         let username = adw::EntryRow::builder().title(tr("Username")).build();
+        if let Some(preset) = preset.as_ref() {
+            username.set_text(&preset.username);
+        }
         let password = adw::PasswordEntryRow::builder()
             .title(tr("Password"))
             .build();
         let trust = adw::SwitchRow::builder()
             .title(tr("Trust invalid certificate"))
             .subtitle(tr("Only use this for a server you control"))
-            .active(false)
+            .active(
+                preset
+                    .as_ref()
+                    .is_some_and(|preset| preset.trust_invalid_cert),
+            )
             .build();
 
         let server_group = adw::PreferencesGroup::builder().title(tr("Server")).build();
@@ -384,6 +413,41 @@ impl Shell {
         scroller.upcast()
     }
 
+    pub(super) fn show_reconnect_notice_if_needed(&self) {
+        let Some(preset) = self.saved_server_form_preset() else {
+            return;
+        };
+        let mut shown = self.state.reconnect_toasts_shown.borrow_mut();
+        if shown.insert(preset.server_id) {
+            self.toast_overlay
+                .add_toast(adw::Toast::new(&tr(RECONNECT_NOTICE)));
+        }
+    }
+
+    fn saved_server_form_preset(&self) -> Option<ServerFormPreset> {
+        let library = self.state.library.borrow();
+        if !library.first_run {
+            return None;
+        }
+        let server = library.server.as_ref()?;
+        let provider = StreamingProvider::from_provider_id(&server.provider)?;
+        if provider == StreamingProvider::Local {
+            return None;
+        }
+        let trust_invalid_cert = library
+            .server_local_access
+            .iter()
+            .find(|status| status.server_id == server.id)
+            .is_some_and(|status| status.trust_invalid_cert);
+        Some(ServerFormPreset {
+            server_id: server.id.clone(),
+            provider,
+            url: server.base_url.clone(),
+            username: library.username.clone().unwrap_or_default(),
+            trust_invalid_cert,
+        })
+    }
+
     fn begin_first_run_connection(self: &Rc<Self>, status: &str) {
         self.state.first_run_connection_pending.set(true);
         self.state.first_run_connection_ready.set(false);
@@ -526,6 +590,13 @@ impl Shell {
 
         group
     }
+}
+
+fn provider_index(provider: StreamingProvider) -> u32 {
+    StreamingProvider::ALL
+        .iter()
+        .position(|candidate| *candidate == provider)
+        .unwrap_or_default() as u32
 }
 
 fn update_provider_rows(
