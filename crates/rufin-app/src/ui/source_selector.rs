@@ -122,13 +122,10 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
     selector
         .normal_button
         .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
-    selector
-        .normal_button
-        .set_popover(Some(&server_selection_popover(
-            shell,
-            &content,
-            NORMAL_SELECTOR_BUTTON_WIDTH,
-        )));
+    update_selector_popover(
+        &selector.normal_button,
+        server_selection_popover(shell, &content, NORMAL_SELECTOR_BUTTON_WIDTH),
+    );
 
     selector.compact_icon.set_icon_name(Some(icon_name));
     selector
@@ -137,13 +134,10 @@ pub(super) fn update_server_selector(shell: &Rc<Shell>) {
     selector
         .compact_button
         .update_property(&[gtk::accessible::Property::Label(&accessible_label)]);
-    selector
-        .compact_button
-        .set_popover(Some(&server_selection_popover(
-            shell,
-            &content,
-            COMPACT_SELECTOR_BUTTON_WIDTH,
-        )));
+    update_selector_popover(
+        &selector.compact_button,
+        server_selection_popover(shell, &content, COMPACT_SELECTOR_BUTTON_WIDTH),
+    );
 }
 
 fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
@@ -170,6 +164,13 @@ fn server_selector_content(library: LibrarySnapshot) -> ServerSelectorContent {
         music_folders: library.music_folders,
         selected_music_folder_id: library.selected_music_folder_id,
     }
+}
+
+fn update_selector_popover(button: &gtk::MenuButton, popover: gtk::Popover) {
+    if button.popover().is_some_and(|current| current.is_visible()) {
+        return;
+    }
+    button.set_popover(Some(&popover));
 }
 
 fn source_icon_name(content: &ServerSelectorContent) -> &'static str {
@@ -244,13 +245,15 @@ fn server_selection_popover(
             let title = server_display_name(server);
             let detail = server_detail(server);
             let row = server_option_row(Some(server), &title, &detail, active);
-            let row_popover = popover.clone();
-            let controller = shell.controller.clone();
-            let server_id = server.id.clone();
-            row.connect_clicked(move |_| {
-                row_popover.popdown();
-                controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
-            });
+            if !active {
+                let row_popover = popover.clone();
+                let controller = shell.controller.clone();
+                let server_id = server.id.clone();
+                row.connect_clicked(move |_| {
+                    row_popover.popdown();
+                    controller.select_source(LibrarySourceSelection::Server(server_id.clone()));
+                });
+            }
             wrapper.append(&row);
         }
     }
@@ -262,12 +265,14 @@ fn server_selection_popover(
         &local_source_detail(&content.local_folders),
         local_active,
     );
-    let row_popover = popover.clone();
-    let controller = shell.controller.clone();
-    local.connect_clicked(move |_| {
-        row_popover.popdown();
-        controller.select_source(LibrarySourceSelection::Local);
-    });
+    if !local_active {
+        let row_popover = popover.clone();
+        let controller = shell.controller.clone();
+        local.connect_clicked(move |_| {
+            row_popover.popdown();
+            controller.select_source(LibrarySourceSelection::Local);
+        });
+    }
     wrapper.append(&local);
 
     if let Some(server) = &content.active_server
@@ -341,13 +346,15 @@ fn append_server_music_folder_rows(
 ) {
     let all_active = content.selected_music_folder_id.is_none();
     let all = server_action_row("folder-symbolic", &tr("All Music"), "", all_active);
-    let row_popover = popover.clone();
-    let controller = shell.controller.clone();
-    let server_id = server.id.clone();
-    all.connect_clicked(move |_| {
-        row_popover.popdown();
-        controller.set_selected_music_folder(server_id.clone(), None);
-    });
+    if !all_active {
+        let row_popover = popover.clone();
+        let controller = shell.controller.clone();
+        let server_id = server.id.clone();
+        all.connect_clicked(move |_| {
+            row_popover.popdown();
+            controller.set_selected_music_folder(server_id.clone(), None);
+        });
+    }
     wrapper.append(&all);
 
     for folder in &content.music_folders {
@@ -356,14 +363,16 @@ fn append_server_music_folder_rows(
             .as_ref()
             .is_some_and(|selected| *selected == folder.id);
         let row = server_action_row("folder-music-symbolic", &folder.name, "", active);
-        let row_popover = popover.clone();
-        let controller = shell.controller.clone();
-        let server_id = server.id.clone();
-        let folder_id = folder.id.clone();
-        row.connect_clicked(move |_| {
-            row_popover.popdown();
-            controller.set_selected_music_folder(server_id.clone(), Some(folder_id.clone()));
-        });
+        if !active {
+            let row_popover = popover.clone();
+            let controller = shell.controller.clone();
+            let server_id = server.id.clone();
+            let folder_id = folder.id.clone();
+            row.connect_clicked(move |_| {
+                row_popover.popdown();
+                controller.set_selected_music_folder(server_id.clone(), Some(folder_id.clone()));
+            });
+        }
         wrapper.append(&row);
     }
 }
