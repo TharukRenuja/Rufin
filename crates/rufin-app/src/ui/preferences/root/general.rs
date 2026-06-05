@@ -5,7 +5,8 @@ pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage 
         .title(tr("Scrobbling"))
         .icon_name(SCROBBLING_ICON_NAME)
         .build();
-    let app_settings = shell.state.settings.borrow().clone();
+    let app_settings = shell.controller.load_settings_with_scrobbling_secrets();
+    *shell.state.settings.borrow_mut() = app_settings.clone();
     let settings = app_settings.scrobbling.clone();
     let lastfm_api_key_text = if app_settings.lastfm_api_key.trim().is_empty() {
         settings.lastfm.api_key.clone()
@@ -53,7 +54,7 @@ pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage 
     lastfm_api_key.connect_apply(move |row| {
         let api_key = row.text().trim().to_string();
         if lastfm_api_shell
-            .update_app_settings("Last.fm API key setting", |settings| {
+            .update_app_settings_with_scrobbling_secrets("Last.fm API key setting", |settings| {
                 if settings.lastfm_api_key == api_key
                     && settings.scrobbling.lastfm.api_key == api_key
                 {
@@ -380,14 +381,17 @@ async fn connect_lastfm_session(
         .await
         .map_err(|_| "Last.fm session task failed.".to_string())??;
         if let Some(session) = maybe_session {
-            shell.update_app_settings("Last.fm connection setting", |settings| {
-                settings.lastfm_api_key = api_key.clone();
-                settings.scrobbling.lastfm.api_key = api_key.clone();
-                settings.scrobbling.lastfm.api_secret = api_secret.clone();
-                settings.scrobbling.lastfm.username = session.username.clone();
-                settings.scrobbling.lastfm.session_key = session.session_key.clone();
-                true
-            });
+            shell.update_app_settings_with_scrobbling_secrets(
+                "Last.fm connection setting",
+                |settings| {
+                    settings.lastfm_api_key = api_key.clone();
+                    settings.scrobbling.lastfm.api_key = api_key.clone();
+                    settings.scrobbling.lastfm.api_secret = api_secret.clone();
+                    settings.scrobbling.lastfm.username = session.username.clone();
+                    settings.scrobbling.lastfm.session_key = session.session_key.clone();
+                    true
+                },
+            );
             shell.retry_external_cover_lookups("Last.fm connection setting");
             shell.update_discord_presence(&shell.state.player.borrow());
             return Ok(session);

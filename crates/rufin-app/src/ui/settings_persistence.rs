@@ -11,6 +11,12 @@ use tracing::warn;
 
 use super::{Shell, chrome, current_playback_track_id};
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum AppControllerSettingsMode {
+    PreserveScrobblingSecrets,
+    DeleteMissingScrobblingSecrets,
+}
+
 impl Shell {
     pub(super) fn save_window_state(&self) {
         if self.window.is_maximized() || self.window.is_fullscreen() {
@@ -44,13 +50,49 @@ impl Shell {
         warning_action: &'static str,
         update: impl FnOnce(&mut AppSettings) -> bool,
     ) -> Option<AppSettings> {
-        let mut settings = self.controller.load_settings();
+        self.update_app_settings_with_loader(
+            warning_action,
+            AppControllerSettingsMode::PreserveScrobblingSecrets,
+            update,
+        )
+    }
+
+    pub(super) fn update_app_settings_with_scrobbling_secrets(
+        &self,
+        warning_action: &'static str,
+        update: impl FnOnce(&mut AppSettings) -> bool,
+    ) -> Option<AppSettings> {
+        self.update_app_settings_with_loader(
+            warning_action,
+            AppControllerSettingsMode::DeleteMissingScrobblingSecrets,
+            update,
+        )
+    }
+
+    fn update_app_settings_with_loader(
+        &self,
+        warning_action: &'static str,
+        mode: AppControllerSettingsMode,
+        update: impl FnOnce(&mut AppSettings) -> bool,
+    ) -> Option<AppSettings> {
+        let mut settings = match mode {
+            AppControllerSettingsMode::PreserveScrobblingSecrets => self.controller.load_settings(),
+            AppControllerSettingsMode::DeleteMissingScrobblingSecrets => {
+                self.controller.load_settings_with_scrobbling_secrets()
+            }
+        };
         if !update(&mut settings) {
             return None;
         }
         settings.migrate_defaults();
         *self.state.settings.borrow_mut() = settings.clone();
-        if let Err(error) = self.controller.save_settings(&settings) {
+        let save_result = if mode == AppControllerSettingsMode::DeleteMissingScrobblingSecrets {
+            self.controller
+                .save_settings_with_scrobbling_deletes(&settings)
+        } else {
+            self.controller.save_settings(&settings)
+        };
+        if let Err(error) = save_result {
             warn!(%error, action = warning_action, "failed to save settings");
         }
         Some(settings)
@@ -377,7 +419,7 @@ impl Shell {
         warning_action: &'static str,
         update: impl FnOnce(&mut ScrobblingSettings) -> bool,
     ) {
-        self.update_app_settings(warning_action, |settings| {
+        self.update_app_settings_with_scrobbling_secrets(warning_action, |settings| {
             let changed = update(&mut settings.scrobbling);
             if changed {
                 settings.scrobbling.sanitize();

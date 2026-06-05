@@ -332,6 +332,55 @@ pub(in crate::controller) fn startup_persist_server() {
     );
     assert!(events.try_recv().is_err());
 }
+
+#[test]
+pub(in crate::controller) fn startup_persist_server_token_in_foreground_store() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let server_id = ServerId::new("jellyfin:server:foreground");
+    let session = ProviderSession {
+        server: ServerIdentity {
+            id: server_id.clone(),
+            provider: "jellyfin".to_string(),
+            name: "Foreground Server".to_string(),
+            base_url: "https://library.example.test".to_string(),
+        },
+        user_id: "user-id".to_string(),
+        username: "listener".to_string(),
+        access_token: "token".to_string(),
+        device_id: Some("rufin-install-one".to_string()),
+    };
+
+    activate_with_token(
+        &LoginActivationContext {
+            store: &controller.store,
+            queue: &controller.queue,
+            playback_request_generation: &controller.playback_request_generation,
+            playback: &controller.playback,
+            playback_snapshot: &controller.playback_snapshot,
+            auto_dj_enabled: &controller.auto_dj_enabled,
+            events: &controller.events,
+        },
+        &controller.secrets,
+        LoginActivationRequest {
+            session: &session,
+            trust_invalid_cert: false,
+            local_access_root: None,
+            path_replace_from: None,
+        },
+    )
+    .expect("activate with token");
+
+    assert_eq!(
+        controller
+            .secrets
+            .load_token(&server_id)
+            .expect("load token"),
+        Some("token".to_string())
+    );
+    let queue = wait_for_queue(&events).expect("server queue");
+    assert_eq!(queue.server_id, server_id);
+}
 #[test]
 pub(in crate::controller) fn startup_load_folders() {
     let store = StoreHandle::open_memory().expect("memory store");

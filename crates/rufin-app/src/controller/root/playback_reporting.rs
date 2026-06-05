@@ -59,7 +59,7 @@ impl AppController {
         let Some((server_id, _, _)) = self.current_queue_entry() else {
             return;
         };
-        let settings = self.load_settings();
+        let settings = self.load_settings_with_scrobbling_secrets();
         if settings.private_mode {
             return;
         }
