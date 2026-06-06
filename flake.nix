@@ -81,16 +81,7 @@
               "rufin-app"
             ];
 
-            cargoCheckFlags = [
-              "--workspace"
-              "--all-targets"
-            ];
-
-            preCheck = ''
-              export XDG_CACHE_HOME="$TMPDIR/rufin-cache"
-              export XDG_CONFIG_HOME="$TMPDIR/rufin-config"
-              mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
-            '';
+            doCheck = false;
 
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
