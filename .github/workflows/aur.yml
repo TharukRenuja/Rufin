@@ -216,10 +216,55 @@ jobs:
             exit 1
           fi
 
-          if [[ "$REQUESTED_PACKAGE" != "rufin-git" ]]; then
-            echo "Manual AUR publishing is limited to rufin-git; stable rufin publishes from release events" >&2
+          case "$REQUESTED_PACKAGE" in
+            both|rufin|rufin-git) ;;
+            *) echo "unknown package: $REQUESTED_PACKAGE" >&2; exit 1 ;;
+          esac
+
+      - name: Validate manual stable package metadata
+        if: github.event_name == 'workflow_dispatch' && (inputs.package == 'rufin' || inputs.package == 'both')
+        run: |
+          set -euo pipefail
+          version="$(
+            sed -n 's/^pkgver=\(.*\)$/\1/p' packaging/aur/rufin/PKGBUILD |
+              head -n 1
+          )"
+          tag="v$version"
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Stable AUR package must point at a version tag" >&2
             exit 1
           fi
+
+          git fetch --force origin \
+            "refs/heads/main:refs/remotes/origin/main" \
+            "refs/tags/${tag}:refs/tags/${tag}"
+
+          if [[ "$(git cat-file -t "refs/tags/$tag")" != "tag" ]]; then
+            echo "Stable AUR tag must be an annotated signed tag" >&2
+            exit 1
+          fi
+
+          if ! git cat-file tag "refs/tags/$tag" | grep -q '^-----BEGIN PGP SIGNATURE-----$'; then
+            echo "Stable AUR tag must contain a PGP signature" >&2
+            exit 1
+          fi
+
+          if [[ -f .github/release-gpg.pub ]]; then
+            gnupg_home="$(mktemp -d)"
+            cleanup() {
+              rm -rf "$gnupg_home"
+            }
+            trap cleanup EXIT
+            chmod 700 "$gnupg_home"
+            export GNUPGHOME="$gnupg_home"
+            gpg --batch --import .github/release-gpg.pub >/dev/null 2>&1
+            git verify-tag "refs/tags/$tag" >/dev/null 2>&1
+          fi
+
+          tag_commit="$(git rev-list -n1 "refs/tags/$tag")"
+          git merge-base --is-ancestor "$tag_commit" origin/main
+          bash .github/scripts/update-aur-stable-package.sh --check "$tag"
 
       - name: Download package metadata
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
