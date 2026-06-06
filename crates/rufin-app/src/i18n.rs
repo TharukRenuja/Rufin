@@ -265,7 +265,7 @@ fn locale_dir() -> PathBuf {
         }
     }
 
-    PathBuf::from("po")
+    PathBuf::from("locales")
 }
 
 fn locale_dir_candidates() -> Vec<PathBuf> {
@@ -277,7 +277,7 @@ fn locale_dir_candidates() -> Vec<PathBuf> {
         candidates.push(path);
     }
     if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
-        candidates.push(PathBuf::from(manifest_dir).join("../../po"));
+        candidates.push(PathBuf::from(manifest_dir).join("../../locales"));
     }
     if let Ok(exe) = env::current_exe()
         && let Some(exe_dir) = exe.parent()
@@ -285,7 +285,7 @@ fn locale_dir_candidates() -> Vec<PathBuf> {
         candidates.push(exe_dir.join("share/locale"));
         candidates.push(exe_dir.join("../share/locale"));
     }
-    candidates.push(PathBuf::from("po"));
+    candidates.push(PathBuf::from("locales"));
     candidates
 }
 
@@ -586,7 +586,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Add tracks when fewer than this many remain");
     let _ = tr("Auto DJ on");
     let _ = tr("Play random");
-    let _ = tr("Songs");
+    let _ = tr("Number of songs");
     let _ = tr("Minimum year");
     let _ = tr("Maximum year");
     let _ = tr("Any genre");
@@ -696,15 +696,56 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Play next");
     let _ = tr("Play Next");
     let _ = tr("Play Later");
+    let _ = tr("Play album");
+    let _ = tr("Play track");
+    let _ = tr("Play artist");
     let _ = tr("Add to Favorites");
     let _ = tr("Remove from Favorites");
     let _ = tr("Go to Artist");
     let _ = tr("Go to Album");
     let _ = tr("Add to queue");
+    let _ = tr("Clear queue");
+    let _ = tr("Previous page");
+    let _ = tr("Next page");
+    let _ = tr("Refresh section");
+    let _ = tr("Reset display");
+    let _ = tr("New Smart Playlist");
+    let _ = tr("Edit Smart Playlist");
+    let _ = tr("Restore Default");
+    let _ = tr("Create");
+    let _ = tr("Restore");
+    let _ = tr("Match");
+    let _ = tr("Sort");
+    let _ = tr("Limit");
+    let _ = tr("Add Rule");
     let _ = tr("Title");
     let _ = tr("Title (merged)");
     let _ = tr("Year");
     let _ = tr("Duration");
+    let _ = tr("Comment");
+    let _ = tr("Rating");
+    let _ = tr("Played");
+    let _ = tr("Play count");
+    let _ = tr("Skip count");
+    let _ = tr("Last played");
+    let _ = tr("Date added");
+    let _ = tr("All");
+    let _ = tr("Any");
+    let _ = tr("No");
+    let _ = tr("contains");
+    let _ = tr("equals");
+    let _ = tr("does not contain");
+    let _ = tr("does not equal");
+    let _ = tr("is empty");
+    let _ = tr("is not empty");
+    let _ = tr("excludes");
+    let _ = tr("is not");
+    let _ = tr("above");
+    let _ = tr("below");
+    let _ = tr("range");
+    let _ = tr("is");
+    let _ = tr("after");
+    let _ = tr("before");
     let _ = tr("Yes");
     let _ = tr("Server");
     let _ = tr("No server");

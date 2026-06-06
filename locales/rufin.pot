@@ -1,0 +1,2155 @@
+# Rufin translation template.
+# Copyright (C) 2026 Rufin contributors
+# This file is distributed under the same license as the Rufin package.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Rufin 0.6.0\n"
+"Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
+"POT-Creation-Date: 2026-06-06 20:59+0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: Rufin translators\n"
+"Language-Team: Rufin translators\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: crates/rufin-app/src/i18n.rs:60 crates/rufin-app/src/i18n.rs:419
+#: crates/rufin-app/src/ui/preferences/root/general.rs:811
+msgid "System default"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:65 crates/rufin-app/src/i18n.rs:420
+msgid "English"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:421
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:164
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:173
+msgid "Language"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:422
+msgid "Home"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:423
+msgid "Favorites"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:424
+msgid "Albums"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:425
+#: crates/rufin-app/src/ui/preferences/root/general.rs:534
+#: crates/rufin-app/src/ui/queue.rs:402
+#: crates/rufin-app/src/ui/root/album_detail_view.rs:66
+msgid "Album"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:426
+msgid "Tracks"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:427 crates/rufin-app/src/ui/artist.rs:229
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:82
+msgid "Artist"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:428
+msgid "Artists"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:429
+msgid "Album Artists"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:430 crates/rufin-app/src/ui/random_play.rs:81
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:938
+msgid "Genre"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:431
+msgid "Genres"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:432
+msgid "Folders"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:433 crates/rufin-app/src/ui/folders.rs:373
+msgid "Folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:434
+msgid "Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:435
+msgid "Playlists"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:436
+#: crates/rufin-app/src/ui/library/route_shell.rs:32
+#: crates/rufin-app/src/ui/library/route_shell.rs:76
+#: crates/rufin-app/src/ui/library/routes.rs:65
+#: crates/rufin-app/src/ui/library/routes.rs:355
+#: crates/rufin-app/src/ui/library/routes.rs:534
+#: crates/rufin-app/src/ui/library/routes.rs:711
+#: crates/rufin-app/src/ui/library/routes.rs:874
+#: crates/rufin-app/src/ui/library/routes.rs:1050
+#: crates/rufin-app/src/ui/root/playlist_detail_view.rs:377
+#: crates/rufin-app/src/ui/root/track_table.rs:54
+msgid "Search"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:437
+msgid "Settings"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:438
+msgid "Explore"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:439
+msgid "Most played"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:440
+msgid "Newly added"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:441
+msgid "Recently played"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:442
+msgid "Recently released"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:443
+msgid "Favorite tracks"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:444
+msgid "Appears On"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:445 crates/rufin-app/src/ui/artist.rs:427
+msgid "appears on"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:446
+msgid "Discography"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:447
+msgid "View all tracks"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:448 crates/rufin-app/src/ui/artist.rs:417
+#: crates/rufin-app/src/ui/artist.rs:425 crates/rufin-app/src/ui/home.rs:255
+#: crates/rufin-app/src/ui/library/cards.rs:194
+#: crates/rufin-app/src/ui/library/cards.rs:206
+#: crates/rufin-app/src/ui/preferences/library.rs:225
+msgid "albums"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:449 crates/rufin-app/src/ui/artist.rs:419
+#: crates/rufin-app/src/ui/artist.rs:429 crates/rufin-app/src/ui/home.rs:59
+#: crates/rufin-app/src/ui/home.rs:257
+#: crates/rufin-app/src/ui/library/cards.rs:185
+#: crates/rufin-app/src/ui/library/cards.rs:195
+#: crates/rufin-app/src/ui/library/cards.rs:207
+#: crates/rufin-app/src/ui/library/cards.rs:214
+#: crates/rufin-app/src/ui/library/cards.rs:223
+#: crates/rufin-app/src/ui/library/cards.rs:392
+#: crates/rufin-app/src/ui/preferences/library.rs:227
+#: crates/rufin-app/src/ui/root/album_detail_view.rs:102
+#: crates/rufin-app/src/ui/root/genre_detail_view.rs:30
+#: crates/rufin-app/src/ui/root/playlist_detail_view.rs:79
+#: crates/rufin-app/src/ui/root/playlist_detail_view.rs:218
+msgid "tracks"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:450
+#: crates/rufin-app/src/ui/root/cover_startup.rs:426
+msgid "Back"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:451
+#: crates/rufin-app/src/ui/root/cover_startup.rs:428
+msgid "Forward"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:452
+msgid "Menu"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:453 crates/rufin-app/src/ui/chrome.rs:116
+#: crates/rufin-app/src/ui/chrome.rs:124
+#: crates/rufin-app/src/ui/root/cover_startup.rs:431
+msgid "Main Menu"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:454 crates/rufin-app/src/ui/chrome.rs:140
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:59
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:88
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:92
+#: crates/rufin-app/src/ui/root/cover_startup.rs:433
+msgid "Preferences"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:455 crates/rufin-app/src/ui/chrome.rs:141
+#: crates/rufin-app/src/ui/root/cover_startup.rs:423
+#: crates/rufin-app/src/ui/root/cover_startup.rs:437
+msgid "Keyboard Shortcuts"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:456 crates/rufin-app/src/ui/chrome.rs:134
+#: crates/rufin-app/src/ui/root/cover_startup.rs:441
+msgid "Toggle Fullscreen"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:457 crates/rufin-app/src/ui/chrome.rs:145
+msgid "About Rufin"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:458
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:122
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:157
+#: crates/rufin-app/src/ui/root/cover_startup.rs:425
+msgid "General"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:459
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:407
+msgid "Interface"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:460
+#: crates/rufin-app/src/ui/preferences/library.rs:16
+#: crates/rufin-app/src/ui/preferences/library.rs:27
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:146
+msgid "Library"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:461
+msgid "Actions"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:462
+msgid "Sync Status"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:463
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:246
+msgid "Metadata"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:464
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:259
+msgid "External lyric lookup"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:465
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:249
+msgid "External cover lookup"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:466
+msgid "Does MusicBrainz and Cover Art Archive lookups"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:467
+msgid "Try to fetch artwork from internet when server artwork is missing"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:468
+#: crates/rufin-app/src/ui/local_access_mapping.rs:506
+msgid "Clear Cached Library"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:469
+#: crates/rufin-app/src/ui/local_access_mapping.rs:514
+msgid "Clear Cache"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:470
+#: crates/rufin-app/src/ui/local_access_mapping.rs:509
+msgid "This removes cached library metadata for"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:472
+#: crates/rufin-app/src/ui/local_access_mapping.rs:542
+msgid ""
+"This removes the server, cached library metadata, queue snapshot, and saved "
+"token for"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:473
+msgid "Clears cached data for the server, login stays saved"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:474
+msgid "No active server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:475 crates/rufin-app/src/ui/login.rs:50
+#: crates/rufin-app/src/ui/source_selector.rs:316
+msgid "Add Server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:476
+#: crates/rufin-app/src/ui/local_access_mapping.rs:72
+msgid "Manage Server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:477
+msgid "Configure local folder access"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:478
+#: crates/rufin-app/src/ui/source_selector.rs:115
+msgid "Source"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:479
+#: crates/rufin-app/src/ui/source_selector.rs:234
+msgid "Select Source"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:480
+#: crates/rufin-app/src/ui/source_selector.rs:147
+msgid "No source"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:481
+msgid "Sources"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:482
+#: crates/rufin-app/src/ui/preferences/library.rs:34
+msgid "Servers"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:483
+msgid "Configure saved music servers and local playback mappings"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:484
+#: crates/rufin-app/src/ui/preferences/library.rs:42
+#: crates/rufin-app/src/ui/source_selector.rs:236
+msgid "No servers configured"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:485
+#: crates/rufin-app/src/ui/source_selector.rs:286
+msgid "Server Library"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:486
+#: crates/rufin-app/src/ui/preferences/library.rs:205
+#: crates/rufin-app/src/ui/source_selector.rs:348
+msgid "All Music"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:487
+#: crates/rufin-app/src/ui/source_selector.rs:298
+msgid "Manage"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:488
+#: crates/rufin-app/src/ui/preferences/library.rs:99
+msgid "Local Folders"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:489
+#: crates/rufin-app/src/ui/preferences/library.rs:106
+#: crates/rufin-app/src/ui/source_selector.rs:334
+msgid "No local folders configured"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:490
+msgid "Add Local Folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:491
+msgid "Active Source Actions"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:492
+msgid "Map Local"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:493
+msgid "Edit Mapping"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:494
+#: crates/rufin-app/src/ui/local_access_mapping.rs:349
+msgid "Server Settings"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:495
+#: crates/rufin-app/src/ui/local_access_mapping.rs:432
+msgid "Server Actions"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:496
+msgid "Use This Source"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:497
+msgid "Selected Source"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:498 crates/rufin-app/src/ui/folders.rs:331
+#: crates/rufin-app/src/ui/local_access_mapping.rs:358
+msgid "Name"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:499
+#: crates/rufin-app/src/ui/local_access_mapping.rs:489
+msgid "Not set"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:500 crates/rufin-app/src/i18n.rs:749
+msgid "Yes"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:501 crates/rufin-app/src/i18n.rs:734
+msgid "No"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:502
+#: crates/rufin-app/src/ui/preferences/library.rs:260
+msgid "Local mapping"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:503
+#: crates/rufin-app/src/ui/preferences/library.rs:249
+#: crates/rufin-app/src/ui/preferences/library.rs:252
+msgid "No local playback mapping"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:504
+msgid "Local mapping saved. Sync to preview matches"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:505
+#: crates/rufin-app/src/ui/preferences/library.rs:207
+msgid "Saved per server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:506
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:315
+msgid "None"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:507
+msgid "Use server streams only"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:508
+msgid "Choose Folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:509
+msgid "Add local folder access"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:510
+#: crates/rufin-app/src/ui/preferences/library.rs:162
+msgid "Remove Local Folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:511
+msgid "This removes the folder from the Local source"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:512
+msgid "Clear Mapping"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:513 crates/rufin-app/src/i18n.rs:622
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:218
+msgid "Save"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:514
+msgid "Save Mapping"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:515
+msgid "Save Server Settings"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:516 crates/rufin-app/src/i18n.rs:643
+#: crates/rufin-app/src/ui/preferences/root/general.rs:104
+#: crates/rufin-app/src/ui/preferences/root/general.rs:193
+msgid "Connect"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:517 crates/rufin-app/src/ui/login.rs:114
+#: crates/rufin-app/src/ui/root/route_rendering.rs:21
+msgid "Connect to Music Server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:518
+msgid "Preparing library…"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:519
+msgid "Library sync complete"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:520
+msgid "Choose a provider, pick a server, or enter the address manually"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:521 crates/rufin-app/src/ui/login.rs:119
+msgid ""
+"Choose a provider, pick a discovered server, or enter the address manually"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:522 crates/rufin-app/src/ui/login.rs:138
+msgid "Provider"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:523
+#: crates/rufin-app/src/ui/local_access_mapping.rs:371
+#: crates/rufin-app/src/ui/login.rs:154
+msgid "Username"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:524
+#: crates/rufin-app/src/ui/local_access_mapping.rs:378
+#: crates/rufin-app/src/ui/login.rs:159
+msgid "Password"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:525
+#: crates/rufin-app/src/ui/preferences/library.rs:279
+#: crates/rufin-app/src/ui/source_selector.rs:199
+msgid "Jellyfin"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:526
+#: crates/rufin-app/src/ui/preferences/library.rs:280
+#: crates/rufin-app/src/ui/source_selector.rs:200
+msgid "Navidrome"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:527
+#: crates/rufin-app/src/ui/preferences/library.rs:281
+#: crates/rufin-app/src/ui/source_selector.rs:201
+msgid "Subsonic / OpenSubsonic"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:528 crates/rufin-app/src/i18n.rs:753
+#: crates/rufin-app/src/ui/preferences/library.rs:282
+#: crates/rufin-app/src/ui/source_selector.rs:202
+#: crates/rufin-app/src/ui/source_selector.rs:264
+msgid "Local"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:529
+#: crates/rufin-app/src/ui/local_access_mapping.rs:182
+#: crates/rufin-app/src/ui/login.rs:184
+msgid "Local Library"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:531
+msgid ""
+"Choose a folder to scan and play locally from the computer (For flatpak "
+"users, if the folder is not in ~/Music, you need to give folder permissions "
+"from Flatseal)"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:533
+#: crates/rufin-app/src/ui/preferences/library.rs:237
+msgid "Music Folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:534 crates/rufin-app/src/ui/login.rs:190
+msgid "Music Folders"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:535
+#: crates/rufin-app/src/ui/local_access_mapping.rs:138
+msgid "No folder selected"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:536 crates/rufin-app/src/ui/login.rs:787
+msgid "No folders selected"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:537 crates/rufin-app/src/ui/login.rs:789
+msgid "folders selected"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:538 crates/rufin-app/src/ui/login.rs:202
+msgid "Add"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:539 crates/rufin-app/src/ui/login.rs:199
+msgid "Add Folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:540 crates/rufin-app/src/ui/login.rs:200
+msgid "Add another folder to the Local source"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:541 crates/rufin-app/src/ui/login.rs:186
+msgid "Choose one or more folders to scan and play directly from this computer"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:542 crates/rufin-app/src/ui/login.rs:264
+msgid "Choose at least one local music folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:543
+#: crates/rufin-app/src/ui/local_access_mapping.rs:141
+#: crates/rufin-app/src/ui/login.rs:193
+msgid "Choose"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:544
+#: crates/rufin-app/src/ui/local_access_mapping.rs:180
+msgid "Local Playback Access"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:545
+#: crates/rufin-app/src/ui/local_access_mapping.rs:185
+msgid "Optionally map server tracks to files on this computer"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:546
+#: crates/rufin-app/src/ui/local_access_mapping.rs:133
+msgid "Local Folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:547
+#: crates/rufin-app/src/ui/local_access_mapping.rs:147
+msgid "Server Prefix"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:548
+#: crates/rufin-app/src/ui/local_access_mapping.rs:153
+msgid "Local Prefix"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:549
+#: crates/rufin-app/src/ui/local_access_mapping.rs:163
+msgid "Server Sample"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:550
+#: crates/rufin-app/src/ui/local_access_mapping.rs:161
+#: crates/rufin-app/src/ui/local_access_mapping.rs:644
+msgid "No cached server path yet"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:551
+#: crates/rufin-app/src/ui/local_access_mapping.rs:169
+msgid "Mapped Local Path"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:552
+#: crates/rufin-app/src/ui/local_access_mapping.rs:665
+msgid "Server sample does not match the server prefix."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:553
+#: crates/rufin-app/src/ui/local_access_mapping.rs:693
+msgid "Enter a matching server prefix to map this path."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:554
+#: crates/rufin-app/src/ui/local_access_mapping.rs:709
+msgid "Save to rescan this local library."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:555
+#: crates/rufin-app/src/ui/local_access_mapping.rs:711
+msgid "Local library folder is saved."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:556
+#: crates/rufin-app/src/ui/local_access_mapping.rs:653
+#: crates/rufin-app/src/ui/local_access_mapping.rs:715
+msgid "Choose a local prefix."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:557
+#: crates/rufin-app/src/ui/local_access_mapping.rs:718
+msgid "Choose an existing local prefix."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:558
+#: crates/rufin-app/src/ui/local_access_mapping.rs:308
+msgid "Enter a local prefix."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:559
+#: crates/rufin-app/src/ui/local_access_mapping.rs:722
+msgid "Save to apply this mapping after the next sync."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:560
+#: crates/rufin-app/src/ui/local_access_mapping.rs:724
+msgid "No cached tracks yet. Sync the server to preview matches."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:561
+#: crates/rufin-app/src/ui/local_access_mapping.rs:729
+msgid "Unsaved changes."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:562
+#: crates/rufin-app/src/ui/local_access_mapping.rs:731
+msgid "Saved mapping."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:563 crates/rufin-app/src/ui/login.rs:834
+#: crates/rufin-app/src/ui/login.rs:872
+#: crates/rufin-app/src/ui/preferences/library.rs:142
+msgid "Select Music Folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:564
+#: crates/rufin-app/src/ui/local_access_mapping.rs:299
+#: crates/rufin-app/src/ui/local_access_mapping.rs:705
+msgid "Choose a local music folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:565 crates/rufin-app/src/ui/login.rs:274
+msgid "Enter a server address, username, and password"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:566
+#: crates/rufin-app/src/ui/local_access_mapping.rs:364
+#: crates/rufin-app/src/ui/login.rs:147
+msgid "Server Address"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:567
+msgid "Trust invalid certificates"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:568
+#: crates/rufin-app/src/ui/local_access_mapping.rs:384
+#: crates/rufin-app/src/ui/login.rs:162
+msgid "Trust invalid certificate"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:569
+#: crates/rufin-app/src/ui/local_access_mapping.rs:385
+#: crates/rufin-app/src/ui/login.rs:163
+msgid "Only use this for a server you control"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:570 crates/rufin-app/src/ui/login.rs:544
+msgid "Found Servers"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:571 crates/rufin-app/src/ui/login.rs:550
+msgid "Searching Local Network"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:572 crates/rufin-app/src/ui/login.rs:552
+msgid "No Servers Found"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:573 crates/rufin-app/src/ui/login.rs:585
+msgid "Search Again"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:574
+msgid "Resync Library"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:575
+msgid "Play"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:576
+msgid "Resume"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:577
+msgid "Pause"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:578
+msgid "Stop"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:579
+msgid "Previous"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:580
+msgid "Next"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:581
+#: crates/rufin-app/src/ui/root/home_refresh.rs:932
+msgid "Favorite"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:582
+msgid "Shuffle"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:583
+msgid "Shuffle on"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:584
+msgid "Auto DJ"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:585
+#: crates/rufin-app/src/ui/preferences/root/general.rs:502
+msgid "Auto DJ refill threshold"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:586
+#: crates/rufin-app/src/ui/preferences/root/general.rs:503
+msgid "Add tracks when fewer than this many remain"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:587
+msgid "Auto DJ on"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:588 crates/rufin-app/src/ui/random_play.rs:45
+msgid "Play random"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:589 crates/rufin-app/src/ui/random_play.rs:70
+msgid "Number of songs"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:590 crates/rufin-app/src/ui/random_play.rs:72
+msgid "Minimum year"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:591 crates/rufin-app/src/ui/random_play.rs:77
+msgid "Maximum year"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:592 crates/rufin-app/src/ui/random_play.rs:146
+msgid "Any genre"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:593 crates/rufin-app/src/ui/random_play.rs:82
+msgid "Play filter"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:594 crates/rufin-app/src/ui/random_play.rs:157
+msgid "All tracks"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:595 crates/rufin-app/src/ui/random_play.rs:158
+msgid "Only unplayed tracks"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:596 crates/rufin-app/src/ui/random_play.rs:159
+msgid "Only played tracks"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:597
+msgid "Add Last"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:598
+msgid "Repeat off"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:599
+msgid "Repeat one"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:600
+msgid "Repeat all"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:601
+msgid "Show sidebar"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:602
+msgid "Hide sidebar"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:603
+msgid "Show lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:604
+msgid "Hide lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:605
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:19
+msgid "Search lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:606
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:64
+msgid "Search Lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:607
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:248
+msgid "Save Lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:608
+msgid "Close"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:609
+msgid "Disable automatic lyric search for this track"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:610
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:21
+msgid "No track playing"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:611
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:88
+msgid "Song"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:612
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:93
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:337
+msgid "Ready"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:613
+#: crates/rufin-app/src/ui/root/cover_startup.rs:73
+msgid "Enter an artist or song."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:614 crates/rufin-app/src/ui/login.rs:583
+#: crates/rufin-app/src/ui/root/cover_startup.rs:77
+msgid "Searching…"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:615
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:194
+msgid "No lyrics found."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:616
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:306
+msgid "Search failed."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:617
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:200
+msgid "results"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:618
+#: crates/rufin-app/src/ui/root/cover_startup.rs:302
+msgid "Synced lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:619
+#: crates/rufin-app/src/ui/root/cover_startup.rs:308
+msgid "Plain lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:620
+#: crates/rufin-app/src/ui/root/cover_startup.rs:310
+msgid "No lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:621
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:235
+msgid "Loaded in lyrics panel."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:623
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:347
+msgid "Saved to"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:624
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:451
+msgid "Show Lyrics Panel"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:625
+msgid "Keep the lyrics section visible below the queue"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:626
+msgid "Keep the queue sidebar visible in the main window"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:627
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:264
+msgid "Prefer server lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:628
+msgid "Search server lyrics before external providers"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:629
+msgid "Use remote lyric providers when server lyrics are unavailable"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:630
+#: crates/rufin-app/src/ui/preferences/root/general.rs:5
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:134
+msgid "Scrobbling"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:631
+#: crates/rufin-app/src/ui/preferences/root/general.rs:18
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:316
+msgid "Last.fm"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:632
+#: crates/rufin-app/src/ui/preferences/root/general.rs:21
+msgid "Last.fm scrobbling"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:633
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:318
+msgid "MusicBrainz with Last.fm fallback"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:634
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:344
+msgid "Use listening activity"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:635
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:345
+msgid "Set the Discord activity type to Listening"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:636
+#: crates/rufin-app/src/ui/preferences/root/general.rs:37
+msgid "API keys"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:637
+#: crates/rufin-app/src/ui/preferences/root/general.rs:39
+msgid "If you do not have API keys, create them"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:638
+#: crates/rufin-app/src/ui/preferences/root/general.rs:41
+#: crates/rufin-app/src/ui/preferences/root/general.rs:271
+msgid "here"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:639
+#: crates/rufin-app/src/ui/preferences/root/general.rs:42
+msgid ". You only need ot fill email and an application name parts"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:640
+#: crates/rufin-app/src/ui/preferences/root/general.rs:49
+msgid "API key"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:641
+#: crates/rufin-app/src/ui/preferences/root/general.rs:77
+msgid "Shared secret"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:642
+#: crates/rufin-app/src/ui/preferences/root/general.rs:100
+#: crates/rufin-app/src/ui/preferences/root/general.rs:189
+msgid "Connection"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:644
+#: crates/rufin-app/src/ui/preferences/root/general.rs:106
+#: crates/rufin-app/src/ui/preferences/root/general.rs:132
+#: crates/rufin-app/src/ui/preferences/root/general.rs:195
+#: crates/rufin-app/src/ui/preferences/root/general.rs:213
+msgid "Reconnect"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:645
+#: crates/rufin-app/src/ui/preferences/root/general.rs:325
+msgid "Not connected"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:646
+#: crates/rufin-app/src/ui/preferences/root/general.rs:333
+msgid "Connected"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:647
+#: crates/rufin-app/src/ui/preferences/root/general.rs:335
+msgid "Connected as"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:648
+#: crates/rufin-app/src/ui/preferences/root/general.rs:120
+msgid "Enter API credentials first"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:649
+#: crates/rufin-app/src/ui/preferences/root/general.rs:124
+msgid "Opening Last.fm authorization…"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:650
+#: crates/rufin-app/src/ui/preferences/root/general.rs:401
+msgid "Timed out waiting for Last.fm authorization."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:651
+#: crates/rufin-app/src/ui/preferences/root/general.rs:144
+#: crates/rufin-app/src/ui/preferences/root/general.rs:225
+#: crates/rufin-app/src/ui/preferences/root/general.rs:300
+msgid "Now playing updates"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:652
+#: crates/rufin-app/src/ui/preferences/root/general.rs:164
+msgid "Libre.fm"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:653
+#: crates/rufin-app/src/ui/preferences/root/general.rs:166
+msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:654
+#: crates/rufin-app/src/ui/preferences/root/general.rs:170
+msgid "Libre.fm scrobbling"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:655
+#: crates/rufin-app/src/ui/preferences/root/general.rs:205
+msgid "Opening Libre.fm authorization…"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:656
+#: crates/rufin-app/src/ui/preferences/root/general.rs:434
+msgid "Timed out waiting for Libre.fm authorization"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:657
+#: crates/rufin-app/src/ui/preferences/root/general.rs:245
+msgid "ListenBrainz"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:658
+#: crates/rufin-app/src/ui/preferences/root/general.rs:248
+msgid "ListenBrainz scrobbling"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:659
+#: crates/rufin-app/src/ui/preferences/root/general.rs:267
+msgid "Get token"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:660
+#: crates/rufin-app/src/ui/preferences/root/general.rs:269
+msgid "Find your ListenBrainz user token"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:661
+#: crates/rufin-app/src/ui/preferences/root/general.rs:279
+msgid "User token"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:663
+msgid ""
+"Stop playback reporting, external lyrics, external metadata, notifications, "
+"and Discord IPC"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:665
+msgid "Music Server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:666
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:17
+msgid "Private mode is on"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:667
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:202
+msgid "App window"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:668
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:205
+msgid "Show tray icon"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:669
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:209
+msgid "Exit to tray"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:670
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:213
+msgid "Start minimized"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:671 crates/rufin-app/src/ui/root/tray.rs:50
+msgid "Show Rufin"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:672 crates/rufin-app/src/ui/root/tray.rs:51
+msgid "Play/Pause"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:673 crates/rufin-app/src/ui/root/tray.rs:52
+msgid "Previous Track"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:674 crates/rufin-app/src/ui/root/tray.rs:53
+msgid "Next Track"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:675 crates/rufin-app/src/ui/root/tray.rs:54
+msgid "Enable private mode"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:676 crates/rufin-app/src/ui/root/tray.rs:55
+msgid "Disable private mode"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:677 crates/rufin-app/src/ui/root/tray.rs:56
+msgid "Quit"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:678 crates/rufin-app/src/ui/root/tray.rs:57
+msgid "Rufin is running in the tray"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:679
+msgid "Left sidebar density"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:680
+msgid "Choose when the left sidebar uses compact navigation"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:681
+msgid "Plays"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:682
+#: crates/rufin-app/src/ui/root/home_refresh.rs:70
+msgid "Remove from playlist"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:683
+msgid "Remove from queue"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:684 crates/rufin-app/src/ui/queue.rs:544
+msgid "Remove from Queue"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:685
+msgid "Mute"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:686
+msgid "Seek"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:687
+msgid "Seekbar"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:688
+#: crates/rufin-app/src/ui/preferences/root/general.rs:446
+msgid "Queue and transitions"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:689
+#: crates/rufin-app/src/ui/preferences/root/general.rs:533
+msgid "Audio"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:690
+#: crates/rufin-app/src/ui/preferences/root/general.rs:489
+msgid "Skip same-album crossfade"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:691
+#: crates/rufin-app/src/ui/preferences/root/general.rs:490
+msgid "Keep album transitions gapless when possible"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:692
+#: crates/rufin-app/src/ui/preferences/root/general.rs:579
+msgid "Waveform seekbar"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:693
+#: crates/rufin-app/src/ui/preferences/root/general.rs:580
+msgid "Generate and cache waveforms for the current track"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:694
+msgid "Play now"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:695 crates/rufin-app/src/ui/queue.rs:545
+msgid "Play Now"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:696
+msgid "Play next"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:697 crates/rufin-app/src/ui/queue.rs:546
+msgid "Play Next"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:698
+msgid "Play Later"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:699
+msgid "Play album"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:700
+msgid "Play track"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:701
+msgid "Play artist"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:702
+msgid "Add to Favorites"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:703
+msgid "Remove from Favorites"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:704 crates/rufin-app/src/ui/queue.rs:557
+#: crates/rufin-app/src/ui/root/home_refresh.rs:65
+#: crates/rufin-app/src/ui/root/home_refresh.rs:242
+#: crates/rufin-app/src/ui/root/home_refresh.rs:405
+msgid "Go to Artist"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:705 crates/rufin-app/src/ui/queue.rs:561
+#: crates/rufin-app/src/ui/root/home_refresh.rs:67
+#: crates/rufin-app/src/ui/root/home_refresh.rs:244
+msgid "Go to Album"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:706
+msgid "Add to queue"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:707
+msgid "Clear queue"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:708
+msgid "Previous page"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:709
+msgid "Next page"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:710
+msgid "Refresh section"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:711
+msgid "Reset display"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:712
+msgid "New Smart Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:713
+msgid "Edit Smart Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:714
+msgid "Restore Default"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:715
+#: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:12
+msgid "Create"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:716
+msgid "Restore"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:717
+msgid "Match"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:718
+msgid "Sort"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:719
+msgid "Limit"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:720
+msgid "Add Rule"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:721 crates/rufin-app/src/ui/queue.rs:374
+#: crates/rufin-app/src/ui/queue.rs:396
+#: crates/rufin-app/src/ui/root/shell_navigation.rs:785
+msgid "Title"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:722
+msgid "Title (merged)"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:723 crates/rufin-app/src/ui/queue.rs:380
+#: crates/rufin-app/src/ui/queue.rs:408
+msgid "Year"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:724 crates/rufin-app/src/ui/folders.rs:350
+#: crates/rufin-app/src/ui/queue.rs:449
+msgid "Duration"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:725
+msgid "Comment"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:726
+msgid "Rating"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:727
+msgid "Played"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:728
+msgid "Play count"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:729
+msgid "Skip count"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:730
+msgid "Last played"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:731
+msgid "Date added"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:732
+msgid "All"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:733
+msgid "Any"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:735
+msgid "contains"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:736
+msgid "equals"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:737
+msgid "does not contain"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:738
+msgid "does not equal"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:739
+msgid "is empty"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:740
+msgid "is not empty"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:741
+msgid "excludes"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:742
+msgid "is not"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:743
+msgid "above"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:744
+msgid "below"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:745
+msgid "range"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:746
+msgid "is"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:747
+msgid "after"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:748
+msgid "before"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:750 crates/rufin-app/src/ui/login.rs:171
+msgid "Server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:751
+msgid "No server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:752
+msgid "Current server"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:754
+msgid "no account"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:755
+#: crates/rufin-app/src/ui/fullscreen_player.rs:304
+msgid "Nothing playing"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:756
+#: crates/rufin-app/src/ui/fullscreen_player.rs:310
+msgid "Queue a track to begin"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:757
+#: crates/rufin-app/src/ui/settings_persistence.rs:269
+msgid "Open fullscreen player"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:758
+msgid "Close fullscreen player"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:759
+#: crates/rufin-app/src/ui/fullscreen_player.rs:106
+#: crates/rufin-app/src/ui/settings_persistence.rs:300
+msgid "Queue"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:760
+msgid "No queue items match the search"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:761
+msgid "Artist detail will use cached album and track groups"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:762
+msgid "Genre detail keeps albums above tracks"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:763
+msgid "Playlist detail will use the track table"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:764
+msgid "Loading…"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:765
+msgid "Loading folders…"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:766 crates/rufin-app/src/ui/folders.rs:60
+msgid "Search current folder"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:767
+msgid "Artist / Album"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:768 crates/rufin-app/src/ui/folders.rs:518
+msgid "Folder browsing failed"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:769 crates/rufin-app/src/ui/folders.rs:505
+msgid "No folder contents found."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:770
+msgid "Cached library data will appear here as sync pages finish"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:771
+msgid "The selected cached album was not found"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:772
+msgid "No cached results found"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:773
+msgid "Cached rows will appear here after the background sync finishes"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:774
+msgid "Type a query in the sidebar search field to search the local cache"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:776
+msgid ""
+"Thank you for trying out Rufin! This a new app that is still in heavy "
+"development. If you have problems or suggestions, please open an issue in "
+"Github."
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:778
+#: crates/rufin-app/src/ui/root/cover_startup.rs:457
+msgid "Website"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:779
+#: crates/rufin-app/src/ui/root/cover_startup.rs:458
+msgid "Issues"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:88
+#: crates/rufin-app/src/ui/fullscreen_player.rs:94
+#: crates/rufin-app/src/ui/right_panel.rs:65
+#: crates/rufin-app/src/ui/settings_persistence.rs:294
+#: crates/rufin-app/src/ui/settings_persistence.rs:295
+msgid "Lyrics"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/album_detail.rs:815
+msgid "Image"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/cards.rs:441
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:178
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:589
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:628
+msgid "Visible"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/cards.rs:441
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:179
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:252
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:591
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:630
+msgid "Hidden"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/cards.rs:446
+#: crates/rufin-app/src/ui/library/collections.rs:1510
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:26
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:636
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:587
+msgid "Drag to reorder"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/cards.rs:458
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:31
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:645
+msgid "Move up"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/cards.rs:465
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:51
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:651
+msgid "Move down"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/route_shell.rs:332
+#: crates/rufin-app/src/ui/root/playlist_detail_view.rs:395
+msgid "Change sort order"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/route_shell.rs:348
+#: crates/rufin-app/src/ui/library/route_shell.rs:393
+#: crates/rufin-app/src/ui/preferences/root/general.rs:749
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:128
+msgid "Layout"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/route_shell.rs:364
+#: crates/rufin-app/src/ui/library/route_shell.rs:380
+msgid "Customize display"
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/route_shell.rs:394
+msgid "Choose the current page layout."
+msgstr ""
+
+#: crates/rufin-app/src/ui/library/route_shell.rs:396
+msgid "View"
+msgstr ""
+
+#: crates/rufin-app/src/ui/local_access_mapping.rs:187
+msgid "Choose the folder to scan and play directly from this computer"
+msgstr ""
+
+#: crates/rufin-app/src/ui/local_access_mapping.rs:513
+#: crates/rufin-app/src/ui/local_access_mapping.rs:546
+#: crates/rufin-app/src/ui/preferences/library.rs:169
+#: crates/rufin-app/src/ui/root/home_refresh.rs:605
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:752
+#: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:11
+#: crates/rufin-app/src/ui/root/playlist_detail_view.rs:331
+#: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:13
+msgid "Cancel"
+msgstr ""
+
+#: crates/rufin-app/src/ui/local_access_mapping.rs:539
+#: crates/rufin-app/src/ui/local_access_mapping.rs:547
+msgid "Forget Server"
+msgstr ""
+
+#: crates/rufin-app/src/ui/login.rs:268
+#: crates/rufin-app/src/ui/root/startup_reveal.rs:561
+msgid "Caching local library…"
+msgstr ""
+
+#: crates/rufin-app/src/ui/login.rs:278
+msgid "Connecting to music server…"
+msgstr ""
+
+#: crates/rufin-app/src/ui/login.rs:491
+msgid "Caching Library"
+msgstr ""
+
+#: crates/rufin-app/src/ui/navigation.rs:34
+msgid "My Library"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:36
+msgid "Configure saved music servers and local playback mappings."
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:44
+msgid "Add a server to use Jellyfin, Subsonic, or OpenSubsonic."
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:101
+msgid ""
+"These folders are combined into the Local source and shown through folder "
+"browsing."
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:107
+msgid "Add folders to use the Local source."
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:118
+#: crates/rufin-app/src/ui/preferences/library.rs:170
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:753
+msgid "Remove"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:165
+msgid "This removes the folder from the Local source."
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:215
+msgid "User"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:223
+msgid "Cached"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/library.rs:256
+msgid "Local mapping saved. Sync to preview matches."
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:438
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:140
+msgid "Playback"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:448
+msgid "Gapless"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:448
+msgid "Crossfade"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:455
+msgid "Transition mode"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:468
+msgid "Crossfade duration"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:469
+msgid "Seconds"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:534
+msgid "Off"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:534
+msgid "Track"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:541
+msgid "ReplayGain"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:554
+msgid "Original"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:555
+msgid "320 kbps"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:556
+msgid "256 kbps"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:557
+msgid "192 kbps"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:558
+msgid "128 kbps"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:566
+msgid "Stream quality"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:596
+msgid "Audio output"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:616
+msgid "Equalizer"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:620
+msgid "Enable equalizer"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:671
+msgid "Reset equalizer"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:672
+msgid "Restore neutral bands and disable equalizer."
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:674
+msgid "Reset"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/general.rs:757
+msgid "Home Blocks"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:174
+msgid "Position"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:177
+msgid "Hidden server section"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:230
+msgid "Full"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:230
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:253
+msgid "Compact"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:254
+msgid "Default"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:255
+msgid "Comfortable"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/layout.rs:256
+msgid "Spacious"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:285
+msgid "Discord"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:288
+msgid "Rich presence"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:297
+msgid "Application name"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:297
+msgid "Song title"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:297
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:940
+msgid "Artist name"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:304
+msgid "Status display"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:317
+msgid "MusicBrainz"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:323
+msgid "Activity links and MusicBrainz covers"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:334
+msgid "Show paused status"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:355
+msgid "Show playback icon"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:365
+msgid "Last.fm API key"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:378
+msgid "Privacy"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:381
+msgid "Private mode"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:391
+msgid "Now playing notifications"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:411
+msgid "Default left sidebar"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:429
+msgid "Default right sidebar"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:461
+msgid "Use different layout below a threshold width"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:475
+msgid "Narrow layout threshold"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:500
+msgid "Narrow left sidebar"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:519
+msgid "Narrow right sidebar"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:564
+msgid "Sidebar Items"
+msgstr ""
+
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:587
+msgid "Server selector"
+msgstr ""
+
+#: crates/rufin-app/src/ui/queue.rs:121
+msgid "No queue items match the search."
+msgstr ""
+
+#: crates/rufin-app/src/ui/queue.rs:123
+msgid "Add music to start a queue."
+msgstr ""
+
+#: crates/rufin-app/src/ui/right_panel.rs:47
+#: crates/rufin-app/src/ui/settings_persistence.rs:290
+msgid "Search queue"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/cover_startup.rs:454
+msgid ""
+"Thank you for trying out Rufin! If you have problems or suggestions, please "
+"open an issue in Github."
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/home_refresh.rs:52
+#: crates/rufin-app/src/ui/root/home_refresh.rs:229
+#: crates/rufin-app/src/ui/root/home_refresh.rs:394
+msgid "Add to Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/home_refresh.rs:602
+#: crates/rufin-app/src/ui/root/playlist_detail_view.rs:328
+msgid "Delete Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/home_refresh.rs:606
+#: crates/rufin-app/src/ui/root/playlist_detail_view.rs:332
+msgid "Delete"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:411
+msgid "No tracks match the search."
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:749
+msgid "Remove from Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:29
+msgid "Clear fetched lyrics for this track"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/lyrics_panel.rs:74
+msgid ""
+"Tap to the entry to load the lyrics and save in the app cache, click save "
+"only if you also want to save it in your music folder"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/lyrics_playback_state.rs:115
+msgid "No server lyrics for the current track. Private mode is on."
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/lyrics_playback_state.rs:117
+msgid "No server lyrics for the current track. External lyric lookup is off."
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/lyrics_playback_state.rs:119
+msgid "No lyrics for the current track."
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:6
+msgid "New Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:8
+msgid "Create a playlist. If a track is playing, it will be added."
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:15
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:255
+msgid "Playlist name"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:268
+msgid "Descending"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:271
+msgid "No limit"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:418
+msgid ""
+"This playlist uses nested rule groups. Rule editing is unavailable in this "
+"editor."
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:483
+msgid "Remove rule"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:551
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:583
+msgid "to"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:939
+msgid "Comment text"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:941
+msgid "Album title"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:942
+msgid "Text"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:10
+msgid "Rename Playlist"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:11
+msgid "Enter a new playlist name."
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:14
+msgid "Rename"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/startup_reveal.rs:86
+msgid "Switching library…"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/track_table.rs:67
+msgid "Configure columns"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/track_table_popover.rs:34
+msgid "Sort by"
+msgstr ""
+
+#: crates/rufin-app/src/ui/root/track_table_popover.rs:82
+msgid "Columns"
+msgstr ""
+
+#: crates/rufin-app/src/ui/source_selector.rs:336
+msgid "folders"
+msgstr ""

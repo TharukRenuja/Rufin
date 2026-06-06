@@ -67,7 +67,7 @@ pub(super) fn present_random_play_dialog(shell: &Rc<Shell>) {
     connect_year_toggle(&controls.min_year_enabled, &controls.min_year);
     connect_year_toggle(&controls.max_year_enabled, &controls.max_year);
 
-    content.append(&control_row(&tr("Songs"), &controls.limit));
+    content.append(&control_row(&tr("Number of songs"), &controls.limit));
     content.append(&optional_control_row(
         &tr("Minimum year"),
         &controls.min_year_enabled,
