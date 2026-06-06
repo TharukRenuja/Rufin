@@ -606,11 +606,16 @@ pub(in crate::controller) fn startup_start_refresh() {
     );
     assert_eq!(snapshot.sync_status, "Syncing library…");
     assert_eq!(wait_for_status(&events), "Syncing Local library…");
-    let state = controller
-        .store
-        .with_store(|store| store.sync_state(&local.server.id))
-        .expect("sync state");
-    assert!(state.generation > generation);
+    wait_for_store_condition(
+        "local sync generation to advance",
+        || {
+            controller
+                .store
+                .with_store(|store| store.sync_state(&local.server.id))
+                .expect("sync state")
+        },
+        |state| state.generation > generation,
+    );
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
@@ -1319,6 +1324,27 @@ fn wait_for_sync_status_without_snapshot(
             | ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
+    }
+}
+
+fn wait_for_store_condition<T>(
+    description: &str,
+    mut load: impl FnMut() -> T,
+    mut ready: impl FnMut(&T) -> bool,
+) -> T
+where
+    T: std::fmt::Debug,
+{
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let value = load();
+        if ready(&value) {
+            return value;
+        }
+        if Instant::now() >= deadline {
+            panic!("{description} timed out; last observed: {value:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
