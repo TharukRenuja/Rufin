@@ -546,5 +546,17 @@ pub(in crate::ui) fn connection_progress_status_label(sync_status: &str) -> Opti
         return Some(tr(LIBRARY_PREPARING_STATUS));
     };
     let (_title, detail) = startup_loading_status_parts(&status);
-    Some(detail.unwrap_or(status))
+    Some(detail.unwrap_or_else(|| {
+        if connection_progress_status_is_cache_headline(&status) {
+            tr(LIBRARY_PREPARING_STATUS)
+        } else {
+            status
+        }
+    }))
+}
+
+fn connection_progress_status_is_cache_headline(status: &str) -> bool {
+    status == "Caching library…"
+        || status == "Caching local library…"
+        || status == tr("Caching local library…")
 }

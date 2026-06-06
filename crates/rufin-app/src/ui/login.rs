@@ -494,7 +494,10 @@ impl Shell {
         title.set_wrap(true);
         content.append(&title);
 
-        let status_text = self.state.library.borrow().sync_status.clone();
+        let status_text = {
+            let sync_status = self.state.library.borrow().sync_status.clone();
+            connection_progress_status_label(&sync_status).unwrap_or_default()
+        };
         let status = gtk::Label::new(Some(&status_text));
         status.add_css_class("muted");
         status.set_justify(gtk::Justification::Center);
