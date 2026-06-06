@@ -9,13 +9,13 @@ fn main() {
         env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
     );
     let icon_path = manifest_dir.join("../../packaging/windows/assets/rufin.ico");
-    let po_dir = manifest_dir.join("../../po");
+    let translation_dir = manifest_dir.join("../../locales");
 
     println!("cargo:rerun-if-changed={}", icon_path.display());
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed={}", po_dir.display());
+    println!("cargo:rerun-if-changed={}", translation_dir.display());
 
-    let build_locale_dir = compile_translation_catalogs(&po_dir);
+    let build_locale_dir = compile_translation_catalogs(&translation_dir);
     println!(
         "cargo:rustc-env=RUFIN_BUILD_LOCALEDIR={}",
         build_locale_dir.display()
@@ -28,14 +28,14 @@ fn main() {
     compile_windows_resource(&icon_path);
 }
 
-fn compile_translation_catalogs(po_dir: &Path) -> PathBuf {
+fn compile_translation_catalogs(translation_dir: &Path) -> PathBuf {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let locale_dir = out_dir.join("share/locale");
     if locale_dir.exists() {
         fs::remove_dir_all(&locale_dir).expect("remove stale generated gettext catalogs");
     }
 
-    let po_files = translation_source_files(po_dir);
+    let po_files = translation_source_files(translation_dir);
     if po_files.is_empty() {
         return locale_dir;
     }

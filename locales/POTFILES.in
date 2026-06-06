@@ -1,5 +1,6 @@
 crates/rufin-app/src/i18n.rs
 crates/rufin-app/src/ui/artist.rs
+crates/rufin-app/src/ui/cards.rs
 crates/rufin-app/src/ui/chrome.rs
 crates/rufin-app/src/ui/folders.rs
 crates/rufin-app/src/ui/fullscreen_player.rs
@@ -30,6 +31,7 @@ crates/rufin-app/src/ui/root/layout_rendering.rs
 crates/rufin-app/src/ui/root/lyrics_panel.rs
 crates/rufin-app/src/ui/root/lyrics_playback_state.rs
 crates/rufin-app/src/ui/root/new_playlist_dialog.rs
+crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs
 crates/rufin-app/src/ui/root/playlist_detail_view.rs
 crates/rufin-app/src/ui/root/playlist_rename_dialog.rs
 crates/rufin-app/src/ui/root/route_rendering.rs
@@ -37,4 +39,6 @@ crates/rufin-app/src/ui/root/shell_navigation.rs
 crates/rufin-app/src/ui/root/startup_reveal.rs
 crates/rufin-app/src/ui/root/track_table.rs
 crates/rufin-app/src/ui/root/track_table_popover.rs
+crates/rufin-app/src/ui/root/tray.rs
+crates/rufin-app/src/ui/settings_persistence.rs
 crates/rufin-app/src/ui/source_selector.rs

@@ -887,7 +887,9 @@ fn match_mode_from_index(index: u32) -> SmartPlaylistMatchMode {
 }
 
 fn dropdown_from_titles(titles: &[&str], selected: usize) -> gtk::DropDown {
-    let model = gtk::StringList::new(titles);
+    let labels = titles.iter().map(|title| tr(title)).collect::<Vec<_>>();
+    let refs = labels.iter().map(String::as_str).collect::<Vec<_>>();
+    let model = gtk::StringList::new(&refs);
     let dropdown = gtk::DropDown::new(Some(model), None::<gtk::Expression>);
     dropdown.set_selected(selected as u32);
     dropdown

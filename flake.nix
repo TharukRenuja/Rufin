@@ -103,7 +103,7 @@
               install -Dm644 -t "$out/share/icons/hicolor/64x64/apps" \
                 data/icons/hicolor/64x64/apps/*.png
 
-              for po_file in po/*.po; do
+              for po_file in locales/*.po; do
                 if [ -f "$po_file" ]; then
                   lang="$(basename "$po_file" .po)"
                   mkdir -p "$out/share/locale/$lang/LC_MESSAGES"
@@ -179,7 +179,7 @@
                 gst-libav
               ]);
 
-            RUFIN_LOCALEDIR = "po";
+            RUFIN_LOCALEDIR = "locales";
           };
         }
       );
