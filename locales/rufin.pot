@@ -628,6 +628,18 @@ msgstr ""
 msgid "Optionally map server tracks to files on this computer"
 msgstr ""
 
+#: crates/rufin-app/src/ui/local_access_mapping.rs:199
+msgid "Local playback mapping configured"
+msgstr ""
+
+#: crates/rufin-app/src/ui/local_access_mapping.rs:201
+msgid "Map server tracks to local files"
+msgstr ""
+
+#: crates/rufin-app/src/ui/local_access_mapping.rs:205
+msgid "Local Playback Mapping"
+msgstr ""
+
 #: crates/rufin-app/src/i18n.rs:546
 #: crates/rufin-app/src/ui/local_access_mapping.rs:133
 msgid "Local Folder"
@@ -738,19 +750,15 @@ msgid "Server Address"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:567
-msgid "Trust invalid certificates"
+#: crates/rufin-app/src/ui/local_access_mapping.rs:417
+#: crates/rufin-app/src/ui/login.rs:179
+msgid "Verify server certificate"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:568
-#: crates/rufin-app/src/ui/local_access_mapping.rs:384
-#: crates/rufin-app/src/ui/login.rs:162
-msgid "Trust invalid certificate"
-msgstr ""
-
-#: crates/rufin-app/src/i18n.rs:569
-#: crates/rufin-app/src/ui/local_access_mapping.rs:385
-#: crates/rufin-app/src/ui/login.rs:163
-msgid "Only use this for a server you control"
+#: crates/rufin-app/src/ui/local_access_mapping.rs:418
+#: crates/rufin-app/src/ui/login.rs:180
+msgid "Turn off only for a server you control"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:570 crates/rufin-app/src/ui/login.rs:544

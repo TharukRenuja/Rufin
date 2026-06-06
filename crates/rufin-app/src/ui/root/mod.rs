@@ -226,6 +226,11 @@ pub struct AppOptions {
     #[cfg(feature = "dev-tools")]
     pub fake_scale: Option<FakeScale>,
 }
+#[derive(Clone)]
+pub(in crate::ui) struct AddServerDialogHandle {
+    toolbar: adw::ToolbarView,
+    on_connect_started: Option<Rc<dyn Fn()>>,
+}
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
     settings: RefCell<AppSettings>,
@@ -292,6 +297,7 @@ pub(in crate::ui) struct AppState {
     server_discovery_status: RefCell<String>,
     server_discovery_running: Cell<bool>,
     server_discovery_started: Cell<bool>,
+    add_server_dialog: RefCell<Option<AddServerDialogHandle>>,
     cover_bindings: RefCell<HashMap<String, Vec<CoverBinding>>>,
     cover_unavailable: RefCell<HashSet<String>>,
     cover_path_cache: RefCell<HashMap<String, PathBuf>>,
@@ -529,6 +535,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         server_discovery_status: RefCell::new("Searching will start automatically".to_string()),
         server_discovery_running: Cell::new(false),
         server_discovery_started: Cell::new(false),
+        add_server_dialog: RefCell::new(None),
         cover_bindings: RefCell::new(HashMap::new()),
         cover_unavailable: RefCell::new(HashSet::new()),
         cover_path_cache: RefCell::new(HashMap::new()),

@@ -947,6 +947,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     if shell.state.library.borrow().first_run {
                         shell.render_current_route();
                     }
+                    shell.refresh_add_server_dialog();
                 }
                 ControllerEvent::LoginStatus(status) => {
                     if let Some(message) = preferences_login_status_toast_message(&status) {

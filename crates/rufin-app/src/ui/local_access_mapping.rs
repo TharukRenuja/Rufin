@@ -190,11 +190,31 @@ fn manage_server_toolbar(
         .title(group_title)
         .description(group_description)
         .build();
-    group.add(&folder_row);
-    group.add(&server_prefix);
-    group.add(&local_prefix);
-    group.add(&sample_row);
-    group.add(&preview_row);
+    let mapping_expander = if remote {
+        let subtitle = if access.is_some() {
+            tr("Local playback mapping configured")
+        } else {
+            tr("Map server tracks to local files")
+        };
+        let expander = adw::ExpanderRow::builder()
+            .title(tr("Local Playback Mapping"))
+            .subtitle(subtitle)
+            .build();
+        expander.add_row(&folder_row);
+        expander.add_row(&server_prefix);
+        expander.add_row(&local_prefix);
+        expander.add_row(&sample_row);
+        expander.add_row(&preview_row);
+        group.add(&expander);
+        Some(expander)
+    } else {
+        group.add(&folder_row);
+        group.add(&server_prefix);
+        group.add(&local_prefix);
+        group.add(&sample_row);
+        group.add(&preview_row);
+        None
+    };
     content.append(&group);
 
     let status = gtk::Label::new(None);
@@ -212,6 +232,19 @@ fn manage_server_toolbar(
     actions.append(&remove);
     actions.append(&save);
     content.append(&actions);
+    if let Some(expander) = mapping_expander.as_ref() {
+        status.set_visible(expander.is_expanded());
+        actions.set_visible(expander.is_expanded());
+        expander.connect_expanded_notify({
+            let status = status.clone();
+            let actions = actions.clone();
+            move |expander| {
+                let expanded = expander.is_expanded();
+                status.set_visible(expanded);
+                actions.set_visible(expanded);
+            }
+        });
+    }
 
     content.append(&server_actions_group(
         shell,
@@ -380,13 +413,13 @@ fn server_settings_group(
     password.set_visible(remote);
     group.add(&password);
 
-    let trust_invalid_certificate = adw::SwitchRow::builder()
-        .title(tr("Trust invalid certificate"))
-        .subtitle(tr("Only use this for a server you control"))
-        .active(saved_trust_invalid_cert)
+    let cert_verify = adw::SwitchRow::builder()
+        .title(tr("Verify server certificate"))
+        .subtitle(tr("Turn off only for a server you control"))
+        .active(!saved_trust_invalid_cert)
         .build();
-    trust_invalid_certificate.set_visible(remote);
-    group.add(&trust_invalid_certificate);
+    cert_verify.set_visible(remote);
+    group.add(&cert_verify);
 
     let save = button_row("Save Server Settings", "document-save-symbolic");
     save.add_css_class("suggested-action");
@@ -414,7 +447,7 @@ fn server_settings_group(
             base_url,
             username,
             password.text().to_string(),
-            trust_invalid_certificate.is_active(),
+            !cert_verify.is_active(),
         );
     });
 

@@ -748,20 +748,16 @@ msgid "Server Address"
 msgstr "Serveri aadress"
 
 #: crates/rufin-app/src/i18n.rs:567
-msgid "Trust invalid certificates"
-msgstr "Usalda vigaseid sertifikaate"
+#: crates/rufin-app/src/ui/local_access_mapping.rs:417
+#: crates/rufin-app/src/ui/login.rs:179
+msgid "Verify server certificate"
+msgstr "Kontrolli serveri sertifikaati"
 
 #: crates/rufin-app/src/i18n.rs:568
-#: crates/rufin-app/src/ui/local_access_mapping.rs:384
-#: crates/rufin-app/src/ui/login.rs:162
-msgid "Trust invalid certificate"
-msgstr "Usalda vigast sertifikaati"
-
-#: crates/rufin-app/src/i18n.rs:569
-#: crates/rufin-app/src/ui/local_access_mapping.rs:385
-#: crates/rufin-app/src/ui/login.rs:163
-msgid "Only use this for a server you control"
-msgstr "Kasuta vaid selle sinu kontrollitava serveri jaoks"
+#: crates/rufin-app/src/ui/local_access_mapping.rs:418
+#: crates/rufin-app/src/ui/login.rs:180
+msgid "Turn off only for a server you control"
+msgstr "Lülita välja vaid enda kontrollitava serveri jaoks"
 
 #: crates/rufin-app/src/i18n.rs:570 crates/rufin-app/src/ui/login.rs:544
 msgid "Found Servers"

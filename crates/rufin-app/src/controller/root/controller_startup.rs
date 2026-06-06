@@ -5,21 +5,30 @@ use std::time::{Duration, Instant};
 const SYNC_PROGRESS_MIN_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
-    start_sync_thread_inner(context, saved, false);
+    start_sync_thread_inner(context, saved, false, false);
 }
 
 pub(in crate::controller) fn start_sync_thread_with_snapshots(
     context: SyncContext,
     saved: SavedServer,
 ) {
-    start_sync_thread_inner(context, saved, true);
+    start_sync_thread_inner(context, saved, true, false);
 }
 
-fn start_sync_thread_inner(context: SyncContext, saved: SavedServer, force_snapshots: bool) {
+pub(in crate::controller) fn start_login_sync_thread(context: SyncContext, saved: SavedServer) {
+    start_sync_thread_inner(context, saved, false, true);
+}
+
+fn start_sync_thread_inner(
+    context: SyncContext,
+    saved: SavedServer,
+    force_snapshots: bool,
+    completion_snapshot: bool,
+) {
     let server_id = saved.server.id.clone();
-    let skip_sync_snapshots = !force_snapshots
-        && sync_target_is_current(&context.store, &server_id)
+    let cached_current = sync_target_is_current(&context.store, &server_id)
         && cached_library_exists(&context.store, &server_id);
+    let skip_sync_snapshots = !force_snapshots && !completion_snapshot && cached_current;
     let permit = match context.sync_in_flight.acquire(server_id.clone()) {
         Ok(Some(permit)) => permit,
         Ok(None) => {
@@ -60,7 +69,7 @@ fn start_sync_thread_inner(context: SyncContext, saved: SavedServer, force_snaps
             return;
         }
     };
-    if !skip_sync_snapshots {
+    if !skip_sync_snapshots && !completion_snapshot {
         emit_runtime_snapshot(&context.store, &context.secrets, &context.events);
     }
 
