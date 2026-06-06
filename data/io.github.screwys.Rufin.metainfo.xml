@@ -30,28 +30,37 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/play_random.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/play_random.png</image>
     </screenshot>
     <screenshot>
       <caption>Tune playback settings</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.0/data/playback.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.1" date="2026-06-06">
+      <description>
+        <ul>
+          <li>Fixed a bug where UI stayed stale during syncing library even though sync has finished</li>
+          <li>Removed duplicate &quot;Caching library&quot; wording</li>
+          <li>Moved local folder mapping for server library under a toggle</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-06-05">
       <description>
         <p>The heaviest release so far, a lot of fundamentals have changed for the better, thanks everyone reporting issues! There was a compatability problem with using the keyring, which caused issues for several systems, therefore we migrated to a local storage. This unfortunately means that you will need to login again to your servers, and enter API credentials again, but this is an one-time thing. I hope the improvements make up for this inconvenience:</p>
