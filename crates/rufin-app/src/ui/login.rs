@@ -12,7 +12,7 @@ use adw::prelude::*;
 use rufin_core::ServerId;
 
 use super::{
-    Shell, icon_button,
+    AddServerDialogHandle, Shell, icon_button,
     layout::{large_popup_content_height, large_popup_content_width},
     startup_reveal::connection_progress_status_label,
     text_button,
@@ -62,14 +62,23 @@ impl Shell {
             .build();
         let dialog_for_connect = dialog.clone();
         let on_connect_started = on_connect_started.clone();
-        let child = self.server_view_handler(Some(Rc::new(move || {
+        let connect_callback = Rc::new(move || {
             dialog_for_connect.close();
             if let Some(on_connect_started) = on_connect_started.as_ref() {
                 on_connect_started();
             }
-        })));
+        });
+        let child = self.server_view_handler(Some(connect_callback.clone()));
         toolbar.set_content(Some(&child));
         dialog.set_child(Some(&toolbar));
+        *self.state.add_server_dialog.borrow_mut() = Some(AddServerDialogHandle {
+            toolbar: toolbar.clone(),
+            on_connect_started: Some(connect_callback),
+        });
+        let shell = Rc::clone(self);
+        dialog.connect_closed(move |_| {
+            shell.state.add_server_dialog.borrow_mut().take();
+        });
         let dialog_for_close = dialog.clone();
         close.connect_clicked(move |_| {
             dialog_for_close.close();
@@ -79,6 +88,14 @@ impl Shell {
 
     pub(super) fn add_server_view(self: &Rc<Self>) -> gtk::Widget {
         self.server_view_handler(None)
+    }
+
+    pub(super) fn refresh_add_server_dialog(self: &Rc<Self>) {
+        let Some(handle) = self.state.add_server_dialog.borrow().clone() else {
+            return;
+        };
+        let child = self.server_view_handler(handle.on_connect_started);
+        handle.toolbar.set_content(Some(&child));
     }
 
     fn server_view_handler(
@@ -158,11 +175,11 @@ impl Shell {
         let password = adw::PasswordEntryRow::builder()
             .title(tr("Password"))
             .build();
-        let trust = adw::SwitchRow::builder()
-            .title(tr("Trust invalid certificate"))
-            .subtitle(tr("Only use this for a server you control"))
+        let cert_verify = adw::SwitchRow::builder()
+            .title(tr("Verify server certificate"))
+            .subtitle(tr("Turn off only for a server you control"))
             .active(
-                preset
+                !preset
                     .as_ref()
                     .is_some_and(|preset| preset.trust_invalid_cert),
             )
@@ -173,7 +190,7 @@ impl Shell {
         server_group.add(&url);
         server_group.add(&username);
         server_group.add(&password);
-        server_group.add(&trust);
+        server_group.add(&cert_verify);
         content.append(&server_group);
 
         let default_local_folder = default_music_folder();
@@ -237,7 +254,7 @@ impl Shell {
         let url_input = url.clone();
         let username_input = username.clone();
         let password_input = password.clone();
-        let trust_input = trust.clone();
+        let cert_verify_input = cert_verify.clone();
         let provider_input = provider.clone();
         let local_folders_input = Rc::clone(&local_folders);
         let status_input = status.clone();
@@ -283,7 +300,7 @@ impl Shell {
                     server_url: url_input.text().to_string(),
                     username: username_input.text().to_string(),
                     password: password_input.text().to_string(),
-                    trust_invalid_cert: trust_input.is_active(),
+                    trust_invalid_cert: !cert_verify_input.is_active(),
                     local_access_root: None,
                     path_replace_from: None,
                 });
@@ -309,7 +326,7 @@ impl Shell {
             url.clone().upcast::<gtk::Widget>(),
             username.clone().upcast::<gtk::Widget>(),
             password.clone().upcast::<gtk::Widget>(),
-            trust.clone().upcast::<gtk::Widget>(),
+            cert_verify.clone().upcast::<gtk::Widget>(),
             discovered_group.clone().upcast::<gtk::Widget>(),
         ];
         update_provider_rows(

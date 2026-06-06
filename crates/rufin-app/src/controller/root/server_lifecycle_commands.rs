@@ -202,7 +202,7 @@ impl AppController {
                 }
             };
 
-            start_sync_thread(sync_context, saved);
+            start_login_sync_thread(sync_context, saved);
         });
     }
 }

@@ -564,9 +564,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Choose a local music folder");
     let _ = tr("Enter a server address, username, and password");
     let _ = tr("Server Address");
-    let _ = tr("Trust invalid certificates");
-    let _ = tr("Trust invalid certificate");
-    let _ = tr("Only use this for a server you control");
+    let _ = tr("Verify server certificate");
+    let _ = tr("Turn off only for a server you control");
     let _ = tr("Found Servers");
     let _ = tr("Searching Local Network");
     let _ = tr("No Servers Found");

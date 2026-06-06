@@ -659,6 +659,41 @@ pub(in crate::controller) fn startup_reuse_cache() {
     assert_eq!(wait_for_status(&events), "Syncing Local library…");
     let _cleanup = fs::remove_dir_all(root);
 }
+
+#[test]
+pub(in crate::controller) fn startup_login_sync_emits_snapshot() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let local = local_source_saved();
+    let root = unique_test_dir("login-sync-snapshot");
+    fs::create_dir_all(&root).expect("create root");
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Local);
+    settings.sources.local_folders = vec![LocalLibraryFolder {
+        path: root.to_string_lossy().into_owned(),
+    }];
+    store.save_settings(&settings).expect("save settings");
+    seed_cached_library(
+        &store,
+        &local,
+        &[local_album_with_image_ref(ImageRef::new(
+            "local:cover:file%3A%2F%2Flogin-sync-cover",
+            None,
+        ))],
+        &[],
+        &[],
+    );
+    let (controller, events) = controller_from_store_for_test(store);
+
+    start_login_sync_thread(controller.sync_context(), local);
+
+    let snapshot = wait_for_snapshot(&events);
+    assert!(!snapshot.first_run);
+    assert_eq!(
+        snapshot.selected_source,
+        Some(LibrarySourceSelection::Local)
+    );
+    let _cleanup = fs::remove_dir_all(root);
+}
 #[test]
 pub(in crate::controller) fn startup_source_sync_running_emits_snapshot() {
     let store = StoreHandle::open_memory().expect("memory store");
