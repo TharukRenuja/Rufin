@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: 2026-05-28 20:43+0300\n"
-"PO-Revision-Date: 2026-06-05 15:18+0000\n"
+"PO-Revision-Date: 2026-06-06 18:01+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -53,7 +53,7 @@ msgstr "Album"
 
 #: crates/rufin-app/src/i18n.rs:310
 msgid "Tracks"
-msgstr "Lood"
+msgstr "Palad"
 
 #: crates/rufin-app/src/i18n.rs:311
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:72
@@ -155,7 +155,7 @@ msgstr "Vaata kõiki lugusid"
 #: crates/rufin-app/src/ui/library/cards.rs:182
 #: crates/rufin-app/src/ui/preferences/library.rs:224
 msgid "albums"
-msgstr "albumid"
+msgstr "albumit"
 
 #: crates/rufin-app/src/i18n.rs:333 crates/rufin-app/src/ui/artist.rs:277
 #: crates/rufin-app/src/ui/artist.rs:287 crates/rufin-app/src/ui/home.rs:59
@@ -170,7 +170,7 @@ msgstr "albumid"
 #: crates/rufin-app/src/ui/root/genre_detail_view.rs:30
 #: crates/rufin-app/src/ui/root/playlist_detail_view.rs:35
 msgid "tracks"
-msgstr "lood"
+msgstr "palad"
 
 #: crates/rufin-app/src/i18n.rs:334
 #: crates/rufin-app/src/ui/root/cover_startup.rs:299
@@ -224,55 +224,56 @@ msgstr "Üldised"
 #: crates/rufin-app/src/i18n.rs:343
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:334
 msgid "Interface"
-msgstr ""
+msgstr "Kasutajaliides"
 
 #: crates/rufin-app/src/i18n.rs:344
 #: crates/rufin-app/src/ui/preferences/library.rs:16
 #: crates/rufin-app/src/ui/preferences/library.rs:27
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:115
 msgid "Library"
-msgstr ""
+msgstr "Meediakogu"
 
 #: crates/rufin-app/src/i18n.rs:345
 msgid "Actions"
-msgstr ""
+msgstr "Tegevused"
 
 #: crates/rufin-app/src/i18n.rs:346
 msgid "Sync Status"
-msgstr ""
+msgstr "Sünkroonimise olek"
 
 #: crates/rufin-app/src/i18n.rs:347
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:196
 msgid "Metadata"
-msgstr ""
+msgstr "Metateave"
 
 #: crates/rufin-app/src/i18n.rs:348
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:211
 msgid "External lyric lookup"
-msgstr ""
+msgstr "Laulusõnade otsing välisest teenusest"
 
 #: crates/rufin-app/src/i18n.rs:349
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:199
 msgid "External cover lookup"
-msgstr ""
+msgstr "Kaanepiltide otsing välisest teenusest"
 
 #: crates/rufin-app/src/i18n.rs:350
 msgid "Does MusicBrainz and Cover Art Archive lookups"
-msgstr ""
+msgstr "Otsingud MusicBrainzi ja Cover Art Archive'i teenustesse"
 
 #: crates/rufin-app/src/i18n.rs:351
 msgid "Try to fetch artwork from internet when server artwork is missing"
 msgstr ""
+"Kui serveris pole kaanepilte, siis proovi need leida välistest teenustest"
 
 #: crates/rufin-app/src/i18n.rs:352
 #: crates/rufin-app/src/ui/local_access_mapping.rs:476
 msgid "Clear Cached Library"
-msgstr ""
+msgstr "Kustuta meediakogu puhverdatud andmed"
 
 #: crates/rufin-app/src/i18n.rs:353
 #: crates/rufin-app/src/ui/local_access_mapping.rs:484
 msgid "Clear Cache"
-msgstr ""
+msgstr "Kustuta vahemälu"
 
 #: crates/rufin-app/src/i18n.rs:354
 #: crates/rufin-app/src/ui/local_access_mapping.rs:479
@@ -289,263 +290,269 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:357
 msgid "Clears cached data for the server, login stays saved"
 msgstr ""
+"Eemaldab serverist puhverdatud andmed, kasutajakonto andmed jäävad alles"
 
 #: crates/rufin-app/src/i18n.rs:358
 msgid "No active server"
-msgstr ""
+msgstr "Aktiivset serverit pole"
 
 #: crates/rufin-app/src/i18n.rs:359 crates/rufin-app/src/ui/login.rs:26
 #: crates/rufin-app/src/ui/source_selector.rs:292
 msgid "Add Server"
-msgstr ""
+msgstr "Lisa server"
 
 #: crates/rufin-app/src/i18n.rs:360
 #: crates/rufin-app/src/ui/local_access_mapping.rs:72
 msgid "Manage Server"
-msgstr ""
+msgstr "Halda serverit"
 
 #: crates/rufin-app/src/i18n.rs:361
 msgid "Configure local folder access"
-msgstr ""
+msgstr "Seadista ligipääs kohalikele kaustadele"
 
 #: crates/rufin-app/src/i18n.rs:362
 #: crates/rufin-app/src/ui/source_selector.rs:112
 msgid "Source"
-msgstr ""
+msgstr "Allikas"
 
 #: crates/rufin-app/src/i18n.rs:363
 #: crates/rufin-app/src/ui/source_selector.rs:214
 msgid "Select Source"
-msgstr ""
+msgstr "Vali allikas"
 
 #: crates/rufin-app/src/i18n.rs:364
 #: crates/rufin-app/src/ui/source_selector.rs:142
 msgid "No source"
-msgstr ""
+msgstr "Allikat pole"
 
 #: crates/rufin-app/src/i18n.rs:365
 msgid "Sources"
-msgstr ""
+msgstr "Allikad"
 
 #: crates/rufin-app/src/i18n.rs:366
 #: crates/rufin-app/src/ui/preferences/library.rs:34
 msgid "Servers"
-msgstr ""
+msgstr "Serverid"
 
 #: crates/rufin-app/src/i18n.rs:367
 msgid "Configure saved music servers and local playback mappings"
 msgstr ""
+"Seadista salvestatud muusikaservereid ja kohaliku taasesituse vastendusi"
 
 #: crates/rufin-app/src/i18n.rs:368
 #: crates/rufin-app/src/ui/preferences/library.rs:42
 #: crates/rufin-app/src/ui/source_selector.rs:216
 msgid "No servers configured"
-msgstr ""
+msgstr "Ühtegi serverit pole seadistatud"
 
 #: crates/rufin-app/src/i18n.rs:369
 #: crates/rufin-app/src/ui/source_selector.rs:262
 msgid "Server Library"
-msgstr ""
+msgstr "Serveri muusikakogu"
 
 #: crates/rufin-app/src/i18n.rs:370
 #: crates/rufin-app/src/ui/preferences/library.rs:204
 #: crates/rufin-app/src/ui/source_selector.rs:324
 msgid "All Music"
-msgstr ""
+msgstr "Kogu muusika"
 
 #: crates/rufin-app/src/i18n.rs:371
 #: crates/rufin-app/src/ui/source_selector.rs:274
 msgid "Manage"
-msgstr ""
+msgstr "Halda"
 
 #: crates/rufin-app/src/i18n.rs:372
 #: crates/rufin-app/src/ui/preferences/library.rs:98
 msgid "Local Folders"
-msgstr ""
+msgstr "Kohalikud kaustad"
 
 #: crates/rufin-app/src/i18n.rs:373
 #: crates/rufin-app/src/ui/preferences/library.rs:105
 #: crates/rufin-app/src/ui/source_selector.rs:310
 msgid "No local folders configured"
-msgstr ""
+msgstr "Ühtegi kohalikku kausta pole seadistatud"
 
 #: crates/rufin-app/src/i18n.rs:374
 msgid "Add Local Folder"
-msgstr ""
+msgstr "Lisa kohalik kaust"
 
 #: crates/rufin-app/src/i18n.rs:375
 msgid "Active Source Actions"
-msgstr ""
+msgstr "Tegevused aktiivse allikaga"
 
 #: crates/rufin-app/src/i18n.rs:376
 msgid "Map Local"
-msgstr ""
+msgstr "Vastenda kohalik"
 
 #: crates/rufin-app/src/i18n.rs:377
 msgid "Edit Mapping"
-msgstr ""
+msgstr "Muuda vastendust"
 
 #: crates/rufin-app/src/i18n.rs:378
 #: crates/rufin-app/src/ui/local_access_mapping.rs:333
 msgid "Server Settings"
-msgstr ""
+msgstr "Serveri seadistused"
 
 #: crates/rufin-app/src/i18n.rs:379
 #: crates/rufin-app/src/ui/local_access_mapping.rs:404
 msgid "Server Actions"
-msgstr ""
+msgstr "Serveri tegevused"
 
 #: crates/rufin-app/src/i18n.rs:380
 msgid "Use This Source"
-msgstr ""
+msgstr "Kasuta seda allikat"
 
 #: crates/rufin-app/src/i18n.rs:381
 msgid "Selected Source"
-msgstr ""
+msgstr "Valitud allikas"
 
 #: crates/rufin-app/src/i18n.rs:382 crates/rufin-app/src/ui/folders.rs:325
 #: crates/rufin-app/src/ui/local_access_mapping.rs:342
 msgid "Name"
-msgstr ""
+msgstr "Nimi"
 
 #: crates/rufin-app/src/i18n.rs:383
 #: crates/rufin-app/src/ui/local_access_mapping.rs:459
 msgid "Not set"
-msgstr ""
+msgstr "Määratlemata"
 
 #: crates/rufin-app/src/i18n.rs:384 crates/rufin-app/src/i18n.rs:562
 msgid "Yes"
-msgstr ""
+msgstr "Jah"
 
 #: crates/rufin-app/src/i18n.rs:385
 msgid "No"
-msgstr ""
+msgstr "Ei"
 
 #: crates/rufin-app/src/i18n.rs:386
 #: crates/rufin-app/src/ui/preferences/library.rs:259
 msgid "Local mapping"
-msgstr ""
+msgstr "Kohalik vastendus"
 
 #: crates/rufin-app/src/i18n.rs:387
 #: crates/rufin-app/src/ui/preferences/library.rs:248
 #: crates/rufin-app/src/ui/preferences/library.rs:251
 msgid "No local playback mapping"
-msgstr ""
+msgstr "Kohaliku taasesituse vastendust pole"
 
 #: crates/rufin-app/src/i18n.rs:388
 msgid "Local mapping saved. Sync to preview matches"
 msgstr ""
+"Kohaliku taasesituse vastendus on salvestatud. Eevaade klapitamiseks "
+"sünkrooni"
 
 #: crates/rufin-app/src/i18n.rs:389
 #: crates/rufin-app/src/ui/preferences/library.rs:206
 msgid "Saved per server"
-msgstr ""
+msgstr "Salvestatud serverikohaselt"
 
 #: crates/rufin-app/src/i18n.rs:390
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:267
 msgid "None"
-msgstr ""
+msgstr "Määramata"
 
 #: crates/rufin-app/src/i18n.rs:391
 msgid "Use server streams only"
-msgstr ""
+msgstr "Kasuta vaid voogedastust serverist"
 
 #: crates/rufin-app/src/i18n.rs:392
 msgid "Choose Folder"
-msgstr ""
+msgstr "Vali kaust"
 
 #: crates/rufin-app/src/i18n.rs:393
 msgid "Add local folder access"
-msgstr ""
+msgstr "Lisa ligipääs kohalikule kaustale"
 
 #: crates/rufin-app/src/i18n.rs:394
 #: crates/rufin-app/src/ui/preferences/library.rs:161
 msgid "Remove Local Folder"
-msgstr ""
+msgstr "Eemalda ligipääs kohalikult kaustalt"
 
 #: crates/rufin-app/src/i18n.rs:395
 msgid "This removes the folder from the Local source"
-msgstr ""
+msgstr "Järgnevaga eemaldad selle kausta kohalike allikate seast"
 
 #: crates/rufin-app/src/i18n.rs:396
 msgid "Clear Mapping"
-msgstr ""
+msgstr "Eemalda vastendus"
 
 #: crates/rufin-app/src/i18n.rs:397 crates/rufin-app/src/i18n.rs:501
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:171
 msgid "Save"
-msgstr ""
+msgstr "Salvesta"
 
 #: crates/rufin-app/src/i18n.rs:398
 msgid "Save Mapping"
-msgstr ""
+msgstr "Salvesta vastendus"
 
 #: crates/rufin-app/src/i18n.rs:399
 msgid "Save Server Settings"
-msgstr ""
+msgstr "Salvesta serveri seadistused"
 
 #: crates/rufin-app/src/i18n.rs:400 crates/rufin-app/src/i18n.rs:522
 #: crates/rufin-app/src/ui/preferences/root/general.rs:103
 #: crates/rufin-app/src/ui/preferences/root/general.rs:192
 msgid "Connect"
-msgstr ""
+msgstr "Ühenda"
 
 #: crates/rufin-app/src/i18n.rs:401 crates/rufin-app/src/ui/login.rs:85
 #: crates/rufin-app/src/ui/root/route_rendering.rs:20
 msgid "Connect to Music Server"
-msgstr ""
+msgstr "Ühenda muusikaserveriga"
 
 #: crates/rufin-app/src/i18n.rs:402
 msgid "Preparing library…"
-msgstr ""
+msgstr "Valmistan muusikakogu ette…"
 
 #: crates/rufin-app/src/i18n.rs:403
 msgid "Library sync complete"
-msgstr ""
+msgstr "Muusikakogu sünkroonimine on lõppenud"
 
 #: crates/rufin-app/src/i18n.rs:404
 msgid "Choose a provider, pick a server, or enter the address manually"
-msgstr ""
+msgstr "Vali teenusepakkuja või server, aga võid ka aadressi käsitsi lisada"
 
 #: crates/rufin-app/src/i18n.rs:405 crates/rufin-app/src/ui/login.rs:90
 msgid ""
 "Choose a provider, pick a discovered server, or enter the address manually"
 msgstr ""
+"Vali teenusepakkuja või tuvastatud server, aga võid ka aadressi käsitsi "
+"lisada"
 
 #: crates/rufin-app/src/i18n.rs:406 crates/rufin-app/src/ui/login.rs:109
 msgid "Provider"
-msgstr ""
+msgstr "Teenusepakkuja"
 
 #: crates/rufin-app/src/i18n.rs:407
 #: crates/rufin-app/src/ui/preferences/library.rs:278
 #: crates/rufin-app/src/ui/source_selector.rs:187
 msgid "Jellyfin"
-msgstr ""
+msgstr "Jellyfin"
 
 #: crates/rufin-app/src/i18n.rs:408
 #: crates/rufin-app/src/ui/preferences/library.rs:279
 #: crates/rufin-app/src/ui/source_selector.rs:188
 msgid "Navidrome"
-msgstr ""
+msgstr "Navidrome"
 
 #: crates/rufin-app/src/i18n.rs:409
 #: crates/rufin-app/src/ui/preferences/library.rs:280
 #: crates/rufin-app/src/ui/source_selector.rs:189
 msgid "Subsonic / OpenSubsonic"
-msgstr ""
+msgstr "Subsonic / OpenSubsonic"
 
 #: crates/rufin-app/src/i18n.rs:410 crates/rufin-app/src/i18n.rs:566
 #: crates/rufin-app/src/ui/preferences/library.rs:281
 #: crates/rufin-app/src/ui/source_selector.rs:190
 #: crates/rufin-app/src/ui/source_selector.rs:242
 msgid "Local"
-msgstr ""
+msgstr "Kohalik andmekogu"
 
 #: crates/rufin-app/src/i18n.rs:411
 #: crates/rufin-app/src/ui/local_access_mapping.rs:182
 #: crates/rufin-app/src/ui/login.rs:138
 msgid "Local Library"
-msgstr ""
+msgstr "Kohalik meediakogu"
 
 #: crates/rufin-app/src/i18n.rs:413
 msgid ""
@@ -557,55 +564,57 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:415
 #: crates/rufin-app/src/ui/preferences/library.rs:236
 msgid "Music Folder"
-msgstr ""
+msgstr "Muusikafailide kaust"
 
 #: crates/rufin-app/src/i18n.rs:416 crates/rufin-app/src/ui/login.rs:144
 msgid "Music Folders"
-msgstr ""
+msgstr "Muusika kaustad"
 
 #: crates/rufin-app/src/i18n.rs:417
 #: crates/rufin-app/src/ui/local_access_mapping.rs:138
 msgid "No folder selected"
-msgstr ""
+msgstr "Kaust on valimata"
 
 #: crates/rufin-app/src/i18n.rs:418 crates/rufin-app/src/ui/login.rs:682
 msgid "No folders selected"
-msgstr ""
+msgstr "Kaustad on valimata"
 
 #: crates/rufin-app/src/i18n.rs:419 crates/rufin-app/src/ui/login.rs:684
 msgid "folders selected"
-msgstr ""
+msgstr "valitud kausta"
 
 #: crates/rufin-app/src/i18n.rs:420 crates/rufin-app/src/ui/login.rs:156
 msgid "Add"
-msgstr ""
+msgstr "Lisa"
 
 #: crates/rufin-app/src/i18n.rs:421 crates/rufin-app/src/ui/login.rs:153
 msgid "Add Folder"
-msgstr ""
+msgstr "Lisa kaust"
 
 #: crates/rufin-app/src/i18n.rs:422 crates/rufin-app/src/ui/login.rs:154
 msgid "Add another folder to the Local source"
-msgstr ""
+msgstr "Lisa veel mõni kaust kohalikuks allikaks"
 
 #: crates/rufin-app/src/i18n.rs:423 crates/rufin-app/src/ui/login.rs:140
 msgid "Choose one or more folders to scan and play directly from this computer"
 msgstr ""
+"Vali üks või enam, kasuta, mille sisu sellest arvutist tahad skaneerida ja "
+"kuulata"
 
 #: crates/rufin-app/src/i18n.rs:424 crates/rufin-app/src/ui/login.rs:204
 msgid "Choose at least one local music folder"
-msgstr ""
+msgstr "Palun vali vähemalt üks kohaliku muusika kaust"
 
 #: crates/rufin-app/src/i18n.rs:425
 #: crates/rufin-app/src/ui/local_access_mapping.rs:141
 #: crates/rufin-app/src/ui/login.rs:147
 msgid "Choose"
-msgstr ""
+msgstr "Vali"
 
 #: crates/rufin-app/src/i18n.rs:426
 #: crates/rufin-app/src/ui/local_access_mapping.rs:180
 msgid "Local Playback Access"
-msgstr ""
+msgstr "Ligipääs kohaliku muusika esitamisele"
 
 #: crates/rufin-app/src/i18n.rs:427
 #: crates/rufin-app/src/ui/local_access_mapping.rs:185
@@ -615,17 +624,17 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:428
 #: crates/rufin-app/src/ui/local_access_mapping.rs:133
 msgid "Local Folder"
-msgstr ""
+msgstr "Kohalik kaust"
 
 #: crates/rufin-app/src/i18n.rs:429
 #: crates/rufin-app/src/ui/local_access_mapping.rs:147
 msgid "Server Prefix"
-msgstr ""
+msgstr "Serveri prefiks"
 
 #: crates/rufin-app/src/i18n.rs:430
 #: crates/rufin-app/src/ui/local_access_mapping.rs:153
 msgid "Local Prefix"
-msgstr ""
+msgstr "Kohalik prefiks"
 
 #: crates/rufin-app/src/i18n.rs:431
 #: crates/rufin-app/src/ui/local_access_mapping.rs:163
@@ -656,28 +665,28 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:436
 #: crates/rufin-app/src/ui/local_access_mapping.rs:679
 msgid "Save to rescan this local library."
-msgstr ""
+msgstr "Salvesta selle kohaliku muusikakogu uuesti skaneerimiseks."
 
 #: crates/rufin-app/src/i18n.rs:437
 #: crates/rufin-app/src/ui/local_access_mapping.rs:681
 msgid "Local library folder is saved."
-msgstr ""
+msgstr "Kohaliku muusikakogu kaust on salvestatud."
 
 #: crates/rufin-app/src/i18n.rs:438
 #: crates/rufin-app/src/ui/local_access_mapping.rs:623
 #: crates/rufin-app/src/ui/local_access_mapping.rs:685
 msgid "Choose a local prefix."
-msgstr ""
+msgstr "Vali kohalik prefiks."
 
 #: crates/rufin-app/src/i18n.rs:439
 #: crates/rufin-app/src/ui/local_access_mapping.rs:688
 msgid "Choose an existing local prefix."
-msgstr ""
+msgstr "Vali olemasolev kohalik prefiks."
 
 #: crates/rufin-app/src/i18n.rs:440
 #: crates/rufin-app/src/ui/local_access_mapping.rs:306
 msgid "Enter a local prefix."
-msgstr ""
+msgstr "Sisesta kohalik prefiks."
 
 #: crates/rufin-app/src/i18n.rs:441
 #: crates/rufin-app/src/ui/local_access_mapping.rs:692
@@ -692,193 +701,193 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:443
 #: crates/rufin-app/src/ui/local_access_mapping.rs:699
 msgid "Unsaved changes."
-msgstr ""
+msgstr "Muudatused on salvestamata."
 
 #: crates/rufin-app/src/i18n.rs:444
 #: crates/rufin-app/src/ui/local_access_mapping.rs:701
 msgid "Saved mapping."
-msgstr ""
+msgstr "Vastendus on salvestatud."
 
 #: crates/rufin-app/src/i18n.rs:445 crates/rufin-app/src/ui/login.rs:729
 #: crates/rufin-app/src/ui/login.rs:767
 #: crates/rufin-app/src/ui/preferences/library.rs:141
 msgid "Select Music Folder"
-msgstr ""
+msgstr "Vali muusikakaust"
 
 #: crates/rufin-app/src/i18n.rs:446
 #: crates/rufin-app/src/ui/local_access_mapping.rs:298
 #: crates/rufin-app/src/ui/local_access_mapping.rs:675
 msgid "Choose a local music folder"
-msgstr ""
+msgstr "Vali kohalik muusikakaust"
 
 #: crates/rufin-app/src/i18n.rs:447 crates/rufin-app/src/ui/login.rs:218
 msgid "Enter a server address, username, and password"
-msgstr ""
+msgstr "Sisesta serveri aadress, kasutajanimi ja salasõna"
 
 #: crates/rufin-app/src/i18n.rs:448
 #: crates/rufin-app/src/ui/local_access_mapping.rs:348
 #: crates/rufin-app/src/ui/login.rs:113
 msgid "Server Address"
-msgstr ""
+msgstr "Serveri aadress"
 
 #: crates/rufin-app/src/i18n.rs:449
 msgid "Trust invalid certificates"
-msgstr ""
+msgstr "Usalda vigaseid sertifikaate"
 
 #: crates/rufin-app/src/i18n.rs:450
 #: crates/rufin-app/src/ui/local_access_mapping.rs:355
 #: crates/rufin-app/src/ui/login.rs:120
 msgid "Trust invalid certificate"
-msgstr ""
+msgstr "Usalda vigast sertifikaati"
 
 #: crates/rufin-app/src/i18n.rs:451
 #: crates/rufin-app/src/ui/local_access_mapping.rs:356
 #: crates/rufin-app/src/ui/login.rs:121
 msgid "Only use this for a server you control"
-msgstr ""
+msgstr "Kasuta vaid selle sinu kontrollitava serveri jaoks"
 
 #: crates/rufin-app/src/i18n.rs:452 crates/rufin-app/src/ui/login.rs:455
 msgid "Found Servers"
-msgstr ""
+msgstr "Leitud serverid"
 
 #: crates/rufin-app/src/i18n.rs:453 crates/rufin-app/src/ui/login.rs:461
 msgid "Searching Local Network"
-msgstr ""
+msgstr "Otsin kohtvõrgust"
 
 #: crates/rufin-app/src/i18n.rs:454 crates/rufin-app/src/ui/login.rs:463
 msgid "No Servers Found"
-msgstr ""
+msgstr "Ühtegi serverit ei leidu"
 
 #: crates/rufin-app/src/i18n.rs:455 crates/rufin-app/src/ui/login.rs:496
 msgid "Search Again"
-msgstr ""
+msgstr "Otsi uuesti"
 
 #: crates/rufin-app/src/i18n.rs:456
 msgid "Resync Library"
-msgstr ""
+msgstr "Sünkrooni muusikakogu uuesti"
 
 #: crates/rufin-app/src/i18n.rs:457
 msgid "Play"
-msgstr ""
+msgstr "Esita"
 
 #: crates/rufin-app/src/i18n.rs:458
 msgid "Resume"
-msgstr ""
+msgstr "Jätka"
 
 #: crates/rufin-app/src/i18n.rs:459
 msgid "Pause"
-msgstr ""
+msgstr "Peata esitus"
 
 #: crates/rufin-app/src/i18n.rs:460
 msgid "Stop"
-msgstr ""
+msgstr "Lõpeta"
 
 #: crates/rufin-app/src/i18n.rs:461
 msgid "Previous"
-msgstr ""
+msgstr "Eelmine"
 
 #: crates/rufin-app/src/i18n.rs:462
 msgid "Next"
-msgstr ""
+msgstr "Järgmine"
 
 #: crates/rufin-app/src/i18n.rs:463
 #: crates/rufin-app/src/ui/root/home_refresh.rs:673
 msgid "Favorite"
-msgstr ""
+msgstr "Lemmik"
 
 #: crates/rufin-app/src/i18n.rs:464
 msgid "Shuffle"
-msgstr ""
+msgstr "Sega lood"
 
 #: crates/rufin-app/src/i18n.rs:465
 msgid "Shuffle on"
-msgstr ""
+msgstr "Lugude segamine on kasutusel"
 
 #: crates/rufin-app/src/i18n.rs:466
 msgid "Auto DJ"
-msgstr ""
+msgstr "Automaatne diskor"
 
 #: crates/rufin-app/src/i18n.rs:467
 msgid "Auto DJ on"
-msgstr ""
+msgstr "Automaatne diskor on lülitatud sissse"
 
 #: crates/rufin-app/src/i18n.rs:468 crates/rufin-app/src/ui/random_play.rs:45
 msgid "Play random"
-msgstr ""
+msgstr "Esita juhuslikult"
 
 #: crates/rufin-app/src/i18n.rs:469 crates/rufin-app/src/ui/random_play.rs:70
 msgid "Songs"
-msgstr ""
+msgstr "Lood"
 
 #: crates/rufin-app/src/i18n.rs:470 crates/rufin-app/src/ui/random_play.rs:72
 msgid "Minimum year"
-msgstr ""
+msgstr "Minimaalne aasta"
 
 #: crates/rufin-app/src/i18n.rs:471 crates/rufin-app/src/ui/random_play.rs:77
 msgid "Maximum year"
-msgstr ""
+msgstr "Maksimaalne aasta"
 
 #: crates/rufin-app/src/i18n.rs:472 crates/rufin-app/src/ui/random_play.rs:146
 msgid "Any genre"
-msgstr ""
+msgstr "Iga žanr"
 
 #: crates/rufin-app/src/i18n.rs:473 crates/rufin-app/src/ui/random_play.rs:82
 msgid "Play filter"
-msgstr ""
+msgstr "Esituste filter"
 
 #: crates/rufin-app/src/i18n.rs:474 crates/rufin-app/src/ui/random_play.rs:157
 msgid "All tracks"
-msgstr ""
+msgstr "Kõik lood"
 
 #: crates/rufin-app/src/i18n.rs:475 crates/rufin-app/src/ui/random_play.rs:158
 msgid "Only unplayed tracks"
-msgstr ""
+msgstr "Vaid esitamata lood"
 
 #: crates/rufin-app/src/i18n.rs:476 crates/rufin-app/src/ui/random_play.rs:159
 msgid "Only played tracks"
-msgstr ""
+msgstr "Vaid esitatud lood"
 
 #: crates/rufin-app/src/i18n.rs:477
 msgid "Add Last"
-msgstr ""
+msgstr "Viimatilisatud"
 
 #: crates/rufin-app/src/i18n.rs:478
 msgid "Repeat off"
-msgstr ""
+msgstr "Lugude kordus pole kasutusel"
 
 #: crates/rufin-app/src/i18n.rs:479
 msgid "Repeat one"
-msgstr ""
+msgstr "Korda üht lugu"
 
 #: crates/rufin-app/src/i18n.rs:480
 msgid "Repeat all"
-msgstr ""
+msgstr "Korda kõiki"
 
 #: crates/rufin-app/src/i18n.rs:481
 msgid "Show sidebar"
-msgstr ""
+msgstr "Näita külgriba"
 
 #: crates/rufin-app/src/i18n.rs:482
 msgid "Hide sidebar"
-msgstr ""
+msgstr "Peida külgriba"
 
 #: crates/rufin-app/src/i18n.rs:483
 msgid "Show lyrics"
-msgstr ""
+msgstr "Vaata laulusõnu"
 
 #: crates/rufin-app/src/i18n.rs:484
 msgid "Hide lyrics"
-msgstr ""
+msgstr "Peida laulusõnad"
 
 #: crates/rufin-app/src/i18n.rs:485
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:17
 msgid "Search lyrics"
-msgstr ""
+msgstr "Otsi laulusõnu"
 
 #: crates/rufin-app/src/i18n.rs:486
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:62
 msgid "Search Lyrics"
-msgstr ""
+msgstr "Otsi laulusõnu"
 
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:71
 msgid ""
@@ -889,11 +898,11 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:487
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:186
 msgid "Save Lyrics"
-msgstr ""
+msgstr "Salvesta laulusõnad"
 
 #: crates/rufin-app/src/i18n.rs:488
 msgid "Close"
-msgstr ""
+msgstr "Sulge"
 
 #: crates/rufin-app/src/i18n.rs:489
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:27
@@ -903,162 +912,163 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:490
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:19
 msgid "No track playing"
-msgstr ""
+msgstr "Ühtegi lugu pole esitamisel"
 
 #: crates/rufin-app/src/i18n.rs:491
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:78
 msgid "Song"
-msgstr ""
+msgstr "Lugu"
 
 #: crates/rufin-app/src/i18n.rs:492
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:87
 msgid "Ready"
-msgstr ""
+msgstr "Valmis"
 
 #: crates/rufin-app/src/i18n.rs:493
 #: crates/rufin-app/src/ui/root/cover_startup.rs:80
 msgid "Enter an artist or song."
-msgstr ""
+msgstr "Sisesta esitaja või loo nimi."
 
 #: crates/rufin-app/src/i18n.rs:494 crates/rufin-app/src/ui/login.rs:494
 #: crates/rufin-app/src/ui/root/cover_startup.rs:85
 msgid "Searching…"
-msgstr ""
+msgstr "Otsin…"
 
 #: crates/rufin-app/src/i18n.rs:495
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:157
 msgid "No lyrics found."
-msgstr ""
+msgstr "Laulusõnu ei leidu."
 
 #: crates/rufin-app/src/i18n.rs:496
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:157
 msgid "Search failed."
-msgstr ""
+msgstr "Otsimine ei õnnestunud."
 
 #: crates/rufin-app/src/i18n.rs:497
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:163
 msgid "results"
-msgstr ""
+msgstr "tulemused"
 
 #: crates/rufin-app/src/i18n.rs:498
 #: crates/rufin-app/src/ui/root/cover_startup.rs:177
 msgid "Synchronized"
-msgstr ""
+msgstr "Sünkroonis"
 
 #: crates/rufin-app/src/i18n.rs:498
 #: crates/rufin-app/src/ui/root/cover_startup.rs:184
 msgid "Unsynchronized"
-msgstr ""
+msgstr "Sünkroonimata"
 
 #: crates/rufin-app/src/i18n.rs:499
 #: crates/rufin-app/src/ui/root/cover_startup.rs:175
 msgid "Synchronized + Unsynchronized"
-msgstr ""
+msgstr "Sünkroonitud + sünkroonimata"
 
 #: crates/rufin-app/src/i18n.rs:500
 #: crates/rufin-app/src/ui/root/cover_startup.rs:186
 msgid "No lyrics"
-msgstr ""
+msgstr "Laulusõnu pole"
 
 #: crates/rufin-app/src/i18n.rs:502
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:212
 msgid "Saved to"
-msgstr ""
+msgstr "Salvestatud asukohta"
 
 #: crates/rufin-app/src/i18n.rs:503
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:378
 msgid "Show Lyrics Panel"
-msgstr ""
+msgstr "Näita laulusõnade riba"
 
 #: crates/rufin-app/src/i18n.rs:504
 msgid "Keep the lyrics section visible below the queue"
-msgstr ""
+msgstr "Hoia laulusõnade plokk nähtaval esitusjärjekorra all"
 
 #: crates/rufin-app/src/i18n.rs:505
 msgid "Keep the queue sidebar visible in the main window"
-msgstr ""
+msgstr "Hoia esitusjärjekorra plokk põhiaknas nähtaval"
 
 #: crates/rufin-app/src/i18n.rs:506
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:216
 msgid "Prefer server lyrics"
-msgstr ""
+msgstr "Eelista laulusõnu serverist"
 
 #: crates/rufin-app/src/i18n.rs:507
 msgid "Search server lyrics before external providers"
 msgstr ""
+"Enne välisest teenusest otsimist vaata, kas laulusõnad on serveris olemas"
 
 #: crates/rufin-app/src/i18n.rs:508
 msgid "Use remote lyric providers when server lyrics are unavailable"
-msgstr ""
+msgstr "Kui laulusõnu pole serveris olemas, siis otsi neid välisest teenusest"
 
 #: crates/rufin-app/src/i18n.rs:509
 #: crates/rufin-app/src/ui/preferences/root/general.rs:5
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:103
 msgid "Scrobbling"
-msgstr ""
+msgstr "Kraasimine"
 
 #: crates/rufin-app/src/i18n.rs:510
 #: crates/rufin-app/src/ui/preferences/root/general.rs:17
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:268
 msgid "Last.fm"
-msgstr ""
+msgstr "Last.fm"
 
 #: crates/rufin-app/src/i18n.rs:511
 #: crates/rufin-app/src/ui/preferences/root/general.rs:20
 msgid "Last.fm scrobbling"
-msgstr ""
+msgstr "Kraasimine Last.fm-i"
 
 #: crates/rufin-app/src/i18n.rs:512
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:270
 msgid "MusicBrainz with Last.fm fallback"
-msgstr ""
+msgstr "MusicBrainz ja Last.fm on varuavariandiks"
 
 #: crates/rufin-app/src/i18n.rs:513
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:296
 msgid "Use listening activity"
-msgstr ""
+msgstr "Kasuta kuulamisaktiivsust"
 
 #: crates/rufin-app/src/i18n.rs:514
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:297
 msgid "Set the Discord activity type to Listening"
-msgstr ""
+msgstr "Märgi Discordis tegevuseks kuulamine (Listening)"
 
 #: crates/rufin-app/src/i18n.rs:515
 #: crates/rufin-app/src/ui/preferences/root/general.rs:36
 msgid "API keys"
-msgstr ""
+msgstr "API võtmed"
 
 #: crates/rufin-app/src/i18n.rs:516
 #: crates/rufin-app/src/ui/preferences/root/general.rs:38
 msgid "If you do not have API keys, create them"
-msgstr ""
+msgstr "Kui sul pole APi võtmeid, siis saad nad luua"
 
 #: crates/rufin-app/src/i18n.rs:517
 #: crates/rufin-app/src/ui/preferences/root/general.rs:40
 #: crates/rufin-app/src/ui/preferences/root/general.rs:270
 msgid "here"
-msgstr ""
+msgstr "siin"
 
 #: crates/rufin-app/src/i18n.rs:518
 #: crates/rufin-app/src/ui/preferences/root/general.rs:41
 msgid ". You only need ot fill email and an application name parts"
-msgstr ""
+msgstr ". Sa pead vaid sisestama e-posti aadressi ja rakenduse nime"
 
 #: crates/rufin-app/src/i18n.rs:519
 #: crates/rufin-app/src/ui/preferences/root/general.rs:48
 msgid "API key"
-msgstr ""
+msgstr "API võti"
 
 #: crates/rufin-app/src/i18n.rs:520
 #: crates/rufin-app/src/ui/preferences/root/general.rs:76
 msgid "Shared secret"
-msgstr ""
+msgstr "Jagatud saladus"
 
 #: crates/rufin-app/src/i18n.rs:521
 #: crates/rufin-app/src/ui/preferences/root/general.rs:99
 #: crates/rufin-app/src/ui/preferences/root/general.rs:188
 msgid "Connection"
-msgstr ""
+msgstr "Ühendus"
 
 #: crates/rufin-app/src/i18n.rs:523
 #: crates/rufin-app/src/ui/preferences/root/general.rs:105
@@ -1066,32 +1076,32 @@ msgstr ""
 #: crates/rufin-app/src/ui/preferences/root/general.rs:194
 #: crates/rufin-app/src/ui/preferences/root/general.rs:212
 msgid "Reconnect"
-msgstr ""
+msgstr "Ühenda uuesti"
 
 #: crates/rufin-app/src/i18n.rs:524
 #: crates/rufin-app/src/ui/preferences/root/general.rs:324
 msgid "Not connected"
-msgstr ""
+msgstr "Pole ühendatud"
 
 #: crates/rufin-app/src/i18n.rs:525
 #: crates/rufin-app/src/ui/preferences/root/general.rs:332
 msgid "Connected"
-msgstr ""
+msgstr "Ühendatud"
 
 #: crates/rufin-app/src/i18n.rs:526
 #: crates/rufin-app/src/ui/preferences/root/general.rs:334
 msgid "Connected as"
-msgstr ""
+msgstr "Ühendatud kui"
 
 #: crates/rufin-app/src/i18n.rs:527
 #: crates/rufin-app/src/ui/preferences/root/general.rs:119
 msgid "Enter API credentials first"
-msgstr ""
+msgstr "Esmalt sisesta API tuvastusandmed"
 
 #: crates/rufin-app/src/i18n.rs:528
 #: crates/rufin-app/src/ui/preferences/root/general.rs:123
 msgid "Opening Last.fm authorization…"
-msgstr ""
+msgstr "Avan Last.fm-i autentimisvaate…"
 
 #: crates/rufin-app/src/i18n.rs:529
 #: crates/rufin-app/src/ui/preferences/root/general.rs:397
@@ -1108,7 +1118,7 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:531
 #: crates/rufin-app/src/ui/preferences/root/general.rs:163
 msgid "Libre.fm"
-msgstr ""
+msgstr "Libre.fm"
 
 #: crates/rufin-app/src/i18n.rs:532
 #: crates/rufin-app/src/ui/preferences/root/general.rs:165
@@ -1133,7 +1143,7 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:536
 #: crates/rufin-app/src/ui/preferences/root/general.rs:244
 msgid "ListenBrainz"
-msgstr ""
+msgstr "ListenBrainz"
 
 #: crates/rufin-app/src/i18n.rs:537
 #: crates/rufin-app/src/ui/preferences/root/general.rs:247
@@ -1180,104 +1190,104 @@ msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:548
 msgid "Remove from queue"
-msgstr ""
+msgstr "Eemalda esitusjärjekorrast"
 
 #: crates/rufin-app/src/i18n.rs:549 crates/rufin-app/src/ui/queue.rs:476
 msgid "Remove from Queue"
-msgstr ""
+msgstr "Eemalda esitusjärjekorrast"
 
 #: crates/rufin-app/src/i18n.rs:550
 msgid "Mute"
-msgstr ""
+msgstr "Summuta"
 
 #: crates/rufin-app/src/i18n.rs:551
 msgid "Play now"
-msgstr ""
+msgstr "Esita kohe"
 
 #: crates/rufin-app/src/i18n.rs:552 crates/rufin-app/src/ui/queue.rs:477
 msgid "Play Now"
-msgstr ""
+msgstr "Esita kohe"
 
 #: crates/rufin-app/src/i18n.rs:553
 msgid "Play next"
-msgstr ""
+msgstr "Esita järgmisena"
 
 #: crates/rufin-app/src/i18n.rs:554 crates/rufin-app/src/ui/queue.rs:478
 msgid "Play Next"
-msgstr ""
+msgstr "Esita järgmisena"
 
 #: crates/rufin-app/src/i18n.rs:555
 msgid "Play Later"
-msgstr ""
+msgstr "Esita hiljem"
 
 #: crates/rufin-app/src/i18n.rs:556
 #: crates/rufin-app/src/ui/root/home_refresh.rs:318
 msgid "Go to Artist"
-msgstr ""
+msgstr "Suundu esitaja juurde"
 
 #: crates/rufin-app/src/i18n.rs:557
 msgid "Add to queue"
-msgstr ""
+msgstr "Lisa esitusjärjekorda"
 
 #: crates/rufin-app/src/i18n.rs:558 crates/rufin-app/src/ui/queue.rs:302
 #: crates/rufin-app/src/ui/queue.rs:324
 #: crates/rufin-app/src/ui/root/shell_navigation.rs:760
 msgid "Title"
-msgstr ""
+msgstr "Pealkiri"
 
 #: crates/rufin-app/src/i18n.rs:559
 msgid "Title (merged)"
-msgstr ""
+msgstr "Pealkiri (mestitud)"
 
 #: crates/rufin-app/src/i18n.rs:560 crates/rufin-app/src/ui/queue.rs:308
 #: crates/rufin-app/src/ui/queue.rs:336
 msgid "Year"
-msgstr ""
+msgstr "Aasta"
 
 #: crates/rufin-app/src/i18n.rs:561 crates/rufin-app/src/ui/folders.rs:344
 #: crates/rufin-app/src/ui/queue.rs:377
 #: crates/rufin-app/src/ui/root/layout_rendering.rs:157
 msgid "Duration"
-msgstr ""
+msgstr "Kestus"
 
 #: crates/rufin-app/src/i18n.rs:563 crates/rufin-app/src/ui/login.rs:125
 msgid "Server"
-msgstr ""
+msgstr "Server"
 
 #: crates/rufin-app/src/i18n.rs:564
 msgid "No server"
-msgstr ""
+msgstr "Serverit pole"
 
 #: crates/rufin-app/src/i18n.rs:565
 msgid "Current server"
-msgstr ""
+msgstr "Praegune server"
 
 #: crates/rufin-app/src/i18n.rs:567
 msgid "no account"
-msgstr ""
+msgstr "kasutajakontot pole"
 
 #: crates/rufin-app/src/i18n.rs:568
 #: crates/rufin-app/src/ui/fullscreen_player.rs:304
 msgid "Nothing playing"
-msgstr ""
+msgstr "Mitte midagi pole esitamisel"
 
 #: crates/rufin-app/src/i18n.rs:569
 #: crates/rufin-app/src/ui/fullscreen_player.rs:310
 msgid "Queue a track to begin"
-msgstr ""
+msgstr "Alustamiseks lisa midagi esitusjärjekorda"
 
 #: crates/rufin-app/src/i18n.rs:570
 msgid "Open fullscreen player"
-msgstr ""
+msgstr "Ava muusikaesitaja täisekraanivaates"
 
 #: crates/rufin-app/src/i18n.rs:571
 msgid "Close fullscreen player"
-msgstr ""
+msgstr "Sulge muusikaesitaja täisekraanivaade"
 
 #: crates/rufin-app/src/i18n.rs:572
 #: crates/rufin-app/src/ui/fullscreen_player.rs:106
 msgid "Queue"
-msgstr ""
+msgstr "Esitusjärjekord"
 
 #: crates/rufin-app/src/i18n.rs:573
 msgid "No queue items match the search"
@@ -1345,30 +1355,30 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:590
 #: crates/rufin-app/src/ui/root/cover_startup.rs:330
 msgid "Website"
-msgstr ""
+msgstr "Veebisait"
 
 #: crates/rufin-app/src/i18n.rs:591
 #: crates/rufin-app/src/ui/root/cover_startup.rs:331
 msgid "Issues"
-msgstr ""
+msgstr "Veahaldus"
 
 #: crates/rufin-app/src/ui/fullscreen_player.rs:88
 #: crates/rufin-app/src/ui/fullscreen_player.rs:94
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:209
 #: crates/rufin-app/src/ui/right_panel.rs:65
 msgid "Lyrics"
-msgstr ""
+msgstr "Laulusõnad"
 
 #: crates/rufin-app/src/ui/library/album_detail.rs:649
 msgid "Image"
-msgstr ""
+msgstr "Pilt"
 
 #: crates/rufin-app/src/ui/library/cards.rs:408
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:178
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:516
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:555
 msgid "Visible"
-msgstr ""
+msgstr "Nähtav"
 
 #: crates/rufin-app/src/ui/library/cards.rs:408
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:179
@@ -1376,38 +1386,38 @@ msgstr ""
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:518
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:557
 msgid "Hidden"
-msgstr ""
+msgstr "Peidetud"
 
 #: crates/rufin-app/src/ui/library/cards.rs:413
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:26
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:563
 #: crates/rufin-app/src/ui/root/layout_rendering.rs:226
 msgid "Drag to reorder"
-msgstr ""
+msgstr "Järjekorra muutmiseks lohista"
 
 #: crates/rufin-app/src/ui/library/cards.rs:425
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:31
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:574
 msgid "Move up"
-msgstr ""
+msgstr "Liiguta ülespoole"
 
 #: crates/rufin-app/src/ui/library/cards.rs:432
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:51
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:580
 msgid "Move down"
-msgstr ""
+msgstr "Liiguta allapoole"
 
 #: crates/rufin-app/src/ui/library/route_shell.rs:298
 #: crates/rufin-app/src/ui/root/playlist_detail_view.rs:151
 msgid "Change sort order"
-msgstr ""
+msgstr "Muuda järjestust"
 
 #: crates/rufin-app/src/ui/library/route_shell.rs:314
 #: crates/rufin-app/src/ui/library/route_shell.rs:356
 #: crates/rufin-app/src/ui/preferences/root/general.rs:697
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:97
 msgid "Layout"
-msgstr ""
+msgstr "Paigutus"
 
 #: crates/rufin-app/src/ui/library/route_shell.rs:330
 #: crates/rufin-app/src/ui/library/route_shell.rs:343
@@ -1420,7 +1430,7 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/library/route_shell.rs:359
 msgid "View"
-msgstr ""
+msgstr "Vaade"
 
 #: crates/rufin-app/src/ui/local_access_mapping.rs:187
 msgid "Choose the folder to scan and play directly from this computer"
@@ -1433,7 +1443,7 @@ msgstr ""
 #: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:11
 #: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:13
 msgid "Cancel"
-msgstr ""
+msgstr "Katkesta"
 
 #: crates/rufin-app/src/ui/local_access_mapping.rs:509
 #: crates/rufin-app/src/ui/local_access_mapping.rs:517
@@ -1442,11 +1452,11 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/login.rs:115
 msgid "Username"
-msgstr ""
+msgstr "Kasutajanimi"
 
 #: crates/rufin-app/src/ui/login.rs:117
 msgid "Password"
-msgstr ""
+msgstr "Salasõna"
 
 #: crates/rufin-app/src/ui/login.rs:208
 msgid "Caching local library…"
@@ -1486,7 +1496,7 @@ msgstr ""
 #: crates/rufin-app/src/ui/preferences/library.rs:169
 #: crates/rufin-app/src/ui/root/layout_rendering.rs:391
 msgid "Remove"
-msgstr ""
+msgstr "Eemalda"
 
 #: crates/rufin-app/src/ui/preferences/library.rs:164
 msgid "This removes the folder from the Local source."
@@ -1494,11 +1504,11 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/library.rs:214
 msgid "User"
-msgstr ""
+msgstr "Kasutaja"
 
 #: crates/rufin-app/src/ui/preferences/library.rs:222
 msgid "Cached"
-msgstr ""
+msgstr "Puhverdatud"
 
 #: crates/rufin-app/src/ui/preferences/library.rs:255
 msgid "Local mapping saved. Sync to preview matches."
@@ -1507,31 +1517,31 @@ msgstr ""
 #: crates/rufin-app/src/ui/preferences/root/general.rs:434
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:109
 msgid "Playback"
-msgstr ""
+msgstr "Taasesitus"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:441
 msgid "Transitions"
-msgstr ""
+msgstr "Üleminekud"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:443
 msgid "Gapless"
-msgstr ""
+msgstr "Vahepausideta"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:443
 msgid "Crossfade"
-msgstr ""
+msgstr "Ristsulatatud"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:450
 msgid "Transition mode"
-msgstr ""
+msgstr "Lugudevahetuse viis"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:463
 msgid "Crossfade duration"
-msgstr ""
+msgstr "Risthajumise kestus"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:464
 msgid "Seconds"
-msgstr ""
+msgstr "Sekundites"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:485
 msgid "Leveling"
@@ -1539,79 +1549,79 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:487
 msgid "Off"
-msgstr ""
+msgstr "Väljas"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:487
 msgid "Track"
-msgstr ""
+msgstr "Pala"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:494
 msgid "ReplayGain"
-msgstr ""
+msgstr "Esitusvaljuse tundlikkus"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:508
 msgid "Streaming"
-msgstr ""
+msgstr "Voogedastus"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:511
 msgid "Original"
-msgstr ""
+msgstr "Algne"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:512
 msgid "320 kbps"
-msgstr ""
+msgstr "320 kbps"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:513
 msgid "256 kbps"
-msgstr ""
+msgstr "256 kbps"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:514
 msgid "192 kbps"
-msgstr ""
+msgstr "192 kbps"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:515
 msgid "128 kbps"
-msgstr ""
+msgstr "128 kbps"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:523
 msgid "Stream quality"
-msgstr ""
+msgstr "Voogedastuse kvaliteet"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:536
 msgid "Output"
-msgstr ""
+msgstr "Väljund"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:544
 msgid "Audio output"
-msgstr ""
+msgstr "Heliväljund"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:564
 msgid "Equalizer"
-msgstr ""
+msgstr "Ekvalaiser"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:568
 msgid "Enable equalizer"
-msgstr ""
+msgstr "Kasuta ekvalaiserit"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:619
 msgid "Reset equalizer"
-msgstr ""
+msgstr "Lähtesta ekvalaiser"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:620
 msgid "Restore neutral bands and disable equalizer."
-msgstr ""
+msgstr "Taasta sagedusvahemike olek keskmisena ja lülita ekvalaiser välja."
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:622
 msgid "Reset"
-msgstr ""
+msgstr "Lähtesta"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:705
 msgid "Home Blocks"
-msgstr ""
+msgstr "Avalehe plokid"
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:174
 msgid "Position"
-msgstr ""
+msgstr "Asukoht"
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:177
 msgid "Hidden server section"
@@ -1619,40 +1629,40 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:230
 msgid "Full"
-msgstr ""
+msgstr "Täisvaates"
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:230
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:253
 msgid "Compact"
-msgstr ""
+msgstr "Kompaktne"
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:254
 msgid "Default"
-msgstr ""
+msgstr "Vaikimisi"
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:255
 msgid "Comfortable"
-msgstr ""
+msgstr "Mugav"
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:256
 msgid "Spacious"
-msgstr ""
+msgstr "Ruumikas"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:172
 msgid "Privacy"
-msgstr ""
+msgstr "Privaatsus"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:175
 msgid "Private mode"
-msgstr ""
+msgstr "Privaatne režiim"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:185
 msgid "Now playing notifications"
-msgstr ""
+msgstr "Hetkel"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:237
 msgid "Discord"
-msgstr ""
+msgstr "Discord"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:240
 msgid "Rich presence"
@@ -1660,23 +1670,23 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:249
 msgid "Application name"
-msgstr ""
+msgstr "Rakenduse nimi"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:249
 msgid "Song title"
-msgstr ""
+msgstr "Loo pealkiri"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:249
 msgid "Artist name"
-msgstr ""
+msgstr "Esitaja nimi"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:256
 msgid "Status display"
-msgstr ""
+msgstr "Oleku kuvamine"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:269
 msgid "MusicBrainz"
-msgstr ""
+msgstr "MusicBrainz"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:275
 msgid "Activity links and MusicBrainz covers"
@@ -1748,24 +1758,24 @@ msgstr ""
 #: crates/rufin-app/src/ui/root/home_refresh.rs:161
 #: crates/rufin-app/src/ui/root/home_refresh.rs:307
 msgid "Add to Playlist"
-msgstr ""
+msgstr "Lisa esitusloendisse"
 
 #: crates/rufin-app/src/ui/root/home_refresh.rs:38
 #: crates/rufin-app/src/ui/root/home_refresh.rs:172
 msgid "Go to Album"
-msgstr ""
+msgstr "Vaata albumit"
 
 #: crates/rufin-app/src/ui/root/layout_rendering.rs:49
 msgid "No tracks match the search."
-msgstr ""
+msgstr "Otsingule ei vasta ükski lugu."
 
 #: crates/rufin-app/src/ui/root/layout_rendering.rs:288
 msgid "Remove from playlist"
-msgstr ""
+msgstr "Eemalda esitusloendist"
 
 #: crates/rufin-app/src/ui/root/layout_rendering.rs:387
 msgid "Remove from Playlist"
-msgstr ""
+msgstr "Eemalda esitusloendist"
 
 #: crates/rufin-app/src/ui/root/lyrics_playback_state.rs:85
 msgid "No server lyrics for the current track. Private mode is on."
@@ -1789,7 +1799,7 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:12
 msgid "Create"
-msgstr ""
+msgstr "Loo"
 
 #: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:15
 msgid "Playlist name"
@@ -1805,7 +1815,7 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:14
 msgid "Rename"
-msgstr ""
+msgstr "Muuda nime"
 
 #: crates/rufin-app/src/ui/root/track_table.rs:55
 msgid "Configure columns"
@@ -1817,8 +1827,8 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/root/track_table_popover.rs:70
 msgid "Columns"
-msgstr ""
+msgstr "Veerud"
 
 #: crates/rufin-app/src/ui/source_selector.rs:312
 msgid "folders"
-msgstr ""
+msgstr "kaustad"
