@@ -59,6 +59,7 @@ impl Shell {
         search.add_css_class("folder-search");
         search.set_placeholder_text(Some(&tr("Search current folder")));
         wrapper.append(&search);
+        self.install_type_to_search(&search);
 
         let content = gtk::Paned::new(gtk::Orientation::Horizontal);
         content.add_css_class("folders-split");

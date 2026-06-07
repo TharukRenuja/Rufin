@@ -941,7 +941,8 @@ impl Shell {
         wrapper.set_widget_name(context);
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
-        wrapper.append(&self.library_toolbar(key, search));
+        wrapper.append(&self.library_toolbar(key, search.clone()));
+        self.install_type_to_search(&search);
         scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
         scroller.set_min_content_width(0);
         scroller.set_propagate_natural_width(false);
@@ -968,9 +969,10 @@ impl Shell {
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_vexpand(true);
-        let toolbar = self.library_toolbar(key, search);
+        let toolbar = self.library_toolbar(key, search.clone());
         toolbar.set_margin_start(content_margin_start);
         wrapper.append(&toolbar);
+        self.install_type_to_search(&search);
 
         let scroller = gtk::ScrolledWindow::new();
         mark_route_scroll_owner(&scroller);
@@ -1007,7 +1009,10 @@ impl Shell {
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         wrapper.set_widget_name(context);
-        wrapper.append(&library_route_inset(self.library_toolbar(key, search)));
+        wrapper.append(&library_route_inset(
+            self.library_toolbar(key, search.clone()),
+        ));
+        self.install_type_to_search(&search);
 
         if empty {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));

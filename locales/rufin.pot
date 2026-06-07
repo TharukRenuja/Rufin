@@ -1200,6 +1200,11 @@ msgid "App window"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:668
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:217
+msgid "Type to search"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:668
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:205
 msgid "Show tray icon"
 msgstr ""

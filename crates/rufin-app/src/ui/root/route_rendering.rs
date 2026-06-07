@@ -103,6 +103,7 @@ impl Shell {
     }
     fn prepare_route_host(self: &Rc<Self>, route: &Route) {
         clear_favorite_controls(&self.state.favorite_controls);
+        self.state.type_to_search.borrow_mut().take();
         while let Some(child) = self.route_host.first_child() {
             self.route_host.remove(&child);
         }
