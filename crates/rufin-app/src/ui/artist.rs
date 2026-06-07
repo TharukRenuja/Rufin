@@ -410,25 +410,13 @@ fn section_heading(title: &str) -> gtk::Widget {
 }
 
 fn artist_summary_text(album_count: usize, appears_on_count: usize, track_count: u32) -> String {
-    if appears_on_count == 0 {
-        format!(
-            "{} {} / {} {}",
-            album_count,
-            tr("albums"),
-            track_count,
-            tr("tracks")
-        )
-    } else {
-        format!(
-            "{} {} / {} {} / {} {}",
-            album_count,
-            tr("albums"),
-            appears_on_count,
-            tr("appears on"),
-            track_count,
-            tr("tracks")
-        )
-    }
+    format!(
+        "{} {} / {} {}",
+        album_count + appears_on_count,
+        tr("albums"),
+        track_count,
+        tr("tracks")
+    )
 }
 
 fn favorite_artist_tracks(tracks: &[Track]) -> Vec<Track> {
@@ -547,12 +535,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artist_summary_album() {
-        let summary = artist_summary_text(0, 1, 3);
+    fn artist_summary_merges_appears_on() {
+        let summary = artist_summary_text(0, 2, 3);
 
-        assert!(summary.contains("0 albums"));
-        assert!(summary.contains("1 appears on"));
-        assert!(summary.contains("3 tracks"));
+        assert_eq!(summary, "2 albums / 3 tracks");
     }
 
     #[test]
