@@ -602,7 +602,7 @@ fi
 bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
 update_nix_cargo_hash
 if ! git diff --quiet || ! git diff --cached --quiet; then
-  git add Cargo.lock Cargo.toml data/io.github.screwys.Rufin.metainfo.xml
+  git add Cargo.lock Cargo.toml data/io.github.screwys.Rufin.metainfo.xml .github/ISSUE_TEMPLATE/bug_report.yml
   if [[ -f flake.nix ]]; then
     git add flake.nix
   fi

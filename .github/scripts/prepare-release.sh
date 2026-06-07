@@ -102,3 +102,26 @@ perl -0pi -e '
   my $version = $ENV{"VERSION"};
   s{https://raw\.githubusercontent\.com/screwys/Rufin/[^/]+/data/}{https://raw.githubusercontent.com/screwys/Rufin/v$version/data/}g;
 ' data/io.github.screwys.Rufin.metainfo.xml
+
+perl -0pi -e '
+  my $version = $ENV{"VERSION"};
+  my @existing = /^\s+- ([0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?)(?: \(latest\))?$/mg;
+  my %seen = ($version => 1);
+  my @versions = ($version);
+  for my $existing (@existing) {
+    next if $seen{$existing}++;
+    push @versions, $existing;
+    last if @versions == 6;
+  }
+
+  my $options = join("", map {
+    "        - $_" . ($_ eq $version ? " (latest)" : "") . "\n"
+  } @versions);
+
+  my $count = s{
+    (id:\ rufin-version\n\s+attributes:\n\s+label:\ Rufin\ version\n\s+options:\n)
+    (?:\s+-\ .+\n)+
+    (\s+default:\ 0)
+  }{$1$options$2}xm;
+  die "missing issue template Rufin version dropdown\n" unless $count > 0;
+' .github/ISSUE_TEMPLATE/bug_report.yml

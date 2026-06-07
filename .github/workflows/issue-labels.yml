@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Apply server labels
+      - name: Apply issue labels
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_BODY: ${{ github.event.issue.body }}
@@ -49,6 +49,7 @@ jobs:
               section_value "Server and version"
             } | tr '[:upper:]' '[:lower:]'
           )"
+          desktop_text="$(section_value "Desktop environment/WM" | tr '[:upper:]' '[:lower:]')"
 
           labels=()
 
@@ -76,7 +77,39 @@ jobs:
             labels+=("local")
           fi
 
+          if [[ "$desktop_text" == *niri* ]]; then
+            labels+=("niri")
+          fi
+
+          if [[ "$desktop_text" == *gnome* ]]; then
+            labels+=("gnome")
+          fi
+
+          if [[ "$desktop_text" == *kde* ]]; then
+            labels+=("kde")
+          fi
+
+          if [[ "$desktop_text" == *hyprland* ]]; then
+            labels+=("hyprland")
+          fi
+
+          if [[ "$desktop_text" =~ (^|[^[:alpha:]])i3([^[:alpha:]]|$) ]]; then
+            labels+=("i3")
+          fi
+
+          if [[ "$desktop_text" == *sway* ]]; then
+            labels+=("sway")
+          fi
+
+          if [[ "$desktop_text" == *qtile* ]]; then
+            labels+=("qtile")
+          fi
+
           if ((${#labels[@]})); then
+            for label in "${labels[@]}"; do
+              gh label create "$label" --repo "$GITHUB_REPOSITORY" --color "ededed" >/dev/null 2>&1 || true
+            done
+
             IFS=,
             gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "${labels[*]}"
           fi
