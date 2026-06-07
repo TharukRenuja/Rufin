@@ -98,17 +98,20 @@ impl AppController {
             activity.skip_recorded = true;
             Some(activity.clone())
         };
-        if let Some(activity) = skip
-            && let Err(error) = self.store.with_store(|store| {
+        if let Some(activity) = skip {
+            match self.store.with_store(|store| {
                 store.increment_track_skip_count(&activity.server_id, &activity.track_id)
-            })
-        {
-            warn!(
-                %error,
-                server_id = %activity.server_id,
-                track_id = %activity.track_id,
-                "failed to update local skip count"
-            );
+            }) {
+                Ok(()) => self.emit_activity_delta(activity.track_id),
+                Err(error) => {
+                    warn!(
+                        %error,
+                        server_id = %activity.server_id,
+                        track_id = %activity.track_id,
+                        "failed to update local skip count"
+                    );
+                }
+            }
         }
     }
 
@@ -143,15 +146,27 @@ impl AppController {
                 &activity.session_key,
             )
         });
-        if let Err(error) = result {
-            warn!(
-                %error,
-                server_id = %activity.server_id,
-                track_id = %activity.track_id,
-                entry_id = activity.entry_id.as_str(),
-                "failed to update local play count"
-            );
+        match result {
+            Ok(true) => self.emit_activity_delta(activity.track_id),
+            Ok(false) => {}
+            Err(error) => {
+                warn!(
+                    %error,
+                    server_id = %activity.server_id,
+                    track_id = %activity.track_id,
+                    entry_id = activity.entry_id.as_str(),
+                    "failed to update local play count"
+                );
+            }
         }
+    }
+
+    fn emit_activity_delta(&self, track_id: TrackId) {
+        let mut delta = LibraryDelta::default();
+        delta.tracks.fields.push(track_id);
+        let _sent = self
+            .events
+            .send(ControllerEvent::LibraryDelta(Box::new(delta)));
     }
 }
 
@@ -245,6 +260,8 @@ mod tests {
         let _queue = wait_for_queue(&events).expect("queue");
 
         controller.next_track();
+        let delta = wait_for_activity_delta(&events);
+        assert_eq!(delta.tracks.fields, vec![first.id.clone()]);
         let _queue = wait_for_queue(&events).expect("next queue");
 
         let detail = smart_detail_named(&controller, &server_id, "Most Skipped");
@@ -313,5 +330,36 @@ mod tests {
                     .map(|detail| detail.expect("smart playlist detail"))
             })
             .expect("smart detail")
+    }
+
+    fn wait_for_activity_delta(events: &Receiver<ControllerEvent>) -> LibraryDelta {
+        loop {
+            match events
+                .recv_timeout(Duration::from_secs(5))
+                .expect("controller event")
+            {
+                ControllerEvent::LibraryDelta(delta) => return *delta,
+                ControllerEvent::Snapshot(_)
+                | ControllerEvent::LibrarySyncStatus(_)
+                | ControllerEvent::HomeSectionsUpdated { .. }
+                | ControllerEvent::PlaylistChanged { .. }
+                | ControllerEvent::SmartPlaylistChanged { .. }
+                | ControllerEvent::FavoriteChanged { .. }
+                | ControllerEvent::Queue(_)
+                | ControllerEvent::Playback(_)
+                | ControllerEvent::Lyrics(_)
+                | ControllerEvent::LyricsSearchResults { .. }
+                | ControllerEvent::LyricsSearchFailed { .. }
+                | ControllerEvent::LyricsSaved { .. }
+                | ControllerEvent::FolderLoaded { .. }
+                | ControllerEvent::FolderLoadFailed { .. }
+                | ControllerEvent::HomeSectionPrefetched { .. }
+                | ControllerEvent::ServerDiscovery { .. }
+                | ControllerEvent::CoverReady { .. }
+                | ControllerEvent::CoverUnavailable { .. }
+                | ControllerEvent::LoginStatus(_) => {}
+                ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            }
+        }
     }
 }

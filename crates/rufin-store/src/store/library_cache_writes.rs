@@ -198,8 +198,9 @@ impl Store {
             match self.load_playlist_for_delta(server_id, &playlist.id)? {
                 Some(existing) if existing == *playlist => {}
                 Some(existing) => {
-                    if existing.track_count != playlist.track_count
-                        || existing.duration_seconds != playlist.duration_seconds
+                    if !self.playlist_has_entries(server_id, &playlist.id)?
+                        && (existing.track_count != playlist.track_count
+                            || existing.duration_seconds != playlist.duration_seconds)
                     {
                         delta.playlists.entries.push(playlist.id.clone());
                     }
@@ -859,8 +860,24 @@ impl Store {
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ON CONFLICT(server_id, playlist_id) DO UPDATE SET
                     name = excluded.name,
-                    track_count = excluded.track_count,
-                    duration_seconds = excluded.duration_seconds,
+                    track_count = CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM playlist_tracks
+                            WHERE server_id = excluded.server_id
+                                AND playlist_id = excluded.playlist_id
+                        ) THEN playlists.track_count
+                        ELSE excluded.track_count
+                    END,
+                    duration_seconds = CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM playlist_tracks
+                            WHERE server_id = excluded.server_id
+                                AND playlist_id = excluded.playlist_id
+                        ) THEN playlists.duration_seconds
+                        ELSE excluded.duration_seconds
+                    END,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
                     sync_generation = excluded.sync_generation
@@ -1222,7 +1239,7 @@ impl Store {
         Ok(genre)
     }
 
-    fn load_playlist_for_delta(
+    pub(super) fn load_playlist_for_delta(
         &self,
         server_id: &ServerId,
         playlist_id: &PlaylistId,
@@ -1240,6 +1257,25 @@ impl Store {
             )
             .optional()?;
         Ok(playlist)
+    }
+
+    fn playlist_has_entries(
+        &self,
+        server_id: &ServerId,
+        playlist_id: &PlaylistId,
+    ) -> StoreResult<bool> {
+        let has_entries = self.connection.query_row(
+            "
+            SELECT EXISTS (
+                SELECT 1
+                FROM playlist_tracks
+                WHERE server_id = ?1 AND playlist_id = ?2
+            )
+            ",
+            params![server_id.as_str(), playlist_id.as_str()],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(has_entries)
     }
 
     fn stale_library_ids(

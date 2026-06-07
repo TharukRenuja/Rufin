@@ -1889,3 +1889,66 @@ fn playlist_detail_stores_ordered_tracks() {
     assert_eq!(detail.playlist, playlist);
     assert_eq!(detail.tracks, vec![track_two, track_one]);
 }
+
+#[test]
+fn playlist_entries_derive_cached_stats() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut track_one = track(1, &album);
+    track_one.duration_seconds = 120;
+    let mut track_two = track(2, &album);
+    track_two.duration_seconds = 210;
+    let mut playlist = playlist(1, None);
+    playlist.track_count = 0;
+    playlist.duration_seconds = 0;
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            &[track_one.clone(), track_two.clone()],
+            generation,
+        )
+        .expect("upsert tracks");
+    store
+        .upsert_playlists(
+            &saved.server.id,
+            std::slice::from_ref(&playlist),
+            generation,
+        )
+        .expect("upsert playlist");
+    let delta = store
+        .upsert_playlist_entries_delta(
+            &saved.server.id,
+            &playlist.id,
+            &[
+                PlaylistEntry {
+                    entry_id: "entry-one".to_string(),
+                    track: track_one,
+                },
+                PlaylistEntry {
+                    entry_id: "entry-two".to_string(),
+                    track: track_two,
+                },
+            ],
+            generation,
+        )
+        .expect("upsert entries");
+
+    assert_eq!(delta.playlists.entries, vec![playlist.id.clone()]);
+    let page = store
+        .load_playlists(&saved.server.id, 0, 10)
+        .expect("load playlists");
+    assert_eq!(page.items[0].track_count, 2);
+    assert_eq!(page.items[0].duration_seconds, 330);
+    let detail = store
+        .load_playlist_detail(&saved.server.id, &playlist.id)
+        .expect("load playlist detail")
+        .expect("playlist detail");
+    assert_eq!(detail.playlist.track_count, 2);
+    assert_eq!(detail.playlist.duration_seconds, 330);
+}
