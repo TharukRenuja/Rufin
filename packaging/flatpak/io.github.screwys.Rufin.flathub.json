@@ -56,8 +56,8 @@
         {
           "type": "git",
           "url": "https://github.com/screwys/Rufin.git",
-          "tag": "v0.6.1",
-          "commit": "a085f6885e9e3c711b7a152a1c000c63bb13fe77",
+          "tag": "v0.6.2",
+          "commit": "86f7ad802c9abdd1674fac6c22ccbc15e55465b3",
           "x-checker-data": {
             "type": "json",
             "url": "https://api.github.com/repos/screwys/Rufin/releases/latest",
