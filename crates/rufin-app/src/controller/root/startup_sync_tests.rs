@@ -1305,6 +1305,7 @@ fn wait_for_sync_status_without_snapshot(
             }
             ControllerEvent::Snapshot(_) => panic!("cached same-source sync emitted snapshot"),
             ControllerEvent::LibrarySyncStatus(_)
+            | ControllerEvent::LibraryDelta(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }

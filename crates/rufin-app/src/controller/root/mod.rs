@@ -308,6 +308,7 @@ impl LibrarySnapshot {
 pub enum ControllerEvent {
     Snapshot(Box<LibrarySnapshot>),
     LibrarySyncStatus(Box<LibrarySyncStatus>),
+    LibraryDelta(Box<LibraryDelta>),
     HomeSectionsUpdated {
         snapshot: Box<LibrarySnapshot>,
         include_explore: bool,

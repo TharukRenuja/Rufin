@@ -227,6 +227,7 @@ impl Store {
                     generation,
                 ])?;
             }
+            refresh_playlist_stats(connection, server_id, playlist_id)?;
             refresh_playlist_refs(connection, server_id, playlist_id)?;
             Ok(())
         })
@@ -239,10 +240,12 @@ impl Store {
         entries: &[PlaylistEntry],
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
+        let before_playlist = self.load_playlist_for_delta(server_id, playlist_id)?;
         let before = self.playlist_entry_keys(server_id, playlist_id)?;
         self.upsert_playlist_entries(server_id, playlist_id, entries, generation)?;
         let after = self.playlist_entry_keys(server_id, playlist_id)?;
-        let changed = before != after;
+        let after_playlist = self.load_playlist_for_delta(server_id, playlist_id)?;
+        let changed = before != after || playlist_stats_changed(before_playlist, after_playlist);
         Ok(LibraryDelta {
             playlists: PlaylistDelta {
                 entries: changed.then(|| playlist_id.clone()).into_iter().collect(),
@@ -1655,6 +1658,45 @@ pub(super) fn refresh_playlist_refs(
         playlist_id.as_str(),
         &image_refs,
     )
+}
+
+fn refresh_playlist_stats(
+    connection: &Connection,
+    server_id: &ServerId,
+    playlist_id: &PlaylistId,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        UPDATE playlists
+        SET track_count = (
+                SELECT COUNT(*)
+                FROM playlist_tracks
+                WHERE server_id = ?1 AND playlist_id = ?2
+            ),
+            duration_seconds = (
+                SELECT COALESCE(SUM(t.duration_seconds), 0)
+                FROM playlist_tracks pt
+                JOIN tracks t
+                    ON t.server_id = pt.server_id AND t.track_id = pt.track_id
+                WHERE pt.server_id = ?1 AND pt.playlist_id = ?2
+            )
+        WHERE server_id = ?1 AND playlist_id = ?2
+        ",
+        params![server_id.as_str(), playlist_id.as_str()],
+    )?;
+    Ok(())
+}
+
+fn playlist_stats_changed(before: Option<Playlist>, after: Option<Playlist>) -> bool {
+    match (before, after) {
+        (Some(before), Some(after)) => {
+            before.track_count != after.track_count
+                || before.duration_seconds != after.duration_seconds
+        }
+        (None, Some(after)) => after.track_count > 0 || after.duration_seconds > 0,
+        (Some(before), None) => before.track_count > 0 || before.duration_seconds > 0,
+        (None, None) => false,
+    }
 }
 
 fn collection_direct_image_ref(

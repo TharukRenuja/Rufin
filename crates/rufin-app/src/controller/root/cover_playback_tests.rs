@@ -330,6 +330,7 @@ pub(in crate::controller) fn cover_emit_unavailable() {
             }
             ControllerEvent::Snapshot(_)
             | ControllerEvent::LibrarySyncStatus(_)
+            | ControllerEvent::LibraryDelta(_)
             | ControllerEvent::HomeSectionsUpdated { .. }
             | ControllerEvent::PlaylistChanged { .. }
             | ControllerEvent::SmartPlaylistChanged { .. }

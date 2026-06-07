@@ -10,8 +10,9 @@ use crate::controller::AppController;
 use crate::i18n::tr;
 
 use super::{
-    FAVORITE_EMPTY_GLYPH, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
+    FAVORITE_EMPTY_GLYPH, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, context_menu_playlists,
     favorite_button_is_active, favorite_icon_button, set_favorite_button_active,
+    track_from_queue_entry,
 };
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
@@ -544,6 +545,20 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
     menu.append(Some(&tr("Remove from Queue")), Some("queue.remove"));
     menu.append(Some(&tr("Play Now")), Some("queue.play-now"));
     menu.append(Some(&tr("Play Next")), Some("queue.play-next"));
+
+    let track = track_from_queue_entry(entry);
+    let playlists = context_menu_playlists(shell);
+    if track.is_some() && !playlists.is_empty() {
+        let playlist_menu = gio::Menu::new();
+        for (index, playlist) in playlists.iter().enumerate() {
+            playlist_menu.append(
+                Some(&playlist.name),
+                Some(&format!("queue.add-to-playlist-{index}")),
+            );
+        }
+        menu.append_submenu(Some(&tr("Add to Playlist")), &playlist_menu);
+    }
+
     menu.append(
         Some(&tr(if entry.favorite {
             "Remove from Favorites"
@@ -603,6 +618,25 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
         play_next_controller.move_queue_entry_after_current(entry_id.clone());
     });
     actions.add_action(&play_next);
+
+    if let Some(track) = track {
+        for (index, playlist) in playlists.into_iter().enumerate() {
+            let action_name = format!("add-to-playlist-{index}");
+            let add = gio::SimpleAction::new(&action_name, None);
+            let add_controller = controller.clone();
+            let playlist_id = playlist.id;
+            let action_track = track.clone();
+            let add_popover = popover.downgrade();
+            add.connect_activate(move |_, _| {
+                if let Some(popover) = add_popover.upgrade() {
+                    popover.popdown();
+                }
+                add_controller
+                    .add_tracks_to_playlist(playlist_id.clone(), vec![action_track.clone()]);
+            });
+            actions.add_action(&add);
+        }
+    }
 
     let favorite = gio::SimpleAction::new("favorite", None);
     let favorite_controller = controller.clone();

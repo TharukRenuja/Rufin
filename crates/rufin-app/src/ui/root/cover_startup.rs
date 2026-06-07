@@ -725,6 +725,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.apply_library_delta(delta);
                     }
                 }
+                ControllerEvent::LibraryDelta(delta) => {
+                    shell.apply_library_delta(*delta);
+                }
                 ControllerEvent::HomeSectionsUpdated {
                     snapshot,
                     include_explore,
