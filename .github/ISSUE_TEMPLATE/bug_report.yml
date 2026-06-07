@@ -10,20 +10,31 @@ body:
         - label: I have already searched through open/closed issues
           required: true
 
-  - type: input
+  - type: dropdown
     id: rufin-version
     attributes:
       label: Rufin version
-      placeholder: "Example: 0.1.0"
+      options:
+        - 0.6.1 (latest)
+        - 0.6.0
+        - 0.5.6
+        - 0.5.5
+        - 0.5.1
+        - 0.5.0
+      default: 0
     validations:
       required: true
 
-  - type: input
-    id: server-version
+  - type: dropdown
+    id: server
     attributes:
-      label: Server and version
-      description: Please enter the server version if appliciable, especially if the app needs to interact with the server for the issue
-      placeholder: "Example: Jellyfin v10.11.0"
+      label: Server
+      options:
+        - Jellyfin
+        - Navidrome
+        - OpenSubsonic
+        - Local
+        - Irrelevant
     validations:
       required: true
 
@@ -40,6 +51,22 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: desktop
+    attributes:
+      label: Desktop environment/WM
+      options:
+        - niri
+        - gnome
+        - KDE
+        - hyprland
+        - i3
+        - sway
+        - qtile
+        - Other/Irrelevant
+    validations:
+      required: true
+
   - type: textarea
     id: problem
     attributes:
@@ -47,6 +74,14 @@ body:
       description: Please describe the problem and what you expected to happen instead.
     validations:
       required: true
+
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: Additional information
+      description: Please provide additional information if you selected Other above, if your music server is not up-to-date, or to add context that may be useful to know
+    validations:
+      required: false
 
   - type: textarea
     id: steps
