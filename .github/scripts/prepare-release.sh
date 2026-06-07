@@ -43,6 +43,15 @@ perl -0pi -e '
     return $text;
   }
 
+  sub strip_issue_refs {
+    my ($text) = @_;
+    my $ref = qr/(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+/;
+    my $tag = qr/(?:\($ref\)|$ref)/;
+    $text =~ s/(?:\s+$tag|^$tag)+(?:[.,;:])?$//;
+    $text =~ s/[ \t]+$//;
+    return $text;
+  }
+
   my @description = ();
   my @paragraph = ();
   my @list = ();
@@ -68,7 +77,8 @@ perl -0pi -e '
 
     if ($line =~ /^\s*-\s+(.+)$/) {
       flush_paragraph();
-      push @list, $1;
+      my $item = strip_issue_refs($1);
+      push @list, $item if $item ne "";
       next;
     }
 
@@ -79,7 +89,8 @@ perl -0pi -e '
     }
 
     flush_list();
-    push @paragraph, $line;
+    my $paragraph_line = strip_issue_refs($line);
+    push @paragraph, $paragraph_line if $paragraph_line ne "";
   }
 
   flush_paragraph();
