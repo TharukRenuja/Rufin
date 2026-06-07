@@ -30,28 +30,35 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.2/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.2/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.2/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/play_random.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.2/data/play_random.png</image>
     </screenshot>
     <screenshot>
       <caption>Tune playback settings</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.1/data/playback.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.2/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.2" date="2026-06-07">
+      <description>
+        <p>Made app more responsive for smaller window sizes, and fixed a bug where page content disappear
+Added type-to-search like GTK apps to main routes, can be disabled from preferences
+Fixed a bug where smart playlist content did not update</p>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-06-06">
       <description>
         <ul>
