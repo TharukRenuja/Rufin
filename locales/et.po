@@ -22,10 +22,6 @@ msgstr ""
 msgid "System default"
 msgstr "Süsteemi vaikeseadistus"
 
-#: crates/rufin-app/src/i18n.rs:65 crates/rufin-app/src/i18n.rs:420
-msgid "English"
-msgstr "inglise keel"
-
 #: crates/rufin-app/src/i18n.rs:421
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:164
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:173

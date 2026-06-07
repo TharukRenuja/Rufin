@@ -18,6 +18,64 @@ use rufin_core::{
 const DOMAIN: &str = "rufin";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const ENGLISH_LANGUAGE_PREFERENCE: &str = "en";
+const LANGUAGE_NAMES: &[(&str, &str)] = &[
+    ("af", "Afrikaans"),
+    ("ar", "العربية"),
+    ("az", "Azərbaycan"),
+    ("be", "Беларуская"),
+    ("bg", "Български"),
+    ("bn", "বাংলা"),
+    ("bs", "Bosanski"),
+    ("ca", "Català"),
+    ("cs", "Čeština"),
+    ("cy", "Cymraeg"),
+    ("da", "Dansk"),
+    ("de", "Deutsch"),
+    ("el", "Ελληνικά"),
+    ("en", "English"),
+    ("eo", "Esperanto"),
+    ("es", "Español"),
+    ("et", "Eesti"),
+    ("eu", "Euskara"),
+    ("fa", "فارسی"),
+    ("fi", "Suomi"),
+    ("fr", "Français"),
+    ("ga", "Gaeilge"),
+    ("gl", "Galego"),
+    ("he", "עברית"),
+    ("hi", "हिन्दी"),
+    ("hr", "Hrvatski"),
+    ("hu", "Magyar"),
+    ("hy", "Հայերեն"),
+    ("id", "Indonesia"),
+    ("is", "Íslenska"),
+    ("it", "Italiano"),
+    ("ja", "日本語"),
+    ("ka", "ქართული"),
+    ("kk", "Қазақша"),
+    ("ko", "한국어"),
+    ("lt", "Lietuvių"),
+    ("lv", "Latviešu"),
+    ("mk", "Македонски"),
+    ("ms", "Melayu"),
+    ("nb", "Norsk bokmål"),
+    ("nl", "Nederlands"),
+    ("nn", "Norsk nynorsk"),
+    ("pl", "Polski"),
+    ("pt", "Português"),
+    ("ro", "Română"),
+    ("ru", "Русский"),
+    ("sk", "Slovenčina"),
+    ("sl", "Slovenščina"),
+    ("sq", "Shqip"),
+    ("sr", "Српски"),
+    ("sv", "Svenska"),
+    ("th", "ไทย"),
+    ("tr", "Türkçe"),
+    ("uk", "Українська"),
+    ("vi", "Tiếng Việt"),
+    ("zh", "中文"),
+];
 static INSTALLED_LOCALE_IDS: OnceLock<Vec<String>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,7 +120,7 @@ pub fn language_options() -> Vec<LanguageOption> {
     seen.insert(default_language_preference());
     options.push(LanguageOption {
         id: ENGLISH_LANGUAGE_PREFERENCE.to_string(),
-        title: tr("English"),
+        title: language_display_name(ENGLISH_LANGUAGE_PREFERENCE),
     });
     seen.insert(ENGLISH_LANGUAGE_PREFERENCE.to_string());
 
@@ -343,10 +401,10 @@ fn collect_po_language_ids(localedir: &Path, ids: &mut BTreeSet<String>) {
 
 fn language_display_name(id: &str) -> String {
     let code = language_code(id);
-    let Some(name) = language_name(code) else {
-        return id.to_string();
-    };
-    name.to_string()
+    LANGUAGE_NAMES
+        .iter()
+        .find_map(|(language, name)| (*language == code).then_some((*name).to_string()))
+        .unwrap_or_else(|| id.to_string())
 }
 
 fn language_code(id: &str) -> &str {
@@ -354,50 +412,6 @@ fn language_code(id: &str) -> &str {
         .next()
         .filter(|code| !code.is_empty())
         .unwrap_or(id)
-}
-
-fn language_name(code: &str) -> Option<&'static str> {
-    match code {
-        "ar" => Some("Arabic"),
-        "bg" => Some("Bulgarian"),
-        "ca" => Some("Catalan"),
-        "cs" => Some("Czech"),
-        "da" => Some("Danish"),
-        "de" => Some("German"),
-        "el" => Some("Greek"),
-        "es" => Some("Spanish"),
-        "et" => Some("Estonian"),
-        "eu" => Some("Basque"),
-        "fa" => Some("Persian"),
-        "fi" => Some("Finnish"),
-        "fr" => Some("French"),
-        "gl" => Some("Galician"),
-        "he" => Some("Hebrew"),
-        "hi" => Some("Hindi"),
-        "hr" => Some("Croatian"),
-        "hu" => Some("Hungarian"),
-        "id" => Some("Indonesian"),
-        "it" => Some("Italian"),
-        "ja" => Some("Japanese"),
-        "ko" => Some("Korean"),
-        "lt" => Some("Lithuanian"),
-        "lv" => Some("Latvian"),
-        "ms" => Some("Malay"),
-        "nb" => Some("Norwegian Bokmal"),
-        "nl" => Some("Dutch"),
-        "pl" => Some("Polish"),
-        "pt" => Some("Portuguese"),
-        "ro" => Some("Romanian"),
-        "ru" => Some("Russian"),
-        "sk" => Some("Slovak"),
-        "sl" => Some("Slovenian"),
-        "sr" => Some("Serbian"),
-        "sv" => Some("Swedish"),
-        "uk" => Some("Ukrainian"),
-        "vi" => Some("Vietnamese"),
-        "zh" => Some("Chinese"),
-        _ => None,
-    }
 }
 
 fn app_settings_path() -> PathBuf {
@@ -417,7 +431,6 @@ fn non_empty_translation(message: &str, translated: String) -> String {
 #[allow(dead_code)]
 fn catalog_strings_for_extraction() {
     let _ = tr("System default");
-    let _ = tr("English");
     let _ = tr("Language");
     let _ = tr("Home");
     let _ = tr("Favorites");
@@ -832,8 +845,10 @@ mod tests {
 
     #[test]
     fn i18n_use_name() {
-        assert_eq!(language_display_name("pt_BR"), "Portuguese");
-        assert_eq!(language_display_name("de_DE"), "German");
+        assert_eq!(language_display_name("en_US"), "English");
+        assert_eq!(language_display_name("et"), "Eesti");
+        assert_eq!(language_display_name("tr"), "Türkçe");
+        assert_eq!(language_display_name("ja"), "日本語");
         assert_eq!(language_display_name("zz_ZZ"), "zz_ZZ");
     }
 
