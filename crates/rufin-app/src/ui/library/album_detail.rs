@@ -3,12 +3,9 @@ use super::*;
 const FITTED_TABLE_WIDTH_PADDING: i32 = 2;
 const TABLE_TARGET_WIDTH: i32 = 44;
 const TABLE_MIN_WIDTH: i32 = 24;
-const FITTED_TABLE_ROUTE_INSET: i32 = 72;
 
-pub(in crate::ui) fn route_column_view_initial_width(shell: &Shell) -> i32 {
-    route_content_width(shell)
-        .saturating_sub(FITTED_TABLE_ROUTE_INSET)
-        .max(1)
+pub(in crate::ui) fn route_column_view_initial_width(_shell: &Shell) -> i32 {
+    1
 }
 
 pub(in crate::ui) fn fitted_column_widths(base_widths: &[i32], available_width: i32) -> Vec<i32> {
@@ -109,10 +106,19 @@ pub(in crate::ui) fn install_column_view_width_fit(
     }
 
     let columns = Rc::new(columns);
-    fit_column_widths(columns.as_ref(), initial_width);
+    fit_column_widths(columns.as_ref(), table.width().max(initial_width));
     let columns_for_resize = Rc::clone(&columns);
     table.connect_notify_local(Some("width"), move |table, _| {
         apply_column_view_width_fit(table, columns_for_resize.as_ref());
+    });
+    let columns_for_tick = Rc::clone(&columns);
+    table.add_tick_callback(move |table, _| {
+        apply_column_view_width_fit(table, columns_for_tick.as_ref());
+        if table.width() > 1 {
+            gtk::glib::ControlFlow::Break
+        } else {
+            gtk::glib::ControlFlow::Continue
+        }
     });
 }
 
@@ -315,7 +321,7 @@ pub(in crate::ui) fn track_column_for_key(
             |track| track.image_ref.clone(),
             |track| stable_seed(track.id.as_str()),
         ),
-        LibraryField::Title => track_text_column(shell, "Title", width, true, 0.5, |track| {
+        LibraryField::Title => track_text_column(shell, "Title", width, true, 0.0, |track| {
             track.title.clone()
         }),
         LibraryField::Favorite => track_favorite_column(shell),
@@ -1063,8 +1069,12 @@ where
     column
 }
 
-fn track_text_xalign(_field: LibraryField) -> f32 {
-    0.5
+fn track_text_xalign(field: LibraryField) -> f32 {
+    if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
+        0.0
+    } else {
+        0.5
+    }
 }
 pub(in crate::ui) fn track_merged_column<Title, Subtitle, Image, Seed>(
     shell: &Rc<Shell>,

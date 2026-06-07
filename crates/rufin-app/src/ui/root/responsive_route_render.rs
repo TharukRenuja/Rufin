@@ -7,7 +7,7 @@ impl Shell {
         {
             return;
         }
-        if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
+        if self.state.current_route_resize_policy.get() == RouteResizePolicy::StableOnWidthChange {
             return;
         }
         if self.state.responsive_render_queued.replace(true) {
@@ -25,9 +25,11 @@ impl Shell {
                     return;
                 }
                 shell.update_layout();
-                if route_uses_responsive_cards(shell.state.routes.borrow().current()) {
+                if shell.state.current_route_resize_policy.get()
+                    == RouteResizePolicy::RerenderOnWidthChange
+                {
                     let width = route_content_width(shell.as_ref());
-                    if shell.state.responsive_route_render_width.get() == width {
+                    if shell.state.width_sensitive_render_width.get() == width {
                         return;
                     }
                     shell.render_current_route_preserving_scroll();
@@ -36,7 +38,7 @@ impl Shell {
         );
     }
     pub(in crate::ui) fn queue_post_layout_route_render(self: &Rc<Self>) {
-        if !route_uses_responsive_cards(self.state.routes.borrow().current()) {
+        if self.state.current_route_resize_policy.get() == RouteResizePolicy::StableOnWidthChange {
             return;
         }
 
@@ -55,11 +57,12 @@ impl Shell {
                     return;
                 }
                 shell.update_layout();
-                if route_uses_responsive_cards(shell.state.routes.borrow().current())
+                if shell.state.current_route_resize_policy.get()
+                    == RouteResizePolicy::RerenderOnWidthChange
                     && !shell.login_screen_active()
                 {
                     let width = route_content_width(shell.as_ref());
-                    if shell.state.responsive_route_render_width.get() != width {
+                    if shell.state.width_sensitive_render_width.get() != width {
                         shell.render_current_route_preserving_scroll();
                     }
                 }

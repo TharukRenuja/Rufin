@@ -10,6 +10,7 @@ pub(super) const RIGHT_SIDEBAR_DEFAULT_WIDTH: i32 = 300;
 pub(super) const RIGHT_SIDEBAR_COMFORTABLE_WIDTH: i32 = 400;
 pub(super) const RIGHT_SIDEBAR_SPACIOUS_WIDTH: i32 = 500;
 pub(super) const MIN_USEFUL_MAIN_WIDTH: i32 = 550;
+pub(super) const MIN_APP_WINDOW_WIDTH: i32 = COMPACT_RAIL_WIDTH + MIN_USEFUL_MAIN_WIDTH;
 pub(super) const HOME_ALBUM_GAP: i32 = 14;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 180;
@@ -70,10 +71,25 @@ pub(in crate::ui) struct ResolvedLayout {
     pub(super) main_width: i32,
 }
 
-pub(super) fn left_sidebar_width(mode: LeftSidebarMode) -> i32 {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct SidebarWidths {
+    pub(super) full: i32,
+    pub(super) compact: i32,
+}
+
+impl Default for SidebarWidths {
+    fn default() -> Self {
+        Self {
+            full: NORMAL_SIDEBAR_WIDTH,
+            compact: COMPACT_RAIL_WIDTH,
+        }
+    }
+}
+
+fn sidebar_width(mode: LeftSidebarMode, widths: SidebarWidths) -> i32 {
     match mode {
-        LeftSidebarMode::Full => NORMAL_SIDEBAR_WIDTH,
-        LeftSidebarMode::Compact => COMPACT_RAIL_WIDTH,
+        LeftSidebarMode::Full => widths.full,
+        LeftSidebarMode::Compact => widths.compact,
     }
 }
 
@@ -88,38 +104,49 @@ pub(super) fn right_sidebar_width(mode: RightSidebarMode) -> i32 {
 }
 
 pub(super) fn resolve_layout(settings: &LayoutSettings, window_width: i32) -> ResolvedLayout {
-    let window_width = window_width.max(1);
+    resolve_layout_with_sidebar_widths(settings, window_width, SidebarWidths::default())
+}
+
+pub(in crate::ui) fn resolve_layout_with_sidebar_widths(
+    settings: &LayoutSettings,
+    window_width: i32,
+    sidebar_widths: SidebarWidths,
+) -> ResolvedLayout {
+    let window_width = window_width.max(MIN_APP_WINDOW_WIDTH);
     let (profile, configured) =
         if settings.narrow_enabled && window_width < settings.narrow_threshold {
             (ActiveLayoutProfile::Narrow, &settings.narrow_profile)
         } else {
             (ActiveLayoutProfile::Default, &settings.default_profile)
         };
-    resolve_layout_for_profile(profile, configured, window_width)
+    resolve_layout_for_profile(profile, configured, window_width, sidebar_widths)
 }
 
 fn resolve_layout_for_profile(
     profile: ActiveLayoutProfile,
     configured: &LayoutProfile,
     window_width: i32,
+    sidebar_widths: SidebarWidths,
 ) -> ResolvedLayout {
     let mut left_sidebar = configured.left_sidebar;
     let mut right_sidebar = resolved_right_sidebar_for_width(
         configured.right_sidebar,
-        window_width - left_sidebar_width(left_sidebar),
+        window_width - sidebar_width(left_sidebar, sidebar_widths),
     );
     let mut resolved_right_sidebar_width = right_sidebar_width(right_sidebar);
     let mut main_width =
-        window_width - left_sidebar_width(left_sidebar) - resolved_right_sidebar_width;
+        window_width - sidebar_width(left_sidebar, sidebar_widths) - resolved_right_sidebar_width;
 
     if main_width < MIN_USEFUL_MAIN_WIDTH && left_sidebar == LeftSidebarMode::Full {
         left_sidebar = LeftSidebarMode::Compact;
         right_sidebar = resolved_right_sidebar_for_width(
             right_sidebar,
-            window_width - left_sidebar_width(left_sidebar),
+            window_width - sidebar_width(left_sidebar, sidebar_widths),
         );
         resolved_right_sidebar_width = right_sidebar_width(right_sidebar);
-        main_width = window_width - left_sidebar_width(left_sidebar) - resolved_right_sidebar_width;
+        main_width = window_width
+            - sidebar_width(left_sidebar, sidebar_widths)
+            - resolved_right_sidebar_width;
     }
 
     ResolvedLayout {
@@ -171,6 +198,10 @@ pub(super) fn home_album_content_width(shell: &Shell) -> i32 {
 }
 
 pub(super) fn route_content_width(shell: &Shell) -> i32 {
+    if shell.state.startup_route_render_pending.get() {
+        return shell.state.main_content_width.get().max(1);
+    }
+
     route_content_width_for(
         shell.route_host.width(),
         shell.state.main_content_width.get(),
@@ -179,7 +210,7 @@ pub(super) fn route_content_width(shell: &Shell) -> i32 {
 
 pub(super) fn detail_showcase_cover_size(width: i32) -> i32 {
     if width < 520 {
-        168
+        width.clamp(72, 168)
     } else if width < 760 {
         220
     } else {
@@ -368,6 +399,14 @@ mod tests {
     }
 
     #[test]
+    fn detail_cover_fits_narrow_width() {
+        assert_eq!(detail_showcase_cover_size(120), 120);
+        assert_eq!(detail_showcase_cover_size(40), 72);
+        assert_eq!(detail_showcase_cover_size(519), 168);
+        assert_eq!(detail_showcase_cover_size(520), 220);
+    }
+
+    #[test]
     fn layout_home_text() {
         assert_eq!(
             home_album_card_height(180),
@@ -424,6 +463,16 @@ mod tests {
 
         assert_eq!(resolved.left_sidebar, LeftSidebarMode::Compact);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
+    }
+
+    #[test]
+    fn layout_keeps_main_floor_at_window_minimum() {
+        let settings = LayoutSettings::default();
+        let resolved = resolve_layout(&settings, 1);
+
+        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Compact);
+        assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
+        assert_eq!(resolved.main_width, MIN_USEFUL_MAIN_WIDTH);
     }
 
     #[test]

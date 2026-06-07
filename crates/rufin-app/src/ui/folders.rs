@@ -7,17 +7,20 @@ use rufin_provider::FolderDetail;
 use super::{
     PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, THUMB_COVER_SIZE,
     folder_play_source_key, install_track_context_menu, loaded_tracks_window_play_activation,
-    mark_route_scroll_owner, selected_music_folder_id, sort_tracks_with_options, stable_seed,
-    track_matches_query,
+    mark_route_scroll_owner, route_content_width, selected_music_folder_id,
+    sort_tracks_with_options, stable_seed, track_matches_query,
 };
 use crate::i18n::tr;
 
 const FOLDER_TREE_WIDTH: i32 = 260;
+const FOLDER_TREE_MIN_WIDTH: i32 = 132;
 const FOLDER_DURATION_COLUMN_WIDTH: i32 = 72;
-const FOLDER_NAME_COLUMN_MIN_WIDTH: i32 = 260;
-const FOLDER_NAME_COLUMN_MAX_WIDTH: i32 = 520;
+const FOLDER_NAME_COLUMN_MIN_WIDTH: i32 = 112;
+const FOLDER_NAME_COLUMN_MAX_WIDTH: i32 = 280;
+const FOLDER_DETAIL_COLUMN_MIN_WIDTH: i32 = 92;
 const FOLDER_NAME_TEXT_AVERAGE_WIDTH: i32 = 7;
 const FOLDER_ROW_ARTWORK_SIZE: i32 = 28;
+const FOLDER_TABLE_COLUMN_GAPS: i32 = 24;
 
 impl Shell {
     pub(super) fn folders_view(self: &Rc<Self>, path: Vec<FolderPathItem>) -> gtk::Widget {
@@ -61,19 +64,21 @@ impl Shell {
         wrapper.append(&search);
         self.install_type_to_search(&search);
 
+        let route_width = route_content_width(self);
+        let tree_width = folder_tree_width(route_width);
         let content = gtk::Paned::new(gtk::Orientation::Horizontal);
         content.add_css_class("folders-split");
-        content.set_position(FOLDER_TREE_WIDTH);
+        content.set_position(tree_width);
         content.set_wide_handle(false);
         content.set_hexpand(true);
         content.set_vexpand(true);
 
-        let tree = folder_tree(self, &path, &detail);
+        let tree = folder_tree(self, &path, &detail, tree_width);
         let tree_scroller = gtk::ScrolledWindow::new();
         tree_scroller.add_css_class("folders-tree-pane");
         tree_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        tree_scroller.set_min_content_width(FOLDER_TREE_WIDTH);
-        tree_scroller.set_size_request(FOLDER_TREE_WIDTH, -1);
+        tree_scroller.set_min_content_width(tree_width);
+        tree_scroller.set_size_request(tree_width, -1);
         tree_scroller.set_hexpand(false);
         tree_scroller.set_vexpand(true);
         tree_scroller.set_child(Some(&tree));
@@ -86,7 +91,7 @@ impl Shell {
         table.set_selection_mode(gtk::SelectionMode::Single);
         table.set_hexpand(true);
         table.set_vexpand(true);
-        populate_folder_table(self, &table, &path, &detail, "");
+        populate_folder_table(self, &table, &path, &detail, "", tree_width);
 
         let table_scroller = gtk::ScrolledWindow::new();
         mark_route_scroll_owner(&table_scroller);
@@ -110,6 +115,7 @@ impl Shell {
                 &path_for_search,
                 &detail_for_search,
                 entry.text().as_str(),
+                tree_width,
             );
         });
 
@@ -162,11 +168,16 @@ fn breadcrumb_button(
     button
 }
 
-fn folder_tree(shell: &Rc<Shell>, path: &[FolderPathItem], detail: &FolderDetail) -> gtk::ListBox {
+fn folder_tree(
+    shell: &Rc<Shell>,
+    path: &[FolderPathItem],
+    detail: &FolderDetail,
+    width: i32,
+) -> gtk::ListBox {
     let tree = gtk::ListBox::new();
     tree.add_css_class("folder-tree");
     tree.set_selection_mode(gtk::SelectionMode::None);
-    tree.set_size_request(FOLDER_TREE_WIDTH, -1);
+    tree.set_size_request(width, -1);
     tree.set_hexpand(true);
     tree.append(&tree_row(
         shell,
@@ -250,6 +261,7 @@ fn populate_folder_table(
     path: &[FolderPathItem],
     detail: &FolderDetail,
     query: &str,
+    tree_width: i32,
 ) {
     while let Some(child) = table.first_child() {
         table.remove(&child);
@@ -280,7 +292,7 @@ fn populate_folder_table(
     let source_key =
         folder_play_source_key(path, &query, &settings, selected_music_folder_id(shell));
 
-    let name_column_width = name_column_width(&folders, &tracks);
+    let name_column_width = name_column_width(shell, tree_width, &folders, &tracks);
     table.append(&folder_table_header(name_column_width));
 
     for folder in folders {
@@ -342,7 +354,9 @@ fn table_header_label(label: &str) -> gtk::Label {
     text.add_css_class("muted");
     text.set_xalign(0.0);
     text.set_hexpand(true);
-    text.set_width_chars(18);
+    text.set_width_chars(1);
+    text.set_max_width_chars(18);
+    text.set_ellipsize(gtk::pango::EllipsizeMode::End);
     text
 }
 
@@ -465,7 +479,8 @@ fn detail_cell(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_xalign(0.0);
     label.set_hexpand(true);
-    label.set_width_chars(16);
+    label.set_width_chars(1);
+    label.set_max_width_chars(16);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label
 }
@@ -478,15 +493,43 @@ fn duration_cell(text: &str) -> gtk::Label {
     label
 }
 
-fn name_column_width(folders: &[Folder], tracks: &[Track]) -> i32 {
+fn folder_tree_width(route_width: i32) -> i32 {
+    if route_width < 760 {
+        (route_width / 3).clamp(FOLDER_TREE_MIN_WIDTH, FOLDER_TREE_WIDTH)
+    } else {
+        FOLDER_TREE_WIDTH
+    }
+}
+
+fn name_column_width(shell: &Shell, tree_width: i32, folders: &[Folder], tracks: &[Track]) -> i32 {
+    name_column_width_for(route_content_width(shell), tree_width, folders, tracks)
+}
+
+fn name_column_width_for(
+    route_width: i32,
+    tree_width: i32,
+    folders: &[Folder],
+    tracks: &[Track],
+) -> i32 {
     let longest = folders
         .iter()
         .map(|folder| folder.name.chars().count())
         .chain(tracks.iter().map(|track| track.title.chars().count()))
         .max()
         .unwrap_or(0);
-    (longest as i32 * FOLDER_NAME_TEXT_AVERAGE_WIDTH + FOLDER_ROW_ARTWORK_SIZE + 24)
-        .clamp(FOLDER_NAME_COLUMN_MIN_WIDTH, FOLDER_NAME_COLUMN_MAX_WIDTH)
+    let text_width = longest as i32 * FOLDER_NAME_TEXT_AVERAGE_WIDTH + FOLDER_ROW_ARTWORK_SIZE + 24;
+    let table_width = route_width
+        .saturating_sub(tree_width)
+        .saturating_sub(PRIMARY_ROUTE_MARGIN_END)
+        .max(1);
+    let fit_width = table_width
+        .saturating_sub(FOLDER_DETAIL_COLUMN_MIN_WIDTH)
+        .saturating_sub(FOLDER_DURATION_COLUMN_WIDTH)
+        .saturating_sub(FOLDER_TABLE_COLUMN_GAPS);
+    text_width.clamp(
+        FOLDER_NAME_COLUMN_MIN_WIDTH.min(fit_width.max(1)),
+        FOLDER_NAME_COLUMN_MAX_WIDTH.min(fit_width.max(1)),
+    )
 }
 
 fn display_label(label: &str, translate: bool) -> String {
@@ -646,10 +689,46 @@ mod tests {
             },
         ];
 
-        let width = super::name_column_width(&folders, &tracks);
+        let width = super::name_column_width_for(900, super::FOLDER_TREE_WIDTH, &folders, &tracks);
 
         assert!(width > super::FOLDER_NAME_COLUMN_MIN_WIDTH);
         assert!(width <= super::FOLDER_NAME_COLUMN_MAX_WIDTH);
+    }
+
+    #[test]
+    fn folders_fit_narrow_route() {
+        let folders = Vec::new();
+        let tracks = vec![rufin_core::Track {
+            id: rufin_core::TrackId::new("track-long"),
+            album_id: rufin_core::AlbumId::new("album-one"),
+            title: "A Very Long Track Title That Still Should Not Own The Whole Row".to_string(),
+            artist: String::new(),
+            artist_id: None,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
+            album: String::new(),
+            year: 0,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds: 0,
+            favorite: false,
+            disc_number: 1,
+            track_number: 1,
+            image_ref: None,
+            genres: Vec::new(),
+            local_path: None,
+            source_format: None,
+            comment: None,
+            skip_count: None,
+        }];
+        let tree_width = super::folder_tree_width(420);
+        let width = super::name_column_width_for(420, tree_width, &folders, &tracks);
+
+        assert!(tree_width < super::FOLDER_TREE_WIDTH);
+        assert!(width < super::FOLDER_NAME_COLUMN_MIN_WIDTH + 40);
     }
 
     fn track(number: u32) -> Track {

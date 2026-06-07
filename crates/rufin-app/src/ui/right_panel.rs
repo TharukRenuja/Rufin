@@ -135,6 +135,9 @@ impl Shell {
     }
 
     pub(super) fn set_right_sidebar_visible(self: &Rc<Self>, visible: bool) {
+        if !visible {
+            self.remember_queue_lyrics_open_position();
+        }
         let active_profile = super::layout::resolve_layout(
             &self.state.settings.borrow().layout,
             self.layout_width(),
@@ -258,17 +261,24 @@ pub(super) fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
         }
         glib::ControlFlow::Continue
     });
+}
 
-    let shell_for_position = Rc::clone(shell);
-    let suppress_for_position = Rc::clone(&suppress_split_position_save);
+pub(super) fn restore_queue_lyrics_split_for_current_height(shell: &Shell) {
+    if !shell.state.lyrics_panel_visible.get() {
+        return;
+    }
+
+    let suppress_save = Rc::clone(&shell.state.queue_lyrics_position_save_suppressed);
+    let saved_ratio = shell.state.settings.borrow().queue_lyrics_ratio;
+    let available_height = queue_lyrics_available_height(shell);
+    suppress_save.set(suppress_save.get().saturating_add(1));
     shell
         .queue_lyrics_split
-        .connect_notify_local(Some("position"), move |split, _| {
-            if suppress_for_position.get() > 0 {
-                return;
-            }
-            shell_for_position.save_queue_lyrics_split_position(split.height(), split.position());
-        });
+        .set_position(queue_lyrics_initial_position(available_height, saved_ratio));
+
+    glib::idle_add_local_once(move || {
+        suppress_save.set(suppress_save.get().saturating_sub(1));
+    });
 }
 
 pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {

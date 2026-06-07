@@ -57,6 +57,7 @@ pub(super) fn build_content_chrome(
     // as duplicate horizontal scrollbars.
     main_well.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
     main_well.set_overflow(gtk::Overflow::Hidden);
+    main_well.set_width_request(1);
     main_well.set_min_content_width(0);
     main_well.set_propagate_natural_width(false);
     main_well.set_propagate_natural_height(false);

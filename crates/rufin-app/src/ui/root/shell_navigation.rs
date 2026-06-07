@@ -163,6 +163,15 @@ pub(in crate::ui) fn set_track_table_columns(
         &settings.visible_columns,
         super::library::route_column_view_initial_width(shell.as_ref()),
     );
+    let visible_columns = settings.visible_columns.to_vec();
+    table.add_tick_callback(move |table, _| {
+        fit_track_table_columns(table, &visible_columns);
+        if table.width() > 1 {
+            gtk::glib::ControlFlow::Break
+        } else {
+            gtk::glib::ControlFlow::Continue
+        }
+    });
 }
 pub(in crate::ui) fn fit_track_table_columns(
     table: &gtk::ColumnView,
@@ -350,29 +359,18 @@ pub(in crate::ui) fn sync_track_column_checks(
     }
     syncing.set(false);
 }
-pub(in crate::ui) fn route_uses_responsive_cards(route: &Route) -> bool {
-    matches!(
-        route,
-        Route::Home
-            | Route::Albums
-            | Route::Artists
-            | Route::AlbumArtists
-            | Route::Favorites
-            | Route::ArtistDetail(_)
-            | Route::ArtistDiscography(_)
-            | Route::Genres
-            | Route::GenreDetail(_)
-            | Route::Playlists
-            | Route::SmartPlaylists
-            | Route::PlaylistDetail(_)
-            | Route::SmartPlaylistDetail(_)
-            | Route::Search { .. }
-    )
+pub(in crate::ui) fn route_boundary_for_route(
+    route: &Route,
+    view: gtk::Widget,
+    content_width: i32,
+) -> gtk::Widget {
+    route_boundary_from_spec(view, route_boundary_spec_for_route(route), content_width)
 }
-pub(in crate::ui) fn route_boundary_for_route(route: &Route, view: gtk::Widget) -> gtk::Widget {
-    route_boundary_from_spec(view, route_boundary_spec_for_route(route))
-}
-fn route_boundary_from_spec(view: gtk::Widget, spec: RouteBoundarySpec) -> gtk::Widget {
+fn route_boundary_from_spec(
+    view: gtk::Widget,
+    spec: RouteBoundarySpec,
+    content_width: i32,
+) -> gtk::Widget {
     let scroller = gtk::ScrolledWindow::new();
     // this is necessary because route pages can contain tables, grids, and
     // toolbars wider than the visible pane. they may scroll inside the pane,
@@ -380,6 +378,7 @@ fn route_boundary_from_spec(view: gtk::Widget, spec: RouteBoundarySpec) -> gtk::
     scroller.set_policy(spec.horizontal_policy, spec.vertical_policy);
     scroller.set_overflow(spec.overflow);
     scroller.set_min_content_width(spec.min_content_width);
+    scroller.set_width_request(content_width.max(1));
     scroller.set_propagate_natural_width(spec.propagate_natural_width);
     scroller.set_propagate_natural_height(false);
     scroller.set_hexpand(spec.hexpand);

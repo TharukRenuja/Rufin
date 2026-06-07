@@ -11,7 +11,7 @@ use super::{
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     loaded_tracks_window_play_activation, mark_route_scroll_owner, replace_albums_in_model,
     replace_artists_in_model, replace_genres_in_model, replace_playlists_in_model,
-    selected_music_folder_id, set_favorite_button_active, stable_seed, text_button,
+    selected_music_folder_id, set_favorite_button_active, stable_seed,
     track_collection_play_context,
 };
 use crate::i18n::tr;

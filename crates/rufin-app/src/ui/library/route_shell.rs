@@ -297,10 +297,7 @@ impl Shell {
         key: LibraryListKey,
         search: gtk::SearchEntry,
     ) -> gtk::Widget {
-        let content_width = route_content_width(self);
-        let compact = library_toolbar_compact_for_width(content_width);
-        let stacked = toolbar_key_stack(key, content_width);
-        let toolbar = gtk::Box::new(library_toolbar_orientation_for_width(key, content_width), 8);
+        let toolbar = gtk::Box::new(library_toolbar_orientation_for_width(key, 1), 8);
         toolbar.add_css_class("track-toolbar");
         toolbar.set_hexpand(true);
         toolbar.set_halign(gtk::Align::Fill);
@@ -308,28 +305,36 @@ impl Shell {
         search.set_hexpand(true);
         search.set_width_request(1);
         toolbar.append(&search);
-        let controls = stacked.then(|| gtk::Box::new(gtk::Orientation::Horizontal, 8));
+        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let command_button = Rc::new(RefCell::new(None::<gtk::Button>));
+        let command_compact = Rc::new(Cell::new(false));
 
         match key {
             LibraryListKey::Playlists => {
-                let create = if compact {
-                    icon_button("list-add-symbolic", "New Playlist")
-                } else {
-                    text_button("list-add-symbolic", "New Playlist")
-                };
+                let create = gtk::Button::new();
+                set_library_command_button_content(
+                    &create,
+                    false,
+                    "list-add-symbolic",
+                    "New Playlist",
+                );
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_playlist_dialog());
-                append_library_toolbar_control(&toolbar, controls.as_ref(), &create);
+                controls.append(&create);
+                command_button.replace(Some(create));
             }
             LibraryListKey::SmartPlaylists => {
-                let create = if compact {
-                    icon_button("list-add-symbolic", "New Playlist")
-                } else {
-                    text_button("list-add-symbolic", "New Playlist")
-                };
+                let create = gtk::Button::new();
+                set_library_command_button_content(
+                    &create,
+                    false,
+                    "list-add-symbolic",
+                    "New Playlist",
+                );
                 let shell = Rc::clone(self);
                 create.connect_clicked(move |_| shell.new_smart_playlist_dialog());
-                append_library_toolbar_control(&toolbar, controls.as_ref(), &create);
+                controls.append(&create);
+                command_button.replace(Some(create));
             }
             _ => {}
         }
@@ -348,15 +353,6 @@ impl Shell {
                 .position(|field| *field == settings.sort_key)
                 .unwrap_or(0) as u32,
         );
-        if stacked {
-            sort_dropdown.set_hexpand(true);
-            sort_dropdown.set_halign(gtk::Align::Fill);
-            sort_dropdown.set_width_request(1);
-        } else if let Some(width) = toolbar_sort_width(key, content_width) {
-            sort_dropdown.set_hexpand(false);
-            sort_dropdown.set_halign(gtk::Align::End);
-            sort_dropdown.set_width_request(width);
-        }
         {
             let shell = Rc::clone(self);
             sort_dropdown.connect_selected_notify(move |dropdown| {
@@ -368,7 +364,7 @@ impl Shell {
                 shell.render_current_route_preserving_scroll();
             });
         }
-        append_library_toolbar_control(&toolbar, controls.as_ref(), &sort_dropdown);
+        controls.append(&sort_dropdown);
 
         let direction = gtk::Button::from_icon_name(if settings.descending {
             "view-sort-descending-symbolic"
@@ -386,7 +382,7 @@ impl Shell {
                 shell.render_current_route_preserving_scroll();
             });
         }
-        append_library_toolbar_control(&toolbar, controls.as_ref(), &direction);
+        controls.append(&direction);
 
         let layout = gtk::Button::from_icon_name(layout_icon(settings.layout));
         layout.add_css_class("flat");
@@ -404,7 +400,7 @@ impl Shell {
                 shell.render_current_route_preserving_scroll();
             });
         }
-        append_library_toolbar_control(&toolbar, controls.as_ref(), &layout);
+        controls.append(&layout);
 
         let configure = gtk::Button::from_icon_name("view-more-symbolic");
         configure.add_css_class("flat");
@@ -415,9 +411,30 @@ impl Shell {
                 shell.present_library_config_dialog(key);
             });
         }
-        append_library_toolbar_control(&toolbar, controls.as_ref(), &configure);
-        if let Some(controls) = controls {
-            toolbar.append(&controls);
+        controls.append(&configure);
+        toolbar.append(&controls);
+        apply_library_toolbar_layout(
+            key,
+            &toolbar,
+            &sort_dropdown,
+            command_button.borrow().as_ref(),
+            &command_compact,
+            1,
+        );
+        {
+            let sort_dropdown = sort_dropdown.clone();
+            let command_button = Rc::clone(&command_button);
+            let command_compact = Rc::clone(&command_compact);
+            toolbar.connect_notify_local(Some("width"), move |toolbar, _| {
+                apply_library_toolbar_layout(
+                    key,
+                    toolbar,
+                    &sort_dropdown,
+                    command_button.borrow().as_ref(),
+                    &command_compact,
+                    toolbar.width(),
+                );
+            });
         }
         toolbar.upcast()
     }
@@ -682,19 +699,70 @@ pub(in crate::ui) fn toolbar_sort_width(_key: LibraryListKey, width: i32) -> Opt
     library_toolbar_compact_for_width(width).then_some((width / 4).clamp(112, 150))
 }
 
-fn append_library_toolbar_control(
+fn apply_library_toolbar_layout(
+    key: LibraryListKey,
     toolbar: &gtk::Box,
-    controls: Option<&gtk::Box>,
-    child: &impl IsA<gtk::Widget>,
+    sort_dropdown: &gtk::DropDown,
+    command_button: Option<&gtk::Button>,
+    command_compact: &Cell<bool>,
+    width: i32,
 ) {
-    if let Some(controls) = controls {
-        controls.append(child);
+    let width = width.max(1);
+    toolbar.set_orientation(library_toolbar_orientation_for_width(key, width));
+    if toolbar_key_stack(key, width) {
+        sort_dropdown.set_hexpand(true);
+        sort_dropdown.set_halign(gtk::Align::Fill);
+        sort_dropdown.set_width_request(1);
+    } else if let Some(width) = toolbar_sort_width(key, width) {
+        sort_dropdown.set_hexpand(false);
+        sort_dropdown.set_halign(gtk::Align::End);
+        sort_dropdown.set_width_request(width);
     } else {
-        toolbar.append(child);
+        sort_dropdown.set_hexpand(false);
+        sort_dropdown.set_halign(gtk::Align::End);
+        sort_dropdown.set_width_request(-1);
+    }
+    if let Some(button) = command_button {
+        let compact = library_toolbar_compact_for_width(width);
+        if command_compact.replace(compact) != compact {
+            set_library_command_button_content(
+                button,
+                compact,
+                "list-add-symbolic",
+                "New Playlist",
+            );
+        }
     }
 }
 
-fn non_propagating_width_clip(child: gtk::Widget) -> gtk::Widget {
+fn set_library_command_button_content(
+    button: &gtk::Button,
+    compact: bool,
+    icon_name: &str,
+    label: &str,
+) {
+    button.add_css_class("flat");
+    button.set_tooltip_text(Some(&tr(label)));
+    if compact {
+        button.remove_css_class("pill-button");
+        button.remove_css_class("pill");
+        button.add_css_class("icon-button");
+        button.add_css_class("circular");
+        button.set_child(Some(&gtk::Image::from_icon_name(icon_name)));
+        return;
+    }
+
+    button.remove_css_class("icon-button");
+    button.remove_css_class("circular");
+    button.add_css_class("pill-button");
+    button.add_css_class("pill");
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.append(&gtk::Image::from_icon_name(icon_name));
+    content.append(&gtk::Label::new(Some(&tr(label))));
+    button.set_child(Some(&content));
+}
+
+pub(in crate::ui) fn non_propagating_width_clip(child: gtk::Widget) -> gtk::Widget {
     child.set_hexpand(true);
     child.set_halign(gtk::Align::Fill);
 

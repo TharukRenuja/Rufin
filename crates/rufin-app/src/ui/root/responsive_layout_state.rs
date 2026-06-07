@@ -4,7 +4,7 @@ impl Shell {
     pub(in crate::ui) fn update_layout(self: &Rc<Self>) -> bool {
         let width = self.layout_width().max(1);
         let settings = self.state.settings.borrow().layout.clone();
-        let resolved = resolve_layout(&settings, width);
+        let resolved = resolve_layout_with_sidebar_widths(&settings, width, self.sidebar_widths());
         self.apply_resolved_layout(resolved)
     }
     pub(in crate::ui) fn apply_resolved_layout(self: &Rc<Self>, resolved: ResolvedLayout) -> bool {
@@ -90,14 +90,20 @@ impl Shell {
         changed
     }
     pub(in crate::ui) fn layout_width(&self) -> i32 {
+        let root_width = self.root_stack.width();
+        if root_width > 1 {
+            return root_width;
+        }
+
+        let window_width = self.window.width();
+        if window_width > 1 {
+            return window_width;
+        }
+
         self.window
             .surface()
             .map(|surface| surface.width())
             .filter(|width| *width > 1)
-            .or_else(|| {
-                let width = self.window.width();
-                (width > 1).then_some(width)
-            })
             .unwrap_or(1)
     }
     pub(in crate::ui) fn login_screen_active(&self) -> bool {
@@ -109,6 +115,7 @@ impl Shell {
         }
 
         let route = self.state.routes.borrow().current().clone();
+        let route_chain = widget_width_chain(&self.route_host.clone().upcast());
         info!(
             stage,
             ?route,
@@ -131,9 +138,38 @@ impl Shell {
             right_panel_slot_visible = self.right_panel_slot.is_visible(),
             right_panel_slot_width = self.right_panel_slot.width(),
             right_panel_width = self.right_panel.width(),
+            %route_chain,
             "layout snapshot"
         );
     }
+}
+
+impl Shell {
+    fn sidebar_widths(&self) -> SidebarWidths {
+        SidebarWidths {
+            full: measured_sidebar_width(&self.normal_nav_slot, NORMAL_SIDEBAR_WIDTH),
+            compact: measured_sidebar_width(&self.compact_nav_slot, COMPACT_RAIL_WIDTH),
+        }
+    }
+}
+
+fn measured_sidebar_width(slot: &gtk::ScrolledWindow, fallback: i32) -> i32 {
+    let allocated = slot.width();
+    if allocated > 1 {
+        return allocated;
+    }
+    let (_, natural, _, _) = slot.measure(gtk::Orientation::Horizontal, -1);
+    natural.max(fallback)
+}
+
+fn widget_width_chain(widget: &gtk::Widget) -> String {
+    let mut parts = Vec::new();
+    let mut current = Some(widget.clone());
+    while let Some(widget) = current {
+        parts.push(format!("{}:{}", widget.type_().name(), widget.width()));
+        current = widget.parent();
+    }
+    parts.join(" <- ")
 }
 
 fn set_scrolled_window_exact_content_width(scroller: &gtk::ScrolledWindow, width: i32) {
