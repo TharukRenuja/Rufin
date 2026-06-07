@@ -378,6 +378,7 @@ impl Shell {
         search.set_hexpand(true);
         search.set_width_request(1);
         toolbar.append(&search);
+        self.install_type_to_search(&search);
 
         let sort_titles = PLAYLIST_ENTRY_SORTS
             .iter()

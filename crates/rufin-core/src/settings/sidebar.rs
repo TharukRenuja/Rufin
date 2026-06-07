@@ -421,6 +421,8 @@ pub struct AppSettings {
     pub exit_to_tray: bool,
     #[serde(default)]
     pub start_minimized: bool,
+    #[serde(default = "default_true")]
+    pub type_to_search_enabled: bool,
     #[serde(default)]
     pub jellyfin_device_id: String,
     pub discord_presence_enabled: bool,
@@ -486,6 +488,7 @@ impl Default for AppSettings {
             tray_enabled: false,
             exit_to_tray: false,
             start_minimized: false,
+            type_to_search_enabled: true,
             jellyfin_device_id: String::new(),
             discord_presence_enabled: false,
             discord_client_id: default_discord_client_id(),

@@ -54,6 +54,7 @@ impl Shell {
         search.set_placeholder_text(Some(&tr("Search")));
         search.set_hexpand(true);
         toolbar.append(&search);
+        self.install_type_to_search(&search);
 
         let settings = self.state.settings.borrow().track_table.clone();
         let sort_button = gtk::Button::new();

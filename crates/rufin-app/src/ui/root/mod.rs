@@ -245,6 +245,7 @@ pub(in crate::ui) struct AppState {
     lyrics_track_id: RefCell<Option<rufin_core::TrackId>>,
     lyrics_auto_search_attempted: RefCell<HashSet<rufin_core::TrackId>>,
     lyrics_search_dialog: RefCell<Option<LyricsSearchDialog>>,
+    type_to_search: RefCell<Option<gtk::SearchEntry>>,
     preferences_dialog: RefCell<Option<adw::Dialog>>,
     preferences_toast_overlay: RefCell<Option<adw::ToastOverlay>>,
     reconnect_toasts_shown: RefCell<HashSet<ServerId>>,
@@ -483,6 +484,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         lyrics_track_id: RefCell::new(None),
         lyrics_auto_search_attempted: RefCell::new(HashSet::new()),
         lyrics_search_dialog: RefCell::new(None),
+        type_to_search: RefCell::new(None),
         preferences_dialog: RefCell::new(None),
         preferences_toast_overlay: RefCell::new(None),
         reconnect_toasts_shown: RefCell::new(HashSet::new()),
@@ -695,6 +697,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     tray::install_tray(&shell);
     connect_queue_panel_controls(&shell);
     connect_queue_lyrics_split(&shell);
+    shell.connect_type_to_search();
     connect_lyrics_search_controls(&shell);
     connect_fullscreen_player_controls(&shell);
     connect_player_controls(&shell);

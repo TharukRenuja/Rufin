@@ -203,6 +203,16 @@ impl Shell {
         });
     }
 
+    pub(super) fn set_type_to_search_enabled(self: &Rc<Self>, enabled: bool) {
+        self.update_app_settings("type to search setting", |settings| {
+            if settings.type_to_search_enabled == enabled {
+                return false;
+            }
+            settings.type_to_search_enabled = enabled;
+            true
+        });
+    }
+
     pub(super) fn set_seekbar_waveform_enabled(self: &Rc<Self>, enabled: bool) {
         if self
             .update_app_settings("seekbar waveform setting", |settings| {

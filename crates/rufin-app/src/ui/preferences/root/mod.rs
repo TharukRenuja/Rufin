@@ -213,6 +213,10 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
             .title(tr("Start minimized"))
             .active(settings.tray_enabled && settings.start_minimized)
             .build();
+        let type_to_search_row = adw::SwitchRow::builder()
+            .title(tr("Type to search"))
+            .active(settings.type_to_search_enabled)
+            .build();
         exit_to_tray_row.set_visible(settings.tray_enabled);
         start_minimized_row.set_visible(settings.tray_enabled);
         let tray_shell = Rc::clone(shell);
@@ -236,9 +240,14 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         start_minimized_row.connect_active_notify(move |row| {
             start_minimized_shell.set_start_minimized_enabled(row.is_active());
         });
+        let type_to_search_shell = Rc::clone(shell);
+        type_to_search_row.connect_active_notify(move |row| {
+            type_to_search_shell.set_type_to_search_enabled(row.is_active());
+        });
         window_group.add(&tray_row);
         window_group.add(&exit_to_tray_row);
         window_group.add(&start_minimized_row);
+        window_group.add(&type_to_search_row);
         page.add(&window_group);
     }
 

@@ -53,7 +53,8 @@ impl Shell {
         wrapper.set_widget_name(context);
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
-        wrapper.append(&self.library_toolbar(key, search));
+        wrapper.append(&self.library_toolbar(key, search.clone()));
+        self.install_type_to_search(&search);
         wrapper.append(&non_propagating_width_clip(album_collection_widget(
             self, model, key,
         )));
@@ -225,7 +226,10 @@ impl Shell {
         wrapper.set_margin_bottom(LIBRARY_ROUTE_BOTTOM_MARGIN);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
-        wrapper.append(&library_route_inset(self.library_toolbar(key, search)));
+        wrapper.append(&library_route_inset(
+            self.library_toolbar(key, search.clone()),
+        ));
+        self.install_type_to_search(&search);
 
         if empty {
             wrapper.append(&library_route_inset(self.route_empty_view(empty_body)));
@@ -244,6 +248,49 @@ impl Shell {
         }
 
         wrapper.upcast()
+    }
+
+    pub(in crate::ui) fn install_type_to_search(&self, search: &gtk::SearchEntry) {
+        self.state.type_to_search.replace(Some(search.clone()));
+    }
+
+    pub(in crate::ui) fn connect_type_to_search(self: &Rc<Self>) {
+        let key = gtk::EventControllerKey::new();
+        key.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let shell = Rc::clone(self);
+        key.connect_key_pressed(move |_, key, _, state| {
+            let Some(search) = shell.state.type_to_search.borrow().as_ref().cloned() else {
+                return glib::Propagation::Proceed;
+            };
+            if !shell.state.settings.borrow().type_to_search_enabled
+                || shell.login_screen_active()
+                || shell.state.fullscreen_player_visible.get()
+                || shell.state.preferences_dialog.borrow().is_some()
+                || shell.state.add_server_dialog.borrow().is_some()
+                || shell.state.lyrics_search_dialog.borrow().is_some()
+                || key_should_bypass_type_to_search(state)
+                || focus_blocks_type_to_search(GtkWindowExt::focus(&shell.window).as_ref(), &search)
+            {
+                return glib::Propagation::Proceed;
+            }
+            let Some(character) = key.to_unicode().filter(|character| !character.is_control())
+            else {
+                return glib::Propagation::Proceed;
+            };
+            if character.is_whitespace() && search.text().trim().is_empty() {
+                return glib::Propagation::Proceed;
+            }
+            let mut position = search.position();
+            if let Some((start, end)) = search.selection_bounds() {
+                search.delete_text(start, end);
+                position = start;
+            }
+            search.insert_text(&character.to_string(), &mut position);
+            search.set_position(position);
+            search.grab_focus();
+            glib::Propagation::Stop
+        });
+        self.window.add_controller(key);
     }
     pub(in crate::ui) fn library_toolbar(
         self: &Rc<Self>,
@@ -589,6 +636,27 @@ impl Shell {
         }
         Some(tracks_by_album)
     }
+}
+
+fn key_should_bypass_type_to_search(state: gtk::gdk::ModifierType) -> bool {
+    state.intersects(
+        gtk::gdk::ModifierType::ALT_MASK
+            | gtk::gdk::ModifierType::CONTROL_MASK
+            | gtk::gdk::ModifierType::SUPER_MASK
+            | gtk::gdk::ModifierType::HYPER_MASK
+            | gtk::gdk::ModifierType::META_MASK,
+    )
+}
+
+fn focus_blocks_type_to_search(focus: Option<&gtk::Widget>, search: &gtk::SearchEntry) -> bool {
+    let Some(focus) = focus else {
+        return false;
+    };
+    focus.is_ancestor(search)
+        || focus.is::<gtk::Editable>()
+        || focus.is::<gtk::TextView>()
+        || focus.ancestor(gtk::Editable::static_type()).is_some()
+        || focus.ancestor(gtk::TextView::static_type()).is_some()
 }
 
 pub(in crate::ui) fn library_toolbar_stacks_for_width(_width: i32) -> bool {

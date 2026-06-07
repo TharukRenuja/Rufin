@@ -14,6 +14,7 @@ fn settings_default_disabled() {
     assert!(settings.sources.local_folders.is_empty());
     assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
     assert!(!settings.notifications_enabled);
+    assert!(settings.type_to_search_enabled);
     assert!(!settings.discord_presence_enabled);
     assert!(!settings.discord_show_paused);
     assert_eq!(settings.lastfm_api_key, "");
@@ -160,6 +161,7 @@ fn settings_restore_without_window_geometry() {
     assert_eq!(restored.window_width, None);
     assert_eq!(restored.window_height, None);
     assert!(!restored.external_lyrics_enabled);
+    assert!(restored.type_to_search_enabled);
 }
 
 #[test]
