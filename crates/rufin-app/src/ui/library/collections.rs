@@ -3,6 +3,12 @@ use super::*;
 const ALBUM_DETAIL_ARTIST_SECTION_INSET: i32 = 64;
 const ALBUM_DETAIL_ROW_HORIZONTAL_INSET: i32 = 8;
 const ALBUM_DETAIL_TRACK_COLUMN_GAP: i32 = 8;
+const ALBUM_DETAIL_WIDE_COVER: i32 = 220;
+const ALBUM_DETAIL_WIDE_META: i32 = 240;
+const ALBUM_DETAIL_COMPACT_COVER: i32 = 148;
+const ALBUM_DETAIL_COMPACT_META: i32 = 168;
+const ALBUM_DETAIL_MIN_META: i32 = 72;
+const ALBUM_DETAIL_NARROW_WIDTH: i32 = 360;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct LibraryRouteInsetSpec {
@@ -176,7 +182,7 @@ pub(in crate::ui) fn album_grid(
     model: gio::ListStore,
     key: LibraryListKey,
 ) -> gtk::GridView {
-    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    let (columns, card_size) = shell.collection_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
@@ -219,7 +225,7 @@ pub(in crate::ui) fn artist_grid(
     model: gio::ListStore,
     key: LibraryListKey,
 ) -> gtk::GridView {
-    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    let (columns, card_size) = shell.collection_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
@@ -258,7 +264,7 @@ pub(in crate::ui) fn artist_grid(
     grid
 }
 pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
-    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    let (columns, card_size) = shell.collection_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
@@ -292,7 +298,7 @@ pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk
     grid
 }
 pub(in crate::ui) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
-    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    let (columns, card_size) = shell.collection_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
@@ -333,7 +339,7 @@ pub(in crate::ui) fn smart_playlist_grid(
     shell: &Rc<Shell>,
     model: gio::ListStore,
 ) -> gtk::GridView {
-    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    let (columns, card_size) = shell.collection_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
@@ -376,7 +382,7 @@ pub(in crate::ui) fn track_grid(
     key: LibraryListKey,
     play_context: Option<LoadedTrackPlayContext>,
 ) -> gtk::GridView {
-    let (columns, card_size) = shell.responsive_card_grid_metrics();
+    let (columns, card_size) = shell.collection_card_grid_metrics();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
@@ -950,13 +956,8 @@ pub(in crate::ui) fn album_detail_lead_row(
     key: LibraryListKey,
     selection: &AlbumDetailTrackSelection,
 ) -> gtk::Widget {
-    let compact = compact_detail_layout(shell);
-    let (cover_size, meta_width, spacing) = if compact {
-        (148, 168, 14)
-    } else {
-        (220, 240, 24)
-    };
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, spacing);
+    let metrics = album_detail_row_metrics(shell, key);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, metrics.spacing);
     row.add_css_class("album-detail-row");
     row.set_hexpand(true);
     row.set_halign(gtk::Align::Fill);
@@ -966,18 +967,24 @@ pub(in crate::ui) fn album_detail_lead_row(
     row.set_margin_end(4);
     row.set_height_request(album_detail_lead_content_height(
         album,
-        cover_size,
+        metrics.cover_size,
         inline_tracks.len(),
     ));
 
-    row.append(&album_detail_meta(shell, album, cover_size, meta_width));
+    row.append(&album_detail_meta(
+        shell,
+        album,
+        metrics.cover_size,
+        metrics.meta_width,
+    ));
 
     let track_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
     track_area.set_hexpand(true);
     track_area.set_halign(gtk::Align::Fill);
     if !inline_tracks.is_empty() {
         let fields = shell.library_settings(key).detail_track_fields;
-        let track_width = album_detail_track_area_width(shell, key, meta_width, spacing, &fields);
+        let track_width =
+            album_detail_track_area_width(shell, key, metrics.meta_width, metrics.spacing, &fields);
         let field_widths = album_detail_track_field_widths(key, &fields, track_width);
         track_area.set_width_request(track_width);
         track_area.set_height_request(album_detail_track_area_height(inline_tracks.len()));
@@ -1003,13 +1010,8 @@ pub(in crate::ui) fn album_detail_track_row(
     key: LibraryListKey,
     selection: &AlbumDetailTrackSelection,
 ) -> gtk::Widget {
-    let compact = compact_detail_layout(shell);
-    let (_cover_size, meta_width, spacing) = if compact {
-        (148, 168, 14)
-    } else {
-        (220, 240, 24)
-    };
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, spacing);
+    let metrics = album_detail_row_metrics(shell, key);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, metrics.spacing);
     row.add_css_class("album-detail-row");
     row.set_hexpand(true);
     row.set_halign(gtk::Align::Fill);
@@ -1019,12 +1021,13 @@ pub(in crate::ui) fn album_detail_track_row(
     row.set_height_request(LIBRARY_TABLE_ROW_HEIGHT);
 
     let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    spacer.set_width_request(meta_width);
+    spacer.set_width_request(metrics.meta_width);
     spacer.set_hexpand(false);
     row.append(&spacer);
 
     let fields = shell.library_settings(key).detail_track_fields;
-    let track_width = album_detail_track_area_width(shell, key, meta_width, spacing, &fields);
+    let track_width =
+        album_detail_track_area_width(shell, key, metrics.meta_width, metrics.spacing, &fields);
     let field_widths = album_detail_track_field_widths(key, &fields, track_width);
     row.append(&album_detail_track_cells(
         shell,
@@ -1259,12 +1262,12 @@ pub(in crate::ui) fn album_detail_fixed_cell(width: i32, child: gtk::Widget) -> 
 }
 pub(in crate::ui) fn album_detail_track_label(
     text: &str,
-    _field: LibraryField,
+    field: LibraryField,
     width: i32,
     ellipsize: bool,
 ) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
-    label.set_xalign(0.5);
+    label.set_xalign(album_detail_track_xalign(field));
     label.set_halign(gtk::Align::Fill);
     label.set_wrap(false);
     label.set_single_line_mode(true);
@@ -1276,6 +1279,13 @@ pub(in crate::ui) fn album_detail_track_label(
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     }
     label
+}
+fn album_detail_track_xalign(field: LibraryField) -> f32 {
+    if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
+        0.0
+    } else {
+        0.5
+    }
 }
 pub(in crate::ui) fn album_detail_track_trailing_inset(
     field_widths: &[(LibraryField, i32)],
@@ -1316,16 +1326,20 @@ pub(in crate::ui) fn album_detail_track_area_width(
     spacing: i32,
     fields: &[LibraryField],
 ) -> i32 {
-    let route_inset = match key {
-        LibraryListKey::ArtistAlbums => ALBUM_DETAIL_ARTIST_SECTION_INSET,
-        _ => 0,
-    };
-    route_content_width(shell)
-        .saturating_sub(route_inset)
+    album_detail_track_area_width_for(key, route_content_width(shell), meta_width, spacing, fields)
+}
+
+fn album_detail_track_area_width_for(
+    key: LibraryListKey,
+    route_width: i32,
+    meta_width: i32,
+    spacing: i32,
+    fields: &[LibraryField],
+) -> i32 {
+    album_detail_row_content_width(key, route_width)
         .saturating_sub(meta_width)
         .saturating_sub(spacing)
-        .saturating_sub(ALBUM_DETAIL_ROW_HORIZONTAL_INSET)
-        .max(fields.len() as i32)
+        .max(album_detail_min_track_area_width(fields))
 }
 pub(in crate::ui) fn album_detail_track_text(
     track: &Track,
@@ -1396,6 +1410,73 @@ pub(in crate::ui) fn library_table_content_height(row_count: usize) -> i32 {
 pub(in crate::ui) fn compact_detail_layout(shell: &Shell) -> bool {
     route_content_width(shell) < 760
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AlbumDetailRowMetrics {
+    cover_size: i32,
+    meta_width: i32,
+    spacing: i32,
+}
+
+fn album_detail_row_metrics(shell: &Shell, key: LibraryListKey) -> AlbumDetailRowMetrics {
+    album_detail_row_metrics_for_width(key, route_content_width(shell))
+}
+
+fn album_detail_row_metrics_for_width(
+    key: LibraryListKey,
+    route_width: i32,
+) -> AlbumDetailRowMetrics {
+    let row_width = album_detail_row_content_width(key, route_width);
+    let compact = row_width < 760;
+    let base_cover = if compact {
+        ALBUM_DETAIL_COMPACT_COVER
+    } else {
+        ALBUM_DETAIL_WIDE_COVER
+    };
+    let base_meta = if compact {
+        ALBUM_DETAIL_COMPACT_META
+    } else {
+        ALBUM_DETAIL_WIDE_META
+    };
+    let spacing = if row_width < ALBUM_DETAIL_NARROW_WIDTH {
+        8
+    } else if compact {
+        14
+    } else {
+        24
+    };
+    let meta_width = base_meta
+        .min((row_width * 45 / 100).max(ALBUM_DETAIL_MIN_META))
+        .min(row_width)
+        .max(1);
+
+    AlbumDetailRowMetrics {
+        cover_size: base_cover.min(meta_width).max(1),
+        meta_width,
+        spacing,
+    }
+}
+
+fn album_detail_row_content_width(key: LibraryListKey, route_width: i32) -> i32 {
+    route_width
+        .saturating_sub(album_detail_route_inset(key))
+        .saturating_sub(ALBUM_DETAIL_ROW_HORIZONTAL_INSET)
+        .max(1)
+}
+
+fn album_detail_route_inset(key: LibraryListKey) -> i32 {
+    match key {
+        LibraryListKey::ArtistAlbums => ALBUM_DETAIL_ARTIST_SECTION_INSET,
+        _ => 0,
+    }
+}
+
+fn album_detail_min_track_area_width(fields: &[LibraryField]) -> i32 {
+    let field_count = fields.len().min(i32::MAX as usize) as i32;
+    let gap_count = fields.len().saturating_sub(1).min(i32::MAX as usize) as i32;
+    field_count + ALBUM_DETAIL_TRACK_COLUMN_GAP.saturating_mul(gap_count)
+}
+
 pub(in crate::ui) fn album_card(
     shell: &Rc<Shell>,
     album: &Album,
@@ -1644,4 +1725,44 @@ pub(in crate::ui) fn artist_cover_image_ref(
     artist: &Artist,
 ) -> Option<ImageRef> {
     artist.image_ref.clone()
+}
+
+#[cfg(test)]
+mod album_detail_width_tests {
+    use super::*;
+
+    #[test]
+    fn album_detail_meta_shrinks_with_route() {
+        let metrics = album_detail_row_metrics_for_width(LibraryListKey::Albums, 260);
+
+        assert_eq!(metrics.spacing, 8);
+        assert!(metrics.meta_width < ALBUM_DETAIL_COMPACT_META);
+        assert_eq!(metrics.cover_size, metrics.meta_width);
+    }
+
+    #[test]
+    fn album_detail_track_width_stays_in_narrow_budget() {
+        let fields = [
+            LibraryField::RowIndex,
+            LibraryField::Title,
+            LibraryField::Duration,
+        ];
+        let metrics = album_detail_row_metrics_for_width(LibraryListKey::Albums, 260);
+        let track_width = album_detail_track_area_width_for(
+            LibraryListKey::Albums,
+            260,
+            metrics.meta_width,
+            metrics.spacing,
+            &fields,
+        );
+
+        let row_width = metrics.meta_width
+            + metrics.spacing
+            + album_detail_track_cells_width(&album_detail_track_field_widths(
+                LibraryListKey::Albums,
+                &fields,
+                track_width,
+            ));
+        assert!(row_width <= album_detail_row_content_width(LibraryListKey::Albums, 260));
+    }
 }

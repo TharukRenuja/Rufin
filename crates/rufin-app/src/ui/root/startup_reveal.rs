@@ -113,12 +113,16 @@ impl Shell {
         {
             let shell = Rc::clone(self);
             let cover_prime_generation = Rc::clone(&cover_prime_generation);
-            glib::idle_add_local_once(move || {
-                if shell.state.startup_route_revealed.get() || shell.login_screen_active() {
-                    return;
-                }
-                cover_prime_generation.set(Some(shell.begin_startup_cover_prime()));
-            });
+            glib::timeout_add_local_once(
+                Duration::from_millis(STARTUP_ROUTE_REVEAL_POLL_MS),
+                move || {
+                    if shell.state.startup_route_revealed.get() || shell.login_screen_active() {
+                        return;
+                    }
+                    shell.prepare_startup_route_content();
+                    cover_prime_generation.set(Some(shell.begin_startup_cover_prime()));
+                },
+            );
         }
         let started_at = Instant::now();
         let timeout_logged = Rc::new(Cell::new(false));
@@ -163,6 +167,29 @@ impl Shell {
                 }
             },
         );
+    }
+    pub(in crate::ui) fn prepare_startup_route_content(self: &Rc<Self>) {
+        if self.state.startup_route_content_prepared.get()
+            || self.state.startup_route_revealed.get()
+            || self.login_screen_active()
+        {
+            return;
+        }
+
+        self.state.startup_route_render_pending.set(true);
+        self.update_layout();
+        self.log_layout_snapshot("startup_prepare_before_hidden_render");
+        self.state.home_section_views.borrow_mut().clear();
+        if matches!(self.state.routes.borrow().current(), Route::Home) {
+            self.promote_cached_prefetched_explore();
+        }
+        self.render_current_route_content();
+        self.render_queue_panel();
+        self.render_lyrics_panel();
+        self.update_bottom_player();
+        self.state.startup_route_render_pending.set(false);
+        self.state.startup_route_content_prepared.set(true);
+        self.log_layout_snapshot("startup_prepare_after_hidden_render");
     }
     pub(in crate::ui) fn begin_startup_cover_prime(self: &Rc<Self>) -> u64 {
         let generation = self
@@ -213,41 +240,31 @@ impl Shell {
         self.state.startup_cover_prime_pending.borrow_mut().clear();
     }
     pub(in crate::ui) fn reveal_startup_route(self: &Rc<Self>) {
-        if self.login_screen_active() || self.state.startup_route_revealed.replace(true) {
+        if self.login_screen_active() || self.state.startup_route_revealed.get() {
             return;
         }
 
-        self.state.startup_route_render_pending.set(true);
+        if !self.state.startup_route_content_prepared.get() {
+            self.prepare_startup_route_content();
+        }
+        self.state.startup_route_revealed.set(true);
+
         self.log_layout_snapshot("startup_reveal_before_stack_switch");
         self.update_layout();
+        restore_queue_lyrics_split_for_current_height(self);
         self.window.queue_resize();
         self.app_root.queue_resize();
         self.route_host.queue_resize();
         self.right_panel_slot.queue_resize();
         self.log_layout_snapshot("startup_reveal_after_stack_switch");
-
-        let shell = Rc::clone(self);
-        glib::timeout_add_local_once(
-            Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
-            move || {
-                shell.log_layout_snapshot("startup_reveal_before_render");
-                shell.state.startup_route_render_pending.set(false);
-                if shell.login_screen_active() {
-                    return;
-                }
-                shell.update_layout();
-                shell.render_current_route();
-                if matches!(shell.state.routes.borrow().current(), Route::Home) {
-                    shell.refresh_home_for_current_visit();
-                }
-                shell.render_queue_panel();
-                shell.render_lyrics_panel();
-                shell.update_bottom_player();
-                shell.log_layout_snapshot("startup_reveal_after_render");
-                shell.queue_post_layout_route_render();
-                shell.queue_settled_warm();
-            },
-        );
+        if std::env::var_os("RUFIN_DEBUG_LAYOUT").is_some() {
+            let shell = Rc::clone(self);
+            glib::timeout_add_local_once(
+                Duration::from_millis(RESPONSIVE_RENDER_DELAY_MS),
+                move || shell.log_layout_snapshot("startup_reveal_after_allocation_tick"),
+            );
+        }
+        self.queue_settled_warm();
     }
     pub(in crate::ui) fn schedule_first_run_app_reveal(self: &Rc<Self>) {
         self.log_layout_snapshot("first_run_reveal_queued");
@@ -304,6 +321,7 @@ impl Shell {
             shell.state.first_run_connection_ready.set(false);
             shell.log_layout_snapshot("first_run_reveal_before_stack_switch");
             shell.update_layout();
+            restore_queue_lyrics_split_for_current_height(&shell);
             shell.window.queue_resize();
             shell.app_root.queue_resize();
             shell.route_host.queue_resize();
@@ -319,6 +337,7 @@ impl Shell {
                     shell.state.startup_route_revealed.set(true);
                     shell.update_layout();
                     shell.render_current_route();
+                    shell.state.startup_route_content_prepared.set(true);
                     if matches!(shell.state.routes.borrow().current(), Route::Home) {
                         shell.refresh_home_for_current_visit();
                     }

@@ -439,7 +439,10 @@ fn settings_migrate_state() {
 
     assert_eq!(settings.queue_lyrics_position, None);
     assert_eq!(settings.queue_lyrics_ratio, None);
-    assert_eq!(settings.queue_lyrics_layout_version, 3);
+    assert_eq!(
+        settings.queue_lyrics_layout_version,
+        super::QUEUE_LYRICS_LAYOUT_VERSION
+    );
 }
 #[test]
 fn settings_migrate_defaults() {

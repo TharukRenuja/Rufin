@@ -23,28 +23,41 @@ use super::{
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
 pub(in crate::ui) const BOTTOM_PLAYER_COVER_SIZE: i32 = 72;
-const BOTTOM_PLAYER_HORIZONTAL_PADDING: i32 = 8;
-const BOTTOM_PLAYER_NOW_PLAYING_SPACING: i32 = 12;
-const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 420;
+const BOTTOM_PLAYER_HORIZONTAL_PADDING: i32 = 6;
+const BOTTOM_PLAYER_NOW_PLAYING_SPACING: i32 = 8;
+const BOTTOM_PLAYER_TRANSPORT_WIDTH: i32 = 300;
 const BOTTOM_PLAYER_PROGRESS_WIDTH: i32 = 320;
+const BOTTOM_PLAYER_PROGRESS_MIN_WIDTH: i32 = 140;
 const BOTTOM_PLAYER_BUTTON_ROW_HEIGHT: i32 = 58;
 const BOTTOM_PLAYER_SIDE_BUTTON_SIZE: i32 = 50;
 const BOTTOM_PLAYER_PLAY_BUTTON_SIZE: i32 = 45;
 const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 3.0;
-const BOTTOM_PLAYER_BUTTON_STEP: f64 = 52.0;
+const BOTTOM_PLAYER_BUTTON_STEP: f64 = 38.0;
 const BOTTOM_PLAYER_WAVEFORM_HEIGHT: i32 = 32;
 const BOTTOM_PLAYER_ACTION_BUTTON_SIZE: i32 = 34;
-const BOTTOM_PLAYER_ACTION_BUTTON_COUNT: i32 = 4;
-const BOTTOM_PLAYER_ACTION_SPACING: i32 = 5;
-const BOTTOM_PLAYER_VOLUME_SPACING: i32 = 2;
+const BOTTOM_PLAYER_ACTION_SPACING: i32 = 3;
+const BOTTOM_PLAYER_VOLUME_SPACING: i32 = 1;
 const BOTTOM_PLAYER_VOLUME_MIN_WIDTH: i32 = 48;
 const BOTTOM_PLAYER_VOLUME_MAX_WIDTH: i32 = 160;
 const BOTTOM_PLAYER_VOLUME_WIDTH_RATIO: f64 = 1.0 / 16.0;
 const BOTTOM_PLAYER_RIGHT_EDGE_GAP: i32 = 8;
-const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 18;
+const BOTTOM_PLAYER_TRANSPORT_CLEARANCE: i32 = 8;
+const BOTTOM_PLAYER_COMPACT_MIN_WIDTH: i32 = 614;
+const BOTTOM_PLAYER_FULL_PROGRESS_WIDTH: i32 = 864;
+const BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH: i32 = BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
+const BOTTOM_PLAYER_SHOW_LYRICS_WIDTH: i32 = 780;
+const BOTTOM_PLAYER_SHOW_QUEUE_WIDTH: i32 = 864;
 const SEEK_PREVIEW_COMMIT_DELAY: Duration = Duration::from_millis(100);
 const SEEK_PREVIEW_SETTLE_WINDOW: Duration = Duration::from_millis(1_000);
 const SEEK_PREVIEW_TOLERANCE_MILLIS: u64 = 1_500;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BottomPlayerActions {
+    Volume,
+    Favorite,
+    Lyrics,
+    Queue,
+}
 
 pub(super) struct PlayerControls {
     pub(super) root: gtk::CenterBox,
@@ -900,9 +913,14 @@ fn configure_player_action_button(button: &gtk::Button) {
 
 fn bottom_player_volume_width(player_width: i32) -> i32 {
     let right_side_width = (player_width - BOTTOM_PLAYER_TRANSPORT_WIDTH) / 2;
-    let action_width_without_volume = BOTTOM_PLAYER_ACTION_BUTTON_SIZE
-        * BOTTOM_PLAYER_ACTION_BUTTON_COUNT
-        + BOTTOM_PLAYER_ACTION_SPACING * 3
+    let visible_action_count = match bottom_player_actions(player_width) {
+        BottomPlayerActions::Volume => 0,
+        BottomPlayerActions::Favorite => 1,
+        BottomPlayerActions::Lyrics => 2,
+        BottomPlayerActions::Queue => 3,
+    };
+    let action_width_without_volume = BOTTOM_PLAYER_ACTION_BUTTON_SIZE * (visible_action_count + 1)
+        + BOTTOM_PLAYER_ACTION_SPACING * visible_action_count
         + BOTTOM_PLAYER_VOLUME_SPACING
         + BOTTOM_PLAYER_RIGHT_EDGE_GAP
         + BOTTOM_PLAYER_TRANSPORT_CLEARANCE;
@@ -914,6 +932,29 @@ fn bottom_player_volume_width(player_width: i32) -> i32 {
         BOTTOM_PLAYER_VOLUME_MIN_WIDTH,
         BOTTOM_PLAYER_VOLUME_MAX_WIDTH,
     )
+}
+
+fn bottom_player_progress_width(player_width: i32) -> i32 {
+    if player_width >= BOTTOM_PLAYER_FULL_PROGRESS_WIDTH {
+        return BOTTOM_PLAYER_PROGRESS_WIDTH;
+    }
+
+    let span = BOTTOM_PLAYER_FULL_PROGRESS_WIDTH - BOTTOM_PLAYER_COMPACT_MIN_WIDTH;
+    let width_span = BOTTOM_PLAYER_PROGRESS_WIDTH - BOTTOM_PLAYER_PROGRESS_MIN_WIDTH;
+    let progress = (player_width - BOTTOM_PLAYER_COMPACT_MIN_WIDTH).clamp(0, span);
+    BOTTOM_PLAYER_PROGRESS_MIN_WIDTH + width_span * progress / span
+}
+
+fn bottom_player_actions(player_width: i32) -> BottomPlayerActions {
+    if player_width >= BOTTOM_PLAYER_SHOW_QUEUE_WIDTH {
+        BottomPlayerActions::Queue
+    } else if player_width >= BOTTOM_PLAYER_SHOW_LYRICS_WIDTH {
+        BottomPlayerActions::Lyrics
+    } else if player_width >= BOTTOM_PLAYER_SHOW_FAVORITE_WIDTH {
+        BottomPlayerActions::Favorite
+    } else {
+        BottomPlayerActions::Volume
+    }
 }
 
 struct PlayerWallSpec {
@@ -1221,7 +1262,7 @@ fn connect_bottom_player_volume_resize(shell: &Rc<Shell>) {
     shell
         .window
         .connect_notify_local(Some("width"), move |window, _| {
-            resize_shell.set_bottom_player_volume_width(window.width());
+            resize_shell.apply_bottom_player_width(window.width());
         });
 
     let window = shell.window.clone();
@@ -1232,16 +1273,16 @@ fn connect_bottom_player_volume_resize(shell: &Rc<Shell>) {
         };
         let surface_resize_shell = Rc::clone(&resize_shell);
         surface.connect_width_notify(move |surface| {
-            surface_resize_shell.set_bottom_player_volume_width(surface.width());
+            surface_resize_shell.apply_bottom_player_width(surface.width());
         });
-        resize_shell.set_bottom_player_volume_width(surface.width());
+        resize_shell.apply_bottom_player_width(surface.width());
     });
 
     let resize_shell = Rc::clone(shell);
     shell.player_controls.root.add_tick_callback(move |_, _| {
         let width = resize_shell.window.width();
         if width > 0 {
-            resize_shell.set_bottom_player_volume_width(width);
+            resize_shell.apply_bottom_player_width(width);
             glib::ControlFlow::Break
         } else {
             glib::ControlFlow::Continue
@@ -1250,12 +1291,45 @@ fn connect_bottom_player_volume_resize(shell: &Rc<Shell>) {
 }
 
 impl Shell {
-    fn set_bottom_player_volume_width(&self, player_width: i32) {
+    fn apply_bottom_player_width(&self, player_width: i32) {
         if player_width > 0 {
+            let progress_width = bottom_player_progress_width(player_width);
+            self.player_controls
+                .progress
+                .set_width_request(progress_width);
+            self.player_controls
+                .progress_stack
+                .set_size_request(progress_width, BOTTOM_PLAYER_WAVEFORM_HEIGHT);
+            self.player_controls
+                .waveform
+                .widget()
+                .set_width_request(progress_width);
+            self.player_controls
+                .waveform
+                .widget()
+                .set_content_width(progress_width);
             self.player_controls
                 .volume
                 .set_width_request(bottom_player_volume_width(player_width));
+            self.apply_bottom_player_actions(bottom_player_actions(player_width));
         }
+    }
+
+    fn apply_bottom_player_actions(&self, actions: BottomPlayerActions) {
+        let player = &self.player_controls;
+        player.favorite_button.set_visible(matches!(
+            actions,
+            BottomPlayerActions::Favorite
+                | BottomPlayerActions::Lyrics
+                | BottomPlayerActions::Queue
+        ));
+        player.lyrics_button.set_visible(matches!(
+            actions,
+            BottomPlayerActions::Lyrics | BottomPlayerActions::Queue
+        ));
+        player
+            .queue_button
+            .set_visible(matches!(actions, BottomPlayerActions::Queue));
     }
 }
 
@@ -1274,7 +1348,43 @@ mod tests {
         assert_eq!(super::bottom_player_volume_width(2560), 160);
         assert_eq!(super::bottom_player_volume_width(1920), 120);
         assert_eq!(super::bottom_player_volume_width(960), 60);
-        assert_eq!(super::bottom_player_volume_width(820), 48);
+        assert_eq!(super::bottom_player_volume_width(820), 51);
+    }
+
+    #[test]
+    fn player_progress_only_narrows_at_compact_widths() {
+        assert_eq!(
+            super::bottom_player_progress_width(1024),
+            super::BOTTOM_PLAYER_PROGRESS_WIDTH
+        );
+        assert_eq!(
+            super::bottom_player_progress_width(864),
+            super::BOTTOM_PLAYER_PROGRESS_WIDTH
+        );
+        assert_eq!(
+            super::bottom_player_progress_width(614),
+            super::BOTTOM_PLAYER_PROGRESS_MIN_WIDTH
+        );
+    }
+
+    #[test]
+    fn player_restores_actions_by_priority() {
+        assert_eq!(
+            super::bottom_player_actions(614),
+            super::BottomPlayerActions::Favorite
+        );
+        assert_eq!(
+            super::bottom_player_actions(700),
+            super::BottomPlayerActions::Favorite
+        );
+        assert_eq!(
+            super::bottom_player_actions(800),
+            super::BottomPlayerActions::Lyrics
+        );
+        assert_eq!(
+            super::bottom_player_actions(900),
+            super::BottomPlayerActions::Queue
+        );
     }
 
     #[test]

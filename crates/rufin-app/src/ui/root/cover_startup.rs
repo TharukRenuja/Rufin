@@ -625,6 +625,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                                 .set(local_snapshot_syncing);
                             shell.state.startup_route_render_pending.set(false);
                             shell.state.startup_route_revealed.set(false);
+                            shell.state.startup_route_content_prepared.set(false);
                             shell.prepare_home_route();
                             shell.render_startup_loading_view();
                             continue;
@@ -650,6 +651,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             shell.state.source_switch_preparing.set(false);
                             shell.state.startup_route_render_pending.set(false);
                             shell.state.startup_route_revealed.set(true);
+                            shell.state.startup_route_content_prepared.set(true);
                         }
                         LocalSourceCacheGateAction::None => {}
                     }
@@ -747,6 +749,13 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.promote_cached_prefetched_explore();
                     }
                     shell.update_server_selector();
+                    if matches!(shell.state.routes.borrow().current(), Route::Home)
+                        && !shell.state.startup_route_revealed.get()
+                    {
+                        shell.state.startup_route_content_prepared.set(false);
+                        shell.prepare_startup_route_content();
+                        return glib::ControlFlow::Continue;
+                    }
                     shell.refresh_changed_visible_home_sections(
                         &previous_sections,
                         &sections,
@@ -762,8 +771,15 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         .as_ref()
                         .map(|server| server.id.clone());
                     if active_server_id.as_ref() == Some(&server_id) {
-                        *shell.state.prefetched_explore.borrow_mut() =
-                            Some(PrefetchedHomeSection { server_id, section });
+                        let prefetched = PrefetchedHomeSection { server_id, section };
+                        *shell.state.prefetched_explore.borrow_mut() = Some(prefetched);
+                        if matches!(shell.state.routes.borrow().current(), Route::Home)
+                            && !shell.state.startup_route_revealed.get()
+                        {
+                            shell.state.startup_route_content_prepared.set(false);
+                            shell.prepare_startup_route_content();
+                            return glib::ControlFlow::Continue;
+                        }
                     }
                 }
                 ControllerEvent::PlaylistChanged {
@@ -815,6 +831,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.state.source_switch_preparing.set(true);
                         shell.state.startup_route_render_pending.set(false);
                         shell.state.startup_route_revealed.set(false);
+                        shell.state.startup_route_content_prepared.set(false);
                         shell.render_startup_loading_view();
                         continue;
                     }
@@ -997,6 +1014,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.state.source_switch_preparing.set(false);
                     shell.state.startup_route_render_pending.set(false);
                     shell.state.startup_route_revealed.set(true);
+                    shell.state.startup_route_content_prepared.set(true);
                     let mut library = shell.state.library.borrow_mut();
                     library.sync_status = "Action failed".to_string();
                     library.last_error = Some(error);

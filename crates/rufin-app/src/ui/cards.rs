@@ -31,6 +31,12 @@ impl Shell {
         self.state.card_grid_columns.set(columns);
         (columns, home_album_card_size(width, columns))
     }
+
+    pub(super) fn collection_card_grid_metrics(&self) -> (usize, i32) {
+        let width = home_album_content_width(self);
+        let columns = home_album_page_size(width, None);
+        (columns, home_album_card_size(width, columns))
+    }
 }
 
 pub(super) fn render_home_album_page(

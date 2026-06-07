@@ -19,6 +19,7 @@ enum AppControllerSettingsMode {
 
 impl Shell {
     pub(super) fn save_window_state(&self) {
+        self.remember_queue_lyrics_open_position();
         if self.window.is_maximized() || self.window.is_fullscreen() {
             return;
         }

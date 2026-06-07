@@ -1,5 +1,19 @@
 use super::*;
 
+struct RouteView {
+    widget: gtk::Widget,
+    resize: RouteResizePolicy,
+}
+
+impl RouteView {
+    fn new(widget: gtk::Widget) -> Self {
+        Self {
+            widget,
+            resize: RouteResizePolicy::RerenderOnWidthChange,
+        }
+    }
+}
+
 impl Shell {
     pub(in crate::ui) fn render_current_route(self: &Rc<Self>) {
         self.cancel_route_loads();
@@ -26,41 +40,48 @@ impl Shell {
             return;
         }
 
-        let route = self.state.routes.borrow().current().clone();
-        self.prepare_route_host(&route);
-        let view = match route.clone() {
-            Route::Home => self.home_view(),
-            Route::Albums => self.library_albums_view(),
-            Route::AlbumDetail(album_id) => self.album_detail_view(album_id),
-            Route::Tracks => self.library_tracks_route_view(),
-            Route::Favorites => self.favorites_view(),
-            Route::Artists => self.library_artist_list_view(false),
-            Route::ArtistDetail(artist_id) => self.artist_detail_view(artist_id),
-            Route::ArtistDiscography(artist_id) => self.artist_discography_view(artist_id),
-            Route::ArtistTracks(artist_id) => self.artist_tracks_view(artist_id),
-            Route::AlbumArtists => self.library_artist_list_view(true),
-            Route::Genres => self.library_genre_list_view(),
-            Route::GenreDetail(genre_id) => self.genre_detail_view(genre_id),
-            Route::Folders { path } => self.folders_view(path),
-            Route::Playlists => self.library_playlists_view(),
-            Route::PlaylistDetail(playlist_id) => self.playlist_detail_view(playlist_id),
-            Route::SmartPlaylists => self.library_smart_playlists_view(),
-            Route::SmartPlaylistDetail(smart_playlist_id) => {
-                self.smart_playlist_detail_view(smart_playlist_id)
-            }
-            Route::Search { query, .. } => {
-                let library = self.state.library.borrow().clone();
-                self.search_view(&query, library)
-            }
-        };
-
-        self.finish_route_view(&route, view);
+        self.render_current_route_content();
     }
     pub(in crate::ui) fn request_current_route_render(self: &Rc<Self>) {
         self.render_current_route();
     }
     pub(in crate::ui) fn render_current_route_preserving_scroll(self: &Rc<Self>) {
         self.render_current_route();
+    }
+    pub(in crate::ui) fn render_current_route_content(self: &Rc<Self>) {
+        let route = self.state.routes.borrow().current().clone();
+        self.prepare_route_host(&route);
+        let view = match route.clone() {
+            Route::Home => RouteView::new(self.home_view()),
+            Route::Albums => RouteView::new(self.library_albums_view()),
+            Route::AlbumDetail(album_id) => RouteView::new(self.album_detail_view(album_id)),
+            Route::Tracks => RouteView::new(self.library_tracks_route_view()),
+            Route::Favorites => RouteView::new(self.favorites_view()),
+            Route::Artists => RouteView::new(self.library_artist_list_view(false)),
+            Route::ArtistDetail(artist_id) => RouteView::new(self.artist_detail_view(artist_id)),
+            Route::ArtistDiscography(artist_id) => {
+                RouteView::new(self.artist_discography_view(artist_id))
+            }
+            Route::ArtistTracks(artist_id) => RouteView::new(self.artist_tracks_view(artist_id)),
+            Route::AlbumArtists => RouteView::new(self.library_artist_list_view(true)),
+            Route::Genres => RouteView::new(self.library_genre_list_view()),
+            Route::GenreDetail(genre_id) => RouteView::new(self.genre_detail_view(genre_id)),
+            Route::Folders { path } => RouteView::new(self.folders_view(path)),
+            Route::Playlists => RouteView::new(self.library_playlists_view()),
+            Route::PlaylistDetail(playlist_id) => {
+                RouteView::new(self.playlist_detail_view(playlist_id))
+            }
+            Route::SmartPlaylists => RouteView::new(self.library_smart_playlists_view()),
+            Route::SmartPlaylistDetail(smart_playlist_id) => {
+                RouteView::new(self.smart_playlist_detail_view(smart_playlist_id))
+            }
+            Route::Search { query, .. } => {
+                let library = self.state.library.borrow().clone();
+                RouteView::new(self.search_view(&query, library))
+            }
+        };
+
+        self.finish_route_view(&route, view);
     }
     pub(in crate::ui) fn apply_library_delta(self: &Rc<Self>, delta: LibraryDelta) {
         if delta.is_empty() {
@@ -113,18 +134,18 @@ impl Shell {
             self.state.routes.borrow().can_forward(),
         );
         update_navigation_selection(self.as_ref());
-        if route_uses_responsive_cards(route) {
-            self.state
-                .responsive_route_render_width
-                .set(route_content_width(self.as_ref()));
-        } else {
-            self.state.responsive_route_render_width.set(0);
-        }
     }
 
-    fn finish_route_view(self: &Rc<Self>, route: &Route, view: gtk::Widget) {
+    fn finish_route_view(self: &Rc<Self>, route: &Route, view: RouteView) {
+        self.state.current_route_resize_policy.set(view.resize);
+        let render_width = route_content_width(self.as_ref());
+        let width = match view.resize {
+            RouteResizePolicy::StableOnWidthChange => 0,
+            RouteResizePolicy::RerenderOnWidthChange => render_width,
+        };
+        self.state.width_sensitive_render_width.set(width);
         self.route_host
-            .append(&route_boundary_for_route(route, view));
+            .append(&route_boundary_for_route(route, view.widget, render_width));
         self.prime_route_visible_cover_window(route);
         {
             let shell = Rc::clone(self);

@@ -10,6 +10,8 @@ const DEFAULT_LYRICS_SCROLL_ANIMATION_MS: u64 = 300;
 const MIN_LYRICS_SCROLL_ANIMATION_MS: u64 = 80;
 const LYRICS_SCROLL_MS: u64 = 200;
 const LYRICS_USER_SCROLL_PAUSE_MS: u64 = 3_000;
+const LYRICS_SCROLL_READY_RETRY_MS: u64 = 32;
+const LYRICS_SCROLL_READY_RETRIES: u8 = 5;
 
 #[derive(Clone)]
 pub struct LyricsPane {
@@ -295,40 +297,80 @@ impl LyricsPane {
         let generation = self.scroll_generation.get().saturating_add(1);
         self.scroll_generation.set(generation);
         let scroll_generation = Rc::clone(&self.scroll_generation);
-
-        glib::idle_add_local_once(move || {
-            let Some(bounds) = row.compute_bounds(&scroller) else {
-                return;
-            };
-            let adjustment = scroller.vadjustment();
-            let viewport_height = f64::from(scroller.height().max(1));
-            let row_center = adjustment.value() + f64::from(bounds.y() + bounds.height() / 2.0);
-            let target = row_center - viewport_height / 2.0;
-            let upper = adjustment.upper() - adjustment.page_size();
-            let target = target.clamp(adjustment.lower(), upper.max(adjustment.lower()));
-            let start = adjustment.value();
-            let delta = target - start;
-            if duration_millis == 0 || delta.abs() < 1.0 {
-                adjustment.set_value(target);
-                return;
-            }
-            let started_at = Instant::now();
-            glib::timeout_add_local(Duration::from_millis(16), move || {
-                if scroll_generation.get() != generation {
-                    return glib::ControlFlow::Break;
-                }
-                let elapsed = started_at.elapsed().as_millis() as f64;
-                let progress = (elapsed / duration_millis as f64).clamp(0.0, 1.0);
-                let eased = 1.0 - (1.0 - progress).powi(3);
-                adjustment.set_value(start + delta * eased);
-                if progress >= 1.0 {
-                    glib::ControlFlow::Break
-                } else {
-                    glib::ControlFlow::Continue
-                }
-            });
-        });
+        scroll_row_into_view_when_ready(
+            scroller,
+            row,
+            duration_millis,
+            scroll_generation,
+            generation,
+            LYRICS_SCROLL_READY_RETRIES,
+        );
     }
+}
+
+fn scroll_row_into_view_when_ready(
+    scroller: gtk::ScrolledWindow,
+    row: gtk::Widget,
+    duration_millis: u64,
+    scroll_generation: Rc<Cell<u64>>,
+    generation: u64,
+    retries_left: u8,
+) {
+    glib::idle_add_local_once(move || {
+        if scroll_generation.get() != generation {
+            return;
+        }
+
+        let bounds = row.compute_bounds(&scroller);
+        let adjustment = scroller.vadjustment();
+        let ready = bounds.is_some() && scroller.height() > 1 && adjustment.page_size() > 1.0;
+        if !ready && retries_left > 0 {
+            glib::timeout_add_local_once(
+                Duration::from_millis(LYRICS_SCROLL_READY_RETRY_MS),
+                move || {
+                    scroll_row_into_view_when_ready(
+                        scroller,
+                        row,
+                        duration_millis,
+                        scroll_generation,
+                        generation,
+                        retries_left - 1,
+                    );
+                },
+            );
+            return;
+        }
+
+        let Some(bounds) = bounds else {
+            return;
+        };
+        let viewport_height = f64::from(scroller.height().max(1));
+        let row_center = adjustment.value() + f64::from(bounds.y() + bounds.height() / 2.0);
+        let target = row_center - viewport_height / 2.0;
+        let upper = adjustment.upper() - adjustment.page_size();
+        let target = target.clamp(adjustment.lower(), upper.max(adjustment.lower()));
+        let start = adjustment.value();
+        let delta = target - start;
+        if duration_millis == 0 || delta.abs() < 1.0 {
+            adjustment.set_value(target);
+            return;
+        }
+        let started_at = Instant::now();
+        glib::timeout_add_local(Duration::from_millis(16), move || {
+            if scroll_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+            let elapsed = started_at.elapsed().as_millis() as f64;
+            let progress = (elapsed / duration_millis as f64).clamp(0.0, 1.0);
+            let eased = 1.0 - (1.0 - progress).powi(3);
+            adjustment.set_value(start + delta * eased);
+            if progress >= 1.0 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    });
 }
 
 pub fn active_lyrics_line_index(lines: &[LyricLine], position_millis: u64) -> Option<usize> {

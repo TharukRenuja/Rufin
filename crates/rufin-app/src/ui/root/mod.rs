@@ -77,9 +77,10 @@ use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
 use layout::{
-    COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, detail_showcase_cover_size,
-    detail_showcase_spacing, resolve_layout, route_content_width,
+    COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH,
+    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, SidebarWidths,
+    detail_showcase_cover_size, detail_showcase_spacing, resolve_layout_with_sidebar_widths,
+    route_content_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;
@@ -93,7 +94,10 @@ use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use preferences::{present_library_preferences_dialog, present_preferences_dialog};
 use queue::connect_queue_panel_controls;
-use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
+use right_panel::{
+    apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split,
+    restore_queue_lyrics_split_for_current_height,
+};
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH, FolderPathItem, Genre, HomeBlockKind, HomeSection, HomeSectionKind,
@@ -221,6 +225,11 @@ pub(in crate::ui) const PLAY_NEXT_ICON: &str = "view-sort-ascending-symbolic";
 pub(in crate::ui) const PLAY_LATER_ICON: &str = "view-sort-descending-symbolic";
 pub(in crate::ui) const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
 static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum RouteResizePolicy {
+    StableOnWidthChange,
+    RerenderOnWidthChange,
+}
 #[derive(Clone, Debug, Default)]
 pub struct AppOptions {
     #[cfg(feature = "dev-tools")]
@@ -267,7 +276,8 @@ pub(in crate::ui) struct AppState {
     fullscreen_player_visible: Cell<bool>,
     queue_lyrics_position_save_suppressed: Rc<Cell<u32>>,
     responsive_render_queued: Cell<bool>,
-    responsive_route_render_width: Cell<i32>,
+    current_route_resize_policy: Cell<RouteResizePolicy>,
+    width_sensitive_render_width: Cell<i32>,
     card_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
@@ -280,6 +290,7 @@ pub(in crate::ui) struct AppState {
     route_load_generation: Cell<u64>,
     startup_route_revealed: Cell<bool>,
     startup_route_render_pending: Cell<bool>,
+    startup_route_content_prepared: Cell<bool>,
     source_switch_preparing: Cell<bool>,
     local_source_preparing: Cell<bool>,
     local_source_sync_seen: Cell<bool>,
@@ -422,9 +433,10 @@ pub(in crate::ui) struct Shell {
 }
 fn sidebar_scroll_slot(width: i32, child: &gtk::Box) -> gtk::ScrolledWindow {
     let slot = gtk::ScrolledWindow::new();
-    slot.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    slot.set_policy(gtk::PolicyType::Never, gtk::PolicyType::External);
     slot.set_width_request(width);
     slot.set_min_content_width(width);
+    slot.set_max_content_width(width);
     slot.set_propagate_natural_width(false);
     slot.set_propagate_natural_height(false);
     slot.set_hexpand(false);
@@ -506,7 +518,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         fullscreen_player_visible: Cell::new(false),
         queue_lyrics_position_save_suppressed: Rc::new(Cell::new(0)),
         responsive_render_queued: Cell::new(false),
-        responsive_route_render_width: Cell::new(0),
+        current_route_resize_policy: Cell::new(RouteResizePolicy::StableOnWidthChange),
+        width_sensitive_render_width: Cell::new(0),
         card_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
         home_section_views: RefCell::new(HashMap::new()),
@@ -519,6 +532,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         route_load_generation: Cell::new(0),
         startup_route_revealed: Cell::new(!defer_initial_route),
         startup_route_render_pending: Cell::new(false),
+        startup_route_content_prepared: Cell::new(!defer_initial_route),
         source_switch_preparing: Cell::new(false),
         local_source_preparing: Cell::new(false),
         local_source_sync_seen: Cell::new(false),
@@ -568,6 +582,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
 
     let root_stack = gtk::Stack::new();
     root_stack.add_css_class("app-root");
+    root_stack.set_width_request(MIN_APP_WINDOW_WIDTH);
     root_stack.set_hhomogeneous(false);
     root_stack.set_vhomogeneous(false);
     root_stack.set_interpolate_size(false);

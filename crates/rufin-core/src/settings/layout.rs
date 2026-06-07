@@ -4,7 +4,7 @@ use super::sidebar::*;
 use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 3;
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 4;
-pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 3;
+pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 4;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
 pub const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;

@@ -204,7 +204,7 @@ impl Shell {
         appears_on_count: usize,
         track_count: u32,
     ) -> gtk::Widget {
-        let content_width = route_content_width(self);
+        let content_width = route_content_width(self).saturating_sub(64).max(1);
         let cover_size = detail_showcase_cover_size(content_width);
         let seed = stable_seed(artist.id.as_str());
         let header = gtk::Box::new(
@@ -329,7 +329,7 @@ impl Shell {
         metadata.append(&actions);
         metadata.append(&links);
         header.append(&metadata);
-        detail_showcase_frame(header.upcast(), content_width)
+        detail_showcase_frame(header.upcast())
     }
 
     fn artist_detail_data(&self, artist_id: &ArtistId) -> Option<CachedArtistDetail> {

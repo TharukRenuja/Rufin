@@ -835,10 +835,7 @@ pub(in crate::ui) fn detail_action_row() -> gtk::Box {
     row.set_halign(gtk::Align::Center);
     row
 }
-pub(in crate::ui) fn detail_showcase_frame(
-    header: gtk::Widget,
-    _content_width: i32,
-) -> gtk::Widget {
+pub(in crate::ui) fn detail_showcase_frame(header: gtk::Widget) -> gtk::Widget {
     header.set_hexpand(true);
     header.set_halign(gtk::Align::Fill);
     header

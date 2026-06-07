@@ -532,6 +532,14 @@ pub(in crate::ui) fn startup_route_reveal() {
         ),
         StartupRevealAction::RevealExpired
     );
+    assert_eq!(
+        startup_route_reveal_action(
+            true,
+            0,
+            Duration::from_millis(super::STARTUP_ROUTE_REVEAL_MIN_MS)
+        ),
+        StartupRevealAction::RevealReady
+    );
 }
 #[test]
 pub(in crate::ui) fn run_cover_prime() {

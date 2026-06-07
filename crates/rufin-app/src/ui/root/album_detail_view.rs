@@ -40,11 +40,11 @@ impl Shell {
         content.set_margin_end(32);
         content.set_hexpand(true);
 
-        let content_width = route_content_width(self);
-        let cover_size = detail_showcase_cover_size(content_width);
+        let inner_content_width = route_content_width(self).saturating_sub(64).max(1);
+        let cover_size = detail_showcase_cover_size(inner_content_width);
         let header = gtk::Box::new(
             gtk::Orientation::Vertical,
-            detail_showcase_spacing(content_width),
+            detail_showcase_spacing(inner_content_width),
         );
         header.add_css_class("detail-showcase");
         header.add_css_class("album-detail-showcase");
@@ -159,7 +159,7 @@ impl Shell {
         metadata.append(&artist);
         metadata.append(&actions);
         header.append(&metadata);
-        content.append(&detail_showcase_frame(header.upcast(), content_width));
+        content.append(&detail_showcase_frame(header.upcast()));
 
         let table = self.library_tracks_panel_with_source(
             tracks,
