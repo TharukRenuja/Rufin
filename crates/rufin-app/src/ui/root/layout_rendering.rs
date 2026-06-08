@@ -1,4 +1,13 @@
+use super::library::{
+    clear_list_item_child, configure_library_route_scroller, install_column_view_width_fit,
+    item_at, item_at_from_item, non_propagating_width_clip, route_column_view_initial_width,
+};
 use super::*;
+
+const PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH: i32 = 30;
+const PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH: i32 = 320;
+const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 220;
+const PLAYLIST_ENTRY_PLAY_COUNT_COLUMN_WIDTH: i32 = 96;
 
 impl PlaylistEntrySort {
     pub(in crate::ui) fn title(self) -> &'static str {
@@ -395,44 +404,104 @@ impl Default for PlaylistEntryListState {
         }
     }
 }
-pub(in crate::ui) fn rebuild_playlist_entries_list(
+#[derive(Clone)]
+pub(in crate::ui) struct PlaylistEntryTableRow {
+    pub(in crate::ui) original_index: usize,
+    pub(in crate::ui) display_index: usize,
+    pub(in crate::ui) entry: PlaylistEntry,
+}
+pub(in crate::ui) fn playlist_entries_table_panel(
     shell: &Rc<Shell>,
-    list: &gtk::ListBox,
-    entries: &Rc<Vec<PlaylistEntry>>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    state: Rc<RefCell<PlaylistEntryListState>>,
+    playlist_id: PlaylistId,
+) -> (gtk::Widget, gio::ListStore) {
+    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    selection.set_autoselect(false);
+    selection.set_can_unselect(true);
+    selection.set_selected(gtk::INVALID_LIST_POSITION);
+
+    let table = gtk::ColumnView::new(Some(selection));
+    table.add_css_class("track-table");
+    table.add_css_class("playlist-entry-table");
+    table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
+    table.set_hexpand(true);
+    table.set_halign(gtk::Align::Fill);
+    table.set_vexpand(true);
+
+    let columns = vec![
+        (
+            playlist_entry_reorder_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH,
+        ),
+        (
+            playlist_entry_number_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            PLAYLIST_ENTRY_NUMBER_WIDTH,
+        ),
+        (
+            playlist_entry_title_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH,
+        ),
+        (
+            playlist_entry_album_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH,
+        ),
+        (
+            playlist_entry_play_count_column(shell, Rc::clone(&entries), playlist_id.clone()),
+            PLAYLIST_ENTRY_PLAY_COUNT_COLUMN_WIDTH,
+        ),
+    ];
+    for (column, _) in &columns {
+        table.append_column(column);
+    }
+    install_column_view_width_fit(&table, columns, route_column_view_initial_width(shell));
+
+    let controller = shell.controller.clone();
+    let playlist_id_for_activate = playlist_id.clone();
+    let state_for_activate = Rc::clone(&state);
+    let model_for_activate = model.clone();
+    table.connect_activate(move |_, position| {
+        let visible_entries = playlist_entry_model_entries(&model_for_activate);
+        if let Some(activation) = playlist_play_activation(
+            playlist_id_for_activate.clone(),
+            visible_entries,
+            position as usize,
+            &state_for_activate.borrow(),
+        ) {
+            controller.play_activation(activation);
+        }
+    });
+
+    let scroller = gtk::ScrolledWindow::new();
+    mark_route_scroll_owner(&scroller);
+    configure_library_route_scroller(shell, &scroller);
+    scroller.set_child(Some(&non_propagating_width_clip(table.upcast())));
+    (scroller.upcast(), model)
+}
+pub(in crate::ui) fn rebuild_playlist_entries_model(
+    model: &gio::ListStore,
+    entries: &[PlaylistEntry],
     state: &PlaylistEntryListState,
-    playlist_id: &PlaylistId,
 ) {
-    while let Some(child) = list.first_child() {
-        list.remove(&child);
-    }
-
-    let rows = playlist_entries_for_state(entries, state);
-    if rows.is_empty() {
-        let empty = gtk::Label::new(Some(&tr("No tracks match the search.")));
-        empty.add_css_class("muted");
-        empty.set_margin_top(16);
-        empty.set_margin_bottom(16);
-        list.append(&empty);
-        return;
-    }
-
-    let visible_entries = Rc::new(
-        rows.iter()
-            .map(|(_, entry)| entry.clone())
-            .collect::<Vec<_>>(),
-    );
-    for (display_index, (original_index, entry)) in rows.into_iter().enumerate() {
-        list.append(&playlist_entry_row(
-            shell,
-            Rc::clone(entries),
-            Rc::clone(&visible_entries),
-            playlist_id,
-            state.clone(),
-            original_index,
-            display_index,
-            &entry,
-        ));
-    }
+    let rows = playlist_entries_for_state(entries, state)
+        .into_iter()
+        .enumerate()
+        .map(|(display_index, (original_index, entry))| {
+            glib::BoxedAnyObject::new(PlaylistEntryTableRow {
+                original_index,
+                display_index,
+                entry,
+            })
+        })
+        .collect::<Vec<_>>();
+    model.splice(0, model.n_items(), &rows);
+}
+fn playlist_entry_model_entries(model: &gio::ListStore) -> Vec<PlaylistEntry> {
+    (0..model.n_items())
+        .filter_map(|position| item_at::<PlaylistEntryTableRow>(model, position))
+        .map(|row| row.entry)
+        .collect()
 }
 pub(in crate::ui) fn playlist_entries_for_state(
     entries: &[PlaylistEntry],
@@ -461,6 +530,233 @@ pub(in crate::ui) fn playlist_entry_matches_query(entry: &PlaylistEntry, query: 
         || entry.track.artist.to_lowercase().contains(query)
         || entry.track.album.to_lowercase().contains(query)
 }
+fn playlist_entry_reorder_column(
+    shell: &Rc<Shell>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: PlaylistId,
+) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+            return;
+        };
+        let drag = playlist_entry_drag_handle(&row.entry.entry_id);
+        install_playlist_entry_cell_actions(
+            &drag,
+            &shell,
+            Rc::clone(&entries),
+            playlist_id.clone(),
+            row,
+        );
+        item.set_child(Some(&drag));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let column = gtk::ColumnViewColumn::new(None::<&str>, Some(factory));
+    column.set_fixed_width(PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH);
+    column.set_resizable(false);
+    column
+}
+fn playlist_entry_number_column(
+    shell: &Rc<Shell>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: PlaylistId,
+) -> gtk::ColumnViewColumn {
+    playlist_entry_text_column(
+        shell,
+        "#",
+        PLAYLIST_ENTRY_NUMBER_WIDTH,
+        entries,
+        playlist_id,
+        |row| (row.display_index + 1).to_string(),
+    )
+}
+fn playlist_entry_album_column(
+    shell: &Rc<Shell>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: PlaylistId,
+) -> gtk::ColumnViewColumn {
+    playlist_entry_text_column(
+        shell,
+        "Album",
+        PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH,
+        entries,
+        playlist_id,
+        |row| row.entry.track.album.clone(),
+    )
+}
+fn playlist_entry_play_count_column(
+    shell: &Rc<Shell>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: PlaylistId,
+) -> gtk::ColumnViewColumn {
+    playlist_entry_text_column(
+        shell,
+        "Plays",
+        PLAYLIST_ENTRY_PLAY_COUNT_COLUMN_WIDTH,
+        entries,
+        playlist_id,
+        |row| playlist_entry_play_count_text(row.entry.track.play_count),
+    )
+}
+fn playlist_entry_text_column<F>(
+    shell: &Rc<Shell>,
+    title: &'static str,
+    width: i32,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: PlaylistId,
+    value: F,
+) -> gtk::ColumnViewColumn
+where
+    F: Fn(&PlaylistEntryTableRow) -> String + 'static,
+{
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    let value = Rc::new(value);
+    let xalign = if title == "Plays" { 1.0 } else { 0.5 };
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+            return;
+        };
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        root.set_valign(gtk::Align::Center);
+        root.set_halign(gtk::Align::Fill);
+        root.set_hexpand(true);
+
+        let label = gtk::Label::new(Some(&value(&row)));
+        label.add_css_class("table-link-label");
+        label.add_css_class("muted");
+        label.set_xalign(xalign);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
+        label.set_width_chars(1);
+        label.set_max_width_chars((width / 8).clamp(8, 32));
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        root.append(&label);
+
+        install_playlist_entry_cell_actions(
+            &root,
+            &shell,
+            Rc::clone(&entries),
+            playlist_id.clone(),
+            row,
+        );
+        item.set_child(Some(&root));
+    });
+    factory.connect_unbind(clear_list_item_child);
+
+    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
+    column.set_fixed_width(width);
+    column.set_resizable(false);
+    column
+}
+fn playlist_entry_title_column(
+    shell: &Rc<Shell>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: PlaylistId,
+) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+            return;
+        };
+        let cover = shell.cover_tile_for(
+            row.entry.track.image_ref.as_ref(),
+            stable_seed(row.entry.track.id.as_str()),
+            PLAYLIST_ENTRY_COVER_WIDTH,
+            THUMB_COVER_SIZE,
+        );
+
+        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        labels.set_hexpand(true);
+        labels.set_halign(gtk::Align::Fill);
+        labels.set_width_request(1);
+        labels.append(&playlist_entry_text_label(
+            &row.entry.track.title,
+            "",
+            PLAYLIST_ENTRY_TITLE_MAX_CHARS,
+        ));
+        labels.append(&playlist_entry_text_label(
+            &row.entry.track.artist,
+            "muted",
+            PLAYLIST_ENTRY_TITLE_MAX_CHARS,
+        ));
+        let title = playlist_title_cell(cover, labels.upcast());
+        install_playlist_entry_cell_actions(
+            &title,
+            &shell,
+            Rc::clone(&entries),
+            playlist_id.clone(),
+            row,
+        );
+        item.set_child(Some(&title));
+    });
+    factory.connect_unbind(clear_list_item_child);
+    let column = gtk::ColumnViewColumn::new(Some(&tr("Title")), Some(factory));
+    column.set_fixed_width(PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH);
+    column.set_resizable(false);
+    column
+}
+fn playlist_entry_drag_handle(entry_id: &str) -> gtk::Image {
+    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+    drag.add_css_class("dim-label");
+    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
+    drag.set_width_request(PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH);
+    drag.set_halign(gtk::Align::Center);
+    let drag_source = gtk::DragSource::builder()
+        .actions(gtk::gdk::DragAction::MOVE)
+        .build();
+    let entry_id = entry_id.to_string();
+    drag_source.connect_prepare(move |_, _, _| {
+        Some(gtk::gdk::ContentProvider::for_value(&entry_id.to_value()))
+    });
+    drag.add_controller(drag_source);
+    drag
+}
+fn install_playlist_entry_cell_actions(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+    entries: Rc<Vec<PlaylistEntry>>,
+    playlist_id: PlaylistId,
+    row: PlaylistEntryTableRow,
+) {
+    install_playlist_entry_context_menu(
+        target,
+        shell,
+        row.entry.track.clone(),
+        playlist_id.clone(),
+        row.entry.entry_id.clone(),
+        row.entry.track.title.clone(),
+    );
+
+    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    let controller = shell.controller.clone();
+    let target = target.as_ref().clone();
+    let target_for_drop = target.clone();
+    drop_target.connect_drop(move |_, value, _, y| {
+        let Ok(entry_id) = value.get::<String>() else {
+            return false;
+        };
+        let after = y > f64::from(target_for_drop.height()) / 2.0;
+        let Some(new_index) = playlist_drop_index(&entries, &entry_id, row.original_index, after)
+        else {
+            return false;
+        };
+        controller.move_playlist_entry(playlist_id.clone(), entry_id, new_index);
+        true
+    });
+    target.add_controller(drop_target);
+}
 pub(in crate::ui) fn compare_playlist_entry(
     left: &(usize, PlaylistEntry),
     right: &(usize, PlaylistEntry),
@@ -477,84 +773,6 @@ pub(in crate::ui) fn compare_playlist_entry(
 pub(in crate::ui) fn cmp_text(left: &str, right: &str) -> std::cmp::Ordering {
     left.to_lowercase().cmp(&right.to_lowercase())
 }
-pub(in crate::ui) fn playlist_entries_header_row() -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
-    row.add_css_class("playlist-entry-header");
-    row.set_hexpand(true);
-    row.set_halign(gtk::Align::Fill);
-    row.set_valign(gtk::Align::Center);
-    row.append(&fixed_spacer(PLAYLIST_ENTRY_DRAG_WIDTH));
-    row.append(&playlist_header_label(
-        "#",
-        PLAYLIST_ENTRY_NUMBER_WIDTH,
-        false,
-        PLAYLIST_ENTRY_NUMBER_XALIGN,
-    ));
-    row.append(&playlist_text_columns(
-        playlist_header_text_label("Title", PLAYLIST_ENTRY_TITLE_MAX_CHARS).upcast(),
-        playlist_header_album_label("Album", PLAYLIST_ENTRY_ALBUM_MAX_CHARS).upcast(),
-    ));
-    row.append(&playlist_header_label(
-        "Plays",
-        PLAYLIST_ENTRY_PLAY_COUNT_WIDTH,
-        false,
-        1.0,
-    ));
-    row.upcast()
-}
-pub(in crate::ui) fn playlist_header_label(
-    text: &str,
-    width: i32,
-    expand: bool,
-    xalign: f32,
-) -> gtk::Label {
-    let label = gtk::Label::new(Some(&tr(text)));
-    label.add_css_class("muted");
-    label.set_xalign(xalign);
-    label.set_width_request(width);
-    label.set_hexpand(expand);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    if expand {
-        label.set_width_chars(1);
-        label.set_max_width_chars(PLAYLIST_ENTRY_TITLE_MAX_CHARS);
-    }
-    label
-}
-pub(in crate::ui) fn playlist_header_text_label(text: &str, max_width_chars: i32) -> gtk::Label {
-    let label = gtk::Label::new(Some(&tr(text)));
-    label.add_css_class("muted");
-    label.set_xalign(0.0);
-    label.set_hexpand(true);
-    label.set_halign(gtk::Align::Fill);
-    label.set_width_chars(1);
-    label.set_max_width_chars(max_width_chars);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label
-}
-pub(in crate::ui) fn playlist_header_album_label(text: &str, max_width_chars: i32) -> gtk::Label {
-    let label = playlist_header_text_label(text, max_width_chars);
-    label.set_xalign(0.5);
-    label
-}
-pub(in crate::ui) fn playlist_text_columns(title: gtk::Widget, album: gtk::Widget) -> gtk::Widget {
-    let columns = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_TEXT_COLUMN_GAP);
-    columns.set_homogeneous(false);
-    columns.set_hexpand(true);
-    columns.set_halign(gtk::Align::Fill);
-    columns.set_width_request(1);
-
-    title.set_hexpand(true);
-    title.set_halign(gtk::Align::Fill);
-    title.set_width_request(1);
-    columns.append(&title);
-
-    album.set_hexpand(true);
-    album.set_halign(gtk::Align::Fill);
-    album.set_width_request(1);
-    columns.append(&album);
-
-    columns.upcast()
-}
 pub(in crate::ui) fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget) -> gtk::Widget {
     let title = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
     title.set_hexpand(true);
@@ -563,137 +781,6 @@ pub(in crate::ui) fn playlist_title_cell(cover: gtk::Widget, labels: gtk::Widget
     title.append(&cover);
     title.append(&labels);
     title.upcast()
-}
-#[allow(clippy::too_many_arguments)]
-pub(in crate::ui) fn playlist_entry_row(
-    shell: &Rc<Shell>,
-    entries: Rc<Vec<PlaylistEntry>>,
-    visible_entries: Rc<Vec<PlaylistEntry>>,
-    playlist_id: &PlaylistId,
-    state: PlaylistEntryListState,
-    original_index: usize,
-    display_index: usize,
-    entry: &PlaylistEntry,
-) -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, PLAYLIST_ENTRY_COLUMN_GAP);
-    row.add_css_class("playlist-entry-row");
-    row.set_focusable(true);
-    row.set_hexpand(true);
-    row.set_halign(gtk::Align::Fill);
-    row.set_valign(gtk::Align::Center);
-
-    let drag = gtk::Image::from_icon_name("list-drag-handle-symbolic");
-    drag.add_css_class("dim-label");
-    drag.set_tooltip_text(Some(&tr("Drag to reorder")));
-    drag.set_width_request(PLAYLIST_ENTRY_DRAG_WIDTH);
-    drag.set_halign(gtk::Align::Center);
-    let drag_source = gtk::DragSource::builder()
-        .actions(gtk::gdk::DragAction::MOVE)
-        .build();
-    let drag_entry_id = entry.entry_id.clone();
-    drag_source.connect_prepare(move |_, _, _| {
-        Some(gtk::gdk::ContentProvider::for_value(
-            &drag_entry_id.to_value(),
-        ))
-    });
-    drag.add_controller(drag_source);
-    row.append(&drag);
-
-    let number = gtk::Label::new(Some(&(display_index + 1).to_string()));
-    number.add_css_class("muted");
-    number.set_xalign(PLAYLIST_ENTRY_NUMBER_XALIGN);
-    number.set_width_request(PLAYLIST_ENTRY_NUMBER_WIDTH);
-    row.append(&number);
-
-    let cover = shell.cover_tile_for(
-        entry.track.image_ref.as_ref(),
-        stable_seed(entry.track.id.as_str()),
-        PLAYLIST_ENTRY_COVER_WIDTH,
-        THUMB_COVER_SIZE,
-    );
-
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    labels.set_hexpand(true);
-    labels.set_halign(gtk::Align::Fill);
-    labels.set_width_request(1);
-    labels.append(&playlist_entry_text_label(
-        &entry.track.title,
-        "",
-        PLAYLIST_ENTRY_TITLE_MAX_CHARS,
-    ));
-    labels.append(&playlist_entry_text_label(
-        &entry.track.artist,
-        "muted",
-        PLAYLIST_ENTRY_TITLE_MAX_CHARS,
-    ));
-
-    let album =
-        playlist_entry_text_label(&entry.track.album, "muted", PLAYLIST_ENTRY_ALBUM_MAX_CHARS);
-    album.set_xalign(0.5);
-    album.set_valign(gtk::Align::Center);
-    row.append(&playlist_text_columns(
-        playlist_title_cell(cover, labels.upcast()),
-        album.upcast(),
-    ));
-
-    let play_count = gtk::Label::new(Some(&playlist_entry_play_count_text(
-        entry.track.play_count,
-    )));
-    play_count.add_css_class("muted");
-    play_count.set_xalign(1.0);
-    play_count.set_valign(gtk::Align::Center);
-    play_count.set_width_request(PLAYLIST_ENTRY_PLAY_COUNT_WIDTH);
-    row.append(&play_count);
-
-    let controller = shell.controller.clone();
-    let entries_for_play = Rc::clone(&visible_entries);
-    let playlist_id_for_play = playlist_id.clone();
-    let click = gtk::GestureClick::new();
-    click.set_button(1);
-    click.connect_released(move |gesture, n_press, _, _| {
-        if n_press == 2 {
-            gesture.set_state(gtk::EventSequenceState::Claimed);
-            if let Some(activation) = playlist_play_activation(
-                playlist_id_for_play.clone(),
-                entries_for_play.as_ref().clone(),
-                display_index,
-                &state,
-            ) {
-                controller.play_activation(activation);
-            }
-        }
-    });
-    row.add_controller(click);
-    install_playlist_entry_context_menu(
-        &row,
-        shell,
-        entry.track.clone(),
-        playlist_id.clone(),
-        entry.entry_id.clone(),
-        entry.track.title.clone(),
-    );
-
-    let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
-    let controller = shell.controller.clone();
-    let playlist_id = playlist_id.clone();
-    let entries_for_drop = Rc::clone(&entries);
-    let row_for_drop = row.clone();
-    drop_target.connect_drop(move |_, value, _, y| {
-        let Ok(entry_id) = value.get::<String>() else {
-            return false;
-        };
-        let after = y > f64::from(row_for_drop.height()) / 2.0;
-        let Some(new_index) =
-            playlist_drop_index(&entries_for_drop, &entry_id, original_index, after)
-        else {
-            return false;
-        };
-        controller.move_playlist_entry(playlist_id.clone(), entry_id, new_index);
-        true
-    });
-    row.add_controller(drop_target);
-
-    row.upcast()
 }
 pub(in crate::ui) fn playlist_drop_index(
     entries: &[PlaylistEntry],
@@ -733,11 +820,6 @@ pub(in crate::ui) fn playlist_entry_text_label(
 }
 pub(in crate::ui) fn playlist_entry_play_count_text(value: Option<u32>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
-}
-pub(in crate::ui) fn fixed_spacer(width: i32) -> gtk::Widget {
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_width_request(width);
-    spacer.upcast()
 }
 pub(in crate::ui) fn confirm_remove_playlist_entry(
     shell: &Rc<Shell>,
