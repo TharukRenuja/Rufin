@@ -222,17 +222,12 @@ impl Shell {
         let compact = playlist_detail_compact_for_width(content_width);
         let route_margin = playlist_route_margin(content_width);
         let cover_size = playlist_cover_size(content_width);
-        let scroller = gtk::ScrolledWindow::new();
-        mark_route_scroll_owner(&scroller);
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_vexpand(true);
-
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 20);
         wrapper.add_css_class("route-content");
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_width_request(1);
+        wrapper.set_vexpand(true);
         wrapper.set_margin_top(28);
         wrapper.set_margin_bottom(36);
         wrapper.set_margin_start(route_margin);
@@ -353,8 +348,7 @@ impl Shell {
         } else {
             wrapper.append(&self.playlist_entries_view(&detail));
         }
-        scroller.set_child(Some(&wrapper));
-        scroller.upcast()
+        wrapper.upcast()
     }
     pub(in crate::ui) fn playlist_entries_view(
         self: &Rc<Self>,
@@ -398,61 +392,40 @@ impl Shell {
         toolbar.append(&direction);
         wrapper.append(&toolbar);
 
-        wrapper.append(&playlist_entries_header_row());
-
-        let list = gtk::ListBox::new();
-        list.add_css_class("track-table");
-        list.add_css_class("playlist-entry-list");
-        list.set_hexpand(true);
-        list.set_halign(gtk::Align::Fill);
-        list.set_selection_mode(gtk::SelectionMode::None);
-
-        rebuild_playlist_entries_list(self, &list, &entries, &state.borrow(), &detail.playlist.id);
+        let (table, model) = playlist_entries_table_panel(
+            self,
+            Rc::clone(&entries),
+            Rc::clone(&state),
+            detail.playlist.id.clone(),
+        );
+        rebuild_playlist_entries_model(&model, &entries, &state.borrow());
 
         {
-            let shell = Rc::clone(self);
-            let list = list.clone();
+            let model = model.clone();
             let entries = Rc::clone(&entries);
             let state = Rc::clone(&state);
-            let playlist_id = detail.playlist.id.clone();
             search.connect_search_changed(move |entry| {
                 state.borrow_mut().query = entry.text().trim().to_string();
-                rebuild_playlist_entries_list(
-                    &shell,
-                    &list,
-                    &entries,
-                    &state.borrow(),
-                    &playlist_id,
-                );
+                rebuild_playlist_entries_model(&model, &entries, &state.borrow());
             });
         }
         {
-            let shell = Rc::clone(self);
-            let list = list.clone();
+            let model = model.clone();
             let entries = Rc::clone(&entries);
             let state = Rc::clone(&state);
-            let playlist_id = detail.playlist.id.clone();
             sort_dropdown.connect_selected_notify(move |dropdown| {
                 let selected = PLAYLIST_ENTRY_SORTS
                     .get(dropdown.selected() as usize)
                     .copied()
                     .unwrap_or(PlaylistEntrySort::Order);
                 state.borrow_mut().sort = selected;
-                rebuild_playlist_entries_list(
-                    &shell,
-                    &list,
-                    &entries,
-                    &state.borrow(),
-                    &playlist_id,
-                );
+                rebuild_playlist_entries_model(&model, &entries, &state.borrow());
             });
         }
         {
-            let shell = Rc::clone(self);
-            let list = list.clone();
+            let model = model.clone();
             let entries = Rc::clone(&entries);
             let state = Rc::clone(&state);
-            let playlist_id = detail.playlist.id.clone();
             direction.connect_clicked(move |button| {
                 let descending = {
                     let mut state = state.borrow_mut();
@@ -464,16 +437,10 @@ impl Shell {
                 } else {
                     "view-sort-ascending-symbolic"
                 });
-                rebuild_playlist_entries_list(
-                    &shell,
-                    &list,
-                    &entries,
-                    &state.borrow(),
-                    &playlist_id,
-                );
+                rebuild_playlist_entries_model(&model, &entries, &state.borrow());
             });
         }
-        wrapper.append(&list);
+        wrapper.append(&table);
         wrapper.upcast()
     }
 }
