@@ -134,5 +134,12 @@ perl -0pi -e '
     (?:\s+-\ .+\n)+
     (\s+default:\ 0)
   }{$1$options$2}xm;
+  if ($count == 0) {
+    $count = s{
+      (id:\ rufin-version\n\s+attributes:\n\s+label:\ Rufin\ version\n(?:\s+(?!options:).+\n)*\s+options:\n)
+      (?:\s+-\ .+\n)+
+      (\s+default:\ 0)
+    }{$1$options$2}xm;
+  }
   die "missing issue template Rufin version dropdown\n" unless $count > 0;
 ' .github/ISSUE_TEMPLATE/bug_report.yml
