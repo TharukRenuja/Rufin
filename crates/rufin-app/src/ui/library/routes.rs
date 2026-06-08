@@ -980,7 +980,7 @@ impl Shell {
         connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
         scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         view.set_margin_start(content_margin_start);
-        scroller.set_child(Some(&non_propagating_width_clip(view)));
+        scroller.set_child(Some(&view));
         wrapper.append(&scroller);
         wrapper.upcast()
     }
