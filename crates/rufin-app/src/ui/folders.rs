@@ -333,19 +333,21 @@ fn folder_table_header(name_column_width: i32) -> gtk::ListBoxRow {
     row.add_css_class("folder-table-header");
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    content.append(&name_header_label(name_column_width));
+    content.append(&fixed_width_cell(
+        name_column_width,
+        name_header_label().upcast(),
+    ));
     content.append(&table_header_label("Artist / Album"));
     content.append(&duration_header_label());
     row.set_child(Some(&content));
     row
 }
 
-fn name_header_label(name_column_width: i32) -> gtk::Label {
+fn name_header_label() -> gtk::Label {
     let text = gtk::Label::new(Some(&tr("Name")));
     text.add_css_class("muted");
     text.set_xalign(0.0);
-    text.set_hexpand(false);
-    text.set_width_request(name_column_width);
+    text.set_hexpand(true);
     text
 }
 
@@ -360,16 +362,21 @@ fn table_header_label(label: &str) -> gtk::Label {
     text
 }
 
-fn duration_header_label() -> gtk::Image {
+fn duration_header_label() -> gtk::Widget {
+    let wrapper = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    wrapper.set_hexpand(false);
+    wrapper.set_width_request(FOLDER_DURATION_COLUMN_WIDTH);
+    wrapper.set_halign(gtk::Align::Fill);
+
     let image = gtk::Image::from_icon_name("appointment-soon-symbolic");
     let label = tr("Duration");
     image.add_css_class("muted");
     image.set_hexpand(false);
-    image.set_width_request(FOLDER_DURATION_COLUMN_WIDTH);
-    image.set_halign(gtk::Align::End);
+    image.set_halign(gtk::Align::Start);
     image.set_tooltip_text(Some(&label));
     image.update_property(&[gtk::accessible::Property::Label(&label)]);
-    image
+    wrapper.append(&image);
+    wrapper.upcast()
 }
 
 fn folder_table_folder_row(
@@ -444,23 +451,25 @@ fn folder_table_track_row(
     row
 }
 
-fn folder_name_cell(text: &str, width: i32) -> gtk::Box {
+fn folder_name_cell(text: &str, width: i32) -> gtk::Widget {
     let cell = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    cell.set_hexpand(false);
-    cell.set_width_request(width);
+    cell.set_hexpand(true);
+    cell.set_halign(gtk::Align::Fill);
     cell.append(&gtk::Image::from_icon_name("folder-symbolic"));
     let label = gtk::Label::new(Some(text));
     label.set_xalign(0.0);
     label.set_hexpand(true);
+    label.set_width_chars(1);
+    label.set_max_width_chars(1);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     cell.append(&label);
-    cell
+    fixed_width_cell(width, cell.upcast())
 }
 
-fn track_name_cell(shell: &Rc<Shell>, track: &Track, width: i32) -> gtk::Box {
+fn track_name_cell(shell: &Rc<Shell>, track: &Track, width: i32) -> gtk::Widget {
     let cell = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    cell.set_hexpand(false);
-    cell.set_width_request(width);
+    cell.set_hexpand(true);
+    cell.set_halign(gtk::Align::Fill);
     cell.append(&shell.cover_tile_for(
         track.image_ref.as_ref(),
         stable_seed(track.id.as_str()),
@@ -470,9 +479,11 @@ fn track_name_cell(shell: &Rc<Shell>, track: &Track, width: i32) -> gtk::Box {
     let label = gtk::Label::new(Some(&track.title));
     label.set_xalign(0.0);
     label.set_hexpand(true);
+    label.set_width_chars(1);
+    label.set_max_width_chars(1);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     cell.append(&label);
-    cell
+    fixed_width_cell(width, cell.upcast())
 }
 
 fn detail_cell(text: &str) -> gtk::Label {
@@ -487,10 +498,27 @@ fn detail_cell(text: &str) -> gtk::Label {
 
 fn duration_cell(text: &str) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
-    label.set_xalign(1.0);
+    label.set_xalign(0.0);
     label.set_hexpand(false);
     label.set_width_request(FOLDER_DURATION_COLUMN_WIDTH);
     label
+}
+
+fn fixed_width_cell(width: i32, child: gtk::Widget) -> gtk::Widget {
+    child.set_hexpand(true);
+    child.set_halign(gtk::Align::Fill);
+
+    let clip = gtk::ScrolledWindow::new();
+    clip.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+    clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_min_content_width(0);
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(true);
+    clip.set_width_request(width);
+    clip.set_hexpand(false);
+    clip.set_halign(gtk::Align::Fill);
+    clip.set_child(Some(&child));
+    clip.upcast()
 }
 
 fn folder_tree_width(route_width: i32) -> i32 {

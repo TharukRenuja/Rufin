@@ -3,6 +3,7 @@ use super::*;
 const FITTED_TABLE_WIDTH_PADDING: i32 = 2;
 const TABLE_TARGET_WIDTH: i32 = 44;
 const TABLE_MIN_WIDTH: i32 = 24;
+const TABLE_EXPAND_MIN_WIDTH: i32 = 140;
 
 pub(in crate::ui) fn route_column_view_initial_width(_shell: &Shell) -> i32 {
     1
@@ -87,6 +88,16 @@ fn distribute_column_width(widths: &mut [i32], target: i32) {
     if remainder <= 0 || widths.is_empty() {
         return;
     }
+    let flex_positions = widths
+        .iter()
+        .enumerate()
+        .filter_map(|(pos, width)| (*width >= TABLE_EXPAND_MIN_WIDTH).then_some(pos))
+        .collect::<Vec<_>>();
+    if !flex_positions.is_empty() {
+        distribute_weighted_column_width(widths, &flex_positions, remainder);
+        return;
+    }
+
     let pos = widths
         .iter()
         .enumerate()
@@ -94,6 +105,25 @@ fn distribute_column_width(widths: &mut [i32], target: i32) {
         .map(|(pos, _)| pos)
         .unwrap_or(0);
     widths[pos] += remainder;
+}
+
+fn distribute_weighted_column_width(widths: &mut [i32], positions: &[usize], extra: i32) {
+    let total = positions.iter().map(|pos| widths[*pos]).sum::<i32>().max(1);
+    let mut applied = 0;
+    for pos in positions {
+        let add = widths[*pos] * extra / total;
+        widths[*pos] += add;
+        applied += add;
+    }
+
+    let mut remainder = extra - applied;
+    let mut index = 0;
+    while remainder > 0 {
+        let pos = positions[index % positions.len()];
+        widths[pos] += 1;
+        remainder -= 1;
+        index += 1;
+    }
 }
 
 pub(in crate::ui) fn install_column_view_width_fit(
@@ -325,14 +355,9 @@ pub(in crate::ui) fn track_column_for_key(
             track.title.clone()
         }),
         LibraryField::Favorite => track_favorite_column(shell),
-        _ => track_text_column(
-            shell,
-            field.title(),
-            width,
-            false,
-            track_text_xalign(field),
-            move |track| track_field(track, field),
-        ),
+        _ => track_text_column(shell, field.title(), width, false, 0.0, move |track| {
+            track_field(track, field)
+        }),
     }
 }
 pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField) -> i32 {
@@ -346,11 +371,9 @@ pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField
         LibraryField::Album
         | LibraryField::Artist
         | LibraryField::AlbumArtist
-        | LibraryField::Genre => 148,
-        LibraryField::PlayCount
-        | LibraryField::UserRating
-        | LibraryField::SongCount
-        | LibraryField::AlbumCount => 82,
+        | LibraryField::Genre => 180,
+        LibraryField::PlayCount => play_count_column_width(),
+        LibraryField::UserRating | LibraryField::SongCount | LibraryField::AlbumCount => 82,
         LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 108,
         LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 62,
         LibraryField::Duration => 70,
@@ -391,7 +414,7 @@ where
     factory.connect_setup(|_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             let label = gtk::Label::new(None);
-            label.set_xalign(0.5);
+            label.set_xalign(0.0);
             label.set_halign(gtk::Align::Fill);
             label.set_hexpand(true);
             label.set_wrap(false);
@@ -594,7 +617,7 @@ where
         };
         let current_album = Rc::new(RefCell::new(None::<Album>));
         let label = gtk::Label::new(None);
-        label.set_xalign(0.5);
+        label.set_xalign(0.0);
         label.set_halign(gtk::Align::Fill);
         label.set_hexpand(true);
         label.set_wrap(false);
@@ -843,7 +866,7 @@ where
             return;
         };
         let label = gtk::Label::new(Some(&(value)(&artist)));
-        label.set_xalign(0.5);
+        label.set_xalign(0.0);
         label.set_halign(gtk::Align::Fill);
         label.set_hexpand(true);
         label.set_wrap(false);
@@ -1069,13 +1092,6 @@ where
     column
 }
 
-fn track_text_xalign(field: LibraryField) -> f32 {
-    if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
-        0.0
-    } else {
-        0.5
-    }
-}
 pub(in crate::ui) fn track_merged_column<Title, Subtitle, Image, Seed>(
     shell: &Rc<Shell>,
     title: &'static str,

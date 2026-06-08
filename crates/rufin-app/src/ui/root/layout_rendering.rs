@@ -1,13 +1,13 @@
 use super::library::{
     clear_list_item_child, configure_library_route_scroller, install_column_view_width_fit,
-    item_at, item_at_from_item, non_propagating_width_clip, route_column_view_initial_width,
+    item_at, item_at_from_item, non_propagating_width_clip, play_count_column_width,
+    route_column_view_initial_width,
 };
 use super::*;
 
 const PLAYLIST_ENTRY_REORDER_COLUMN_WIDTH: i32 = 30;
 const PLAYLIST_ENTRY_TITLE_COLUMN_WIDTH: i32 = 320;
 const PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH: i32 = 220;
-const PLAYLIST_ENTRY_PLAY_COUNT_COLUMN_WIDTH: i32 = 96;
 
 impl PlaylistEntrySort {
     pub(in crate::ui) fn title(self) -> &'static str {
@@ -449,7 +449,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
         ),
         (
             playlist_entry_play_count_column(shell, Rc::clone(&entries), playlist_id.clone()),
-            PLAYLIST_ENTRY_PLAY_COUNT_COLUMN_WIDTH,
+            play_count_column_width(),
         ),
     ];
     for (column, _) in &columns {
@@ -596,7 +596,7 @@ fn playlist_entry_play_count_column(
     playlist_entry_text_column(
         shell,
         "Plays",
-        PLAYLIST_ENTRY_PLAY_COUNT_COLUMN_WIDTH,
+        play_count_column_width(),
         entries,
         playlist_id,
         |row| playlist_entry_play_count_text(row.entry.track.play_count),
@@ -616,7 +616,6 @@ where
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
     let value = Rc::new(value);
-    let xalign = if title == "Plays" { 1.0 } else { 0.5 };
     factory.connect_bind(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -632,7 +631,7 @@ where
         let label = gtk::Label::new(Some(&value(&row)));
         label.add_css_class("table-link-label");
         label.add_css_class("muted");
-        label.set_xalign(xalign);
+        label.set_xalign(0.0);
         label.set_halign(gtk::Align::Fill);
         label.set_hexpand(true);
         label.set_width_chars(1);

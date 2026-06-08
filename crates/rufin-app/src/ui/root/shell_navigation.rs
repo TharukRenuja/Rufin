@@ -213,8 +213,8 @@ fn track_table_column_width(column: TrackTableColumn) -> i32 {
     match column {
         TrackTableColumn::TrackNumber => 54,
         TrackTableColumn::Title => 320,
-        TrackTableColumn::Artist => 180,
-        TrackTableColumn::Album => 220,
+        TrackTableColumn::Artist => 220,
+        TrackTableColumn::Album => 260,
         TrackTableColumn::Year => 70,
         TrackTableColumn::Duration => 90,
         TrackTableColumn::Favorite => 76,
@@ -227,10 +227,10 @@ pub(in crate::ui) fn track_table_column(
     match column {
         TrackTableColumn::TrackNumber => track_row_index_column(),
         TrackTableColumn::Title => track_identity_column(shell),
-        TrackTableColumn::Artist => track_link_column(shell, "Artist", 180, |track| {
+        TrackTableColumn::Artist => track_link_column(shell, "Artist", 220, |track| {
             (track.artist.clone(), track_artist_route(track))
         }),
-        TrackTableColumn::Album => track_link_column(shell, "Album", 220, |track| {
+        TrackTableColumn::Album => track_link_column(shell, "Album", 260, |track| {
             (
                 track.album.clone(),
                 Some(Route::AlbumDetail(track.album_id.clone())),
@@ -551,7 +551,7 @@ where
             return;
         };
         let label = gtk::Label::new(None);
-        label.set_xalign(0.5);
+        label.set_xalign(0.0);
         label.set_halign(gtk::Align::Fill);
         label.set_hexpand(true);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -815,7 +815,7 @@ where
 
         let button_label = gtk::Label::new(None);
         button_label.add_css_class("table-link-label");
-        button_label.set_xalign(0.5);
+        button_label.set_xalign(0.0);
         button_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         button_label.set_halign(gtk::Align::Fill);
         button_label.set_hexpand(true);
@@ -835,7 +835,7 @@ where
 
         let label = gtk::Label::new(None);
         label.add_css_class("table-link-label");
-        label.set_xalign(0.5);
+        label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_halign(gtk::Align::Fill);
         label.set_hexpand(true);
