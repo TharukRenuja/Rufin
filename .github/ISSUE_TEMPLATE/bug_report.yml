@@ -14,6 +14,7 @@ body:
     id: rufin-version
     attributes:
       label: Rufin version
+      description: You can check which version you are running from Main Menu/About Rufin
       options:
         - 0.6.3 (latest)
         - 0.6.2
@@ -57,21 +58,13 @@ body:
       label: Desktop environment/WM
       options:
         - niri
-        - gnome
-        - KDE
-        - hyprland
+        - GNOME
+        - KDE Plasma
+        - Hyprland
         - i3
-        - sway
-        - qtile
+        - Sway
+        - Qtile
         - Other/Irrelevant
-    validations:
-      required: true
-
-  - type: textarea
-    id: problem
-    attributes:
-      label: What happened?
-      description: Please describe the problem and what you expected to happen instead.
     validations:
       required: true
 
@@ -82,6 +75,14 @@ body:
       description: Please provide additional information if you selected Other above, if your music server is not up-to-date, or to add context that may be useful to know
     validations:
       required: false
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Please describe the problem and what you expected to happen instead.
+    validations:
+      required: true
 
   - type: textarea
     id: steps
