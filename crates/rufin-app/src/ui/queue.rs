@@ -34,6 +34,8 @@ const QUEUE_FAVORITE_COLUMN_WIDTH: i32 = 64;
 struct QueueFullscreenColumnWidths {
     title: i32,
     album: i32,
+    show_album: bool,
+    show_year: bool,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -277,23 +279,25 @@ impl Shell {
         );
 
         let (labels, artist) = queue_identity_cell(entry, widths.title);
-        let album = fullscreen_queue_text_cell(&entry.album, widths.album);
         let duration = fullscreen_queue_fixed_cell(
             &format_duration(entry.duration_seconds),
             QUEUE_DURATION_COLUMN_WIDTH,
-        );
-        let year_text = (entry.year != 0).then(|| entry.year.to_string());
-        let year = fullscreen_queue_fixed_cell(
-            year_text.as_deref().unwrap_or(""),
-            QUEUE_YEAR_COLUMN_WIDTH,
         );
 
         columns.append(&number);
         columns.append(&cover);
         columns.append(&labels);
-        columns.append(&album);
+        if widths.show_album {
+            columns.append(&fullscreen_queue_text_cell(&entry.album, widths.album));
+        }
         columns.append(&duration);
-        columns.append(&year);
+        if widths.show_year {
+            let year_text = (entry.year != 0).then(|| entry.year.to_string());
+            columns.append(&fullscreen_queue_fixed_cell(
+                year_text.as_deref().unwrap_or(""),
+                QUEUE_YEAR_COLUMN_WIDTH,
+            ));
+        }
         columns.append(&self.queue_favorite_cell(entry));
         row.append(&columns);
 
@@ -426,9 +430,7 @@ fn fullscreen_queue_header_row(widths: QueueFullscreenColumnWidths) -> gtk::Widg
     let number = fullscreen_queue_fixed_spacer(QUEUE_FULLSCREEN_INDEX_COLUMN_WIDTH);
     let cover = fullscreen_queue_fixed_spacer(QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH);
     let title = queue_header_text_label(&tr("Title").to_uppercase(), widths.title, 0.0);
-    let album = queue_header_text_label(&tr("Album").to_uppercase(), widths.album, 0.0);
     let duration = queue_duration_header_icon();
-    let year = queue_header_fixed_label(&tr("Year").to_uppercase(), QUEUE_YEAR_COLUMN_WIDTH);
     let favorite = gtk::Label::new(Some(FAVORITE_EMPTY_GLYPH));
     favorite.add_css_class("muted");
     favorite.set_width_request(QUEUE_FAVORITE_COLUMN_WIDTH);
@@ -437,9 +439,20 @@ fn fullscreen_queue_header_row(widths: QueueFullscreenColumnWidths) -> gtk::Widg
     header.append(&number);
     header.append(&cover);
     header.append(&title);
-    header.append(&album);
+    if widths.show_album {
+        header.append(&queue_header_text_label(
+            &tr("Album").to_uppercase(),
+            widths.album,
+            0.0,
+        ));
+    }
     header.append(&duration);
-    header.append(&year);
+    if widths.show_year {
+        header.append(&queue_header_fixed_label(
+            &tr("Year").to_uppercase(),
+            QUEUE_YEAR_COLUMN_WIDTH,
+        ));
+    }
     header.append(&favorite);
 
     header.upcast()
@@ -532,29 +545,62 @@ fn fullscreen_queue_fixed_spacer(width: i32) -> gtk::Box {
 }
 
 fn fullscreen_queue_available_width(panel: &gtk::Box, window_width: i32) -> i32 {
-    panel.width().max(window_width.saturating_sub(72)).max(1)
+    let window_width = window_width.saturating_sub(72).max(1);
+    let panel_width = panel.width();
+    if panel_width > 1 {
+        panel_width.min(window_width).max(1)
+    } else {
+        window_width
+    }
 }
 
 fn fullscreen_queue_column_widths(available_width: i32) -> QueueFullscreenColumnWidths {
-    let fixed_width = QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING
+    let full_fixed = fullscreen_queue_fixed_width(true, true);
+    let full_variable = available_width.saturating_sub(full_fixed);
+    if full_variable >= QUEUE_FULLSCREEN_TITLE_MIN_WIDTH + QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH {
+        return split_queue_text_width(full_variable, true);
+    }
+
+    let compact_fixed = fullscreen_queue_fixed_width(true, false);
+    let compact_variable = available_width.saturating_sub(compact_fixed);
+    if compact_variable >= QUEUE_FULLSCREEN_TITLE_MIN_WIDTH + QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH {
+        return split_queue_text_width(compact_variable, false);
+    }
+
+    let title_fixed = fullscreen_queue_fixed_width(false, false);
+    QueueFullscreenColumnWidths {
+        title: available_width
+            .saturating_sub(title_fixed)
+            .max(QUEUE_FULLSCREEN_TITLE_MIN_WIDTH),
+        album: 0,
+        show_album: false,
+        show_year: false,
+    }
+}
+
+fn fullscreen_queue_fixed_width(show_album: bool, show_year: bool) -> i32 {
+    let columns = 5 + i32::from(show_album) + i32::from(show_year);
+    QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING
         + QUEUE_FULLSCREEN_INDEX_COLUMN_WIDTH
         + QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH
         + QUEUE_DURATION_COLUMN_WIDTH
-        + QUEUE_YEAR_COLUMN_WIDTH
         + QUEUE_FAVORITE_COLUMN_WIDTH
-        + 6 * QUEUE_FULLSCREEN_COLUMN_SPACING;
-    let variable_width = available_width.saturating_sub(fixed_width);
-    split_queue_text_width(
-        variable_width.max(QUEUE_FULLSCREEN_TITLE_MIN_WIDTH + QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH),
-    )
+        + if show_year {
+            QUEUE_YEAR_COLUMN_WIDTH
+        } else {
+            0
+        }
+        + (columns - 1) * QUEUE_FULLSCREEN_COLUMN_SPACING
 }
 
-fn split_queue_text_width(width: i32) -> QueueFullscreenColumnWidths {
+fn split_queue_text_width(width: i32, show_year: bool) -> QueueFullscreenColumnWidths {
     let min_total = QUEUE_FULLSCREEN_TITLE_MIN_WIDTH + QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH;
     if width <= min_total {
         return QueueFullscreenColumnWidths {
             title: QUEUE_FULLSCREEN_TITLE_MIN_WIDTH,
             album: QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH,
+            show_album: true,
+            show_year,
         };
     }
 
@@ -565,6 +611,8 @@ fn split_queue_text_width(width: i32) -> QueueFullscreenColumnWidths {
         return QueueFullscreenColumnWidths {
             title: title.max(QUEUE_FULLSCREEN_TITLE_MIN_WIDTH),
             album: (width - title).max(QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH),
+            show_album: true,
+            show_year,
         };
     }
 
@@ -572,6 +620,8 @@ fn split_queue_text_width(width: i32) -> QueueFullscreenColumnWidths {
     QueueFullscreenColumnWidths {
         title: QUEUE_FULLSCREEN_TITLE_COLUMN_WIDTH + extra / 2,
         album: QUEUE_FULLSCREEN_ALBUM_COLUMN_WIDTH + extra - extra / 2,
+        show_album: true,
+        show_year,
     }
 }
 
@@ -838,17 +888,25 @@ mod tests {
     fn fullscreen_queue_text_columns_fill_available_width() {
         let available = 900;
         let widths = fullscreen_queue_column_widths(available);
-        let fixed = QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING
-            + QUEUE_FULLSCREEN_INDEX_COLUMN_WIDTH
-            + QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH
-            + QUEUE_DURATION_COLUMN_WIDTH
-            + QUEUE_YEAR_COLUMN_WIDTH
-            + QUEUE_FAVORITE_COLUMN_WIDTH
-            + 6 * QUEUE_FULLSCREEN_COLUMN_SPACING;
+        let fixed = fullscreen_queue_fixed_width(widths.show_album, widths.show_year);
 
         assert_eq!(widths.title + widths.album + fixed, available);
+        assert!(widths.show_album);
+        assert!(widths.show_year);
         assert!(widths.title > widths.album);
         assert!(widths.title >= QUEUE_FULLSCREEN_TITLE_MIN_WIDTH);
         assert!(widths.album >= QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH);
+    }
+
+    #[test]
+    fn fullscreen_queue_drops_secondary_columns_when_narrow() {
+        let available = 542;
+        let widths = fullscreen_queue_column_widths(available);
+        let fixed = fullscreen_queue_fixed_width(widths.show_album, widths.show_year);
+
+        assert!(!widths.show_album);
+        assert!(!widths.show_year);
+        assert_eq!(widths.album, 0);
+        assert_eq!(widths.title + fixed, available);
     }
 }

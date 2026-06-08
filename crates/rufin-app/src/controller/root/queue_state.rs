@@ -4,6 +4,11 @@ impl AppController {
     pub(in crate::controller) fn persist_and_emit_queue(&self) {
         self.preload_queue_emit(true);
     }
+    pub(in crate::controller) fn persist_and_emit_playback(&self) {
+        self.persist_current_queue_snapshot_deferred();
+        self.sync_playback_snapshot_from_queue();
+        self.emit_playback_snapshot();
+    }
     pub(in crate::controller) fn start_queue_emit(&self) {
         self.preload_queue_emit(false);
     }
@@ -25,6 +30,19 @@ impl AppController {
         if let Some(snapshot) = self.queue_snapshot() {
             self.persist_queue_snapshot(&snapshot);
         }
+    }
+    pub(in crate::controller) fn persist_current_queue_snapshot_deferred(&self) {
+        if matches!(&self.store, StoreHandle::Memory { .. }) {
+            self.persist_current_queue_snapshot();
+            return;
+        }
+
+        defer_current_queue_snapshot(
+            self.store.clone(),
+            self.events.clone(),
+            Arc::clone(&self.queue_persist_generation),
+            Arc::clone(&self.queue),
+        );
     }
     pub(in crate::controller) fn persist_queue_snapshot_deferred(&self, snapshot: QueueSnapshot) {
         if matches!(&self.store, StoreHandle::Memory { .. }) {
@@ -154,6 +172,30 @@ pub(in crate::controller) fn defer_queue_snapshot(
             return;
         }
         if let Err(error) = store.with_store(|store| store.save_queue_snapshot(&snapshot)) {
+            let _sent = events.send(ControllerEvent::Error(error));
+        }
+    });
+}
+
+pub(in crate::controller) fn defer_current_queue_snapshot(
+    store: StoreHandle,
+    events: Sender<ControllerEvent>,
+    generation: Arc<AtomicU64>,
+    queue: Arc<Mutex<Option<QueueEngine>>>,
+) {
+    let request_generation = generation.fetch_add(1, Ordering::AcqRel) + 1;
+    thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if generation.load(Ordering::Acquire) != request_generation {
+            return;
+        }
+        let snapshot = queue
+            .lock()
+            .ok()
+            .and_then(|queue| queue.as_ref().map(QueueEngine::snapshot));
+        if let Some(snapshot) = snapshot
+            && let Err(error) = store.with_store(|store| store.save_queue_snapshot(&snapshot))
+        {
             let _sent = events.send(ControllerEvent::Error(error));
         }
     });

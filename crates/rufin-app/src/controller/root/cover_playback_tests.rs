@@ -57,6 +57,46 @@ fn wait_for_queue_matching(
     panic!("matching queue event was not emitted");
 }
 
+fn wait_for_repeat_without_queue(
+    events: &Receiver<ControllerEvent>,
+    repeat_mode: RepeatMode,
+) -> PlaybackSnapshot {
+    loop {
+        match events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("repeat event")
+        {
+            ControllerEvent::Playback(playback) if playback.repeat_mode == repeat_mode => {
+                return *playback;
+            }
+            ControllerEvent::Playback(_) => {}
+            ControllerEvent::Queue(_) => panic!("repeat mode emitted a queue event"),
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            _ => {}
+        }
+    }
+}
+
+fn wait_for_shuffle_without_queue(
+    events: &Receiver<ControllerEvent>,
+    enabled: bool,
+) -> PlaybackSnapshot {
+    loop {
+        match events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("shuffle event")
+        {
+            ControllerEvent::Playback(playback) if playback.shuffle_enabled == enabled => {
+                return *playback;
+            }
+            ControllerEvent::Playback(_) => {}
+            ControllerEvent::Queue(_) => panic!("shuffle mode emitted a queue event"),
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            _ => {}
+        }
+    }
+}
+
 pub(in crate::controller) fn wait_for_token_deleted(
     secrets: &Arc<dyn SecretStore>,
     server_id: &ServerId,
@@ -337,6 +377,7 @@ pub(in crate::controller) fn cover_emit_unavailable() {
             | ControllerEvent::FavoriteChanged { .. }
             | ControllerEvent::Queue(_)
             | ControllerEvent::Playback(_)
+            | ControllerEvent::Visualizer(_)
             | ControllerEvent::Lyrics(_)
             | ControllerEvent::LyricsSearchResults { .. }
             | ControllerEvent::LyricsSearchFailed { .. }
@@ -872,15 +913,33 @@ pub(in crate::controller) fn cover_use_order() {
     controller.play_now(snapshot.tracks[0].clone());
     let _queue = wait_for_queue(&events).expect("queue");
     controller.cycle_repeat();
-    let queue = wait_for_queue(&events).expect("repeat one");
-    assert_eq!(queue.repeat_mode, RepeatMode::One);
+    let playback = wait_for_playback_repeat(&events, RepeatMode::One);
+    assert_eq!(playback.repeat_mode, RepeatMode::One);
     controller.cycle_repeat();
-    let queue = wait_for_queue(&events).expect("repeat off");
-    assert_eq!(queue.repeat_mode, RepeatMode::Off);
+    let playback = wait_for_playback_repeat(&events, RepeatMode::Off);
+    assert_eq!(playback.repeat_mode, RepeatMode::Off);
     controller.cycle_repeat();
-    let queue = wait_for_queue(&events).expect("repeat all");
-    assert_eq!(queue.repeat_mode, RepeatMode::All);
+    let playback = wait_for_playback_repeat(&events, RepeatMode::All);
+    assert_eq!(playback.repeat_mode, RepeatMode::All);
 }
+
+#[test]
+pub(in crate::controller) fn playback_modes_do_not_emit_queue() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    controller.play_tracks_now(vec![snapshot.tracks[0].clone(), snapshot.tracks[1].clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_repeat(&events, RepeatMode::All);
+
+    controller.cycle_repeat();
+    let playback = wait_for_repeat_without_queue(&events, RepeatMode::One);
+    assert_eq!(playback.repeat_mode, RepeatMode::One);
+
+    controller.toggle_shuffle();
+    let playback = wait_for_shuffle_without_queue(&events, true);
+    assert!(playback.shuffle_enabled);
+}
+
 #[test]
 pub(in crate::controller) fn cover_use_sqlite() {
     let dir = unique_test_dir("settings-round-trip");
@@ -1232,7 +1291,7 @@ pub(in crate::controller) fn end_stream_repeat() {
     controller.play_tracks_now(vec![first.clone(), second]);
     let _queue = wait_for_queue(&events).expect("queue");
     controller.cycle_repeat();
-    let _queue = wait_for_queue(&events).expect("repeat one");
+    let _playback = wait_for_playback_repeat(&events, RepeatMode::One);
     controller.advance_after_end_of_stream();
     let queue = wait_for_queue(&events).expect("repeated queue");
     assert_eq!(

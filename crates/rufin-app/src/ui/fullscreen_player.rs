@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::glib;
-use rufin_core::QueueEntry;
+use rufin_core::{EQUALIZER_BAND_COUNT, EqualizerSettings, QueueEntry};
+use rufin_playback::PlaybackState;
 
 use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
@@ -24,6 +25,12 @@ const FULLSCREEN_PLAYER_MIN_COVER_SIZE: i32 = 140;
 const FULLSCREEN_PLAYER_MAX_COVER_SIZE: i32 = 320;
 const FULLSCREEN_PLAYER_HORIZONTAL_MARGIN: i32 = 64;
 const FULLSCREEN_PLAYER_VERTICAL_RESERVED: i32 = 360;
+const FULLSCREEN_ICON_SIZE: i32 = 18;
+const FULLSCREEN_VISUALIZER_BANDS: usize = 512;
+const FULLSCREEN_VISUALIZER_MIN_RATIO: f64 = 20.0 / 24_000.0;
+const FULLSCREEN_VISUALIZER_MAX_RATIO: f64 = 22_050.0 / 24_000.0;
+const FULLSCREEN_VISUALIZER_EMA_WEIGHT: f64 = 0.35;
+const FULLSCREEN_VISUALIZER_TOP_PADDING: f64 = 30.0;
 
 pub(super) struct FullscreenPlayerParts {
     pub(super) root: gtk::Box,
@@ -38,6 +45,25 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) stack: adw::ViewStack,
     pub(super) lyrics_pane: LyricsPane,
     pub(super) queue_panel: gtk::Box,
+    pub(super) visualizer_area: gtk::DrawingArea,
+    pub(super) visualizer_levels: Rc<RefCell<Vec<f64>>>,
+    pub(super) visualizer_targets: Rc<RefCell<Vec<f64>>>,
+    pub(super) visualizer_tick: RefCell<Option<gtk::TickCallbackId>>,
+    pub(super) visualizer_active: Cell<bool>,
+    pub(super) equalizer_enabled: gtk::Switch,
+    pub(super) equalizer_scales: Vec<gtk::Scale>,
+    pub(super) equalizer_reset_button: gtk::Button,
+    pub(super) equalizer_preset_buttons: Vec<(gtk::Button, Vec<f64>)>,
+    pub(super) equalizer_syncing: Rc<Cell<bool>>,
+}
+
+struct EqualizerPanel {
+    root: gtk::ScrolledWindow,
+    enabled: gtk::Switch,
+    scales: Vec<gtk::Scale>,
+    reset_button: gtk::Button,
+    preset_buttons: Vec<(gtk::Button, Vec<f64>)>,
+    syncing: Rc<Cell<bool>>,
 }
 
 pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
@@ -67,25 +93,37 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     body.set_hexpand(true);
     body.set_vexpand(true);
 
-    let hero = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let hero = gtk::Box::new(gtk::Orientation::Horizontal, 18);
     hero.add_css_class("fullscreen-player-hero");
     hero.set_halign(gtk::Align::Center);
+    hero.set_valign(gtk::Align::Center);
     hero.set_hexpand(true);
 
     let cover = ArtworkTile::new(FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE, 42);
     cover.area.add_css_class("fullscreen-player-cover");
-    cover.area.set_halign(gtk::Align::Center);
+    cover.area.set_halign(gtk::Align::End);
     hero.append(&cover.area);
+
+    let details = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    details.add_css_class("fullscreen-player-details");
+    details.set_halign(gtk::Align::Start);
+    details.set_valign(gtk::Align::Center);
 
     let title = fullscreen_player_label("fullscreen-player-title");
     let artist = fullscreen_player_label("fullscreen-player-artist");
     let album = fullscreen_player_label("fullscreen-player-album");
     let meta = fullscreen_player_label("fullscreen-player-meta");
     meta.add_css_class("muted");
-    hero.append(&title);
-    hero.append(&artist);
-    hero.append(&album);
-    hero.append(&meta);
+    for label in [&title, &artist, &album, &meta] {
+        label.set_halign(gtk::Align::Start);
+        label.set_xalign(0.0);
+        label.set_justify(gtk::Justification::Left);
+    }
+    details.append(&title);
+    details.append(&artist);
+    details.append(&album);
+    details.append(&meta);
+    hero.append(&details);
     body.append(&hero);
 
     let stack = adw::ViewStack::builder()
@@ -94,10 +132,6 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         .hexpand(true)
         .vexpand(true)
         .build();
-    let lyrics_pane = LyricsPane::new(&tr("Lyrics"));
-    lyrics_pane.set_title("");
-    lyrics_pane.widget().add_css_class("fullscreen-player-pane");
-    stack.add_titled(lyrics_pane.widget(), Some("lyrics"), &tr("Lyrics"));
 
     let queue_panel = gtk::Box::new(gtk::Orientation::Vertical, 6);
     queue_panel.add_css_class("fullscreen-player-pane");
@@ -105,6 +139,26 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     queue_panel.set_hexpand(true);
     queue_panel.set_vexpand(true);
     stack.add_titled(&queue_panel, Some("queue"), &tr("Queue"));
+
+    let lyrics_pane = LyricsPane::new(&tr("Lyrics"));
+    lyrics_pane.set_title("");
+    lyrics_pane.widget().add_css_class("fullscreen-player-pane");
+    stack.add_titled(lyrics_pane.widget(), Some("lyrics"), &tr("Lyrics"));
+
+    let visualizer_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    visualizer_panel.add_css_class("fullscreen-player-pane");
+    visualizer_panel.add_css_class("fullscreen-player-visualizer");
+    visualizer_panel.set_hexpand(true);
+    visualizer_panel.set_vexpand(true);
+    let visualizer_levels = Rc::new(RefCell::new(Vec::new()));
+    let visualizer_targets = Rc::new(RefCell::new(Vec::new()));
+    let visualizer_area = build_fullscreen_visualizer_area(Rc::clone(&visualizer_levels));
+    visualizer_panel.append(&visualizer_area);
+    stack.add_titled(&visualizer_panel, Some("visualizer"), &tr("Visualizer"));
+
+    let equalizer = build_fullscreen_equalizer_panel();
+    stack.add_titled(&equalizer.root, Some("equalizer"), &tr("Equalizer"));
+    stack.set_visible_child_name("lyrics");
 
     let switcher_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     switcher_bar.add_css_class("fullscreen-player-tab-bar");
@@ -127,6 +181,16 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         stack,
         lyrics_pane,
         queue_panel,
+        visualizer_area,
+        visualizer_levels,
+        visualizer_targets,
+        visualizer_tick: RefCell::new(None),
+        visualizer_active: Cell::new(false),
+        equalizer_enabled: equalizer.enabled,
+        equalizer_scales: equalizer.scales,
+        equalizer_reset_button: equalizer.reset_button,
+        equalizer_preset_buttons: equalizer.preset_buttons,
+        equalizer_syncing: equalizer.syncing,
     }
 }
 
@@ -135,36 +199,53 @@ fn fullscreen_player_switcher(stack: &adw::ViewStack) -> gtk::Box {
     switcher.add_css_class("linked");
     switcher.set_halign(gtk::Align::Center);
 
-    let lyrics = fullscreen_player_tab_button(
-        lyrics_icon_area(Rc::new(Cell::new(true))).upcast(),
-        &tr("Lyrics"),
-    );
     let queue = fullscreen_player_tab_button(
         gtk::Image::from_icon_name("view-list-ordered-symbolic").upcast(),
         &tr("Queue"),
     );
+    let lyrics = fullscreen_player_tab_button(
+        lyrics_icon_area(Rc::new(Cell::new(true))).upcast(),
+        &tr("Lyrics"),
+    );
+    let visualizer =
+        fullscreen_player_tab_button(fullscreen_visualizer_icon().upcast(), &tr("Visualizer"));
+    let equalizer =
+        fullscreen_player_tab_button(fullscreen_equalizer_icon().upcast(), &tr("Equalizer"));
     lyrics.set_active(true);
 
-    let lyrics_stack = stack.clone();
-    lyrics.connect_clicked(move |_| {
-        lyrics_stack.set_visible_child_name("lyrics");
-    });
     let queue_stack = stack.clone();
     queue.connect_clicked(move |_| {
         queue_stack.set_visible_child_name("queue");
     });
-
-    let lyrics_for_notify = lyrics.clone();
-    let queue_for_notify = queue.clone();
-    stack.connect_visible_child_name_notify(move |stack| {
-        let page = stack.visible_child_name();
-        let lyrics_active = page.as_deref() != Some("queue");
-        lyrics_for_notify.set_active(lyrics_active);
-        queue_for_notify.set_active(!lyrics_active);
+    let lyrics_stack = stack.clone();
+    lyrics.connect_clicked(move |_| {
+        lyrics_stack.set_visible_child_name("lyrics");
+    });
+    let visualizer_stack = stack.clone();
+    visualizer.connect_clicked(move |_| {
+        visualizer_stack.set_visible_child_name("visualizer");
+    });
+    let equalizer_stack = stack.clone();
+    equalizer.connect_clicked(move |_| {
+        equalizer_stack.set_visible_child_name("equalizer");
     });
 
-    switcher.append(&lyrics);
+    let visualizer_for_notify = visualizer.clone();
+    let lyrics_for_notify = lyrics.clone();
+    let queue_for_notify = queue.clone();
+    let equalizer_for_notify = equalizer.clone();
+    stack.connect_visible_child_name_notify(move |stack| {
+        let page = stack.visible_child_name();
+        visualizer_for_notify.set_active(page.as_deref() == Some("visualizer"));
+        lyrics_for_notify.set_active(page.as_deref() == Some("lyrics"));
+        queue_for_notify.set_active(page.as_deref() == Some("queue"));
+        equalizer_for_notify.set_active(page.as_deref() == Some("equalizer"));
+    });
+
     switcher.append(&queue);
+    switcher.append(&lyrics);
+    switcher.append(&visualizer);
+    switcher.append(&equalizer);
     switcher
 }
 
@@ -179,6 +260,331 @@ fn fullscreen_player_tab_button(icon: gtk::Widget, label: &str) -> gtk::ToggleBu
     button.set_tooltip_text(Some(label));
     button.update_property(&[gtk::accessible::Property::Label(label)]);
     button
+}
+
+fn fullscreen_visualizer_icon() -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::new();
+    area.set_content_width(FULLSCREEN_ICON_SIZE);
+    area.set_content_height(FULLSCREEN_ICON_SIZE);
+    area.set_draw_func(|area, context, width, height| {
+        let color = area.color();
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            0.9,
+        );
+        context.set_line_width(1.6);
+        let center = f64::from(height) * 0.5;
+        let bars = [0.38, 0.74, 0.48, 0.92, 0.56];
+        let step = f64::from(width) / (bars.len() + 1) as f64;
+        for (index, level) in bars.iter().enumerate() {
+            let x = step * (index + 1) as f64;
+            let half = f64::from(height) * level * 0.36;
+            context.move_to(x, center - half);
+            context.line_to(x, center + half);
+            let _ = context.stroke();
+        }
+    });
+    area
+}
+
+fn build_fullscreen_visualizer_area(levels: Rc<RefCell<Vec<f64>>>) -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::new();
+    area.add_css_class("fullscreen-player-visualizer-area");
+    area.set_hexpand(true);
+    area.set_vexpand(true);
+    area.set_content_height(230);
+    area.set_draw_func(move |area, context, width, height| {
+        let levels = levels.borrow();
+        let color = area.color();
+        if levels.is_empty() {
+            draw_visualizer_idle(context, width, height, &color);
+        } else {
+            draw_visualizer_wave(context, width, height, &color, &levels);
+        }
+    });
+    area
+}
+
+fn draw_visualizer_idle(
+    context: &gtk::cairo::Context,
+    width: i32,
+    height: i32,
+    color: &gtk::gdk::RGBA,
+) {
+    let _ = context;
+    let _ = width;
+    let _ = height;
+    let _ = color;
+}
+
+fn draw_visualizer_wave(
+    context: &gtk::cairo::Context,
+    width: i32,
+    height: i32,
+    color: &gtk::gdk::RGBA,
+    levels: &[f64],
+) {
+    let width = f64::from(width.max(1));
+    let height = f64::from(height.max(1));
+    let left = width * 0.01;
+    let right = width * 0.99;
+    let baseline = height * 0.60;
+    let amplitude = (baseline - FULLSCREEN_VISUALIZER_TOP_PADDING).max(1.0);
+    let points = visualizer_points(levels, left, right, baseline, amplitude);
+    if points.len() < 2 {
+        draw_visualizer_idle(context, width as i32, height as i32, color);
+        return;
+    }
+    context.set_line_cap(gtk::cairo::LineCap::Round);
+    context.set_line_join(gtk::cairo::LineJoin::Round);
+    context.set_line_width(5.0);
+    let glow = gtk::cairo::LinearGradient::new(left, 0.0, right, 0.0);
+    glow.add_color_stop_rgba(0.0, 0.95, 0.10, 0.04, 0.16);
+    glow.add_color_stop_rgba(0.24, 1.0, 0.30, 0.04, 0.18);
+    glow.add_color_stop_rgba(0.48, 1.0, 0.62, 0.06, 0.20);
+    glow.add_color_stop_rgba(0.72, 0.95, 0.18, 0.06, 0.17);
+    glow.add_color_stop_rgba(1.0, 0.70, 0.05, 0.04, 0.13);
+    let _ = context.set_source(&glow);
+    context.move_to(points[0].0, points[0].1);
+    for &(x, y) in points.iter().skip(1) {
+        context.line_to(x, y);
+    }
+    let _ = context.stroke();
+
+    context.set_line_width(1.8);
+    let line = gtk::cairo::LinearGradient::new(left, 0.0, right, 0.0);
+    line.add_color_stop_rgba(0.0, 1.0, 0.12, 0.04, 0.98);
+    line.add_color_stop_rgba(0.18, 1.0, 0.28, 0.04, 0.98);
+    line.add_color_stop_rgba(0.35, 1.0, 0.52, 0.05, 0.98);
+    line.add_color_stop_rgba(0.48, 1.0, 0.78, 0.08, 0.98);
+    line.add_color_stop_rgba(0.62, 0.98, 0.36, 0.05, 0.98);
+    line.add_color_stop_rgba(0.78, 0.88, 0.10, 0.04, 0.96);
+    line.add_color_stop_rgba(1.0, 0.62, 0.02, 0.03, 0.86);
+    let _ = context.set_source(&line);
+    context.move_to(points[0].0, points[0].1);
+    for &(x, y) in points.iter().skip(1) {
+        context.line_to(x, y);
+    }
+    let _ = context.stroke();
+
+    context.set_line_width(1.1);
+    let reflection = gtk::cairo::LinearGradient::new(left, 0.0, right, 0.0);
+    reflection.add_color_stop_rgba(0.0, 1.0, 0.12, 0.04, 0.05);
+    reflection.add_color_stop_rgba(0.45, 1.0, 0.55, 0.06, 0.07);
+    reflection.add_color_stop_rgba(1.0, 0.70, 0.04, 0.03, 0.04);
+    let _ = context.set_source(&reflection);
+    context.move_to(points[0].0, baseline + (baseline - points[0].1) * 0.28);
+    for &(x, y) in points.iter().skip(1) {
+        context.line_to(x, baseline + (baseline - y) * 0.28);
+    }
+    let _ = context.stroke();
+}
+
+fn visualizer_points(
+    levels: &[f64],
+    left: f64,
+    right: f64,
+    baseline: f64,
+    amplitude: f64,
+) -> Vec<(f64, f64)> {
+    let visible = levels.len().max(2);
+    let step = (right - left) / (visible - 1) as f64;
+    levels
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, level)| {
+            let shaped = level.clamp(0.0, 1.0);
+            let x = left + step * index as f64;
+            let y = baseline - shaped * amplitude;
+            (x, y)
+        })
+        .collect()
+}
+
+fn visualizer_display_levels(levels: &[f64]) -> Vec<f64> {
+    let source = levels
+        .iter()
+        .copied()
+        .map(|level| level.clamp(0.0, 1.0))
+        .collect::<Vec<_>>();
+    if source.is_empty() {
+        return vec![0.0; FULLSCREEN_VISUALIZER_BANDS];
+    }
+    if source.len() == 1 {
+        return vec![source[0]; FULLSCREEN_VISUALIZER_BANDS];
+    }
+    if source.len() < 4 {
+        let source_max = source.len().saturating_sub(1) as f64;
+        let display_max = FULLSCREEN_VISUALIZER_BANDS.saturating_sub(1) as f64;
+        return (0..FULLSCREEN_VISUALIZER_BANDS)
+            .map(|index| {
+                let position = index as f64 / display_max * source_max;
+                let lower = position.floor() as usize;
+                let upper = position.ceil().min(source_max) as usize;
+                let mix = position - lower as f64;
+                source[lower] + (source[upper] - source[lower]) * mix
+            })
+            .collect();
+    }
+
+    let source_last = source.len().saturating_sub(1) as f64;
+    let source_min = (source_last * FULLSCREEN_VISUALIZER_MIN_RATIO)
+        .round()
+        .clamp(1.0, source_last);
+    let source_max = (source_last * FULLSCREEN_VISUALIZER_MAX_RATIO)
+        .round()
+        .clamp(source_min + 1.0, source_last);
+    let log_span = (source_max / source_min).ln();
+
+    (0..FULLSCREEN_VISUALIZER_BANDS)
+        .map(|index| {
+            let center_t = (index as f64 + 0.5) / FULLSCREEN_VISUALIZER_BANDS as f64;
+            let position = source_min * (log_span * center_t).exp();
+            let lower = position.floor().min(source_last) as usize;
+            let upper = position.ceil().min(source_last) as usize;
+            let mix = position - lower as f64;
+            source[lower] + (source[upper] - source[lower]) * mix
+        })
+        .collect()
+}
+
+fn fullscreen_equalizer_icon() -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::new();
+    area.set_content_width(FULLSCREEN_ICON_SIZE);
+    area.set_content_height(FULLSCREEN_ICON_SIZE);
+    area.set_draw_func(|area, context, width, height| {
+        let color = area.color();
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            0.92,
+        );
+        let width = f64::from(width);
+        let height = f64::from(height);
+        let tracks = [
+            (width * 0.24, height * 0.38),
+            (width * 0.5, height * 0.58),
+            (width * 0.76, height * 0.38),
+        ];
+        context.set_line_width(2.2);
+        for (x, _) in tracks {
+            context.move_to(x, 2.6);
+            context.line_to(x, height - 2.6);
+            let _ = context.stroke();
+        }
+
+        context.set_source_rgba(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+            0.92,
+        );
+        for (x, y) in tracks {
+            context.rectangle(x - 2.4, y - 1.7, 4.8, 3.4);
+            let _ = context.fill();
+        }
+    });
+    area
+}
+
+fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
+    let root = gtk::ScrolledWindow::new();
+    root.add_css_class("fullscreen-player-pane");
+    root.add_css_class("fullscreen-player-equalizer-scroller");
+    root.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    root.set_hexpand(true);
+    root.set_vexpand(true);
+    root.set_propagate_natural_height(false);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    content.add_css_class("fullscreen-player-equalizer");
+    content.set_hexpand(true);
+    content.set_vexpand(true);
+
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    header.set_halign(gtk::Align::Center);
+    header.set_valign(gtk::Align::Center);
+
+    let enabled = gtk::Switch::new();
+    enabled.set_valign(gtk::Align::Center);
+    let enabled_label = gtk::Label::new(Some(&tr("Enable equalizer")));
+    enabled_label.set_valign(gtk::Align::Center);
+    header.append(&enabled_label);
+    header.append(&enabled);
+
+    let preset_button = gtk::MenuButton::new();
+    preset_button.set_label(&tr("Preset"));
+    preset_button.set_valign(gtk::Align::Center);
+    let preset_popover = gtk::Popover::new();
+    let preset_menu = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    preset_menu.add_css_class("fullscreen-player-equalizer-preset-menu");
+    let mut preset_buttons = Vec::new();
+    for (name, bands) in equalizer_presets() {
+        let button = gtk::Button::with_label(&tr(name));
+        button.set_halign(gtk::Align::Fill);
+        button.set_valign(gtk::Align::Center);
+        button.add_css_class("flat");
+        preset_menu.append(&button);
+        preset_buttons.push((button, bands));
+    }
+    preset_popover.set_child(Some(&preset_menu));
+    preset_button.set_popover(Some(&preset_popover));
+    header.append(&preset_button);
+
+    let reset_button = gtk::Button::with_label(&tr("Reset"));
+    reset_button.add_css_class("destructive-action");
+    header.append(&reset_button);
+    content.append(&header);
+
+    let bands = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    bands.add_css_class("fullscreen-player-equalizer-bands");
+    bands.set_halign(gtk::Align::Center);
+    bands.set_valign(gtk::Align::Center);
+    bands.set_vexpand(true);
+    let mut scales = Vec::with_capacity(EQUALIZER_BAND_COUNT);
+    for index in 0..EQUALIZER_BAND_COUNT {
+        let scale = gtk::Scale::with_range(gtk::Orientation::Vertical, -12.0, 12.0, 0.5);
+        scale.set_inverted(true);
+        scale.set_value(0.0);
+        scale.set_draw_value(false);
+        scale.set_size_request(36, 210);
+        scale.set_valign(gtk::Align::Center);
+        scale.set_tooltip_text(Some(&equalizer_band_title(index)));
+        scale.add_mark(
+            6.0,
+            gtk::PositionType::Left,
+            if index == 0 { Some("6 dB") } else { None },
+        );
+        scale.add_mark(
+            0.0,
+            gtk::PositionType::Left,
+            if index == 0 { Some("0 dB") } else { None },
+        );
+        scale.add_mark(
+            -6.0,
+            gtk::PositionType::Left,
+            if index == 0 { Some("-6 dB") } else { None },
+        );
+        bands.append(&scale);
+        scales.push(scale);
+    }
+    content.append(&bands);
+    root.set_child(Some(&content));
+
+    EqualizerPanel {
+        root,
+        enabled,
+        scales,
+        reset_button,
+        preset_buttons,
+        syncing: Rc::new(Cell::new(false)),
+    }
 }
 
 pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
@@ -204,19 +610,27 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
     shell
         .window
         .connect_notify_local(Some("width"), move |_, _| {
-            if resize_shell.state.fullscreen_player_visible.get() {
-                resize_shell.update_fullscreen_player();
-                resize_shell.schedule_queue_panel_render();
-            }
+            resize_shell.refresh_fullscreen_player_layout();
         });
     let resize_shell = Rc::clone(shell);
     shell
         .window
         .connect_notify_local(Some("height"), move |_, _| {
-            if resize_shell.state.fullscreen_player_visible.get() {
-                resize_shell.update_fullscreen_player();
-                resize_shell.schedule_queue_panel_render();
-            }
+            resize_shell.refresh_fullscreen_player_layout();
+        });
+    let resize_shell = Rc::clone(shell);
+    shell
+        .fullscreen_player
+        .root
+        .connect_notify_local(Some("width"), move |_, _| {
+            resize_shell.refresh_fullscreen_player_layout();
+        });
+    let resize_shell = Rc::clone(shell);
+    shell
+        .fullscreen_player
+        .root
+        .connect_notify_local(Some("height"), move |_, _| {
+            resize_shell.refresh_fullscreen_player_layout();
         });
 
     let queue_tab_shell = Rc::clone(shell);
@@ -224,12 +638,134 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
         .fullscreen_player
         .stack
         .connect_visible_child_name_notify(move |stack| {
-            if queue_tab_shell.state.fullscreen_player_visible.get()
-                && stack.visible_child_name().as_deref() == Some("queue")
-            {
-                queue_tab_shell.schedule_queue_panel_render();
+            if !queue_tab_shell.state.fullscreen_player_visible.get() {
+                return;
+            }
+            match stack.visible_child_name().as_deref() {
+                Some("queue") => queue_tab_shell.schedule_queue_panel_render(),
+                Some("lyrics") => queue_tab_shell.refresh_fullscreen_lyrics_position(),
+                _ => {}
+            }
+            queue_tab_shell.sync_fullscreen_visualizer_state();
+            if stack.visible_child_name().as_deref() == Some("visualizer") {
+                let visualizer_shell = Rc::clone(&queue_tab_shell);
+                glib::timeout_add_local_once(Duration::from_millis(120), move || {
+                    visualizer_shell.sync_fullscreen_visualizer_state();
+                });
             }
         });
+
+    let equalizer_shell = Rc::clone(shell);
+    let equalizer_guard = Rc::clone(&shell.fullscreen_player.equalizer_syncing);
+    shell
+        .fullscreen_player
+        .equalizer_enabled
+        .connect_state_set(move |row, enabled| {
+            if equalizer_guard.get() {
+                return glib::Propagation::Proceed;
+            }
+            row.set_state(enabled);
+            equalizer_shell.update_playback_settings(|settings| {
+                if enabled {
+                    settings.equalizer.enabled = true;
+                    if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
+                        settings.equalizer.sanitize();
+                    }
+                } else {
+                    settings.equalizer = EqualizerSettings::default();
+                }
+            });
+            glib::Propagation::Stop
+        });
+
+    for (index, scale) in shell.fullscreen_player.equalizer_scales.iter().enumerate() {
+        let band_shell = Rc::clone(shell);
+        let band_guard = Rc::clone(&shell.fullscreen_player.equalizer_syncing);
+        scale.connect_value_changed(move |scale| {
+            if band_guard.get() {
+                return;
+            }
+            band_shell.update_playback_settings(|settings| {
+                if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
+                    settings.equalizer.sanitize();
+                }
+                if let Some(gain) = settings.equalizer.bands.get_mut(index) {
+                    *gain = scale.value();
+                }
+            });
+        });
+    }
+
+    let reset_shell = Rc::clone(shell);
+    shell
+        .fullscreen_player
+        .equalizer_reset_button
+        .connect_clicked(move |_| {
+            reset_shell.apply_fullscreen_equalizer(EqualizerSettings::default());
+        });
+
+    for (button, bands) in &shell.fullscreen_player.equalizer_preset_buttons {
+        let preset_shell = Rc::clone(shell);
+        let preset_bands = bands.clone();
+        button.connect_clicked(move |_| {
+            let mut equalizer = EqualizerSettings {
+                enabled: true,
+                bands: preset_bands.clone(),
+            };
+            equalizer.sanitize();
+            preset_shell.apply_fullscreen_equalizer(equalizer);
+        });
+    }
+}
+
+fn equalizer_band_title(index: usize) -> String {
+    const BANDS: [&str; EQUALIZER_BAND_COUNT] = [
+        "60 Hz", "170 Hz", "310 Hz", "600 Hz", "1 kHz", "3 kHz", "6 kHz", "12 kHz", "14 kHz",
+        "16 kHz",
+    ];
+    BANDS.get(index).copied().unwrap_or("Band").to_string()
+}
+
+fn equalizer_presets() -> Vec<(&'static str, Vec<f64>)> {
+    vec![
+        ("Flat", vec![0.0; EQUALIZER_BAND_COUNT]),
+        (
+            "Classical",
+            vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -7.2, -7.2, -7.2, -9.6],
+        ),
+        (
+            "Club",
+            vec![0.0, 0.0, 3.2, 5.6, 5.6, 5.6, 3.2, 0.0, 0.0, 0.0],
+        ),
+        (
+            "Dance",
+            vec![9.6, 7.2, 2.4, 0.0, 0.0, -5.6, -7.2, -7.2, 0.0, 0.0],
+        ),
+        (
+            "Full Bass",
+            vec![9.6, 9.6, 9.6, 5.6, 1.6, -4.0, -8.0, -10.4, -11.2, -11.2],
+        ),
+        (
+            "Full Treble",
+            vec![-9.6, -9.6, -9.6, -4.0, 2.4, 11.2, 12.0, 12.0, 12.0, 12.0],
+        ),
+        (
+            "Laptop/Headphones",
+            vec![4.8, 11.2, 5.6, -3.2, -2.4, 1.6, 4.8, 9.6, 12.0, 12.0],
+        ),
+        (
+            "Rock",
+            vec![8.0, 4.8, -5.6, -8.0, -3.2, 4.0, 8.8, 11.2, 11.2, 11.2],
+        ),
+        (
+            "Pop",
+            vec![-1.6, 4.8, 7.2, 8.0, 5.6, 0.0, -2.4, -2.4, -1.6, -1.6],
+        ),
+        (
+            "Techno",
+            vec![8.0, 5.6, 0.0, -5.6, -4.8, 0.0, 8.0, 9.6, 9.6, 8.8],
+        ),
+    ]
 }
 
 impl Shell {
@@ -239,6 +775,8 @@ impl Shell {
         }
         self.state.fullscreen_player_visible.set(true);
         self.animate_fullscreen_player(true);
+        let player = self.state.player.borrow().clone();
+        self.update_fullscreen_player_cover(&player);
         let update_shell = Rc::clone(self);
         glib::timeout_add_local_once(
             Duration::from_millis(FULLSCREEN_PLAYER_DEFERRED_UPDATE_MS),
@@ -277,6 +815,13 @@ impl Shell {
                 },
             );
         }
+        if self.fullscreen_player.stack.visible_child_name().as_deref() == Some("lyrics") {
+            let lyrics_shell = Rc::clone(self);
+            glib::idle_add_local_once(move || {
+                lyrics_shell.refresh_fullscreen_lyrics_position();
+            });
+        }
+        self.sync_fullscreen_visualizer_state();
         let _focused = self.fullscreen_player.close_button.grab_focus();
     }
 
@@ -285,6 +830,7 @@ impl Shell {
             return;
         }
         self.animate_fullscreen_player(false);
+        self.sync_fullscreen_visualizer_state();
     }
 
     pub(super) fn toggle_fullscreen_player(self: &Rc<Self>) {
@@ -302,13 +848,163 @@ impl Shell {
         let player = self.state.player.borrow().clone();
         self.update_fullscreen_player_text(&player);
         self.update_fullscreen_player_cover(&player);
+        self.sync_fullscreen_equalizer_controls(&self.state.settings.borrow().playback.equalizer);
+        self.sync_fullscreen_visualizer_state();
+    }
+
+    fn refresh_fullscreen_player_layout(self: &Rc<Self>) {
+        if !self.state.fullscreen_player_visible.get() {
+            return;
+        }
+        self.update_fullscreen_player();
+        self.schedule_queue_panel_render();
+        let refresh_shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            if refresh_shell.state.fullscreen_player_visible.get() {
+                refresh_shell.update_fullscreen_player();
+                refresh_shell.schedule_queue_panel_render();
+            }
+        });
+    }
+
+    pub(super) fn sync_fullscreen_equalizer_controls(&self, equalizer: &EqualizerSettings) {
+        self.fullscreen_player.equalizer_syncing.set(true);
+        self.fullscreen_player
+            .equalizer_enabled
+            .set_active(equalizer.enabled);
+        for (index, scale) in self.fullscreen_player.equalizer_scales.iter().enumerate() {
+            let value = if equalizer.enabled {
+                equalizer.bands.get(index).copied().unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            scale.set_value(value);
+        }
+        self.fullscreen_player.equalizer_syncing.set(false);
+    }
+
+    fn apply_fullscreen_equalizer(self: &Rc<Self>, equalizer: EqualizerSettings) {
+        self.sync_fullscreen_equalizer_controls(&equalizer);
+        self.update_playback_settings(|settings| {
+            settings.equalizer = equalizer;
+        });
+    }
+
+    pub(in crate::ui) fn apply_fullscreen_visualizer_levels(self: &Rc<Self>, levels: Vec<f64>) {
+        if levels.is_empty() {
+            self.clear_fullscreen_visualizer();
+            return;
+        }
+        if !self.fullscreen_player.visualizer_active.get() {
+            return;
+        }
+        *self.fullscreen_player.visualizer_targets.borrow_mut() =
+            visualizer_display_levels(&levels);
+        self.start_fullscreen_visualizer_tick();
+    }
+
+    fn sync_fullscreen_visualizer_state(self: &Rc<Self>) {
+        let active = self.state.fullscreen_player_visible.get()
+            && self.fullscreen_player.stack.visible_child_name().as_deref() == Some("visualizer")
+            && matches!(
+                self.state.player.borrow().state,
+                PlaybackState::Playing | PlaybackState::Buffering
+            );
+        let changed = self.fullscreen_player.visualizer_active.replace(active) != active;
+        if active {
+            self.controller.set_visualizer_enabled(true);
+            self.start_fullscreen_visualizer_tick();
+            return;
+        }
+        if changed {
+            self.controller.set_visualizer_enabled(false);
+            self.stop_fullscreen_visualizer_tick();
+            self.clear_fullscreen_visualizer();
+        }
+    }
+
+    fn start_fullscreen_visualizer_tick(self: &Rc<Self>) {
+        if self.fullscreen_player.visualizer_tick.borrow().is_some() {
+            return;
+        }
+        let levels = Rc::clone(&self.fullscreen_player.visualizer_levels);
+        let targets = Rc::clone(&self.fullscreen_player.visualizer_targets);
+        let tick = self
+            .fullscreen_player
+            .visualizer_area
+            .add_tick_callback(move |area, _| {
+                let mut current = levels.borrow_mut();
+                let target = targets.borrow();
+                let len = target
+                    .len()
+                    .max(current.len())
+                    .max(FULLSCREEN_VISUALIZER_BANDS);
+                current.resize(len, 0.0);
+                for index in 0..len {
+                    let next = target.get(index).copied().unwrap_or(0.0);
+                    let value = current[index];
+                    current[index] = next * FULLSCREEN_VISUALIZER_EMA_WEIGHT
+                        + value * (1.0 - FULLSCREEN_VISUALIZER_EMA_WEIGHT);
+                }
+                area.queue_draw();
+                glib::ControlFlow::Continue
+            });
+        *self.fullscreen_player.visualizer_tick.borrow_mut() = Some(tick);
+    }
+
+    fn stop_fullscreen_visualizer_tick(&self) {
+        if let Some(tick) = self.fullscreen_player.visualizer_tick.borrow_mut().take() {
+            tick.remove();
+        }
+    }
+
+    fn clear_fullscreen_visualizer(&self) {
+        self.fullscreen_player
+            .visualizer_levels
+            .borrow_mut()
+            .clear();
+        self.fullscreen_player
+            .visualizer_targets
+            .borrow_mut()
+            .clear();
+        self.fullscreen_player.visualizer_area.queue_draw();
+    }
+
+    fn refresh_fullscreen_lyrics_position(self: &Rc<Self>) {
+        if !self.state.fullscreen_player_visible.get()
+            || self.fullscreen_player.stack.visible_child_name().as_deref() != Some("lyrics")
+        {
+            return;
+        }
+        self.refocus_fullscreen_lyrics_position();
+        let idle_shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            idle_shell.refocus_fullscreen_lyrics_position();
+        });
+        let settle_shell = Rc::clone(self);
+        glib::timeout_add_local_once(Duration::from_millis(80), move || {
+            settle_shell.refocus_fullscreen_lyrics_position();
+        });
+    }
+
+    fn refocus_fullscreen_lyrics_position(&self) {
+        if !self.state.fullscreen_player_visible.get()
+            || self.fullscreen_player.stack.visible_child_name().as_deref() != Some("lyrics")
+        {
+            return;
+        }
+        let lyrics = self.state.lyrics.borrow();
+        self.fullscreen_player
+            .lyrics_pane
+            .refocus_highlight(lyrics.as_ref(), self.current_position_millis());
     }
 
     fn update_fullscreen_player_cover(
         self: &Rc<Self>,
         player: &crate::controller::PlaybackSnapshot,
     ) {
-        let cover_size = self.update_fullscreen_player_cover_size();
+        let cover_size = self.fullscreen_player_cover_size();
+        self.fullscreen_player.cover.set_square_size(cover_size);
         let cover_seed = player
             .current
             .as_ref()
@@ -321,16 +1017,14 @@ impl Shell {
             .as_ref()
             .and_then(|entry| entry.image_ref.as_ref())
         {
-            if let Some(key) = self.cover_cache_key(image_ref, DETAIL_COVER_SIZE) {
+            if let Some(key) = self.current_playback_cover_cache_key(image_ref, DETAIL_COVER_SIZE) {
                 let request_key = format!("{key}:{cover_size}");
                 let cover_key_changed = self.fullscreen_player.cover_key.borrow().as_deref()
                     != Some(request_key.as_str());
                 if cover_key_changed {
                     let has_decoded_cover = self.decoded_cover_has_min_size(&key, cover_size);
-                    let has_cached_cover_file = self
-                        .controller
-                        .cached_cover_path(image_ref, DETAIL_COVER_SIZE)
-                        .is_some();
+                    let has_cached_cover_file =
+                        self.controller.cached_cover_path_for_key(&key).is_some();
                     if has_decoded_cover || has_cached_cover_file {
                         self.fullscreen_player.cover.advance_generation();
                     } else {
@@ -464,23 +1158,11 @@ impl Shell {
             })
     }
 
-    fn update_fullscreen_player_cover_size(&self) -> i32 {
-        let width = self
-            .fullscreen_player
-            .root
-            .width()
-            .max(self.window.width())
-            .max(1);
+    fn fullscreen_player_cover_size(&self) -> i32 {
+        let width = self.window.width().max(1);
         let fallback_height = (self.window.height() - BOTTOM_PLAYER_HEIGHT).max(1);
-        let height = self
-            .fullscreen_player
-            .root
-            .height()
-            .max(fallback_height)
-            .max(1);
-        let size = fullscreen_artwork_size_for(width, height);
-        self.fullscreen_player.cover.set_square_size(size);
-        size
+        let height = fallback_height.max(1);
+        fullscreen_artwork_size_for(width, height)
     }
 
     fn clear_fullscreen_player_cover(&self) {
@@ -622,7 +1304,7 @@ pub(super) fn fullscreen_artwork_size_for(width: i32, height: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::fullscreen_artwork_size_for;
+    use super::{EQUALIZER_BAND_COUNT, fullscreen_artwork_size_for};
 
     #[test]
     fn fullscreen_stay_windows() {
@@ -670,5 +1352,13 @@ mod tests {
             super::audio_source_label_from_format("audio/mpeg").as_deref(),
             Some("MP3")
         );
+    }
+
+    #[test]
+    fn fullscreen_equalizer_presets_cover_all_bands() {
+        for (_, bands) in super::equalizer_presets() {
+            assert_eq!(bands.len(), EQUALIZER_BAND_COUNT);
+            assert!(bands.iter().all(|gain| (-12.0..=12.0).contains(gain)));
+        }
     }
 }

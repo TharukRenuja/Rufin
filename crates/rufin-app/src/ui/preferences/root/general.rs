@@ -828,7 +828,7 @@ pub(in crate::ui) fn audio_output_index(
 }
 pub(in crate::ui) fn equalizer_band_title(index: usize) -> String {
     const BANDS: [&str; EQUALIZER_BAND_COUNT] = [
-        "31 Hz", "62 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz",
+        "60 Hz", "170 Hz", "310 Hz", "600 Hz", "1 kHz", "3 kHz", "6 kHz", "12 kHz", "14 kHz",
         "16 kHz",
     ];
     BANDS.get(index).copied().unwrap_or("Band").to_string()

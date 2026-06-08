@@ -418,7 +418,8 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        self.persist_and_emit_queue();
+        self.persist_and_emit_playback();
+        self.prepare_next_stream_deferred();
     }
     pub fn cycle_repeat(&self) {
         let result = self.with_queue_mut(|queue| {
@@ -434,7 +435,7 @@ impl AppController {
             let _sent = self.events.send(ControllerEvent::Error(error));
             return;
         }
-        self.persist_and_emit_queue();
+        self.persist_and_emit_playback();
     }
 }
 

@@ -206,6 +206,13 @@ impl AppController {
         self.prepare_next_stream();
         self.emit_playback_snapshot();
     }
+    pub fn set_visualizer_enabled(&self, enabled: bool) {
+        if let Err(error) =
+            self.send_playback_command(PlaybackCommand::SetVisualizerEnabled(enabled))
+        {
+            let _sent = self.events.send(ControllerEvent::Error(error));
+        }
+    }
     pub fn poll_playback_events(&self) {
         let events = self
             .playback
@@ -215,6 +222,7 @@ impl AppController {
         if events.is_empty() {
             return;
         }
+        let mut playback_changed = false;
         let mut track_boundary_handled = false;
         for event in events {
             match event {
@@ -226,6 +234,7 @@ impl AppController {
                         snapshot.state = state;
                         snapshot.buffering_percent = None;
                     });
+                    playback_changed = true;
                 }
                 PlaybackEvent::PositionChanged {
                     track_id,
@@ -257,6 +266,7 @@ impl AppController {
                     self.record_playback_activity_progress(seconds);
                     self.persist_progress_if_needed(seconds);
                     self.report_playback_progress_if_needed(seconds);
+                    playback_changed = true;
                 }
                 PlaybackEvent::DurationChanged { track_id, seconds } => {
                     if track_boundary_handled {
@@ -273,26 +283,34 @@ impl AppController {
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.duration_seconds = seconds;
                     });
+                    playback_changed = true;
                 }
                 PlaybackEvent::Buffering(percent) => {
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.state = PlaybackState::Buffering;
                         snapshot.buffering_percent = Some(percent);
                     });
+                    playback_changed = true;
                 }
                 PlaybackEvent::EndOfStream => {
                     self.advance_after_end_of_stream();
                     track_boundary_handled = true;
+                    playback_changed = true;
                 }
                 PlaybackEvent::PreparedTrackStarted(track) => {
                     self.advance_after_prepared_track_started(track);
                     track_boundary_handled = true;
+                    playback_changed = true;
                 }
                 PlaybackEvent::VolumeChanged { volume, muted } => {
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.volume = volume;
                         snapshot.muted = muted;
                     });
+                    playback_changed = true;
+                }
+                PlaybackEvent::Visualizer(levels) => {
+                    let _sent = self.events.send(ControllerEvent::Visualizer(levels));
                 }
                 PlaybackEvent::Error(error) => {
                     self.report_playback(PlaybackReportKind::Stopped, true);
@@ -303,10 +321,13 @@ impl AppController {
                         snapshot.buffering_percent = None;
                     });
                     let _sent = self.events.send(ControllerEvent::Error(error));
+                    playback_changed = true;
                 }
             }
         }
-        self.emit_playback_snapshot();
+        if playback_changed {
+            self.emit_playback_snapshot();
+        }
     }
 }
 

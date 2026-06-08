@@ -65,6 +65,34 @@ impl Shell {
             size,
         ))
     }
+    pub(in crate::ui) fn current_playback_cover_cache_key(
+        &self,
+        image_ref: &ImageRef,
+        size: u32,
+    ) -> Option<String> {
+        let server_id = self.current_playback_server_id()?;
+        if self
+            .state
+            .library
+            .borrow()
+            .server
+            .as_ref()
+            .is_some_and(|server| server.provider == "fake")
+        {
+            return None;
+        }
+        if external_metadata::is_external_image_ref(image_ref)
+            && !external_metadata::enabled(&self.state.settings.borrow())
+        {
+            return None;
+        }
+        Some(image_cache_key(
+            &server_id,
+            &image_ref.item_id,
+            image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
+            size,
+        ))
+    }
     pub(in crate::ui) fn cover_cache_candidate_keys(
         &self,
         image_ref: &ImageRef,
@@ -106,7 +134,10 @@ impl Shell {
             self.apply_cover_unavailable(&key);
             return;
         }
-        let candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
+        let mut candidate_keys = self.cover_cache_candidate_keys(&image_ref, fetch_size);
+        if !candidate_keys.iter().any(|candidate| candidate == &key) {
+            candidate_keys.insert(0, key.clone());
+        }
         let fast_path = if matches!(
             intent,
             CoverPathLookupIntent::Priority

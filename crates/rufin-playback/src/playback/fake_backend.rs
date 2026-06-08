@@ -143,6 +143,10 @@ impl PlaybackBackend for FakePlaybackBackend {
                     muted: self.muted,
                 });
             }
+            PlaybackCommand::SetVisualizerEnabled(false) => {
+                self.events.push_back(PlaybackEvent::Visualizer(Vec::new()));
+            }
+            PlaybackCommand::SetVisualizerEnabled(true) => {}
         }
         Ok(())
     }

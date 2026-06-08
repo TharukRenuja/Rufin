@@ -11,7 +11,7 @@ const MIN_LYRICS_SCROLL_ANIMATION_MS: u64 = 80;
 const LYRICS_SCROLL_MS: u64 = 200;
 const LYRICS_USER_SCROLL_PAUSE_MS: u64 = 3_000;
 const LYRICS_SCROLL_READY_RETRY_MS: u64 = 32;
-const LYRICS_SCROLL_READY_RETRIES: u8 = 5;
+const LYRICS_SCROLL_READY_RETRIES: u8 = 12;
 
 #[derive(Clone)]
 pub struct LyricsPane {
@@ -196,6 +196,15 @@ impl LyricsPane {
     }
 
     pub fn update_highlight(&self, lyrics: Option<&Lyrics>, position_millis: u64) {
+        self.update_highlight_with_scroll_duration(lyrics, position_millis, None);
+    }
+
+    fn update_highlight_with_scroll_duration(
+        &self,
+        lyrics: Option<&Lyrics>,
+        position_millis: u64,
+        scroll_duration: Option<u64>,
+    ) {
         let active_index = lyrics
             .and_then(|lyrics| active_lyrics_line_index(lyrics.lines.as_slice(), position_millis));
         let highlight_all_lines =
@@ -218,15 +227,17 @@ impl LyricsPane {
             lyrics_follow_scroll_target(active_index, previous_index, follow_pause).and_then(
                 |index| {
                     let row = rows.iter().find(|row| row.line_index == index)?.row.clone();
-                    let duration = lyrics
-                        .map(|lyrics| {
-                            lyrics_scroll_animation_millis(
-                                lyrics.lines.as_slice(),
-                                index,
-                                position_millis,
-                            )
-                        })
-                        .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS);
+                    let duration = scroll_duration.unwrap_or_else(|| {
+                        lyrics
+                            .map(|lyrics| {
+                                lyrics_scroll_animation_millis(
+                                    lyrics.lines.as_slice(),
+                                    index,
+                                    position_millis,
+                                )
+                            })
+                            .unwrap_or(DEFAULT_LYRICS_SCROLL_ANIMATION_MS)
+                    });
                     Some((row, duration))
                 },
             )
@@ -235,6 +246,13 @@ impl LyricsPane {
         if let Some((row, duration)) = scroll_target {
             self.scroll_row_into_view(row, duration);
         }
+    }
+
+    pub fn refocus_highlight(&self, lyrics: Option<&Lyrics>, position_millis: u64) {
+        self.active_index.set(None);
+        self.follow_pause_until.set(None);
+        self.cancel_scroll_animation();
+        self.update_highlight_with_scroll_duration(lyrics, position_millis, Some(0));
     }
 
     pub fn pause_follow_scroll(&self) {

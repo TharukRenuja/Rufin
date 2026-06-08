@@ -408,16 +408,14 @@ impl Shell {
             .as_ref()
             .and_then(|entry| entry.image_ref.as_ref())
         {
-            if let Some(key) = self.cover_cache_key(image_ref, THUMB_COVER_SIZE) {
+            if let Some(key) = self.current_playback_cover_cache_key(image_ref, THUMB_COVER_SIZE) {
                 let cover_key_changed =
                     controls.cover_key.borrow().as_deref() != Some(key.as_str());
                 if cover_key_changed {
                     let has_decoded_cover =
                         self.decoded_cover_has_min_size(&key, BOTTOM_PLAYER_COVER_SIZE);
-                    let has_cached_cover_file = self
-                        .controller
-                        .cached_cover_path(image_ref, THUMB_COVER_SIZE)
-                        .is_some();
+                    let has_cached_cover_file =
+                        self.controller.cached_cover_path_for_key(&key).is_some();
                     if player_cover_replacement_is_ready(has_decoded_cover, has_cached_cover_file) {
                         controls.cover.advance_generation();
                     } else {

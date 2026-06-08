@@ -881,6 +881,30 @@ scale.volume-slider trough {
   margin: 0 12px 6px;
 }
 
+.fullscreen-player-visualizer {
+  min-height: 220px;
+}
+
+.fullscreen-player-visualizer-area {
+  min-height: 220px;
+}
+
+.fullscreen-player-equalizer-scroller {
+  min-height: 0;
+}
+
+.fullscreen-player-equalizer {
+  padding-bottom: 10px;
+}
+
+.fullscreen-player-equalizer-preset-menu {
+  padding: 6px;
+}
+
+.fullscreen-player-equalizer-bands {
+  min-height: 0;
+}
+
 .fullscreen-player .lyrics-panel {
   margin-top: 0;
   margin-bottom: 0;
@@ -891,11 +915,11 @@ scale.volume-slider trough {
 }
 
 .fullscreen-player-queue-panel {
-  min-height: 160px;
+  min-height: 0;
 }
 
 .fullscreen-player .queue-scroller {
-  min-height: 120px;
+  min-height: 0;
 }
 
 .folders-route {
