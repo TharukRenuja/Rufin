@@ -13,9 +13,9 @@ use super::{
     GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, PlaylistEntryListState,
     Shell, THUMB_COVER_SIZE, add_card_label_link, add_link_hover, album_artist_route,
     favorite_button_is_active, favorite_icon_button, icon_button, install_album_context_menu,
-    install_track_context_menu, loaded_tracks_window_play_activation, playlist_play_activation,
-    playlist_play_source_key, selected_music_folder_id, set_favorite_button_active,
-    smart_playlist_play_source_key, stable_seed, track_artist_route,
+    install_track_context_menu, loaded_tracks_window_play_activation,
+    playlist_entry_play_activation, playlist_play_source_key, selected_music_folder_id,
+    set_favorite_button_active, smart_playlist_play_source_key, stable_seed, track_artist_route,
 };
 use crate::controller::AppController;
 
@@ -370,7 +370,7 @@ pub(super) fn playlist_cover_tile(
                     |index| detail.tracks.get(index).cloned(),
                 )
             } else {
-                playlist_play_activation(playlist_id.clone(), detail.entries, 0, &state)
+                playlist_entry_play_activation(playlist_id.clone(), &detail.entries[0], 0, &state)
             };
             if let Some(activation) = activation {
                 controller.play_activation(activation);

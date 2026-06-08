@@ -939,10 +939,6 @@ pub(in crate::controller) fn cover_app_root() {
         playback_cache_dir(&root.join("cache")),
         root.join("cache").join("playback")
     );
-    assert_eq!(
-        tmp_cache_dir(&root.join("cache")),
-        root.join("cache").join("tmp")
-    );
 }
 #[test]
 pub(in crate::controller) fn cover_create_folder() {
@@ -952,8 +948,20 @@ pub(in crate::controller) fn cover_create_folder() {
     assert!(root.join("covers").is_dir());
     assert!(root.join("lyrics").is_dir());
     assert!(root.join("playback").is_dir());
-    assert!(root.join("tmp").is_dir());
+    assert!(!root.join("tmp").exists());
     assert!(!root.join("playlists").exists());
+    let _cleanup = fs::remove_dir_all(root);
+}
+#[test]
+pub(in crate::controller) fn cover_remove_waveform_tmp() {
+    let root = unique_test_dir("waveform-tmp");
+    let waveform_tmp = root.join("tmp").join("waveforms");
+    fs::create_dir_all(&waveform_tmp).expect("create waveform tmp");
+    fs::write(waveform_tmp.join("track.audio"), b"audio").expect("write waveform tmp");
+
+    remove_waveform_tmp(&root).expect("remove waveform tmp");
+
+    assert!(!root.join("tmp").exists());
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]

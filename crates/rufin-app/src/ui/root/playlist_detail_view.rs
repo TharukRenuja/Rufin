@@ -268,14 +268,16 @@ impl Shell {
         let play = playlist_detail_action_button("media-playback-start-symbolic", "Play", true);
         let controller = self.controller.clone();
         let playlist_id_for_play = detail.playlist.id.clone();
-        let entries_for_play = detail.entries.clone();
+        let entry_for_play = detail.entries.first().cloned();
         play.connect_clicked(move |_| {
-            if let Some(activation) = playlist_play_activation(
-                playlist_id_for_play.clone(),
-                entries_for_play.clone(),
-                0,
-                &PlaylistEntryListState::default(),
-            ) {
+            if let Some(entry) = entry_for_play.as_ref()
+                && let Some(activation) = playlist_entry_play_activation(
+                    playlist_id_for_play.clone(),
+                    entry,
+                    0,
+                    &PlaylistEntryListState::default(),
+                )
+            {
                 controller.play_activation(activation);
             }
         });
@@ -362,6 +364,7 @@ impl Shell {
         wrapper.set_width_request(1);
 
         let content_width = route_content_width(self);
+        let route_margin = playlist_route_margin(content_width);
         let toolbar = gtk::Box::new(playlist_toolbar_orientation(content_width), 8);
         toolbar.add_css_class("track-toolbar");
         toolbar.set_hexpand(true);
@@ -397,6 +400,7 @@ impl Shell {
             Rc::clone(&entries),
             Rc::clone(&state),
             detail.playlist.id.clone(),
+            route_margin * 2,
         );
         rebuild_playlist_entries_model(&model, &entries, &state.borrow());
 

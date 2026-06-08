@@ -22,26 +22,20 @@ impl Shell {
         let favorite_tracks = favorite_artist_tracks(&tracks);
         let has_favorite_tracks = !favorite_tracks.is_empty();
 
-        let scroller = gtk::ScrolledWindow::new();
-        mark_route_scroll_owner(&scroller);
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_propagate_natural_width(false);
-        scroller.set_hexpand(true);
-        scroller.set_vexpand(true);
-
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(28);
-        wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(32);
-        wrapper.set_margin_end(32);
-        wrapper.set_hexpand(true);
+        let wrapper = detail_route_wrapper(0);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        content.set_margin_top(28);
+        content.set_margin_bottom(36);
+        content.set_margin_start(32);
+        content.set_margin_end(32);
+        content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        content.set_width_request(1);
 
         let track_count = artist
             .track_count
             .max(tracks.len().min(u32::MAX as usize) as u32);
-        wrapper.append(&self.artist_detail_header(
+        content.append(&self.artist_detail_header(
             &artist,
             &tracks,
             albums.len(),
@@ -50,7 +44,7 @@ impl Shell {
         ));
 
         if has_favorite_tracks {
-            wrapper.append(&section_heading("Favorite tracks"));
+            content.append(&section_heading("Favorite tracks"));
             let favorite_artist_id = artist.id.clone();
             let selected_music_folder_id = selected_music_folder_id(self);
             let source_descriptor = PlaySourceDescriptor::HomeCollection {
@@ -61,7 +55,7 @@ impl Shell {
                     selected_music_folder_id,
                 }),
             };
-            wrapper.append(&self.compact_artist_tracks_table(
+            content.append(&self.compact_artist_tracks_table(
                 favorite_tracks,
                 "artist-favorites",
                 Some(source_descriptor),
@@ -69,22 +63,22 @@ impl Shell {
         }
 
         if !albums.is_empty() {
-            wrapper.append(&self.artist_album_section("Albums", &albums));
+            content.append(&self.artist_album_section("Albums", &albums));
         }
 
         if !appears_on.is_empty() {
-            wrapper.append(&self.artist_album_section("Appears On", &appears_on));
+            content.append(&self.artist_album_section("Appears On", &appears_on));
         }
 
         if !has_favorite_tracks && albums.is_empty() && appears_on.is_empty() {
-            wrapper.append(&self.placeholder_view(
+            content.append(&self.placeholder_view(
                 "Artist",
                 "No cached albums or tracks are linked to this artist yet.",
             ));
         }
 
-        scroller.set_child(Some(&wrapper));
-        scroller.upcast()
+        wrapper.append(&detail_route_scroller(self, content.upcast()));
+        wrapper.upcast()
     }
 
     pub(super) fn artist_discography_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
@@ -93,27 +87,21 @@ impl Shell {
                 .placeholder_view("Discography", "The selected cached artist was not found.");
         };
 
-        let scroller = gtk::ScrolledWindow::new();
-        mark_route_scroll_owner(&scroller);
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_propagate_natural_width(false);
-        scroller.set_hexpand(true);
-        scroller.set_vexpand(true);
-
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(28);
-        wrapper.set_margin_bottom(36);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
-        wrapper.set_hexpand(true);
+        let wrapper = detail_route_wrapper(0);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        content.set_margin_top(28);
+        content.set_margin_bottom(36);
+        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        content.set_width_request(1);
 
         let title = gtk::Label::new(Some(&detail.artist.name));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
         title.set_wrap(true);
-        wrapper.append(&title);
+        content.append(&title);
 
         let summary = gtk::Label::new(Some(&artist_summary_text(
             detail.albums.len(),
@@ -125,23 +113,23 @@ impl Shell {
         )));
         summary.add_css_class("muted");
         summary.set_xalign(0.0);
-        wrapper.append(&summary);
+        content.append(&summary);
 
         if !detail.albums.is_empty() {
-            wrapper.append(&self.artist_album_section("Albums", &detail.albums));
+            content.append(&self.artist_album_section("Albums", &detail.albums));
         }
         if !detail.appears_on.is_empty() {
-            wrapper.append(&self.artist_album_section("Appears On", &detail.appears_on));
+            content.append(&self.artist_album_section("Appears On", &detail.appears_on));
         }
         if detail.albums.is_empty() && detail.appears_on.is_empty() {
-            wrapper.append(&self.placeholder_view(
+            content.append(&self.placeholder_view(
                 "Discography",
                 "No cached albums are linked to this artist yet.",
             ));
         }
 
-        scroller.set_child(Some(&wrapper));
-        scroller.upcast()
+        wrapper.append(&detail_route_scroller(self, content.upcast()));
+        wrapper.upcast()
     }
 
     pub(super) fn artist_tracks_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
@@ -162,6 +150,7 @@ impl Shell {
         wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
+        wrapper.set_width_request(1);
 
         let title = gtk::Label::new(Some(&detail.artist.name));
         title.add_css_class("detail-title");
@@ -204,7 +193,7 @@ impl Shell {
         appears_on_count: usize,
         track_count: u32,
     ) -> gtk::Widget {
-        let content_width = route_content_width(self).saturating_sub(64).max(1);
+        let content_width = detail_route_inner_width(self, 64);
         let cover_size = detail_showcase_cover_size(content_width);
         let seed = stable_seed(artist.id.as_str());
         let header = gtk::Box::new(
@@ -392,6 +381,7 @@ impl Shell {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
         section.set_halign(gtk::Align::Fill);
+        section.set_width_request(1);
         section.append(&section_heading(title));
         section.append(&self.library_album_collection_panel(
             albums,

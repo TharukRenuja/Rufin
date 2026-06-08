@@ -77,10 +77,10 @@ use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::gio;
 use gtk::glib;
 use layout::{
-    COMPACT_RAIL_WIDTH, HOME_ALBUM_GAP, MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH,
-    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, SidebarWidths,
-    detail_showcase_cover_size, detail_showcase_spacing, resolve_layout_with_sidebar_widths,
-    route_content_width,
+    COMPACT_RAIL_WIDTH, DETAIL_ROUTE_SCROLL_GUTTER, HOME_ALBUM_GAP, MIN_APP_WINDOW_WIDTH,
+    NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, ResolvedLayout,
+    SidebarWidths, detail_route_inner_width, detail_showcase_cover_size, detail_showcase_spacing,
+    resolve_layout_with_sidebar_widths, route_content_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;

@@ -1,4 +1,5 @@
 use super::cover::{collection_cover_decode_extent, cover_group_collage_ready};
+use super::grouped_detail_view::GROUPED_DETAIL_COVER_FETCH_SIZE;
 use super::lyrics_playback_state::allow_loaded_lyrics_cache_revisit;
 use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
@@ -19,7 +20,7 @@ use super::{
     local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_result_subtitle_markup,
     lyrics_result_title_markup, lyrics_search_response_matches_query,
     playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
-    playlist_play_activation, playlist_route_margin, playlist_sort_width,
+    playlist_entry_play_activation, playlist_route_margin, playlist_sort_width,
     preferences_login_status_toast_message, queue_source_waits_for_snapshot,
     seekbar_target_seconds, snapshot_event_outcome,
 };
@@ -604,6 +605,11 @@ pub(in crate::ui) fn shell_collection_cover_uses_thumbnail_extent() {
         180
     );
 }
+
+#[test]
+pub(in crate::ui) fn shell_grouped_detail_uses_grid_collection_art() {
+    assert_eq!(GROUPED_DETAIL_COVER_FETCH_SIZE, super::GRID_COVER_SIZE);
+}
 #[test]
 pub(in crate::ui) fn shell_stay_cover() {
     let mut library = test_library_snapshot();
@@ -1104,18 +1110,19 @@ pub(in crate::ui) fn shell_playlist_panes() {
 pub(in crate::ui) fn shell_track_occurrences() {
     let mut duplicate = test_track("Artist", None);
     duplicate.id = TrackId::fake(7);
-    let activation = playlist_play_activation(
+    let entries = [
+        PlaylistEntry {
+            entry_id: "entry-a".to_string(),
+            track: duplicate.clone(),
+        },
+        PlaylistEntry {
+            entry_id: "entry-b".to_string(),
+            track: duplicate,
+        },
+    ];
+    let activation = playlist_entry_play_activation(
         PlaylistId::fake(3),
-        vec![
-            PlaylistEntry {
-                entry_id: "entry-a".to_string(),
-                track: duplicate.clone(),
-            },
-            PlaylistEntry {
-                entry_id: "entry-b".to_string(),
-                track: duplicate,
-            },
-        ],
+        &entries[1],
         1,
         &PlaylistEntryListState::default(),
     )

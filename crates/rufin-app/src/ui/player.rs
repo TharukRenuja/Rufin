@@ -1291,7 +1291,7 @@ fn connect_bottom_player_volume_resize(shell: &Rc<Shell>) {
 }
 
 impl Shell {
-    fn apply_bottom_player_width(&self, player_width: i32) {
+    pub(in crate::ui) fn apply_bottom_player_width(&self, player_width: i32) {
         if player_width > 0 {
             let progress_width = bottom_player_progress_width(player_width);
             self.player_controls

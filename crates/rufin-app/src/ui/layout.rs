@@ -12,6 +12,7 @@ pub(super) const RIGHT_SIDEBAR_SPACIOUS_WIDTH: i32 = 500;
 pub(super) const MIN_USEFUL_MAIN_WIDTH: i32 = 550;
 pub(super) const MIN_APP_WINDOW_WIDTH: i32 = COMPACT_RAIL_WIDTH + MIN_USEFUL_MAIN_WIDTH;
 pub(super) const HOME_ALBUM_GAP: i32 = 14;
+pub(super) const DETAIL_ROUTE_SCROLL_GUTTER: i32 = 24;
 const HOME_ALBUM_MIN_SIZE: i32 = 150;
 const HOME_ALBUM_TARGET_SIZE: i32 = 180;
 const HOME_ALBUM_MAX_SIZE: i32 = 210;
@@ -206,6 +207,13 @@ pub(super) fn route_content_width(shell: &Shell) -> i32 {
         shell.route_host.width(),
         shell.state.main_content_width.get(),
     )
+}
+
+pub(super) fn detail_route_inner_width(shell: &Shell, horizontal_inset: i32) -> i32 {
+    route_content_width(shell)
+        .saturating_sub(horizontal_inset)
+        .saturating_sub(DETAIL_ROUTE_SCROLL_GUTTER)
+        .max(1)
 }
 
 pub(super) fn detail_showcase_cover_size(width: i32) -> i32 {

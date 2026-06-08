@@ -586,6 +586,9 @@ impl StoreHandle {
     pub(in crate::controller) fn open_for_app() -> Result<Self, String> {
         if let Some(cache_root) = cache_dir() {
             ensure_app_cache_dirs(&cache_root)?;
+            if let Err(error) = remove_waveform_tmp(&cache_root) {
+                warn!(%error, "failed to remove waveform temp cache");
+            }
         }
         let cache_database_path = app_cache_database_path();
         if let Some(parent) = cache_database_path.parent() {

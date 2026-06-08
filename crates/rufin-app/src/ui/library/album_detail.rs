@@ -5,8 +5,43 @@ const TABLE_TARGET_WIDTH: i32 = 44;
 const TABLE_MIN_WIDTH: i32 = 24;
 const TABLE_EXPAND_MIN_WIDTH: i32 = 140;
 
-pub(in crate::ui) fn route_column_view_initial_width(_shell: &Shell) -> i32 {
-    1
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum ColumnViewWidthMode {
+    RouteScroller,
+    Embedded,
+}
+
+pub(in crate::ui) fn route_column_view_initial_width(shell: &Shell) -> i32 {
+    column_view_initial_width(shell, 0, ColumnViewWidthMode::RouteScroller)
+}
+
+pub(in crate::ui) fn route_column_view_initial_width_with_inset(
+    shell: &Shell,
+    content_inset: i32,
+) -> i32 {
+    column_view_initial_width(shell, content_inset, ColumnViewWidthMode::RouteScroller)
+}
+
+pub(in crate::ui) fn column_view_initial_width(
+    shell: &Shell,
+    content_inset: i32,
+    mode: ColumnViewWidthMode,
+) -> i32 {
+    let scrollbar_width = match mode {
+        ColumnViewWidthMode::RouteScroller => vertical_scrollbar_width(),
+        ColumnViewWidthMode::Embedded => 0,
+    };
+    route_content_width(shell)
+        .saturating_sub(scrollbar_width)
+        .saturating_sub(content_inset.max(0))
+        .saturating_sub(FITTED_TABLE_WIDTH_PADDING)
+        .max(1)
+}
+
+fn vertical_scrollbar_width() -> i32 {
+    let scrollbar = gtk::Scrollbar::new(gtk::Orientation::Vertical, None::<&gtk::Adjustment>);
+    let (_, natural, _, _) = scrollbar.measure(gtk::Orientation::Horizontal, -1);
+    natural.max(0)
 }
 
 pub(in crate::ui) fn fitted_column_widths(base_widths: &[i32], available_width: i32) -> Vec<i32> {
@@ -137,6 +172,10 @@ pub(in crate::ui) fn install_column_view_width_fit(
 
     let columns = Rc::new(columns);
     fit_column_widths(columns.as_ref(), table.width().max(initial_width));
+    let columns_for_map = Rc::clone(&columns);
+    table.connect_map(move |table| {
+        apply_column_view_width_fit(table, columns_for_map.as_ref());
+    });
     let columns_for_resize = Rc::clone(&columns);
     table.connect_notify_local(Some("width"), move |table, _| {
         apply_column_view_width_fit(table, columns_for_resize.as_ref());
@@ -361,8 +400,12 @@ pub(in crate::ui) fn track_column_for_key(
     }
 }
 pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField) -> i32 {
-    if key != LibraryListKey::SmartPlaylistTracks {
-        return column_width(field);
+    match key {
+        LibraryListKey::ArtistTracks
+        | LibraryListKey::GenreTracks
+        | LibraryListKey::PlaylistTracks => return track_list_column_width(field),
+        LibraryListKey::SmartPlaylistTracks => {}
+        _ => return column_width(field),
     }
 
     match field {
@@ -379,6 +422,18 @@ pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField
         LibraryField::Duration => 70,
         LibraryField::Image => column_width(LibraryField::Image),
         LibraryField::Favorite => 48,
+    }
+}
+fn track_list_column_width(field: LibraryField) -> i32 {
+    match field {
+        LibraryField::RowIndex => 54,
+        LibraryField::Title | LibraryField::TitleMerged => 320,
+        LibraryField::Album => 260,
+        LibraryField::Artist | LibraryField::AlbumArtist | LibraryField::Genre => 220,
+        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 70,
+        LibraryField::Duration => 90,
+        LibraryField::Favorite => 76,
+        _ => column_width(field),
     }
 }
 pub(in crate::ui) fn text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
@@ -457,7 +512,7 @@ pub(in crate::ui) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewC
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             let label = gtk::Label::new(None);
             label.add_css_class("muted");
-            label.set_xalign(0.5);
+            label.set_xalign(0.0);
             label.set_halign(gtk::Align::Fill);
             label.set_hexpand(true);
             label.set_wrap(false);

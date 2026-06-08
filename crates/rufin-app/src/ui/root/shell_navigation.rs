@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::root::library::configure_library_route_scroller;
 
 const ROUTE_SCROLL_OWNER_CLASS: &str = "route-scroll-owner";
 
@@ -158,11 +159,8 @@ pub(in crate::ui) fn set_track_table_columns(
     for column in &settings.visible_columns {
         table.append_column(&track_table_column(shell, *column));
     }
-    fit_track_columns(
-        table,
-        &settings.visible_columns,
-        super::library::route_column_view_initial_width(shell.as_ref()),
-    );
+    let initial_width = super::library::route_column_view_initial_width(shell.as_ref());
+    fit_track_columns(table, &settings.visible_columns, initial_width);
     let visible_columns = settings.visible_columns.to_vec();
     table.add_tick_callback(move |table, _| {
         fit_track_table_columns(table, &visible_columns);
@@ -369,16 +367,17 @@ pub(in crate::ui) fn route_boundary_for_route(
 fn route_boundary_from_spec(
     view: gtk::Widget,
     spec: RouteBoundarySpec,
-    content_width: i32,
+    _content_width: i32,
 ) -> gtk::Widget {
     let scroller = gtk::ScrolledWindow::new();
-    // this is necessary because route pages can contain tables, grids, and
-    // toolbars wider than the visible pane. they may scroll inside the pane,
-    // but they must never draw under the right sidebar.
+    if spec.vertical_policy != gtk::PolicyType::Never {
+        mark_route_scroll_owner(&scroller);
+    }
     scroller.set_policy(spec.horizontal_policy, spec.vertical_policy);
     scroller.set_overflow(spec.overflow);
     scroller.set_min_content_width(spec.min_content_width);
-    scroller.set_width_request(content_width.max(1));
+    scroller.set_max_content_width(1);
+    scroller.set_width_request(1);
     scroller.set_propagate_natural_width(spec.propagate_natural_width);
     scroller.set_propagate_natural_height(false);
     scroller.set_hexpand(spec.hexpand);
@@ -398,7 +397,7 @@ pub(in crate::ui) struct RouteBoundarySpec {
 }
 pub(in crate::ui) fn route_boundary_spec() -> RouteBoundarySpec {
     RouteBoundarySpec {
-        horizontal_policy: gtk::PolicyType::External,
+        horizontal_policy: gtk::PolicyType::Never,
         vertical_policy: gtk::PolicyType::Never,
         overflow: gtk::Overflow::Hidden,
         min_content_width: 0,
@@ -409,6 +408,26 @@ pub(in crate::ui) fn route_boundary_spec() -> RouteBoundarySpec {
 }
 pub(in crate::ui) fn route_boundary_spec_for_route(_route: &Route) -> RouteBoundarySpec {
     route_boundary_spec()
+}
+
+pub(in crate::ui) fn detail_route_scroller(shell: &Rc<Shell>, content: gtk::Widget) -> gtk::Widget {
+    let scroller = gtk::ScrolledWindow::new();
+    mark_route_scroll_owner(&scroller);
+    configure_library_route_scroller(shell, &scroller);
+    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_overlay_scrolling(true);
+    scroller.set_child(Some(&content));
+    scroller.upcast()
+}
+
+pub(in crate::ui) fn detail_route_wrapper(spacing: i32) -> gtk::Box {
+    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, spacing);
+    wrapper.add_css_class("route-content");
+    wrapper.set_hexpand(true);
+    wrapper.set_halign(gtk::Align::Fill);
+    wrapper.set_width_request(1);
+    wrapper.set_vexpand(true);
+    wrapper
 }
 pub(in crate::ui) fn route_displays_sync_status(_route: &Route, first_run: bool) -> bool {
     first_run
@@ -591,7 +610,7 @@ pub(in crate::ui) fn track_row_index_column() -> gtk::ColumnViewColumn {
             return;
         };
         let label = gtk::Label::new(None);
-        label.set_xalign(0.5);
+        label.set_xalign(0.0);
         label.set_halign(gtk::Align::Fill);
         label.set_hexpand(true);
         list_item.set_child(Some(&label));

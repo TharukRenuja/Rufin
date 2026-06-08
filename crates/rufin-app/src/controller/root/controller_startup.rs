@@ -653,6 +653,7 @@ async fn sync_local_provider_store_generation(
     let pruned_cover_entries =
         store.with_store(|store| store.commit_local_library_delta(server_id, generation, delta))?;
     prune_successful_sync_image_cache(store, server_id, pruned_cover_entries);
+    prune_disk_waveform_cache_entries(server_id, &sync_delta.tracks.deleted);
     progress.finished();
     info!(
         generation,
@@ -1173,6 +1174,7 @@ async fn sync_provider_generation(
         warn!(%error, "failed to refresh local track matches");
     }
     let delta = collector.finish();
+    prune_disk_waveform_cache_entries(server_id, &delta.tracks.deleted);
     let library_changed = !delta.is_empty();
     info!(
         generation,

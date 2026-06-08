@@ -6,19 +6,16 @@ impl Shell {
         query: &str,
         library: LibrarySnapshot,
     ) -> gtk::Widget {
-        let scroller = gtk::ScrolledWindow::new();
-        mark_route_scroll_owner(&scroller);
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_vexpand(true);
-
-        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 18);
-        wrapper.add_css_class("route-content");
-        wrapper.set_margin_top(24);
-        wrapper.set_margin_bottom(28);
-        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
-        wrapper.set_vexpand(true);
+        let wrapper = detail_route_wrapper(0);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+        content.set_margin_top(24);
+        content.set_margin_bottom(28);
+        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        content.set_width_request(1);
+        content.set_vexpand(true);
 
         let has_albums = !library.search.albums.is_empty();
         let has_tracks = !library.search.tracks.is_empty();
@@ -31,11 +28,11 @@ impl Shell {
                 albums,
                 tracks: Vec::new(),
             };
-            wrapper.append(&self.home_album_section(&section));
+            content.append(&self.home_album_section(&section));
         }
 
         if has_tracks {
-            wrapper.append(&self.library_tracks_panel_with_source(
+            content.append(&self.library_tracks_panel_with_source(
                 library.search.tracks,
                 LibraryListKey::Tracks,
                 "search",
@@ -43,12 +40,13 @@ impl Shell {
                     query: query.to_string(),
                     selected_music_folder_id: selected_music_folder_id(self),
                 }),
+                PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END + DETAIL_ROUTE_SCROLL_GUTTER,
             ));
         } else if !has_albums && !has_artists && !has_playlists {
-            wrapper.append(&self.route_empty_view("No cached results found."));
+            content.append(&self.route_empty_view("No cached results found."));
         }
 
-        scroller.set_child(Some(&wrapper));
-        scroller.upcast()
+        wrapper.append(&detail_route_scroller(self, content.upcast()));
+        wrapper.upcast()
     }
 }

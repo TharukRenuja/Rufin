@@ -202,6 +202,8 @@ impl Shell {
                 model,
                 LibraryListKey::Tracks,
                 Some(play_context),
+                0,
+                ColumnViewWidthMode::RouteScroller,
             ),
             load_next: if complete_page { None } else { Some(load_next) },
             configure_scroller: Some(track_viewport_warm),
@@ -767,9 +769,11 @@ pub(in crate::ui) fn non_propagating_width_clip(child: gtk::Widget) -> gtk::Widg
     child.set_halign(gtk::Align::Fill);
 
     let clip = gtk::ScrolledWindow::new();
-    clip.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
     clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_width_request(1);
     clip.set_min_content_width(0);
+    clip.set_max_content_width(1);
     clip.set_propagate_natural_width(false);
     clip.set_propagate_natural_height(true);
     clip.set_hexpand(true);

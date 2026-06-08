@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
@@ -10,7 +10,10 @@ use rufin_core::QueueEntry;
 use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
 
-use super::{ArtworkTile, DETAIL_COVER_SIZE, Shell, icon_button, player::BOTTOM_PLAYER_HEIGHT};
+use super::{
+    ArtworkTile, DETAIL_COVER_SIZE, Shell, icon_button, player::BOTTOM_PLAYER_HEIGHT,
+    player_icons::lyrics_icon_area,
+};
 
 const MAIN_VIEW_NAME: &str = "main";
 const FULLSCREEN_PLAYER_VIEW_NAME: &str = "fullscreen-player";
@@ -88,33 +91,19 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     let lyrics_pane = LyricsPane::new(&tr("Lyrics"));
     lyrics_pane.set_title("");
     lyrics_pane.widget().add_css_class("fullscreen-player-pane");
-    stack.add_titled_with_icon(
-        lyrics_pane.widget(),
-        Some("lyrics"),
-        &tr("Lyrics"),
-        "insert-text-symbolic",
-    );
+    stack.add_titled(lyrics_pane.widget(), Some("lyrics"), &tr("Lyrics"));
 
     let queue_panel = gtk::Box::new(gtk::Orientation::Vertical, 6);
     queue_panel.add_css_class("fullscreen-player-pane");
     queue_panel.add_css_class("fullscreen-player-queue-panel");
     queue_panel.set_hexpand(true);
     queue_panel.set_vexpand(true);
-    stack.add_titled_with_icon(
-        &queue_panel,
-        Some("queue"),
-        &tr("Queue"),
-        "view-list-ordered-symbolic",
-    );
+    stack.add_titled(&queue_panel, Some("queue"), &tr("Queue"));
 
-    let switcher = adw::ViewSwitcher::builder()
-        .policy(adw::ViewSwitcherPolicy::Wide)
-        .stack(&stack)
-        .build();
     let switcher_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     switcher_bar.add_css_class("fullscreen-player-tab-bar");
     switcher_bar.set_halign(gtk::Align::Center);
-    switcher_bar.append(&switcher);
+    switcher_bar.append(&fullscreen_player_switcher(&stack));
     body.append(&switcher_bar);
     body.append(&stack);
     root.append(&body);
@@ -132,6 +121,57 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         lyrics_pane,
         queue_panel,
     }
+}
+
+fn fullscreen_player_switcher(stack: &adw::ViewStack) -> gtk::Box {
+    let switcher = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    switcher.add_css_class("linked");
+    switcher.set_halign(gtk::Align::Center);
+
+    let lyrics = fullscreen_player_tab_button(
+        lyrics_icon_area(Rc::new(Cell::new(true))).upcast(),
+        &tr("Lyrics"),
+    );
+    let queue = fullscreen_player_tab_button(
+        gtk::Image::from_icon_name("view-list-ordered-symbolic").upcast(),
+        &tr("Queue"),
+    );
+    lyrics.set_active(true);
+
+    let lyrics_stack = stack.clone();
+    lyrics.connect_clicked(move |_| {
+        lyrics_stack.set_visible_child_name("lyrics");
+    });
+    let queue_stack = stack.clone();
+    queue.connect_clicked(move |_| {
+        queue_stack.set_visible_child_name("queue");
+    });
+
+    let lyrics_for_notify = lyrics.clone();
+    let queue_for_notify = queue.clone();
+    stack.connect_visible_child_name_notify(move |stack| {
+        let page = stack.visible_child_name();
+        let lyrics_active = page.as_deref() != Some("queue");
+        lyrics_for_notify.set_active(lyrics_active);
+        queue_for_notify.set_active(!lyrics_active);
+    });
+
+    switcher.append(&lyrics);
+    switcher.append(&queue);
+    switcher
+}
+
+fn fullscreen_player_tab_button(icon: gtk::Widget, label: &str) -> gtk::ToggleButton {
+    let button = gtk::ToggleButton::new();
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.set_halign(gtk::Align::Center);
+    content.set_valign(gtk::Align::Center);
+    content.append(&icon);
+    content.append(&gtk::Label::new(Some(label)));
+    button.set_child(Some(&content));
+    button.set_tooltip_text(Some(label));
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    button
 }
 
 pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
@@ -159,6 +199,7 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
         .connect_notify_local(Some("width"), move |_, _| {
             if resize_shell.state.fullscreen_player_visible.get() {
                 resize_shell.update_fullscreen_player();
+                resize_shell.schedule_queue_panel_render();
             }
         });
     let resize_shell = Rc::clone(shell);
@@ -167,6 +208,7 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
         .connect_notify_local(Some("height"), move |_, _| {
             if resize_shell.state.fullscreen_player_visible.get() {
                 resize_shell.update_fullscreen_player();
+                resize_shell.schedule_queue_panel_render();
             }
         });
 }
