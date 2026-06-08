@@ -15,19 +15,44 @@ impl Shell {
             self.root_stack.set_visible_child(&self.login_host);
             self.state.fullscreen_player_visible.set(false);
             self.app_content_stack.set_visible_child_name("main");
+            if let Some(tick) = self.fullscreen_player.animation_tick.borrow_mut().take() {
+                tick.remove();
+            }
+            self.fullscreen_player.root.set_margin_top(0);
+            self.fullscreen_player.root.set_opacity(0.0);
+            self.fullscreen_player.root.set_can_target(false);
+            self.fullscreen_player.root.set_sensitive(false);
+            self.fullscreen_player.root.set_visible(false);
         } else if startup_loading_active {
             self.root_stack
                 .set_visible_child(&self.startup_loading_host);
             self.state.fullscreen_player_visible.set(false);
             self.app_content_stack.set_visible_child_name("main");
+            if let Some(tick) = self.fullscreen_player.animation_tick.borrow_mut().take() {
+                tick.remove();
+            }
+            self.fullscreen_player.root.set_margin_top(0);
+            self.fullscreen_player.root.set_opacity(0.0);
+            self.fullscreen_player.root.set_can_target(false);
+            self.fullscreen_player.root.set_sensitive(false);
+            self.fullscreen_player.root.set_visible(false);
         } else {
             self.root_stack.set_visible_child(&self.app_root);
-            let content_view = if self.state.fullscreen_player_visible.get() {
-                "fullscreen-player"
-            } else {
-                "main"
-            };
-            self.app_content_stack.set_visible_child_name(content_view);
+            self.app_content_stack.set_visible_child_name("main");
+            let fullscreen_visible = self.state.fullscreen_player_visible.get();
+            if self.fullscreen_player.animation_tick.borrow().is_none() {
+                self.fullscreen_player.root.set_margin_top(0);
+                self.fullscreen_player
+                    .root
+                    .set_opacity(if fullscreen_visible { 1.0 } else { 0.0 });
+                self.fullscreen_player
+                    .root
+                    .set_can_target(fullscreen_visible);
+                self.fullscreen_player
+                    .root
+                    .set_sensitive(fullscreen_visible);
+                self.fullscreen_player.root.set_visible(true);
+            }
         }
         let previous_left = self
             .state

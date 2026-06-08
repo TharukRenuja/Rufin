@@ -597,6 +597,10 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     app_content_stack.set_hexpand(true);
     app_content_stack.set_vexpand(true);
 
+    let app_content_overlay = gtk::Overlay::new();
+    app_content_overlay.set_hexpand(true);
+    app_content_overlay.set_vexpand(true);
+
     let login_host = gtk::Box::new(gtk::Orientation::Vertical, 0);
     login_host.add_css_class("login-root");
     login_host.set_hexpand(true);
@@ -652,9 +656,11 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     upper.append(&content_chrome.root);
 
     app_content_stack.add_named(&upper, Some("main"));
-    app_content_stack.add_named(&fullscreen_player.root, Some("fullscreen-player"));
+    app_content_overlay.set_child(Some(&app_content_stack));
+    app_content_overlay.add_overlay(&fullscreen_player.root);
+    app_content_overlay.set_measure_overlay(&fullscreen_player.root, false);
 
-    app_root.append(&app_content_stack);
+    app_root.append(&app_content_overlay);
     app_root.append(&player_controls.root);
 
     root_stack.add_named(&login_host, Some("login"));
