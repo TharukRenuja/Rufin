@@ -484,6 +484,7 @@ impl Shell {
         }) {
             self.controller
                 .update_playback_settings(settings.playback.clone());
+            self.sync_fullscreen_equalizer_controls(&settings.playback.equalizer);
             self.update_bottom_player();
         }
     }

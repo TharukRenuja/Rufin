@@ -1,5 +1,11 @@
 use super::*;
 
+const CLASSIC_EQUALIZER_FREQUENCIES: [f64; EQUALIZER_BAND_COUNT] = [
+    60.0, 170.0, 310.0, 600.0, 1000.0, 3000.0, 6000.0, 12000.0, 14000.0, 16000.0,
+];
+const EQUALIZER_DUMMY_LOW_FREQUENCY: f64 = 20.0;
+const EQUALIZER_DUMMY_HIGH_FREQUENCY: f64 = 20_000.0;
+
 pub struct LazyGStreamerPlaybackBackend {
     inner: Option<Box<dyn PlaybackBackend>>,
 }
@@ -196,6 +202,7 @@ pub(super) struct SharedPlaybackState {
     pub(super) crossfade: Option<CrossfadeState>,
     pub(super) volume: f64,
     pub(super) muted: bool,
+    pub(super) visualizer_enabled: bool,
 }
 impl SharedPlaybackState {
     pub(super) fn new() -> Self {
@@ -209,6 +216,7 @@ impl SharedPlaybackState {
             crossfade: None,
             volume: settings.volume,
             muted: settings.muted,
+            visualizer_enabled: false,
             settings,
         }
     }
@@ -218,6 +226,7 @@ pub(super) struct PlayerPipeline {
     bus: gst::Bus,
     _about_to_finish_id: glib::SignalHandlerId,
     audio_sink_config: Option<AudioSinkConfig>,
+    visualizer: Option<gst::Element>,
 }
 #[derive(Clone, Debug, PartialEq)]
 struct AudioSinkConfig {
@@ -225,14 +234,18 @@ struct AudioSinkConfig {
     audio_output: Option<String>,
     equalizer: EqualizerSettings,
 }
-impl From<&PlaybackSettings> for AudioSinkConfig {
-    fn from(settings: &PlaybackSettings) -> Self {
+impl AudioSinkConfig {
+    fn new(settings: &PlaybackSettings) -> Self {
         Self {
             replay_gain: settings.replay_gain,
             audio_output: settings.audio_output.clone(),
             equalizer: settings.equalizer.clone(),
         }
     }
+}
+struct AudioSink {
+    root: gst::Element,
+    visualizer: Option<gst::Element>,
 }
 #[derive(Debug, PartialEq)]
 pub(super) enum AboutToFinishAction {
@@ -269,18 +282,31 @@ impl PlayerPipeline {
             bus,
             _about_to_finish_id: about_to_finish_id,
             audio_sink_config: None,
+            visualizer: None,
         })
     }
 
-    fn configure_audio(&mut self, settings: &PlaybackSettings) -> Result<(), String> {
-        let config = AudioSinkConfig::from(settings);
+    fn configure_audio(
+        &mut self,
+        settings: &PlaybackSettings,
+        visualizer_enabled: bool,
+    ) -> Result<(), String> {
+        let config = AudioSinkConfig::new(settings);
         if self.audio_sink_config.as_ref() == Some(&config) {
+            self.set_visualizer_enabled(visualizer_enabled);
             return Ok(());
         }
-        let sink = build_audio_sink(settings)?;
-        self.pipeline.set_property("audio-sink", &sink);
+        let sink = build_audio_sink(settings, visualizer_enabled)?;
+        self.pipeline.set_property("audio-sink", &sink.root);
+        self.visualizer = sink.visualizer;
         self.audio_sink_config = Some(config);
         Ok(())
+    }
+
+    fn set_visualizer_enabled(&self, enabled: bool) {
+        if let Some(visualizer) = &self.visualizer {
+            visualizer.set_property("post-messages", enabled);
+        }
     }
 
     fn play_item(
@@ -289,12 +315,13 @@ impl PlayerPipeline {
         settings: &PlaybackSettings,
         volume: f64,
         muted: bool,
+        visualizer_enabled: bool,
         start_position_seconds: u32,
     ) -> Result<(), String> {
         self.pipeline
             .set_state(gst::State::Ready)
             .map_err(|error| error.to_string())?;
-        self.configure_audio(settings)?;
+        self.configure_audio(settings, visualizer_enabled)?;
         self.pipeline.set_property("uri", item.stream.uri());
         self.set_output_volume(volume, muted);
         let startup_state = if start_position_seconds > 0 {
@@ -411,17 +438,25 @@ impl GstEngine {
             PlaybackCommand::PrepareNext(next) => self.prepare_next(next),
             PlaybackCommand::UpdateSettings(mut settings) => {
                 settings.sanitize();
-                if let Ok(mut shared) = self.shared.lock() {
-                    shared.settings = settings;
-                    shared.volume = shared.settings.volume;
-                    shared.muted = shared.settings.muted;
-                }
-                let (volume, muted) = self.output_state();
-                self.primary.set_output_volume(volume, muted);
-                self.secondary.set_output_volume(volume, muted);
-                push_event(&self.events, PlaybackEvent::VolumeChanged { volume, muted });
-                Ok(())
+                (|| -> Result<(), String> {
+                    let visualizer_enabled = self.visualizer_enabled();
+                    if let Ok(mut shared) = self.shared.lock() {
+                        shared.settings = settings.clone();
+                        shared.volume = shared.settings.volume;
+                        shared.muted = shared.settings.muted;
+                    }
+                    self.primary
+                        .configure_audio(&settings, visualizer_enabled)?;
+                    self.secondary
+                        .configure_audio(&settings, visualizer_enabled)?;
+                    let (volume, muted) = self.output_state();
+                    self.primary.set_output_volume(volume, muted);
+                    self.secondary.set_output_volume(volume, muted);
+                    push_event(&self.events, PlaybackEvent::VolumeChanged { volume, muted });
+                    Ok(())
+                })()
             }
+            PlaybackCommand::SetVisualizerEnabled(enabled) => self.set_visualizer_enabled(enabled),
             PlaybackCommand::Resume => {
                 self.pending_seek = None;
                 self.active_pipeline()
@@ -475,8 +510,10 @@ impl GstEngine {
     }
 
     fn warm_up(&mut self, settings: &PlaybackSettings) -> Result<(), String> {
-        self.primary.configure_audio(settings)?;
-        self.secondary.configure_audio(settings)?;
+        let visualizer_enabled = self.visualizer_enabled();
+        self.primary.configure_audio(settings, visualizer_enabled)?;
+        self.secondary
+            .configure_audio(settings, visualizer_enabled)?;
         if let Ok(mut shared) = self.shared.lock() {
             shared.settings = settings.clone();
             shared.volume = settings.volume;
@@ -504,6 +541,7 @@ impl GstEngine {
         let volume = settings.volume;
         let muted = settings.muted;
         let start_millis = u64::from(start_position_seconds) * 1_000;
+        let mut visualizer_enabled = false;
         if let Ok(mut shared) = self.shared.lock() {
             shared.settings = settings.clone();
             shared.current = Some(item.clone());
@@ -514,11 +552,18 @@ impl GstEngine {
             shared.active = Slot::Primary;
             shared.volume = volume;
             shared.muted = muted;
+            visualizer_enabled = shared.visualizer_enabled;
         }
         self.push_state(PlaybackState::Buffering);
         let pipeline_started_at = Instant::now();
-        self.primary
-            .play_item(&item, &settings, volume, muted, start_position_seconds)?;
+        self.primary.play_item(
+            &item,
+            &settings,
+            volume,
+            muted,
+            visualizer_enabled,
+            start_position_seconds,
+        )?;
         info!(
             track_id = %item.track.id.as_str(),
             elapsed_ms = command_started_at.elapsed().as_millis(),
@@ -651,6 +696,9 @@ impl GstEngine {
             MessageView::Buffering(buffering) if self.is_active_slot(slot) => {
                 self.handle_buffering(buffering.percent().min(100) as u8);
             }
+            MessageView::Element(element) if self.is_active_slot(slot) => {
+                self.handle_element_message(element);
+            }
             MessageView::Eos(_) => self.handle_eos(slot),
             MessageView::Error(error_message) => {
                 let error = error_message.error().to_string();
@@ -675,6 +723,21 @@ impl GstEngine {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn handle_element_message(&self, element: &gst::message::Element) {
+        if !self.visualizer_enabled() {
+            return;
+        }
+        let Some(structure) = element.structure() else {
+            return;
+        };
+        if structure.name() != "spectrum" {
+            return;
+        }
+        if let Some(levels) = spectrum_levels(structure) {
+            push_event(&self.events, PlaybackEvent::Visualizer(levels));
         }
     }
 
@@ -987,8 +1050,10 @@ impl GstEngine {
         {
             return;
         }
+        let visualizer_enabled = self.visualizer_enabled();
         let inactive = self.pipeline_for_slot_mut(to);
-        if let Err(error) = inactive.play_item(&next, &settings, 0.0, muted, 0) {
+        if let Err(error) = inactive.play_item(&next, &settings, 0.0, muted, visualizer_enabled, 0)
+        {
             push_event(&self.events, PlaybackEvent::Error(error));
             return;
         }
@@ -1098,6 +1163,30 @@ impl GstEngine {
             .lock()
             .map(|shared| (shared.volume, shared.muted))
             .unwrap_or((1.0, false))
+    }
+
+    fn visualizer_enabled(&self) -> bool {
+        self.shared
+            .lock()
+            .map(|shared| shared.visualizer_enabled)
+            .unwrap_or(false)
+    }
+
+    fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String> {
+        let changed = {
+            let Ok(mut shared) = self.shared.lock() else {
+                return Ok(());
+            };
+            let changed = shared.visualizer_enabled != enabled;
+            shared.visualizer_enabled = enabled;
+            changed
+        };
+        self.primary.set_visualizer_enabled(enabled);
+        self.secondary.set_visualizer_enabled(enabled);
+        if changed && !enabled {
+            push_event(&self.events, PlaybackEvent::Visualizer(Vec::new()));
+        }
+        Ok(())
     }
 
     fn set_volume(&mut self, volume: f64) -> bool {
@@ -1358,11 +1447,18 @@ fn configure_playbin_for_audio(pipeline: &gst::Element) {
     };
     pipeline.set_property_from_value("flags", &flags);
 }
-fn build_audio_sink(settings: &PlaybackSettings) -> Result<gst::Element, String> {
+fn build_audio_sink(
+    settings: &PlaybackSettings,
+    visualizer_enabled: bool,
+) -> Result<AudioSink, String> {
     let has_replay_gain = settings.replay_gain != ReplayGainMode::Off;
     let has_equalizer = settings.equalizer.enabled;
-    if !has_replay_gain && !has_equalizer {
-        return make_audio_output(settings.audio_output.as_deref());
+    let visualizer = optional_element("spectrum", "rufin-spectrum");
+    if !has_replay_gain && !has_equalizer && visualizer.is_none() {
+        return Ok(AudioSink {
+            root: make_audio_output(settings.audio_output.as_deref())?,
+            visualizer: None,
+        });
     }
 
     let bin = gst::Bin::new();
@@ -1382,19 +1478,34 @@ fn build_audio_sink(settings: &PlaybackSettings) -> Result<gst::Element, String>
     }
 
     if has_equalizer
-        && let Some(equalizer) = optional_element("equalizer-10bands", "rufin-equalizer")
+        && let Some(equalizer) = optional_element("equalizer-nbands", "rufin-equalizer")
     {
-        for (index, gain) in settings
-            .equalizer
-            .bands
-            .iter()
-            .copied()
-            .take(EQUALIZER_BAND_COUNT)
-            .enumerate()
-        {
-            equalizer.set_property(format!("band{index}").as_str(), gain);
+        equalizer.set_property("num-bands", (EQUALIZER_BAND_COUNT + 2) as u32);
+        set_equalizer_band(&equalizer, 0, EQUALIZER_DUMMY_LOW_FREQUENCY, 0.0, 0.0);
+        set_equalizer_band(
+            &equalizer,
+            EQUALIZER_BAND_COUNT + 1,
+            EQUALIZER_DUMMY_HIGH_FREQUENCY,
+            0.0,
+            0.0,
+        );
+        let mut previous = 0.0;
+        for (index, frequency) in CLASSIC_EQUALIZER_FREQUENCIES.iter().copied().enumerate() {
+            let gain = settings.equalizer.bands.get(index).copied().unwrap_or(0.0);
+            set_equalizer_band(&equalizer, index + 1, frequency, frequency - previous, gain);
+            previous = frequency;
         }
         elements.push(equalizer);
+    }
+
+    if let Some(spectrum) = &visualizer {
+        spectrum.set_property("bands", 1024u32);
+        spectrum.set_property("threshold", -85i32);
+        spectrum.set_property("post-messages", visualizer_enabled);
+        spectrum.set_property("message-magnitude", true);
+        spectrum.set_property("message-phase", false);
+        spectrum.set_property("interval", 50_000_000u64);
+        elements.push(spectrum.clone());
     }
 
     elements.push(convert_out.clone());
@@ -1414,7 +1525,68 @@ fn build_audio_sink(settings: &PlaybackSettings) -> Result<gst::Element, String>
         .map_err(|error| error.to_string())?;
     bin.add_pad(&ghost_sink)
         .map_err(|error| error.to_string())?;
-    Ok(bin.upcast())
+    Ok(AudioSink {
+        root: bin.upcast(),
+        visualizer,
+    })
+}
+fn spectrum_levels(structure: &gst::StructureRef) -> Option<Vec<f64>> {
+    if let Ok(list) = structure.get::<gst::List>("magnitude") {
+        let levels = list
+            .iter()
+            .filter_map(value_level)
+            .map(normalize_spectrum_level)
+            .collect::<Vec<_>>();
+        return (!levels.is_empty()).then_some(levels);
+    }
+    if let Ok(array) = structure.get::<gst::Array>("magnitude") {
+        let levels = array
+            .iter()
+            .filter_map(value_level)
+            .map(normalize_spectrum_level)
+            .collect::<Vec<_>>();
+        return (!levels.is_empty()).then_some(levels);
+    }
+    structure
+        .get::<String>("magnitude")
+        .ok()
+        .and_then(|raw| spectrum_levels_from_text(&raw))
+}
+fn value_level(value: &glib::SendValue) -> Option<f64> {
+    value
+        .get::<f64>()
+        .ok()
+        .or_else(|| value.get::<f32>().ok().map(f64::from))
+        .or_else(|| value.get::<i32>().ok().map(f64::from))
+}
+fn spectrum_levels_from_text(raw: &str) -> Option<Vec<f64>> {
+    let start = raw.find('{').map(|index| index + 1).unwrap_or(0);
+    let end = raw.rfind('}').unwrap_or(raw.len());
+    let levels = raw[start..end]
+        .split(',')
+        .filter_map(|part| part.trim().parse::<f64>().ok())
+        .map(normalize_spectrum_level)
+        .collect::<Vec<_>>();
+    (!levels.is_empty()).then_some(levels)
+}
+fn normalize_spectrum_level(level: f64) -> f64 {
+    ((level + 85.0) / 60.0).clamp(0.0, 1.0)
+}
+fn set_equalizer_band(
+    equalizer: &gst::Element,
+    index: usize,
+    frequency: f64,
+    bandwidth: f64,
+    gain: f64,
+) {
+    let Some(proxy) = equalizer.dynamic_cast_ref::<gst::ChildProxy>() else {
+        return;
+    };
+    if let Some(band) = proxy.child_by_index(index as u32) {
+        band.set_property("freq", frequency);
+        band.set_property("bandwidth", bandwidth);
+        band.set_property("gain", gain);
+    }
 }
 fn make_audio_output(selected: Option<&str>) -> Result<gst::Element, String> {
     if let Some(selected) = selected
@@ -1457,6 +1629,7 @@ pub(super) fn position_event_for_track(millis: u64, track_id: Option<TrackId>) -
         millis,
     }
 }
+
 pub(super) fn clock_seconds_from_millis(millis: u64) -> u32 {
     (millis / 1_000).min(u64::from(u32::MAX)) as u32
 }
@@ -1491,4 +1664,48 @@ pub(super) fn redact_sensitive_uri(uri: &str) -> String {
         .collect::<Vec<_>>()
         .join("&");
     format!("{base}?{query}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visualizer_audio_sink_builds_when_available() {
+        gst::init().expect("initialize GStreamer");
+        if gst::ElementFactory::find("spectrum").is_none() {
+            return;
+        }
+        let sink = build_audio_sink(&PlaybackSettings::default(), true)
+            .expect("build visualizer audio sink");
+        let visualizer = sink.visualizer.expect("visualizer element");
+        assert!(visualizer.property::<bool>("post-messages"));
+    }
+
+    #[test]
+    fn equalizer_band_helper_configures_child_band() {
+        gst::init().expect("initialize GStreamer");
+        let Some(equalizer) = optional_element("equalizer-nbands", "test-equalizer") else {
+            return;
+        };
+        equalizer.set_property("num-bands", 12u32);
+        set_equalizer_band(&equalizer, 1, 60.0, 60.0, 8.0);
+        let proxy = equalizer
+            .dynamic_cast_ref::<gst::ChildProxy>()
+            .expect("equalizer child proxy");
+        let band = proxy.child_by_index(1).expect("configured band");
+        assert_eq!(band.property::<f64>("freq"), 60.0);
+        assert_eq!(band.property::<f64>("bandwidth"), 60.0);
+        assert_eq!(band.property::<f64>("gain"), 8.0);
+    }
+
+    #[test]
+    fn spectrum_text_levels_are_normalized() {
+        let levels =
+            spectrum_levels_from_text("(float){ -30.0, -45.0, -70.0 }").expect("parse levels");
+        assert!(levels[0] > levels[1]);
+        assert!(levels[1] > levels[2]);
+        assert!(levels.iter().all(|level| (0.0..=1.0).contains(level)));
+        assert!(normalize_spectrum_level(-45.0) > 0.0);
+    }
 }

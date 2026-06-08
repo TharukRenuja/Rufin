@@ -347,6 +347,7 @@ mod tests {
                 | ControllerEvent::FavoriteChanged { .. }
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
+                | ControllerEvent::Visualizer(_)
                 | ControllerEvent::Lyrics(_)
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSearchFailed { .. }

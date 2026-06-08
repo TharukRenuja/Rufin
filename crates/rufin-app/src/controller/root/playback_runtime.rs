@@ -231,4 +231,15 @@ impl AppController {
             self.events.clone(),
         );
     }
+    pub(in crate::controller) fn prepare_next_stream_deferred(&self) {
+        let store = self.store.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let secrets = Arc::clone(&self.secrets);
+        let playback = Arc::clone(&self.playback);
+        let queue = Arc::clone(&self.queue);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            prepare_next_stream_from_handles(store, runtime, secrets, playback, queue, events);
+        });
+    }
 }

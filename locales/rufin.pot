@@ -1670,6 +1670,52 @@ msgstr ""
 msgid "Lyrics"
 msgstr ""
 
+#: crates/rufin-app/src/ui/fullscreen_player.rs:135
+#: crates/rufin-app/src/ui/fullscreen_player.rs:201
+#: crates/rufin-app/src/ui/fullscreen_player.rs:202
+msgid "Visualizer"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:706
+msgid "Flat"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:708
+msgid "Classical"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:712
+msgid "Club"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:716
+msgid "Dance"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:720
+msgid "Full Bass"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:724
+msgid "Full Treble"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:728
+msgid "Laptop/Headphones"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:732
+msgid "Rock"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:736
+msgid "Pop"
+msgstr ""
+
+#: crates/rufin-app/src/ui/fullscreen_player.rs:740
+msgid "Techno"
+msgstr ""
+
 #: crates/rufin-app/src/ui/library/album_detail.rs:815
 msgid "Image"
 msgstr ""
@@ -1882,6 +1928,9 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:620
 msgid "Enable equalizer"
+msgstr ""
+
+msgid "Preset"
 msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:671

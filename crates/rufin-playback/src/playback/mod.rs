@@ -125,6 +125,7 @@ pub enum PlaybackCommand {
     SeekMillis(u64),
     SetVolume(f64),
     SetMuted(bool),
+    SetVisualizerEnabled(bool),
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaybackEvent {
@@ -145,6 +146,7 @@ pub enum PlaybackEvent {
         volume: f64,
         muted: bool,
     },
+    Visualizer(Vec<f64>),
     Error(String),
 }
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -896,6 +896,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.update_mpris_player();
                     shell.update_discord_presence(&next_snapshot);
                 }
+                ControllerEvent::Visualizer(levels) => {
+                    shell.apply_fullscreen_visualizer_levels(levels);
+                }
                 ControllerEvent::Lyrics(lyrics) => {
                     shell.apply_loaded_lyrics(*lyrics);
                 }
