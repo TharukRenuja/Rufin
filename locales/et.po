@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: 2026-06-06 20:59+0300\n"
-"PO-Revision-Date: 2026-06-06 18:01+0000\n"
+"PO-Revision-Date: 2026-06-08 23:29+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -49,7 +49,7 @@ msgstr "Album"
 
 #: crates/rufin-app/src/i18n.rs:426
 msgid "Tracks"
-msgstr "Palad"
+msgstr "Lood"
 
 #: crates/rufin-app/src/i18n.rs:427 crates/rufin-app/src/ui/artist.rs:229
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:82
@@ -170,7 +170,7 @@ msgstr "albumit"
 #: crates/rufin-app/src/ui/root/playlist_detail_view.rs:79
 #: crates/rufin-app/src/ui/root/playlist_detail_view.rs:218
 msgid "tracks"
-msgstr "palad"
+msgstr "lugu"
 
 #: crates/rufin-app/src/i18n.rs:450
 #: crates/rufin-app/src/ui/root/cover_startup.rs:426
@@ -824,7 +824,7 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:586
 #: crates/rufin-app/src/ui/preferences/root/general.rs:503
 msgid "Add tracks when fewer than this many remain"
-msgstr ""
+msgstr "Kui jäänud alla antud piiri lugusid, siis lisa neid juurde"
 
 #: crates/rufin-app/src/i18n.rs:587
 msgid "Auto DJ on"
@@ -836,7 +836,7 @@ msgstr "Esita juhuslikult"
 
 #: crates/rufin-app/src/i18n.rs:589 crates/rufin-app/src/ui/random_play.rs:70
 msgid "Number of songs"
-msgstr ""
+msgstr "Lugude arv"
 
 #: crates/rufin-app/src/i18n.rs:590 crates/rufin-app/src/ui/random_play.rs:72
 msgid "Minimum year"
@@ -919,7 +919,7 @@ msgstr "Sulge"
 
 #: crates/rufin-app/src/i18n.rs:609
 msgid "Disable automatic lyric search for this track"
-msgstr ""
+msgstr "Keela selle loo puhul automaatne laulusõnade otsing"
 
 #: crates/rufin-app/src/i18n.rs:610
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:21
@@ -964,15 +964,13 @@ msgstr "tulemused"
 
 #: crates/rufin-app/src/i18n.rs:618
 #: crates/rufin-app/src/ui/root/cover_startup.rs:302
-#, fuzzy
 msgid "Synced lyrics"
-msgstr "Otsi laulusõnu"
+msgstr "Sünkroonitud laulusõnad"
 
 #: crates/rufin-app/src/i18n.rs:619
 #: crates/rufin-app/src/ui/root/cover_startup.rs:308
-#, fuzzy
 msgid "Plain lyrics"
-msgstr "Peida laulusõnad"
+msgstr "Tavalised laulusõnad"
 
 #: crates/rufin-app/src/i18n.rs:620
 #: crates/rufin-app/src/ui/root/cover_startup.rs:310
@@ -981,9 +979,8 @@ msgstr "Laulusõnu pole"
 
 #: crates/rufin-app/src/i18n.rs:621
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:235
-#, fuzzy
 msgid "Loaded in lyrics panel."
-msgstr "Näita laulusõnade riba"
+msgstr "Laaditud laulusõnade plokis."
 
 #: crates/rufin-app/src/i18n.rs:623
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:347
@@ -1189,33 +1186,32 @@ msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:665
 msgid "Music Server"
-msgstr ""
+msgstr "Muusikaserver"
 
 #: crates/rufin-app/src/i18n.rs:666
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:17
 msgid "Private mode is on"
-msgstr ""
+msgstr "Privaatne režiim on lülitatud sisse"
 
 #: crates/rufin-app/src/i18n.rs:667
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:202
 msgid "App window"
-msgstr ""
+msgstr "Rakenduse aken"
 
 #: crates/rufin-app/src/i18n.rs:668
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:217
 msgid "Type to search"
-msgstr ""
+msgstr "Otsimiseks siesta midagi"
 
 #: crates/rufin-app/src/i18n.rs:668
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:205
-#, fuzzy
 msgid "Show tray icon"
-msgstr "Vaata laulusõnu"
+msgstr "Näita süsteemisalve ikooni"
 
 #: crates/rufin-app/src/i18n.rs:669
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:209
 msgid "Exit to tray"
-msgstr ""
+msgstr "Väljumisel jäta rakendus süsteemisalve"
 
 #: crates/rufin-app/src/i18n.rs:670
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:213
@@ -1223,55 +1219,48 @@ msgid "Start minimized"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:671 crates/rufin-app/src/ui/root/tray.rs:50
-#, fuzzy
 msgid "Show Rufin"
-msgstr "Rakenduse teave: Rufin"
+msgstr "Näita Rufinit"
 
 #: crates/rufin-app/src/i18n.rs:672 crates/rufin-app/src/ui/root/tray.rs:51
-#, fuzzy
 msgid "Play/Pause"
-msgstr "Peata esitus"
+msgstr "Esita/Peata esitus"
 
 #: crates/rufin-app/src/i18n.rs:673 crates/rufin-app/src/ui/root/tray.rs:52
-#, fuzzy
 msgid "Previous Track"
-msgstr "Eelmine"
+msgstr "Eelmine lugu"
 
 #: crates/rufin-app/src/i18n.rs:674 crates/rufin-app/src/ui/root/tray.rs:53
-#, fuzzy
 msgid "Next Track"
-msgstr "Pala"
+msgstr "Järgmine lugu"
 
 #: crates/rufin-app/src/i18n.rs:675 crates/rufin-app/src/ui/root/tray.rs:54
-#, fuzzy
 msgid "Enable private mode"
-msgstr "Privaatne režiim"
+msgstr "Lülita privaatne režiim sisse"
 
 #: crates/rufin-app/src/i18n.rs:676 crates/rufin-app/src/ui/root/tray.rs:55
-#, fuzzy
 msgid "Disable private mode"
-msgstr "Privaatne režiim"
+msgstr "Lülita privaatne režiim välja"
 
 #: crates/rufin-app/src/i18n.rs:677 crates/rufin-app/src/ui/root/tray.rs:56
 msgid "Quit"
-msgstr ""
+msgstr "Välju"
 
 #: crates/rufin-app/src/i18n.rs:678 crates/rufin-app/src/ui/root/tray.rs:57
 msgid "Rufin is running in the tray"
-msgstr ""
+msgstr "Rufin on töös süsteemisalves"
 
 #: crates/rufin-app/src/i18n.rs:679
 msgid "Left sidebar density"
-msgstr ""
+msgstr "Vasaku külgriba tihedus"
 
 #: crates/rufin-app/src/i18n.rs:680
 msgid "Choose when the left sidebar uses compact navigation"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:681
-#, fuzzy
 msgid "Plays"
-msgstr "Esita"
+msgstr "Esitamisi"
 
 #: crates/rufin-app/src/i18n.rs:682
 #: crates/rufin-app/src/ui/root/home_refresh.rs:70
@@ -1296,13 +1285,12 @@ msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:687
 msgid "Seekbar"
-msgstr ""
+msgstr "Kerimisriba"
 
 #: crates/rufin-app/src/i18n.rs:688
 #: crates/rufin-app/src/ui/preferences/root/general.rs:446
-#, fuzzy
 msgid "Queue and transitions"
-msgstr "Alustamiseks lisa midagi esitusjärjekorda"
+msgstr "Esitusjärjekord ja üleminekud"
 
 #: crates/rufin-app/src/i18n.rs:689
 #: crates/rufin-app/src/ui/preferences/root/general.rs:533
@@ -1317,7 +1305,7 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:691
 #: crates/rufin-app/src/ui/preferences/root/general.rs:490
 msgid "Keep album transitions gapless when possible"
-msgstr ""
+msgstr "Kui võimalik, siis hoia albumi lugude üleminekud pausideta"
 
 #: crates/rufin-app/src/i18n.rs:692
 #: crates/rufin-app/src/ui/preferences/root/general.rs:579
@@ -1350,29 +1338,24 @@ msgid "Play Later"
 msgstr "Esita hiljem"
 
 #: crates/rufin-app/src/i18n.rs:699
-#, fuzzy
 msgid "Play album"
-msgstr "Esita juhuslikult"
+msgstr "Esita albumit"
 
 #: crates/rufin-app/src/i18n.rs:700
-#, fuzzy
 msgid "Play track"
-msgstr "Taasesitus"
+msgstr "Esita lugu"
 
 #: crates/rufin-app/src/i18n.rs:701
-#, fuzzy
 msgid "Play artist"
-msgstr "Esitusloend"
+msgstr "Esita esitajat"
 
 #: crates/rufin-app/src/i18n.rs:702
-#, fuzzy
 msgid "Add to Favorites"
-msgstr "Lemmikud"
+msgstr "Lisa lemmikuks"
 
 #: crates/rufin-app/src/i18n.rs:703
-#, fuzzy
 msgid "Remove from Favorites"
-msgstr "Eemalda esitusloendist"
+msgstr "Eemalda lemmikute hulgast"
 
 #: crates/rufin-app/src/i18n.rs:704 crates/rufin-app/src/ui/queue.rs:557
 #: crates/rufin-app/src/ui/root/home_refresh.rs:65
@@ -1392,44 +1375,36 @@ msgid "Add to queue"
 msgstr "Lisa esitusjärjekorda"
 
 #: crates/rufin-app/src/i18n.rs:707
-#, fuzzy
 msgid "Clear queue"
-msgstr "Kustuta vahemälu"
+msgstr "Tühjenda esitusjärjekord"
 
 #: crates/rufin-app/src/i18n.rs:708
-#, fuzzy
 msgid "Previous page"
-msgstr "Eelmine"
+msgstr "Eelmine leht"
 
 #: crates/rufin-app/src/i18n.rs:709
-#, fuzzy
 msgid "Next page"
-msgstr "Järgmine"
+msgstr "Järgmine leht"
 
 #: crates/rufin-app/src/i18n.rs:710
-#, fuzzy
 msgid "Refresh section"
-msgstr "Serveri tegevused"
+msgstr "Uuenda ploki andmeid"
 
 #: crates/rufin-app/src/i18n.rs:711
-#, fuzzy
 msgid "Reset display"
-msgstr "Oleku kuvamine"
+msgstr "Lähtesta ekraan"
 
 #: crates/rufin-app/src/i18n.rs:712
-#, fuzzy
 msgid "New Smart Playlist"
-msgstr "Lisa esitusloendisse"
+msgstr "Uus nutikas esitusloend"
 
 #: crates/rufin-app/src/i18n.rs:713
-#, fuzzy
 msgid "Edit Smart Playlist"
-msgstr "Lisa esitusloendisse"
+msgstr "Muuda nutikat esitusloendit"
 
 #: crates/rufin-app/src/i18n.rs:714
-#, fuzzy
 msgid "Restore Default"
-msgstr "Süsteemi vaikeseadistus"
+msgstr "Taasta vaikimisi väärtus"
 
 #: crates/rufin-app/src/i18n.rs:715
 #: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:12
@@ -1438,24 +1413,23 @@ msgstr "Loo"
 
 #: crates/rufin-app/src/i18n.rs:716
 msgid "Restore"
-msgstr ""
+msgstr "Taasta"
 
 #: crates/rufin-app/src/i18n.rs:717
 msgid "Match"
-msgstr ""
+msgstr "Sobita"
 
 #: crates/rufin-app/src/i18n.rs:718
 msgid "Sort"
-msgstr ""
+msgstr "Järjestus"
 
 #: crates/rufin-app/src/i18n.rs:719
 msgid "Limit"
-msgstr ""
+msgstr "Piirang"
 
 #: crates/rufin-app/src/i18n.rs:720
-#, fuzzy
 msgid "Add Rule"
-msgstr "Lisa kaust"
+msgstr "Lisa reegel"
 
 #: crates/rufin-app/src/i18n.rs:721 crates/rufin-app/src/ui/queue.rs:374
 #: crates/rufin-app/src/ui/queue.rs:396
@@ -1479,101 +1453,95 @@ msgstr "Kestus"
 
 #: crates/rufin-app/src/i18n.rs:725
 msgid "Comment"
-msgstr ""
+msgstr "Kommentaar"
 
 #: crates/rufin-app/src/i18n.rs:726
 msgid "Rating"
-msgstr ""
+msgstr "Hinnang"
 
 #: crates/rufin-app/src/i18n.rs:727
-#, fuzzy
 msgid "Played"
-msgstr "Esita"
+msgstr "Esitatud"
 
 #: crates/rufin-app/src/i18n.rs:728
-#, fuzzy
 msgid "Play count"
-msgstr "Esita järgmisena"
+msgstr "Esituskordi"
 
 #: crates/rufin-app/src/i18n.rs:729
-#, fuzzy
 msgid "Skip count"
-msgstr "kasutajakontot pole"
+msgstr "Vahelejätmiste arv"
 
 #: crates/rufin-app/src/i18n.rs:730
-#, fuzzy
 msgid "Last played"
-msgstr "Enimesitatud"
+msgstr "Viimati esitatud"
 
 #: crates/rufin-app/src/i18n.rs:731
-#, fuzzy
 msgid "Date added"
-msgstr "Äsjalisatud"
+msgstr "Lisamise kuupäev"
 
 #: crates/rufin-app/src/i18n.rs:732
 msgid "All"
-msgstr ""
+msgstr "Kõik"
 
 #: crates/rufin-app/src/i18n.rs:733
 msgid "Any"
-msgstr ""
+msgstr "Ükspuha milline"
 
 #: crates/rufin-app/src/i18n.rs:735
 msgid "contains"
-msgstr ""
+msgstr "sisaldab"
 
 #: crates/rufin-app/src/i18n.rs:736
 msgid "equals"
-msgstr ""
+msgstr "võrdub"
 
 #: crates/rufin-app/src/i18n.rs:737
 msgid "does not contain"
-msgstr ""
+msgstr "ei sisalda"
 
 #: crates/rufin-app/src/i18n.rs:738
-#, fuzzy
 msgid "does not equal"
-msgstr "Lähtesta ekvalaiser"
+msgstr "ei võrdu"
 
 #: crates/rufin-app/src/i18n.rs:739
 msgid "is empty"
-msgstr ""
+msgstr "on tühi"
 
 #: crates/rufin-app/src/i18n.rs:740
 msgid "is not empty"
-msgstr ""
+msgstr "pole tühi"
 
 #: crates/rufin-app/src/i18n.rs:741
 msgid "excludes"
-msgstr ""
+msgstr "välistab"
 
 #: crates/rufin-app/src/i18n.rs:742
 msgid "is not"
-msgstr ""
+msgstr "pole"
 
 #: crates/rufin-app/src/i18n.rs:743
 msgid "above"
-msgstr ""
+msgstr "suurem, kui"
 
 #: crates/rufin-app/src/i18n.rs:744
 msgid "below"
-msgstr ""
+msgstr "väiksem, kui"
 
 #: crates/rufin-app/src/i18n.rs:745
 msgid "range"
-msgstr ""
+msgstr "vahemik on"
 
 #: crates/rufin-app/src/i18n.rs:746
 msgid "is"
-msgstr ""
+msgstr "on"
 
 #: crates/rufin-app/src/i18n.rs:747
 msgid "after"
-msgstr ""
+msgstr "pärast"
 
 #: crates/rufin-app/src/i18n.rs:748
 msgid "before"
-msgstr ""
+msgstr "enne"
 
 #: crates/rufin-app/src/i18n.rs:750 crates/rufin-app/src/ui/login.rs:171
 msgid "Server"
@@ -1618,7 +1586,7 @@ msgstr "Esitusjärjekord"
 
 #: crates/rufin-app/src/i18n.rs:760
 msgid "No queue items match the search"
-msgstr ""
+msgstr "Otsingule ei vasta ükski esitusjärjekorra kirje"
 
 #: crates/rufin-app/src/i18n.rs:761
 msgid "Artist detail will use cached album and track groups"
@@ -1633,29 +1601,28 @@ msgid "Playlist detail will use the track table"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:764
-#, fuzzy
 msgid "Loading…"
-msgstr "Otsin…"
+msgstr "Laadin andmeid…"
 
 #: crates/rufin-app/src/i18n.rs:765
 msgid "Loading folders…"
-msgstr ""
+msgstr "Laadin kaustu…"
 
 #: crates/rufin-app/src/i18n.rs:766 crates/rufin-app/src/ui/folders.rs:60
 msgid "Search current folder"
-msgstr ""
+msgstr "Otsi sellest kaustas"
 
 #: crates/rufin-app/src/i18n.rs:767
 msgid "Artist / Album"
-msgstr ""
+msgstr "Esitaja / Album"
 
 #: crates/rufin-app/src/i18n.rs:768 crates/rufin-app/src/ui/folders.rs:518
 msgid "Folder browsing failed"
-msgstr ""
+msgstr "Kaustade sirvimine ei õnnestunud"
 
 #: crates/rufin-app/src/i18n.rs:769 crates/rufin-app/src/ui/folders.rs:505
 msgid "No folder contents found."
-msgstr ""
+msgstr "Kaustasisu ei leidu."
 
 #: crates/rufin-app/src/i18n.rs:770
 msgid "Cached library data will appear here as sync pages finish"
@@ -1676,6 +1643,8 @@ msgstr ""
 #: crates/rufin-app/src/i18n.rs:774
 msgid "Type a query in the sidebar search field to search the local cache"
 msgstr ""
+"Otsimiseks kohalikku seadmesse puhveradatud andmete seast, kirjuta otsing "
+"külgriba otsinguväljale"
 
 #: crates/rufin-app/src/i18n.rs:776
 msgid ""
@@ -1784,16 +1753,16 @@ msgstr "Katkesta"
 #: crates/rufin-app/src/ui/local_access_mapping.rs:539
 #: crates/rufin-app/src/ui/local_access_mapping.rs:547
 msgid "Forget Server"
-msgstr ""
+msgstr "Unusta server"
 
 #: crates/rufin-app/src/ui/login.rs:268
 #: crates/rufin-app/src/ui/root/startup_reveal.rs:561
 msgid "Caching local library…"
-msgstr ""
+msgstr "Puhverdan kokalikku muusikakogu…"
 
 #: crates/rufin-app/src/ui/login.rs:278
 msgid "Connecting to music server…"
-msgstr ""
+msgstr "Ühendan muusikaserveriga…"
 
 #: crates/rufin-app/src/ui/login.rs:491
 msgid "Caching Library"
@@ -1801,7 +1770,7 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/navigation.rs:34
 msgid "My Library"
-msgstr ""
+msgstr "Minu muusikakogu"
 
 #: crates/rufin-app/src/ui/preferences/library.rs:36
 msgid "Configure saved music servers and local playback mappings."
@@ -1874,7 +1843,7 @@ msgstr "Väljas"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:534
 msgid "Track"
-msgstr "Pala"
+msgstr "Lugu"
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:541
 msgid "ReplayGain"
@@ -1938,7 +1907,7 @@ msgstr "Asukoht"
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:177
 msgid "Hidden server section"
-msgstr ""
+msgstr "Peidetud plokk serverist"
 
 #: crates/rufin-app/src/ui/preferences/root/layout.rs:230
 msgid "Full"
@@ -2004,7 +1973,7 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:365
 msgid "Last.fm API key"
-msgstr ""
+msgstr "Last.fm-i API võti"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:378
 msgid "Privacy"
@@ -2016,47 +1985,48 @@ msgstr "Privaatne režiim"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:391
 msgid "Now playing notifications"
-msgstr "Hetkel"
+msgstr "Tevitused hetkel esitamisel lugude kohta"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:411
 msgid "Default left sidebar"
-msgstr ""
+msgstr "Vaikimisi vasak külgpaan"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:429
 msgid "Default right sidebar"
-msgstr ""
+msgstr "Vaikimisi parem külgpaan"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:461
 msgid "Use different layout below a threshold width"
 msgstr ""
+"Kui ekraani laius jääb alla etteantud piiri, siis näita kitsast paigutust"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:475
 msgid "Narrow layout threshold"
-msgstr ""
+msgstr "Kitsa paigutuse lävend"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:500
 msgid "Narrow left sidebar"
-msgstr ""
+msgstr "Kitsas vasak külgpaan"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:519
 msgid "Narrow right sidebar"
-msgstr ""
+msgstr "Kitsas parem külgpaan"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:564
 msgid "Sidebar Items"
-msgstr ""
+msgstr "Külgpaani objektid"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:587
 msgid "Server selector"
-msgstr ""
+msgstr "Serverivalija"
 
 #: crates/rufin-app/src/ui/queue.rs:121
 msgid "No queue items match the search."
-msgstr ""
+msgstr "Otsingule ei vasta ükski esitusjärjekorra kirje."
 
 #: crates/rufin-app/src/ui/queue.rs:123
 msgid "Add music to start a queue."
-msgstr ""
+msgstr "Esitusjärjekorra koostamiseks lisa muusikat."
 
 #: crates/rufin-app/src/ui/right_panel.rs:47
 #: crates/rufin-app/src/ui/settings_persistence.rs:290
@@ -2077,14 +2047,13 @@ msgstr "Lisa esitusloendisse"
 
 #: crates/rufin-app/src/ui/root/home_refresh.rs:602
 #: crates/rufin-app/src/ui/root/playlist_detail_view.rs:328
-#, fuzzy
 msgid "Delete Playlist"
-msgstr "Esitusloend"
+msgstr "Kustuta esitusloend"
 
 #: crates/rufin-app/src/ui/root/home_refresh.rs:606
 #: crates/rufin-app/src/ui/root/playlist_detail_view.rs:332
 msgid "Delete"
-msgstr ""
+msgstr "Kustuta"
 
 #: crates/rufin-app/src/ui/root/layout_rendering.rs:411
 msgid "No tracks match the search."
@@ -2096,7 +2065,7 @@ msgstr "Eemalda esitusloendist"
 
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:29
 msgid "Clear fetched lyrics for this track"
-msgstr ""
+msgstr "Kustuta see loo jaoks laaditud laulusõnad"
 
 #: crates/rufin-app/src/ui/root/lyrics_panel.rs:74
 msgid ""
@@ -2107,35 +2076,39 @@ msgstr ""
 #: crates/rufin-app/src/ui/root/lyrics_playback_state.rs:115
 msgid "No server lyrics for the current track. Private mode is on."
 msgstr ""
+"Privaatne režiim on lülitatud sisse ja selle loo jaoks pole serverist "
+"laaditud laulusõnu."
 
 #: crates/rufin-app/src/ui/root/lyrics_playback_state.rs:117
 msgid "No server lyrics for the current track. External lyric lookup is off."
 msgstr ""
+"Väliste laulusõnade otsing on lülitatud välja ja selle loo jaoks pole "
+"serverist laaditud laulusõnu."
 
 #: crates/rufin-app/src/ui/root/lyrics_playback_state.rs:119
 msgid "No lyrics for the current track."
-msgstr ""
+msgstr "Selle loo jaoks pole laulusõnu."
 
 #: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:6
 msgid "New Playlist"
-msgstr ""
+msgstr "Uus esitusloend"
 
 #: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:8
 msgid "Create a playlist. If a track is playing, it will be added."
-msgstr ""
+msgstr "Koosta esitusloend. Kui lugu on esitamisel, siis ta lisatakse."
 
 #: crates/rufin-app/src/ui/root/new_playlist_dialog.rs:15
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:255
 msgid "Playlist name"
-msgstr ""
+msgstr "Esitusloendi nimi"
 
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:268
 msgid "Descending"
-msgstr ""
+msgstr "Järjesta kahanevalt"
 
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:271
 msgid "No limit"
-msgstr ""
+msgstr "Piirang puudub"
 
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:418
 msgid ""
@@ -2144,53 +2117,49 @@ msgid ""
 msgstr ""
 
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:483
-#, fuzzy
 msgid "Remove rule"
-msgstr "Eemalda esitusjärjekorrast"
+msgstr "Eemalda reegel"
 
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:551
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:583
-#, fuzzy
 msgid "to"
-msgstr "Lõpeta"
+msgstr "kuni"
 
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:939
 msgid "Comment text"
-msgstr ""
+msgstr "Kommentaari tekst"
 
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:941
-#, fuzzy
 msgid "Album title"
-msgstr "Albumi esitajad"
+msgstr "Albumi pealkiri"
 
 #: crates/rufin-app/src/ui/root/new_smart_playlist_dialog.rs:942
 msgid "Text"
-msgstr ""
+msgstr "Tekst"
 
 #: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:10
 msgid "Rename Playlist"
-msgstr ""
+msgstr "Muuda esitusloendi nime"
 
 #: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:11
 msgid "Enter a new playlist name."
-msgstr ""
+msgstr "Sisesta uus esitusloendi nimi."
 
 #: crates/rufin-app/src/ui/root/playlist_rename_dialog.rs:14
 msgid "Rename"
 msgstr "Muuda nime"
 
 #: crates/rufin-app/src/ui/root/startup_reveal.rs:86
-#, fuzzy
 msgid "Switching library…"
-msgstr "Valmistan muusikakogu ette…"
+msgstr "Vahetan muusikakogu…"
 
 #: crates/rufin-app/src/ui/root/track_table.rs:67
 msgid "Configure columns"
-msgstr ""
+msgstr "Seadista veerge"
 
 #: crates/rufin-app/src/ui/root/track_table_popover.rs:34
 msgid "Sort by"
-msgstr ""
+msgstr "Järjestus"
 
 #: crates/rufin-app/src/ui/root/track_table_popover.rs:82
 msgid "Columns"
