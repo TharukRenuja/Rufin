@@ -1,7 +1,6 @@
 use super::library::{
     clear_list_item_child, configure_library_route_scroller, install_column_view_width_fit,
-    item_at, item_at_from_item, non_propagating_width_clip, play_count_column_width,
-    route_column_view_initial_width,
+    item_at, item_at_from_item, play_count_column_width, route_column_view_initial_width,
 };
 use super::*;
 
@@ -476,7 +475,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     let scroller = gtk::ScrolledWindow::new();
     mark_route_scroll_owner(&scroller);
     configure_library_route_scroller(shell, &scroller);
-    scroller.set_child(Some(&non_propagating_width_clip(table.upcast())));
+    scroller.set_child(Some(&table));
     (scroller.upcast(), model)
 }
 pub(in crate::ui) fn rebuild_playlist_entries_model(
