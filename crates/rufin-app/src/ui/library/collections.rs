@@ -1262,12 +1262,12 @@ pub(in crate::ui) fn album_detail_fixed_cell(width: i32, child: gtk::Widget) -> 
 }
 pub(in crate::ui) fn album_detail_track_label(
     text: &str,
-    field: LibraryField,
+    _field: LibraryField,
     width: i32,
     ellipsize: bool,
 ) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
-    label.set_xalign(album_detail_track_xalign(field));
+    label.set_xalign(0.0);
     label.set_halign(gtk::Align::Fill);
     label.set_wrap(false);
     label.set_single_line_mode(true);
@@ -1279,13 +1279,6 @@ pub(in crate::ui) fn album_detail_track_label(
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     }
     label
-}
-fn album_detail_track_xalign(field: LibraryField) -> f32 {
-    if matches!(field, LibraryField::Title | LibraryField::TitleMerged) {
-        0.0
-    } else {
-        0.5
-    }
 }
 pub(in crate::ui) fn album_detail_track_trailing_inset(
     field_widths: &[(LibraryField, i32)],

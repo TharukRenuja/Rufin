@@ -800,15 +800,20 @@ pub(in crate::ui) fn column_width(field: LibraryField) -> i32 {
         LibraryField::Album
         | LibraryField::Artist
         | LibraryField::AlbumArtist
-        | LibraryField::Genre => 170,
+        | LibraryField::Genre => 220,
         LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 118,
-        LibraryField::PlayCount
-        | LibraryField::UserRating
-        | LibraryField::SongCount
-        | LibraryField::AlbumCount => 96,
+        LibraryField::PlayCount => play_count_column_width(),
+        LibraryField::UserRating | LibraryField::SongCount | LibraryField::AlbumCount => 96,
         LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 68,
         LibraryField::Duration => 76,
     }
+}
+pub(in crate::ui) fn play_count_column_width() -> i32 {
+    compact_header_column_width("Plays", 56)
+}
+pub(in crate::ui) fn compact_header_column_width(header: &str, min_width: i32) -> i32 {
+    let width = tr(header).chars().count().min(i32::MAX as usize / 8) as i32 * 8 + 20;
+    width.max(min_width)
 }
 pub(in crate::ui) fn apply_desc(ordering: Ordering, descending: bool) -> Ordering {
     if descending {

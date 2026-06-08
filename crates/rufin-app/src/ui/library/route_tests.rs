@@ -61,6 +61,19 @@ fn route_allow_space() {
     assert_eq!(fitted[2], base_widths[2]);
 }
 #[test]
+fn route_expands_text_columns() {
+    let base_widths = [48, 220, 220, 220, 68, 56];
+    let fitted = super::fitted_column_widths(&base_widths, 1200);
+
+    assert_eq!(fitted.iter().sum::<i32>(), 1200);
+    assert_eq!(fitted[0], base_widths[0]);
+    assert!(fitted[1] > base_widths[1]);
+    assert!(fitted[2] > base_widths[2]);
+    assert!(fitted[3] > base_widths[3]);
+    assert_eq!(fitted[4], base_widths[4]);
+    assert_eq!(fitted[5], base_widths[5]);
+}
+#[test]
 fn route_track_area() {
     let fields = [
         LibraryField::RowIndex,
