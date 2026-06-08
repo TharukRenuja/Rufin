@@ -70,6 +70,7 @@ impl Shell {
             .set_visible(!login_active && !startup_loading_active);
         self.update_right_panel_button();
         self.update_lyrics_panel_button();
+        self.apply_bottom_player_width(self.layout_width());
 
         let changed = previous_left != resolved.left_sidebar
             || previous_right != resolved.right_sidebar

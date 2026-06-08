@@ -71,6 +71,9 @@ impl Store {
                     if existing.image_ref != track.image_ref {
                         delta.tracks.cover_refs.push(track.id.clone());
                     }
+                    if track_stats_changed(&existing, track) {
+                        delta.tracks.stats.push(track.id.clone());
+                    }
                     if track_fields_changed(&existing, track) {
                         delta.tracks.fields.push(track.id.clone());
                     }
@@ -1364,6 +1367,7 @@ fn album_fields_changed(left: &Album, right: &Album) -> bool {
 
 fn track_changed(left: &Track, right: &Track) -> bool {
     track_fields_changed(left, right)
+        || track_stats_changed(left, right)
         || left.album_id != right.album_id
         || track_artist_links_changed(left, right)
         || left.genres != right.genres
@@ -1378,15 +1382,18 @@ fn track_fields_changed(left: &Track, right: &Track) -> bool {
         || left.year != right.year
         || left.release_date != right.release_date
         || left.date_added != right.date_added
-        || left.last_played != right.last_played
-        || left.play_count != right.play_count
-        || left.user_rating != right.user_rating
         || left.duration_seconds != right.duration_seconds
         || left.disc_number != right.disc_number
         || left.track_number != right.track_number
         || left.local_path != right.local_path
         || left.source_format != right.source_format
         || left.comment != right.comment
+}
+
+fn track_stats_changed(left: &Track, right: &Track) -> bool {
+    left.last_played != right.last_played
+        || left.play_count != right.play_count
+        || left.user_rating != right.user_rating
         || left.skip_count != right.skip_count
 }
 
@@ -1484,4 +1491,27 @@ fn refresh_genre_counts_on_connection(
         params![server_id.as_str()],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{album, track};
+    use super::*;
+
+    #[test]
+    fn track_activity_changes_are_stats() {
+        let album = album(1);
+        let original = track(1, &album);
+        let mut played = original.clone();
+        played.play_count = Some(1);
+        played.last_played = Some("2026-06-08T12:00:00Z".to_string());
+        played.skip_count = Some(1);
+
+        assert!(track_stats_changed(&original, &played));
+        assert!(!track_fields_changed(&original, &played));
+
+        let mut renamed = original.clone();
+        renamed.title = "Updated title".to_string();
+        assert!(track_fields_changed(&original, &renamed));
+    }
 }

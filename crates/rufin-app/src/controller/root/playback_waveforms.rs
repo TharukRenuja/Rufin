@@ -184,32 +184,17 @@ fn generate_and_publish_waveform(
     if publish_cached_waveform(&playback_snapshot, &events, &cache_key, duration_seconds) {
         return;
     }
-    let temp_source = if waveform_generation_source_is_remote(&uri) {
-        match download_remote_waveform_source(&cache_key, &uri) {
-            Ok(source) => Some(source),
-            Err(error) => {
-                warn!(%error, uri = %redacted_uri, "failed to download remote waveform source");
-                return;
-            }
-        }
-    } else {
-        None
-    };
-    let source_uri = temp_source
-        .as_ref()
-        .map(|source| source.uri.as_str())
-        .unwrap_or(uri.as_str());
-    if !waveform_generation_source_is_local(source_uri) {
+    if !waveform_generation_source_is_supported(&uri) {
         debug!(
             track_id = %track_id,
             "skipped unsupported waveform generation source"
         );
         return;
     }
-    let peaks = match generate_waveform_peaks(source_uri) {
+    let peaks = match generate_waveform_peaks(&uri) {
         Ok(peaks) => peaks,
         Err(error) => {
-            warn!(%error, track_id = %track_id, "failed to generate waveform");
+            warn!(%error, track_id = %track_id, uri = %redacted_uri, "failed to generate waveform");
             return;
         }
     };
@@ -370,64 +355,8 @@ fn waveform_generation_source_is_remote(uri: &str) -> bool {
     uri.starts_with("http://") || uri.starts_with("https://")
 }
 
-struct TempWaveformSource {
-    uri: String,
-    path: PathBuf,
-}
-
-impl Drop for TempWaveformSource {
-    fn drop(&mut self) {
-        let _ignored = fs::remove_file(&self.path);
-    }
-}
-
-fn download_remote_waveform_source(
-    cache_key: &str,
-    uri: &str,
-) -> Result<TempWaveformSource, String> {
-    let path =
-        remote_waveform_temp_path(cache_key).ok_or_else(|| "No cache directory.".to_string())?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let mut response = client
-        .get(uri)
-        .send()
-        .map_err(|_| "request failed".to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("request failed with HTTP {}", response.status()));
-    }
-    let mut file = fs::File::create(&path).map_err(|error| error.to_string())?;
-    std::io::copy(&mut response, &mut file).map_err(|error| error.to_string())?;
-    let file_uri = reqwest::Url::from_file_path(&path)
-        .map_err(|()| {
-            format!(
-                "Could not turn waveform temp path into a file URI: {}",
-                path.display()
-            )
-        })?
-        .to_string();
-    Ok(TempWaveformSource {
-        uri: file_uri,
-        path,
-    })
-}
-
-fn remote_waveform_temp_path(cache_key: &str) -> Option<PathBuf> {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_nanos();
-    let key_hash = format!("{:x}", md5::compute(cache_key));
-    cache_dir().map(|dir| {
-        tmp_cache_dir(&dir)
-            .join("waveforms")
-            .join(format!("{key_hash}-{}-{stamp}.audio", std::process::id()))
-    })
+fn waveform_generation_source_is_supported(uri: &str) -> bool {
+    waveform_generation_source_is_local(uri) || waveform_generation_source_is_remote(uri)
 }
 
 fn publish_cached_waveform(
@@ -592,10 +521,16 @@ mod tests {
         assert!(waveform_generation_source_is_local(
             "file:///music/track.flac"
         ));
+        assert!(waveform_generation_source_is_supported(
+            "file:///music/track.flac"
+        ));
         assert!(!waveform_generation_source_is_remote(
             "file:///music/track.flac"
         ));
         assert!(!waveform_generation_source_is_local(
+            "https://music.example/stream"
+        ));
+        assert!(waveform_generation_source_is_supported(
             "https://music.example/stream"
         ));
         assert!(waveform_generation_source_is_remote(
@@ -605,6 +540,9 @@ mod tests {
             "http://music.example/stream"
         ));
         assert!(!waveform_generation_source_is_remote(
+            "fake://music.example/stream"
+        ));
+        assert!(!waveform_generation_source_is_supported(
             "fake://music.example/stream"
         ));
     }

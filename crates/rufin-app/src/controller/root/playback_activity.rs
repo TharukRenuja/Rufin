@@ -163,7 +163,7 @@ impl AppController {
 
     fn emit_activity_delta(&self, track_id: TrackId) {
         let mut delta = LibraryDelta::default();
-        delta.tracks.fields.push(track_id);
+        delta.tracks.stats.push(track_id);
         let _sent = self
             .events
             .send(ControllerEvent::LibraryDelta(Box::new(delta)));
@@ -261,7 +261,7 @@ mod tests {
 
         controller.next_track();
         let delta = wait_for_activity_delta(&events);
-        assert_eq!(delta.tracks.fields, vec![first.id.clone()]);
+        assert_eq!(delta.tracks.stats, vec![first.id.clone()]);
         let _queue = wait_for_queue(&events).expect("next queue");
 
         let detail = smart_detail_named(&controller, &server_id, "Most Skipped");

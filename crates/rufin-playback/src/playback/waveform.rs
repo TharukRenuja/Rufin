@@ -1,5 +1,9 @@
 use gst::prelude::*;
 use gstreamer as gst;
+use std::time::{Duration, Instant};
+
+const WAVEFORM_GENERATION_TIMEOUT: Duration = Duration::from_secs(180);
+const WAVEFORM_BUS_POLL: gst::ClockTime = gst::ClockTime::from_mseconds(250);
 
 pub fn generate_waveform_peaks(uri: &str) -> Result<Vec<(f64, f64)>, String> {
     gst::init().map_err(|error| error.to_string())?;
@@ -31,8 +35,12 @@ pub fn generate_waveform_peaks(uri: &str) -> Result<Vec<(f64, f64)>, String> {
     }
 
     let mut peaks = Vec::new();
+    let started = Instant::now();
     let result = loop {
-        let Some(message) = bus.timed_pop(gst::ClockTime::NONE) else {
+        if started.elapsed() > WAVEFORM_GENERATION_TIMEOUT {
+            break Err("waveform generation timed out".to_string());
+        }
+        let Some(message) = bus.timed_pop(WAVEFORM_BUS_POLL) else {
             continue;
         };
         use gst::MessageView;

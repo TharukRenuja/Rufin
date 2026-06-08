@@ -6,10 +6,13 @@ impl Shell {
         genre_id: rufin_core::GenreId,
     ) -> gtk::Widget {
         let detail = self
-            .controller
-            .cached_genre_detail(&genre_id)
-            .ok()
-            .flatten()
+            .genre_detail_from_memory(&genre_id)
+            .or_else(|| {
+                self.controller
+                    .cached_genre_detail(&genre_id)
+                    .ok()
+                    .flatten()
+            })
             .or_else(|| {
                 let library = self.state.library.borrow();
                 let genre = library
@@ -45,6 +48,32 @@ impl Shell {
                 genre_id,
                 selected_music_folder_id: selected_music_folder_id(self),
             }),
+        })
+    }
+
+    fn genre_detail_from_memory(
+        self: &Rc<Self>,
+        genre_id: &rufin_core::GenreId,
+    ) -> Option<CachedGenreDetail> {
+        let library = self.state.library.borrow();
+        if library.cached_track_count > library.tracks.len() {
+            return None;
+        }
+        let genre = library
+            .genres
+            .iter()
+            .find(|genre| genre.id.as_str() == genre_id.as_str())
+            .cloned()?;
+        let tracks = library
+            .tracks
+            .iter()
+            .filter(|track| track.genres.iter().any(|name| name == &genre.name))
+            .cloned()
+            .collect::<Vec<_>>();
+        Some(CachedGenreDetail {
+            genre,
+            albums: Vec::new(),
+            tracks,
         })
     }
 }

@@ -40,7 +40,9 @@ pub(in crate::ui) fn configure_library_route_scroller(
 ) {
     scroller.add_css_class("library-route-scroller");
     scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
+    scroller.set_width_request(1);
     scroller.set_min_content_width(0);
+    scroller.set_max_content_width(1);
     scroller.set_propagate_natural_width(false);
     scroller.set_propagate_natural_height(false);
     scroller.set_overlay_scrolling(false);
@@ -110,12 +112,21 @@ pub(in crate::ui) fn track_collection_widget(
     model: gio::ListStore,
     key: LibraryListKey,
     play_context: Option<LoadedTrackPlayContext>,
+    content_inset: i32,
+    width_mode: ColumnViewWidthMode,
 ) -> gtk::Widget {
     match shell.library_settings(key).layout {
         LibraryLayout::Grid => track_grid(shell, model, key, play_context).upcast(),
-        LibraryLayout::Row | LibraryLayout::Detail => {
-            track_table(shell, model, key, false, play_context).upcast()
-        }
+        LibraryLayout::Row | LibraryLayout::Detail => track_table(
+            shell,
+            model,
+            key,
+            false,
+            play_context,
+            content_inset,
+            width_mode,
+        )
+        .upcast(),
     }
 }
 fn track_model_play_action(
@@ -612,13 +623,15 @@ pub(in crate::ui) fn track_table(
     key: LibraryListKey,
     detail: bool,
     play_context: Option<LoadedTrackPlayContext>,
+    content_inset: i32,
+    width_mode: ColumnViewWidthMode,
 ) -> gtk::ColumnView {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
     selection.set_selected(gtk::INVALID_LIST_POSITION);
     let table = gtk::ColumnView::new(Some(selection));
-    let initial_width = route_column_view_initial_width(shell);
+    let initial_width = column_view_initial_width(shell, content_inset, width_mode);
     table.add_css_class("track-table");
     table.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
     table.set_hexpand(true);
@@ -1152,7 +1165,7 @@ pub(in crate::ui) fn album_detail_track_cells(
     row.set_height_request(LIBRARY_TABLE_ROW_HEIGHT);
     row.set_valign(gtk::Align::Center);
     row.set_margin_end(album_detail_track_trailing_inset(field_widths));
-    row.set_focusable(true);
+    row.set_focusable(false);
     row.update_property(&[gtk::accessible::Property::Label(&format!(
         "{} {}",
         track.title, track.artist
@@ -1173,10 +1186,8 @@ pub(in crate::ui) fn album_detail_track_cells(
     let gesture = gtk::GestureClick::new();
     gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
     gesture.set_button(1);
-    gesture.connect_released(move |gesture, n_press, _, _| {
-        selection.select_row(row_for_click.upcast_ref(), track.id.clone());
-        row_for_click.grab_focus();
-        if n_press == 2 {
+    gesture.connect_pressed(move |gesture, n_press, _, _| {
+        if album_detail_play_click(n_press) {
             gesture.set_state(gtk::EventSequenceState::Claimed);
             let controller = controller.clone();
             let track = track.clone();
@@ -1184,11 +1195,17 @@ pub(in crate::ui) fn album_detail_track_cells(
             glib::idle_add_local_once(move || {
                 play_album_track_from_cache(&controller, track, selected_music_folder_id)
             });
+        } else if n_press == 1 {
+            selection.select_row(row_for_click.upcast_ref(), track.id.clone());
         }
     });
     row.add_controller(gesture);
     row.upcast()
 }
+fn album_detail_play_click(n_press: i32) -> bool {
+    n_press >= 2 && n_press % 2 == 0
+}
+
 fn play_album_track_from_cache(
     controller: &crate::controller::AppController,
     track: Track,
@@ -1250,7 +1267,7 @@ pub(in crate::ui) fn album_detail_track_cell(
 }
 pub(in crate::ui) fn album_detail_fixed_cell(width: i32, child: gtk::Widget) -> gtk::Widget {
     let clip = gtk::ScrolledWindow::new();
-    clip.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
     clip.set_overflow(gtk::Overflow::Hidden);
     clip.set_min_content_width(0);
     clip.set_propagate_natural_width(false);
@@ -1459,7 +1476,9 @@ fn album_detail_row_content_width(key: LibraryListKey, route_width: i32) -> i32 
 
 fn album_detail_route_inset(key: LibraryListKey) -> i32 {
     match key {
-        LibraryListKey::ArtistAlbums => ALBUM_DETAIL_ARTIST_SECTION_INSET,
+        LibraryListKey::ArtistAlbums => {
+            ALBUM_DETAIL_ARTIST_SECTION_INSET + DETAIL_ROUTE_SCROLL_GUTTER
+        }
         _ => 0,
     }
 }
@@ -1757,5 +1776,48 @@ mod album_detail_width_tests {
                 track_width,
             ));
         assert!(row_width <= album_detail_row_content_width(LibraryListKey::Albums, 260));
+    }
+
+    #[test]
+    fn artist_album_detail_width_leaves_scroll_gutter() {
+        let fields = [
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::Year,
+            LibraryField::Duration,
+        ];
+
+        for route_width in [360, 562, 1145] {
+            let metrics =
+                album_detail_row_metrics_for_width(LibraryListKey::ArtistAlbums, route_width);
+            let track_width = album_detail_track_area_width_for(
+                LibraryListKey::ArtistAlbums,
+                route_width,
+                metrics.meta_width,
+                metrics.spacing,
+                &fields,
+            );
+            let row_width = metrics.meta_width
+                + metrics.spacing
+                + album_detail_track_cells_width(&album_detail_track_field_widths(
+                    LibraryListKey::ArtistAlbums,
+                    &fields,
+                    track_width,
+                ));
+            let route_budget = route_width
+                .saturating_sub(ALBUM_DETAIL_ARTIST_SECTION_INSET)
+                .saturating_sub(DETAIL_ROUTE_SCROLL_GUTTER)
+                .saturating_sub(ALBUM_DETAIL_ROW_HORIZONTAL_INSET)
+                .max(1);
+            assert!(row_width <= route_budget);
+        }
+    }
+
+    #[test]
+    fn album_detail_repeated_double_clicks_activate() {
+        assert!(!album_detail_play_click(1));
+        assert!(album_detail_play_click(2));
+        assert!(!album_detail_play_click(3));
+        assert!(album_detail_play_click(4));
     }
 }

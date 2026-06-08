@@ -1,6 +1,7 @@
 use super::library::{
     clear_list_item_child, configure_library_route_scroller, install_column_view_width_fit,
-    item_at, item_at_from_item, play_count_column_width, route_column_view_initial_width,
+    item_at, item_at_from_item, play_count_column_width,
+    route_column_view_initial_width_with_inset,
 };
 use super::*;
 
@@ -171,13 +172,12 @@ pub(in crate::ui) fn album_play_activation(
         anchor_index,
     )
 }
-pub(in crate::ui) fn playlist_play_activation(
+pub(in crate::ui) fn playlist_entry_play_activation(
     playlist_id: PlaylistId,
-    entries: Vec<PlaylistEntry>,
+    anchor_entry: &PlaylistEntry,
     anchor_index: usize,
     state: &PlaylistEntryListState,
 ) -> Option<PlayActivation> {
-    let anchor_entry = entries.get(anchor_index)?;
     Some(PlayActivation {
         action: PlayAction::ReplaceNow,
         target: PlayTarget::StoreBackedSource {
@@ -414,6 +414,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     entries: Rc<Vec<PlaylistEntry>>,
     state: Rc<RefCell<PlaylistEntryListState>>,
     playlist_id: PlaylistId,
+    content_inset: i32,
 ) -> (gtk::Widget, gio::ListStore) {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     let selection = gtk::SingleSelection::new(Some(model.clone()));
@@ -454,17 +455,23 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     for (column, _) in &columns {
         table.append_column(column);
     }
-    install_column_view_width_fit(&table, columns, route_column_view_initial_width(shell));
+    install_column_view_width_fit(
+        &table,
+        columns,
+        route_column_view_initial_width_with_inset(shell, content_inset),
+    );
 
     let controller = shell.controller.clone();
     let playlist_id_for_activate = playlist_id.clone();
     let state_for_activate = Rc::clone(&state);
     let model_for_activate = model.clone();
     table.connect_activate(move |_, position| {
-        let visible_entries = playlist_entry_model_entries(&model_for_activate);
-        if let Some(activation) = playlist_play_activation(
+        let Some(row) = item_at::<PlaylistEntryTableRow>(&model_for_activate, position) else {
+            return;
+        };
+        if let Some(activation) = playlist_entry_play_activation(
             playlist_id_for_activate.clone(),
-            visible_entries,
+            &row.entry,
             position as usize,
             &state_for_activate.borrow(),
         ) {
@@ -495,12 +502,6 @@ pub(in crate::ui) fn rebuild_playlist_entries_model(
         })
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &rows);
-}
-fn playlist_entry_model_entries(model: &gio::ListStore) -> Vec<PlaylistEntry> {
-    (0..model.n_items())
-        .filter_map(|position| item_at::<PlaylistEntryTableRow>(model, position))
-        .map(|row| row.entry)
-        .collect()
 }
 pub(in crate::ui) fn playlist_entries_for_state(
     entries: &[PlaylistEntry],
@@ -564,14 +565,36 @@ fn playlist_entry_number_column(
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
 ) -> gtk::ColumnViewColumn {
-    playlist_entry_text_column(
-        shell,
-        "#",
-        PLAYLIST_ENTRY_NUMBER_WIDTH,
-        entries,
-        playlist_id,
-        |row| (row.display_index + 1).to_string(),
-    )
+    let factory = gtk::SignalListItemFactory::new();
+    let shell = Rc::clone(shell);
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
+            return;
+        };
+
+        let label = gtk::Label::new(Some(&(row.display_index + 1).to_string()));
+        label.add_css_class("muted");
+        label.set_xalign(0.0);
+        label.set_halign(gtk::Align::Fill);
+        label.set_hexpand(true);
+        install_playlist_entry_cell_actions(
+            &label,
+            &shell,
+            Rc::clone(&entries),
+            playlist_id.clone(),
+            row,
+        );
+        item.set_child(Some(&label));
+    });
+    factory.connect_unbind(clear_list_item_child);
+
+    let column = gtk::ColumnViewColumn::new(Some("#"), Some(factory));
+    column.set_fixed_width(PLAYLIST_ENTRY_NUMBER_WIDTH);
+    column.set_resizable(false);
+    column
 }
 fn playlist_entry_album_column(
     shell: &Rc<Shell>,

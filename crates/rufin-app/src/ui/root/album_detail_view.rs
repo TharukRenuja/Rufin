@@ -1,5 +1,7 @@
 use super::*;
 
+const ALBUM_DETAIL_ROUTE_MARGIN: i32 = 32;
+
 impl Shell {
     pub(in crate::ui) fn album_detail_view(self: &Rc<Self>, album_id: AlbumId) -> gtk::Widget {
         let detail = self
@@ -26,21 +28,17 @@ impl Shell {
             return self.placeholder_view("Album", "The selected cached album was not found.");
         };
 
-        let scroller = gtk::ScrolledWindow::new();
-        mark_route_scroll_owner(&scroller);
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
-        scroller.set_vexpand(true);
-
+        let wrapper = detail_route_wrapper(0);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 22);
-        content.add_css_class("route-content");
         content.set_margin_top(20);
         content.set_margin_bottom(36);
-        content.set_margin_start(32);
-        content.set_margin_end(32);
+        content.set_margin_start(ALBUM_DETAIL_ROUTE_MARGIN);
+        content.set_margin_end(ALBUM_DETAIL_ROUTE_MARGIN);
         content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        content.set_width_request(1);
 
-        let inner_content_width = route_content_width(self).saturating_sub(64).max(1);
+        let inner_content_width = detail_route_inner_width(self, ALBUM_DETAIL_ROUTE_MARGIN * 2);
         let cover_size = detail_showcase_cover_size(inner_content_width);
         let header = gtk::Box::new(
             gtk::Orientation::Vertical,
@@ -169,10 +167,11 @@ impl Shell {
                 album_id: album.id.clone(),
                 selected_music_folder_id: selected_music_folder_id(self),
             }),
+            ALBUM_DETAIL_ROUTE_MARGIN * 2 + DETAIL_ROUTE_SCROLL_GUTTER,
         );
         content.append(&table);
 
-        scroller.set_child(Some(&content));
-        scroller.upcast()
+        wrapper.append(&detail_route_scroller(self, content.upcast()));
+        wrapper.upcast()
     }
 }

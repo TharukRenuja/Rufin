@@ -196,7 +196,7 @@ pub(super) fn lyrics_icon_button(label: &str) -> (gtk::Button, gtk::DrawingArea,
     (button, icon, open)
 }
 
-fn lyrics_icon_area(open: Rc<Cell<bool>>) -> gtk::DrawingArea {
+pub(super) fn lyrics_icon_area(open: Rc<Cell<bool>>) -> gtk::DrawingArea {
     let icon = gtk::DrawingArea::new();
     icon.set_content_width(TRANSPORT_ICON_SIZE);
     icon.set_content_height(TRANSPORT_ICON_SIZE);

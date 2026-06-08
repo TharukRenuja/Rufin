@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use rufin_core::{QueueEntry, QueueEntryId, RightSidebarMode, Route, SearchKind, format_duration};
+use rufin_core::{
+    Playlist, QueueEntry, QueueEntryId, RightSidebarMode, Route, SearchKind, format_duration,
+};
 
 use crate::controller::AppController;
 use crate::i18n::tr;
@@ -17,16 +19,22 @@ use super::{
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
 const QUEUE_FULLSCREEN_COLUMN_SPACING: i32 = 16;
+const QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING: i32 = 12;
 const QUEUE_FULLSCREEN_INDEX_COLUMN_WIDTH: i32 = 24;
 const QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH: i32 = 50;
-const QUEUE_FULLSCREEN_TITLE_COLUMN_WIDTH: i32 = 190;
-const QUEUE_FULLSCREEN_ALBUM_COLUMN_WIDTH: i32 = 270;
-const QUEUE_FULLSCREEN_TEXT_MIN_WIDTH: i32 = 1;
-const QUEUE_FULLSCREEN_TITLE_WIDTH_CHARS: i32 = 24;
-const QUEUE_FULLSCREEN_ALBUM_WIDTH_CHARS: i32 = 34;
+const QUEUE_FULLSCREEN_TITLE_COLUMN_WIDTH: i32 = 320;
+const QUEUE_FULLSCREEN_ALBUM_COLUMN_WIDTH: i32 = 260;
+const QUEUE_FULLSCREEN_TITLE_MIN_WIDTH: i32 = 160;
+const QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH: i32 = 140;
 const QUEUE_DURATION_COLUMN_WIDTH: i32 = 82;
 const QUEUE_YEAR_COLUMN_WIDTH: i32 = 64;
 const QUEUE_FAVORITE_COLUMN_WIDTH: i32 = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct QueueFullscreenColumnWidths {
+    title: i32,
+    album: i32,
+}
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum QueuePanelLayout {
@@ -89,9 +97,16 @@ impl Shell {
         scroll_behavior: QueueScrollBehavior,
     ) {
         let queue_snapshot = self.state.queue.borrow().clone();
+        let playlists = context_menu_playlists(self);
         let has_filter = !queue_filter.is_empty();
         let queue_scroller = queue_panel_scroller(panel).unwrap_or_else(new_queue_scroller);
         let previous_scroll = queue_scroller.vadjustment().value();
+        let fullscreen_widths = (layout == QueuePanelLayout::Fullscreen).then(|| {
+            fullscreen_queue_column_widths(fullscreen_queue_available_width(
+                panel,
+                self.window.width(),
+            ))
+        });
 
         while let Some(child) = panel.first_child() {
             panel.remove(&child);
@@ -113,7 +128,14 @@ impl Shell {
                 if visible_entries == 0 {
                     show_header = true;
                 }
-                queue_list.append(&self.queue_row(index, entry, snapshot.current_index, layout));
+                queue_list.append(&self.queue_row(
+                    index,
+                    entry,
+                    snapshot.current_index,
+                    layout,
+                    fullscreen_widths,
+                    &playlists,
+                ));
                 visible_entries += 1;
             }
         }
@@ -130,7 +152,7 @@ impl Shell {
             queue_list.append(&empty);
         }
         if show_header {
-            panel.append(&queue_header_row(layout));
+            panel.append(&queue_header_row(layout, fullscreen_widths));
         }
         queue_scroller.set_child(Some(&queue_list));
         panel.append(&queue_scroller);
@@ -150,9 +172,17 @@ impl Shell {
         entry: &QueueEntry,
         current_index: Option<usize>,
         layout: QueuePanelLayout,
+        fullscreen_widths: Option<QueueFullscreenColumnWidths>,
+        playlists: &[Playlist],
     ) -> gtk::Widget {
         if layout == QueuePanelLayout::Fullscreen {
-            return self.fullscreen_queue_row(index, entry, current_index);
+            return self.fullscreen_queue_row(
+                index,
+                entry,
+                current_index,
+                fullscreen_widths.unwrap_or_else(|| fullscreen_queue_column_widths(1)),
+                playlists,
+            );
         }
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -208,7 +238,7 @@ impl Shell {
         row.append(&labels);
         row.append(&year);
         install_queue_row_activation(&row, &self.controller, entry.id.clone());
-        install_queue_row_context_menu(&row, self, entry);
+        install_queue_row_context_menu(&row, self, entry, playlists);
         row.upcast()
     }
 
@@ -217,6 +247,8 @@ impl Shell {
         index: usize,
         entry: &QueueEntry,
         current_index: Option<usize>,
+        widths: QueueFullscreenColumnWidths,
+        playlists: &[Playlist],
     ) -> gtk::Widget {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         row.add_css_class("queue-row");
@@ -244,12 +276,8 @@ impl Shell {
             THUMB_COVER_SIZE,
         );
 
-        let (labels, artist) = queue_identity_cell(entry);
-        let album = fullscreen_queue_text_cell(
-            &entry.album,
-            QUEUE_FULLSCREEN_ALBUM_COLUMN_WIDTH,
-            QUEUE_FULLSCREEN_ALBUM_WIDTH_CHARS,
-        );
+        let (labels, artist) = queue_identity_cell(entry, widths.title);
+        let album = fullscreen_queue_text_cell(&entry.album, widths.album);
         let duration = fullscreen_queue_fixed_cell(
             &format_duration(entry.duration_seconds),
             QUEUE_DURATION_COLUMN_WIDTH,
@@ -264,7 +292,6 @@ impl Shell {
         columns.append(&cover);
         columns.append(&labels);
         columns.append(&album);
-        columns.append(&fullscreen_queue_expanding_spacer());
         columns.append(&duration);
         columns.append(&year);
         columns.append(&self.queue_favorite_cell(entry));
@@ -287,7 +314,7 @@ impl Shell {
         }
 
         install_queue_row_activation(&row, &self.controller, entry.id.clone());
-        install_queue_row_context_menu(&row, self, entry);
+        install_queue_row_context_menu(&row, self, entry, playlists);
         row.upcast()
     }
 
@@ -359,9 +386,14 @@ fn restore_queue_scroll_position(scroller: &gtk::ScrolledWindow, value: f64) {
     adjustment.set_value(value.clamp(lower, upper));
 }
 
-fn queue_header_row(layout: QueuePanelLayout) -> gtk::Widget {
+fn queue_header_row(
+    layout: QueuePanelLayout,
+    fullscreen_widths: Option<QueueFullscreenColumnWidths>,
+) -> gtk::Widget {
     if layout == QueuePanelLayout::Fullscreen {
-        return fullscreen_queue_header_row();
+        return fullscreen_queue_header_row(
+            fullscreen_widths.unwrap_or_else(|| fullscreen_queue_column_widths(1)),
+        );
     }
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -387,24 +419,14 @@ fn queue_header_row(layout: QueuePanelLayout) -> gtk::Widget {
     header.upcast()
 }
 
-fn fullscreen_queue_header_row() -> gtk::Widget {
+fn fullscreen_queue_header_row(widths: QueueFullscreenColumnWidths) -> gtk::Widget {
     let header = fullscreen_queue_row_box();
     header.add_css_class("queue-header");
 
     let number = fullscreen_queue_fixed_spacer(QUEUE_FULLSCREEN_INDEX_COLUMN_WIDTH);
     let cover = fullscreen_queue_fixed_spacer(QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH);
-    let title = queue_header_text_label(
-        &tr("Title").to_uppercase(),
-        QUEUE_FULLSCREEN_TITLE_COLUMN_WIDTH,
-        QUEUE_FULLSCREEN_TITLE_WIDTH_CHARS,
-        0.0,
-    );
-    let album = queue_header_text_label(
-        &tr("Album").to_uppercase(),
-        QUEUE_FULLSCREEN_ALBUM_COLUMN_WIDTH,
-        QUEUE_FULLSCREEN_ALBUM_WIDTH_CHARS,
-        0.5,
-    );
+    let title = queue_header_text_label(&tr("Title").to_uppercase(), widths.title, 0.0);
+    let album = queue_header_text_label(&tr("Album").to_uppercase(), widths.album, 0.0);
     let duration = queue_duration_header_icon();
     let year = queue_header_fixed_label(&tr("Year").to_uppercase(), QUEUE_YEAR_COLUMN_WIDTH);
     let favorite = gtk::Label::new(Some(FAVORITE_EMPTY_GLYPH));
@@ -416,7 +438,6 @@ fn fullscreen_queue_header_row() -> gtk::Widget {
     header.append(&cover);
     header.append(&title);
     header.append(&album);
-    header.append(&fullscreen_queue_expanding_spacer());
     header.append(&duration);
     header.append(&year);
     header.append(&favorite);
@@ -424,13 +445,12 @@ fn fullscreen_queue_header_row() -> gtk::Widget {
     header.upcast()
 }
 
-fn queue_header_text_label(text: &str, _width: i32, width_chars: i32, xalign: f32) -> gtk::Label {
+fn queue_header_text_label(text: &str, width: i32, xalign: f32) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("muted");
     label.set_xalign(xalign);
-    label.set_width_request(QUEUE_FULLSCREEN_TEXT_MIN_WIDTH);
-    label.set_max_width_chars(width_chars);
-    label.set_hexpand(true);
+    label.set_width_request(width);
+    label.set_hexpand(false);
     label.set_halign(gtk::Align::Fill);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label
@@ -456,13 +476,12 @@ fn queue_duration_header_icon() -> gtk::Image {
     image
 }
 
-fn fullscreen_queue_text_cell(text: &str, _width: i32, width_chars: i32) -> gtk::Label {
+fn fullscreen_queue_text_cell(text: &str, width: i32) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("muted");
-    label.set_xalign(0.5);
-    label.set_width_request(QUEUE_FULLSCREEN_TEXT_MIN_WIDTH);
-    label.set_max_width_chars(width_chars);
-    label.set_hexpand(true);
+    label.set_xalign(0.0);
+    label.set_width_request(width);
+    label.set_hexpand(false);
     label.set_halign(gtk::Align::Fill);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label
@@ -477,19 +496,19 @@ fn fullscreen_queue_fixed_cell(text: &str, width: i32) -> gtk::Label {
     label
 }
 
-fn queue_identity_cell(entry: &QueueEntry) -> (gtk::Box, gtk::Label) {
+fn queue_identity_cell(entry: &QueueEntry, width: i32) -> (gtk::Box, gtk::Label) {
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    labels.set_width_request(QUEUE_FULLSCREEN_TEXT_MIN_WIDTH);
-    labels.set_hexpand(true);
+    labels.set_width_request(width);
+    labels.set_hexpand(false);
     labels.set_halign(gtk::Align::Fill);
     labels.set_valign(gtk::Align::Center);
 
     let title = gtk::Label::new(Some(&entry.title));
     title.set_xalign(0.0);
-    title.set_max_width_chars(QUEUE_FULLSCREEN_TITLE_WIDTH_CHARS);
+    title.set_width_request(width);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
     let artist = queue_link_label(&entry.artist);
-    artist.set_max_width_chars(QUEUE_FULLSCREEN_TITLE_WIDTH_CHARS);
+    artist.set_width_request(width);
     labels.append(&title);
     labels.append(&artist);
     (labels, artist)
@@ -512,10 +531,48 @@ fn fullscreen_queue_fixed_spacer(width: i32) -> gtk::Box {
     spacer
 }
 
-fn fullscreen_queue_expanding_spacer() -> gtk::Box {
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    spacer
+fn fullscreen_queue_available_width(panel: &gtk::Box, window_width: i32) -> i32 {
+    panel.width().max(window_width.saturating_sub(72)).max(1)
+}
+
+fn fullscreen_queue_column_widths(available_width: i32) -> QueueFullscreenColumnWidths {
+    let fixed_width = QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING
+        + QUEUE_FULLSCREEN_INDEX_COLUMN_WIDTH
+        + QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH
+        + QUEUE_DURATION_COLUMN_WIDTH
+        + QUEUE_YEAR_COLUMN_WIDTH
+        + QUEUE_FAVORITE_COLUMN_WIDTH
+        + 6 * QUEUE_FULLSCREEN_COLUMN_SPACING;
+    let variable_width = available_width.saturating_sub(fixed_width);
+    split_queue_text_width(
+        variable_width.max(QUEUE_FULLSCREEN_TITLE_MIN_WIDTH + QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH),
+    )
+}
+
+fn split_queue_text_width(width: i32) -> QueueFullscreenColumnWidths {
+    let min_total = QUEUE_FULLSCREEN_TITLE_MIN_WIDTH + QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH;
+    if width <= min_total {
+        return QueueFullscreenColumnWidths {
+            title: QUEUE_FULLSCREEN_TITLE_MIN_WIDTH,
+            album: QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH,
+        };
+    }
+
+    let base_total = QUEUE_FULLSCREEN_TITLE_COLUMN_WIDTH + QUEUE_FULLSCREEN_ALBUM_COLUMN_WIDTH;
+    if width <= base_total {
+        let title = ((i64::from(width) * i64::from(QUEUE_FULLSCREEN_TITLE_COLUMN_WIDTH))
+            / i64::from(base_total)) as i32;
+        return QueueFullscreenColumnWidths {
+            title: title.max(QUEUE_FULLSCREEN_TITLE_MIN_WIDTH),
+            album: (width - title).max(QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH),
+        };
+    }
+
+    let extra = width - base_total;
+    QueueFullscreenColumnWidths {
+        title: QUEUE_FULLSCREEN_TITLE_COLUMN_WIDTH + extra / 2,
+        album: QUEUE_FULLSCREEN_ALBUM_COLUMN_WIDTH + extra - extra / 2,
+    }
 }
 
 fn install_queue_row_activation(
@@ -540,14 +597,18 @@ fn install_queue_row_activation(
     row.add_controller(click);
 }
 
-fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &QueueEntry) {
+fn install_queue_row_context_menu(
+    row: &gtk::Box,
+    shell: &Rc<Shell>,
+    entry: &QueueEntry,
+    playlists: &[Playlist],
+) {
     let menu = gio::Menu::new();
     menu.append(Some(&tr("Remove from Queue")), Some("queue.remove"));
     menu.append(Some(&tr("Play Now")), Some("queue.play-now"));
     menu.append(Some(&tr("Play Next")), Some("queue.play-next"));
 
     let track = track_from_queue_entry(entry);
-    let playlists = context_menu_playlists(shell);
     if track.is_some() && !playlists.is_empty() {
         let playlist_menu = gio::Menu::new();
         for (index, playlist) in playlists.iter().enumerate() {
@@ -620,11 +681,11 @@ fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &Que
     actions.add_action(&play_next);
 
     if let Some(track) = track {
-        for (index, playlist) in playlists.into_iter().enumerate() {
+        for (index, playlist) in playlists.iter().enumerate() {
             let action_name = format!("add-to-playlist-{index}");
             let add = gio::SimpleAction::new(&action_name, None);
             let add_controller = controller.clone();
-            let playlist_id = playlist.id;
+            let playlist_id = playlist.id.clone();
             let action_track = track.clone();
             let add_popover = popover.downgrade();
             add.connect_activate(move |_, _| {
@@ -767,4 +828,27 @@ fn add_queue_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
         );
     });
     label.add_controller(click);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fullscreen_queue_text_columns_fill_available_width() {
+        let available = 900;
+        let widths = fullscreen_queue_column_widths(available);
+        let fixed = QUEUE_FULLSCREEN_ROW_HORIZONTAL_PADDING
+            + QUEUE_FULLSCREEN_INDEX_COLUMN_WIDTH
+            + QUEUE_FULLSCREEN_COVER_COLUMN_WIDTH
+            + QUEUE_DURATION_COLUMN_WIDTH
+            + QUEUE_YEAR_COLUMN_WIDTH
+            + QUEUE_FAVORITE_COLUMN_WIDTH
+            + 6 * QUEUE_FULLSCREEN_COLUMN_SPACING;
+
+        assert_eq!(widths.title + widths.album + fixed, available);
+        assert!(widths.title > widths.album);
+        assert!(widths.title >= QUEUE_FULLSCREEN_TITLE_MIN_WIDTH);
+        assert!(widths.album >= QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH);
+    }
 }

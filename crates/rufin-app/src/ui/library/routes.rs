@@ -929,22 +929,32 @@ impl Shell {
         key: LibraryListKey,
         context: &str,
         source_descriptor: Option<PlaySourceDescriptor>,
+        content_inset: i32,
     ) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
         let resize_scroller = scroller.clone();
         let resize: Rc<dyn Fn(usize)> = Rc::new(move |row_count| {
             set_library_table_content_height(&resize_scroller, row_count);
         });
-        let (_empty, search, view, _model, _settings) =
-            self.searchable_track_collection(tracks, key, Some(resize), source_descriptor);
+        let (_empty, search, view, _model, _settings) = self.searchable_track_collection(
+            tracks,
+            key,
+            Some(resize),
+            source_descriptor,
+            content_inset,
+            ColumnViewWidthMode::Embedded,
+        );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
+        wrapper.set_width_request(1);
         wrapper.append(&self.library_toolbar(key, search.clone()));
         self.install_type_to_search(&search);
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+        scroller.set_width_request(1);
         scroller.set_min_content_width(0);
+        scroller.set_max_content_width(1);
         scroller.set_propagate_natural_width(false);
         scroller.set_hexpand(true);
         scroller.set_halign(gtk::Align::Fill);
@@ -962,8 +972,14 @@ impl Shell {
         content_margin_start: i32,
         source_descriptor: Option<PlaySourceDescriptor>,
     ) -> gtk::Widget {
-        let (_empty, search, view, model, settings) =
-            self.searchable_track_collection(tracks, key, None, source_descriptor);
+        let (_empty, search, view, model, settings) = self.searchable_track_collection(
+            tracks,
+            key,
+            None,
+            source_descriptor,
+            content_margin_start,
+            ColumnViewWidthMode::RouteScroller,
+        );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
         wrapper.set_hexpand(true);
@@ -1000,8 +1016,14 @@ impl Shell {
             }),
             _ => None,
         };
-        let (empty, search, view, model, settings) =
-            self.searchable_track_collection(tracks, key, None, source_descriptor);
+        let (empty, search, view, model, settings) = self.searchable_track_collection(
+            tracks,
+            key,
+            None,
+            source_descriptor,
+            0,
+            ColumnViewWidthMode::RouteScroller,
+        );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 14);
         wrapper.add_css_class("route-content");
         wrapper.set_margin_top(24);
@@ -1033,6 +1055,8 @@ impl Shell {
         key: LibraryListKey,
         on_visible_count_changed: Option<Rc<dyn Fn(usize)>>,
         source_descriptor: Option<PlaySourceDescriptor>,
+        content_inset: i32,
+        width_mode: ColumnViewWidthMode,
     ) -> (
         bool,
         gtk::SearchEntry,
@@ -1079,7 +1103,14 @@ impl Shell {
         let play_context = source_descriptor.map(|descriptor| {
             track_collection_play_context(self, descriptor, key, Rc::clone(&query), false)
         });
-        let view = track_collection_widget(self, model.clone(), key, play_context);
+        let view = track_collection_widget(
+            self,
+            model.clone(),
+            key,
+            play_context,
+            content_inset,
+            width_mode,
+        );
         (empty, search, view, model, settings)
     }
 }

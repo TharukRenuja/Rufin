@@ -579,7 +579,7 @@ pub(in crate::ui) fn present_playlist_context_menu(
                     |index| detail.tracks.get(index).cloned(),
                 )
             } else {
-                playlist_play_activation(playlist_id.clone(), detail.entries, 0, &state)
+                playlist_entry_play_activation(playlist_id.clone(), &detail.entries[0], 0, &state)
             };
             if let Some(activation) = activation {
                 controller.play_activation(activation);

@@ -74,6 +74,28 @@ fn route_expands_text_columns() {
     assert_eq!(fitted[5], base_widths[5]);
 }
 #[test]
+fn genre_track_rows_expand_title_and_album() {
+    let settings = LibraryListSettings::for_key(LibraryListKey::GenreTracks);
+    let base_widths = settings
+        .row_fields
+        .iter()
+        .map(|field| super::track_column_width(LibraryListKey::GenreTracks, *field))
+        .collect::<Vec<_>>();
+    let fitted = super::fitted_column_widths(&base_widths, 1000);
+
+    assert_eq!(settings.row_fields[0], LibraryField::RowIndex);
+    assert_eq!(settings.row_fields[1], LibraryField::TitleMerged);
+    assert_eq!(settings.row_fields[2], LibraryField::Album);
+    assert_eq!(base_widths[0], 54);
+    assert_eq!(base_widths[1], 320);
+    assert_eq!(base_widths[2], 260);
+    assert!(fitted[1] > base_widths[1]);
+    assert!(fitted[2] > base_widths[2]);
+    assert_eq!(fitted[0], base_widths[0]);
+    assert_eq!(fitted[3], base_widths[3]);
+    assert_eq!(fitted[4], base_widths[4]);
+}
+#[test]
 fn route_track_area() {
     let fields = [
         LibraryField::RowIndex,

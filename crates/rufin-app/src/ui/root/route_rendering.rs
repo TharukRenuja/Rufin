@@ -12,6 +12,13 @@ impl RouteView {
             resize: RouteResizePolicy::RerenderOnWidthChange,
         }
     }
+
+    fn stable(widget: gtk::Widget) -> Self {
+        Self {
+            widget,
+            resize: RouteResizePolicy::StableOnWidthChange,
+        }
+    }
 }
 
 impl Shell {
@@ -54,13 +61,13 @@ impl Shell {
         let view = match route.clone() {
             Route::Home => RouteView::new(self.home_view()),
             Route::Albums => RouteView::new(self.library_albums_view()),
-            Route::AlbumDetail(album_id) => RouteView::new(self.album_detail_view(album_id)),
+            Route::AlbumDetail(album_id) => RouteView::stable(self.album_detail_view(album_id)),
             Route::Tracks => RouteView::new(self.library_tracks_route_view()),
             Route::Favorites => RouteView::new(self.favorites_view()),
             Route::Artists => RouteView::new(self.library_artist_list_view(false)),
-            Route::ArtistDetail(artist_id) => RouteView::new(self.artist_detail_view(artist_id)),
+            Route::ArtistDetail(artist_id) => RouteView::stable(self.artist_detail_view(artist_id)),
             Route::ArtistDiscography(artist_id) => {
-                RouteView::new(self.artist_discography_view(artist_id))
+                RouteView::stable(self.artist_discography_view(artist_id))
             }
             Route::ArtistTracks(artist_id) => RouteView::new(self.artist_tracks_view(artist_id)),
             Route::AlbumArtists => RouteView::new(self.library_artist_list_view(true)),
@@ -180,13 +187,7 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
     }
     match route {
         Route::Home => delta.home_changed,
-        Route::Favorites => {
-            !delta.tracks.added.is_empty()
-                || !delta.tracks.deleted.is_empty()
-                || !delta.tracks.favorite.is_empty()
-                || !delta.tracks.fields.is_empty()
-                || !delta.tracks.cover_refs.is_empty()
-        }
+        Route::Favorites => track_table_delta_affects(delta),
         Route::Albums => {
             !delta.albums.added.is_empty()
                 || !delta.albums.deleted.is_empty()
@@ -207,7 +208,7 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
                 || !delta.tracks.favorite.is_empty()
                 || !delta.tracks.cover_refs.is_empty()
         }
-        Route::Tracks => !delta.tracks.is_empty(),
+        Route::Tracks => track_table_delta_affects(delta),
         Route::Artists => {
             !delta.artists.added.is_empty()
                 || !delta.artists.deleted.is_empty()
@@ -225,7 +226,7 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
                 || delta.artists.links.contains(artist_id)
                 || delta.artists.cover_refs.contains(artist_id)
                 || !delta.albums.is_empty()
-                || !delta.tracks.is_empty()
+                || track_table_delta_affects(delta)
         }
         Route::AlbumArtists => {
             !delta.album_artists.added.is_empty()
@@ -248,10 +249,10 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
                 || delta.genres.stats.contains(genre_id)
                 || delta.genres.links.contains(genre_id)
                 || delta.genres.cover_refs.contains(genre_id)
-                || !delta.tracks.is_empty()
+                || track_table_delta_affects(delta)
                 || !delta.albums.is_empty()
         }
-        Route::Folders { .. } => delta.folders_changed || !delta.tracks.is_empty(),
+        Route::Folders { .. } => delta.folders_changed || track_table_delta_affects(delta),
         Route::Playlists => {
             !delta.playlists.added.is_empty()
                 || !delta.playlists.deleted.is_empty()
@@ -269,12 +270,77 @@ fn route_delta_affects(route: &Route, delta: &LibraryDelta) -> bool {
         }
         Route::SmartPlaylists | Route::SmartPlaylistDetail(_) => !delta.tracks.is_empty(),
         Route::Search { .. } => {
-            !delta.tracks.is_empty()
+            track_table_delta_affects(delta)
                 || !delta.albums.is_empty()
                 || !delta.artists.is_empty()
                 || !delta.album_artists.is_empty()
                 || !delta.genres.is_empty()
                 || !delta.playlists.is_empty()
         }
+    }
+}
+
+fn track_table_delta_affects(delta: &LibraryDelta) -> bool {
+    !delta.tracks.added.is_empty()
+        || !delta.tracks.deleted.is_empty()
+        || !delta.tracks.fields.is_empty()
+        || !delta.tracks.favorite.is_empty()
+        || !delta.tracks.cover_refs.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stats_only_track_delta_skips_plain_track_routes() {
+        let mut delta = LibraryDelta::default();
+        delta.tracks.stats.push(TrackId::fake(1));
+
+        assert!(!route_delta_affects(&Route::Tracks, &delta));
+        assert!(!route_delta_affects(&Route::Favorites, &delta));
+        assert!(!route_delta_affects(
+            &Route::AlbumDetail(AlbumId::fake(1)),
+            &delta
+        ));
+        assert!(!route_delta_affects(
+            &Route::ArtistDetail(ArtistId::fake(1)),
+            &delta
+        ));
+        assert!(!route_delta_affects(
+            &Route::ArtistTracks(ArtistId::fake(1)),
+            &delta
+        ));
+        assert!(!route_delta_affects(
+            &Route::Folders { path: Vec::new() },
+            &delta
+        ));
+        assert!(!route_delta_affects(
+            &Route::Search {
+                query: "track".to_string(),
+                kind: SearchKind::Tracks
+            },
+            &delta
+        ));
+        assert!(route_delta_affects(&Route::SmartPlaylists, &delta));
+        assert!(route_delta_affects(
+            &Route::SmartPlaylistDetail(SmartPlaylistId::fake(1)),
+            &delta
+        ));
+        assert!(route_delta_affects(
+            &Route::PlaylistDetail(PlaylistId::fake(1)),
+            &delta
+        ));
+    }
+
+    #[test]
+    fn visible_track_delta_updates_tracks_route() {
+        let mut delta = LibraryDelta::default();
+        delta.tracks.fields.push(TrackId::fake(1));
+        assert!(route_delta_affects(&Route::Tracks, &delta));
+
+        let mut delta = LibraryDelta::default();
+        delta.tracks.added.push(TrackId::fake(2));
+        assert!(route_delta_affects(&Route::Tracks, &delta));
     }
 }

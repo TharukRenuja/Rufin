@@ -405,6 +405,7 @@ fn genre_detail_tracks() {
     assert_eq!(detail.albums, vec![album]);
     assert_eq!(detail.tracks, vec![track]);
 }
+
 #[test]
 fn relation_return_genre() {
     let store = Store::open_memory().expect("open store");
