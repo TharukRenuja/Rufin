@@ -15,12 +15,10 @@ use super::{
     player_icons::lyrics_icon_area,
 };
 
-const MAIN_VIEW_NAME: &str = "main";
-const FULLSCREEN_PLAYER_VIEW_NAME: &str = "fullscreen-player";
-const FULLSCREEN_PLAYER_TRANSITION_MS: u32 = 240;
+const FULLSCREEN_PLAYER_TRANSITION_MS: u32 = 320;
+const FULLSCREEN_PLAYER_TRANSITION_US: i64 = FULLSCREEN_PLAYER_TRANSITION_MS as i64 * 1_000;
 const FULLSCREEN_PLAYER_DEFERRED_UPDATE_MS: u64 = 16;
 const FULLSCREEN_PLAYER_DEFERRED_COVER_MS: u64 = 80;
-const FULLSCREEN_PLAYER_DEFERRED_RENDER_MS: u64 = 240;
 const FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE: i32 = 320;
 const FULLSCREEN_PLAYER_MIN_COVER_SIZE: i32 = 140;
 const FULLSCREEN_PLAYER_MAX_COVER_SIZE: i32 = 320;
@@ -29,6 +27,7 @@ const FULLSCREEN_PLAYER_VERTICAL_RESERVED: i32 = 360;
 
 pub(super) struct FullscreenPlayerParts {
     pub(super) root: gtk::Box,
+    pub(super) animation_tick: RefCell<Option<gtk::TickCallbackId>>,
     pub(super) close_button: gtk::Button,
     pub(super) cover: ArtworkTile,
     pub(super) cover_key: RefCell<Option<String>>,
@@ -46,6 +45,10 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     root.add_css_class("fullscreen-player");
     root.set_hexpand(true);
     root.set_vexpand(true);
+    root.set_visible(false);
+    root.set_can_target(false);
+    root.set_sensitive(false);
+    root.set_opacity(0.0);
 
     let top_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     top_bar.add_css_class("fullscreen-player-top-bar");
@@ -54,7 +57,10 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
     let close_button = icon_button("go-down-symbolic", "Close fullscreen player");
     close_button.add_css_class("fullscreen-player-close-button");
     top_bar.append(&close_button);
-    root.append(&top_bar);
+
+    let top_bar_handle = gtk::WindowHandle::new();
+    top_bar_handle.set_child(Some(&top_bar));
+    root.append(&top_bar_handle);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
     body.add_css_class("fullscreen-player-body");
@@ -110,6 +116,7 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
 
     FullscreenPlayerParts {
         root,
+        animation_tick: RefCell::new(None),
         close_button,
         cover,
         cover_key: RefCell::new(None),
@@ -211,6 +218,18 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
                 resize_shell.schedule_queue_panel_render();
             }
         });
+
+    let queue_tab_shell = Rc::clone(shell);
+    shell
+        .fullscreen_player
+        .stack
+        .connect_visible_child_name_notify(move |stack| {
+            if queue_tab_shell.state.fullscreen_player_visible.get()
+                && stack.visible_child_name().as_deref() == Some("queue")
+            {
+                queue_tab_shell.schedule_queue_panel_render();
+            }
+        });
 }
 
 impl Shell {
@@ -219,13 +238,7 @@ impl Shell {
             return;
         }
         self.state.fullscreen_player_visible.set(true);
-        self.app_content_stack
-            .set_transition_duration(FULLSCREEN_PLAYER_TRANSITION_MS);
-        self.app_content_stack.set_visible_child_full(
-            FULLSCREEN_PLAYER_VIEW_NAME,
-            gtk::StackTransitionType::OverUp,
-        );
-        reset_fullscreen_stack(self);
+        self.animate_fullscreen_player(true);
         let update_shell = Rc::clone(self);
         glib::timeout_add_local_once(
             Duration::from_millis(FULLSCREEN_PLAYER_DEFERRED_UPDATE_MS),
@@ -246,17 +259,24 @@ impl Shell {
                 }
             },
         );
-        let render_shell = Rc::clone(self);
-        glib::timeout_add_local_once(
-            Duration::from_millis(FULLSCREEN_PLAYER_DEFERRED_RENDER_MS),
-            move || {
-                if !render_shell.state.fullscreen_player_visible.get() {
-                    return;
-                }
-                render_shell.render_queue_panel();
-                render_shell.render_lyrics_panel();
-            },
-        );
+        if self.fullscreen_player.stack.visible_child_name().as_deref() == Some("queue") {
+            let queue_shell = Rc::clone(self);
+            glib::timeout_add_local_once(
+                Duration::from_millis(u64::from(FULLSCREEN_PLAYER_TRANSITION_MS)),
+                move || {
+                    if queue_shell.state.fullscreen_player_visible.get()
+                        && queue_shell
+                            .fullscreen_player
+                            .stack
+                            .visible_child_name()
+                            .as_deref()
+                            == Some("queue")
+                    {
+                        queue_shell.render_queue_panel();
+                    }
+                },
+            );
+        }
         let _focused = self.fullscreen_player.close_button.grab_focus();
     }
 
@@ -264,11 +284,7 @@ impl Shell {
         if !self.state.fullscreen_player_visible.replace(false) {
             return;
         }
-        self.app_content_stack
-            .set_transition_duration(FULLSCREEN_PLAYER_TRANSITION_MS);
-        self.app_content_stack
-            .set_visible_child_full(MAIN_VIEW_NAME, gtk::StackTransitionType::UnderDown);
-        reset_fullscreen_stack(self);
+        self.animate_fullscreen_player(false);
     }
 
     pub(super) fn toggle_fullscreen_player(self: &Rc<Self>) {
@@ -471,23 +487,72 @@ impl Shell {
         self.fullscreen_player.cover.clear_image();
         *self.fullscreen_player.cover_key.borrow_mut() = None;
     }
-}
 
-fn reset_fullscreen_stack(shell: &Rc<Shell>) {
-    let reset_shell = Rc::clone(shell);
-    glib::timeout_add_local(
-        Duration::from_millis(u64::from(FULLSCREEN_PLAYER_TRANSITION_MS) + 16),
-        move || {
-            if reset_shell.app_content_stack.is_transition_running() {
-                return glib::ControlFlow::Continue;
+    fn animate_fullscreen_player(self: &Rc<Self>, opening: bool) {
+        if let Some(tick) = self.fullscreen_player.animation_tick.borrow_mut().take() {
+            tick.remove();
+        }
+
+        let root = self.fullscreen_player.root.clone();
+        let height = self.fullscreen_player_hidden_offset();
+        let started_at = Rc::new(Cell::new(None));
+
+        root.set_visible(true);
+        root.set_opacity(1.0);
+        root.set_can_target(opening);
+        root.set_sensitive(opening);
+        root.set_margin_top(if opening { height } else { 0 });
+
+        let tick_shell = Rc::clone(self);
+        let tick_started_at = Rc::clone(&started_at);
+        let tick = root.add_tick_callback(move |root, clock| {
+            let now = clock.frame_time();
+            let start = tick_started_at.get().unwrap_or_else(|| {
+                tick_started_at.set(Some(now));
+                now
+            });
+            let elapsed = now.saturating_sub(start);
+            let progress =
+                (elapsed as f64 / FULLSCREEN_PLAYER_TRANSITION_US as f64).clamp(0.0, 1.0);
+            let eased = 1.0 - (1.0 - progress).powi(3);
+            let offset = if opening {
+                (1.0 - eased) * f64::from(height)
+            } else {
+                eased * f64::from(height)
+            };
+            root.set_margin_top(offset.round() as i32);
+
+            if progress >= 1.0 {
+                root.set_can_target(opening);
+                root.set_sensitive(opening);
+                if opening {
+                    root.set_margin_top(0);
+                    root.set_opacity(1.0);
+                } else {
+                    root.set_margin_top(0);
+                    root.set_opacity(0.0);
+                }
+                root.set_visible(true);
+                tick_shell
+                    .fullscreen_player
+                    .animation_tick
+                    .borrow_mut()
+                    .take();
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
             }
-            reset_shell
-                .app_content_stack
-                .set_transition_type(gtk::StackTransitionType::None);
-            reset_shell.app_content_stack.set_transition_duration(0);
-            glib::ControlFlow::Break
-        },
-    );
+        });
+        *self.fullscreen_player.animation_tick.borrow_mut() = Some(tick);
+    }
+
+    pub(in crate::ui) fn fullscreen_player_hidden_offset(&self) -> i32 {
+        self.fullscreen_player
+            .root
+            .height()
+            .max(self.app_content_stack.height())
+            .max((self.window.height() - BOTTOM_PLAYER_HEIGHT).max(1))
+    }
 }
 
 fn fullscreen_player_label(css_class: &str) -> gtk::Label {
