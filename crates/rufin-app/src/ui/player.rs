@@ -150,7 +150,7 @@ impl WaveformSeekBar {
         area.set_width_request(BOTTOM_PLAYER_PROGRESS_WIDTH);
         area.set_focusable(true);
         area.set_valign(gtk::Align::Center);
-        let seek_label = crate::i18n::tr("Seek");
+        let seek_label = crate::i18n::tr("Seek playback");
         area.set_tooltip_text(Some(&seek_label));
         area.update_property(&[
             gtk::accessible::Property::Label(&seek_label),

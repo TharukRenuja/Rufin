@@ -697,7 +697,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Remove from queue");
     let _ = tr("Remove from Queue");
     let _ = tr("Mute");
-    let _ = tr("Seek");
+    let _ = tr("Seek playback");
     let _ = tr("Seekbar");
     let _ = tr("Queue and transitions");
     let _ = tr("Audio");
