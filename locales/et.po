@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Rufin 0.3.13\n"
 "Report-Msgid-Bugs-To: https://github.com/screwys/Rufin/issues\n"
 "POT-Creation-Date: 2026-06-06 20:59+0300\n"
-"PO-Revision-Date: 2026-06-08 23:29+0000\n"
+"PO-Revision-Date: 2026-06-09 20:34+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/rufin/app/et/>\n"
 "Language: et\n"
@@ -279,7 +279,7 @@ msgstr "Kustuta vahemälu"
 #: crates/rufin-app/src/i18n.rs:470
 #: crates/rufin-app/src/ui/local_access_mapping.rs:509
 msgid "This removes cached library metadata for"
-msgstr ""
+msgstr "Järgnevaga kustutakse puhverdatud muusikakogu andmed teenusest"
 
 #: crates/rufin-app/src/i18n.rs:472
 #: crates/rufin-app/src/ui/local_access_mapping.rs:542
@@ -287,6 +287,8 @@ msgid ""
 "This removes the server, cached library metadata, queue snapshot, and saved "
 "token for"
 msgstr ""
+"Järgnevaga kustutakse serveriteave, puhverdatud muusikakogu andmed, "
+"esitusjärjekorra hetkvaade ja salvestatud tunnusload teenusest"
 
 #: crates/rufin-app/src/i18n.rs:473
 msgid "Clears cached data for the server, login stays saved"
@@ -573,6 +575,9 @@ msgid ""
 "users, if the folder is not in ~/Music, you need to give folder permissions "
 "from Flatseal)"
 msgstr ""
+"Vali kaust, mida tahad kohalikus arvutis skaneerida ja sealt muusikat "
+"esitada (Kui oled flatpaki kasutaja ja see kaust pole ~/Muusika, siis pead "
+"ilmselt Flatsealiga jagama vajalikke õigusi)"
 
 #: crates/rufin-app/src/i18n.rs:533
 #: crates/rufin-app/src/ui/preferences/library.rs:237
@@ -633,6 +638,7 @@ msgstr "Ligipääs kohaliku muusika esitamisele"
 #: crates/rufin-app/src/ui/local_access_mapping.rs:185
 msgid "Optionally map server tracks to files on this computer"
 msgstr ""
+"Soovi korral saad serveris olevad lood vastendada failidega selles arvutis"
 
 #: crates/rufin-app/src/i18n.rs:546
 #: crates/rufin-app/src/ui/local_access_mapping.rs:133
@@ -819,7 +825,7 @@ msgstr "Automaatne diskor"
 #: crates/rufin-app/src/i18n.rs:585
 #: crates/rufin-app/src/ui/preferences/root/general.rs:502
 msgid "Auto DJ refill threshold"
-msgstr ""
+msgstr "Automaatse diskori muusika täiendamise lävend"
 
 #: crates/rufin-app/src/i18n.rs:586
 #: crates/rufin-app/src/ui/preferences/root/general.rs:503
@@ -1119,14 +1125,14 @@ msgstr "Avan Last.fm-i autentimisvaate…"
 #: crates/rufin-app/src/i18n.rs:650
 #: crates/rufin-app/src/ui/preferences/root/general.rs:401
 msgid "Timed out waiting for Last.fm authorization."
-msgstr ""
+msgstr "Aegumine Last.fm-i autentimise ootamisel."
 
 #: crates/rufin-app/src/i18n.rs:651
 #: crates/rufin-app/src/ui/preferences/root/general.rs:144
 #: crates/rufin-app/src/ui/preferences/root/general.rs:225
 #: crates/rufin-app/src/ui/preferences/root/general.rs:300
 msgid "Now playing updates"
-msgstr ""
+msgstr "„Hetkel esitamisel“ uuendused"
 
 #: crates/rufin-app/src/i18n.rs:652
 #: crates/rufin-app/src/ui/preferences/root/general.rs:164
@@ -1137,21 +1143,23 @@ msgstr "Libre.fm"
 #: crates/rufin-app/src/ui/preferences/root/general.rs:166
 msgid "If the page doesn't load, then Libre.fm blocks your IP range/VPN"
 msgstr ""
+"Kui lehe laadimine ei toimi, siis Libre.fm blokeerib sinu IP-aadressi või "
+"VPN-teenust"
 
 #: crates/rufin-app/src/i18n.rs:654
 #: crates/rufin-app/src/ui/preferences/root/general.rs:170
 msgid "Libre.fm scrobbling"
-msgstr ""
+msgstr "Kraasimine Libre.fm-teenuses"
 
 #: crates/rufin-app/src/i18n.rs:655
 #: crates/rufin-app/src/ui/preferences/root/general.rs:205
 msgid "Opening Libre.fm authorization…"
-msgstr ""
+msgstr "Avan Libre.fm-i autentimisvaate…"
 
 #: crates/rufin-app/src/i18n.rs:656
 #: crates/rufin-app/src/ui/preferences/root/general.rs:434
 msgid "Timed out waiting for Libre.fm authorization"
-msgstr ""
+msgstr "Aegumine Libre.fm-i autentimise ootamisel"
 
 #: crates/rufin-app/src/i18n.rs:657
 #: crates/rufin-app/src/ui/preferences/root/general.rs:245
@@ -1161,22 +1169,22 @@ msgstr "ListenBrainz"
 #: crates/rufin-app/src/i18n.rs:658
 #: crates/rufin-app/src/ui/preferences/root/general.rs:248
 msgid "ListenBrainz scrobbling"
-msgstr ""
+msgstr "Kraasimine ListenBrainzi teenuses"
 
 #: crates/rufin-app/src/i18n.rs:659
 #: crates/rufin-app/src/ui/preferences/root/general.rs:267
 msgid "Get token"
-msgstr ""
+msgstr "Vormista endale tunnusluba"
 
 #: crates/rufin-app/src/i18n.rs:660
 #: crates/rufin-app/src/ui/preferences/root/general.rs:269
 msgid "Find your ListenBrainz user token"
-msgstr ""
+msgstr "Vormista ListenBrainz-teenuse kasutaja tunnusluba"
 
 #: crates/rufin-app/src/i18n.rs:661
 #: crates/rufin-app/src/ui/preferences/root/general.rs:279
 msgid "User token"
-msgstr ""
+msgstr "Kasutaja tunnusluba"
 
 #: crates/rufin-app/src/i18n.rs:663
 msgid ""
@@ -1216,7 +1224,7 @@ msgstr "Väljumisel jäta rakendus süsteemisalve"
 #: crates/rufin-app/src/i18n.rs:670
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:213
 msgid "Start minimized"
-msgstr ""
+msgstr "Käivita minimeerituna"
 
 #: crates/rufin-app/src/i18n.rs:671 crates/rufin-app/src/ui/root/tray.rs:50
 msgid "Show Rufin"
@@ -1256,7 +1264,7 @@ msgstr "Vasaku külgriba tihedus"
 
 #: crates/rufin-app/src/i18n.rs:680
 msgid "Choose when the left sidebar uses compact navigation"
-msgstr ""
+msgstr "Seadista vasaku külgriba kompaktse vaate käivitamise tingimusi"
 
 #: crates/rufin-app/src/i18n.rs:681
 msgid "Plays"
@@ -1965,11 +1973,11 @@ msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:334
 msgid "Show paused status"
-msgstr ""
+msgstr "Näita peatamise olekut"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:355
 msgid "Show playback icon"
-msgstr ""
+msgstr "Näita taasesituse ikooni"
 
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:365
 msgid "Last.fm API key"
