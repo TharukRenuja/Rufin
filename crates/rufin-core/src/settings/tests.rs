@@ -191,6 +191,20 @@ fn settings_migrate_preferences() {
             .any(|entry| entry.item == SidebarRouteItem::SmartPlaylists && entry.visible)
     );
 }
+
+#[test]
+fn album_artists_visible_by_default() {
+    let settings = AppSettings::default();
+
+    assert!(
+        settings
+            .sidebar
+            .route_items
+            .iter()
+            .any(|entry| entry.item == SidebarRouteItem::AlbumArtists && entry.visible)
+    );
+}
+
 #[test]
 fn app_settings_sanitize_language_preference() {
     let mut settings = AppSettings {
