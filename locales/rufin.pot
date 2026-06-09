@@ -1281,7 +1281,7 @@ msgid "Mute"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:686
-msgid "Seek"
+msgid "Seek playback"
 msgstr ""
 
 #: crates/rufin-app/src/i18n.rs:687
