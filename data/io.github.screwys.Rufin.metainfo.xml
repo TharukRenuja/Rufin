@@ -30,28 +30,57 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.3/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.3/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.3/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.3/data/play_random.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/play_random.png</image>
     </screenshot>
     <screenshot>
       <caption>Tune playback settings</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.3/data/playback.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.5" date="2026-06-08">
+      <description>
+        <p>Thanks to everyone who reported issues again. We got to fix several bugs &amp; unwanted behavior this release!</p>
+        <ul>
+          <li>Added fullscreen player visualizer and equalizer tabs</li>
+        </ul>
+        <ul>
+          <li>Made genres and playlists load instantly like other routes</li>
+        </ul>
+        <ul>
+          <li>Expanded equalizer to have Winamp-like presets</li>
+        </ul>
+        <ul>
+          <li>Smoothed fullscreen player open/close animation</li>
+        </ul>
+        <ul>
+          <li>Improved route layout stability for different window sizes</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug where fullscreen player made the app window not draggable</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug where playing a later track in the queue froze the app</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug where longer playlists and genres showed a blank screen mid-scroll</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.3" date="2026-06-08">
       <description>
         <ul>
