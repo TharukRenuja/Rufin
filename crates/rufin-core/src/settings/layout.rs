@@ -171,7 +171,7 @@ impl SidebarRouteItem {
     }
 
     fn default_visible(self) -> bool {
-        !matches!(self, Self::AlbumArtists)
+        true
     }
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
