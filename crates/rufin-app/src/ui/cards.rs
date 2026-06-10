@@ -34,7 +34,9 @@ impl Shell {
 
     pub(super) fn collection_card_grid_metrics(&self) -> (usize, i32) {
         let width = home_album_content_width(self);
-        let columns = home_album_page_size(width, None);
+        let current = nonzero_usize(self.state.collection_grid_columns.get());
+        let columns = home_album_page_size(width, current);
+        self.state.collection_grid_columns.set(columns);
         (columns, home_album_card_size(width, columns))
     }
 }

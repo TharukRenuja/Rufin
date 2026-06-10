@@ -44,6 +44,8 @@ struct Cli {
 enum FakeScaleArg {
     Small,
     Large,
+    Stress,
+    ThirtyK,
 }
 
 #[cfg(feature = "dev-tools")]
@@ -52,6 +54,8 @@ impl From<FakeScaleArg> for FakeScale {
         match value {
             FakeScaleArg::Small => Self::Small,
             FakeScaleArg::Large => Self::Large,
+            FakeScaleArg::Stress => Self::Stress,
+            FakeScaleArg::ThirtyK => Self::ThirtyK,
         }
     }
 }

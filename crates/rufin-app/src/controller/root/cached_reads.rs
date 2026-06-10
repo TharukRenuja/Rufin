@@ -646,7 +646,15 @@ pub(in crate::controller) fn seed_fake_cache(
     store: &StoreHandle,
     scale: FakeScale,
 ) -> Result<(), String> {
+    let started = Instant::now();
     let provider = FakeProvider::new(scale);
+    info!(
+        ?scale,
+        albums = provider.album_count(),
+        tracks = provider.track_count(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "generated fake library"
+    );
     let server = provider.identity().server.clone();
     let saved = SavedServer {
         server: server.clone(),
@@ -665,12 +673,17 @@ pub(in crate::controller) fn seed_fake_cache(
     let album_limit = match scale {
         FakeScale::Small => provider.album_count(),
         FakeScale::Large => 1_000,
+        FakeScale::Stress => provider.album_count(),
+        FakeScale::ThirtyK => provider.album_count(),
     };
     let track_limit = match scale {
         FakeScale::Small => provider.track_count(),
         FakeScale::Large => 2_000,
+        FakeScale::Stress => provider.track_count(),
+        FakeScale::ThirtyK => provider.track_count(),
     };
     runtime.block_on(async {
+        let fetch_started = Instant::now();
         let albums = provider
             .albums(PagedRequest::new(0, album_limit))
             .await
@@ -699,19 +712,65 @@ pub(in crate::controller) fn seed_fake_cache(
             .home_sections()
             .await
             .map_err(|error| error.to_string())?;
+        info!(
+            ?scale,
+            album_limit,
+            track_limit,
+            elapsed_ms = fetch_started.elapsed().as_millis() as u64,
+            total_elapsed_ms = started.elapsed().as_millis() as u64,
+            "fetched fake cache seed pages"
+        );
 
         let pruned_cover_entries = store.with_store(|store| {
+            let write_started = Instant::now();
+            let step_started = Instant::now();
             store.upsert_albums(&server.id, &albums.items, generation)?;
+            info!(
+                ?scale,
+                count = albums.items.len(),
+                elapsed_ms = step_started.elapsed().as_millis() as u64,
+                total_elapsed_ms = started.elapsed().as_millis() as u64,
+                "seeded fake albums"
+            );
+            let step_started = Instant::now();
             store.upsert_tracks(&server.id, &tracks.items, generation)?;
+            info!(
+                ?scale,
+                count = tracks.items.len(),
+                elapsed_ms = step_started.elapsed().as_millis() as u64,
+                total_elapsed_ms = started.elapsed().as_millis() as u64,
+                "seeded fake tracks"
+            );
+            let step_started = Instant::now();
             store.upsert_artists(&server.id, &artists.items, false, generation)?;
             store.upsert_artists(&server.id, &album_artists.items, true, generation)?;
             store.refresh_library_counts(&server.id)?;
             store.upsert_genres(&server.id, &genres.items, generation)?;
             store.upsert_playlists(&server.id, &playlists.items, generation)?;
             store.upsert_home_sections(&server.id, &home_sections, generation)?;
-            store.complete_sync(&server.id, generation)
+            info!(
+                ?scale,
+                elapsed_ms = step_started.elapsed().as_millis() as u64,
+                total_elapsed_ms = started.elapsed().as_millis() as u64,
+                "seeded fake library metadata"
+            );
+            let result = store.complete_sync(&server.id, generation);
+            info!(
+                ?scale,
+                elapsed_ms = write_started.elapsed().as_millis() as u64,
+                total_elapsed_ms = started.elapsed().as_millis() as u64,
+                "finished fake cache writes"
+            );
+            result
         })?;
+        let prune_started = Instant::now();
         prune_successful_sync_image_cache(store, &server.id, pruned_cover_entries);
+        info!(
+            ?scale,
+            elapsed_ms = prune_started.elapsed().as_millis() as u64,
+            total_elapsed_ms = started.elapsed().as_millis() as u64,
+            "finished fake cache seed"
+        );
         Ok::<(), String>(())
     })?;
     Ok(())

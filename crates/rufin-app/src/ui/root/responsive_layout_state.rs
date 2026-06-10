@@ -93,6 +93,7 @@ impl Shell {
         self.player_controls
             .root
             .set_visible(!login_active && !startup_loading_active);
+        self.sync_current_route_boundary_width(resolved.main_width);
         self.update_right_panel_button();
         self.update_lyrics_panel_button();
         self.apply_bottom_player_width(self.layout_width());
@@ -171,6 +172,14 @@ impl Shell {
 }
 
 impl Shell {
+    fn sync_current_route_boundary_width(&self, width: i32) {
+        if let Some(boundary) = self.state.current_route_boundary.borrow().as_ref() {
+            apply_route_boundary_width(boundary, width);
+            boundary.queue_resize();
+            self.route_host.queue_resize();
+        }
+    }
+
     fn sidebar_widths(&self) -> SidebarWidths {
         SidebarWidths {
             full: measured_sidebar_width(&self.normal_nav_slot, NORMAL_SIDEBAR_WIDTH),

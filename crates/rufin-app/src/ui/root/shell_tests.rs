@@ -1011,15 +1011,22 @@ pub(in crate::ui) fn shell_clamp_height() {
     assert_eq!(clamp_queue_lyrics_position(200, 1701), 120);
     assert_eq!(queue_lyrics_default_position(700), 400);
     assert_eq!(queue_lyrics_default_position(1400), 1000);
-    assert_eq!(queue_lyrics_initial_position(700, None), 400);
-    assert_eq!(queue_lyrics_initial_position(700, Some(0.5)), 350);
-    assert_eq!(queue_lyrics_initial_position(700, Some(2.0)), 400);
-    assert_eq!(queue_lyrics_initial_position(700, Some(f64::NAN)), 400);
+    assert_eq!(queue_lyrics_initial_position(700, None, None), 400);
+    assert_eq!(queue_lyrics_initial_position(700, None, Some(0.5)), 350);
+    assert_eq!(queue_lyrics_initial_position(700, None, Some(2.0)), 400);
+    assert_eq!(
+        queue_lyrics_initial_position(700, None, Some(f64::NAN)),
+        400
+    );
+    assert_eq!(
+        queue_lyrics_initial_position(700, Some(380), Some(0.5)),
+        380
+    );
     assert_eq!(queue_lyrics_position_from_ratio(700, 0.5), 350);
     assert_eq!(queue_lyrics_position_ratio(700, 350), 0.5);
     let saved_default_ratio = queue_lyrics_position_ratio(700, 400);
     assert_eq!(
-        queue_lyrics_initial_position(1400, Some(saved_default_ratio)),
+        queue_lyrics_initial_position(1400, None, Some(saved_default_ratio)),
         800
     );
 }

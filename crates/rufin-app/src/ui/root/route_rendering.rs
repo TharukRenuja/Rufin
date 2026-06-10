@@ -9,15 +9,27 @@ impl RouteView {
     fn new(widget: gtk::Widget) -> Self {
         Self {
             widget,
-            resize: RouteResizePolicy::RerenderOnWidthChange,
+            resize: RouteResizePolicy::LayoutSignature,
         }
     }
 
     fn stable(widget: gtk::Widget) -> Self {
         Self {
             widget,
-            resize: RouteResizePolicy::StableOnWidthChange,
+            resize: RouteResizePolicy::Stable,
         }
+    }
+
+    fn settled_width(widget: gtk::Widget) -> Self {
+        Self {
+            widget,
+            resize: RouteResizePolicy::SettledWidth,
+        }
+    }
+
+    fn with_resize(mut self, resize: RouteResizePolicy) -> Self {
+        self.resize = resize;
+        self
     }
 }
 
@@ -57,38 +69,62 @@ impl Shell {
     }
     pub(in crate::ui) fn render_current_route_content(self: &Rc<Self>) {
         let route = self.state.routes.borrow().current().clone();
+        let render_started = Instant::now();
         self.prepare_route_host(&route);
         let view = match route.clone() {
             Route::Home => RouteView::new(self.home_view()),
-            Route::Albums => RouteView::new(self.library_albums_view()),
+            Route::Albums => RouteView::new(self.library_albums_view())
+                .with_resize(self.library_route_resize_policy(LibraryListKey::Albums)),
             Route::AlbumDetail(album_id) => RouteView::stable(self.album_detail_view(album_id)),
-            Route::Tracks => RouteView::new(self.library_tracks_route_view()),
-            Route::Favorites => RouteView::new(self.favorites_view()),
-            Route::Artists => RouteView::new(self.library_artist_list_view(false)),
+            Route::Tracks => RouteView::new(self.library_tracks_route_view())
+                .with_resize(self.library_route_resize_policy(LibraryListKey::Tracks)),
+            Route::Favorites => RouteView::new(self.favorites_view())
+                .with_resize(self.library_route_resize_policy(LibraryListKey::FavoriteTracks)),
+            Route::Artists => RouteView::new(self.library_artist_list_view(false))
+                .with_resize(self.library_route_resize_policy(LibraryListKey::Artists)),
             Route::ArtistDetail(artist_id) => RouteView::stable(self.artist_detail_view(artist_id)),
             Route::ArtistDiscography(artist_id) => {
                 RouteView::stable(self.artist_discography_view(artist_id))
             }
-            Route::ArtistTracks(artist_id) => RouteView::new(self.artist_tracks_view(artist_id)),
-            Route::AlbumArtists => RouteView::new(self.library_artist_list_view(true)),
-            Route::Genres => RouteView::new(self.library_genre_list_view()),
-            Route::GenreDetail(genre_id) => RouteView::new(self.genre_detail_view(genre_id)),
-            Route::Folders { path } => RouteView::new(self.folders_view(path)),
-            Route::Playlists => RouteView::new(self.library_playlists_view()),
-            Route::PlaylistDetail(playlist_id) => {
-                RouteView::new(self.playlist_detail_view(playlist_id))
+            Route::ArtistTracks(artist_id) => RouteView::new(self.artist_tracks_view(artist_id))
+                .with_resize(self.library_route_resize_policy(LibraryListKey::ArtistTracks)),
+            Route::AlbumArtists => RouteView::new(self.library_artist_list_view(true))
+                .with_resize(self.library_route_resize_policy(LibraryListKey::AlbumArtists)),
+            Route::Genres => RouteView::new(self.library_genre_list_view())
+                .with_resize(self.library_route_resize_policy(LibraryListKey::Genres)),
+            Route::GenreDetail(genre_id) => {
+                RouteView::settled_width(self.genre_detail_view(genre_id))
             }
-            Route::SmartPlaylists => RouteView::new(self.library_smart_playlists_view()),
+            Route::Folders { path } => RouteView::settled_width(self.folders_view(path)),
+            Route::Playlists => RouteView::new(self.library_playlists_view())
+                .with_resize(self.library_route_resize_policy(LibraryListKey::Playlists)),
+            Route::PlaylistDetail(playlist_id) => {
+                RouteView::settled_width(self.playlist_detail_view(playlist_id))
+            }
+            Route::SmartPlaylists => RouteView::new(self.library_smart_playlists_view())
+                .with_resize(self.library_route_resize_policy(LibraryListKey::SmartPlaylists)),
             Route::SmartPlaylistDetail(smart_playlist_id) => {
-                RouteView::new(self.smart_playlist_detail_view(smart_playlist_id))
+                RouteView::settled_width(self.smart_playlist_detail_view(smart_playlist_id))
             }
             Route::Search { query, .. } => {
                 let library = self.state.library.borrow().clone();
-                RouteView::new(self.search_view(&query, library))
+                RouteView::settled_width(self.search_view(&query, library))
             }
         };
 
+        let resize = view.resize;
+        let build_ms = render_started.elapsed().as_millis() as u64;
         self.finish_route_view(&route, view);
+        if route_resize_diagnostics_enabled() {
+            info!(
+                ?route,
+                ?resize,
+                build_ms,
+                total_ms = render_started.elapsed().as_millis() as u64,
+                signature = self.state.responsive_render_signature.get(),
+                "route render timing"
+            );
+        }
     }
     pub(in crate::ui) fn apply_library_delta(self: &Rc<Self>, delta: LibraryDelta) {
         if delta.is_empty() {
@@ -132,6 +168,7 @@ impl Shell {
     fn prepare_route_host(self: &Rc<Self>, route: &Route) {
         clear_favorite_controls(&self.state.favorite_controls);
         self.state.type_to_search.borrow_mut().take();
+        self.state.current_route_boundary.borrow_mut().take();
         while let Some(child) = self.route_host.first_child() {
             self.route_host.remove(&child);
         }
@@ -146,13 +183,14 @@ impl Shell {
     fn finish_route_view(self: &Rc<Self>, route: &Route, view: RouteView) {
         self.state.current_route_resize_policy.set(view.resize);
         let render_width = route_content_width(self.as_ref());
-        let width = match view.resize {
-            RouteResizePolicy::StableOnWidthChange => 0,
-            RouteResizePolicy::RerenderOnWidthChange => render_width,
-        };
-        self.state.width_sensitive_render_width.set(width);
-        self.route_host
-            .append(&route_boundary_for_route(route, view.widget, render_width));
+        self.state
+            .responsive_render_signature
+            .set(self.route_resize_signature(route, view.resize));
+        let boundary = route_boundary_for_route(route, view.widget, render_width);
+        self.state
+            .current_route_boundary
+            .replace(Some(boundary.clone()));
+        self.route_host.append(&boundary);
         self.prime_route_visible_cover_window(route);
         {
             let shell = Rc::clone(self);
@@ -178,6 +216,75 @@ impl Shell {
                 .saturating_add(1),
         );
         self.state.route_cover_prime_pending.borrow_mut().clear();
+    }
+}
+
+impl Shell {
+    pub(in crate::ui) fn library_route_resize_policy(
+        &self,
+        key: LibraryListKey,
+    ) -> RouteResizePolicy {
+        library_route_resize_policy_for(key, &self.library_settings(key))
+    }
+
+    pub(in crate::ui) fn route_resize_signature(
+        &self,
+        route: &Route,
+        policy: RouteResizePolicy,
+    ) -> i32 {
+        match policy {
+            RouteResizePolicy::Stable => 0,
+            RouteResizePolicy::SettledWidth => route_content_width(self),
+            RouteResizePolicy::LayoutSignature => match route {
+                Route::Albums => self.library_layout_signature(LibraryListKey::Albums),
+                Route::Tracks => self.library_layout_signature(LibraryListKey::Tracks),
+                Route::Favorites => self.library_layout_signature(LibraryListKey::FavoriteTracks),
+                Route::Artists => self.library_layout_signature(LibraryListKey::Artists),
+                Route::ArtistTracks(_) => {
+                    self.library_layout_signature(LibraryListKey::ArtistTracks)
+                }
+                Route::AlbumArtists => self.library_layout_signature(LibraryListKey::AlbumArtists),
+                Route::Genres => self.library_layout_signature(LibraryListKey::Genres),
+                Route::Playlists => self.library_layout_signature(LibraryListKey::Playlists),
+                Route::SmartPlaylists => {
+                    self.library_layout_signature(LibraryListKey::SmartPlaylists)
+                }
+                _ => self.grid_layout_signature(),
+            },
+        }
+    }
+
+    fn library_layout_signature(&self, key: LibraryListKey) -> i32 {
+        let settings = self.library_settings(key);
+        match normalized_library_layout(key, &settings) {
+            LibraryLayout::Row => 0,
+            LibraryLayout::Grid => self.grid_layout_signature(),
+            LibraryLayout::Detail => route_content_width(self),
+        }
+    }
+
+    fn grid_layout_signature(&self) -> i32 {
+        let (columns, _) = self.collection_card_grid_metrics();
+        columns as i32
+    }
+}
+
+pub(in crate::ui) fn library_route_resize_policy_for(
+    key: LibraryListKey,
+    settings: &LibraryListSettings,
+) -> RouteResizePolicy {
+    match normalized_library_layout(key, settings) {
+        LibraryLayout::Row => RouteResizePolicy::Stable,
+        LibraryLayout::Grid => RouteResizePolicy::LayoutSignature,
+        LibraryLayout::Detail => RouteResizePolicy::SettledWidth,
+    }
+}
+
+fn normalized_library_layout(key: LibraryListKey, settings: &LibraryListSettings) -> LibraryLayout {
+    if key.supports_layout(settings.layout) {
+        settings.layout
+    } else {
+        LibraryLayout::Row
     }
 }
 
@@ -291,6 +398,58 @@ fn track_table_delta_affects(delta: &LibraryDelta) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn row_library_routes_do_not_rerender_for_width() {
+        let settings = LibraryListSettings {
+            layout: LibraryLayout::Row,
+            ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+        };
+
+        assert_eq!(
+            library_route_resize_policy_for(LibraryListKey::Tracks, &settings),
+            RouteResizePolicy::Stable
+        );
+    }
+
+    #[test]
+    fn grid_library_routes_rerender_by_layout_signature() {
+        let settings = LibraryListSettings {
+            layout: LibraryLayout::Grid,
+            ..LibraryListSettings::for_key(LibraryListKey::Artists)
+        };
+
+        assert_eq!(
+            library_route_resize_policy_for(LibraryListKey::Artists, &settings),
+            RouteResizePolicy::LayoutSignature
+        );
+    }
+
+    #[test]
+    fn detail_library_routes_wait_for_settled_width() {
+        let settings = LibraryListSettings {
+            layout: LibraryLayout::Detail,
+            ..LibraryListSettings::for_key(LibraryListKey::Albums)
+        };
+
+        assert_eq!(
+            library_route_resize_policy_for(LibraryListKey::Albums, &settings),
+            RouteResizePolicy::SettledWidth
+        );
+    }
+
+    #[test]
+    fn unsupported_detail_layout_is_stable() {
+        let settings = LibraryListSettings {
+            layout: LibraryLayout::Detail,
+            ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+        };
+
+        assert_eq!(
+            library_route_resize_policy_for(LibraryListKey::Tracks, &settings),
+            RouteResizePolicy::Stable
+        );
+    }
 
     #[test]
     fn stats_only_track_delta_skips_plain_track_routes() {

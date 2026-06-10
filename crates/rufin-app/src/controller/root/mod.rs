@@ -129,7 +129,7 @@ pub(in crate::controller) use test_support::*;
 
 const PAGE_SIZE: usize = 500;
 const SNAPSHOT_GRID_LIMIT: usize = 500;
-pub(in crate::controller) const SNAPSHOT_TRACK_LIMIT: usize = 25_000;
+pub(in crate::controller) const SNAPSHOT_TRACK_LIMIT: usize = 40_000;
 const STARTUP_CACHE_STALE_SECONDS: i64 = 24 * 60 * 60;
 const GROUPED_COVER_REF_LIMIT: usize = 4;
 pub(in crate::controller) const IMAGE_TAG_UNTAGGED: &str = "untagged";
