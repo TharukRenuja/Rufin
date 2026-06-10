@@ -220,11 +220,21 @@ pub(in crate::ui) const PLAYLIST_ENTRY_TITLE_MAX_CHARS: i32 = 44;
 pub(in crate::ui) const PLAY_NEXT_ICON: &str = "view-sort-ascending-symbolic";
 pub(in crate::ui) const PLAY_LATER_ICON: &str = "view-sort-descending-symbolic";
 pub(in crate::ui) const RESPONSIVE_RENDER_DELAY_MS: u64 = 16;
+pub(in crate::ui) const RESPONSIVE_ROUTE_SETTLE_MS: u64 = 180;
 static HOME_SHOWCASE_COUNTER: AtomicU64 = AtomicU64::new(0);
+pub(in crate::ui) fn route_resize_diagnostics_enabled() -> bool {
+    matches!(
+        std::env::var("RUFIN_RESIZE_DEBUG")
+            .unwrap_or_default()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum RouteResizePolicy {
-    StableOnWidthChange,
-    RerenderOnWidthChange,
+    Stable,
+    LayoutSignature,
+    SettledWidth,
 }
 #[derive(Clone, Debug, Default)]
 pub struct AppOptions {
@@ -272,9 +282,12 @@ pub(in crate::ui) struct AppState {
     fullscreen_player_visible: Cell<bool>,
     queue_lyrics_position_save_suppressed: Rc<Cell<u32>>,
     responsive_render_queued: Cell<bool>,
+    responsive_render_generation: Cell<u64>,
     current_route_resize_policy: Cell<RouteResizePolicy>,
-    width_sensitive_render_width: Cell<i32>,
+    responsive_render_signature: Cell<i32>,
+    current_route_boundary: RefCell<Option<gtk::Widget>>,
     card_grid_columns: Cell<usize>,
+    collection_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
@@ -514,9 +527,12 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         fullscreen_player_visible: Cell::new(false),
         queue_lyrics_position_save_suppressed: Rc::new(Cell::new(0)),
         responsive_render_queued: Cell::new(false),
-        current_route_resize_policy: Cell::new(RouteResizePolicy::StableOnWidthChange),
-        width_sensitive_render_width: Cell::new(0),
+        responsive_render_generation: Cell::new(0),
+        current_route_resize_policy: Cell::new(RouteResizePolicy::Stable),
+        responsive_render_signature: Cell::new(0),
+        current_route_boundary: RefCell::new(None),
         card_grid_columns: Cell::new(0),
+        collection_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
         home_section_views: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),

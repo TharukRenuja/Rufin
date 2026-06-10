@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::glib;
@@ -234,33 +235,40 @@ impl Shell {
 }
 
 pub(super) fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
-    let saved_ratio = shell.state.settings.borrow().queue_lyrics_ratio;
+    let settings = shell.state.settings.borrow();
+    let saved_position = settings.queue_lyrics_position;
+    let saved_ratio = settings.queue_lyrics_ratio;
+    drop(settings);
     shell
         .queue_lyrics_split
         .set_position(queue_lyrics_initial_position(
             queue_lyrics_available_height(shell),
+            saved_position,
             saved_ratio,
         ));
 
-    let suppress_split_position_save =
-        Rc::clone(&shell.state.queue_lyrics_position_save_suppressed);
-    let applied_split_height = Rc::new(Cell::new(0));
-    let position_shell = Rc::clone(shell);
-    let suppress_for_tick = Rc::clone(&suppress_split_position_save);
-    let applied_height_for_tick = Rc::clone(&applied_split_height);
-    shell.queue_lyrics_split.add_tick_callback(move |split, _| {
-        let available_height = split.height();
-        if !position_shell.state.lyrics_panel_visible.get() {
-            return glib::ControlFlow::Continue;
-        }
-        if available_height >= QUEUE_LYRICS_READY_MIN_HEIGHT
-            && applied_height_for_tick.replace(available_height) != available_height
-        {
-            let saved_ratio = position_shell.state.settings.borrow().queue_lyrics_ratio;
-            set_lyrics_split(split, &suppress_for_tick, saved_ratio);
-        }
-        glib::ControlFlow::Continue
-    });
+    let save_generation = Rc::new(Cell::new(0_u64));
+    {
+        let save_shell = Rc::clone(shell);
+        let save_generation_for_notify = Rc::clone(&save_generation);
+        shell.queue_lyrics_split.connect_position_notify(move |_| {
+            if !save_shell.state.lyrics_panel_visible.get()
+                || save_shell.state.queue_lyrics_position_save_suppressed.get() > 0
+            {
+                return;
+            }
+            let generation = save_generation_for_notify.get().saturating_add(1);
+            save_generation_for_notify.set(generation);
+            let save_shell = Rc::clone(&save_shell);
+            let save_generation_for_timeout = Rc::clone(&save_generation_for_notify);
+            glib::timeout_add_local_once(Duration::from_millis(250), move || {
+                if save_generation_for_timeout.get() != generation {
+                    return;
+                }
+                save_shell.remember_queue_lyrics_open_position();
+            });
+        });
+    }
 }
 
 pub(super) fn restore_queue_lyrics_split_for_current_height(shell: &Shell) {
@@ -269,12 +277,19 @@ pub(super) fn restore_queue_lyrics_split_for_current_height(shell: &Shell) {
     }
 
     let suppress_save = Rc::clone(&shell.state.queue_lyrics_position_save_suppressed);
-    let saved_ratio = shell.state.settings.borrow().queue_lyrics_ratio;
+    let settings = shell.state.settings.borrow();
+    let saved_position = settings.queue_lyrics_position;
+    let saved_ratio = settings.queue_lyrics_ratio;
+    drop(settings);
     let available_height = queue_lyrics_available_height(shell);
     suppress_save.set(suppress_save.get().saturating_add(1));
     shell
         .queue_lyrics_split
-        .set_position(queue_lyrics_initial_position(available_height, saved_ratio));
+        .set_position(queue_lyrics_initial_position(
+            available_height,
+            saved_position,
+            saved_ratio,
+        ));
 
     glib::idle_add_local_once(move || {
         suppress_save.set(suppress_save.get().saturating_sub(1));
@@ -288,10 +303,17 @@ pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
     shell.lyrics_pane.widget().set_visible(visible);
     let available_height = shell.queue_lyrics_split.height();
     if visible {
-        let saved_ratio = shell.state.settings.borrow().queue_lyrics_ratio;
+        let settings = shell.state.settings.borrow();
+        let saved_position = settings.queue_lyrics_position;
+        let saved_ratio = settings.queue_lyrics_ratio;
+        drop(settings);
         shell
             .queue_lyrics_split
-            .set_position(queue_lyrics_initial_position(available_height, saved_ratio));
+            .set_position(queue_lyrics_initial_position(
+                available_height,
+                saved_position,
+                saved_ratio,
+            ));
     } else if available_height > 0 {
         shell.queue_lyrics_split.set_position(available_height);
     }
@@ -340,26 +362,18 @@ pub(super) fn queue_lyrics_position_from_ratio(available_height: i32, ratio: f64
 
 pub(super) fn queue_lyrics_initial_position(
     available_height: i32,
+    saved_position: Option<i32>,
     saved_ratio: Option<f64>,
 ) -> i32 {
-    saved_ratio
-        .filter(|ratio| ratio.is_finite())
-        .map(|ratio| queue_lyrics_position_from_ratio(available_height, ratio))
+    saved_position
+        .filter(|position| *position > 0)
+        .map(|position| clamp_queue_lyrics_position(available_height, position))
+        .or_else(|| {
+            saved_ratio
+                .filter(|ratio| ratio.is_finite())
+                .map(|ratio| queue_lyrics_position_from_ratio(available_height, ratio))
+        })
         .unwrap_or_else(|| queue_lyrics_default_position(available_height))
-}
-
-fn set_lyrics_split(split: &gtk::Paned, suppress_save: &Rc<Cell<u32>>, saved_ratio: Option<f64>) {
-    let available_height = split.height();
-    if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT {
-        return;
-    }
-
-    suppress_save.set(suppress_save.get().saturating_add(1));
-    split.set_position(queue_lyrics_initial_position(available_height, saved_ratio));
-    let suppress = Rc::clone(suppress_save);
-    glib::idle_add_local_once(move || {
-        suppress.set(suppress.get().saturating_sub(1));
-    });
 }
 
 #[cfg(test)]

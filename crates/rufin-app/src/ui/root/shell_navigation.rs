@@ -364,10 +364,19 @@ pub(in crate::ui) fn route_boundary_for_route(
 ) -> gtk::Widget {
     route_boundary_from_spec(view, route_boundary_spec_for_route(route), content_width)
 }
+pub(in crate::ui) fn apply_route_boundary_width(boundary: &gtk::Widget, content_width: i32) {
+    let width = content_width.max(1);
+    boundary.set_width_request(width);
+    if let Some(scroller) = boundary.downcast_ref::<gtk::ScrolledWindow>() {
+        scroller.set_max_content_width(-1);
+        scroller.set_min_content_width(width);
+        scroller.set_max_content_width(width);
+    }
+}
 fn route_boundary_from_spec(
     view: gtk::Widget,
     spec: RouteBoundarySpec,
-    _content_width: i32,
+    content_width: i32,
 ) -> gtk::Widget {
     let scroller = gtk::ScrolledWindow::new();
     if spec.vertical_policy != gtk::PolicyType::Never {
@@ -383,7 +392,9 @@ fn route_boundary_from_spec(
     scroller.set_hexpand(spec.hexpand);
     scroller.set_vexpand(spec.vexpand);
     scroller.set_child(Some(&view));
-    scroller.upcast()
+    let boundary = scroller.upcast::<gtk::Widget>();
+    apply_route_boundary_width(&boundary, content_width);
+    boundary
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct RouteBoundarySpec {

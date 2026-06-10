@@ -19,14 +19,25 @@ impl AppController {
             .unwrap_or_else(|error| panic!("failed to create Tokio runtime: {error}"));
         let store = StoreHandle::open_memory()
             .unwrap_or_else(|error| panic!("failed to open fake memory store: {error}"));
-        seed_fake_cache(&store, scale)
-            .unwrap_or_else(|error| panic!("failed to seed fake cache: {error}"));
-        let snapshot = load_snapshot(&store).unwrap_or_else(|error| {
-            warn!(%error, "failed to load fake snapshot");
-            LibrarySnapshot::first_run()
-        });
         let settings = load_settings_from_store(&store);
-        let queue = restore_queue(&store, snapshot.server.as_ref());
+        let (snapshot, queue) = if scale == FakeScale::ThirtyK {
+            let snapshot = fake_snapshot(&store, runtime.as_ref(), scale)
+                .unwrap_or_else(|error| panic!("failed to build fake snapshot: {error}"));
+            let queue = snapshot
+                .server
+                .as_ref()
+                .map(|server| QueueEngine::new(server.id.clone()));
+            (snapshot, queue)
+        } else {
+            seed_fake_cache(&store, scale)
+                .unwrap_or_else(|error| panic!("failed to seed fake cache: {error}"));
+            let snapshot = load_snapshot(&store).unwrap_or_else(|error| {
+                warn!(%error, "failed to load fake snapshot");
+                LibrarySnapshot::first_run()
+            });
+            let queue = restore_queue(&store, snapshot.server.as_ref());
+            (snapshot, queue)
+        };
         let queue_snapshot = queue.as_ref().map(QueueEngine::snapshot);
         let playback_snapshot = playback_snapshot_from_queue(
             queue.as_ref(),
@@ -221,4 +232,113 @@ impl AppController {
             },
         )
     }
+}
+
+#[cfg(any(test, feature = "dev-tools"))]
+fn fake_snapshot(
+    store: &StoreHandle,
+    runtime: &Runtime,
+    scale: FakeScale,
+) -> Result<LibrarySnapshot, String> {
+    let started = std::time::Instant::now();
+    let provider = FakeProvider::new(scale);
+    let server = provider.identity().server.clone();
+    let saved = SavedServer {
+        server: server.clone(),
+        user_id: "fake-user".to_string(),
+        username: "fake".to_string(),
+        trust_invalid_cert: false,
+    };
+    store.with_store(|store| {
+        store.save_server(&saved)?;
+        store.set_active_server(&server.id)?;
+        Ok(())
+    })?;
+    let (
+        home_sections,
+        album_page,
+        track_page,
+        artist_page,
+        album_artist_page,
+        genre_page,
+        playlist_page,
+    ) = runtime.block_on(async {
+        let home_sections = provider
+            .home_sections()
+            .await
+            .map_err(|error| error.to_string())?;
+        let album_page = provider
+            .albums(PagedRequest::new(0, SNAPSHOT_GRID_LIMIT))
+            .await
+            .map_err(|error| error.to_string())?;
+        let track_page = provider
+            .tracks(PagedRequest::new(0, SNAPSHOT_TRACK_LIMIT))
+            .await
+            .map_err(|error| error.to_string())?;
+        let artist_page = provider
+            .artists(PagedRequest::new(0, PAGE_SIZE))
+            .await
+            .map_err(|error| error.to_string())?;
+        let album_artist_page = provider
+            .album_artists(PagedRequest::new(0, PAGE_SIZE))
+            .await
+            .map_err(|error| error.to_string())?;
+        let genre_page = provider
+            .genres(PagedRequest::new(0, PAGE_SIZE))
+            .await
+            .map_err(|error| error.to_string())?;
+        let playlist_page = provider
+            .playlists(PagedRequest::new(0, PAGE_SIZE))
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok::<_, String>((
+            home_sections,
+            album_page,
+            track_page,
+            artist_page,
+            album_artist_page,
+            genre_page,
+            playlist_page,
+        ))
+    })?;
+    info!(
+        ?scale,
+        cached_albums = album_page.total,
+        cached_tracks = track_page.total,
+        preloaded_albums = album_page.items.len(),
+        preloaded_tracks = track_page.items.len(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "built direct fake snapshot"
+    );
+    Ok(LibrarySnapshot {
+        server: Some(server.clone()),
+        servers: vec![server.clone()],
+        selected_source: Some(LibrarySourceSelection::Server(server.id)),
+        local_folders: Vec::new(),
+        server_local_access: Vec::new(),
+        local_access: None,
+        local_access_status: LocalAccessStatus::default(),
+        music_folders: Vec::new(),
+        selected_music_folder_id: None,
+        username: Some(saved.username),
+        first_run: false,
+        sync_status: "Fake library ready".to_string(),
+        last_error: None,
+        cached_album_count: album_page.total,
+        cached_track_count: track_page.total,
+        cached_artist_count: artist_page.total,
+        cached_album_artist_count: album_artist_page.total,
+        cached_genre_count: genre_page.total,
+        cached_playlist_count: playlist_page.total,
+        home_sections,
+        prefetched_explore: None,
+        albums: album_page.items,
+        tracks: track_page.items,
+        artists: artist_page.items,
+        album_artists: album_artist_page.items,
+        genres: genre_page.items,
+        playlists: playlist_page.items,
+        favorites: Vec::new(),
+        search: SearchResults::default(),
+    })
 }
