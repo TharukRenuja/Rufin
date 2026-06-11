@@ -452,9 +452,10 @@ pub(in crate::controller) fn track_album_refs(
     tracks: &mut [Track],
     albums: &[Album],
 ) -> Result<(), String> {
-    if saved.server.provider != LOCAL_PROVIDER_ID || tracks.is_empty() {
+    if tracks.is_empty() {
         return Ok(());
     }
+    let settings = load_settings_for_saved(store, saved);
     let mut image_refs = albums
         .iter()
         .filter_map(|album| {
@@ -482,7 +483,7 @@ pub(in crate::controller) fn track_album_refs(
     }
     for track in tracks {
         if let Some(image_ref) = image_refs.get(&track.album_id) {
-            track.image_ref = Some(image_ref.clone());
+            external_metadata::normalize_track_with_album_ref(track, Some(image_ref), &settings);
         }
     }
     Ok(())
@@ -543,9 +544,10 @@ fn home_local_refs(
 pub(in crate::controller) fn queue_album_refs(
     store: &StoreHandle,
     server: &ServerIdentity,
+    settings: &AppSettings,
     entries: &mut [QueueEntry],
 ) -> Result<(), String> {
-    if server.provider != LOCAL_PROVIDER_ID || entries.is_empty() {
+    if entries.is_empty() {
         return Ok(());
     }
     let missing_album_ids = entries
@@ -568,7 +570,11 @@ pub(in crate::controller) fn queue_album_refs(
             continue;
         };
         if let Some(image_ref) = image_refs.get(album_id) {
-            entry.image_ref = Some(image_ref.clone());
+            external_metadata::normalize_queue_entry_with_album_ref(
+                entry,
+                Some(image_ref),
+                settings,
+            );
         }
     }
     Ok(())
@@ -784,8 +790,8 @@ pub(in crate::controller) fn restore_queue(
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
         Ok(Some(mut snapshot)) => {
             external_metadata::normalize_queue_snapshot(&mut snapshot, &settings);
-            if let Err(error) = queue_album_refs(store, server, &mut snapshot.entries) {
-                warn!(%error, "failed to normalize local queue image refs");
+            if let Err(error) = queue_album_refs(store, server, &settings, &mut snapshot.entries) {
+                warn!(%error, "failed to normalize queue image refs");
             }
             Some(QueueEngine::restore(snapshot))
         }
