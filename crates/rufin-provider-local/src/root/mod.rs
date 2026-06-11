@@ -78,6 +78,8 @@ enum LocalCover {
 struct ScannedTrack {
     track: Track,
     album_artist: String,
+    musicbrainz_album_id: Option<String>,
+    musicbrainz_release_group_id: Option<String>,
     cover: Option<LocalCover>,
     embedded_cover_path: Option<PathBuf>,
 }
@@ -1162,6 +1164,8 @@ fn reuse_manifest_track(
     let scanned_track = ScannedTrack {
         track: track.clone(),
         album_artist: cached.album_artist.clone(),
+        musicbrainz_album_id: cached.musicbrainz_album_id.clone(),
+        musicbrainz_release_group_id: cached.musicbrainz_release_group_id.clone(),
         cover: current_cover.as_ref().map(local_cover_from_manifest),
         embedded_cover_path: None,
     };
@@ -1169,6 +1173,8 @@ fn reuse_manifest_track(
         facts,
         track,
         album_artist: cached.album_artist,
+        musicbrainz_album_id: cached.musicbrainz_album_id,
+        musicbrainz_release_group_id: cached.musicbrainz_release_group_id,
         cover: current_cover,
         metadata_hash: cached.metadata_hash,
         search_hash: cached.search_hash,
@@ -1195,11 +1201,18 @@ fn manifest_entry_for_scanned(
         facts: facts.clone(),
         track: scanned_track.track.clone(),
         album_artist: scanned_track.album_artist.clone(),
+        musicbrainz_album_id: scanned_track.musicbrainz_album_id.clone(),
+        musicbrainz_release_group_id: scanned_track.musicbrainz_release_group_id.clone(),
         cover: scanned_track
             .cover
             .as_ref()
             .and_then(manifest_cover_from_local),
-        metadata_hash: track_metadata_hash(&scanned_track.track, &scanned_track.album_artist),
+        metadata_hash: track_metadata_hash(
+            &scanned_track.track,
+            &scanned_track.album_artist,
+            scanned_track.musicbrainz_album_id.as_deref(),
+            scanned_track.musicbrainz_release_group_id.as_deref(),
+        ),
         search_hash: track_search_hash(&scanned_track.track),
     }
 }
@@ -1301,19 +1314,21 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| artist.clone());
     let artist_names = artist_names(tag, &artist);
+    let artist_mbids = aligned_mbids(&artist_names, tag_mbids(tag, ItemKey::MusicBrainzArtistId));
     let artist_credits = artist_names
         .iter()
-        .map(|name| ArtistCredit {
-            id: local_id("artist", name),
-            name: name.clone(),
-        })
+        .zip(artist_mbids.iter())
+        .map(|(name, mbid)| artist_credit(name, mbid.as_deref()))
         .collect::<Vec<_>>();
-    let album_artist_credits = split_credit_names(&album_artist)
-        .into_iter()
-        .map(|name| ArtistCredit {
-            id: local_id("artist", &name),
-            name,
-        })
+    let album_artist_names = split_credit_names(&album_artist);
+    let album_artist_mbids = aligned_mbids(
+        &album_artist_names,
+        tag_mbids(tag, ItemKey::MusicBrainzReleaseArtistId),
+    );
+    let album_artist_credits = album_artist_names
+        .iter()
+        .zip(album_artist_mbids.iter())
+        .map(|(name, mbid)| artist_credit(name, mbid.as_deref()))
         .collect::<Vec<_>>();
     let artist_id = artist_credits
         .first()
@@ -1322,7 +1337,12 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
     let path_text = path.to_string_lossy().into_owned();
     let album_id = local_id(
         "album",
-        &format!("{}:{}:{}", album_artist, album, album_grouping_path(&path)),
+        &format!(
+            "{}:{}:{}",
+            credit_identity_value(&album_artist_credits),
+            normalized_identity_value(&album),
+            album_grouping_path(&path)
+        ),
     );
     let genres = tag
         .and_then(|tag| tag.genre().map(|genre| split_credit_names(&genre)))
@@ -1331,6 +1351,13 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
         .and_then(|tag| tag.get_string(ItemKey::Comment))
         .map(ToString::to_string)
         .filter(|value| !value.trim().is_empty());
+    let musicbrainz_album_id = tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzReleaseId));
+    let musicbrainz_release_group_id =
+        tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzReleaseGroupId));
+    let musicbrainz_recording_id =
+        tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzRecordingId));
+    let musicbrainz_release_track_id =
+        tag.and_then(|tag| tag_mbid(tag, ItemKey::MusicBrainzTrackId));
     let cover = path.parent().and_then(folder_cover).map(local_file_cover);
     let embedded_cover_path = cover.is_none().then(|| path.clone());
     let year = tag
@@ -1369,6 +1396,8 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
                 .min(u32::from(u16::MAX)) as u16,
             image_ref: None,
             genres,
+            musicbrainz_recording_id,
+            musicbrainz_release_track_id,
             local_path: Some(path_text),
             source_format: path
                 .extension()
@@ -1380,9 +1409,83 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
             skip_count: None,
         },
         album_artist,
+        musicbrainz_album_id,
+        musicbrainz_release_group_id,
         cover,
         embedded_cover_path,
     })
+}
+
+fn tag_mbid(tag: &Tag, key: ItemKey) -> Option<String> {
+    tag_values(tag, key)
+        .into_iter()
+        .find_map(|value| clean_mbid(&value))
+}
+
+fn tag_mbids(tag: Option<&Tag>, key: ItemKey) -> Vec<String> {
+    tag.map(|tag| {
+        tag_values(tag, key)
+            .into_iter()
+            .flat_map(|value| split_credit_names(&value))
+            .filter_map(|value| clean_mbid(&value))
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default()
+}
+
+fn tag_values(tag: &Tag, key: ItemKey) -> Vec<String> {
+    tag.get_items(key)
+        .filter_map(|item| item.value().text().map(ToString::to_string))
+        .collect()
+}
+
+fn aligned_mbids(names: &[String], mbids: Vec<String>) -> Vec<Option<String>> {
+    if names.len() == mbids.len() {
+        mbids.into_iter().map(Some).collect()
+    } else {
+        names.iter().map(|_| None).collect()
+    }
+}
+
+fn artist_credit(name: &str, musicbrainz_artist_id: Option<&str>) -> ArtistCredit {
+    let clean_mbid = musicbrainz_artist_id.and_then(clean_mbid);
+    let id = clean_mbid
+        .as_deref()
+        .map(|mbid| ArtistId::new(format!("local:artist:musicbrainz:{mbid}")))
+        .unwrap_or_else(|| local_id("artist", &normalized_identity_value(name)));
+    ArtistCredit {
+        id,
+        name: name.to_string(),
+        musicbrainz_artist_id: clean_mbid,
+    }
+}
+
+fn credit_identity_value(credits: &[ArtistCredit]) -> String {
+    credits
+        .iter()
+        .map(|credit| credit.id.as_str())
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
+}
+
+fn normalized_identity_value(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn clean_mbid(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 fn local_scan_parse_options() -> ParseOptions {

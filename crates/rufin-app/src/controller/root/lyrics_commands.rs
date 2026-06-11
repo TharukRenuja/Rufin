@@ -71,15 +71,33 @@ impl AppController {
             .with_store(|store| store.saved_server(&server_id))
             .unwrap_or(None)
             .is_some_and(|saved| saved.server.provider == LOCAL_PROVIDER_ID);
-        if provider_is_local {
-            debug!(track_id = %entry.track_id, "local provider has no server lyrics");
-            let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
-            return;
-        }
         let allow_remote = matches!(
             search,
             JellyfinLyricsSearch::ServerThenRemote | JellyfinLyricsSearch::RemoteThenServer
         );
+        if provider_is_local {
+            debug!(track_id = %entry.track_id, allow_remote, "local provider has no server lyrics");
+            let events = self.events.clone();
+            let store = self.store.clone();
+            thread::spawn(
+                move || match allow_remote.then(|| lrclib_best_lyrics(&entry)) {
+                    Some(Ok(Some(lyrics))) => {
+                        debug!(track_id = %entry.track_id, "loaded lyrics from LRCLIB fallback");
+                        let _saved =
+                            store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
+                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                    }
+                    Some(Err(error)) => {
+                        debug!(track_id = %entry.track_id, %error, "LRCLIB fallback failed");
+                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                    }
+                    Some(Ok(None)) | None => {
+                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                    }
+                },
+            );
+            return;
+        }
         debug!(track_id = %entry.track_id, allow_remote, ?search, "requesting lyrics from provider");
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);

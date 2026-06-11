@@ -265,6 +265,8 @@ pub(super) fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) ->
         track_number: u16_from_option(song.track).max(1),
         image_ref: image_ref(provider, song.cover_art),
         genres: genres_from_item(song.genre, song.genres),
+        musicbrainz_recording_id: None,
+        musicbrainz_release_track_id: None,
         local_path: song.path,
         source_format,
         comment: song.comment.filter(|value| !value.trim().is_empty()),

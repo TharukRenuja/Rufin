@@ -172,6 +172,9 @@ pub(super) fn track_from_item(item: JellyfinItem) -> Track {
         track_number: u16_from_option(item.index_number),
         image_ref,
         genres: item.genres.unwrap_or_default(),
+        musicbrainz_recording_id: provider_id(&item.provider_ids, "MusicBrainzTrack")
+            .or_else(|| provider_id(&item.provider_ids, "MusicBrainzRecording")),
+        musicbrainz_release_track_id: provider_id(&item.provider_ids, "MusicBrainzReleaseTrack"),
         local_path: item.path,
         source_format,
         comment: item.overview.filter(|value| !value.trim().is_empty()),
@@ -293,6 +296,7 @@ fn artist_credits_from_pairs(pairs: Option<&[NameIdPair]>) -> Vec<ArtistCredit> 
                 .filter(|name| !name.trim().is_empty())
                 .unwrap_or("Unknown Artist")
                 .to_string(),
+            musicbrainz_artist_id: None,
         })
         .collect()
 }

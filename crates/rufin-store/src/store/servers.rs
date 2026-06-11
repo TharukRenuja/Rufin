@@ -110,6 +110,8 @@ pub(super) fn track_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Resul
         track_number: u16_from_i64(row.get(offset + 15)?),
         image_ref: image_ref_from_row(row, offset + 16, offset + 17)?,
         genres: Vec::new(),
+        musicbrainz_recording_id: None,
+        musicbrainz_release_track_id: None,
         local_path: row.get::<_, Option<String>>(offset + 18).ok().flatten(),
         source_format: row.get::<_, Option<String>>(offset + 19).ok().flatten(),
         comment: row.get::<_, Option<String>>(offset + 20).ok().flatten(),
@@ -515,6 +517,7 @@ pub(super) fn artist_credits_or_scalar(
             } else {
                 name.to_string()
             },
+            musicbrainz_artist_id: credit.musicbrainz_artist_id.clone(),
         });
     }
 
@@ -529,6 +532,7 @@ pub(super) fn artist_credits_or_scalar(
             } else {
                 name.to_string()
             },
+            musicbrainz_artist_id: None,
         });
     }
 
@@ -872,6 +876,14 @@ pub(super) fn clear_library_cache_on_connection(
         "lyrics_cache",
         "cover_cache",
         "external_image_lookup_misses",
+        "entity_content_refs",
+        "entity_links",
+        "entity_resolver_state",
+        "entity_facts",
+        "entity_grouping_keys",
+        "entity_identity_keys",
+        "entities",
+        "source_objects",
     ] {
         let sql = format!("DELETE FROM {table} WHERE server_id = ?1");
         connection.execute(&sql, params![server_id.as_str()])?;

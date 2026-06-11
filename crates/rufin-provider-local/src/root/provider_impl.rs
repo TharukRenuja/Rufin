@@ -47,8 +47,10 @@ pub(super) fn build_library(
                         genres: Vec::new(),
                         release_types: Vec::new(),
                         is_compilation: None,
-                        musicbrainz_album_id: None,
-                        musicbrainz_release_group_id: None,
+                        musicbrainz_album_id: scanned_track.musicbrainz_album_id.clone(),
+                        musicbrainz_release_group_id: scanned_track
+                            .musicbrainz_release_group_id
+                            .clone(),
                     },
                     album_artist_keys: BTreeSet::new(),
                     artist_keys: BTreeSet::new(),
@@ -71,6 +73,13 @@ pub(super) fn build_library(
             .saturating_add(track.duration_seconds);
         if album_entry.album.year == 0 {
             album_entry.album.year = track.year;
+        }
+        if album_entry.album.musicbrainz_album_id.is_none() {
+            album_entry.album.musicbrainz_album_id = scanned_track.musicbrainz_album_id.clone();
+        }
+        if album_entry.album.musicbrainz_release_group_id.is_none() {
+            album_entry.album.musicbrainz_release_group_id =
+                scanned_track.musicbrainz_release_group_id.clone();
         }
         merge_genres(&mut album_entry.album.genres, &track.genres);
 
@@ -509,11 +518,14 @@ pub(super) fn artist_names(tag: Option<&Tag>, fallback: &str) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let fallback = split_credit_names(fallback);
     if tagged.is_empty() {
-        split_credit_names(fallback)
-    } else {
-        tagged
+        return fallback;
     }
+    if tagged.len() == 1 && fallback.len() == 1 && tagged[0].eq_ignore_ascii_case(&fallback[0]) {
+        return fallback;
+    }
+    tagged
 }
 pub(super) fn split_credit_names(value: &str) -> Vec<String> {
     let names = value
@@ -607,7 +619,12 @@ pub(super) fn hash_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> String
     }
     format!("{hash:016x}")
 }
-pub(super) fn track_metadata_hash(track: &Track, album_artist: &str) -> String {
+pub(super) fn track_metadata_hash(
+    track: &Track,
+    album_artist: &str,
+    musicbrainz_album_id: Option<&str>,
+    musicbrainz_release_group_id: Option<&str>,
+) -> String {
     let artist_id = track.artist_id.as_ref().map(ArtistId::as_str).unwrap_or("");
     let artist_credits = artist_credit_hash_value(&track.artist_credits);
     let album_artist_credits = artist_credit_hash_value(&track.album_artist_credits);
@@ -633,6 +650,10 @@ pub(super) fn track_metadata_hash(track: &Track, album_artist: &str) -> String {
         track.local_path.as_deref().unwrap_or(""),
         track.source_format.as_deref().unwrap_or(""),
         track.comment.as_deref().unwrap_or(""),
+        track.musicbrainz_recording_id.as_deref().unwrap_or(""),
+        track.musicbrainz_release_track_id.as_deref().unwrap_or(""),
+        musicbrainz_album_id.unwrap_or(""),
+        musicbrainz_release_group_id.unwrap_or(""),
     ])
 }
 pub(super) fn track_search_hash(track: &Track) -> String {
@@ -652,7 +673,14 @@ pub(super) fn track_search_hash(track: &Track) -> String {
 fn artist_credit_hash_value(credits: &[ArtistCredit]) -> String {
     credits
         .iter()
-        .map(|credit| format!("{}:{}", credit.id.as_str(), credit.name))
+        .map(|credit| {
+            format!(
+                "{}:{}:{}",
+                credit.id.as_str(),
+                credit.name,
+                credit.musicbrainz_artist_id.as_deref().unwrap_or("")
+            )
+        })
         .collect::<Vec<_>>()
         .join("\u{1f}")
 }

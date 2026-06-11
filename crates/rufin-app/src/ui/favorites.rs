@@ -287,6 +287,8 @@ mod tests {
                 track_number: 1,
                 image_ref: None,
                 genres: Vec::new(),
+                musicbrainz_recording_id: None,
+                musicbrainz_release_track_id: None,
                 local_path: None,
                 source_format: None,
                 comment: None,

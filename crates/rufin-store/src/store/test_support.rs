@@ -77,6 +77,7 @@ pub(super) fn credit(id: ArtistId, name: &str) -> ArtistCredit {
     ArtistCredit {
         id,
         name: name.to_string(),
+        musicbrainz_artist_id: None,
     }
 }
 
@@ -186,6 +187,8 @@ pub(super) fn track(number: u32, album: &Album) -> Track {
         track_number: number as u16,
         image_ref: album.image_ref.clone(),
         genres: album.genres.clone(),
+        musicbrainz_recording_id: None,
+        musicbrainz_release_track_id: None,
         local_path: None,
         source_format: None,
         comment: None,

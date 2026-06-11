@@ -55,6 +55,19 @@ fn fetch_album_cover_with_client(
     lastfm_api_key: &str,
 ) -> Result<Vec<u8>, String> {
     let mut errors = Vec::new();
+    let identity_urls = cover_art_urls_from_identity(art, size);
+    for url in &identity_urls {
+        match download_image(client, url) {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) => errors.push(error),
+        }
+    }
+    if !identity_urls.is_empty() {
+        return Err(format!(
+            "external cover lookup found no usable image: {}",
+            errors.join("; ")
+        ));
+    }
     if !lastfm_api_key.trim().is_empty() {
         match lastfm_album_cover_url(client, art, lastfm_api_key) {
             Ok(Some(url)) => match download_image(client, &url) {
@@ -65,7 +78,6 @@ fn fetch_album_cover_with_client(
             Err(error) => errors.push(error),
         }
     }
-
     match release_group_urls(client, art, size) {
         Ok(urls) => {
             for url in urls {
@@ -94,6 +106,20 @@ fn fetch_album_cover_with_client(
         "external cover lookup found no usable image: {}",
         errors.join("; ")
     ))
+}
+
+fn cover_art_urls_from_identity(art: &ExternalAlbumArt, size: u32) -> Vec<String> {
+    let cover_path = cover_art_size_path(size);
+    let mut urls = Vec::new();
+    if let Some(group_id) = art.musicbrainz_release_group_id.as_deref() {
+        urls.push(format!("{RELEASE_GROUP_URL}/{group_id}/{cover_path}"));
+    }
+    if let Some(release_id) = art.musicbrainz_release_id.as_deref() {
+        urls.push(format!(
+            "{COVER_ART_ARCHIVE_RELEASE_URL}/{release_id}/{cover_path}"
+        ));
+    }
+    urls
 }
 
 fn download_image(client: &Client, url: &str) -> Result<Vec<u8>, String> {
@@ -174,6 +200,12 @@ fn release_group_urls(
     art: &ExternalAlbumArt,
     size: u32,
 ) -> Result<Vec<String>, String> {
+    if let Some(group_id) = art.musicbrainz_release_group_id.as_deref() {
+        return Ok(vec![format!(
+            "{RELEASE_GROUP_URL}/{group_id}/{}",
+            cover_art_size_path(size)
+        )]);
+    }
     let ids = musicbrainz_release_group_ids(client, art)?;
     let cover_path = cover_art_size_path(size);
     Ok(ids
@@ -187,6 +219,12 @@ fn cover_art_archive_release_urls(
     art: &ExternalAlbumArt,
     size: u32,
 ) -> Result<Vec<String>, String> {
+    if let Some(release_id) = art.musicbrainz_release_id.as_deref() {
+        return Ok(vec![format!(
+            "{COVER_ART_ARCHIVE_RELEASE_URL}/{release_id}/{}",
+            cover_art_size_path(size)
+        )]);
+    }
     let ids = musicbrainz_release_ids(client, art)?;
     let cover_path = cover_art_size_path(size);
     Ok(ids

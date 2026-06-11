@@ -1,4 +1,5 @@
 use super::*;
+use lofty::tag::{ItemValue, TagItem, TagType};
 #[test]
 fn local_root_identity() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -126,6 +127,57 @@ fn local_scan_reports_progress() {
             .any(|progress| progress.stage == LocalScanStage::BuildingLibrary
                 && progress.processed_tracks == 1)
     );
+}
+
+#[test]
+fn artist_identity_preserves_visible_case_for_hidden_case_only_tag() {
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.insert_text(ItemKey::TrackArtists, "FEEDER".to_string());
+
+    let names = artist_names(Some(&tag), "Feeder");
+    let visible = artist_credit("Feeder", None);
+    let hidden_case = artist_credit("FEEDER", None);
+
+    assert_eq!(names, vec!["Feeder".to_string()]);
+    assert_eq!(visible.id, hidden_case.id);
+    assert_eq!(visible.name, "Feeder");
+}
+
+#[test]
+fn musicbrainz_ids_become_optional_identity_data() {
+    let recording_id = "b3b3c0bb-1111-4222-8333-123456789abc";
+    let release_track_id = "c4c4d1cc-2222-4333-9444-123456789abc";
+    let artist_id = "d5d5e2dd-3333-4444-a555-123456789abc";
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.push_unchecked(TagItem::new(
+        ItemKey::MusicBrainzRecordingId,
+        ItemValue::Text(recording_id.to_string()),
+    ));
+    tag.push_unchecked(TagItem::new(
+        ItemKey::MusicBrainzTrackId,
+        ItemValue::Text(release_track_id.to_string()),
+    ));
+    tag.push_unchecked(TagItem::new(
+        ItemKey::MusicBrainzArtistId,
+        ItemValue::Text(artist_id.to_string()),
+    ));
+
+    let credit = artist_credit("Example Artist", Some(artist_id));
+
+    assert_eq!(
+        tag_mbid(&tag, ItemKey::MusicBrainzRecordingId).as_deref(),
+        Some(recording_id)
+    );
+    assert_eq!(
+        tag_mbid(&tag, ItemKey::MusicBrainzTrackId).as_deref(),
+        Some(release_track_id)
+    );
+    assert_eq!(
+        tag_mbids(Some(&tag), ItemKey::MusicBrainzArtistId),
+        vec![artist_id.to_string()]
+    );
+    assert_eq!(credit.musicbrainz_artist_id.as_deref(), Some(artist_id));
+    assert!(credit.id.as_str().contains(artist_id));
 }
 #[tokio::test]
 async fn manifest_scan_update() {
@@ -622,6 +674,7 @@ fn scanned_test_track(number: u32, album_id: AlbumId, cover: Option<LocalCover>)
     let artist = ArtistCredit {
         id: ArtistId::new("local:artist:example"),
         name: "Example Artist".to_string(),
+        musicbrainz_artist_id: None,
     };
     ScannedTrack {
         track: Track {
@@ -645,12 +698,16 @@ fn scanned_test_track(number: u32, album_id: AlbumId, cover: Option<LocalCover>)
             track_number: number as u16,
             image_ref: None,
             genres: Vec::new(),
+            musicbrainz_recording_id: None,
+            musicbrainz_release_track_id: None,
             local_path: Some(format!("/tmp/rufin-track-{number}.flac")),
             source_format: Some("flac".to_string()),
             comment: None,
             skip_count: None,
         },
         album_artist: "Example Artist".to_string(),
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
         cover,
         embedded_cover_path: None,
     }

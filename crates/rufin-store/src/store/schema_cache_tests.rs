@@ -3,14 +3,18 @@ use std::{fs, path::PathBuf};
 use super::PRE_SMART_PLAYLISTS_SCHEMA_VERSION;
 use super::servers::COLLECTION_COVER_GENRE;
 use super::test_support::*;
-use crate::LocalLibraryDelta;
+use crate::{
+    CueTrackSourceObject, LocalFileSourceObject, LocalLibraryDelta, StoreError,
+    local_file_source_object_id,
+};
 use rufin_core::{
-    LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, TrackId,
+    ArtistCredit, ArtistId, LocalFileFacts, LocalManifestCover, LocalManifestCoverKind,
+    LocalManifestEntry, ServerId, TrackId,
 };
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 15);
+    assert_eq!(store.schema_version().expect("schema version"), 16);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -24,11 +28,46 @@ fn current_schema_initializes_empty_database() {
             "albums.{column} should exist"
         );
     }
+    for table in [
+        "source_objects",
+        "entities",
+        "entity_identity_keys",
+        "entity_grouping_keys",
+        "entity_facts",
+        "entity_resolver_state",
+        "entity_content_refs",
+        "entity_links",
+        "content_cache_entries",
+    ] {
+        assert!(
+            store.table_exists(table).expect("table lookup"),
+            "{table} should exist"
+        );
+    }
+    for column in [
+        "parent_source_object_id",
+        "cue_path",
+        "cue_revision",
+        "cue_track_index",
+        "segment_start_ms",
+        "segment_end_ms",
+    ] {
+        assert!(
+            store
+                .table_has_column("source_objects", column)
+                .expect("column lookup"),
+            "source_objects.{column} should exist"
+        );
+    }
     assert!(
-        store
+        !store
             .table_exists("album_release_type_lookup_misses")
             .expect("table lookup"),
-        "album release type miss cache should exist"
+        "release metadata misses should use entity_resolver_state"
+    );
+    assert!(
+        !store.table_exists("album_identity").expect("table lookup"),
+        "album identity should use shared entity tables"
     );
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
@@ -87,6 +126,8 @@ fn local_manifest_entry() -> LocalManifestEntry {
         },
         track,
         album_artist: "Artist".to_string(),
+        musicbrainz_album_id: Some("mb-album-one".to_string()),
+        musicbrainz_release_group_id: Some("mb-group-one".to_string()),
         cover: Some(LocalManifestCover {
             item_id: "local:cover:file%3A%2Fmusic%2FAlbum%2Fcover.jpg".to_string(),
             kind: LocalManifestCoverKind::File,
@@ -98,6 +139,149 @@ fn local_manifest_entry() -> LocalManifestEntry {
         search_hash: "search-one".to_string(),
     }
 }
+
+fn entity_key_count(
+    store: &Store,
+    server_id: &ServerId,
+    entity_kind: &str,
+    namespace: &str,
+    value: &str,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entity_identity_keys
+            WHERE server_id = ?1
+              AND entity_kind = ?2
+              AND namespace = ?3
+              AND value = ?4
+            ",
+            rusqlite::params![server_id.as_str(), entity_kind, namespace, value],
+            |row| row.get(0),
+        )
+        .expect("count identity keys")
+}
+
+fn grouping_key_count(
+    store: &Store,
+    server_id: &ServerId,
+    entity_kind: &str,
+    namespace: &str,
+    value: &str,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entity_grouping_keys
+            WHERE server_id = ?1
+              AND entity_kind = ?2
+              AND namespace = ?3
+              AND value = ?4
+            ",
+            rusqlite::params![server_id.as_str(), entity_kind, namespace, value],
+            |row| row.get(0),
+        )
+        .expect("count grouping keys")
+}
+
+fn entity_fact_count(
+    store: &Store,
+    server_id: &ServerId,
+    entity_kind: &str,
+    entity_id: &str,
+    fact_key: &str,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entity_facts
+            WHERE server_id = ?1
+              AND entity_kind = ?2
+              AND entity_id = ?3
+              AND fact_key = ?4
+            ",
+            rusqlite::params![server_id.as_str(), entity_kind, entity_id, fact_key],
+            |row| row.get(0),
+        )
+        .expect("count entity facts")
+}
+
+fn entity_row_count(
+    store: &Store,
+    server_id: &ServerId,
+    entity_kind: &str,
+    entity_id: &str,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entities
+            WHERE server_id = ?1
+              AND entity_kind = ?2
+              AND entity_id = ?3
+            ",
+            rusqlite::params![server_id.as_str(), entity_kind, entity_id],
+            |row| row.get(0),
+        )
+        .expect("count entities")
+}
+
+fn content_ref_count(
+    store: &Store,
+    server_id: &ServerId,
+    entity_kind: &str,
+    entity_id: &str,
+    content_kind: &str,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entity_content_refs
+            WHERE server_id = ?1
+              AND entity_kind = ?2
+              AND entity_id = ?3
+              AND content_kind = ?4
+            ",
+            rusqlite::params![server_id.as_str(), entity_kind, entity_id, content_kind],
+            |row| row.get(0),
+        )
+        .expect("count content refs")
+}
+
+fn entity_link_count(
+    store: &Store,
+    server_id: &ServerId,
+    entity_kind: &str,
+    entity_id: &str,
+    namespace: &str,
+) -> i64 {
+    store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entity_links
+            WHERE server_id = ?1
+              AND entity_kind = ?2
+              AND entity_id = ?3
+              AND namespace = ?4
+            ",
+            rusqlite::params![server_id.as_str(), entity_kind, entity_id, namespace],
+            |row| row.get(0),
+        )
+        .expect("count entity links")
+}
+
 #[test]
 fn file_store_reset() {
     let path = std::env::temp_dir().join(format!(
@@ -140,7 +324,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 15);
+    assert_eq!(store.schema_version().expect("schema version"), 16);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -192,7 +376,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 15);
+    assert_eq!(store.schema_version().expect("schema version"), 16);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -218,7 +402,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 15);
+    assert_eq!(store.schema_version().expect("schema version"), 16);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -261,7 +445,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 15);
+    assert_eq!(store.schema_version().expect("schema version"), 16);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -300,16 +484,76 @@ fn schema_upgrade_servers() {
             "albums.{column} should exist after migration"
         );
     }
+    assert!(store.table_exists("entities").expect("table lookup"));
     assert!(
         store
+            .table_exists("entity_identity_keys")
+            .expect("table lookup")
+    );
+    assert!(
+        store
+            .table_exists("entity_resolver_state")
+            .expect("table lookup")
+    );
+    assert!(
+        !store
             .table_exists("album_release_type_lookup_misses")
             .expect("table lookup")
+    );
+    assert!(!store.table_exists("album_identity").expect("table lookup"));
+    drop(store);
+    let _cleanup = fs::remove_file(&path);
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
+    let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
+}
+
+#[test]
+fn schema_v13_local_manifest_without_identity_columns_migrates() {
+    let path = std::env::temp_dir().join(format!(
+        "rufin-store-test-{}-{}.sqlite",
+        std::process::id(),
+        "v13-local-manifest-upgrade"
+    ));
+    let _cleanup = fs::remove_file(&path);
+    let saved = saved_server();
+    {
+        let store = Store::open(&path).expect("open current store");
+        store.save_server(&saved).expect("save server");
+    }
+    let connection = rusqlite::Connection::open(&path).expect("open previous connection");
+    connection
+        .execute_batch(
+            "
+            ALTER TABLE local_track_manifest_data DROP COLUMN musicbrainz_album_id;
+            ALTER TABLE local_track_manifest_data DROP COLUMN musicbrainz_release_group_id;
+            PRAGMA user_version = 13;
+            ",
+        )
+        .expect("simulate v13 local manifest schema");
+    drop(connection);
+
+    let store = Store::open(&path).expect("open upgraded store");
+    assert_eq!(store.schema_version().expect("schema version"), 16);
+    assert_eq!(
+        store.list_servers().expect("list servers"),
+        vec![saved.clone()]
+    );
+    assert!(
+        store
+            .table_has_column("local_track_manifest_data", "musicbrainz_album_id")
+            .expect("column lookup")
+    );
+    assert!(
+        store
+            .table_has_column("local_track_manifest_data", "musicbrainz_release_group_id")
+            .expect("column lookup")
     );
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-shm"));
 }
+
 #[test]
 fn future_user_version() {
     let path = std::env::temp_dir().join(format!(
@@ -325,12 +569,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 16)
+        .pragma_update(None, "user_version", 17)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 15);
+    assert_eq!(store.schema_version().expect("schema version"), 16);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1434,6 +1678,507 @@ fn album_release_type_lookup_candidates_skip_cached_and_misses() {
     assert_eq!(updated_album.release_types, vec!["single".to_string()]);
     assert_eq!(updated_album.is_compilation, Some(false));
 }
+
+#[test]
+fn projection_writes_populate_entity_identity_rows() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut album = album(1);
+    album.musicbrainz_album_id = Some("release-one".to_string());
+    album.musicbrainz_release_group_id = Some("group-one".to_string());
+    album.release_types = vec!["album".to_string()];
+    album.is_compilation = Some(false);
+    album.image_ref = Some(image_ref("album-cover-one", "album-cover-tag"));
+    let mut track = track(1, &album);
+    track.musicbrainz_recording_id = Some("recording-one".to_string());
+    track.musicbrainz_release_track_id = Some("release-track-one".to_string());
+    track.artist_credits = vec![ArtistCredit {
+        id: ArtistId::new("local:artist:musicbrainz:artist-one"),
+        name: "Example Artist".to_string(),
+        musicbrainz_artist_id: Some("artist-one".to_string()),
+    }];
+
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert tracks");
+
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "album",
+            "musicbrainz:release",
+            "release-one"
+        ),
+        1
+    );
+    assert_eq!(
+        grouping_key_count(
+            &store,
+            &saved.server.id,
+            "album",
+            "musicbrainz:release_group",
+            "group-one"
+        ),
+        1
+    );
+    assert_eq!(
+        entity_fact_count(
+            &store,
+            &saved.server.id,
+            "album",
+            album.id.as_str(),
+            "release_types"
+        ),
+        1
+    );
+    assert_eq!(
+        grouping_key_count(
+            &store,
+            &saved.server.id,
+            "track",
+            "musicbrainz:recording",
+            "recording-one"
+        ),
+        1
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "track",
+            "musicbrainz:release_track",
+            "release-track-one"
+        ),
+        1
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "artist",
+            "musicbrainz:artist",
+            "artist-one"
+        ),
+        1
+    );
+    assert_eq!(
+        content_ref_count(
+            &store,
+            &saved.server.id,
+            "album",
+            album.id.as_str(),
+            "cover"
+        ),
+        1
+    );
+    assert_eq!(
+        content_ref_count(
+            &store,
+            &saved.server.id,
+            "track",
+            track.id.as_str(),
+            "cover"
+        ),
+        1
+    );
+}
+
+#[test]
+fn complete_sync_prunes_generic_entity_rows_for_deleted_items() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut album = album(1);
+    album.musicbrainz_album_id = Some("release-one".to_string());
+    album.musicbrainz_release_group_id = Some("group-one".to_string());
+    let mut track = track(1, &album);
+    track.musicbrainz_recording_id = Some("recording-one".to_string());
+    track.musicbrainz_release_track_id = Some("release-track-one".to_string());
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert tracks");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete first sync");
+    store
+        .connection
+        .execute(
+            "
+            INSERT INTO entity_links (
+                server_id, entity_kind, entity_id, namespace, url, label, source, status
+            )
+            VALUES (?1, 'album', ?2, 'lastfm:album', ?3, 'Last.fm', 'lastfm', 'resolved')
+            ",
+            rusqlite::params![
+                saved.server.id.as_str(),
+                album.id.as_str(),
+                "https://www.last.fm/music/Example+Artist/Example+Album"
+            ],
+        )
+        .expect("insert album link");
+    assert_eq!(
+        entity_link_count(
+            &store,
+            &saved.server.id,
+            "album",
+            album.id.as_str(),
+            "lastfm:album"
+        ),
+        1
+    );
+
+    let next_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
+    store
+        .complete_sync(&saved.server.id, next_generation)
+        .expect("complete empty sync");
+
+    assert_eq!(
+        entity_row_count(&store, &saved.server.id, "album", album.id.as_str()),
+        0
+    );
+    assert_eq!(
+        entity_row_count(&store, &saved.server.id, "track", track.id.as_str()),
+        0
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "album",
+            "musicbrainz:release",
+            "release-one"
+        ),
+        0
+    );
+    assert_eq!(
+        grouping_key_count(
+            &store,
+            &saved.server.id,
+            "track",
+            "musicbrainz:recording",
+            "recording-one"
+        ),
+        0
+    );
+    assert_eq!(
+        entity_link_count(
+            &store,
+            &saved.server.id,
+            "album",
+            album.id.as_str(),
+            "lastfm:album"
+        ),
+        0
+    );
+}
+
+#[test]
+fn local_metadata_update_refreshes_track_identity_rows() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut track = track(1, &album);
+    track.local_path = Some("/music/Album/track.mp3".to_string());
+    track.musicbrainz_recording_id = Some("recording-old".to_string());
+    track.musicbrainz_release_track_id = Some("release-track-old".to_string());
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert tracks");
+
+    let next_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
+    track.musicbrainz_recording_id = Some("recording-new".to_string());
+    track.musicbrainz_release_track_id = Some("release-track-new".to_string());
+    store
+        .update_local_track_metadata_rows(
+            &saved.server.id,
+            std::slice::from_ref(&track),
+            next_generation,
+        )
+        .expect("update local metadata");
+
+    assert_eq!(
+        grouping_key_count(
+            &store,
+            &saved.server.id,
+            "track",
+            "musicbrainz:recording",
+            "recording-old"
+        ),
+        0
+    );
+    assert_eq!(
+        grouping_key_count(
+            &store,
+            &saved.server.id,
+            "track",
+            "musicbrainz:recording",
+            "recording-new"
+        ),
+        1
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "track",
+            "musicbrainz:release_track",
+            "release-track-old"
+        ),
+        0
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "track",
+            "musicbrainz:release_track",
+            "release-track-new"
+        ),
+        1
+    );
+}
+
+#[test]
+fn album_identity_change_clears_stale_release_metadata() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut album = album(1);
+    album.musicbrainz_album_id = Some("release-old".to_string());
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert albums");
+    store
+        .update_album_identity_metadata(
+            &saved.server.id,
+            &album.id,
+            &["single".to_string()],
+            Some(false),
+        )
+        .expect("save resolved metadata");
+
+    let next_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
+    album.musicbrainz_album_id = Some("release-new".to_string());
+    album.release_types.clear();
+    album.is_compilation = None;
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            next_generation,
+        )
+        .expect("upsert changed album identity");
+
+    let loaded = store
+        .load_album_detail(&saved.server.id, &album.id)
+        .expect("load album")
+        .expect("album")
+        .0;
+    assert_eq!(loaded.musicbrainz_album_id.as_deref(), Some("release-new"));
+    assert!(loaded.release_types.is_empty());
+    assert_eq!(loaded.is_compilation, None);
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "album",
+            "musicbrainz:release",
+            "release-old"
+        ),
+        0
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "album",
+            "musicbrainz:release",
+            "release-new"
+        ),
+        1
+    );
+    assert_eq!(
+        entity_fact_count(
+            &store,
+            &saved.server.id,
+            "album",
+            album.id.as_str(),
+            "release_types"
+        ),
+        0
+    );
+}
+
+#[test]
+fn local_manifest_writes_physical_file_source_objects() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let entry = local_manifest_entry();
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&album(1)),
+            generation,
+        )
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            std::slice::from_ref(&entry.track),
+            generation,
+        )
+        .expect("upsert track");
+    store
+        .replace_local_manifest(&saved.server.id, generation, std::slice::from_ref(&entry))
+        .expect("replace manifest");
+
+    let source_object_id = local_file_source_object_id("/music", "Album/track.mp3");
+    let source = store
+        .load_source_object(&saved.server.id, &source_object_id)
+        .expect("load source object")
+        .expect("source object");
+    assert_eq!(source.source_kind, "local_file");
+    assert_eq!(source.entity_kind, None);
+    assert_eq!(source.entity_id, None);
+    assert_eq!(
+        source.source_path.as_deref(),
+        Some("/music/Album/track.mp3")
+    );
+
+    let entity_source_object_id = store
+        .connection
+        .query_row(
+            "
+            SELECT source_object_id
+            FROM entities
+            WHERE server_id = ?1
+              AND entity_kind = 'track'
+              AND entity_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), entry.track.id.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("load entity source object id");
+    assert_eq!(entity_source_object_id, source_object_id);
+}
+
+#[test]
+fn typed_source_object_api_writes_cue_segment_shape() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let parent_id = store
+        .upsert_local_file_source_object(
+            &saved.server.id,
+            &LocalFileSourceObject {
+                source_path: "/music/album.flac".to_string(),
+                root_path: "/music".to_string(),
+                relative_path: "album.flac".to_string(),
+                sync_generation: 7,
+            },
+        )
+        .expect("upsert file source object");
+    let cue = CueTrackSourceObject {
+        source_object_id: "local:cue:track:1".to_string(),
+        track_id: TrackId::new("track-cue-1"),
+        source_path: "/music/album.flac".to_string(),
+        parent_source_object_id: parent_id.clone(),
+        cue_path: "/music/album.cue".to_string(),
+        cue_revision: "cue-revision-one".to_string(),
+        cue_track_index: 1,
+        segment_start_ms: 12345,
+        segment_end_ms: 67890,
+        sync_generation: 7,
+    };
+    store
+        .upsert_cue_track_source_object(&saved.server.id, &cue)
+        .expect("upsert cue source object");
+
+    let file_source = store
+        .load_source_object(&saved.server.id, &parent_id)
+        .expect("load file source object")
+        .expect("file source object");
+    assert_eq!(file_source.source_kind, "local_file");
+    assert_eq!(file_source.entity_kind, None);
+    assert_eq!(file_source.entity_id, None);
+
+    let cue_source = store
+        .load_source_object(&saved.server.id, &cue.source_object_id)
+        .expect("load cue source object")
+        .expect("cue source object");
+    assert_eq!(cue_source.source_kind, "cue_track");
+    assert_eq!(cue_source.entity_kind.as_deref(), Some("track"));
+    assert_eq!(cue_source.entity_id.as_deref(), Some("track-cue-1"));
+    assert_eq!(
+        cue_source.parent_source_object_id.as_deref(),
+        Some(parent_id.as_str())
+    );
+    assert_eq!(cue_source.cue_path.as_deref(), Some("/music/album.cue"));
+    assert_eq!(cue_source.cue_revision.as_deref(), Some("cue-revision-one"));
+    assert_eq!(cue_source.cue_track_index, Some(1));
+    assert_eq!(cue_source.segment_start_ms, Some(12345));
+    assert_eq!(cue_source.segment_end_ms, Some(67890));
+
+    let entity_source_object_id = store
+        .connection
+        .query_row(
+            "
+            SELECT source_object_id
+            FROM entities
+            WHERE server_id = ?1
+              AND entity_kind = 'track'
+              AND entity_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), cue.track_id.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("load cue entity source object id");
+    assert_eq!(entity_source_object_id, cue.source_object_id);
+}
+
+#[test]
+fn cue_track_source_object_requires_local_file_parent() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let error = store
+        .upsert_cue_track_source_object(
+            &saved.server.id,
+            &CueTrackSourceObject {
+                source_object_id: "local:cue:track:1".to_string(),
+                track_id: TrackId::new("track-cue-1"),
+                source_path: "/music/album.flac".to_string(),
+                parent_source_object_id: "local:file:missing".to_string(),
+                cue_path: "/music/album.cue".to_string(),
+                cue_revision: "cue-revision-one".to_string(),
+                cue_track_index: 1,
+                segment_start_ms: 12345,
+                segment_end_ms: 67890,
+                sync_generation: 7,
+            },
+        )
+        .expect_err("missing parent should fail");
+    assert!(matches!(error, StoreError::InvalidSourceObject(_)));
+}
+
 #[test]
 fn schema_trip_model() {
     let store = Store::open_memory().expect("open store");

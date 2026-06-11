@@ -19,9 +19,9 @@ use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, Searc
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 15;
+const SCHEMA_VERSION: i64 = 16;
 const PRE_SMART_PLAYLISTS_SCHEMA_VERSION: i64 = 10;
-pub const LOCAL_MANIFEST_VERSION: i64 = 1;
+pub const LOCAL_MANIFEST_VERSION: i64 = 2;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
 const CACHE_KEY_HASH_LEN: usize = 16;
 
@@ -37,6 +37,8 @@ pub enum StoreError {
     UnsupportedSchemaVersion(i64),
     #[error("incomplete store schema version: {0}")]
     IncompleteSchemaVersion(i64),
+    #[error("invalid source object: {0}")]
+    InvalidSourceObject(String),
     #[error("unsupported store-backed source window")]
     UnsupportedSourceWindow,
 }
@@ -79,6 +81,44 @@ pub struct CoverCacheEntry {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceObject {
+    pub source_object_id: String,
+    pub entity_kind: Option<String>,
+    pub entity_id: Option<String>,
+    pub source_kind: String,
+    pub source_path: Option<String>,
+    pub parent_source_object_id: Option<String>,
+    pub cue_path: Option<String>,
+    pub cue_revision: Option<String>,
+    pub cue_track_index: Option<i64>,
+    pub segment_start_ms: Option<i64>,
+    pub segment_end_ms: Option<i64>,
+    pub sync_generation: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalFileSourceObject {
+    pub source_path: String,
+    pub root_path: String,
+    pub relative_path: String,
+    pub sync_generation: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CueTrackSourceObject {
+    pub source_object_id: String,
+    pub track_id: TrackId,
+    pub source_path: String,
+    pub parent_source_object_id: String,
+    pub cue_path: String,
+    pub cue_revision: String,
+    pub cue_track_index: i64,
+    pub segment_start_ms: i64,
+    pub segment_end_ms: i64,
+    pub sync_generation: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlbumReleaseTypeLookupCandidate {
     pub album_id: AlbumId,
     pub title: String,
@@ -86,6 +126,16 @@ pub struct AlbumReleaseTypeLookupCandidate {
     pub musicbrainz_album_id: Option<String>,
     pub musicbrainz_release_group_id: Option<String>,
     pub lookup_key: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlbumIdentityCandidate {
+    pub album_id: AlbumId,
+    pub title: String,
+    pub artist: String,
+    pub musicbrainz_album_id: Option<String>,
+    pub musicbrainz_release_group_id: Option<String>,
+    pub identity_key: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -319,7 +369,7 @@ mod smart_playlists;
 mod source_windows;
 mod store_lifecycle_schema;
 
-pub use local_manifest::LocalLibraryDelta;
+pub use local_manifest::{LocalLibraryDelta, local_file_source_object_id};
 pub use servers::{image_cache_key, lyrics_cache_key};
 
 #[cfg(test)]

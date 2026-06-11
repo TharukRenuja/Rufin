@@ -2,59 +2,110 @@ use super::servers::*;
 use super::*;
 
 impl Store {
-    pub fn load_album_release_type_lookup_candidates(
+    pub fn load_album_identity_candidates(
         &self,
         server_id: &ServerId,
         limit: usize,
-    ) -> StoreResult<Vec<AlbumReleaseTypeLookupCandidate>> {
+    ) -> StoreResult<Vec<AlbumIdentityCandidate>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
         let mut statement = self.connection.prepare(
             "
-            SELECT album_id, title, artist, musicbrainz_album_id,
-                   musicbrainz_release_group_id, lookup_key
-            FROM (
+            WITH candidates AS (
+                SELECT a.album_id, a.title, a.artist,
+                       COALESCE(g.value, NULLIF(TRIM(a.musicbrainz_release_group_id), ''))
+                         AS musicbrainz_release_group_id,
+                       COALESCE(i.value, NULLIF(TRIM(a.musicbrainz_album_id), ''))
+                         AS musicbrainz_album_id
+                FROM albums a
+                LEFT JOIN entity_grouping_keys g
+                  ON g.server_id = a.server_id
+                 AND g.entity_kind = 'album'
+                 AND g.entity_id = a.album_id
+                 AND g.namespace = 'musicbrainz:release_group'
+                LEFT JOIN entity_identity_keys i
+                  ON i.server_id = a.server_id
+                 AND i.entity_kind = 'album'
+                 AND i.entity_id = a.album_id
+                 AND i.namespace = 'musicbrainz:release'
+                WHERE a.server_id = ?1
+                  AND a.release_types_json = '[]'
+            ),
+            lookup AS (
                 SELECT album_id, title, artist, musicbrainz_album_id,
                        musicbrainz_release_group_id,
                        CASE
                          WHEN TRIM(COALESCE(musicbrainz_release_group_id, '')) <> ''
                            THEN 'release-group:' || TRIM(musicbrainz_release_group_id)
                          ELSE 'release:' || TRIM(musicbrainz_album_id)
-                       END AS lookup_key
-                FROM albums
-                WHERE server_id = ?1
-                  AND release_types_json = '[]'
-                  AND (
+                       END AS identity_key
+                FROM candidates
+                WHERE (
                     TRIM(COALESCE(musicbrainz_release_group_id, '')) <> ''
                     OR TRIM(COALESCE(musicbrainz_album_id, '')) <> ''
-                  )
-            ) AS candidates
+                )
+            )
+            SELECT album_id, title, artist, musicbrainz_album_id,
+                   musicbrainz_release_group_id, identity_key
+            FROM lookup
             WHERE NOT EXISTS (
                 SELECT 1
-                FROM album_release_type_lookup_misses misses
-                WHERE misses.server_id = ?1
-                  AND misses.album_id = candidates.album_id
-                  AND misses.lookup_key = candidates.lookup_key
+                FROM entity_resolver_state state
+                WHERE state.server_id = ?1
+                  AND state.entity_kind = 'album'
+                  AND state.purpose = 'release_metadata'
+                  AND state.resolver_namespace = 'musicbrainz'
+                  AND state.resolver_value = lookup.identity_key
+                  AND state.status = 'missing'
               )
             ORDER BY album_id
             LIMIT ?2
             ",
         )?;
         let rows = statement.query_map(params![server_id.as_str(), limit as i64], |row| {
-            Ok(AlbumReleaseTypeLookupCandidate {
+            Ok(AlbumIdentityCandidate {
                 album_id: AlbumId::new(row.get::<_, String>(0)?),
                 title: row.get(1)?,
                 artist: row.get(2)?,
                 musicbrainz_album_id: optional_string_column(row, 3)?,
                 musicbrainz_release_group_id: optional_string_column(row, 4)?,
-                lookup_key: row.get(5)?,
+                identity_key: row.get(5)?,
             })
         })?;
         collect_rows(rows)
     }
 
+    pub fn load_album_release_type_lookup_candidates(
+        &self,
+        server_id: &ServerId,
+        limit: usize,
+    ) -> StoreResult<Vec<AlbumReleaseTypeLookupCandidate>> {
+        Ok(self
+            .load_album_identity_candidates(server_id, limit)?
+            .into_iter()
+            .map(|candidate| AlbumReleaseTypeLookupCandidate {
+                album_id: candidate.album_id,
+                title: candidate.title,
+                artist: candidate.artist,
+                musicbrainz_album_id: candidate.musicbrainz_album_id,
+                musicbrainz_release_group_id: candidate.musicbrainz_release_group_id,
+                lookup_key: candidate.identity_key,
+            })
+            .collect())
+    }
+
     pub fn update_album_release_metadata(
+        &self,
+        server_id: &ServerId,
+        album_id: &AlbumId,
+        release_types: &[String],
+        is_compilation: Option<bool>,
+    ) -> StoreResult<()> {
+        self.update_album_identity_metadata(server_id, album_id, release_types, is_compilation)
+    }
+
+    pub fn update_album_identity_metadata(
         &self,
         server_id: &ServerId,
         album_id: &AlbumId,
@@ -78,14 +129,70 @@ impl Store {
                 is_compilation
             ],
         )?;
+        let identity_key = self.album_resolver_key(server_id, album_id)?;
         self.connection.execute(
             "
-            DELETE FROM album_release_type_lookup_misses
+            INSERT INTO entity_facts (
+                server_id, entity_kind, entity_id, fact_key,
+                value_json, source, status, updated_at
+            )
+            VALUES (?1, 'album', ?2, 'release_types', ?3, 'musicbrainz', 'resolved', CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id, entity_kind, entity_id, fact_key, source) DO UPDATE SET
+                value_json = excluded.value_json,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            ",
+            params![server_id.as_str(), album_id.as_str(), release_types_json],
+        )?;
+        self.connection.execute(
+            "
+            DELETE FROM entity_facts
             WHERE server_id = ?1
-              AND album_id = ?2
+              AND entity_kind = 'album'
+              AND entity_id = ?2
+              AND fact_key = 'is_compilation'
+              AND source = 'musicbrainz'
             ",
             params![server_id.as_str(), album_id.as_str()],
         )?;
+        if let Some(is_compilation) = is_compilation {
+            let value_json = if is_compilation == 1 { "true" } else { "false" };
+            self.connection.execute(
+                "
+                INSERT INTO entity_facts (
+                    server_id, entity_kind, entity_id, fact_key,
+                    value_json, source, status, updated_at
+                )
+                VALUES (?1, 'album', ?2, 'is_compilation', ?3, 'musicbrainz', 'resolved', CURRENT_TIMESTAMP)
+                ON CONFLICT(server_id, entity_kind, entity_id, fact_key, source) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    status = excluded.status,
+                    updated_at = excluded.updated_at
+                ",
+                params![server_id.as_str(), album_id.as_str(), value_json],
+            )?;
+        }
+        self.connection.execute(
+            "
+            DELETE FROM entity_resolver_state
+            WHERE server_id = ?1
+              AND entity_kind = 'album'
+              AND purpose = 'release_metadata'
+              AND resolver_namespace = 'musicbrainz'
+              AND resolver_value = ?2
+            ",
+            params![server_id.as_str(), identity_key],
+        )?;
+        if self.table_exists("album_release_type_lookup_misses")? {
+            self.connection.execute(
+                "
+                DELETE FROM album_release_type_lookup_misses
+                WHERE server_id = ?1
+                  AND album_id = ?2
+                ",
+                params![server_id.as_str(), album_id.as_str()],
+            )?;
+        }
         Ok(())
     }
 
@@ -96,24 +203,66 @@ impl Store {
         lookup_key: &str,
         reason: &str,
     ) -> StoreResult<()> {
+        self.save_album_identity_miss(server_id, album_id, lookup_key, reason)
+    }
+
+    pub fn save_album_identity_miss(
+        &self,
+        server_id: &ServerId,
+        _album_id: &AlbumId,
+        identity_key: &str,
+        reason: &str,
+    ) -> StoreResult<()> {
         self.connection.execute(
             "
-            INSERT INTO album_release_type_lookup_misses (
-                server_id, album_id, lookup_key, reason, updated_at
+            INSERT INTO entity_resolver_state (
+                server_id, entity_kind, purpose, resolver_namespace,
+                resolver_value, status, reason, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
-            ON CONFLICT(server_id, album_id, lookup_key) DO UPDATE SET
+            VALUES (?1, 'album', 'release_metadata', 'musicbrainz', ?2, 'missing', ?3, CURRENT_TIMESTAMP)
+            ON CONFLICT(
+                server_id, entity_kind, purpose, resolver_namespace, resolver_value
+            ) DO UPDATE SET
+                status = excluded.status,
                 reason = excluded.reason,
                 updated_at = excluded.updated_at
             ",
             params![
                 server_id.as_str(),
-                album_id.as_str(),
-                lookup_key,
+                identity_key,
                 reason.chars().take(500).collect::<String>()
             ],
         )?;
         Ok(())
+    }
+
+    fn album_resolver_key(&self, server_id: &ServerId, album_id: &AlbumId) -> StoreResult<String> {
+        Ok(self.connection.query_row(
+            "
+            SELECT CASE
+                     WHEN TRIM(COALESCE(g.value, a.musicbrainz_release_group_id, '')) <> ''
+                       THEN 'release-group:' || TRIM(COALESCE(g.value, a.musicbrainz_release_group_id))
+                     WHEN TRIM(COALESCE(i.value, a.musicbrainz_album_id, '')) <> ''
+                       THEN 'release:' || TRIM(COALESCE(i.value, a.musicbrainz_album_id))
+                     ELSE 'album:' || LOWER(TRIM(a.artist)) || ':' || LOWER(TRIM(a.title))
+                   END
+            FROM albums a
+            LEFT JOIN entity_grouping_keys g
+              ON g.server_id = a.server_id
+             AND g.entity_kind = 'album'
+             AND g.entity_id = a.album_id
+             AND g.namespace = 'musicbrainz:release_group'
+            LEFT JOIN entity_identity_keys i
+              ON i.server_id = a.server_id
+             AND i.entity_kind = 'album'
+             AND i.entity_id = a.album_id
+             AND i.namespace = 'musicbrainz:release'
+            WHERE a.server_id = ?1
+              AND a.album_id = ?2
+            ",
+            params![server_id.as_str(), album_id.as_str()],
+            |row| row.get(0),
+        )?)
     }
 
     pub(super) fn attach_album_genres(
@@ -592,6 +741,7 @@ impl Store {
                     ArtistCredit {
                         id: ArtistId::new(row.get::<_, String>(1)?),
                         name: row.get::<_, String>(2)?,
+                        musicbrainz_artist_id: None,
                     },
                 ))
             })?;
