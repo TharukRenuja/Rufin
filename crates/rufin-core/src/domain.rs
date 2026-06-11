@@ -98,6 +98,8 @@ pub struct Folder {
 pub struct ArtistCredit {
     pub id: ArtistId,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_artist_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -182,6 +184,10 @@ pub struct Track {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub genres: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_recording_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_release_track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_format: Option<String>,
@@ -196,6 +202,10 @@ pub struct LocalManifestEntry {
     pub facts: LocalFileFacts,
     pub track: Track,
     pub album_artist: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_album_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_release_group_id: Option<String>,
     pub cover: Option<LocalManifestCover>,
     pub metadata_hash: String,
     pub search_hash: String,

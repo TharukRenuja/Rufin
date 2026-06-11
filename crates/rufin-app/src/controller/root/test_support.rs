@@ -28,6 +28,8 @@ pub(in crate::controller) fn library_track(
         track_number: number as u16,
         image_ref: None,
         genres: genres.iter().map(|genre| genre.to_string()).collect(),
+        musicbrainz_recording_id: None,
+        musicbrainz_release_track_id: None,
         local_path: None,
         source_format: None,
         comment: None,

@@ -805,6 +805,8 @@ pub(in crate::ui) fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track>
         track_number: 0,
         image_ref: entry.image_ref.clone(),
         genres: Vec::new(),
+        musicbrainz_recording_id: None,
+        musicbrainz_release_track_id: None,
         local_path: entry.local_path.clone(),
         source_format: entry.source_format.clone(),
         comment: None,

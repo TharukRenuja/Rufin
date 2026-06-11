@@ -106,6 +106,7 @@ async fn library_map_page() {
         ArtistCredit {
             id: ArtistId::new("jellyfin:artist:album-artist-one"),
             name: "Astral Kin".to_string(),
+            musicbrainz_artist_id: None,
         }
     );
     assert_eq!(
@@ -113,6 +114,7 @@ async fn library_map_page() {
         ArtistCredit {
             id: ArtistId::new("jellyfin:artist:guest-one"),
             name: "Guest Artist".to_string(),
+            musicbrainz_artist_id: None,
         }
     );
     assert_eq!(page.items[0].genres, vec!["Ambient", "Electronic"]);
@@ -172,6 +174,7 @@ async fn library_album_artist() {
         vec![ArtistCredit {
             id: ArtistId::new("jellyfin:artist:guest-one"),
             name: "Guest Artist".to_string(),
+            musicbrainz_artist_id: None,
         }]
     );
 }

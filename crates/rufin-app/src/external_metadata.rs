@@ -12,12 +12,17 @@ pub use release_type_lookup::{
 };
 
 const EXTERNAL_ALBUM_IMAGE_PREFIX: &str = "external:album:";
+const EXTERNAL_MUSICBRAINZ_RELEASE_PREFIX: &str = "external:mb-release:";
+const EXTERNAL_MUSICBRAINZ_RELEASE_GROUP_PREFIX: &str = "external:mb-release-group:";
 const EXTERNAL_ALBUM_IMAGE_TAG_VERSION: &str = "external-v1";
+const EXTERNAL_ALBUM_IDENTITY_TAG_VERSION: &str = "external-v2";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExternalAlbumArt {
     pub artist: String,
     pub album: String,
+    pub musicbrainz_release_id: Option<String>,
+    pub musicbrainz_release_group_id: Option<String>,
 }
 
 pub fn enabled(settings: &AppSettings) -> bool {
@@ -26,9 +31,39 @@ pub fn enabled(settings: &AppSettings) -> bool {
 
 pub fn is_external_image_ref(image_ref: &ImageRef) -> bool {
     image_ref.item_id.starts_with(EXTERNAL_ALBUM_IMAGE_PREFIX)
+        || image_ref
+            .item_id
+            .starts_with(EXTERNAL_MUSICBRAINZ_RELEASE_PREFIX)
+        || image_ref
+            .item_id
+            .starts_with(EXTERNAL_MUSICBRAINZ_RELEASE_GROUP_PREFIX)
 }
 
 pub fn album_art_from_image_ref(image_ref: &ImageRef) -> Option<ExternalAlbumArt> {
+    if let Some(release_group_id) = image_ref
+        .item_id
+        .strip_prefix(EXTERNAL_MUSICBRAINZ_RELEASE_GROUP_PREFIX)
+        .and_then(valid_mbid)
+    {
+        return Some(ExternalAlbumArt {
+            artist: String::new(),
+            album: String::new(),
+            musicbrainz_release_id: None,
+            musicbrainz_release_group_id: Some(release_group_id.to_string()),
+        });
+    }
+    if let Some(release_id) = image_ref
+        .item_id
+        .strip_prefix(EXTERNAL_MUSICBRAINZ_RELEASE_PREFIX)
+        .and_then(valid_mbid)
+    {
+        return Some(ExternalAlbumArt {
+            artist: String::new(),
+            album: String::new(),
+            musicbrainz_release_id: Some(release_id.to_string()),
+            musicbrainz_release_group_id: None,
+        });
+    }
     let rest = image_ref
         .item_id
         .strip_prefix(EXTERNAL_ALBUM_IMAGE_PREFIX)?;
@@ -36,13 +71,16 @@ pub fn album_art_from_image_ref(image_ref: &ImageRef) -> Option<ExternalAlbumArt
     Some(ExternalAlbumArt {
         artist: percent_decode_component(artist)?,
         album: percent_decode_component(album)?,
+        musicbrainz_release_id: None,
+        musicbrainz_release_group_id: None,
     })
 }
 
 pub fn normalize_album(album: &mut Album, settings: &AppSettings) {
     normalize_image_ref(&mut album.image_ref, settings);
     if enabled(settings) && album.image_ref.is_none() {
-        album.image_ref = external_album_image_ref(&album.artist, &album.title);
+        album.image_ref = external_album_identity_image_ref(album)
+            .or_else(|| external_album_image_ref(&album.artist, &album.title));
     }
 }
 
@@ -197,6 +235,45 @@ pub fn external_album_image_ref(artist: &str, album: &str) -> Option<ImageRef> {
     Some(ImageRef::new(item_id, Some(tag)))
 }
 
+pub fn external_album_identity_image_ref(album: &Album) -> Option<ImageRef> {
+    if let Some(group_id) = album
+        .musicbrainz_release_group_id
+        .as_deref()
+        .and_then(valid_mbid)
+    {
+        return Some(musicbrainz_image_ref(
+            EXTERNAL_MUSICBRAINZ_RELEASE_GROUP_PREFIX,
+            group_id,
+        ));
+    }
+    let release_id = album.musicbrainz_album_id.as_deref().and_then(valid_mbid)?;
+    Some(musicbrainz_image_ref(
+        EXTERNAL_MUSICBRAINZ_RELEASE_PREFIX,
+        release_id,
+    ))
+}
+
+fn musicbrainz_image_ref(prefix: &str, id: &str) -> ImageRef {
+    let item_id = format!("{prefix}{id}");
+    let tag = format!(
+        "{EXTERNAL_ALBUM_IDENTITY_TAG_VERSION}-{:016x}",
+        stable_album_hash(id, prefix)
+    );
+    ImageRef::new(item_id, Some(tag))
+}
+
+fn valid_mbid(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return None;
+    }
+    Some(value)
+}
+
 fn normalized_lookup_value(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -315,6 +392,36 @@ mod tests {
             Some(super::ExternalAlbumArt {
                 artist: "M83".to_string(),
                 album: "Hurry Up, We're Dreaming".to_string(),
+                musicbrainz_release_id: None,
+                musicbrainz_release_group_id: None,
+            })
+        );
+    }
+
+    #[test]
+    fn metadata_prefers_album_identity_ref() {
+        let mut album = album_without_cover("Example Album", "Example Artist");
+        album.musicbrainz_release_group_id =
+            Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
+        normalize_album(
+            &mut album,
+            &AppSettings {
+                external_metadata_enabled: true,
+                ..AppSettings::default()
+            },
+        );
+
+        let image_ref = album.image_ref.expect("external image ref");
+        assert!(image_ref.item_id.starts_with("external:mb-release-group:"));
+        assert_eq!(
+            album_art_from_image_ref(&image_ref),
+            Some(super::ExternalAlbumArt {
+                artist: String::new(),
+                album: String::new(),
+                musicbrainz_release_id: None,
+                musicbrainz_release_group_id: Some(
+                    "441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string()
+                ),
             })
         );
     }
@@ -361,6 +468,8 @@ mod tests {
             Some(super::ExternalAlbumArt {
                 artist: "Example Artist".to_string(),
                 album: "Example Album".to_string(),
+                musicbrainz_release_id: None,
+                musicbrainz_release_group_id: None,
             })
         );
     }
@@ -459,6 +568,8 @@ mod tests {
             Some(super::ExternalAlbumArt {
                 artist: "Example Artist".to_string(),
                 album: "Example Album".to_string(),
+                musicbrainz_release_id: None,
+                musicbrainz_release_group_id: None,
             })
         );
     }
@@ -666,6 +777,8 @@ mod tests {
             track_number: 1,
             image_ref: None,
             genres: Vec::new(),
+            musicbrainz_recording_id: None,
+            musicbrainz_release_track_id: None,
             local_path: None,
             source_format: None,
             comment: None,

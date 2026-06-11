@@ -1,5 +1,5 @@
 use super::*;
-use rufin_store::AlbumReleaseTypeLookupCandidate;
+use rufin_store::AlbumIdentityCandidate;
 use std::future::Future;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -96,7 +96,7 @@ fn start_sync_thread_inner(
                     return;
                 }
                 refresh_queue_refs(&context, &saved);
-                start_album_release_type_lookup(&context, &saved);
+                start_album_identity_lookup(&context, &saved);
                 covers::start_cover_prefetch(covers::ExternalCoverPrefetchRequest {
                     store: context.store.clone(),
                     runtime: Arc::clone(&context.runtime),
@@ -238,7 +238,7 @@ fn emit_sync_complete_snapshot(
     }
 }
 
-fn start_album_release_type_lookup(context: &SyncContext, saved: &SavedServer) {
+fn start_album_identity_lookup(context: &SyncContext, saved: &SavedServer) {
     if saved.server.provider == "fake" {
         return;
     }
@@ -254,10 +254,10 @@ fn start_album_release_type_lookup(context: &SyncContext, saved: &SavedServer) {
     let store = context.store.clone();
     let events = context.events.clone();
     thread::spawn(move || {
-        let result = run_album_release_type_lookup(&store, &events, &server_id);
+        let result = run_album_identity_lookup(&store, &events, &server_id);
         clear_release_type_lookup_in_flight(&server_id);
         if let Err(error) = result {
-            warn!(%error, server_id = %server_id.as_str(), "failed to enrich album release types");
+            warn!(%error, server_id = %server_id.as_str(), "failed to enrich album identity");
         }
     });
 }
@@ -279,13 +279,13 @@ fn clear_release_type_lookup_in_flight(server_id: &ServerId) {
     }
 }
 
-fn run_album_release_type_lookup(
+fn run_album_identity_lookup(
     store: &StoreHandle,
     events: &Sender<ControllerEvent>,
     server_id: &ServerId,
 ) -> Result<(), String> {
     let candidates = store.with_store(|store| {
-        store.load_album_release_type_lookup_candidates(server_id, RELEASE_TYPE_LOOKUP_LIMIT)
+        store.load_album_identity_candidates(server_id, RELEASE_TYPE_LOOKUP_LIMIT)
     })?;
     if candidates.is_empty() {
         return Ok(());
@@ -294,7 +294,7 @@ fn run_album_release_type_lookup(
     info!(
         server_id = %server_id.as_str(),
         candidate_count = candidates.len(),
-        "started album release type enrichment"
+        "started album identity enrichment"
     );
     let mut updated = Vec::new();
     let mut misses = 0_usize;
@@ -303,10 +303,10 @@ fn run_album_release_type_lookup(
         if !sync_target_is_current(store, server_id) {
             break;
         }
-        match lookup_album_release_type(candidate) {
+        match lookup_album_identity(candidate) {
             Ok(metadata) => {
                 store.with_store(|store| {
-                    store.update_album_release_metadata(
+                    store.update_album_identity_metadata(
                         server_id,
                         &candidate.album_id,
                         &metadata.release_types,
@@ -318,10 +318,10 @@ fn run_album_release_type_lookup(
             Err(error) if external_metadata::is_expected_release_type_lookup_miss(&error) => {
                 misses += 1;
                 store.with_store(|store| {
-                    store.save_album_release_type_lookup_miss(
+                    store.save_album_identity_miss(
                         server_id,
                         &candidate.album_id,
-                        &candidate.lookup_key,
+                        &candidate.identity_key,
                         &error,
                     )
                 })?;
@@ -331,7 +331,7 @@ fn run_album_release_type_lookup(
                 warn!(
                     %error,
                     album_id = %candidate.album_id.as_str(),
-                    "failed to look up album release type"
+                    "failed to look up album identity"
                 );
             }
         }
@@ -350,13 +350,13 @@ fn run_album_release_type_lookup(
         updated = updated.len(),
         misses,
         errors,
-        "completed album release type enrichment"
+        "completed album identity enrichment"
     );
     Ok(())
 }
 
-fn lookup_album_release_type(
-    candidate: &AlbumReleaseTypeLookupCandidate,
+fn lookup_album_identity(
+    candidate: &AlbumIdentityCandidate,
 ) -> Result<external_metadata::AlbumReleaseMetadata, String> {
     external_metadata::fetch_album_release_metadata(
         candidate.musicbrainz_release_group_id.as_deref(),

@@ -612,6 +612,7 @@ impl Store {
                     format!("DELETE FROM {table} WHERE server_id = ?1 AND sync_generation < ?2");
                 connection.execute(&sql, params![server_id.as_str(), generation])?;
             }
+            prune_missing_entity_rows(connection, server_id)?;
 
             connection.execute(
                 "
@@ -705,4 +706,38 @@ impl Store {
             }
         }
     }
+}
+
+fn prune_missing_entity_rows(connection: &Connection, server_id: &ServerId) -> StoreResult<()> {
+    for (entity_kind, table, id_column) in [
+        ("track", "tracks", "track_id"),
+        ("album", "albums", "album_id"),
+        ("artist", "artists", "artist_id"),
+        ("album_artist", "album_artists", "artist_id"),
+    ] {
+        for entity_table in [
+            "entity_content_refs",
+            "entity_facts",
+            "entity_grouping_keys",
+            "entity_identity_keys",
+            "entity_links",
+            "entities",
+        ] {
+            let sql = format!(
+                "
+                DELETE FROM {entity_table}
+                WHERE server_id = ?1
+                  AND entity_kind = ?2
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM {table}
+                      WHERE {table}.server_id = {entity_table}.server_id
+                        AND {table}.{id_column} = {entity_table}.entity_id
+                  )
+                "
+            );
+            connection.execute(&sql, params![server_id.as_str(), entity_kind])?;
+        }
+    }
+    Ok(())
 }

@@ -22,6 +22,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 14,
         run: migrate_to_album_release_type_lookup_schema,
     },
+    SchemaMigration {
+        from_version: 15,
+        run: migrate_to_entity_identity_schema,
+    },
 ];
 const SCHEMA_VERSION_10_TABLES: &[&str] = &[
     "queue_snapshots",
@@ -207,6 +211,10 @@ const LOCAL_MANIFEST_COLUMNS: &[(&str, &str)] = &[
     ("local_artwork_manifest", "source_path"),
     ("local_artwork_manifest", "revision"),
 ];
+const LOCAL_MANIFEST_ENTITY_IDENTITY_COLUMNS: &[(&str, &str)] = &[
+    ("local_track_manifest_data", "musicbrainz_album_id"),
+    ("local_track_manifest_data", "musicbrainz_release_group_id"),
+];
 const ALBUM_RELEASE_METADATA_COLUMNS: &[(&str, &str)] = &[
     ("albums", "release_types_json"),
     ("albums", "is_compilation"),
@@ -217,6 +225,42 @@ const ALBUM_RELEASE_TYPE_LOOKUP_TABLES: &[&str] = &["album_release_type_lookup_m
 const ALBUM_RELEASE_TYPE_LOOKUP_COLUMNS: &[(&str, &str)] = &[
     ("album_release_type_lookup_misses", "lookup_key"),
     ("album_release_type_lookup_misses", "reason"),
+];
+const ENTITY_IDENTITY_TABLES: &[&str] = &[
+    "source_objects",
+    "entities",
+    "entity_identity_keys",
+    "entity_grouping_keys",
+    "entity_facts",
+    "entity_resolver_state",
+    "entity_content_refs",
+    "entity_links",
+    "content_cache_entries",
+];
+const ENTITY_IDENTITY_COLUMNS: &[(&str, &str)] = &[
+    ("source_objects", "source_kind"),
+    ("source_objects", "parent_source_object_id"),
+    ("source_objects", "cue_path"),
+    ("source_objects", "cue_revision"),
+    ("source_objects", "cue_track_index"),
+    ("source_objects", "segment_start_ms"),
+    ("source_objects", "segment_end_ms"),
+    ("entities", "entity_kind"),
+    ("entities", "source_object_id"),
+    ("entity_identity_keys", "namespace"),
+    ("entity_identity_keys", "strength"),
+    ("entity_grouping_keys", "namespace"),
+    ("entity_facts", "fact_key"),
+    ("entity_facts", "value_json"),
+    ("entity_resolver_state", "purpose"),
+    ("entity_resolver_state", "resolver_namespace"),
+    ("entity_content_refs", "content_kind"),
+    ("entity_content_refs", "content_key"),
+    ("entity_links", "namespace"),
+    ("entity_links", "url"),
+    ("entity_links", "status"),
+    ("content_cache_entries", "cache_scope"),
+    ("content_cache_entries", "variant"),
 ];
 
 struct SchemaMigration {
@@ -329,6 +373,9 @@ fn migrate_to_album_release_metadata_schema(store: &Store) -> StoreResult<()> {
 }
 fn migrate_to_album_release_type_lookup_schema(store: &Store) -> StoreResult<()> {
     store.create_album_release_type_lookup_schema()
+}
+fn migrate_to_entity_identity_schema(store: &Store) -> StoreResult<()> {
+    store.create_entity_identity_schema()
 }
 
 impl Store {
@@ -447,6 +494,10 @@ impl Store {
                     ALBUM_RELEASE_TYPE_LOOKUP_TABLES,
                     ALBUM_RELEASE_TYPE_LOOKUP_COLUMNS,
                 )?),
+            16 => Ok(self.schema_is_complete_for_version(14)?
+                && self.schema_has_required_parts(&[], LOCAL_MANIFEST_ENTITY_IDENTITY_COLUMNS)?
+                && self
+                    .schema_has_required_parts(ENTITY_IDENTITY_TABLES, ENTITY_IDENTITY_COLUMNS)?),
             _ => Ok(false),
         }
     }
@@ -499,6 +550,8 @@ impl Store {
                 track_id TEXT NOT NULL,
                 track_json TEXT NOT NULL,
                 album_artist TEXT NOT NULL,
+                musicbrainz_album_id TEXT,
+                musicbrainz_release_group_id TEXT,
                 cover_kind TEXT,
                 cover_path TEXT,
                 cover_embedded_index INTEGER,
@@ -533,6 +586,12 @@ impl Store {
             CREATE INDEX IF NOT EXISTS local_artwork_manifest_source_idx
                 ON local_artwork_manifest(server_id, source_path);
             ",
+        )?;
+        self.ensure_column("local_track_manifest_data", "musicbrainz_album_id", "TEXT")?;
+        self.ensure_column(
+            "local_track_manifest_data",
+            "musicbrainz_release_group_id",
+            "TEXT",
         )?;
         Ok(())
     }
@@ -826,14 +885,6 @@ impl Store {
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (server_id, item_id, image_tag, size)
             );
-            CREATE TABLE IF NOT EXISTS album_release_type_lookup_misses (
-                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
-                album_id TEXT NOT NULL,
-                lookup_key TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (server_id, album_id, lookup_key)
-            );
             CREATE VIRTUAL TABLE IF NOT EXISTS library_fts USING fts5(
                 server_id UNINDEXED,
                 item_type UNINDEXED,
@@ -901,7 +952,7 @@ impl Store {
         self.ensure_column("albums", "is_compilation", "INTEGER")?;
         self.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;
         self.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
-        self.create_album_release_type_lookup_schema()?;
+        self.create_entity_identity_schema()?;
         self.connection
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -919,6 +970,281 @@ impl Store {
             );
             ",
         )?;
+        Ok(())
+    }
+    fn create_entity_identity_schema(&self) -> StoreResult<()> {
+        self.connection.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS source_objects (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                source_object_id TEXT NOT NULL,
+                entity_kind TEXT,
+                entity_id TEXT,
+                source_kind TEXT NOT NULL,
+                source_path TEXT,
+                parent_source_object_id TEXT,
+                cue_path TEXT,
+                cue_revision TEXT,
+                cue_track_index INTEGER,
+                segment_start_ms INTEGER,
+                segment_end_ms INTEGER,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                sync_generation INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CHECK (
+                    source_kind != 'cue_track'
+                    OR (
+                        entity_kind IS NOT NULL
+                        AND entity_id IS NOT NULL
+                        AND parent_source_object_id IS NOT NULL
+                        AND cue_path IS NOT NULL
+                        AND cue_revision IS NOT NULL
+                        AND cue_track_index IS NOT NULL
+                        AND segment_start_ms IS NOT NULL
+                        AND segment_end_ms IS NOT NULL
+                    )
+                ),
+                PRIMARY KEY (server_id, source_object_id)
+            );
+            CREATE INDEX IF NOT EXISTS source_objects_entity_idx
+                ON source_objects(server_id, entity_kind, entity_id);
+            CREATE INDEX IF NOT EXISTS source_objects_parent_idx
+                ON source_objects(server_id, parent_source_object_id);
+
+            CREATE TABLE IF NOT EXISTS entities (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                entity_kind TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                source_object_id TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, entity_kind, entity_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS entity_identity_keys (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                entity_kind TEXT NOT NULL,
+                namespace TEXT NOT NULL,
+                value TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                strength INTEGER NOT NULL DEFAULT 100,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, entity_kind, namespace, value)
+            );
+            CREATE INDEX IF NOT EXISTS entity_identity_entity_idx
+                ON entity_identity_keys(server_id, entity_kind, entity_id);
+
+            CREATE TABLE IF NOT EXISTS entity_grouping_keys (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                entity_kind TEXT NOT NULL,
+                namespace TEXT NOT NULL,
+                value TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, entity_kind, namespace, value, entity_id)
+            );
+            CREATE INDEX IF NOT EXISTS entity_grouping_lookup_idx
+                ON entity_grouping_keys(server_id, entity_kind, namespace, value);
+
+            CREATE TABLE IF NOT EXISTS entity_facts (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                entity_kind TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                fact_key TEXT NOT NULL,
+                value_json TEXT NOT NULL,
+                source TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, entity_kind, entity_id, fact_key, source)
+            );
+
+            CREATE TABLE IF NOT EXISTS entity_resolver_state (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                entity_kind TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                resolver_namespace TEXT NOT NULL,
+                resolver_value TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (
+                    server_id, entity_kind, purpose, resolver_namespace, resolver_value
+                )
+            );
+
+            CREATE TABLE IF NOT EXISTS entity_content_refs (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                entity_kind TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                content_kind TEXT NOT NULL,
+                content_key TEXT NOT NULL,
+                source TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, entity_kind, entity_id, content_kind, source)
+            );
+            CREATE INDEX IF NOT EXISTS entity_content_key_idx
+                ON entity_content_refs(content_kind, content_key);
+
+            CREATE TABLE IF NOT EXISTS entity_links (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                entity_kind TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                namespace TEXT NOT NULL,
+                url TEXT NOT NULL,
+                label TEXT,
+                source TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, entity_kind, entity_id, namespace, source)
+            );
+            CREATE INDEX IF NOT EXISTS entity_links_namespace_idx
+                ON entity_links(server_id, entity_kind, namespace);
+
+            CREATE TABLE IF NOT EXISTS content_cache_entries (
+                cache_scope TEXT NOT NULL,
+                content_kind TEXT NOT NULL,
+                content_key TEXT NOT NULL,
+                variant TEXT NOT NULL,
+                status TEXT NOT NULL,
+                path_or_value TEXT,
+                source TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (cache_scope, content_kind, content_key, variant)
+            );
+            ",
+        )?;
+        self.backfill_entity_identity_schema()?;
+        Ok(())
+    }
+    fn backfill_entity_identity_schema(&self) -> StoreResult<()> {
+        self.connection.execute_batch(
+            "
+            INSERT OR IGNORE INTO source_objects (
+                server_id, source_object_id, entity_kind, entity_id, source_kind,
+                source_path, metadata_json, sync_generation, updated_at
+            )
+            SELECT server_id, 'local:file:' || root_path || char(31) || relative_path,
+                   NULL, NULL, 'local_file',
+                   path, '{}', scan_generation, CURRENT_TIMESTAMP
+            FROM local_file_manifest;
+
+            INSERT OR IGNORE INTO entities (
+                server_id, entity_kind, entity_id, source, source_object_id
+            )
+            SELECT server_id, 'track', track_id, 'provider', NULL
+            FROM tracks;
+            INSERT OR IGNORE INTO entities (
+                server_id, entity_kind, entity_id, source, source_object_id
+            )
+            SELECT server_id, 'album', album_id, 'provider', NULL
+            FROM albums;
+            INSERT OR IGNORE INTO entities (
+                server_id, entity_kind, entity_id, source, source_object_id
+            )
+            SELECT server_id, 'artist', artist_id, 'provider', NULL
+            FROM artists;
+            INSERT OR IGNORE INTO entities (
+                server_id, entity_kind, entity_id, source, source_object_id
+            )
+            SELECT server_id, 'album_artist', artist_id, 'provider', NULL
+            FROM album_artists;
+
+            UPDATE entities
+            SET source = 'local',
+                source_object_id = (
+                    SELECT 'local:file:' || manifest.root_path || char(31) || manifest.relative_path
+                    FROM local_file_manifest manifest
+                    WHERE manifest.server_id = entities.server_id
+                      AND manifest.track_id = entities.entity_id
+                    LIMIT 1
+                ),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE entity_kind = 'track'
+              AND EXISTS (
+                SELECT 1
+                FROM local_file_manifest manifest
+                WHERE manifest.server_id = entities.server_id
+                  AND manifest.track_id = entities.entity_id
+              );
+
+            INSERT OR IGNORE INTO entity_identity_keys (
+                server_id, entity_kind, namespace, value, entity_id, source, strength
+            )
+            SELECT server_id, 'track', 'source:track_id', track_id, track_id, 'provider', 100
+            FROM tracks;
+            INSERT OR IGNORE INTO entity_identity_keys (
+                server_id, entity_kind, namespace, value, entity_id, source, strength
+            )
+            SELECT server_id, 'track', 'local:path', path, track_id, 'local', 100
+            FROM local_file_manifest;
+            INSERT OR IGNORE INTO entity_identity_keys (
+                server_id, entity_kind, namespace, value, entity_id, source, strength
+            )
+            SELECT server_id, 'album', 'source:album_id', album_id, album_id, 'provider', 100
+            FROM albums;
+            INSERT OR IGNORE INTO entity_identity_keys (
+                server_id, entity_kind, namespace, value, entity_id, source, strength
+            )
+            SELECT server_id, 'artist', 'source:artist_id', artist_id, artist_id, 'provider', 100
+            FROM artists;
+            INSERT OR IGNORE INTO entity_identity_keys (
+                server_id, entity_kind, namespace, value, entity_id, source, strength
+            )
+            SELECT server_id, 'album_artist', 'source:artist_id', artist_id, artist_id, 'provider', 100
+            FROM album_artists;
+            INSERT OR IGNORE INTO entity_identity_keys (
+                server_id, entity_kind, namespace, value, entity_id, source, strength
+            )
+            SELECT server_id, 'album', 'musicbrainz:release',
+                   TRIM(musicbrainz_album_id), album_id, 'provider', 100
+            FROM albums
+            WHERE TRIM(COALESCE(musicbrainz_album_id, '')) <> '';
+
+            INSERT OR IGNORE INTO entity_grouping_keys (
+                server_id, entity_kind, namespace, value, entity_id, source
+            )
+            SELECT server_id, 'album', 'musicbrainz:release_group',
+                   TRIM(musicbrainz_release_group_id), album_id, 'provider'
+            FROM albums
+            WHERE TRIM(COALESCE(musicbrainz_release_group_id, '')) <> '';
+
+            INSERT OR IGNORE INTO entity_facts (
+                server_id, entity_kind, entity_id, fact_key, value_json, source, status
+            )
+            SELECT server_id, 'album', album_id, 'release_types',
+                   release_types_json, 'provider', 'resolved'
+            FROM albums
+            WHERE release_types_json <> '[]';
+            INSERT OR IGNORE INTO entity_facts (
+                server_id, entity_kind, entity_id, fact_key, value_json, source, status
+            )
+            SELECT server_id, 'album', album_id, 'is_compilation',
+                   CASE WHEN is_compilation = 1 THEN 'true' ELSE 'false' END,
+                   'provider', 'resolved'
+            FROM albums
+            WHERE is_compilation IS NOT NULL;
+            ",
+        )?;
+        if self.table_exists("album_release_type_lookup_misses")? {
+            self.connection.execute_batch(
+                "
+                INSERT OR REPLACE INTO entity_resolver_state (
+                    server_id, entity_kind, purpose, resolver_namespace,
+                    resolver_value, status, reason, updated_at
+                )
+                SELECT server_id, 'album', 'release_metadata', 'musicbrainz',
+                       lookup_key, 'missing', reason, updated_at
+                FROM album_release_type_lookup_misses;
+                DROP TABLE album_release_type_lookup_misses;
+                ",
+            )?;
+        }
+        if self.table_exists("album_identity")? {
+            self.connection.execute_batch("DROP TABLE album_identity")?;
+        }
         Ok(())
     }
     pub(super) fn table_exists(&self, table: &str) -> StoreResult<bool> {

@@ -2732,6 +2732,7 @@ pub(in crate::controller) fn startup_replace_section() {
     let expected_credit = ArtistCredit {
         id: expected_track.artist_id.clone().expect("artist id"),
         name: expected_track.artist.clone(),
+        musicbrainz_artist_id: None,
     };
     expected_track.artist_credits = vec![expected_credit];
     assert_eq!(after[1].tracks, vec![expected_track]);

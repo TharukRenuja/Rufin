@@ -30,7 +30,8 @@ impl Store {
             "
             SELECT f.path, f.root_path, f.relative_path, f.file_size,
                    f.mtime_seconds, f.mtime_nanos, f.inode, f.device,
-                   d.track_json, d.album_artist, d.cover_kind, d.cover_path,
+                   d.track_json, d.album_artist, d.musicbrainz_album_id,
+                   d.musicbrainz_release_group_id, d.cover_kind, d.cover_path,
                    d.cover_embedded_index, d.cover_revision, f.metadata_hash, f.search_hash,
                    a.cover_item_id
             FROM local_file_manifest f
@@ -68,11 +69,13 @@ impl Store {
                     row.get::<_, String>(9)?,
                     row.get::<_, Option<String>>(10)?,
                     row.get::<_, Option<String>>(11)?,
-                    row.get::<_, Option<i64>>(12)?,
+                    row.get::<_, Option<String>>(12)?,
                     row.get::<_, Option<String>>(13)?,
-                    row.get::<_, String>(14)?,
-                    row.get::<_, String>(15)?,
-                    row.get::<_, Option<String>>(16)?,
+                    row.get::<_, Option<i64>>(14)?,
+                    row.get::<_, Option<String>>(15)?,
+                    row.get::<_, String>(16)?,
+                    row.get::<_, String>(17)?,
+                    row.get::<_, Option<String>>(18)?,
                 ))
             },
         )?)?;
@@ -83,6 +86,8 @@ impl Store {
                     facts,
                     track_json,
                     album_artist,
+                    musicbrainz_album_id,
+                    musicbrainz_release_group_id,
                     cover_kind,
                     cover_path,
                     embedded_index,
@@ -106,6 +111,8 @@ impl Store {
                         facts,
                         track,
                         album_artist,
+                        musicbrainz_album_id,
+                        musicbrainz_release_group_id,
                         cover,
                         metadata_hash,
                         search_hash,
@@ -139,10 +146,22 @@ impl Store {
                 "
                 INSERT INTO local_track_manifest_data (
                     server_id, manifest_version, track_id, track_json, album_artist,
-                    cover_kind, cover_path, cover_embedded_index, cover_revision,
-                    metadata_hash, search_hash, updated_at
+                    musicbrainz_album_id, musicbrainz_release_group_id, cover_kind,
+                    cover_path, cover_embedded_index, cover_revision, metadata_hash,
+                    search_hash, updated_at
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, CURRENT_TIMESTAMP)
+                ",
+            )?;
+            let mut update_entity_source = connection.prepare(
+                "
+                UPDATE entities
+                SET source = 'local',
+                    source_object_id = ?3,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE server_id = ?1
+                  AND entity_kind = 'track'
+                  AND entity_id = ?2
                 ",
             )?;
             let mut insert_artwork = connection.prepare(
@@ -194,12 +213,40 @@ impl Store {
                     entry.track.id.as_str(),
                     track_json,
                     entry.album_artist.as_str(),
+                    entry.musicbrainz_album_id.as_deref(),
+                    entry.musicbrainz_release_group_id.as_deref(),
                     cover_kind,
                     cover_path,
                     embedded_index,
                     cover_revision,
                     entry.metadata_hash.as_str(),
                     entry.search_hash.as_str(),
+                ])?;
+                let root_path = entry.facts.root_path.to_string_lossy();
+                let source_object_id =
+                    local_file_source_object_id(root_path.as_ref(), &entry.facts.relative_path);
+                upsert_source_object_on_connection(
+                    connection,
+                    server_id,
+                    &SourceObject {
+                        source_object_id: source_object_id.clone(),
+                        entity_kind: None,
+                        entity_id: None,
+                        source_kind: "local_file".to_string(),
+                        source_path: Some(entry.facts.path.to_string_lossy().into_owned()),
+                        parent_source_object_id: None,
+                        cue_path: None,
+                        cue_revision: None,
+                        cue_track_index: None,
+                        segment_start_ms: None,
+                        segment_end_ms: None,
+                        sync_generation: generation,
+                    },
+                )?;
+                update_entity_source.execute(params![
+                    server_id.as_str(),
+                    entry.track.id.as_str(),
+                    source_object_id.as_str(),
                 ])?;
                 if let Some(cover) = &entry.cover {
                     let facts = local_artwork_source_facts(&cover.source_path);
@@ -221,6 +268,108 @@ impl Store {
         })
     }
 
+    pub fn upsert_local_file_source_object(
+        &self,
+        server_id: &ServerId,
+        source: &LocalFileSourceObject,
+    ) -> StoreResult<String> {
+        let source_object_id =
+            local_file_source_object_id(&source.root_path, &source.relative_path);
+        self.write_batch(|connection| {
+            upsert_source_object_on_connection(
+                connection,
+                server_id,
+                &SourceObject {
+                    source_object_id: source_object_id.clone(),
+                    entity_kind: None,
+                    entity_id: None,
+                    source_kind: "local_file".to_string(),
+                    source_path: Some(source.source_path.clone()),
+                    parent_source_object_id: None,
+                    cue_path: None,
+                    cue_revision: None,
+                    cue_track_index: None,
+                    segment_start_ms: None,
+                    segment_end_ms: None,
+                    sync_generation: source.sync_generation,
+                },
+            )
+        })?;
+        Ok(source_object_id)
+    }
+
+    pub fn upsert_cue_track_source_object(
+        &self,
+        server_id: &ServerId,
+        source: &CueTrackSourceObject,
+    ) -> StoreResult<()> {
+        self.write_batch(|connection| {
+            ensure_local_file_source_parent(
+                connection,
+                server_id,
+                &source.parent_source_object_id,
+            )?;
+            upsert_source_object_on_connection(
+                connection,
+                server_id,
+                &SourceObject {
+                    source_object_id: source.source_object_id.clone(),
+                    entity_kind: Some("track".to_string()),
+                    entity_id: Some(source.track_id.as_str().to_string()),
+                    source_kind: "cue_track".to_string(),
+                    source_path: Some(source.source_path.clone()),
+                    parent_source_object_id: Some(source.parent_source_object_id.clone()),
+                    cue_path: Some(source.cue_path.clone()),
+                    cue_revision: Some(source.cue_revision.clone()),
+                    cue_track_index: Some(source.cue_track_index),
+                    segment_start_ms: Some(source.segment_start_ms),
+                    segment_end_ms: Some(source.segment_end_ms),
+                    sync_generation: source.sync_generation,
+                },
+            )?;
+            connection.execute(
+                "
+                INSERT INTO entities (
+                    server_id, entity_kind, entity_id, source, source_object_id, updated_at
+                )
+                VALUES (?1, 'track', ?2, 'local', ?3, CURRENT_TIMESTAMP)
+                ON CONFLICT(server_id, entity_kind, entity_id) DO UPDATE SET
+                    source = 'local',
+                    source_object_id = excluded.source_object_id,
+                    updated_at = excluded.updated_at
+                ",
+                params![
+                    server_id.as_str(),
+                    source.track_id.as_str(),
+                    source.source_object_id.as_str(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn load_source_object(
+        &self,
+        server_id: &ServerId,
+        source_object_id: &str,
+    ) -> StoreResult<Option<SourceObject>> {
+        self.connection
+            .query_row(
+                "
+                SELECT source_object_id, entity_kind, entity_id, source_kind, source_path,
+                       parent_source_object_id, cue_path, cue_revision, cue_track_index,
+                       segment_start_ms, segment_end_ms, sync_generation
+                FROM source_objects
+                WHERE server_id = ?1
+                  AND source_object_id = ?2
+                ",
+                params![server_id.as_str(), source_object_id],
+                source_object_from_row,
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
     pub fn delete_local_track_rows(
         &self,
         server_id: &ServerId,
@@ -238,6 +387,7 @@ impl Store {
             ] {
                 delete_track_ids(connection, table, server_id, track_ids)?;
             }
+            delete_track_entity_rows(connection, server_id, track_ids)?;
             delete_track_fts_rows(connection, server_id, track_ids)?;
             Ok(())
         })
@@ -346,6 +496,10 @@ impl Store {
                     ])?;
                     if updated == 0 {
                         missing_tracks.push(track.clone());
+                    } else {
+                        super::library_cache_writes::upsert_track_entity_data_on_connection(
+                            connection, server_id, track,
+                        )?;
                     }
                 }
             }
@@ -434,7 +588,107 @@ pub(super) fn clear_local_manifest_on_connection(
         let sql = format!("DELETE FROM {table} WHERE server_id = ?1");
         connection.execute(&sql, params![server_id.as_str()])?;
     }
+    connection.execute(
+        "DELETE FROM source_objects WHERE server_id = ?1 AND source_kind IN ('local_file', 'cue_track')",
+        params![server_id.as_str()],
+    )?;
     Ok(())
+}
+
+pub fn local_file_source_object_id(root_path: &str, relative_path: &str) -> String {
+    format!("local:file:{root_path}\u{1f}{relative_path}")
+}
+
+fn upsert_source_object_on_connection(
+    connection: &Connection,
+    server_id: &ServerId,
+    source: &SourceObject,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        INSERT INTO source_objects (
+            server_id, source_object_id, entity_kind, entity_id, source_kind,
+            source_path, parent_source_object_id, cue_path, cue_revision,
+            cue_track_index, segment_start_ms, segment_end_ms, metadata_json,
+            sync_generation, updated_at
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, '{}', ?13, CURRENT_TIMESTAMP)
+        ON CONFLICT(server_id, source_object_id) DO UPDATE SET
+            entity_kind = excluded.entity_kind,
+            entity_id = excluded.entity_id,
+            source_kind = excluded.source_kind,
+            source_path = excluded.source_path,
+            parent_source_object_id = excluded.parent_source_object_id,
+            cue_path = excluded.cue_path,
+            cue_revision = excluded.cue_revision,
+            cue_track_index = excluded.cue_track_index,
+            segment_start_ms = excluded.segment_start_ms,
+            segment_end_ms = excluded.segment_end_ms,
+            metadata_json = excluded.metadata_json,
+            sync_generation = excluded.sync_generation,
+            updated_at = excluded.updated_at
+        ",
+        params![
+            server_id.as_str(),
+            source.source_object_id.as_str(),
+            source.entity_kind.as_deref(),
+            source.entity_id.as_deref(),
+            source.source_kind.as_str(),
+            source.source_path.as_deref(),
+            source.parent_source_object_id.as_deref(),
+            source.cue_path.as_deref(),
+            source.cue_revision.as_deref(),
+            source.cue_track_index,
+            source.segment_start_ms,
+            source.segment_end_ms,
+            source.sync_generation,
+        ],
+    )?;
+    Ok(())
+}
+
+fn ensure_local_file_source_parent(
+    connection: &Connection,
+    server_id: &ServerId,
+    source_object_id: &str,
+) -> StoreResult<()> {
+    let exists = connection.query_row(
+        "
+        SELECT EXISTS(
+            SELECT 1
+            FROM source_objects
+            WHERE server_id = ?1
+              AND source_object_id = ?2
+              AND source_kind = 'local_file'
+        )
+        ",
+        params![server_id.as_str(), source_object_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if exists {
+        Ok(())
+    } else {
+        Err(StoreError::InvalidSourceObject(format!(
+            "cue parent source object is not a local file: {source_object_id}"
+        )))
+    }
+}
+
+fn source_object_from_row(row: &Row<'_>) -> rusqlite::Result<SourceObject> {
+    Ok(SourceObject {
+        source_object_id: row.get(0)?,
+        entity_kind: row.get(1)?,
+        entity_id: row.get(2)?,
+        source_kind: row.get(3)?,
+        source_path: row.get(4)?,
+        parent_source_object_id: row.get(5)?,
+        cue_path: row.get(6)?,
+        cue_revision: row.get(7)?,
+        cue_track_index: row.get(8)?,
+        segment_start_ms: row.get(9)?,
+        segment_end_ms: row.get(10)?,
+        sync_generation: row.get(11)?,
+    })
 }
 
 fn local_manifest_cover_parts(
@@ -507,6 +761,39 @@ fn delete_track_ids(
                 .map(|track_id| Value::Text(track_id.as_str().to_string())),
         );
         connection.execute(&sql, params_from_iter(values))?;
+    }
+    Ok(())
+}
+
+fn delete_track_entity_rows(
+    connection: &Connection,
+    server_id: &ServerId,
+    track_ids: &[TrackId],
+) -> StoreResult<()> {
+    for chunk in track_ids.chunks(400) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut values = vec![Value::Text(server_id.as_str().to_string())];
+        values.extend(
+            chunk
+                .iter()
+                .map(|track_id| Value::Text(track_id.as_str().to_string())),
+        );
+        for (table, column) in [
+            ("entity_content_refs", "entity_id"),
+            ("entity_facts", "entity_id"),
+            ("entity_grouping_keys", "entity_id"),
+            ("entity_identity_keys", "entity_id"),
+            ("entity_links", "entity_id"),
+            ("entities", "entity_id"),
+            ("source_objects", "entity_id"),
+        ] {
+            let sql = format!(
+                "DELETE FROM {table} WHERE server_id = ? AND entity_kind = 'track' AND {column} IN ({placeholders})"
+            );
+            connection.execute(&sql, params_from_iter(values.clone()))?;
+        }
     }
     Ok(())
 }

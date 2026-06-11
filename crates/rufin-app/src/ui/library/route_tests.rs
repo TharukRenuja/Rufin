@@ -550,6 +550,8 @@ fn test_track(id: u32, title: &str, disc_number: u16, track_number: u16) -> Trac
         track_number,
         image_ref: None,
         genres: Vec::new(),
+        musicbrainz_recording_id: None,
+        musicbrainz_release_track_id: None,
         local_path: None,
         source_format: None,
         comment: None,
