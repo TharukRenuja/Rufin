@@ -5,6 +5,7 @@ const CLASSIC_EQUALIZER_FREQUENCIES: [f64; EQUALIZER_BAND_COUNT] = [
 ];
 const EQUALIZER_DUMMY_LOW_FREQUENCY: f64 = 20.0;
 const EQUALIZER_DUMMY_HIGH_FREQUENCY: f64 = 20_000.0;
+const GAPLESS_BUFFERING_IGNORE_REMAINING_MS: u64 = 5_000;
 
 pub struct LazyGStreamerPlaybackBackend {
     inner: Option<Box<dyn PlaybackBackend>>,
@@ -361,6 +362,21 @@ impl PlayerPipeline {
             .map_err(|error| error.to_string())
     }
 
+    fn reset_uri(
+        &self,
+        item: &PreparedPlaybackItem,
+        target_state: gst::State,
+    ) -> Result<(), String> {
+        self.pipeline
+            .set_state(gst::State::Ready)
+            .map_err(|error| error.to_string())?;
+        self.pipeline.set_property("uri", item.stream.uri());
+        self.pipeline
+            .set_state(target_state)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     fn seek_millis(&self, millis: u64) -> Result<(), String> {
         self.pipeline
             .seek_simple(
@@ -627,6 +643,7 @@ impl GstEngine {
 
     fn start_seek(&mut self, millis: u64) -> Result<(), String> {
         self.finish_crossfade_for_seek();
+        self.cancel_gapless_preload_for_seek()?;
         if millis == 0 {
             let target_state = match self.state {
                 PlaybackState::Paused | PlaybackState::Stopped => gst::State::Paused,
@@ -661,6 +678,20 @@ impl GstEngine {
         self.pending_seek = Some(PendingSeek::startup(millis, self.state, Instant::now()));
     }
 
+    fn cancel_gapless_preload_for_seek(&mut self) -> Result<(), String> {
+        let reset = self.shared.lock().ok().and_then(|mut shared| {
+            cancel_gapless_pending(&mut shared).map(|(current, _pending)| current)
+        });
+        let Some(current) = reset else {
+            return Ok(());
+        };
+        let target_state = match self.state {
+            PlaybackState::Paused | PlaybackState::Stopped => gst::State::Paused,
+            PlaybackState::Buffering | PlaybackState::Playing => gst::State::Playing,
+        };
+        self.active_pipeline().reset_uri(&current, target_state)
+    }
+
     fn poll_bus(&mut self) {
         while let Some(message) = self.primary.bus.pop() {
             self.handle_message(Slot::Primary, &message);
@@ -692,8 +723,7 @@ impl GstEngine {
                 self.handle_stream_start();
             }
             MessageView::DurationChanged(_) if self.is_active_slot(slot) => {
-                if !self.gapless_timing_is_pending()
-                    && self.pending_seek.is_none()
+                if self.pending_seek.is_none()
                     && let Some(duration) = self.active_pipeline().duration()
                 {
                     self.push_duration(clock_seconds(duration));
@@ -722,6 +752,9 @@ impl GstEngine {
                     relevant,
                     "GStreamer playback error"
                 );
+                if relevant && self.handle_transition_error(slot, &error) {
+                    return;
+                }
                 if relevant {
                     self.stop_after_playback_error();
                     push_event(&self.events, PlaybackEvent::Error(error));
@@ -730,6 +763,63 @@ impl GstEngine {
             }
             _ => {}
         }
+    }
+
+    fn handle_transition_error(&mut self, slot: Slot, error: &str) -> bool {
+        self.handle_gapless_preload_error(slot, error)
+            || self.handle_crossfade_next_error(slot, error)
+    }
+
+    fn handle_gapless_preload_error(&mut self, slot: Slot, error: &str) -> bool {
+        let reset = self.shared.lock().ok().and_then(|mut shared| {
+            if shared.active != slot {
+                return None;
+            }
+            cancel_gapless_pending(&mut shared)
+        });
+        let Some((current, pending)) = reset else {
+            return false;
+        };
+        warn!(
+            track_id = %pending.track.id.as_str(),
+            error = %error,
+            "gapless next stream failed before commit"
+        );
+        let target_state = match self.state {
+            PlaybackState::Paused | PlaybackState::Stopped => gst::State::Paused,
+            PlaybackState::Buffering | PlaybackState::Playing => gst::State::Playing,
+        };
+        if let Err(reset_error) = self.active_pipeline().reset_uri(&current, target_state) {
+            warn!(
+                %reset_error,
+                track_id = %current.track.id.as_str(),
+                "failed to restore current stream after gapless preload error"
+            );
+            return false;
+        }
+        push_event(&self.events, PlaybackEvent::EndOfStream);
+        true
+    }
+
+    fn handle_crossfade_next_error(&mut self, slot: Slot, error: &str) -> bool {
+        let crossfade = self
+            .shared
+            .lock()
+            .ok()
+            .and_then(|mut shared| cancel_crossfade_next(&mut shared, slot));
+        let Some(crossfade) = crossfade else {
+            return false;
+        };
+        warn!(
+            track_id = %crossfade.item.track.id.as_str(),
+            error = %error,
+            "crossfade next stream failed before commit"
+        );
+        self.pipeline_for_slot(crossfade.to).stop();
+        let (volume, muted) = self.output_state();
+        self.pipeline_for_slot(crossfade.from)
+            .set_output_volume(volume, muted);
+        true
     }
 
     fn handle_element_message(&self, element: &gst::message::Element) {
@@ -813,6 +903,13 @@ impl GstEngine {
     }
 
     fn handle_buffering(&mut self, percent: u8) {
+        if percent < 100 && self.gapless_preload_near_end() {
+            debug!(
+                percent,
+                "ignoring buffering while gapless handoff is pending near end"
+            );
+            return;
+        }
         let now = Instant::now();
         if self
             .pending_seek
@@ -830,6 +927,28 @@ impl GstEngine {
         }
         self.state = PlaybackState::Buffering;
         push_event(&self.events, PlaybackEvent::Buffering(percent));
+    }
+
+    fn gapless_preload_near_end(&self) -> bool {
+        if !self
+            .shared
+            .lock()
+            .map(|shared| shared.gapless_pending.is_some())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        let Some(position) = self.active_pipeline().position() else {
+            return false;
+        };
+        let Some(duration) = self.active_pipeline().duration() else {
+            return false;
+        };
+        let position_ms = clock_millis(position);
+        let duration_ms = clock_millis(duration);
+        duration_ms > 0
+            && position_ms > 0
+            && duration_ms.saturating_sub(position_ms) < GAPLESS_BUFFERING_IGNORE_REMAINING_MS
     }
 
     fn handle_async_done(&mut self) {
@@ -943,9 +1062,6 @@ impl GstEngine {
 
         if self.last_position_tick.elapsed() >= Duration::from_millis(500) {
             self.last_position_tick = Instant::now();
-            if self.gapless_timing_is_pending() {
-                return;
-            }
             if self
                 .pending_seek
                 .as_ref()
@@ -966,9 +1082,6 @@ impl GstEngine {
     }
 
     pub(super) fn push_position(&mut self, millis: u64) {
-        if self.gapless_timing_is_pending() {
-            return;
-        }
         let now = Instant::now();
         if let Some(pending) = self.pending_seek.as_ref() {
             if !pending.accepts_position(millis, now) {
@@ -996,9 +1109,6 @@ impl GstEngine {
     }
 
     pub(super) fn push_duration(&self, seconds: u32) {
-        if self.gapless_timing_is_pending() {
-            return;
-        }
         push_event(
             &self.events,
             PlaybackEvent::DurationChanged {
@@ -1017,13 +1127,6 @@ impl GstEngine {
         let current = shared.current.as_ref()?;
         let end = current.stream.source_end_millis()?;
         Some((current.stream.source_start_millis(), end))
-    }
-
-    fn gapless_timing_is_pending(&self) -> bool {
-        self.shared
-            .lock()
-            .map(|shared| shared.gapless_pending.is_some())
-            .unwrap_or(false)
     }
 
     fn timing_track_id(&self) -> Option<TrackId> {
@@ -1409,6 +1512,35 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
     shared.gapless_pending = Some(next.clone());
     shared.about_to_finish_pending = false;
     AboutToFinishAction::Preload(Box::new(next))
+}
+
+pub(super) fn cancel_gapless_pending(
+    shared: &mut SharedPlaybackState,
+) -> Option<(PreparedPlaybackItem, PreparedPlaybackItem)> {
+    let pending = shared.gapless_pending.take()?;
+    let current = shared.current.clone()?;
+    if shared.next.is_none() {
+        shared.next = Some(pending.clone());
+    }
+    shared.about_to_finish_pending = false;
+    Some((current, pending))
+}
+
+pub(super) fn cancel_crossfade_next(
+    shared: &mut SharedPlaybackState,
+    slot: Slot,
+) -> Option<CrossfadeState> {
+    let crossfade = shared.crossfade.clone()?;
+    if crossfade.to != slot {
+        return None;
+    }
+    if shared.next.is_none() {
+        shared.next = Some(crossfade.item.clone());
+    }
+    shared.crossfade = None;
+    shared.gapless_pending = None;
+    shared.about_to_finish_pending = false;
+    Some(crossfade)
 }
 
 fn gapless_preload_should_run(shared: &SharedPlaybackState, next: &PreparedPlaybackItem) -> bool {

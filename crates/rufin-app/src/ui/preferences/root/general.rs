@@ -445,7 +445,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let transition_group = adw::PreferencesGroup::builder()
         .title(tr("Queue and transitions"))
         .build();
-    let transition_titles = [tr("Gapless"), tr("Crossfade")];
+    let transition_titles = [tr("Default"), tr("Gapless"), tr("Crossfade")];
     let transition_refs = transition_titles
         .iter()
         .map(String::as_str)
@@ -764,14 +764,16 @@ pub(in crate::ui) fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
 }
 pub(in crate::ui) fn transition_index(mode: PlaybackTransitionMode) -> u32 {
     match mode {
-        PlaybackTransitionMode::Gapless => 0,
-        PlaybackTransitionMode::Crossfade => 1,
+        PlaybackTransitionMode::Default => 0,
+        PlaybackTransitionMode::Gapless => 1,
+        PlaybackTransitionMode::Crossfade => 2,
     }
 }
 pub(in crate::ui) fn transition_from_index(index: u32) -> PlaybackTransitionMode {
     match index {
-        1 => PlaybackTransitionMode::Crossfade,
-        _ => PlaybackTransitionMode::Gapless,
+        1 => PlaybackTransitionMode::Gapless,
+        2 => PlaybackTransitionMode::Crossfade,
+        _ => PlaybackTransitionMode::Default,
     }
 }
 pub(in crate::ui) fn replay_gain_index(mode: ReplayGainMode) -> u32 {

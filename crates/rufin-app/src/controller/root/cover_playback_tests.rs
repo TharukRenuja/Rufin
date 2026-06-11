@@ -1414,6 +1414,31 @@ pub(in crate::controller) fn cover_track_ignored() {
     assert_eq!(playback.duration_seconds, first.duration_seconds);
 }
 #[test]
+pub(in crate::controller) fn cover_ignores_implausible_backend_duration() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let first = snapshot.tracks[0].clone();
+    controller.play_tracks_now(vec![first.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
+        PlaybackEvent::DurationChanged {
+            track_id: Some(first.id.clone()),
+            seconds: 99 * 60 * 60 + 99 * 60 + 99,
+        },
+    ]));
+
+    controller.poll_playback_events();
+
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.current.expect("current").track_id, first.id);
+    assert_eq!(playback.duration_seconds, first.duration_seconds);
+}
+#[test]
 pub(in crate::controller) fn cover_advance_playback() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);

@@ -2,7 +2,8 @@ use super::{
     AboutToFinishAction, CrossfadeState, FakePlaybackBackend, GstEngine, PendingSeek,
     PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline,
     PreparedPlaybackItem, SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState,
-    Slot, StreamDescriptor, about_to_finish_action, same_album_crossfade_is_skipped,
+    Slot, StreamDescriptor, about_to_finish_action, cancel_crossfade_next, cancel_gapless_pending,
+    same_album_crossfade_is_skipped,
 };
 use rufin_core::{AlbumId, PlaybackSettings, PlaybackTransitionMode, TrackId};
 use std::collections::VecDeque;
@@ -95,6 +96,20 @@ fn playback_redact_query() {
     assert!(!format!("{stream:?}").contains("secret-token"));
 }
 #[test]
+fn default_about_finish_waits_for_eos() {
+    let next =
+        PreparedPlaybackItem::new(track(2), StreamDescriptor::new("file:///music/next.flac"));
+    let mut shared = SharedPlaybackState::new();
+    shared.next = Some(next.clone());
+
+    let action = about_to_finish_action(&mut shared);
+
+    assert_eq!(action, AboutToFinishAction::Ignore);
+    assert_eq!(shared.next, Some(next));
+    assert!(shared.gapless_pending.is_none());
+    assert!(!shared.about_to_finish_pending);
+}
+#[test]
 fn gapless_about_finish() {
     let next =
         PreparedPlaybackItem::new(track(2), StreamDescriptor::new("file:///music/next.flac"));
@@ -161,6 +176,60 @@ fn playback_finish_eos_unsupported_clears_late_window() {
 
     assert_eq!(action, AboutToFinishAction::Ignore);
     assert_eq!(shared.next, Some(next));
+    assert!(!shared.about_to_finish_pending);
+}
+#[test]
+fn gapless_cancel_restores_next() {
+    let current = PreparedPlaybackItem::new(
+        track(1),
+        StreamDescriptor::new("https://music.example/current"),
+    );
+    let pending = PreparedPlaybackItem::new(
+        track(2),
+        StreamDescriptor::new("https://music.example/next"),
+    );
+    let mut shared = SharedPlaybackState::new();
+    shared.current = Some(current.clone());
+    shared.gapless_pending = Some(pending.clone());
+    shared.about_to_finish_pending = true;
+
+    let cancelled = cancel_gapless_pending(&mut shared);
+
+    assert_eq!(cancelled, Some((current, pending.clone())));
+    assert_eq!(shared.next, Some(pending));
+    assert!(shared.gapless_pending.is_none());
+    assert!(!shared.about_to_finish_pending);
+}
+#[test]
+fn crossfade_cancel_restores_next() {
+    let current = PreparedPlaybackItem::new(
+        track(1),
+        StreamDescriptor::new("https://music.example/current"),
+    );
+    let incoming = PreparedPlaybackItem::new(
+        track(2),
+        StreamDescriptor::new("https://music.example/next"),
+    );
+    let mut shared = SharedPlaybackState::new();
+    shared.current = Some(current);
+    shared.active = Slot::Primary;
+    shared.crossfade = Some(CrossfadeState {
+        from: Slot::Primary,
+        to: Slot::Secondary,
+        started_at: Instant::now(),
+        duration: Duration::from_secs(5),
+        item: incoming.clone(),
+    });
+    shared.gapless_pending = Some(incoming.clone());
+    shared.about_to_finish_pending = true;
+
+    let cancelled = cancel_crossfade_next(&mut shared, Slot::Secondary);
+
+    assert!(cancelled.is_some());
+    assert_eq!(shared.next, Some(incoming));
+    assert_eq!(shared.active, Slot::Primary);
+    assert!(shared.crossfade.is_none());
+    assert!(shared.gapless_pending.is_none());
     assert!(!shared.about_to_finish_pending);
 }
 #[test]
@@ -322,19 +391,29 @@ fn playback_source_window_reports_relative_position_and_ends() {
 fn playback_start_stream() {
     let mut engine = test_engine_with_pending_seek(0);
     engine.pending_seek = None;
+    let current = PreparedPlaybackItem::new(track(1), StreamDescriptor::new("fake://track/1"));
     let next = PreparedPlaybackItem::new(track(2), StreamDescriptor::new("fake://track/2"));
     {
         let mut shared = engine.shared.lock().expect("shared");
-        shared.current = Some(PreparedPlaybackItem::new(
-            track(1),
-            StreamDescriptor::new("fake://track/1"),
-        ));
+        shared.current = Some(current.clone());
         shared.gapless_pending = Some(next.clone());
     }
 
     engine.push_position(42_000);
-    engine.push_duration(next.track.duration_seconds);
-    assert!(engine.events.lock().expect("events").is_empty());
+    engine.push_duration(current.track.duration_seconds);
+    {
+        let mut events = engine.events.lock().expect("events");
+        assert!(events.contains(&PlaybackEvent::PositionChanged {
+            track_id: Some(current.track.id.clone()),
+            seconds: 42,
+            millis: 42_000,
+        }));
+        assert!(events.contains(&PlaybackEvent::DurationChanged {
+            track_id: Some(current.track.id.clone()),
+            seconds: current.track.duration_seconds,
+        }));
+        events.clear();
+    }
 
     {
         let mut shared = engine.shared.lock().expect("shared");
