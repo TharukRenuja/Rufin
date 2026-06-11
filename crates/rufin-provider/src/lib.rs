@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rufin_core::{
-    Album, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId, HomeSection,
-    HomeSectionKind, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerIdentity,
+    Album, AlbumId, Artist, ArtistId, ExternalLyricsProvider, Folder, FolderId, Genre, GenreId,
+    HomeSection, HomeSectionKind, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerIdentity,
     StreamQuality, Track, TrackId,
 };
 pub use rufin_playback::StreamDescriptor;
@@ -246,6 +246,8 @@ pub struct LyricLine {
 pub struct Lyrics {
     pub track_id: TrackId,
     pub source: LyricsSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_provider: Option<ExternalLyricsProvider>,
     pub lines: Vec<LyricLine>,
 }
 

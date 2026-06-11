@@ -4,6 +4,7 @@ pub(super) fn lyrics_from_dto(track_id: TrackId, source: LyricsSource, dto: Lyri
     Lyrics {
         track_id,
         source,
+        external_provider: None,
         lines: dto
             .lyrics
             .unwrap_or_default()

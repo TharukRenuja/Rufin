@@ -299,10 +299,11 @@ pub(in crate::ui) fn clear_list_box(list: &gtk::ListBox) {
     }
 }
 pub(in crate::ui) fn lyrics_search_result_has_content(result: &LyricsSearchResult) -> bool {
-    result
-        .synced_lyrics
-        .as_deref()
-        .is_some_and(|lyrics| !lyrics.trim().is_empty())
+    result.provider != ExternalLyricsProvider::Lrclib
+        || result
+            .synced_lyrics
+            .as_deref()
+            .is_some_and(|lyrics| !lyrics.trim().is_empty())
         || result
             .plain_lyrics
             .as_deref()
@@ -315,8 +316,11 @@ pub(in crate::ui) fn lyrics_result_title_markup(result: &LyricsSearchResult) -> 
     glib::markup_escape_text(&lyrics_result_title(result))
 }
 pub(in crate::ui) fn lyrics_result_subtitle(result: &LyricsSearchResult) -> String {
-    let mut subtitle = String::new();
+    let mut subtitle = result.provider.title().to_string();
     if !result.album_name.trim().is_empty() {
+        if !subtitle.is_empty() {
+            subtitle.push_str(" - ");
+        }
         subtitle.push_str(&result.album_name);
     }
     if result.duration_seconds > 0 {

@@ -29,6 +29,7 @@ use crate::controller::{
     PlayAnchor, PlayTarget, normalize_loaded_source_activation,
 };
 use gdk_pixbuf::{Colorspace, Pixbuf};
+use rufin_core::ExternalLyricsProvider;
 use rufin_core::{
     Album, AlbumId, AppSettings, ArtistId, Genre, GenreId, HomeBlockKind, HomeSection,
     HomeSectionKind, ImageRef, LibraryLayout, LibrarySourceSelection, Playlist, PlaylistId,
@@ -1283,6 +1284,7 @@ pub(in crate::ui) fn shell_track_external() {
     let remote_lyrics = Lyrics {
         track_id: track_id.clone(),
         source: LyricsSource::Remote,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "remote line".to_string(),
             start_millis: None,
@@ -1336,6 +1338,7 @@ pub(in crate::ui) fn shell_auto_lyrics() {
     let server_lyrics = Lyrics {
         track_id: track_id.clone(),
         source: LyricsSource::Server,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "server line".to_string(),
             start_millis: None,
@@ -1344,6 +1347,7 @@ pub(in crate::ui) fn shell_auto_lyrics() {
     let remote_lyrics = Lyrics {
         track_id: track_id.clone(),
         source: LyricsSource::Remote,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "remote line".to_string(),
             start_millis: None,
@@ -1415,6 +1419,7 @@ pub(in crate::ui) fn shell_allow_cache() {
     let lyrics = Lyrics {
         track_id: track_id.clone(),
         source: LyricsSource::Remote,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "line one".to_string(),
             start_millis: Some(1_000),
@@ -1496,7 +1501,8 @@ pub(in crate::ui) fn shell_ignore_field() {
 #[test]
 pub(in crate::ui) fn shell_lyrics_exist() {
     let result = LyricsSearchResult {
-        id: 12,
+        provider: ExternalLyricsProvider::Lrclib,
+        id: "12".to_string(),
         track_name: "Example Track".to_string(),
         artist_name: "Example Artist".to_string(),
         album_name: "Example Album".to_string(),
@@ -1507,13 +1513,14 @@ pub(in crate::ui) fn shell_lyrics_exist() {
 
     assert_eq!(
         lyrics_result_subtitle(&result),
-        "Example Album - 1:35 - Synced lyrics"
+        "LRCLIB - Example Album - 1:35 - Synced lyrics"
     );
 }
 #[test]
 pub(in crate::ui) fn shell_lyrics_text() {
     let result = LyricsSearchResult {
-        id: 13,
+        provider: ExternalLyricsProvider::Lrclib,
+        id: "13".to_string(),
         track_name: "Poker Face (Piano & Voice Version) [Live]".to_string(),
         artist_name: "Lady Gaga".to_string(),
         album_name: "Hits & Rarities".to_string(),
@@ -1528,7 +1535,7 @@ pub(in crate::ui) fn shell_lyrics_text() {
     );
     assert_eq!(
         lyrics_result_subtitle_markup(&result).as_str(),
-        "Hits &amp; Rarities - 1:35 - Synced lyrics"
+        "LRCLIB - Hits &amp; Rarities - 1:35 - Synced lyrics"
     );
 }
 #[test]

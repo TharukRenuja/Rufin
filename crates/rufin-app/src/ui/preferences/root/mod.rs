@@ -8,6 +8,7 @@ use crate::{
     i18n::{self, tr},
 };
 use adw::prelude::*;
+use rufin_core::ExternalLyricsProvider;
 use rufin_core::{
     AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
     EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_AUTO_DJ_REFILL_THRESHOLD,
@@ -279,15 +280,41 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         prefer_server_shell.set_prefer_server_lyrics(row.is_active());
     });
 
+    let provider_rows = ExternalLyricsProvider::all()
+        .into_iter()
+        .map(|provider| {
+            let row = adw::SwitchRow::builder()
+                .title(provider.title())
+                .active(settings.external_lyrics_providers.contains(&provider))
+                .sensitive(settings.external_lyrics_enabled)
+                .build();
+            let provider_shell = Rc::clone(shell);
+            row.connect_active_notify(move |row| {
+                provider_shell.set_external_lyrics_provider_enabled(provider, row.is_active());
+            });
+            (provider, row)
+        })
+        .collect::<Vec<_>>();
+
     let external_shell = Rc::clone(shell);
     let prefer_server_row_for_external = prefer_server_row.clone();
+    let provider_rows_for_external = provider_rows
+        .iter()
+        .map(|(_provider, row)| row.clone())
+        .collect::<Vec<_>>();
     external_row.connect_active_notify(move |row| {
         let enabled = row.is_active();
         prefer_server_row_for_external.set_sensitive(enabled);
+        for provider_row in &provider_rows_for_external {
+            provider_row.set_sensitive(enabled);
+        }
         external_shell.set_external_lyrics_enabled(enabled);
     });
     metadata_group.add(&external_row);
     metadata_group.add(&prefer_server_row);
+    for (_provider, row) in provider_rows {
+        metadata_group.add(&row);
+    }
     page.add(&metadata_group);
 
     let discord_group = adw::PreferencesGroup::builder()

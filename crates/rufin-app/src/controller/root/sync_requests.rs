@@ -117,7 +117,8 @@ pub(in crate::controller) struct LrcLibLyricsDto {
 impl From<LrcLibLyricsDto> for LyricsSearchResult {
     fn from(value: LrcLibLyricsDto) -> Self {
         Self {
-            id: value.id,
+            provider: ExternalLyricsProvider::Lrclib,
+            id: value.id.to_string(),
             track_name: if value.track_name.trim().is_empty() {
                 value.name
             } else {
@@ -130,6 +131,93 @@ impl From<LrcLibLyricsDto> for LyricsSearchResult {
             plain_lyrics: value.plain_lyrics,
         }
     }
+}
+#[derive(Debug, Deserialize)]
+struct NeteaseSearchResponse {
+    result: Option<NeteaseSearchResult>,
+}
+#[derive(Debug, Deserialize)]
+struct NeteaseSearchResult {
+    songs: Option<Vec<NeteaseSong>>,
+}
+#[derive(Debug, Deserialize)]
+struct NeteaseSong {
+    id: u64,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    artists: Vec<NeteaseArtist>,
+    #[serde(default)]
+    album: Option<NeteaseAlbum>,
+    #[serde(default)]
+    duration: Option<u64>,
+}
+#[derive(Debug, Deserialize)]
+struct NeteaseArtist {
+    #[serde(default)]
+    name: String,
+}
+#[derive(Debug, Deserialize)]
+struct NeteaseAlbum {
+    #[serde(default)]
+    name: String,
+}
+#[derive(Debug, Deserialize)]
+struct NeteaseLyricsResponse {
+    lrc: Option<NeteaseLyricsBody>,
+}
+#[derive(Debug, Deserialize)]
+struct NeteaseLyricsBody {
+    lyric: Option<String>,
+}
+#[derive(Debug, Deserialize)]
+struct GeniusSearchResponse {
+    response: Option<GeniusResponseBody>,
+}
+#[derive(Debug, Deserialize)]
+struct GeniusResponseBody {
+    sections: Option<Vec<GeniusSection>>,
+}
+#[derive(Debug, Deserialize)]
+struct GeniusSection {
+    hits: Option<Vec<GeniusHit>>,
+}
+#[derive(Debug, Deserialize)]
+struct GeniusHit {
+    result: GeniusSong,
+}
+#[derive(Debug, Deserialize)]
+struct GeniusSong {
+    #[serde(default)]
+    artist_names: String,
+    #[serde(default)]
+    full_title: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    url: String,
+}
+#[derive(Debug, Deserialize)]
+struct SimpMusicSearchResponse {
+    data: Option<Vec<SimpMusicLyric>>,
+}
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SimpMusicLyric {
+    #[serde(default)]
+    artist_name: String,
+    #[serde(default)]
+    album_name: Option<String>,
+    #[serde(default)]
+    duration_seconds: Option<u32>,
+    #[serde(default)]
+    plain_lyric: Option<String>,
+    #[serde(default)]
+    song_title: String,
+    #[serde(default)]
+    synced_lyrics: Option<String>,
+    #[serde(default)]
+    video_id: String,
 }
 pub(in crate::controller) fn lrclib_search(
     artist_name: &str,
@@ -150,6 +238,343 @@ pub(in crate::controller) fn lrclib_automatic_search(
         artist_name,
         track_name,
     )
+}
+pub(in crate::controller) fn external_lyrics_search(
+    providers: &[ExternalLyricsProvider],
+    artist_name: &str,
+    track_name: &str,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+    let mut had_success = false;
+    for provider in providers {
+        match external_provider_search(*provider, artist_name, track_name, false) {
+            Ok(mut batch) => {
+                had_success = true;
+                filter_external_results_for_query(&mut batch, artist_name, track_name);
+                order_external_provider_results(&mut batch, artist_name, track_name);
+                results.extend(batch);
+            }
+            Err(error) => errors.push(format!("{}: {error}", provider.title())),
+        }
+    }
+    if !had_success && !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    Ok(results)
+}
+pub(in crate::controller) fn external_best_lyrics(
+    entry: &QueueEntry,
+    providers: &[ExternalLyricsProvider],
+) -> Result<Option<Lyrics>, String> {
+    let mut results = Vec::new();
+    let mut errors = Vec::new();
+    let mut had_success = false;
+    for provider in providers {
+        if *provider == ExternalLyricsProvider::Lrclib {
+            match lrclib_exact_result(entry) {
+                Ok(Some(result)) => {
+                    had_success = true;
+                    results.push(result);
+                }
+                Ok(None) => {}
+                Err(error) => errors.push(format!("{}: {error}", provider.title())),
+            }
+        }
+        match external_provider_search(*provider, &entry.artist, &entry.title, true) {
+            Ok(batch) => {
+                had_success = true;
+                results.extend(batch);
+            }
+            Err(error) => errors.push(format!("{}: {error}", provider.title())),
+        }
+    }
+    if results.is_empty() {
+        if !had_success && !errors.is_empty() {
+            return Err(errors.join("; "));
+        }
+        return Ok(None);
+    }
+    filter_external_results_for_query(&mut results, &entry.artist, &entry.title);
+    if results.is_empty() {
+        return Ok(None);
+    }
+    order_external_results(&mut results, &entry.artist, &entry.title, providers);
+    for result in results {
+        match lyrics_from_search_result(entry.track_id.clone(), &result) {
+            Ok(Some(lyrics)) => return Ok(Some(lyrics)),
+            Ok(None) => {}
+            Err(error) => errors.push(format!("{}: {error}", result.provider.title())),
+        }
+    }
+    if !had_success && !errors.is_empty() {
+        Err(errors.join("; "))
+    } else {
+        Ok(None)
+    }
+}
+pub(in crate::controller) fn filter_external_results_for_query(
+    results: &mut Vec<LyricsSearchResult>,
+    artist_name: &str,
+    track_name: &str,
+) {
+    results.retain(|result| external_result_matches_query(result, artist_name, track_name));
+}
+fn external_result_matches_query(
+    result: &LyricsSearchResult,
+    artist_name: &str,
+    track_name: &str,
+) -> bool {
+    let artist_name = artist_name.trim();
+    let track_name = track_name.trim();
+    if !track_name.is_empty() && text_match_score(track_name, &result.track_name) > 70 {
+        return false;
+    }
+    if !artist_name.is_empty() && text_match_score(artist_name, &result.artist_name) > 80 {
+        return false;
+    }
+    true
+}
+fn lrclib_exact_result(entry: &QueueEntry) -> Result<Option<LyricsSearchResult>, String> {
+    let Some(url) = lrclib_get_url(&entry.artist, &entry.title, entry.duration_seconds)? else {
+        return Ok(None);
+    };
+    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    lrclib_fetch_get(&client, url)
+}
+fn external_provider_search(
+    provider: ExternalLyricsProvider,
+    artist_name: &str,
+    track_name: &str,
+    automatic: bool,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    match provider {
+        ExternalLyricsProvider::Lrclib => {
+            if automatic {
+                lrclib_automatic_search(artist_name, track_name)
+            } else {
+                lrclib_search(artist_name, track_name)
+            }
+        }
+        ExternalLyricsProvider::Netease => netease_search(artist_name, track_name),
+        ExternalLyricsProvider::Genius => genius_search(artist_name, track_name),
+        ExternalLyricsProvider::SimpMusic => simpmusic_search(artist_name, track_name),
+    }
+}
+fn external_lyrics_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| error.to_string())
+}
+fn netease_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearchResult>, String> {
+    let query = [artist_name.trim(), track_name.trim()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut url = reqwest::Url::parse("https://music.163.com/api/search/get")
+        .map_err(|error| error.to_string())?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs.append_pair("s", &query);
+        pairs.append_pair("type", "1");
+        pairs.append_pair("limit", "5");
+        pairs.append_pair("offset", "0");
+    }
+    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let body = fetch_text(&client, url, "NetEase lyric search")?;
+    parse_netease_search_body(&body)
+}
+pub(in crate::controller) fn parse_netease_search_body(
+    body: &str,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    let response = serde_json::from_str::<NeteaseSearchResponse>(body)
+        .map_err(|error| format!("NetEase lyric search returned invalid data: {error}"))?;
+    Ok(response
+        .result
+        .and_then(|result| result.songs)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|song| !song.name.trim().is_empty() || !song.artists.is_empty())
+        .map(|song| LyricsSearchResult {
+            provider: ExternalLyricsProvider::Netease,
+            id: song.id.to_string(),
+            track_name: song.name,
+            artist_name: song
+                .artists
+                .into_iter()
+                .map(|artist| artist.name)
+                .filter(|name| !name.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(", "),
+            album_name: song.album.map(|album| album.name).unwrap_or_default(),
+            duration_seconds: song.duration.unwrap_or_default().div_ceil(1000) as u32,
+            synced_lyrics: None,
+            plain_lyrics: None,
+        })
+        .collect())
+}
+fn netease_fetch_lyrics(id: &str) -> Result<Option<String>, String> {
+    let mut url = reqwest::Url::parse("https://music.163.com/api/song/lyric")
+        .map_err(|error| error.to_string())?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs.append_pair("id", id);
+        pairs.append_pair("kv", "-1");
+        pairs.append_pair("lv", "-1");
+        pairs.append_pair("tv", "-1");
+    }
+    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let body = fetch_text(&client, url, "NetEase lyric lookup")?;
+    let response = serde_json::from_str::<NeteaseLyricsResponse>(&body)
+        .map_err(|error| format!("NetEase lyric lookup returned invalid data: {error}"))?;
+    Ok(response
+        .lrc
+        .and_then(|body| body.lyric)
+        .filter(|lyrics| !lyrics.trim().is_empty()))
+}
+fn genius_search(artist_name: &str, track_name: &str) -> Result<Vec<LyricsSearchResult>, String> {
+    let query = [artist_name.trim(), track_name.trim()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut url = reqwest::Url::parse("https://genius.com/api/search/song")
+        .map_err(|error| error.to_string())?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs.append_pair("q", &query);
+        pairs.append_pair("per_page", "5");
+    }
+    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let body = fetch_text(&client, url, "Genius lyric search")?;
+    parse_genius_search_body(&body)
+}
+pub(in crate::controller) fn parse_genius_search_body(
+    body: &str,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    let response = serde_json::from_str::<GeniusSearchResponse>(body)
+        .map_err(|error| format!("Genius lyric search returned invalid data: {error}"))?;
+    let mut results = Vec::new();
+    for section in response
+        .response
+        .and_then(|body| body.sections)
+        .unwrap_or_default()
+    {
+        for hit in section.hits.unwrap_or_default() {
+            if hit.result.url.trim().is_empty() {
+                continue;
+            }
+            let track_name = if hit.result.full_title.trim().is_empty() {
+                hit.result.title
+            } else {
+                hit.result.full_title
+            };
+            results.push(LyricsSearchResult {
+                provider: ExternalLyricsProvider::Genius,
+                id: hit.result.url,
+                track_name,
+                artist_name: hit.result.artist_names,
+                album_name: String::new(),
+                duration_seconds: 0,
+                synced_lyrics: None,
+                plain_lyrics: None,
+            });
+        }
+    }
+    Ok(results)
+}
+fn genius_fetch_lyrics(url: &str) -> Result<Option<String>, String> {
+    let url = reqwest::Url::parse(url).map_err(|error| error.to_string())?;
+    let client = external_lyrics_client(LRCLIB_REQUEST_TIMEOUT)?;
+    let body = fetch_text(&client, url, "Genius lyric lookup")?;
+    Ok(extract_genius_lyrics(&body).filter(|lyrics| !lyrics.trim().is_empty()))
+}
+fn simpmusic_search(
+    artist_name: &str,
+    track_name: &str,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    let query = if !track_name.trim().is_empty() {
+        track_name.trim().to_string()
+    } else {
+        artist_name.trim().to_string()
+    };
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut url = reqwest::Url::parse("https://api-lyrics.simpmusic.org/v1/search")
+        .map_err(|error| error.to_string())?;
+    url.query_pairs_mut().append_pair("q", &query);
+    let client = external_lyrics_client(Duration::from_secs(5))?;
+    let body = fetch_text(&client, url, "SimpMusic lyric search")?;
+    parse_simpmusic_search_body(&body)
+}
+pub(in crate::controller) fn parse_simpmusic_search_body(
+    body: &str,
+) -> Result<Vec<LyricsSearchResult>, String> {
+    let response = serde_json::from_str::<SimpMusicSearchResponse>(body)
+        .map_err(|error| format!("SimpMusic lyric search returned invalid data: {error}"))?;
+    Ok(response
+        .data
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|song| !song.video_id.trim().is_empty())
+        .map(|song| LyricsSearchResult {
+            provider: ExternalLyricsProvider::SimpMusic,
+            id: song.video_id,
+            track_name: song.song_title,
+            artist_name: song.artist_name,
+            album_name: song.album_name.unwrap_or_default(),
+            duration_seconds: song.duration_seconds.unwrap_or_default(),
+            synced_lyrics: song.synced_lyrics,
+            plain_lyrics: song.plain_lyric,
+        })
+        .collect())
+}
+fn simpmusic_fetch_lyrics(id: &str) -> Result<Option<String>, String> {
+    let url = reqwest::Url::parse(&format!("https://api-lyrics.simpmusic.org/v1/{id}"))
+        .map_err(|error| error.to_string())?;
+    let client = external_lyrics_client(Duration::from_secs(5))?;
+    let body = fetch_text(&client, url, "SimpMusic lyric lookup")?;
+    parse_simpmusic_lyrics_body(&body)
+}
+fn parse_simpmusic_lyrics_body(body: &str) -> Result<Option<String>, String> {
+    if let Ok(song) = serde_json::from_str::<SimpMusicLyric>(body) {
+        return Ok(song
+            .synced_lyrics
+            .filter(|lyrics| !lyrics.trim().is_empty())
+            .or_else(|| song.plain_lyric.filter(|lyrics| !lyrics.trim().is_empty())));
+    }
+    let response = serde_json::from_str::<SimpMusicSearchResponse>(body)
+        .map_err(|error| format!("SimpMusic lyric lookup returned invalid data: {error}"))?;
+    Ok(response.data.and_then(|mut songs| {
+        songs.drain(..).find_map(|song| {
+            song.synced_lyrics
+                .filter(|lyrics| !lyrics.trim().is_empty())
+                .or_else(|| song.plain_lyric.filter(|lyrics| !lyrics.trim().is_empty()))
+        })
+    }))
+}
+fn fetch_text(
+    client: &reqwest::blocking::Client,
+    url: reqwest::Url,
+    context: &str,
+) -> Result<String, String> {
+    let response = client
+        .get(url)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("{context} failed: {error}"))?;
+    read_response_text_bounded(response, LRCLIB_RESPONSE_MAX_BYTES, context)
+        .map_err(|error| format!("{context} failed: {error}"))
 }
 fn lrclib_search_with_urls(
     urls: Vec<reqwest::Url>,
@@ -184,7 +609,7 @@ fn lrclib_search_with_urls(
                 debug!(results = batch.len(), "received LRCLIB lyric search batch");
                 had_success = true;
                 for result in batch {
-                    if seen.insert(result.id) {
+                    if seen.insert(result.id.clone()) {
                         results.push(result);
                     }
                 }
@@ -249,36 +674,26 @@ fn lrclib_search_priority_urls(
         Err(errors.join("; "))
     }
 }
-pub(in crate::controller) fn lrclib_best_lyrics(
-    entry: &QueueEntry,
+pub(in crate::controller) fn lyrics_from_search_result(
+    track_id: TrackId,
+    result: &LyricsSearchResult,
 ) -> Result<Option<Lyrics>, String> {
-    let mut errors = Vec::new();
-    if let Some(url) = lrclib_get_url(&entry.artist, &entry.title, entry.duration_seconds)? {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(LRCLIB_REQUEST_TIMEOUT)
-            .user_agent(format!("Rufin/{}", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|error| error.to_string())?;
-        match lrclib_fetch_get(&client, url) {
-            Ok(Some(result)) => {
-                if let Some(lyrics) =
-                    lyrics_from_lrclib_search_result(entry.track_id.clone(), &result)
-                {
-                    return Ok(Some(lyrics));
-                }
-            }
-            Ok(None) => {}
-            Err(error) => errors.push(error),
-        }
-    }
-
-    match lrclib_automatic_search(&entry.artist, &entry.title) {
-        Ok(results) => Ok(lyrics_from_lrclib_results(entry, results)),
-        Err(error) if errors.is_empty() => Err(error),
-        Err(error) => {
-            errors.push(error);
-            Err(errors.join("; "))
-        }
+    let content = match lyrics_result_content(result) {
+        Some(content) => Some(content.to_string()),
+        None => external_fetch_lyrics(result)?,
+    };
+    let Some(content) = content.filter(|lyrics| !lyrics.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let lyrics = lyrics_from_text_content(track_id, result.provider, &content);
+    Ok((!lyrics.lines.is_empty()).then_some(lyrics))
+}
+fn external_fetch_lyrics(result: &LyricsSearchResult) -> Result<Option<String>, String> {
+    match result.provider {
+        ExternalLyricsProvider::Lrclib => Ok(None),
+        ExternalLyricsProvider::Netease => netease_fetch_lyrics(&result.id),
+        ExternalLyricsProvider::Genius => genius_fetch_lyrics(&result.id),
+        ExternalLyricsProvider::SimpMusic => simpmusic_fetch_lyrics(&result.id),
     }
 }
 pub(in crate::controller) fn lrclib_get_url(
@@ -328,6 +743,7 @@ pub(in crate::controller) fn parse_lrclib_get_body(
         .map(LyricsSearchResult::from)
         .map_err(|error| format!("Lyric lookup returned invalid data: {error}"))
 }
+#[cfg(test)]
 pub(in crate::controller) fn lyrics_from_lrclib_results(
     entry: &QueueEntry,
     results: Vec<LyricsSearchResult>,
@@ -336,6 +752,7 @@ pub(in crate::controller) fn lyrics_from_lrclib_results(
         .into_iter()
         .find_map(|result| lyrics_from_lrclib_search_result(entry.track_id.clone(), &result))
 }
+#[cfg(test)]
 pub(in crate::controller) fn lyrics_from_lrclib_search_result(
     track_id: TrackId,
     result: &LyricsSearchResult,
@@ -476,6 +893,44 @@ pub(in crate::controller) fn order_lrclib_results(
             .then_with(|| a.artist_name.cmp(&b.artist_name))
     });
 }
+fn order_external_provider_results(
+    results: &mut [LyricsSearchResult],
+    artist_name: &str,
+    track_name: &str,
+) {
+    results.sort_by(|a, b| {
+        lrclib_match_score(a, artist_name, track_name)
+            .cmp(&lrclib_match_score(b, artist_name, track_name))
+            .then_with(|| result_has_synced_lyrics(b).cmp(&result_has_synced_lyrics(a)))
+            .then_with(|| result_has_plain_lyrics(b).cmp(&result_has_plain_lyrics(a)))
+            .then_with(|| a.track_name.cmp(&b.track_name))
+            .then_with(|| a.artist_name.cmp(&b.artist_name))
+    });
+}
+fn order_external_results(
+    results: &mut [LyricsSearchResult],
+    artist_name: &str,
+    track_name: &str,
+    providers: &[ExternalLyricsProvider],
+) {
+    results.sort_by(|a, b| {
+        lrclib_match_score(a, artist_name, track_name)
+            .cmp(&lrclib_match_score(b, artist_name, track_name))
+            .then_with(|| {
+                provider_rank(a.provider, providers).cmp(&provider_rank(b.provider, providers))
+            })
+            .then_with(|| result_has_synced_lyrics(b).cmp(&result_has_synced_lyrics(a)))
+            .then_with(|| result_has_plain_lyrics(b).cmp(&result_has_plain_lyrics(a)))
+            .then_with(|| a.track_name.cmp(&b.track_name))
+            .then_with(|| a.artist_name.cmp(&b.artist_name))
+    });
+}
+fn provider_rank(provider: ExternalLyricsProvider, providers: &[ExternalLyricsProvider]) -> usize {
+    providers
+        .iter()
+        .position(|candidate| *candidate == provider)
+        .unwrap_or(usize::MAX)
+}
 pub(in crate::controller) fn lrclib_match_score(
     result: &LyricsSearchResult,
     artist_name: &str,
@@ -520,13 +975,85 @@ pub(in crate::controller) fn normalize_search_text(value: &str) -> String {
     }
     normalized.split_whitespace().collect::<Vec<_>>().join(" ")
 }
+pub(in crate::controller) fn extract_genius_lyrics(body: &str) -> Option<String> {
+    let mut sections = Vec::new();
+    let mut remaining = body;
+    while let Some(marker_start) = remaining.find("data-lyrics-container=\"true\"") {
+        let after_marker = &remaining[marker_start..];
+        let tag_end = after_marker.find('>')? + marker_start;
+        let after_tag = &remaining[tag_end + 1..];
+        let section_end = after_tag.find("</div>").unwrap_or(after_tag.len());
+        let section = strip_html_tags(&after_tag[..section_end]);
+        if !section.trim().is_empty() {
+            sections.push(section);
+        }
+        remaining = &after_tag[section_end.min(after_tag.len())..];
+    }
+    if sections.is_empty()
+        && let Some(lyrics_start) = body.find("class=\"lyrics\"")
+    {
+        let after_marker = &body[lyrics_start..];
+        let tag_end = after_marker.find('>')? + lyrics_start;
+        let after_tag = &body[tag_end + 1..];
+        let section_end = after_tag.find("</div>").unwrap_or(after_tag.len());
+        let section = strip_html_tags(&after_tag[..section_end]);
+        if !section.trim().is_empty() {
+            sections.push(section);
+        }
+    }
+    let lyrics = sections.join("\n");
+    (!lyrics.trim().is_empty()).then(|| lyrics.trim().to_string())
+}
+fn strip_html_tags(value: &str) -> String {
+    let mut stripped = String::new();
+    let mut in_tag = false;
+    let mut tag = String::new();
+    for character in value.chars() {
+        match character {
+            '<' => {
+                in_tag = true;
+                tag.clear();
+            }
+            '>' if in_tag => {
+                in_tag = false;
+                let tag_name = tag.trim().to_ascii_lowercase();
+                if tag_name.starts_with("br") || tag_name.starts_with("/p") {
+                    stripped.push('\n');
+                }
+            }
+            _ if in_tag => tag.push(character),
+            _ => stripped.push(character),
+        }
+    }
+    decode_html_entities(&stripped)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+fn decode_html_entities(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+}
 pub(in crate::controller) fn lrclib_has_synced_lyrics(result: &LyricsSearchResult) -> bool {
+    result_has_synced_lyrics(result)
+}
+fn result_has_synced_lyrics(result: &LyricsSearchResult) -> bool {
     result
         .synced_lyrics
         .as_deref()
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
 }
 pub(in crate::controller) fn lrclib_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
+    result_has_plain_lyrics(result)
+}
+fn result_has_plain_lyrics(result: &LyricsSearchResult) -> bool {
     result
         .plain_lyrics
         .as_deref()
@@ -538,11 +1065,14 @@ pub(in crate::controller) fn save_lrclib_result(
     result: &LyricsSearchResult,
     output_path: PathBuf,
 ) -> Result<(PathBuf, Lyrics), String> {
-    let content = lyrics_result_content(result)
-        .ok_or_else(|| "Selected lyric result has no lyrics to save.".to_string())?;
+    let content = match lyrics_result_content(result) {
+        Some(content) => Some(content.to_string()),
+        None => external_fetch_lyrics(result)?,
+    }
+    .ok_or_else(|| "Selected lyric result has no lyrics to save.".to_string())?;
     let path = output_path;
-    fs::write(&path, content).map_err(|error| error.to_string())?;
-    let lyrics = lyrics_from_text(entry.track_id.clone(), result);
+    fs::write(&path, &content).map_err(|error| error.to_string())?;
+    let lyrics = lyrics_from_text_content(entry.track_id.clone(), result.provider, &content);
     debug!(server_id = %server_id, path = %path.display(), "saved lyric file");
     Ok((path, lyrics))
 }
@@ -582,6 +1112,7 @@ fn lyrics_from_sidecar_file(track_id: &TrackId, path: &Path) -> Option<Lyrics> {
     (!lines.is_empty()).then(|| Lyrics {
         track_id: track_id.clone(),
         source: rufin_provider::LyricsSource::Local,
+        external_provider: None,
         lines,
     })
 }

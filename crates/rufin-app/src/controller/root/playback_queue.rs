@@ -3,14 +3,24 @@ use std::fmt::Write as _;
 
 const JELLYFIN_DEVICE_ID_RANDOM_BYTES: usize = 16;
 
+#[cfg(test)]
 pub(in crate::controller) fn lyrics_from_text(
     track_id: TrackId,
     result: &LyricsSearchResult,
 ) -> Lyrics {
     let content = lyrics_result_content(result).unwrap_or_default();
+    lyrics_from_text_content(track_id, result.provider, content)
+}
+
+pub(in crate::controller) fn lyrics_from_text_content(
+    track_id: TrackId,
+    provider: ExternalLyricsProvider,
+    content: &str,
+) -> Lyrics {
     Lyrics {
         track_id,
         source: rufin_provider::LyricsSource::Remote,
+        external_provider: Some(provider),
         lines: content
             .lines()
             .filter_map(lyric_line_from_text)
@@ -87,20 +97,27 @@ pub(in crate::controller) fn lyrics_search_for_settings(
 pub(in crate::controller) fn cached_lyrics_allowed(
     lyrics: &Lyrics,
     search: JellyfinLyricsSearch,
+    external_providers: &[ExternalLyricsProvider],
 ) -> bool {
     match lyrics.source {
         rufin_provider::LyricsSource::Local => true,
         rufin_provider::LyricsSource::Server => true,
-        rufin_provider::LyricsSource::Remote => !matches!(search, JellyfinLyricsSearch::ServerOnly),
+        rufin_provider::LyricsSource::Remote => {
+            !matches!(search, JellyfinLyricsSearch::ServerOnly)
+                && lyrics
+                    .external_provider
+                    .is_none_or(|provider| external_providers.contains(&provider))
+        }
     }
 }
 
 pub(in crate::controller) fn cached_lyrics_allowed_for_track(
     lyrics: &Lyrics,
     search: JellyfinLyricsSearch,
+    external_providers: &[ExternalLyricsProvider],
     cue_track: bool,
 ) -> bool {
-    cached_lyrics_allowed(lyrics, search)
+    cached_lyrics_allowed(lyrics, search, external_providers)
         && !(cue_track && lyrics.source == rufin_provider::LyricsSource::Local)
 }
 

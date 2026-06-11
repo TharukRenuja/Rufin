@@ -206,7 +206,17 @@ impl Shell {
         track_id: &rufin_core::TrackId,
         results: &[LyricsSearchResult],
     ) {
+        let mut current_provider = None;
         for result in results {
+            if current_provider != Some(result.provider) {
+                current_provider = Some(result.provider);
+                let header = adw::ActionRow::builder()
+                    .title(result.provider.title())
+                    .activatable(false)
+                    .build();
+                header.add_css_class("property");
+                dialog.list.append(&header);
+            }
             let title = lyrics_result_title_markup(result);
             let subtitle = lyrics_result_subtitle_markup(result);
             let has_content = lyrics_search_result_has_content(result);

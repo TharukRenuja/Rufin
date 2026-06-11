@@ -162,6 +162,7 @@ pub(in crate::controller) fn lyrics_ignore_remote() {
     let remote_lyrics = Lyrics {
         track_id: track.id,
         source: LyricsSource::Remote,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "cached remote line".to_string(),
             start_millis: None,
@@ -191,6 +192,7 @@ pub(in crate::controller) fn lyrics_remove_cache() {
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "cached remote line".to_string(),
             start_millis: None,
@@ -231,6 +233,7 @@ pub(in crate::controller) fn lyrics_preserve_cache() {
     let server_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Server,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "server line".to_string(),
             start_millis: None,
@@ -267,6 +270,7 @@ pub(in crate::controller) fn lyrics_emit_current() {
     let lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Server,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "first line".to_string(),
             start_millis: Some(1_000),
@@ -335,7 +339,8 @@ pub(in crate::controller) fn lyrics_use_path() {
         origin: None,
     };
     let result = super::LyricsSearchResult {
-        id: 1,
+        provider: ExternalLyricsProvider::Lrclib,
+        id: "1".to_string(),
         track_name: "Track".to_string(),
         artist_name: "Artist".to_string(),
         album_name: "Album".to_string(),
@@ -498,6 +503,7 @@ pub(in crate::controller) fn lyrics_ignore_cached_local_for_cue_tracks() {
     let lyrics = Lyrics {
         track_id: TrackId::new("local:track:cue-one"),
         source: LyricsSource::Local,
+        external_provider: None,
         lines: vec![LyricLine {
             text: "line one".to_string(),
             start_millis: Some(1_000),
@@ -507,11 +513,38 @@ pub(in crate::controller) fn lyrics_ignore_cached_local_for_cue_tracks() {
     assert!(!super::cached_lyrics_allowed_for_track(
         &lyrics,
         JellyfinLyricsSearch::RemoteThenServer,
+        &rufin_core::default_external_lyrics_providers(),
         true,
     ));
     assert!(super::cached_lyrics_allowed_for_track(
         &lyrics,
         JellyfinLyricsSearch::RemoteThenServer,
+        &rufin_core::default_external_lyrics_providers(),
+        false,
+    ));
+}
+#[test]
+pub(in crate::controller) fn lyrics_cache_respects_external_provider_selection() {
+    let lyrics = Lyrics {
+        track_id: TrackId::new("track-one"),
+        source: LyricsSource::Remote,
+        external_provider: Some(ExternalLyricsProvider::Genius),
+        lines: vec![LyricLine {
+            text: "line one".to_string(),
+            start_millis: None,
+        }],
+    };
+
+    assert!(super::cached_lyrics_allowed_for_track(
+        &lyrics,
+        JellyfinLyricsSearch::RemoteThenServer,
+        &[ExternalLyricsProvider::Genius],
+        false,
+    ));
+    assert!(!super::cached_lyrics_allowed_for_track(
+        &lyrics,
+        JellyfinLyricsSearch::RemoteThenServer,
+        &[ExternalLyricsProvider::Lrclib],
         false,
     ));
 }
@@ -998,7 +1031,8 @@ pub(in crate::controller) fn lyrics_include_access() {
 #[test]
 pub(in crate::controller) fn lyrics_lrclib_timed() {
     let result = super::LyricsSearchResult {
-        id: 7,
+        provider: ExternalLyricsProvider::Lrclib,
+        id: "7".to_string(),
         track_name: "Song".to_string(),
         artist_name: "Artist".to_string(),
         album_name: "Album".to_string(),
@@ -1018,7 +1052,8 @@ pub(in crate::controller) fn lyrics_lrclib_timed() {
 #[test]
 pub(in crate::controller) fn lyrics_track_current() {
     let result = super::LyricsSearchResult {
-        id: 12,
+        provider: ExternalLyricsProvider::Lrclib,
+        id: "12".to_string(),
         track_name: "Example Track".to_string(),
         artist_name: "Example Artist".to_string(),
         album_name: "Example Album".to_string(),
@@ -1042,7 +1077,8 @@ pub(in crate::controller) fn preview_lrclib_result() {
     let server_id = snapshot.server.expect("active server").id;
     let track = snapshot.tracks[0].clone();
     let result = super::LyricsSearchResult {
-        id: 21,
+        provider: ExternalLyricsProvider::Lrclib,
+        id: "21".to_string(),
         track_name: "Example Track".to_string(),
         artist_name: "Example Artist".to_string(),
         album_name: "Example Album".to_string(),
@@ -1195,7 +1231,8 @@ pub(in crate::controller) fn lyrics_automatic_hits() {
     };
     let results = vec![
         super::LyricsSearchResult {
-            id: 1,
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "1".to_string(),
             track_name: "Lovesong".to_string(),
             artist_name: "The Cure".to_string(),
             album_name: "Disintegration".to_string(),
@@ -1204,7 +1241,8 @@ pub(in crate::controller) fn lyrics_automatic_hits() {
             plain_lyrics: None,
         },
         super::LyricsSearchResult {
-            id: 2,
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "2".to_string(),
             track_name: "Lovesong".to_string(),
             artist_name: "The Cure".to_string(),
             album_name: "Disintegration".to_string(),
@@ -1235,12 +1273,91 @@ pub(in crate::controller) fn lyrics_decode_result() {
         }]"#;
     let results = super::parse_lrclib_search_body(json).expect("parse lrclib response");
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, 9_386_114);
+    assert_eq!(results[0].provider, ExternalLyricsProvider::Lrclib);
+    assert_eq!(results[0].id, "9386114");
     assert_eq!(results[0].track_name, "feel my soul");
     assert_eq!(results[0].artist_name, "joy");
     assert_eq!(results[0].duration_seconds, 223);
     assert!(results[0].synced_lyrics.is_some());
     assert!(results[0].plain_lyrics.is_some());
+}
+#[test]
+pub(in crate::controller) fn lyrics_decode_netease_result() {
+    let json = r#"{
+        "result": {
+            "songs": [{
+                "id": 42,
+                "name": "Example Song",
+                "artists": [{"name": "Example Artist"}],
+                "album": {"name": "Example Album"},
+                "duration": 95000
+            }]
+        }
+    }"#;
+
+    let results = super::parse_netease_search_body(json).expect("parse netease response");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].provider, ExternalLyricsProvider::Netease);
+    assert_eq!(results[0].id, "42");
+    assert_eq!(results[0].track_name, "Example Song");
+    assert_eq!(results[0].artist_name, "Example Artist");
+    assert_eq!(results[0].album_name, "Example Album");
+}
+#[test]
+pub(in crate::controller) fn lyrics_decode_simpmusic_result() {
+    let json = r#"{
+        "success": true,
+        "data": [{
+            "videoId": "video-one",
+            "songTitle": "Example Song",
+            "artistName": "Example Artist",
+            "albumName": "Example Album",
+            "durationSeconds": 95,
+            "syncedLyrics": "[00:01.00]line"
+        }]
+    }"#;
+
+    let results = super::parse_simpmusic_search_body(json).expect("parse simpmusic response");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].provider, ExternalLyricsProvider::SimpMusic);
+    assert_eq!(results[0].id, "video-one");
+    assert!(results[0].synced_lyrics.is_some());
+}
+#[test]
+pub(in crate::controller) fn lyrics_decode_genius_result() {
+    let json = r#"{
+        "response": {
+            "sections": [{
+                "hits": [{
+                    "result": {
+                        "artist_names": "Example Artist",
+                        "full_title": "Example Song by Example Artist",
+                        "title": "Example Song",
+                        "url": "https://genius.example/song"
+                    }
+                }]
+            }]
+        }
+    }"#;
+
+    let results = super::parse_genius_search_body(json).expect("parse genius response");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].provider, ExternalLyricsProvider::Genius);
+    assert_eq!(results[0].id, "https://genius.example/song");
+}
+#[test]
+pub(in crate::controller) fn lyrics_extract_genius_html() {
+    let html = r#"
+        <div data-lyrics-container="true">First &amp; line<br/>Second line</div>
+        <div data-lyrics-container="true"><span>Third line</span></div>
+    "#;
+
+    let lyrics = super::extract_genius_lyrics(html).expect("lyrics");
+
+    assert_eq!(lyrics, "First & line\nSecond line\nThird line");
 }
 #[test]
 pub(in crate::controller) fn lyrics_track_field() {
@@ -1265,7 +1382,8 @@ pub(in crate::controller) fn lyrics_track_field() {
 pub(in crate::controller) fn lyrics_match_hit() {
     let mut results = vec![
         super::LyricsSearchResult {
-            id: 1,
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "1".to_string(),
             track_name: "Crippled Inside".to_string(),
             artist_name: "John Lennon".to_string(),
             album_name: "Imagine".to_string(),
@@ -1274,7 +1392,8 @@ pub(in crate::controller) fn lyrics_match_hit() {
             plain_lyrics: Some("line".to_string()),
         },
         super::LyricsSearchResult {
-            id: 2,
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "2".to_string(),
             track_name: "Imagine".to_string(),
             artist_name: "John Lennon".to_string(),
             album_name: "Lennon".to_string(),
@@ -1287,10 +1406,46 @@ pub(in crate::controller) fn lyrics_match_hit() {
     assert_eq!(results[0].track_name, "Imagine");
 }
 #[test]
+pub(in crate::controller) fn lyrics_filter_manual_query_results() {
+    let results = vec![
+        super::LyricsSearchResult {
+            provider: ExternalLyricsProvider::Netease,
+            id: "match".to_string(),
+            track_name: "MeeM".to_string(),
+            artist_name: "Daoko".to_string(),
+            album_name: String::new(),
+            duration_seconds: 0,
+            synced_lyrics: None,
+            plain_lyrics: None,
+        },
+        super::LyricsSearchResult {
+            provider: ExternalLyricsProvider::Netease,
+            id: "same-artist".to_string(),
+            track_name: "Allure of the Dark".to_string(),
+            artist_name: "Daoko".to_string(),
+            album_name: String::new(),
+            duration_seconds: 0,
+            synced_lyrics: None,
+            plain_lyrics: None,
+        },
+    ];
+    let mut exact_results = results.clone();
+
+    super::filter_external_results_for_query(&mut exact_results, "Daoko", "MeeM");
+
+    assert_eq!(exact_results.len(), 1);
+    assert_eq!(exact_results[0].id, "match");
+
+    let mut artist_results = results;
+    super::filter_external_results_for_query(&mut artist_results, "Daoko", "");
+    assert_eq!(artist_results.len(), 2);
+}
+#[test]
 pub(in crate::controller) fn lyrics_match_token() {
     let mut results = vec![
         super::LyricsSearchResult {
-            id: 1,
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "1".to_string(),
             track_name: "Long Title With Part Token".to_string(),
             artist_name: "Example Artist".to_string(),
             album_name: "Example Album".to_string(),
@@ -1299,7 +1454,8 @@ pub(in crate::controller) fn lyrics_match_token() {
             plain_lyrics: Some("line".to_string()),
         },
         super::LyricsSearchResult {
-            id: 2,
+            provider: ExternalLyricsProvider::Lrclib,
+            id: "2".to_string(),
             track_name: "Part Two".to_string(),
             artist_name: "Example Artist".to_string(),
             album_name: "Example Album".to_string(),
