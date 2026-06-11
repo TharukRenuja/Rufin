@@ -285,6 +285,7 @@ pub const EQUALIZER_BAND_COUNT: usize = 10;
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum PlaybackTransitionMode {
     #[default]
+    Default,
     Gapless,
     Crossfade,
 }
@@ -361,7 +362,7 @@ pub struct PlaybackSettings {
 impl Default for PlaybackSettings {
     fn default() -> Self {
         Self {
-            transition_mode: PlaybackTransitionMode::Gapless,
+            transition_mode: PlaybackTransitionMode::Default,
             crossfade_seconds: default_crossfade_seconds(),
             skip_same_album_crossfade: false,
             replay_gain: ReplayGainMode::Off,

@@ -47,7 +47,17 @@ struct WaveformWarmRequest {
     server_id: ServerId,
     track_id: TrackId,
     duration_seconds: u32,
+    source_format: Option<String>,
     playback_settings: PlaybackSettings,
+}
+
+struct WaveformGenerationRequest {
+    cache_key: String,
+    track_id: TrackId,
+    duration_seconds: u32,
+    source_format: Option<String>,
+    uri: String,
+    redacted_uri: String,
 }
 
 impl AppController {
@@ -88,6 +98,7 @@ impl AppController {
                 server_id,
                 track_id: entry.track_id,
                 duration_seconds: entry.duration_seconds,
+                source_format: entry.source_format,
                 playback_settings,
             };
             let Some((uri, redacted_uri)) =
@@ -98,11 +109,14 @@ impl AppController {
             generate_and_publish_waveform(
                 playback_snapshot,
                 events,
-                cache_key,
-                request.track_id,
-                request.duration_seconds,
-                uri,
-                redacted_uri,
+                WaveformGenerationRequest {
+                    cache_key,
+                    track_id: request.track_id,
+                    duration_seconds: request.duration_seconds,
+                    source_format: request.source_format,
+                    uri,
+                    redacted_uri,
+                },
             );
         });
     }
@@ -163,11 +177,14 @@ pub(in crate::controller) fn request_waveform_for_prepared_item(
         generate_and_publish_waveform(
             playback_snapshot,
             events,
-            cache_key,
-            entry.track_id,
-            entry.duration_seconds,
-            item.stream.uri().to_string(),
-            item.stream.redacted_uri().to_string(),
+            WaveformGenerationRequest {
+                cache_key,
+                track_id: entry.track_id,
+                duration_seconds: entry.duration_seconds,
+                source_format: entry.source_format,
+                uri: item.stream.uri().to_string(),
+                redacted_uri: item.stream.redacted_uri().to_string(),
+            },
         );
     });
 }
@@ -175,36 +192,40 @@ pub(in crate::controller) fn request_waveform_for_prepared_item(
 fn generate_and_publish_waveform(
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     events: Sender<ControllerEvent>,
-    cache_key: String,
-    track_id: TrackId,
-    duration_seconds: u32,
-    uri: String,
-    redacted_uri: String,
+    request: WaveformGenerationRequest,
 ) {
-    if publish_cached_waveform(&playback_snapshot, &events, &cache_key, duration_seconds) {
+    if publish_cached_waveform(
+        &playback_snapshot,
+        &events,
+        &request.cache_key,
+        request.duration_seconds,
+    ) {
         return;
     }
-    if !waveform_generation_source_is_supported(&uri) {
+    if !waveform_generation_source_and_format_is_supported(
+        &request.uri,
+        request.source_format.as_deref(),
+    ) {
         debug!(
-            track_id = %track_id,
+            track_id = %request.track_id,
             "skipped unsupported waveform generation source"
         );
         return;
     }
-    let peaks = match generate_waveform_peaks(&uri) {
+    let peaks = match generate_waveform_peaks(&request.uri) {
         Ok(peaks) => peaks,
         Err(error) => {
-            warn!(%error, track_id = %track_id, uri = %redacted_uri, "failed to generate waveform");
+            warn!(%error, track_id = %request.track_id, uri = %request.redacted_uri, "failed to generate waveform");
             return;
         }
     };
     let Some(peaks) = sanitize_waveform_peaks(peaks) else {
         return;
     };
-    if let Err(error) = save_cached_waveform(&cache_key, duration_seconds, &peaks) {
-        warn!(%error, track_id = %track_id, "failed to cache waveform");
+    if let Err(error) = save_cached_waveform(&request.cache_key, request.duration_seconds, &peaks) {
+        warn!(%error, track_id = %request.track_id, "failed to cache waveform");
     }
-    publish_waveform_peaks(&playback_snapshot, &events, &cache_key, peaks);
+    publish_waveform_peaks(&playback_snapshot, &events, &request.cache_key, peaks);
 }
 
 fn start_waveform_warm_worker(
@@ -266,11 +287,14 @@ fn warm_waveform_request(
     generate_and_publish_waveform(
         Arc::clone(playback_snapshot),
         events.clone(),
-        cache_key,
-        request.track_id,
-        request.duration_seconds,
-        uri,
-        redacted_uri,
+        WaveformGenerationRequest {
+            cache_key,
+            track_id: request.track_id,
+            duration_seconds: request.duration_seconds,
+            source_format: request.source_format,
+            uri,
+            redacted_uri,
+        },
     );
 }
 
@@ -321,6 +345,7 @@ fn waveform_warm_requests(
             server_id: snapshot.server_id.clone(),
             track_id: entry.track_id.clone(),
             duration_seconds: entry.duration_seconds,
+            source_format: entry.source_format.clone(),
             playback_settings: playback_settings.clone(),
         })
         .collect()
@@ -357,6 +382,29 @@ fn waveform_generation_source_is_remote(uri: &str) -> bool {
 
 fn waveform_generation_source_is_supported(uri: &str) -> bool {
     waveform_generation_source_is_local(uri) || waveform_generation_source_is_remote(uri)
+}
+
+fn waveform_generation_format_is_supported(source_format: Option<&str>) -> bool {
+    !source_format.is_some_and(is_dsd_waveform_format)
+}
+
+fn waveform_generation_source_and_format_is_supported(
+    uri: &str,
+    source_format: Option<&str>,
+) -> bool {
+    waveform_generation_source_is_supported(uri)
+        && waveform_generation_format_is_supported(source_format)
+}
+
+fn is_dsd_waveform_format(value: &str) -> bool {
+    let trimmed = value.trim().trim_start_matches('.').to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return false;
+    }
+    trimmed
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .any(|part| matches!(part, "dsf" | "dff" | "dsdiff") || part.starts_with("dsd"))
 }
 
 fn publish_cached_waveform(
@@ -577,7 +625,7 @@ mod tests {
                     favorite: false,
                     image_ref: None,
                     local_path: None,
-                    source_format: None,
+                    source_format: (number == 4).then(|| "flac".to_string()),
                     origin: None,
                 })
                 .collect(),
@@ -593,7 +641,22 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].server_id, server_id);
         assert_eq!(requests[0].track_id, TrackId::new("track-3"));
+        assert_eq!(requests[0].source_format, None);
         assert_eq!(requests[1].track_id, TrackId::new("track-4"));
+        assert_eq!(requests[1].source_format.as_deref(), Some("flac"));
+    }
+
+    #[test]
+    fn playback_waveform_rejects_dsd_formats() {
+        assert!(!waveform_generation_format_is_supported(Some("dsf")));
+        assert!(!waveform_generation_format_is_supported(Some(
+            "audio/x-dsf"
+        )));
+        assert!(!waveform_generation_format_is_supported(Some("DSD64")));
+        assert!(!waveform_generation_format_is_supported(Some(".dff")));
+        assert!(waveform_generation_format_is_supported(Some("flac")));
+        assert!(waveform_generation_format_is_supported(Some("audio/flac")));
+        assert!(waveform_generation_format_is_supported(None));
     }
 
     #[test]

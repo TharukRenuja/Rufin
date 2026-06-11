@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_BACKEND_DURATION_SECONDS: u32 = 12 * 60 * 60;
+
 impl AppController {
     pub fn play_pause(&self) {
         let state = self
@@ -280,6 +282,14 @@ impl AppController {
                     if !accepting_duration {
                         continue;
                     }
+                    let duration_is_plausible = self
+                        .playback_snapshot
+                        .lock()
+                        .map(|snapshot| backend_duration_is_plausible(&snapshot, seconds))
+                        .unwrap_or(false);
+                    if !duration_is_plausible {
+                        continue;
+                    }
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.duration_seconds = seconds;
                     });
@@ -339,4 +349,19 @@ fn timing_event_matches_current(snapshot: &PlaybackSnapshot, track_id: Option<&T
         .current
         .as_ref()
         .is_some_and(|entry| &entry.track_id == track_id)
+}
+
+fn backend_duration_is_plausible(snapshot: &PlaybackSnapshot, seconds: u32) -> bool {
+    if seconds == 0 || seconds > MAX_BACKEND_DURATION_SECONDS {
+        return false;
+    }
+    let Some(current) = snapshot.current.as_ref() else {
+        return true;
+    };
+    let known = current.duration_seconds;
+    if known == 0 {
+        return true;
+    }
+    let max_delta = known.max(60);
+    seconds <= known.saturating_add(max_delta)
 }
