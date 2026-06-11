@@ -224,6 +224,7 @@ fn relation_track_server() {
     let lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
+        external_provider: None,
         lines: vec![LyricLine {
             start_millis: Some(12_000),
             text: "hello".to_string(),
@@ -262,6 +263,7 @@ fn relation_preserve_lyrics() {
     let server_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Server,
+        external_provider: None,
         lines: vec![LyricLine {
             start_millis: None,
             text: "server line".to_string(),
@@ -286,6 +288,7 @@ fn relation_preserve_lyrics() {
     let remote_lyrics = Lyrics {
         track_id: track.id.clone(),
         source: LyricsSource::Remote,
+        external_provider: None,
         lines: vec![LyricLine {
             start_millis: None,
             text: "remote line".to_string(),

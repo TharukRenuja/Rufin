@@ -396,6 +396,49 @@ impl PlaybackSettings {
 fn default_equalizer_bands() -> Vec<f64> {
     vec![0.0; EQUALIZER_BAND_COUNT]
 }
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum ExternalLyricsProvider {
+    #[serde(rename = "lrclib")]
+    Lrclib,
+    #[serde(rename = "netease")]
+    Netease,
+    #[serde(rename = "genius")]
+    Genius,
+    #[serde(rename = "simpmusic")]
+    SimpMusic,
+}
+impl ExternalLyricsProvider {
+    pub fn all() -> [Self; 4] {
+        [Self::Lrclib, Self::Netease, Self::Genius, Self::SimpMusic]
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Lrclib => "LRCLIB",
+            Self::Netease => "NetEase",
+            Self::Genius => "Genius",
+            Self::SimpMusic => "SimpMusic",
+        }
+    }
+}
+pub fn default_external_lyrics_providers() -> Vec<ExternalLyricsProvider> {
+    vec![
+        ExternalLyricsProvider::Lrclib,
+        ExternalLyricsProvider::Netease,
+    ]
+}
+pub const LYRICS_PROVIDER_SETTINGS_VERSION: u8 = 1;
+fn sanitize_external_lyrics_providers(providers: &mut Vec<ExternalLyricsProvider>) {
+    let mut seen = Vec::new();
+    providers.retain(|provider| {
+        if seen.contains(provider) {
+            false
+        } else {
+            seen.push(*provider);
+            true
+        }
+    });
+}
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AppSettings {
     #[serde(default)]
@@ -410,6 +453,8 @@ pub struct AppSettings {
     pub private_mode: bool,
     pub notifications_enabled: bool,
     pub external_lyrics_enabled: bool,
+    #[serde(default = "default_external_lyrics_providers")]
+    pub external_lyrics_providers: Vec<ExternalLyricsProvider>,
     #[serde(default = "default_true")]
     pub external_metadata_enabled: bool,
     #[serde(default = "default_true")]
@@ -470,6 +515,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub library_lists: Vec<LibraryListSettingsEntry>,
     #[serde(default)]
+    pub lyrics_provider_settings_version: u8,
+    #[serde(default)]
     pub suppressed_auto_lyrics_track_ids: Vec<String>,
 }
 impl Default for AppSettings {
@@ -483,6 +530,7 @@ impl Default for AppSettings {
             private_mode: false,
             notifications_enabled: false,
             external_lyrics_enabled: true,
+            external_lyrics_providers: default_external_lyrics_providers(),
             external_metadata_enabled: true,
             prefer_server_lyrics: true,
             seekbar_waveform_enabled: true,
@@ -513,6 +561,7 @@ impl Default for AppSettings {
             queue_lyrics_layout_version: QUEUE_LYRICS_LAYOUT_VERSION,
             track_table: TrackTableSettings::default(),
             library_lists: default_library_list_settings(),
+            lyrics_provider_settings_version: LYRICS_PROVIDER_SETTINGS_VERSION,
             suppressed_auto_lyrics_track_ids: Vec::new(),
         }
     }
@@ -530,6 +579,11 @@ impl AppSettings {
         }
         self.track_table.migrate_defaults();
         self.playback.sanitize();
+        sanitize_external_lyrics_providers(&mut self.external_lyrics_providers);
+        if self.lyrics_provider_settings_version < LYRICS_PROVIDER_SETTINGS_VERSION {
+            self.suppressed_auto_lyrics_track_ids.clear();
+            self.lyrics_provider_settings_version = LYRICS_PROVIDER_SETTINGS_VERSION;
+        }
         self.auto_dj_refill_threshold = self
             .auto_dj_refill_threshold
             .clamp(MIN_AUTO_DJ_REFILL_THRESHOLD, MAX_AUTO_DJ_REFILL_THRESHOLD);

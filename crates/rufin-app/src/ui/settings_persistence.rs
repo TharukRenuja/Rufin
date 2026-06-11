@@ -3,9 +3,9 @@ use std::rc::Rc;
 use crate::i18n::{self, tr};
 use adw::prelude::*;
 use rufin_core::{
-    AppSettings, DiscordDisplayType, DiscordLinkType, HomeBlockKind, LibraryListKey,
-    LibraryListSettings, PlaybackSettings, Route, ScrobblingSettings, TrackTableSettings,
-    sanitized_window_size,
+    AppSettings, DiscordDisplayType, DiscordLinkType, ExternalLyricsProvider, HomeBlockKind,
+    LibraryListKey, LibraryListSettings, PlaybackSettings, Route, ScrobblingSettings,
+    TrackTableSettings, sanitized_window_size,
 };
 use tracing::warn;
 
@@ -155,6 +155,37 @@ impl Shell {
                 return false;
             }
             settings.prefer_server_lyrics = enabled;
+            true
+        }) else {
+            return;
+        };
+        if settings.external_lyrics_enabled
+            && current_playback_track_id(&self.state.player.borrow()).is_some()
+        {
+            *self.state.lyrics.borrow_mut() = None;
+            self.state.lyrics_auto_search_attempted.borrow_mut().clear();
+            self.render_lyrics_panel();
+            self.controller.refresh_lyrics_for_current();
+        }
+    }
+
+    pub(super) fn set_external_lyrics_provider_enabled(
+        self: &Rc<Self>,
+        provider: ExternalLyricsProvider,
+        enabled: bool,
+    ) {
+        let Some(settings) = self.update_app_settings("lyrics provider setting", |settings| {
+            let has_provider = settings.external_lyrics_providers.contains(&provider);
+            if has_provider == enabled {
+                return false;
+            }
+            if enabled {
+                settings.external_lyrics_providers.push(provider);
+            } else {
+                settings
+                    .external_lyrics_providers
+                    .retain(|candidate| *candidate != provider);
+            }
             true
         }) else {
             return;

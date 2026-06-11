@@ -1,10 +1,11 @@
 use super::{
     AppSettings, AudioscrobblerScrobbleSettings, DEFAULT_DISCORD_CLIENT_ID, DiscordDisplayType,
-    LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField, LibraryLayout, LibraryListKey,
-    LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
+    ExternalLyricsProvider, LEGACY_APPLICATION_DISPLAY_BYTES, LibraryField, LibraryLayout,
+    LibraryListKey, LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
     MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, MIN_AUTO_DJ_REFILL_THRESHOLD,
     MIN_CROSSFADE_SECONDS, RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings,
-    SidebarRouteItem, TrackSortKey, TrackTableColumn, sanitized_window_size,
+    SidebarRouteItem, TrackSortKey, TrackTableColumn, default_external_lyrics_providers,
+    sanitized_window_size,
 };
 #[test]
 fn settings_default_disabled() {
@@ -28,6 +29,10 @@ fn settings_default_disabled() {
     assert_eq!(settings.scrobbling.librefm.session_key, "");
     assert!(!settings.scrobbling.listenbrainz.enabled);
     assert_eq!(settings.scrobbling.listenbrainz.user_token, "");
+    assert_eq!(
+        settings.external_lyrics_providers,
+        default_external_lyrics_providers()
+    );
 }
 #[test]
 fn settings_clamp_range() {
@@ -161,7 +166,49 @@ fn settings_restore_without_window_geometry() {
     assert_eq!(restored.window_width, None);
     assert_eq!(restored.window_height, None);
     assert!(!restored.external_lyrics_enabled);
+    assert_eq!(
+        restored.external_lyrics_providers,
+        default_external_lyrics_providers()
+    );
     assert!(restored.type_to_search_enabled);
+}
+
+#[test]
+fn settings_sanitize_lyrics_providers() {
+    let mut settings = AppSettings {
+        external_lyrics_providers: vec![
+            ExternalLyricsProvider::Genius,
+            ExternalLyricsProvider::Netease,
+            ExternalLyricsProvider::Genius,
+            ExternalLyricsProvider::Lrclib,
+        ],
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+
+    assert_eq!(
+        settings.external_lyrics_providers,
+        vec![
+            ExternalLyricsProvider::Genius,
+            ExternalLyricsProvider::Netease,
+            ExternalLyricsProvider::Lrclib
+        ]
+    );
+}
+
+#[test]
+fn settings_reset_legacy_lyrics_suppression() {
+    let mut settings = AppSettings {
+        lyrics_provider_settings_version: 0,
+        suppressed_auto_lyrics_track_ids: vec!["track-one".to_string()],
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+
+    assert_eq!(settings.lyrics_provider_settings_version, 1);
+    assert!(settings.suppressed_auto_lyrics_track_ids.is_empty());
 }
 
 #[test]

@@ -661,6 +661,7 @@ impl MusicProvider for SubsonicProvider {
         Ok(Some(Lyrics {
             track_id: track_id.clone(),
             source: LyricsSource::Server,
+            external_provider: None,
             lines: value
                 .lines()
                 .filter(|line| !line.trim().is_empty())

@@ -36,6 +36,8 @@ impl AppController {
         use_cache: bool,
         search: JellyfinLyricsSearch,
     ) {
+        let settings = load_settings_from_store(&self.store);
+        let external_providers = settings.external_lyrics_providers.clone();
         let Some((server_id, entry, _position)) = self.current_queue_entry() else {
             debug!("lyrics request skipped because the queue has no current track");
             let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
@@ -57,10 +59,9 @@ impl AppController {
                 .with_store(|store| store.load_lyrics(&server_id, &entry.track_id))
                 .unwrap_or(None)
         });
-        if let Some(cached) = cached
-            .flatten()
-            .filter(|lyrics| cached_lyrics_allowed_for_track(lyrics, search, cue_track))
-        {
+        if let Some(cached) = cached.flatten().filter(|lyrics| {
+            cached_lyrics_allowed_for_track(lyrics, search, &external_providers, cue_track)
+        }) {
             debug!(track_id = %entry.track_id, "loaded lyrics from cache");
             let _sent = self
                 .events
@@ -80,23 +81,25 @@ impl AppController {
             debug!(track_id = %entry.track_id, allow_remote, "local provider has no server lyrics");
             let events = self.events.clone();
             let store = self.store.clone();
-            thread::spawn(
-                move || match allow_remote.then(|| lrclib_best_lyrics(&entry)) {
+            let local_external_providers = external_providers.clone();
+            thread::spawn(move || {
+                match allow_remote.then(|| external_best_lyrics(&entry, &local_external_providers))
+                {
                     Some(Ok(Some(lyrics))) => {
-                        debug!(track_id = %entry.track_id, "loaded lyrics from LRCLIB fallback");
+                        debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
                         let _saved =
                             store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
                         let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
                     }
                     Some(Err(error)) => {
-                        debug!(track_id = %entry.track_id, %error, "LRCLIB fallback failed");
+                        debug!(track_id = %entry.track_id, %error, "external lyric fallback failed");
                         let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
                     }
                     Some(Ok(None)) | None => {
                         let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
                     }
-                },
-            );
+                }
+            });
             return;
         }
         debug!(track_id = %entry.track_id, allow_remote, ?search, "requesting lyrics from provider");
@@ -130,16 +133,16 @@ impl AppController {
                 }
                 Ok(None) => {
                     debug!(track_id = %entry.track_id, allow_remote, "provider returned no lyrics");
-                    match allow_remote.then(|| lrclib_best_lyrics(&entry)) {
+                    match allow_remote.then(|| external_best_lyrics(&entry, &external_providers)) {
                         Some(Ok(Some(lyrics))) => {
-                            debug!(track_id = %entry.track_id, "loaded lyrics from LRCLIB fallback");
+                            debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
                             let _saved =
                                 store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
                             let _sent =
                                 events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
                         }
                         Some(Err(error)) => {
-                            debug!(track_id = %entry.track_id, %error, "LRCLIB fallback failed");
+                            debug!(track_id = %entry.track_id, %error, "external lyric fallback failed");
                             let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
                         }
                         Some(Ok(None)) | None => {
@@ -147,15 +150,17 @@ impl AppController {
                         }
                     }
                 }
-                Err(error) => match allow_remote.then(|| lrclib_best_lyrics(&entry)) {
+                Err(error) => match allow_remote
+                    .then(|| external_best_lyrics(&entry, &external_providers))
+                {
                     Some(Ok(Some(lyrics))) => {
-                        debug!(track_id = %entry.track_id, "loaded lyrics from LRCLIB fallback after provider error");
+                        debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider after provider error");
                         let _saved =
                             store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
                         let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
                     }
                     Some(Err(fallback_error)) => {
-                        debug!(track_id = %entry.track_id, %fallback_error, "LRCLIB fallback failed");
+                        debug!(track_id = %entry.track_id, %fallback_error, "external lyric fallback failed");
                         let _sent = events.send(ControllerEvent::Error(error));
                         let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
                     }
@@ -180,37 +185,50 @@ impl AppController {
             return;
         };
         let track_id = entry.track_id.clone();
+        let settings = load_settings_from_store(&self.store);
+        if settings.private_mode || !settings.external_lyrics_enabled {
+            let _sent = self.events.send(ControllerEvent::LyricsSearchResults {
+                track_id,
+                artist_name,
+                track_name,
+                results: Vec::new(),
+            });
+            return;
+        }
+        let external_providers = settings.external_lyrics_providers.clone();
         let events = self.events.clone();
-        thread::spawn(move || match lrclib_search(&artist_name, &track_name) {
-            Ok(results) => {
-                debug!(
-                    track_id = %track_id,
-                    artist_name = %artist_name,
-                    track_name = %track_name,
-                    results = results.len(),
-                    "completed manual LRCLIB lyric search"
-                );
-                let _sent = events.send(ControllerEvent::LyricsSearchResults {
-                    track_id,
-                    artist_name,
-                    track_name,
-                    results,
-                });
-            }
-            Err(error) => {
-                debug!(
-                    track_id = %track_id,
-                    artist_name = %artist_name,
-                    track_name = %track_name,
-                    %error,
-                    "manual LRCLIB lyric search failed"
-                );
-                let _sent = events.send(ControllerEvent::LyricsSearchFailed {
-                    track_id,
-                    artist_name,
-                    track_name,
-                    error,
-                });
+        thread::spawn(move || {
+            match external_lyrics_search(&external_providers, &artist_name, &track_name) {
+                Ok(results) => {
+                    debug!(
+                        track_id = %track_id,
+                        artist_name = %artist_name,
+                        track_name = %track_name,
+                        results = results.len(),
+                        "completed manual external lyric search"
+                    );
+                    let _sent = events.send(ControllerEvent::LyricsSearchResults {
+                        track_id,
+                        artist_name,
+                        track_name,
+                        results,
+                    });
+                }
+                Err(error) => {
+                    debug!(
+                        track_id = %track_id,
+                        artist_name = %artist_name,
+                        track_name = %track_name,
+                        %error,
+                        "manual external lyric search failed"
+                    );
+                    let _sent = events.send(ControllerEvent::LyricsSearchFailed {
+                        track_id,
+                        artist_name,
+                        track_name,
+                        error,
+                    });
+                }
             }
         });
     }
@@ -259,20 +277,23 @@ impl AppController {
             ));
             return;
         }
-        match lyrics_from_lrclib_search_result(entry.track_id, &result) {
-            Some(lyrics) => {
-                let _saved = self
-                    .store
-                    .with_store(|store| store.save_lyrics(&server_id, &lyrics));
-                let _sent = self
-                    .events
-                    .send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
-            }
-            None => {
-                let _sent = self.events.send(ControllerEvent::Error(
-                    "Selected lyric result has no lyrics to load.".to_string(),
-                ));
-            }
-        }
+        let store = self.store.clone();
+        let events = self.events.clone();
+        thread::spawn(
+            move || match lyrics_from_search_result(entry.track_id, &result) {
+                Ok(Some(lyrics)) => {
+                    let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
+                    let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                }
+                Ok(None) => {
+                    let _sent = events.send(ControllerEvent::Error(
+                        "Selected lyric result has no lyrics to load.".to_string(),
+                    ));
+                }
+                Err(error) => {
+                    let _sent = events.send(ControllerEvent::Error(error));
+                }
+            },
+        );
     }
 }

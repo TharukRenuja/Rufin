@@ -101,16 +101,16 @@ use right_panel::{
 };
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
-    DEFAULT_WINDOW_WIDTH, FolderPathItem, Genre, HomeBlockKind, HomeSection, HomeSectionKind,
-    ImageRef, LeftSidebarMode, LibraryField, LibraryLayout, LibraryListKey, LibraryListSettings,
-    MusicFolderId, PlaySourceDescriptor, PlaySourceKey, Playlist, PlaylistEntrySortDescriptor,
-    PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route, RouteStack, SearchKind,
-    ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition,
-    SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField,
-    SmartPlaylistRuleGroup, SmartPlaylistRuleNode, SmartPlaylistRuleOperator,
-    SmartPlaylistRuleValue, SmartPlaylistSortDescriptor, SmartPlaylistSortField, SourceOrder,
-    Track, TrackId, TrackSortDescriptor, TrackSortKey, TrackTableColumn, TrackTableSettings,
-    format_duration, sanitized_window_size,
+    DEFAULT_WINDOW_WIDTH, ExternalLyricsProvider, FolderPathItem, Genre, HomeBlockKind,
+    HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryField, LibraryLayout,
+    LibraryListKey, LibraryListSettings, MusicFolderId, PlaySourceDescriptor, PlaySourceKey,
+    Playlist, PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode,
+    Route, RouteStack, SearchKind, ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
+    SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
+    SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortDescriptor,
+    SmartPlaylistSortField, SourceOrder, Track, TrackId, TrackSortDescriptor, TrackSortKey,
+    TrackTableColumn, TrackTableSettings, format_duration, sanitized_window_size,
 };
 use rufin_playback::PlaybackState;
 use rufin_provider::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};

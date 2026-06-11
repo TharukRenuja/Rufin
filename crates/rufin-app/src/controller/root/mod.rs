@@ -11,10 +11,10 @@ use directories::ProjectDirs;
 #[cfg(test)]
 use rufin_core::ThemePreference;
 use rufin_core::{
-    Album, AlbumId, AppSettings, Artist, ArtistId, FolderPathItem, Genre, GenreId, HomeSection,
-    HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder, LocalManifestEntry,
-    LocalManifestScan, MusicFolder, MusicFolderId, PlaySourceDescriptor, PlaySourceKey,
-    PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
+    Album, AlbumId, AppSettings, Artist, ArtistId, ExternalLyricsProvider, FolderPathItem, Genre,
+    GenreId, HomeSection, HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder,
+    LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId, PlaySourceDescriptor,
+    PlaySourceKey, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
     QueueReplacement, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist,
     SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
     SourceOrder, Track, TrackId,
@@ -241,7 +241,8 @@ pub struct PlaybackSnapshot {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LyricsSearchResult {
-    pub id: u64,
+    pub provider: ExternalLyricsProvider,
+    pub id: String,
     pub track_name: String,
     pub artist_name: String,
     pub album_name: String,
