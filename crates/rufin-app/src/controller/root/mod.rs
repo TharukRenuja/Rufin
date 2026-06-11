@@ -36,9 +36,9 @@ use rufin_provider_local::{LOCAL_PROVIDER_ID, LocalProvider, LocalScanProgress, 
 use rufin_secrets::MemorySecretStore;
 use rufin_secrets::{CachedSecretStore, ConfigSecretStore, SecretKey, SecretStore};
 use rufin_store::{
-    CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, LibraryDelta, LibraryDeltaCollector,
-    LocalLibraryDelta, SavedServer, ServerLocalAccess, Store, StoreBackedSourceWindow, StoreError,
-    StoreResult, SyncState,
+    CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, EntityDelta, LibraryDelta,
+    LibraryDeltaCollector, LocalLibraryDelta, SavedServer, ServerLocalAccess, Store,
+    StoreBackedSourceWindow, StoreError, StoreResult, SyncState,
 };
 #[cfg(any(test, feature = "dev-tools"))]
 use rufin_test_support::{FakeProvider, FakeScale};

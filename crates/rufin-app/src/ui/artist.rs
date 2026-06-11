@@ -3,7 +3,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use rufin_core::{
     Album, AlbumId, Artist, ArtistId, ArtistTrackScope, PlaySourceDescriptor, PlaySourceKey, Route,
-    SourceOrder, Track,
+    SourceOrder, Track, normalize_release_types,
 };
 use rufin_store::CachedArtistDetail;
 
@@ -63,7 +63,7 @@ impl Shell {
         }
 
         if !albums.is_empty() {
-            content.append(&self.artist_album_section("Albums", &albums));
+            self.append_artist_release_sections(&content, &albums);
         }
 
         if !appears_on.is_empty() {
@@ -116,7 +116,7 @@ impl Shell {
         content.append(&summary);
 
         if !detail.albums.is_empty() {
-            content.append(&self.artist_album_section("Albums", &detail.albums));
+            self.append_artist_release_sections(&content, &detail.albums);
         }
         if !detail.appears_on.is_empty() {
             content.append(&self.artist_album_section("Appears On", &detail.appears_on));
@@ -390,6 +390,12 @@ impl Shell {
         ));
         section.upcast()
     }
+
+    fn append_artist_release_sections(self: &Rc<Self>, content: &gtk::Box, albums: &[Album]) {
+        for section in artist_release_sections(albums) {
+            content.append(&self.artist_album_section(section.title, &section.albums));
+        }
+    }
 }
 
 fn section_heading(title: &str) -> gtk::Widget {
@@ -407,6 +413,88 @@ fn artist_summary_text(album_count: usize, appears_on_count: usize, track_count:
         track_count,
         tr("tracks")
     )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArtistReleaseGroup {
+    Albums,
+    Eps,
+    Singles,
+    Collections,
+    Other,
+}
+
+struct ArtistReleaseSection {
+    title: &'static str,
+    albums: Vec<Album>,
+}
+
+fn artist_release_sections(albums: &[Album]) -> Vec<ArtistReleaseSection> {
+    let mut grouped = [
+        (ArtistReleaseGroup::Albums, Vec::new()),
+        (ArtistReleaseGroup::Eps, Vec::new()),
+        (ArtistReleaseGroup::Singles, Vec::new()),
+        (ArtistReleaseGroup::Collections, Vec::new()),
+        (ArtistReleaseGroup::Other, Vec::new()),
+    ];
+    for album in albums {
+        let group = artist_release_group(album);
+        if let Some((_, bucket)) = grouped
+            .iter_mut()
+            .find(|(candidate, _)| candidate == &group)
+        {
+            bucket.push(album.clone());
+        }
+    }
+    grouped
+        .into_iter()
+        .filter_map(|(group, albums)| {
+            (!albums.is_empty()).then_some(ArtistReleaseSection {
+                title: group.title(),
+                albums,
+            })
+        })
+        .collect()
+}
+
+fn artist_release_group(album: &Album) -> ArtistReleaseGroup {
+    if album.is_compilation == Some(true) {
+        return ArtistReleaseGroup::Collections;
+    }
+    let types = normalize_release_types(&album.release_types);
+    if types.is_empty() || types.iter().any(|value| value == "album") {
+        return ArtistReleaseGroup::Albums;
+    }
+    if types.iter().any(|value| {
+        matches!(
+            value.as_str(),
+            "compilation" | "compilations" | "collection" | "collections"
+        )
+    }) {
+        return ArtistReleaseGroup::Collections;
+    }
+    if types
+        .iter()
+        .any(|value| matches!(value.as_str(), "ep" | "e.p."))
+    {
+        return ArtistReleaseGroup::Eps;
+    }
+    if types.iter().any(|value| value == "single") {
+        return ArtistReleaseGroup::Singles;
+    }
+    ArtistReleaseGroup::Other
+}
+
+impl ArtistReleaseGroup {
+    fn title(self) -> &'static str {
+        match self {
+            ArtistReleaseGroup::Albums => "Albums",
+            ArtistReleaseGroup::Eps => "EPs",
+            ArtistReleaseGroup::Singles => "Singles",
+            ArtistReleaseGroup::Collections => "Collections",
+            ArtistReleaseGroup::Other => "Other",
+        }
+    }
 }
 
 fn favorite_artist_tracks(tracks: &[Track]) -> Vec<Track> {
@@ -490,6 +578,10 @@ fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track]) -> Option<
         color_seed: stable_seed(album_id.as_str()),
         image_ref: first.image_ref.clone(),
         genres: first.genres.clone(),
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
     })
 }
 
@@ -579,6 +671,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn artist_release_sections_group_album_types() {
+        let mut album = test_album("Artist", Some(ArtistId::fake(1)));
+        album.title = "Album".to_string();
+        let mut ep = test_album("Artist", Some(ArtistId::fake(1)));
+        ep.id = AlbumId::fake(2);
+        ep.title = "Short".to_string();
+        ep.release_types = vec!["EP".to_string()];
+        let mut single = test_album("Artist", Some(ArtistId::fake(1)));
+        single.id = AlbumId::fake(3);
+        single.title = "One Track".to_string();
+        single.release_types = vec!["single".to_string()];
+        let mut collection = test_album("Artist", Some(ArtistId::fake(1)));
+        collection.id = AlbumId::fake(4);
+        collection.title = "Archive".to_string();
+        collection.is_compilation = Some(true);
+        let mut other = test_album("Artist", Some(ArtistId::fake(1)));
+        other.id = AlbumId::fake(5);
+        other.title = "Live Set".to_string();
+        other.release_types = vec!["live".to_string()];
+
+        let sections = artist_release_sections(&[
+            ep.clone(),
+            other.clone(),
+            album.clone(),
+            collection.clone(),
+            single.clone(),
+        ]);
+        let labels = sections
+            .iter()
+            .map(|section| section.title)
+            .collect::<Vec<_>>();
+        let titles = sections
+            .iter()
+            .map(|section| {
+                section
+                    .albums
+                    .iter()
+                    .map(|album| album.title.as_str())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            vec!["Albums", "EPs", "Singles", "Collections", "Other"]
+        );
+        assert_eq!(
+            titles,
+            vec![
+                vec!["Album"],
+                vec!["Short"],
+                vec!["One Track"],
+                vec!["Archive"],
+                vec!["Live Set"]
+            ]
+        );
+    }
+
     fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Album {
         Album {
             id: AlbumId::fake(1),
@@ -599,6 +750,10 @@ mod tests {
             color_seed: 1,
             image_ref: None,
             genres: Vec::new(),
+            release_types: Vec::new(),
+            is_compilation: None,
+            musicbrainz_album_id: None,
+            musicbrainz_release_group_id: None,
         }
     }
 

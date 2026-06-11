@@ -3,7 +3,7 @@ use reqwest::{Client, StatusCode, Url, header};
 use rufin_core::{
     Album, AlbumId, Artist, ArtistId, Folder, FolderId, Genre, GenreId, HOME_SECTION_ITEM_LIMIT,
     HomeSection, HomeSectionKind, ImageRef, MusicFolder, MusicFolderId, Playlist, PlaylistId,
-    ServerId, ServerIdentity, Track, TrackId,
+    ServerId, ServerIdentity, Track, TrackId, normalize_release_types,
 };
 use rufin_provider::{
     AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,

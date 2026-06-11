@@ -181,6 +181,9 @@ pub(super) fn genres_from_item(genre: Option<String>, genres: Vec<GenreName>) ->
     }
     values
 }
+fn clean_optional(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
+}
 pub(super) fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) -> Album {
     let raw_id = raw_id_string(&album.id);
     Album {
@@ -214,6 +217,10 @@ pub(super) fn album_from_dto(provider: &SubsonicProvider, album: SubsonicAlbum) 
         color_seed: color_seed(&raw_id),
         image_ref: image_ref(provider, album.cover_art),
         genres: genres_from_item(album.genre, album.genres),
+        release_types: normalize_release_types(album.release_types),
+        is_compilation: album.is_compilation,
+        musicbrainz_album_id: clean_optional(album.musicbrainz_album_id),
+        musicbrainz_release_group_id: None,
     }
 }
 pub(super) fn track_from_dto(provider: &SubsonicProvider, song: SubsonicSong) -> Track {
@@ -539,6 +546,12 @@ pub(super) struct SubsonicAlbum {
     pub(super) genre: Option<String>,
     #[serde(default)]
     pub(super) genres: Vec<GenreName>,
+    #[serde(default, rename = "releaseTypes")]
+    pub(super) release_types: Vec<String>,
+    #[serde(default, rename = "isCompilation")]
+    pub(super) is_compilation: Option<bool>,
+    #[serde(default, rename = "musicBrainzId")]
+    pub(super) musicbrainz_album_id: Option<String>,
     #[serde(default)]
     pub(super) song: Vec<SubsonicSong>,
     #[serde(default)]

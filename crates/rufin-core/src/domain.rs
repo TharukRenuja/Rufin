@@ -129,6 +129,25 @@ pub struct Album {
     pub image_ref: Option<ImageRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub genres: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release_types: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_compilation: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_album_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_release_group_id: Option<String>,
+}
+
+pub fn normalize_release_types(types: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<String> {
+    let mut values = Vec::new();
+    for release_type in types {
+        let value = release_type.as_ref().trim().to_ascii_lowercase();
+        if !value.is_empty() && !values.iter().any(|existing| existing == &value) {
+            values.push(value);
+        }
+    }
+    values
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

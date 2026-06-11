@@ -327,9 +327,10 @@ impl Store {
                     server_id, album_id, title, artist, artist_id, year, release_date,
                     date_added, last_played, play_count, user_rating, track_count,
                     duration_seconds, favorite, color_seed, image_item_id, image_tag,
-                    sync_generation
+                    release_types_json, is_compilation, musicbrainz_album_id,
+                    musicbrainz_release_group_id, sync_generation
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
                 ON CONFLICT(server_id, album_id) DO UPDATE SET
                     title = excluded.title,
                     artist = excluded.artist,
@@ -346,6 +347,10 @@ impl Store {
                     color_seed = excluded.color_seed,
                     image_item_id = excluded.image_item_id,
                     image_tag = excluded.image_tag,
+                    release_types_json = excluded.release_types_json,
+                    is_compilation = excluded.is_compilation,
+                    musicbrainz_album_id = excluded.musicbrainz_album_id,
+                    musicbrainz_release_group_id = excluded.musicbrainz_release_group_id,
                     sync_generation = excluded.sync_generation
                 ",
             )?;
@@ -387,6 +392,7 @@ impl Store {
 
             for album in albums {
                 let (image_item_id, image_tag) = image_ref_parts(album.image_ref.as_ref());
+                let release_types_json = album_release_types_json(&album.release_types)?;
                 statement.execute(params![
                     server_id.as_str(),
                     album.id.as_str(),
@@ -405,6 +411,10 @@ impl Store {
                     i64::from(album.color_seed),
                     image_item_id,
                     image_tag,
+                    release_types_json,
+                    album.is_compilation.map(bool_to_i64),
+                    album.musicbrainz_album_id.as_deref(),
+                    album.musicbrainz_release_group_id.as_deref(),
                     generation,
                 ])?;
                 delete_genres.execute(params![server_id.as_str(), album.id.as_str()])?;
@@ -1145,7 +1155,9 @@ impl Store {
                 "
                 SELECT album_id, title, artist, artist_id, year, release_date, date_added,
                        last_played, play_count, user_rating, track_count, duration_seconds,
-                       favorite, color_seed, image_item_id, image_tag
+                       favorite, color_seed, image_item_id, image_tag,
+                       release_types_json, is_compilation, musicbrainz_album_id,
+                       musicbrainz_release_group_id
                 FROM albums
                 WHERE server_id = ?1 AND album_id = ?2
                 ",
@@ -1155,6 +1167,7 @@ impl Store {
             .optional()?;
         if let Some(album) = album.as_mut() {
             self.attach_album_genres(server_id, std::slice::from_mut(album))?;
+            self.attach_album_release_metadata(server_id, std::slice::from_mut(album))?;
             let credits = self.load_artist_links(
                 server_id,
                 "album_artist_links",
@@ -1363,6 +1376,10 @@ fn album_fields_changed(left: &Album, right: &Album) -> bool {
         || left.date_added != right.date_added
         || left.favorite != right.favorite
         || left.color_seed != right.color_seed
+        || left.release_types != right.release_types
+        || left.is_compilation != right.is_compilation
+        || left.musicbrainz_album_id != right.musicbrainz_album_id
+        || left.musicbrainz_release_group_id != right.musicbrainz_release_group_id
 }
 
 fn track_changed(left: &Track, right: &Track) -> bool {

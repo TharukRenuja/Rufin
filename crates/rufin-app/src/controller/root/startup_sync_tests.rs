@@ -2482,6 +2482,10 @@ fn local_album_with_image_ref(image_ref: ImageRef) -> Album {
         color_seed: 1,
         image_ref: Some(image_ref),
         genres: Vec::new(),
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
     }
 }
 fn local_track_with_image_ref(number: u32, album: &Album, image_ref: ImageRef) -> Track {

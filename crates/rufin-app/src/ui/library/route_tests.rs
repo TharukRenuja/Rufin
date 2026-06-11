@@ -593,6 +593,10 @@ fn test_album(id: u32, title: &str) -> Album {
         color_seed: id,
         image_ref: None,
         genres: Vec::new(),
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
     }
 }
 fn test_playlist_with_refs(

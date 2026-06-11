@@ -10,7 +10,26 @@ use rufin_core::{
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 13);
+    assert_eq!(store.schema_version().expect("schema version"), 15);
+    for column in [
+        "release_types_json",
+        "is_compilation",
+        "musicbrainz_album_id",
+        "musicbrainz_release_group_id",
+    ] {
+        assert!(
+            store
+                .table_has_column("albums", column)
+                .expect("column lookup"),
+            "albums.{column} should exist"
+        );
+    }
+    assert!(
+        store
+            .table_exists("album_release_type_lookup_misses")
+            .expect("table lookup"),
+        "album release type miss cache should exist"
+    );
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -121,7 +140,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 13);
+    assert_eq!(store.schema_version().expect("schema version"), 15);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -173,7 +192,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 13);
+    assert_eq!(store.schema_version().expect("schema version"), 15);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -199,7 +218,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 13);
+    assert_eq!(store.schema_version().expect("schema version"), 15);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -242,7 +261,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 13);
+    assert_eq!(store.schema_version().expect("schema version"), 15);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -268,6 +287,24 @@ fn schema_upgrade_servers() {
             .table_exists("local_file_manifest")
             .expect("table lookup")
     );
+    for column in [
+        "release_types_json",
+        "is_compilation",
+        "musicbrainz_album_id",
+        "musicbrainz_release_group_id",
+    ] {
+        assert!(
+            store
+                .table_has_column("albums", column)
+                .expect("column lookup"),
+            "albums.{column} should exist after migration"
+        );
+    }
+    assert!(
+        store
+            .table_exists("album_release_type_lookup_misses")
+            .expect("table lookup")
+    );
     drop(store);
     let _cleanup = fs::remove_file(&path);
     let _cleanup = fs::remove_file(sqlite_sidecar_path(&path, "-wal"));
@@ -288,12 +325,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 14)
+        .pragma_update(None, "user_version", 16)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 13);
+    assert_eq!(store.schema_version().expect("schema version"), 15);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -1296,7 +1333,11 @@ fn schema_trip_page() {
     let saved = saved_server();
     store.save_server(&saved).expect("save server");
     let generation = store.begin_sync(&saved.server.id).expect("begin sync");
-    let album = album(1);
+    let mut album = album(1);
+    album.release_types = vec!["album".to_string(), "ep".to_string()];
+    album.is_compilation = Some(false);
+    album.musicbrainz_album_id = Some("mb-album-one".to_string());
+    album.musicbrainz_release_group_id = Some("mb-group-one".to_string());
     let tracks = vec![track(1, &album), track(2, &album)];
     store
         .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
@@ -1318,6 +1359,80 @@ fn schema_trip_page() {
     assert_eq!(albums.items, vec![album.clone()]);
     assert_eq!(detail.0, album);
     assert_eq!(detail.1, tracks);
+}
+#[test]
+fn album_release_type_lookup_candidates_skip_cached_and_misses() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut release_group_album = album(1);
+    release_group_album.musicbrainz_album_id = Some("release-one".to_string());
+    release_group_album.musicbrainz_release_group_id = Some("group-one".to_string());
+    let mut release_album = album(2);
+    release_album.musicbrainz_album_id = Some("release-two".to_string());
+    let mut cached_album = album(3);
+    cached_album.musicbrainz_release_group_id = Some("group-three".to_string());
+    cached_album.release_types = vec!["album".to_string()];
+    let missing_album = album(4);
+    store
+        .upsert_albums(
+            &saved.server.id,
+            &[
+                release_group_album.clone(),
+                release_album.clone(),
+                cached_album,
+                missing_album,
+            ],
+            generation,
+        )
+        .expect("upsert albums");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let candidates = store
+        .load_album_release_type_lookup_candidates(&saved.server.id, 10)
+        .expect("load candidates");
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].album_id, release_group_album.id);
+    assert_eq!(candidates[0].lookup_key, "release-group:group-one");
+    assert_eq!(candidates[1].album_id, release_album.id);
+    assert_eq!(candidates[1].lookup_key, "release:release-two");
+
+    store
+        .save_album_release_type_lookup_miss(
+            &saved.server.id,
+            &release_group_album.id,
+            "release-group:group-one",
+            "not found",
+        )
+        .expect("save miss");
+    store
+        .update_album_release_metadata(
+            &saved.server.id,
+            &release_album.id,
+            &["single".to_string()],
+            Some(false),
+        )
+        .expect("update release metadata");
+
+    assert!(
+        store
+            .load_album_release_type_lookup_candidates(&saved.server.id, 10)
+            .expect("reload candidates")
+            .is_empty()
+    );
+    let albums = store
+        .load_albums(&saved.server.id, 0, 10)
+        .expect("load albums");
+    let updated_album = albums
+        .items
+        .iter()
+        .find(|album| album.id == release_album.id)
+        .expect("updated album");
+    assert_eq!(updated_album.release_types, vec!["single".to_string()]);
+    assert_eq!(updated_album.is_compilation, Some(false));
 }
 #[test]
 fn schema_trip_model() {

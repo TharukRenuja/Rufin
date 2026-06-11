@@ -140,7 +140,15 @@ pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Opt
     let status = status.trim();
     let server_check = status.starts_with("Checking ") && status.ends_with(" server…");
     let server_saved = status.starts_with("Server settings saved.");
-    if server_check || server_saved || status == "No changes to save." {
+    let sync_started = status.starts_with("Syncing ") && status.ends_with(" library…");
+    let sync_finished = status == LIBRARY_SYNC_COMPLETE_STATUS || status == "Cached library ready";
+    if server_check
+        || server_saved
+        || sync_started
+        || sync_finished
+        || status == "No changes to save."
+        || status == "Sync already running."
+    {
         Some(status)
     } else {
         None
@@ -722,6 +730,8 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 }
                 ControllerEvent::LibrarySyncStatus(status) => {
                     let last_error = status.last_error.clone();
+                    let toast_message = preferences_login_status_toast_message(&status.sync_status)
+                        .map(str::to_string);
                     let delta = status.delta.clone();
                     let applied = {
                         let mut library = shell.state.library.borrow_mut();
@@ -734,6 +744,8 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     if let Some(error) = last_error {
                         warn!(%error, "library sync update reported an error");
                         shell.show_preferences_toast(&error);
+                    } else if let Some(message) = toast_message {
+                        shell.show_preferences_toast(&message);
                     }
                     if shell.state.local_source_preparing.get() {
                         let syncing = {

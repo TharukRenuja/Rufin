@@ -58,6 +58,9 @@ async fn albums_map_subsonic_album_list() {
                         "duration": 1800,
                         "year": 2024,
                         "genre": "Ambient",
+                        "releaseTypes": ["album", "ep", "album"],
+                        "isCompilation": false,
+                        "musicBrainzId": "mb-album-one",
                         "coverArt": "cover-one",
                         "created": "2024-03-02T09:10:11Z",
                         "played": "2024-04-02T09:10:11Z",
@@ -95,6 +98,12 @@ async fn albums_map_subsonic_album_list() {
     assert_eq!(page.items[0].last_played.as_deref(), Some("2024-04-02"));
     assert_eq!(page.items[0].play_count, Some(12));
     assert_eq!(page.items[0].user_rating, Some(5));
+    assert_eq!(page.items[0].release_types, vec!["album", "ep"]);
+    assert_eq!(page.items[0].is_compilation, Some(false));
+    assert_eq!(
+        page.items[0].musicbrainz_album_id.as_deref(),
+        Some("mb-album-one")
+    );
     assert!(page.items[0].favorite);
 }
 #[tokio::test]

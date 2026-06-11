@@ -1,8 +1,12 @@
 use super::*;
+use rufin_store::AlbumReleaseTypeLookupCandidate;
 use std::future::Future;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const SYNC_PROGRESS_MIN_INTERVAL: Duration = Duration::from_secs(2);
+const RELEASE_TYPE_LOOKUP_LIMIT: usize = 500;
+static RELEASE_TYPE_LOOKUPS_IN_FLIGHT: OnceLock<Mutex<HashSet<ServerId>>> = OnceLock::new();
 
 pub(in crate::controller) fn start_sync_thread(context: SyncContext, saved: SavedServer) {
     start_sync_thread_inner(context, saved, false, false);
@@ -92,6 +96,7 @@ fn start_sync_thread_inner(
                     return;
                 }
                 refresh_queue_refs(&context, &saved);
+                start_album_release_type_lookup(&context, &saved);
                 covers::start_cover_prefetch(covers::ExternalCoverPrefetchRequest {
                     store: context.store.clone(),
                     runtime: Arc::clone(&context.runtime),
@@ -231,6 +236,132 @@ fn emit_sync_complete_snapshot(
             let _sent = events.send(ControllerEvent::Error(error));
         }
     }
+}
+
+fn start_album_release_type_lookup(context: &SyncContext, saved: &SavedServer) {
+    if saved.server.provider == "fake" {
+        return;
+    }
+    let settings = load_settings_from_store(&context.store);
+    if !external_metadata::enabled(&settings) {
+        return;
+    }
+    let server_id = saved.server.id.clone();
+    if !mark_release_type_lookup_in_flight(&server_id) {
+        return;
+    }
+
+    let store = context.store.clone();
+    let events = context.events.clone();
+    thread::spawn(move || {
+        let result = run_album_release_type_lookup(&store, &events, &server_id);
+        clear_release_type_lookup_in_flight(&server_id);
+        if let Err(error) = result {
+            warn!(%error, server_id = %server_id.as_str(), "failed to enrich album release types");
+        }
+    });
+}
+
+fn mark_release_type_lookup_in_flight(server_id: &ServerId) -> bool {
+    RELEASE_TYPE_LOOKUPS_IN_FLIGHT
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|mut running| running.insert(server_id.clone()))
+        .unwrap_or(false)
+}
+
+fn clear_release_type_lookup_in_flight(server_id: &ServerId) {
+    if let Ok(mut running) = RELEASE_TYPE_LOOKUPS_IN_FLIGHT
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        running.remove(server_id);
+    }
+}
+
+fn run_album_release_type_lookup(
+    store: &StoreHandle,
+    events: &Sender<ControllerEvent>,
+    server_id: &ServerId,
+) -> Result<(), String> {
+    let candidates = store.with_store(|store| {
+        store.load_album_release_type_lookup_candidates(server_id, RELEASE_TYPE_LOOKUP_LIMIT)
+    })?;
+    if candidates.is_empty() {
+        return Ok(());
+    }
+
+    info!(
+        server_id = %server_id.as_str(),
+        candidate_count = candidates.len(),
+        "started album release type enrichment"
+    );
+    let mut updated = Vec::new();
+    let mut misses = 0_usize;
+    let mut errors = 0_usize;
+    for candidate in &candidates {
+        if !sync_target_is_current(store, server_id) {
+            break;
+        }
+        match lookup_album_release_type(candidate) {
+            Ok(metadata) => {
+                store.with_store(|store| {
+                    store.update_album_release_metadata(
+                        server_id,
+                        &candidate.album_id,
+                        &metadata.release_types,
+                        metadata.is_compilation,
+                    )
+                })?;
+                updated.push(candidate.album_id.clone());
+            }
+            Err(error) if external_metadata::is_expected_release_type_lookup_miss(&error) => {
+                misses += 1;
+                store.with_store(|store| {
+                    store.save_album_release_type_lookup_miss(
+                        server_id,
+                        &candidate.album_id,
+                        &candidate.lookup_key,
+                        &error,
+                    )
+                })?;
+            }
+            Err(error) => {
+                errors += 1;
+                warn!(
+                    %error,
+                    album_id = %candidate.album_id.as_str(),
+                    "failed to look up album release type"
+                );
+            }
+        }
+    }
+    if !updated.is_empty() {
+        let _sent = events.send(ControllerEvent::LibraryDelta(Box::new(LibraryDelta {
+            albums: EntityDelta {
+                fields: updated.clone(),
+                ..EntityDelta::default()
+            },
+            ..LibraryDelta::default()
+        })));
+    }
+    info!(
+        server_id = %server_id.as_str(),
+        updated = updated.len(),
+        misses,
+        errors,
+        "completed album release type enrichment"
+    );
+    Ok(())
+}
+
+fn lookup_album_release_type(
+    candidate: &AlbumReleaseTypeLookupCandidate,
+) -> Result<external_metadata::AlbumReleaseMetadata, String> {
+    external_metadata::fetch_album_release_metadata(
+        candidate.musicbrainz_release_group_id.as_deref(),
+        candidate.musicbrainz_album_id.as_deref(),
+    )
 }
 
 pub(in crate::controller) fn refresh_queue_refs(context: &SyncContext, saved: &SavedServer) {
