@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use super::sidebar::*;
 use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
 pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 3;
-pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 4;
+pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 5;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 5;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
@@ -612,7 +612,7 @@ impl LibraryListKey {
 
     pub fn supports_layout(self, layout: LibraryLayout) -> bool {
         match layout {
-            LibraryLayout::Detail => matches!(self, Self::Albums | Self::ArtistAlbums),
+            LibraryLayout::Detail => matches!(self, Self::Albums),
             LibraryLayout::Row | LibraryLayout::Grid => true,
         }
     }
@@ -728,7 +728,7 @@ impl LibraryListSettings {
         sanitize_optional_fields(&mut self.grid_fields, available_grid_fields(key));
         sanitize_required_fields(
             &mut self.detail_track_fields,
-            available_row_fields(LibraryListKey::Tracks),
+            available_detail_track_fields(),
             default_detail_track_fields(),
         );
         ensure_usable_row_field(&mut self.detail_track_fields, default_detail_track_fields());
@@ -764,6 +764,16 @@ impl LibraryListSettings {
             && self.sort_key == LibraryField::Title
         {
             self.sort_key = default_sort_key(key);
+        }
+
+        if key.supports_layout(LibraryLayout::Detail)
+            && self.layout_version < 5
+            && self
+                .detail_track_fields
+                .iter()
+                .any(|field| !available_detail_track_fields().contains(field))
+        {
+            self.detail_track_fields = default_detail_track_fields();
         }
     }
 }

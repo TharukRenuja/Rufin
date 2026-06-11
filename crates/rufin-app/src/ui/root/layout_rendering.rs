@@ -456,6 +456,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
         table.append_column(column);
     }
     install_column_view_width_fit(
+        shell,
         &table,
         columns,
         route_column_view_initial_width_with_inset(shell, content_inset),
@@ -943,6 +944,282 @@ pub(in crate::ui) fn detail_showcase_frame(header: gtk::Widget) -> gtk::Widget {
     header.set_halign(gtk::Align::Fill);
     header
 }
+
+pub(in crate::ui) fn fit_detail_text(label: &gtk::Label, text: &str) {
+    let count = text.chars().count();
+    if count >= 42 {
+        label.add_css_class("detail-text-very-long");
+    } else if count >= 24 {
+        label.add_css_class("detail-text-long");
+    }
+}
+
+pub(in crate::ui) fn detail_text_clip(child: gtk::Widget, height: i32) -> gtk::Widget {
+    let height = height.max(1);
+    let clip = gtk::ScrolledWindow::new();
+    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+    clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_min_content_width(0);
+    clip.set_min_content_height(height);
+    clip.set_max_content_height(height);
+    clip.set_height_request(height);
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(false);
+    clip.set_hexpand(true);
+    clip.set_halign(gtk::Align::Fill);
+    clip.set_child(Some(&child));
+    clip.upcast()
+}
+
+pub(in crate::ui) fn detail_showcase_frame_with_links(
+    header: gtk::Widget,
+    links: Option<gtk::Widget>,
+) -> gtk::Widget {
+    let header = detail_showcase_frame(header);
+    let Some(links) = links else {
+        return header;
+    };
+
+    let overlay = gtk::Overlay::new();
+    overlay.set_hexpand(true);
+    overlay.set_halign(gtk::Align::Fill);
+    overlay.set_child(Some(&header));
+    links.set_halign(gtk::Align::End);
+    links.set_valign(gtk::Align::End);
+    links.set_margin_end(16);
+    links.set_margin_bottom(14);
+    overlay.add_overlay(&links);
+    overlay.upcast()
+}
+
+pub(in crate::ui) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> Option<gtk::Widget> {
+    let settings = shell.state.settings.borrow();
+    let link_settings = &settings.external_site_links;
+    if settings.private_mode || !link_settings.enabled {
+        return None;
+    }
+
+    let row = detail_external_link_row();
+    if link_settings.lastfm
+        && let Some(url) = lastfm_album_url(&album.artist, &album.title)
+    {
+        row.append(&detail_external_link_button(
+            shell,
+            "io.github.screwys.Rufin.external.lastfm",
+            "Open on Last.fm",
+            url,
+        ));
+    }
+    if link_settings.musicbrainz
+        && let Some(url) = musicbrainz_album_url(album)
+    {
+        row.append(&detail_external_link_button(
+            shell,
+            "io.github.screwys.Rufin.external.musicbrainz",
+            "Open on MusicBrainz",
+            url,
+        ));
+    }
+    if link_settings.server
+        && let Some(link) = server_entity_url(shell, album.id.as_str())
+    {
+        row.append(&detail_external_link_button(
+            shell,
+            link.icon_name,
+            link.label,
+            link.url,
+        ));
+    }
+
+    row.first_child().is_some().then(|| row.upcast())
+}
+
+pub(in crate::ui) fn artist_external_links(
+    shell: &Rc<Shell>,
+    artist: &Artist,
+    tracks: &[Track],
+) -> Option<gtk::Widget> {
+    let settings = shell.state.settings.borrow();
+    let link_settings = &settings.external_site_links;
+    if settings.private_mode || !link_settings.enabled {
+        return None;
+    }
+
+    let row = detail_external_link_row();
+    if link_settings.lastfm
+        && let Some(url) = lastfm_artist_url(&artist.name)
+    {
+        row.append(&detail_external_link_button(
+            shell,
+            "io.github.screwys.Rufin.external.lastfm",
+            "Open on Last.fm",
+            url,
+        ));
+    }
+    if link_settings.musicbrainz
+        && let Some(url) = musicbrainz_artist_url(artist, tracks)
+    {
+        row.append(&detail_external_link_button(
+            shell,
+            "io.github.screwys.Rufin.external.musicbrainz",
+            "Open on MusicBrainz",
+            url,
+        ));
+    }
+    if link_settings.server
+        && let Some(link) = server_entity_url(shell, artist.id.as_str())
+    {
+        row.append(&detail_external_link_button(
+            shell,
+            link.icon_name,
+            link.label,
+            link.url,
+        ));
+    }
+
+    row.first_child().is_some().then(|| row.upcast())
+}
+
+fn detail_external_link_row() -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    row.add_css_class("detail-external-link-row");
+    row
+}
+
+fn detail_external_link_button(
+    shell: &Rc<Shell>,
+    icon_name: &str,
+    label: &str,
+    url: String,
+) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("icon-button");
+    button.add_css_class("flat");
+    button.add_css_class("circular");
+    button.add_css_class("detail-external-link-button");
+    button.set_tooltip_text(Some(&tr(label)));
+    let image = gtk::Image::from_icon_name(icon_name);
+    image.set_pixel_size(18);
+    button.set_child(Some(&image));
+    let window = shell.window.clone();
+    button.connect_clicked(move |_| {
+        let launcher = gtk::UriLauncher::new(&url);
+        let window = window.clone();
+        gtk::glib::spawn_future_local(async move {
+            if let Err(error) = launcher.launch_future(Some(&window)).await {
+                warn!(%error, "failed to open external detail link");
+            }
+        });
+    });
+    button
+}
+
+fn lastfm_album_url(artist: &str, album: &str) -> Option<String> {
+    let artist = clean_url_label(artist)?;
+    let album = clean_url_label(album)?;
+    Some(format!(
+        "https://www.last.fm/music/{}/{}",
+        percent_encode_path_segment(artist),
+        percent_encode_path_segment(album)
+    ))
+}
+
+fn lastfm_artist_url(artist: &str) -> Option<String> {
+    let artist = clean_url_label(artist)?;
+    Some(format!(
+        "https://www.last.fm/music/{}",
+        percent_encode_path_segment(artist)
+    ))
+}
+
+fn musicbrainz_album_url(album: &Album) -> Option<String> {
+    if let Some(group_id) = album
+        .musicbrainz_release_group_id
+        .as_deref()
+        .and_then(clean_url_label)
+    {
+        return Some(format!("https://musicbrainz.org/release-group/{group_id}"));
+    }
+    let release_id = album
+        .musicbrainz_album_id
+        .as_deref()
+        .and_then(clean_url_label)?;
+    Some(format!("https://musicbrainz.org/release/{release_id}"))
+}
+
+fn musicbrainz_artist_url(artist: &Artist, tracks: &[Track]) -> Option<String> {
+    let artist_id = tracks
+        .iter()
+        .flat_map(|track| {
+            track
+                .artist_credits
+                .iter()
+                .chain(track.album_artist_credits.iter())
+        })
+        .find(|credit| {
+            credit.id == artist.id || credit.name.eq_ignore_ascii_case(artist.name.as_str())
+        })
+        .and_then(|credit| credit.musicbrainz_artist_id.as_deref())
+        .and_then(clean_url_label)?;
+    Some(format!("https://musicbrainz.org/artist/{artist_id}"))
+}
+
+struct DetailExternalLink {
+    label: &'static str,
+    icon_name: &'static str,
+    url: String,
+}
+
+fn server_entity_url(shell: &Shell, entity_id: &str) -> Option<DetailExternalLink> {
+    let library = shell.state.library.borrow();
+    let server = library.server.as_ref()?;
+    if server.provider != "jellyfin" {
+        return None;
+    }
+    let item_id = entity_id
+        .strip_prefix("jellyfin:album:")
+        .or_else(|| entity_id.strip_prefix("jellyfin:artist:"))?;
+    let base_url = server.base_url.trim().trim_end_matches('/');
+    if base_url.is_empty() || item_id.trim().is_empty() {
+        return None;
+    }
+    Some(DetailExternalLink {
+        label: "Open on Jellyfin",
+        icon_name: server_external_icon_name(&server.provider),
+        url: format!("{base_url}/web/index.html#!/details?id={item_id}"),
+    })
+}
+
+fn server_external_icon_name(provider: &str) -> &'static str {
+    match provider {
+        "jellyfin" => "io.github.screwys.Rufin.provider.jellyfin",
+        "navidrome" => "io.github.screwys.Rufin.provider.navidrome",
+        "subsonic" | "opensubsonic" => "io.github.screwys.Rufin.provider.opensubsonic",
+        _ => "network-server-symbolic",
+    }
+}
+
+fn clean_url_label(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn percent_encode_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(*byte as char);
+            }
+            _ => {
+                encoded.push('%');
+                encoded.push_str(&format!("{byte:02X}"));
+            }
+        }
+    }
+    encoded
+}
+
 pub(in crate::ui) fn detail_link_button(icon_name: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("flat");
@@ -965,4 +1242,60 @@ pub(in crate::ui) fn install_css() {
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+}
+
+#[cfg(test)]
+mod external_link_tests {
+    use super::*;
+
+    #[test]
+    fn lastfm_urls_escape_path_segments() {
+        assert_eq!(
+            lastfm_album_url("Test Artist", "A/B").as_deref(),
+            Some("https://www.last.fm/music/Test%20Artist/A%2FB")
+        );
+        assert_eq!(
+            lastfm_artist_url("青葉市子").as_deref(),
+            Some("https://www.last.fm/music/%E9%9D%92%E8%91%89%E5%B8%82%E5%AD%90")
+        );
+    }
+
+    #[test]
+    fn musicbrainz_album_url_prefers_release_group() {
+        let mut album = Album {
+            id: AlbumId::fake(1),
+            title: "Album".to_string(),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            album_artist_credits: Vec::new(),
+            artist_credits: Vec::new(),
+            year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            track_count: 1,
+            duration_seconds: 60,
+            favorite: false,
+            color_seed: 1,
+            image_ref: None,
+            genres: Vec::new(),
+            release_types: Vec::new(),
+            is_compilation: None,
+            musicbrainz_album_id: Some("release-one".to_string()),
+            musicbrainz_release_group_id: Some("group-one".to_string()),
+        };
+
+        assert_eq!(
+            musicbrainz_album_url(&album).as_deref(),
+            Some("https://musicbrainz.org/release-group/group-one")
+        );
+
+        album.musicbrainz_release_group_id = None;
+        assert_eq!(
+            musicbrainz_album_url(&album).as_deref(),
+            Some("https://musicbrainz.org/release/release-one")
+        );
+    }
 }

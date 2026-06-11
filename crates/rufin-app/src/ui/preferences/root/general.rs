@@ -1,4 +1,9 @@
 use super::*;
+use crate::ui::{
+    connect_equalizer_scale_commit, equalizer_band_title, equalizer_default_preset_bands,
+    equalizer_preset_bands, equalizer_preset_name_at, equalizer_preset_names,
+    equalizer_preset_position, equalizer_selected_preset,
+};
 
 pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
@@ -632,9 +637,54 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     equalizer_group.add(&equalizer_row);
 
+    let preset_names = equalizer_preset_names();
+    let preset_titles = preset_names.iter().map(|name| tr(name)).collect::<Vec<_>>();
+    let preset_refs = preset_titles.iter().map(String::as_str).collect::<Vec<_>>();
+    let preset_options = gtk::StringList::new(&preset_refs);
+    let selected_preset =
+        equalizer_preset_position(&equalizer_selected_preset(&settings.equalizer));
+    let preset_row = adw::ComboRow::builder()
+        .title(tr("Preset"))
+        .model(&preset_options)
+        .selected(selected_preset)
+        .build();
+    let preset_shell = Rc::clone(shell);
+    let preset_switch = equalizer_row.clone();
+    let preset_reset_guard = Rc::clone(&resetting_equalizer);
+    equalizer_group.add(&preset_row);
+
     let band_scales = Rc::new(std::cell::RefCell::new(Vec::with_capacity(
         EQUALIZER_BAND_COUNT,
     )));
+    let pending_equalizer_update = Rc::new(RefCell::new(None::<gtk::glib::SourceId>));
+    let equalizer_drag_active = Rc::new(Cell::new(false));
+    let equalizer_commit: Rc<dyn Fn()> = {
+        let band_shell = Rc::clone(shell);
+        let update_preset = preset_row.clone();
+        let update_guard = Rc::clone(&resetting_equalizer);
+        let update_scales = Rc::clone(&band_scales);
+        Rc::new(move || {
+            let bands = update_scales
+                .borrow()
+                .iter()
+                .map(gtk::Scale::value)
+                .collect::<Vec<_>>();
+            band_shell.update_playback_settings(|settings| {
+                if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
+                    settings.equalizer.sanitize();
+                }
+                settings.equalizer.bands = bands.clone();
+                let preset = equalizer_selected_preset(&settings.equalizer);
+                settings.equalizer.selected_preset = preset.clone();
+                settings.equalizer.preset_overrides.insert(preset, bands);
+            });
+            update_guard.set(true);
+            update_preset.set_selected(equalizer_preset_position(&equalizer_selected_preset(
+                &band_shell.state.settings.borrow().playback.equalizer,
+            )));
+            update_guard.set(false);
+        })
+    };
     for index in 0..EQUALIZER_BAND_COUNT {
         let row = adw::ActionRow::builder()
             .title(equalizer_band_title(index))
@@ -646,47 +696,77 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         scale.set_width_request(220);
         scale.set_valign(gtk::Align::Center);
         install_eq_scroll(&scale);
-        let band_shell = Rc::clone(shell);
-        let scale_reset_guard = Rc::clone(&resetting_equalizer);
-        scale.connect_value_changed(move |scale| {
-            if scale_reset_guard.get() {
-                return;
-            }
-            band_shell.update_playback_settings(|settings| {
-                if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
-                    settings.equalizer.sanitize();
-                }
-                if let Some(gain) = settings.equalizer.bands.get_mut(index) {
-                    *gain = scale.value();
-                }
-            });
-        });
+        connect_equalizer_scale_commit(
+            &scale,
+            Rc::clone(&resetting_equalizer),
+            Rc::clone(&pending_equalizer_update),
+            Rc::clone(&equalizer_drag_active),
+            Rc::clone(&equalizer_commit),
+        );
         row.add_suffix(&scale);
         row.set_activatable_widget(Some(&scale));
         equalizer_group.add(&row);
         band_scales.borrow_mut().push(scale);
     }
 
+    let preset_scales = Rc::clone(&band_scales);
+    preset_row.connect_selected_notify(move |row| {
+        if preset_reset_guard.get() {
+            return;
+        }
+        let selected = row.selected();
+        if selected == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let Some(preset) = equalizer_preset_name_at(selected) else {
+            return;
+        };
+        let bands = {
+            let settings = preset_shell.state.settings.borrow();
+            equalizer_preset_bands(&settings.playback.equalizer, &preset)
+        };
+        preset_reset_guard.set(true);
+        preset_switch.set_active(true);
+        for (scale, gain) in preset_scales.borrow().iter().zip(bands.iter()) {
+            scale.set_value(*gain);
+        }
+        preset_reset_guard.set(false);
+        preset_shell.update_playback_settings(|settings| {
+            settings.equalizer.enabled = true;
+            settings.equalizer.selected_preset = preset;
+            settings.equalizer.bands = bands;
+            settings.equalizer.sanitize();
+        });
+    });
+
     let reset_row = adw::ActionRow::builder()
         .title(tr("Reset equalizer"))
-        .subtitle(tr("Restore neutral bands and disable equalizer."))
+        .subtitle(tr("Restore selected preset to default bands."))
         .build();
     let reset_button = gtk::Button::with_label(&tr("Reset"));
     reset_button.set_valign(gtk::Align::Center);
     reset_button.add_css_class("destructive-action");
     let reset_shell = Rc::clone(shell);
-    let reset_switch = equalizer_row.clone();
+    let reset_preset = preset_row.clone();
     let reset_scales = Rc::clone(&band_scales);
     let reset_guard = Rc::clone(&resetting_equalizer);
     reset_button.connect_clicked(move |_| {
+        let preset = equalizer_preset_name_at(reset_preset.selected()).unwrap_or_else(|| {
+            equalizer_selected_preset(&reset_shell.state.settings.borrow().playback.equalizer)
+        });
+        let bands = equalizer_default_preset_bands(&preset);
         reset_guard.set(true);
-        reset_switch.set_active(false);
-        for scale in reset_scales.borrow().iter() {
-            scale.set_value(0.0);
+        reset_preset.set_selected(equalizer_preset_position(&preset));
+        for (scale, gain) in reset_scales.borrow().iter().zip(bands.iter()) {
+            scale.set_value(*gain);
         }
         reset_guard.set(false);
         reset_shell.update_playback_settings(|settings| {
-            settings.equalizer = EqualizerSettings::default();
+            settings.equalizer.selected_preset = preset;
+            settings.equalizer.bands = bands;
+            let preset = settings.equalizer.selected_preset.clone();
+            settings.equalizer.preset_overrides.remove(&preset);
+            settings.equalizer.sanitize();
         });
     });
     reset_row.add_suffix(&reset_button);
@@ -827,11 +907,4 @@ pub(in crate::ui) fn audio_output_index(
         .iter()
         .position(|(id, _)| id.as_deref() == selected)
         .unwrap_or_default() as u32
-}
-pub(in crate::ui) fn equalizer_band_title(index: usize) -> String {
-    const BANDS: [&str; EQUALIZER_BAND_COUNT] = [
-        "60 Hz", "170 Hz", "310 Hz", "600 Hz", "1 kHz", "3 kHz", "6 kHz", "12 kHz", "14 kHz",
-        "16 kHz",
-    ];
-    BANDS.get(index).copied().unwrap_or("Band").to_string()
 }

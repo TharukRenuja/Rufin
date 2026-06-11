@@ -720,7 +720,8 @@ pub(in crate::ui) fn track_identity_column(shell: &Rc<Shell>) -> gtk::ColumnView
         let click_shell = Rc::clone(&setup_shell);
         let route_for_click = Rc::clone(&artist_route);
         artist_button.connect_clicked(move |_| {
-            if let Some(route) = route_for_click.borrow().clone() {
+            let route = route_for_click.borrow().clone();
+            if let Some(route) = route {
                 click_shell.navigate(route);
             }
         });
@@ -847,16 +848,16 @@ where
         button_label.add_css_class("table-link-label");
         button_label.set_xalign(0.0);
         button_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        button_label.set_halign(gtk::Align::Fill);
-        button_label.set_hexpand(true);
+        button_label.set_halign(gtk::Align::Start);
+        button_label.set_hexpand(false);
         button_label.set_width_chars(1);
         button_label.set_max_width_chars((width / 8).clamp(8, 32));
 
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.add_css_class("table-link");
-        button.set_halign(gtk::Align::Fill);
-        button.set_hexpand(true);
+        button.set_halign(gtk::Align::Start);
+        button.set_hexpand(false);
         button.set_cursor_from_name(Some("pointer"));
         add_stateful_link_hover(button.upcast_ref(), &button_label, Rc::clone(&hover_text));
         button.set_child(Some(&button_label));
@@ -867,8 +868,8 @@ where
         label.add_css_class("table-link-label");
         label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_halign(gtk::Align::Fill);
-        label.set_hexpand(true);
+        label.set_halign(gtk::Align::Start);
+        label.set_hexpand(false);
         label.set_width_chars(1);
         label.set_max_width_chars((width / 8).clamp(8, 32));
         label.set_visible(false);
@@ -877,7 +878,8 @@ where
         let click_shell = Rc::clone(&setup_shell);
         let route_for_click = Rc::clone(&route);
         button.connect_clicked(move |_| {
-            if let Some(route) = route_for_click.borrow().clone() {
+            let route = route_for_click.borrow().clone();
+            if let Some(route) = route {
                 click_shell.navigate(route);
             }
         });

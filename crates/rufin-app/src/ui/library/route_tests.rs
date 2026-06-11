@@ -96,19 +96,39 @@ fn genre_track_rows_expand_title_and_album() {
     assert_eq!(fitted[4], base_widths[4]);
 }
 #[test]
+fn merged_title_columns_get_extra_weight() {
+    let title = super::track_column_width(LibraryListKey::Tracks, LibraryField::Title);
+    let merged = super::track_column_width(LibraryListKey::Tracks, LibraryField::TitleMerged);
+
+    assert_eq!(
+        super::track_column_fit_width(LibraryListKey::Tracks, LibraryField::Title),
+        title
+    );
+    assert!(
+        super::track_column_fit_width(LibraryListKey::Tracks, LibraryField::TitleMerged) > merged
+    );
+}
+#[test]
 fn route_track_area() {
     let fields = [
-        LibraryField::RowIndex,
+        LibraryField::TrackNumber,
         LibraryField::Title,
-        LibraryField::AlbumArtist,
+        LibraryField::Duration,
     ];
-    let field_widths =
-        super::album_detail_track_field_widths(LibraryListKey::ArtistAlbums, &fields, 320);
+    let field_widths = super::album_detail_track_field_widths(LibraryListKey::Albums, &fields, 320);
 
     assert_eq!(field_widths.len(), fields.len());
     assert!(field_widths.iter().all(|(_, width)| *width > 0));
     assert_eq!(super::album_detail_track_cells_width(&field_widths), 320);
     assert!(field_widths[1].1 > field_widths[0].1);
+    assert_eq!(
+        field_widths[0].1,
+        super::album_detail_track_column_width(LibraryListKey::Albums, LibraryField::TrackNumber)
+    );
+    assert_eq!(
+        field_widths[2].1,
+        super::album_detail_track_column_width(LibraryListKey::Albums, LibraryField::Duration)
+    );
 }
 #[test]
 fn route_load_fully() {

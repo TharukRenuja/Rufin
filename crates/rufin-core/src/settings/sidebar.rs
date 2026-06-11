@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::domain::{HomeBlockKind, HomeSectionKind};
 
@@ -72,7 +73,6 @@ pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
     match key {
         LibraryListKey::Albums | LibraryListKey::ArtistAlbums => vec![
             LibraryField::TitleMerged,
-            LibraryField::AlbumArtist,
             LibraryField::Year,
             LibraryField::Favorite,
         ],
@@ -148,12 +148,15 @@ pub(super) fn default_grid_fields(key: LibraryListKey) -> Vec<LibraryField> {
         }
     }
 }
-pub(super) fn default_detail_track_fields() -> Vec<LibraryField> {
-    vec![
+pub fn available_detail_track_fields() -> &'static [LibraryField] {
+    &[
         LibraryField::TrackNumber,
         LibraryField::Title,
         LibraryField::Duration,
     ]
+}
+pub(super) fn default_detail_track_fields() -> Vec<LibraryField> {
+    available_detail_track_fields().to_vec()
 }
 pub(super) fn default_sort_key(key: LibraryListKey) -> LibraryField {
     match key {
@@ -314,28 +317,46 @@ impl StreamQuality {
 pub struct EqualizerSettings {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default = "default_equalizer_selected_preset")]
+    pub selected_preset: String,
     #[serde(default = "default_equalizer_bands")]
     pub bands: Vec<f64>,
+    #[serde(default)]
+    pub preset_overrides: BTreeMap<String, Vec<f64>>,
 }
 impl Default for EqualizerSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            selected_preset: "Flat".to_string(),
             bands: default_equalizer_bands(),
+            preset_overrides: BTreeMap::new(),
         }
     }
 }
 impl EqualizerSettings {
     pub fn sanitize(&mut self) {
-        if self.bands.len() != EQUALIZER_BAND_COUNT {
-            self.bands.resize(EQUALIZER_BAND_COUNT, 0.0);
+        if self.selected_preset.trim().is_empty() {
+            self.selected_preset = default_equalizer_selected_preset();
         }
-        for gain in &mut self.bands {
-            if !gain.is_finite() {
-                *gain = 0.0;
-            }
-            *gain = gain.clamp(-12.0, 12.0);
+        sanitize_equalizer_bands(&mut self.bands);
+        self.preset_overrides
+            .retain(|name, _| !name.trim().is_empty());
+        for bands in self.preset_overrides.values_mut() {
+            sanitize_equalizer_bands(bands);
         }
+    }
+}
+
+fn sanitize_equalizer_bands(bands: &mut Vec<f64>) {
+    if bands.len() != EQUALIZER_BAND_COUNT {
+        bands.resize(EQUALIZER_BAND_COUNT, 0.0);
+    }
+    for gain in bands {
+        if !gain.is_finite() {
+            *gain = 0.0;
+        }
+        *gain = gain.clamp(-12.0, 12.0);
     }
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -395,6 +416,10 @@ impl PlaybackSettings {
 }
 fn default_equalizer_bands() -> Vec<f64> {
     vec![0.0; EQUALIZER_BAND_COUNT]
+}
+
+fn default_equalizer_selected_preset() -> String {
+    "Custom".to_string()
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum ExternalLyricsProvider {
@@ -457,6 +482,8 @@ pub struct AppSettings {
     pub external_lyrics_providers: Vec<ExternalLyricsProvider>,
     #[serde(default = "default_true")]
     pub external_metadata_enabled: bool,
+    #[serde(default)]
+    pub external_site_links: ExternalSiteLinkSettings,
     #[serde(default = "default_true")]
     pub prefer_server_lyrics: bool,
     #[serde(default)]
@@ -532,6 +559,7 @@ impl Default for AppSettings {
             external_lyrics_enabled: true,
             external_lyrics_providers: default_external_lyrics_providers(),
             external_metadata_enabled: true,
+            external_site_links: ExternalSiteLinkSettings::default(),
             prefer_server_lyrics: true,
             seekbar_waveform_enabled: true,
             tray_enabled: false,
@@ -563,6 +591,29 @@ impl Default for AppSettings {
             library_lists: default_library_list_settings(),
             lyrics_provider_settings_version: LYRICS_PROVIDER_SETTINGS_VERSION,
             suppressed_auto_lyrics_track_ids: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ExternalSiteLinkSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub lastfm: bool,
+    #[serde(default = "default_true")]
+    pub musicbrainz: bool,
+    #[serde(default = "default_true")]
+    pub server: bool,
+}
+
+impl Default for ExternalSiteLinkSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            lastfm: true,
+            musicbrainz: true,
+            server: true,
         }
     }
 }

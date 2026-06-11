@@ -149,6 +149,66 @@ impl Shell {
         self.controller.reload_snapshot();
     }
 
+    pub(super) fn set_external_site_links_enabled(self: &Rc<Self>, enabled: bool) {
+        if self
+            .update_app_settings("external site links setting", |settings| {
+                if settings.external_site_links.enabled == enabled {
+                    return false;
+                }
+                settings.external_site_links.enabled = enabled;
+                true
+            })
+            .is_some()
+        {
+            self.render_current_route_preserving_scroll();
+        }
+    }
+
+    pub(super) fn set_lastfm_site_links_enabled(self: &Rc<Self>, enabled: bool) {
+        if self
+            .update_app_settings("Last.fm site links setting", |settings| {
+                if settings.external_site_links.lastfm == enabled {
+                    return false;
+                }
+                settings.external_site_links.lastfm = enabled;
+                true
+            })
+            .is_some()
+        {
+            self.render_current_route_preserving_scroll();
+        }
+    }
+
+    pub(super) fn set_musicbrainz_site_links_enabled(self: &Rc<Self>, enabled: bool) {
+        if self
+            .update_app_settings("MusicBrainz site links setting", |settings| {
+                if settings.external_site_links.musicbrainz == enabled {
+                    return false;
+                }
+                settings.external_site_links.musicbrainz = enabled;
+                true
+            })
+            .is_some()
+        {
+            self.render_current_route_preserving_scroll();
+        }
+    }
+
+    pub(super) fn set_server_site_links_enabled(self: &Rc<Self>, enabled: bool) {
+        if self
+            .update_app_settings("server site links setting", |settings| {
+                if settings.external_site_links.server == enabled {
+                    return false;
+                }
+                settings.external_site_links.server = enabled;
+                true
+            })
+            .is_some()
+        {
+            self.render_current_route_preserving_scroll();
+        }
+    }
+
     pub(super) fn set_prefer_server_lyrics(self: &Rc<Self>, enabled: bool) {
         let Some(settings) = self.update_app_settings("lyrics search setting", |settings| {
             if settings.prefer_server_lyrics == enabled {
@@ -509,9 +569,10 @@ impl Shell {
         update: impl FnOnce(&mut PlaybackSettings),
     ) {
         if let Some(settings) = self.update_app_settings("playback settings", |settings| {
+            let previous = settings.playback.clone();
             update(&mut settings.playback);
             settings.playback.sanitize();
-            true
+            settings.playback != previous
         }) {
             self.controller
                 .update_playback_settings(settings.playback.clone());

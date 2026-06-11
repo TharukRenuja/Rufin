@@ -50,6 +50,10 @@ listview.album-detail-list row:selected {
   border-radius: 8px;
 }
 
+.album-detail-separator {
+  opacity: 0.42;
+}
+
 .album-detail-track-row:hover {
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
@@ -299,6 +303,11 @@ menubutton.server-selector > button:hover {
   box-shadow:
     0 16px 34px rgba(0, 0, 0, 0.28),
     inset 0 0 0 1px color-mix(in srgb, @window_fg_color 14%, transparent);
+}
+
+.home-showcase-facts {
+  font-size: 13px;
+  line-height: 1.2;
 }
 
 .home-showcase-actions {
@@ -641,7 +650,37 @@ scale.volume-slider trough {
 
 .detail-showcase .detail-title,
 .album-detail-showcase .detail-title {
-  font-size: 40px;
+  font-size: 34px;
+  line-height: 1.08;
+}
+
+.detail-showcase-horizontal {
+  min-height: 236px;
+}
+
+.detail-showcase-horizontal .detail-title {
+  font-size: 29px;
+  line-height: 1.06;
+}
+
+.detail-showcase-horizontal .detail-title.detail-text-long {
+  font-size: 25px;
+}
+
+.detail-showcase-horizontal .detail-title.detail-text-very-long {
+  font-size: 22px;
+}
+
+.detail-showcase-horizontal .detail-artist {
+  font-size: 15px;
+}
+
+.detail-showcase-horizontal .detail-artist.detail-text-long {
+  font-size: 14px;
+}
+
+.detail-showcase-horizontal .detail-artist.detail-text-very-long {
+  font-size: 13px;
 }
 
 .playlist-detail-showcase .detail-title {
@@ -717,6 +756,11 @@ scale.volume-slider trough {
   margin-top: -2px;
 }
 
+.detail-cover-facts {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
 .detail-showcase-link-button {
   min-height: 30px;
   padding: 4px 8px;
@@ -728,6 +772,24 @@ scale.volume-slider trough {
 .detail-showcase-link-button:hover {
   color: @window_fg_color;
   background: color-mix(in srgb, @window_fg_color 10%, transparent);
+}
+
+.detail-external-link-row {
+  padding: 2px;
+}
+
+.detail-external-link-button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  color: color-mix(in srgb, @window_fg_color 76%, @window_bg_color);
+  background: color-mix(in srgb, @window_fg_color 10%, transparent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.detail-external-link-button:hover {
+  color: @window_fg_color;
+  background: color-mix(in srgb, @window_fg_color 18%, transparent);
 }
 
 .home-showcase-action-button {
@@ -903,6 +965,19 @@ scale.volume-slider trough {
 
 .fullscreen-player-equalizer-bands {
   min-height: 0;
+}
+
+.fullscreen-player-equalizer-band-label {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.fullscreen-player-equalizer-levels {
+  min-width: 42px;
+}
+
+.fullscreen-player-equalizer-level-label {
+  font-size: 12px;
 }
 
 .fullscreen-player .lyrics-panel {

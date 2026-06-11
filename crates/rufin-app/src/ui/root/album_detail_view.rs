@@ -1,6 +1,8 @@
 use super::*;
 
-const ALBUM_DETAIL_ROUTE_MARGIN: i32 = 32;
+const ALBUM_DETAIL_ROUTE_INSET: i32 = PRIMARY_ROUTE_MARGIN_START + DETAIL_ROUTE_SCROLL_GUTTER;
+const DETAIL_SHOWCASE_SIDE_INSET: i32 = PRIMARY_ROUTE_MARGIN_END / 2;
+const DETAIL_HEADER_SPACING: i32 = 18;
 
 impl Shell {
     pub(in crate::ui) fn album_detail_view(self: &Rc<Self>, album_id: AlbumId) -> gtk::Widget {
@@ -32,21 +34,23 @@ impl Shell {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 22);
         content.set_margin_top(20);
         content.set_margin_bottom(36);
-        content.set_margin_start(ALBUM_DETAIL_ROUTE_MARGIN);
-        content.set_margin_end(ALBUM_DETAIL_ROUTE_MARGIN);
+        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        content.set_margin_end(0);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);
 
-        let inner_content_width = detail_route_inner_width(self, ALBUM_DETAIL_ROUTE_MARGIN * 2);
+        let inner_content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let cover_size = detail_showcase_cover_size(inner_content_width);
-        let header = gtk::Box::new(
-            gtk::Orientation::Vertical,
-            detail_showcase_spacing(inner_content_width),
-        );
+        let header = gtk::Box::new(gtk::Orientation::Vertical, 12);
         header.add_css_class("detail-showcase");
         header.add_css_class("album-detail-showcase");
+        header.add_css_class("detail-showcase-horizontal");
         add_album_seed_gradient_class(&header, album.color_seed);
+        let external_links = album_external_links(self, &album);
+        let body = gtk::Box::new(gtk::Orientation::Horizontal, DETAIL_HEADER_SPACING);
+        body.set_hexpand(true);
+        body.set_halign(gtk::Align::Fill);
         self.prime_cached_cover(album.image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
         let cover = self.cover_tile_for(
             album.image_ref.as_ref(),
@@ -56,26 +60,68 @@ impl Shell {
         );
         cover.add_css_class("detail-showcase-cover");
         cover.add_css_class("album-detail-cover");
-        cover.set_halign(gtk::Align::Center);
-        header.append(&cover);
-
-        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        metadata.set_halign(gtk::Align::Center);
+        cover.set_halign(gtk::Align::Start);
         let kind = gtk::Label::new(Some(&tr("Album")));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.5);
-        kind.set_halign(gtk::Align::Center);
+        kind.set_halign(gtk::Align::Fill);
+        kind.set_justify(gtk::Justification::Center);
+        kind.set_width_request(cover_size);
+        let facts = gtk::Label::new(Some(&format!(
+            "{} • {} {} • {}",
+            album.year,
+            album.track_count,
+            tr("tracks"),
+            format_duration(album.duration_seconds)
+        )));
+        facts.add_css_class("muted");
+        facts.add_css_class("detail-cover-facts");
+        facts.set_xalign(0.5);
+        facts.set_halign(gtk::Align::Center);
+        facts.set_justify(gtk::Justification::Center);
+        facts.set_wrap(true);
+        facts.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        facts.set_width_chars(1);
+        facts.set_max_width_chars(18);
+        let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        cover_column.set_halign(gtk::Align::Start);
+        cover_column.set_width_request(cover_size);
+        cover_column.append(&kind);
+        cover_column.append(&cover);
+        cover_column.append(&facts);
+        body.append(&cover_column);
+
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        metadata.set_hexpand(true);
+        metadata.set_valign(gtk::Align::Center);
+        metadata.set_halign(gtk::Align::Fill);
+        if external_links.is_some() {
+            metadata.set_margin_bottom(42);
+        }
+        let text_limit = cover_size.saturating_sub(70).max(56);
+        let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        text_stack.set_hexpand(true);
+        text_stack.set_halign(gtk::Align::Fill);
         let title = gtk::Label::new(Some(&album.title));
         title.add_css_class("detail-title");
-        title.set_xalign(0.5);
-        title.set_justify(gtk::Justification::Center);
+        title.set_xalign(0.0);
+        title.set_justify(gtk::Justification::Left);
+        title.set_hexpand(true);
+        title.set_halign(gtk::Align::Fill);
         title.set_wrap(true);
+        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         title.set_width_chars(1);
-        title.set_max_width_chars(24);
+        title.set_max_width_chars(32);
+        fit_detail_text(&title, &album.title);
         let artist = gtk::Label::new(Some(&album.artist));
         artist.add_css_class("detail-artist");
-        artist.set_xalign(0.5);
-        artist.set_halign(gtk::Align::Center);
+        artist.set_xalign(0.0);
+        artist.set_halign(gtk::Align::Start);
+        artist.set_wrap(true);
+        artist.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        artist.set_width_chars(1);
+        artist.set_max_width_chars(32);
+        fit_detail_text(&artist, &album.artist);
         artist.set_cursor_from_name(Some("pointer"));
         add_dynamic_link_hover(artist.upcast_ref(), &artist);
         if let Some(artist_id) = album.artist_id.clone() {
@@ -93,19 +139,11 @@ impl Shell {
                 });
             });
         }
-        let facts = gtk::Label::new(Some(&format!(
-            "{} • {} {} • {}",
-            album.year,
-            album.track_count,
-            tr("tracks"),
-            format_duration(album.duration_seconds)
-        )));
-        facts.add_css_class("muted");
-        facts.set_xalign(0.5);
-        facts.set_halign(gtk::Align::Center);
-
+        text_stack.append(&title);
+        text_stack.append(&artist);
         let actions = detail_action_row();
         actions.add_css_class("album-detail-actions");
+        actions.set_halign(gtk::Align::Start);
         let play_album = detail_action_button("media-playback-start-symbolic", "Play");
         play_album.add_css_class("detail-showcase-play-button");
         let controller = self.controller.clone();
@@ -151,13 +189,14 @@ impl Shell {
         });
         actions.append(&favorite);
 
-        metadata.append(&kind);
-        metadata.append(&title);
-        metadata.append(&facts);
-        metadata.append(&artist);
+        metadata.append(&detail_text_clip(text_stack.upcast(), text_limit));
         metadata.append(&actions);
-        header.append(&metadata);
-        content.append(&detail_showcase_frame(header.upcast()));
+        body.append(&metadata);
+        header.append(&body);
+        let showcase = detail_showcase_frame_with_links(header.upcast(), external_links);
+        showcase.set_margin_start(DETAIL_SHOWCASE_SIDE_INSET);
+        showcase.set_margin_end(DETAIL_SHOWCASE_SIDE_INSET);
+        content.append(&showcase);
 
         let table = self.library_tracks_panel_with_source(
             tracks,
@@ -167,7 +206,7 @@ impl Shell {
                 album_id: album.id.clone(),
                 selected_music_folder_id: selected_music_folder_id(self),
             }),
-            ALBUM_DETAIL_ROUTE_MARGIN * 2 + DETAIL_ROUTE_SCROLL_GUTTER,
+            ALBUM_DETAIL_ROUTE_INSET,
         );
         content.append(&table);
 

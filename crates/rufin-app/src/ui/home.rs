@@ -137,7 +137,22 @@ impl Shell {
             GRID_COVER_SIZE,
         );
         cover.add_css_class("home-showcase-cover");
-        body.append(&cover);
+        let facts = gtk::Label::new(Some(&home_showcase_facts(&album)));
+        facts.add_css_class("muted");
+        facts.add_css_class("home-showcase-facts");
+        facts.set_xalign(0.5);
+        facts.set_halign(gtk::Align::Center);
+        facts.set_justify(gtk::Justification::Center);
+        facts.set_wrap(true);
+        facts.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        facts.set_width_chars(1);
+        facts.set_max_width_chars(22);
+        let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        cover_column.set_width_request(196);
+        cover_column.set_halign(gtk::Align::Start);
+        cover_column.append(&cover);
+        cover_column.append(&facts);
+        body.append(&cover_column);
 
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_hexpand(true);
@@ -155,11 +170,6 @@ impl Shell {
         artist.set_xalign(0.0);
         artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
         metadata.append(&artist);
-
-        let facts = gtk::Label::new(Some(&home_showcase_facts(&album)));
-        facts.add_css_class("muted");
-        facts.set_xalign(0.0);
-        metadata.append(&facts);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.add_css_class("home-showcase-actions");

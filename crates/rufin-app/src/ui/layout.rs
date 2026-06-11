@@ -219,21 +219,11 @@ pub(super) fn detail_route_inner_width(shell: &Shell, horizontal_inset: i32) -> 
 
 pub(super) fn detail_showcase_cover_size(width: i32) -> i32 {
     if width < 520 {
-        width.clamp(72, 168)
+        width.clamp(72, 156)
     } else if width < 760 {
-        220
+        188
     } else {
-        250
-    }
-}
-
-pub(super) fn detail_showcase_spacing(width: i32) -> i32 {
-    if width < 520 {
-        12
-    } else if width < 760 {
-        14
-    } else {
-        16
+        224
     }
 }
 
@@ -411,8 +401,9 @@ mod tests {
     fn detail_cover_fits_narrow_width() {
         assert_eq!(detail_showcase_cover_size(120), 120);
         assert_eq!(detail_showcase_cover_size(40), 72);
-        assert_eq!(detail_showcase_cover_size(519), 168);
-        assert_eq!(detail_showcase_cover_size(520), 220);
+        assert_eq!(detail_showcase_cover_size(519), 156);
+        assert_eq!(detail_showcase_cover_size(520), 188);
+        assert_eq!(detail_showcase_cover_size(760), 224);
     }
 
     #[test]
