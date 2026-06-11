@@ -1,5 +1,8 @@
 use super::*;
 
+const MOUSE_BACK_BUTTON: u32 = 8;
+const MOUSE_FORWARD_BUTTON: u32 = 9;
+
 pub(in crate::ui) fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let normal_back_shell = Rc::clone(shell);
     shell
@@ -22,9 +25,32 @@ pub(in crate::ui) fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::Me
         .connect_clicked(move |_| compact_forward_shell.go_forward());
 
     install_window_actions(shell);
+    install_mouse_history_buttons(shell);
     install_main_menu_shortcut(shell, main_menu);
     connect_layout_resize(shell);
 }
+
+fn install_mouse_history_buttons(shell: &Rc<Shell>) {
+    let click = gtk::GestureClick::new();
+    click.set_button(0);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+
+    let history_shell = Rc::clone(shell);
+    click.connect_pressed(move |click, _, _, _| match click.current_button() {
+        MOUSE_BACK_BUTTON => {
+            click.set_state(gtk::EventSequenceState::Claimed);
+            history_shell.go_back();
+        }
+        MOUSE_FORWARD_BUTTON => {
+            click.set_state(gtk::EventSequenceState::Claimed);
+            history_shell.go_forward();
+        }
+        _ => {}
+    });
+
+    shell.window.add_controller(click);
+}
+
 pub(in crate::ui) fn connect_lyrics_search_controls(shell: &Rc<Shell>) {
     let lyrics_shell = Rc::clone(shell);
     shell.lyrics_pane.connect_search_clicked(move || {
