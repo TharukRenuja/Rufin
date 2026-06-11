@@ -1890,26 +1890,30 @@ pub(in crate::controller) fn snapshot_reuse_album() {
 
     let snapshot = load_snapshot(&store).expect("load snapshot");
 
-    assert!(
-        snapshot
-            .tracks
+    for track in &snapshot.tracks {
+        let expected = tracks
             .iter()
-            .all(|track| track.image_ref.as_ref() == Some(&album_image_ref))
-    );
+            .find(|candidate| candidate.id == track.id)
+            .expect("snapshot track");
+        assert_eq!(track.image_ref.as_ref(), expected.image_ref.as_ref());
+    }
     assert_eq!(
         snapshot.home_sections[0].tracks[0].image_ref.as_ref(),
-        Some(&album_image_ref)
+        tracks[0].image_ref.as_ref()
     );
     assert_eq!(
         snapshot.favorites[0].image_ref.as_ref(),
-        Some(&album_image_ref)
+        tracks[0].image_ref.as_ref()
     );
     let (controller, _events) = controller_from_store_for_test(store);
     let favorites = controller
         .cached_favorite_tracks()
         .expect("cached favorite tracks");
     assert_eq!(favorites.len(), 1);
-    assert_eq!(favorites[0].image_ref.as_ref(), Some(&album_image_ref));
+    assert_eq!(
+        favorites[0].image_ref.as_ref(),
+        tracks[0].image_ref.as_ref()
+    );
 }
 #[test]
 pub(in crate::controller) fn startup_track_cards() {
@@ -1977,11 +1981,13 @@ pub(in crate::controller) fn stale_track_images() {
         .cached_tracks_page(0, 10)
         .expect("cached tracks page");
 
-    assert!(
-        page.items
+    for track in &page.items {
+        let expected = tracks
             .iter()
-            .all(|track| track.image_ref.as_ref() == Some(&album_image_ref))
-    );
+            .find(|candidate| candidate.id == track.id)
+            .expect("cached track");
+        assert_eq!(track.image_ref.as_ref(), expected.image_ref.as_ref());
+    }
 }
 
 #[test]
@@ -2020,13 +2026,13 @@ pub(in crate::controller) fn auto_dj_candidate() {
     let queue = controller.queue.lock().expect("queue");
     let queue = queue.as_ref().expect("queue");
     assert_eq!(queue.entries().len(), 1 + super::AUTO_DJ_ITEM_COUNT);
-    assert!(
-        queue
-            .entries()
+    for entry in queue.entries().iter().skip(1) {
+        let track = tracks
             .iter()
-            .skip(1)
-            .all(|entry| entry.image_ref.as_ref() == Some(&album_image_ref))
-    );
+            .find(|track| track.id == entry.track_id)
+            .expect("auto dj track");
+        assert_eq!(entry.image_ref.as_ref(), track.image_ref.as_ref());
+    }
 }
 
 #[test]
@@ -2035,11 +2041,8 @@ pub(in crate::controller) fn restored_queue_reuse() {
     let local = local_source_saved();
     let album_image_ref = ImageRef::new("local:cover:file%3A%2F%2Falbum-cover", None);
     let album = local_album_with_image_ref(album_image_ref.clone());
-    let track = local_track_with_image_ref(
-        1,
-        &album,
-        ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fone.flac", None),
-    );
+    let track_image_ref = ImageRef::new("local:cover:embedded%3A%2Fmusic%2Fone.flac", None);
+    let track = local_track_with_image_ref(1, &album, track_image_ref.clone());
     seed_cached_library(
         &store,
         &local,
@@ -2057,13 +2060,83 @@ pub(in crate::controller) fn restored_queue_reuse() {
 
     let restored = restore_queue(&store, Some(&local.server)).expect("restore queue");
     let queue = restored.snapshot();
-    assert_eq!(queue.entries[0].image_ref.as_ref(), Some(&album_image_ref));
+    assert_eq!(queue.entries[0].image_ref.as_ref(), Some(&track_image_ref));
 
     let playback =
         playback_snapshot_from_queue(Some(&restored), false, &PlaybackSettings::default());
     assert_eq!(
         playback.current.expect("current").image_ref.as_ref(),
-        Some(&album_image_ref)
+        Some(&track_image_ref)
+    );
+}
+
+#[test]
+pub(in crate::controller) fn restored_queue_uses_canonical_external_album_ref() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let remote = saved_server();
+    let album_ref = external_metadata::external_album_image_ref(
+        "未来古代楽団",
+        "忘れじの言の葉/エデンの揺り籃",
+    )
+    .expect("album ref");
+    let weak_ref = external_metadata::external_album_image_ref(
+        "未来古代楽団, 安次嶺希和子",
+        "忘れじの言の葉/エデンの揺り籃",
+    )
+    .expect("track artist ref");
+    let mut album = remote_album_with_image_ref(album_ref.clone());
+    album.title = "忘れじの言の葉/エデンの揺り籃".to_string();
+    album.artist = "未来古代楽団".to_string();
+    let mut first = library_track(
+        1,
+        Some(ArtistId::new("jellyfin:artist:first")),
+        album.id.clone(),
+        "未来古代楽団, 安次嶺希和子",
+        &[],
+    );
+    first.title = "忘れじの言の葉".to_string();
+    first.album = album.title.clone();
+    first.image_ref = Some(weak_ref);
+    let mut next = library_track(
+        2,
+        Some(ArtistId::new("jellyfin:artist:album")),
+        album.id.clone(),
+        "未来古代楽団",
+        &[],
+    );
+    next.title = "エデンの揺り籃".to_string();
+    next.album = album.title.clone();
+    next.image_ref = Some(album_ref.clone());
+    let mut settings = AppSettings {
+        external_metadata_enabled: true,
+        ..AppSettings::default()
+    };
+    settings.sources.selected = Some(LibrarySourceSelection::Server(remote.server.id.clone()));
+    store.save_settings(&settings).expect("save settings");
+    seed_cached_library(
+        &store,
+        &remote,
+        std::slice::from_ref(&album),
+        &[first.clone(), next],
+        &[],
+    );
+    store
+        .with_store(|store| {
+            let mut queue = QueueEngine::new(remote.server.id.clone());
+            queue.play_now(&first);
+            store.save_queue_snapshot(&queue.snapshot())
+        })
+        .expect("seed remote queue");
+
+    let restored = restore_queue(&store, Some(&remote.server)).expect("restore queue");
+    let queue = restored.snapshot();
+    assert_eq!(queue.entries[0].image_ref.as_ref(), Some(&album_ref));
+
+    let playback =
+        playback_snapshot_from_queue(Some(&restored), false, &PlaybackSettings::default());
+    assert_eq!(
+        playback.current.expect("current").image_ref.as_ref(),
+        Some(&album_ref)
     );
 }
 

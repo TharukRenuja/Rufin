@@ -381,15 +381,18 @@ pub(in crate::controller) fn snapshot_queue_refs(
     saved: &SavedServer,
     original_snapshot: QueueSnapshot,
 ) {
-    if saved.server.provider != LOCAL_PROVIDER_ID {
-        return;
-    }
     if original_snapshot.server_id != saved.server.id {
         return;
     }
     let mut normalized_entries = original_snapshot.entries.clone();
-    if let Err(error) = queue_album_refs(&context.store, &saved.server, &mut normalized_entries) {
-        warn!(%error, "failed to refresh local queue image refs after sync");
+    let settings = load_settings_for_saved(&context.store, saved);
+    if let Err(error) = queue_album_refs(
+        &context.store,
+        &saved.server,
+        &settings,
+        &mut normalized_entries,
+    ) {
+        warn!(%error, "failed to refresh queue image refs after sync");
         return;
     }
     if normalized_entries == original_snapshot.entries {

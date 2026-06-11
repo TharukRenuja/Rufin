@@ -88,6 +88,14 @@ pub fn normalize_track(track: &mut Track, settings: &AppSettings) {
     normalize_track_ref(track, None, settings);
 }
 
+pub fn normalize_track_with_album_ref(
+    track: &mut Track,
+    album_image_ref: Option<&ImageRef>,
+    settings: &AppSettings,
+) {
+    normalize_track_ref(track, album_image_ref, settings);
+}
+
 pub fn normalize_album_detail(album: &mut Album, tracks: &mut [Track], settings: &AppSettings) {
     normalize_album(album, settings);
     let album_image_ref = album.image_ref.as_ref();
@@ -102,7 +110,8 @@ fn normalize_track_ref(
     settings: &AppSettings,
 ) {
     normalize_image_ref(&mut track.image_ref, settings);
-    let weak_album_ref = has_untagged_jellyfin_album_ref(&track.image_ref, track.album_id.as_str());
+    let weak_album_ref = has_untagged_jellyfin_album_ref(&track.image_ref, track.album_id.as_str())
+        || replaceable_album_ref(&track.image_ref, album_image_ref);
     if (track.image_ref.is_none() || weak_album_ref)
         && let Some(image_ref) = album_image_ref
     {
@@ -167,12 +176,26 @@ pub fn normalize_queue_snapshot(snapshot: &mut QueueSnapshot, settings: &AppSett
 }
 
 pub fn normalize_queue_entry(entry: &mut QueueEntry, settings: &AppSettings) {
+    normalize_queue_entry_with_album_ref(entry, None, settings);
+}
+
+pub fn normalize_queue_entry_with_album_ref(
+    entry: &mut QueueEntry,
+    album_image_ref: Option<&ImageRef>,
+    settings: &AppSettings,
+) {
     normalize_image_ref(&mut entry.image_ref, settings);
-    if enabled(settings)
-        && entry.album_id.as_ref().is_some_and(|album_id| {
-            has_untagged_jellyfin_album_ref(&entry.image_ref, album_id.as_str())
-        })
+    let weak_album_ref = entry.album_id.as_ref().is_some_and(|album_id| {
+        has_untagged_jellyfin_album_ref(&entry.image_ref, album_id.as_str())
+    }) || replaceable_album_ref(&entry.image_ref, album_image_ref);
+    if (entry.image_ref.is_none() || weak_album_ref)
+        && let Some(image_ref) = album_image_ref
+        && (!is_external_image_ref(image_ref) || enabled(settings))
     {
+        entry.image_ref = Some(image_ref.clone());
+        return;
+    }
+    if enabled(settings) && weak_album_ref {
         entry.image_ref = None;
     }
     if enabled(settings) && entry.image_ref.is_none() {
@@ -217,6 +240,16 @@ fn has_untagged_jellyfin_album_ref(image_ref: &Option<ImageRef>, album_id: &str)
         image_ref.item_id == album_id
             && image_ref.item_id.starts_with("jellyfin:album:")
             && image_ref.tag.as_deref().is_none_or(str::is_empty)
+    })
+}
+
+fn replaceable_album_ref(image_ref: &Option<ImageRef>, album_image_ref: Option<&ImageRef>) -> bool {
+    let Some(image_ref) = image_ref else {
+        return false;
+    };
+    album_image_ref.is_some_and(|album_image_ref| {
+        image_ref != album_image_ref
+            && (is_external_image_ref(image_ref) || image_ref.item_id == album_image_ref.item_id)
     })
 }
 
@@ -350,9 +383,9 @@ mod tests {
         cover_art_size_path, json_ids, lastfm_album_image_url, read_bounded,
     };
     use super::{
-        album_art_from_image_ref, enabled, is_expected_lookup_miss, is_external_image_ref,
-        normalize_album, normalize_album_detail, normalize_artist, normalize_queue_entry,
-        normalize_track,
+        album_art_from_image_ref, enabled, external_album_image_ref, is_expected_lookup_miss,
+        is_external_image_ref, normalize_album, normalize_album_detail, normalize_artist,
+        normalize_queue_entry, normalize_queue_entry_with_album_ref, normalize_track,
     };
     use rufin_core::{
         Album, AlbumId, AppSettings, Artist, ArtistId, ImageRef, QueueEntry, QueueEntryId, Track,
@@ -572,6 +605,55 @@ mod tests {
                 musicbrainz_release_group_id: None,
             })
         );
+    }
+
+    #[test]
+    fn queue_entry_uses_canonical_album_ref() {
+        let settings = AppSettings {
+            external_metadata_enabled: true,
+            ..AppSettings::default()
+        };
+        let album_ref = external_album_image_ref("未来古代楽団", "忘れじの言の葉/エデンの揺り籃")
+            .expect("album ref");
+        let weak_ref = external_album_image_ref(
+            "未来古代楽団, 安次嶺希和子",
+            "忘れじの言の葉/エデンの揺り籃",
+        )
+        .expect("track artist ref");
+        let mut first = queue_entry_without_cover(
+            "忘れじの言の葉",
+            "未来古代楽団, 安次嶺希和子",
+            "忘れじの言の葉/エデンの揺り籃",
+        );
+        first.image_ref = Some(weak_ref);
+        let mut next = queue_entry_without_cover(
+            "エデンの揺り籃",
+            "未来古代楽団",
+            "忘れじの言の葉/エデンの揺り籃",
+        );
+
+        normalize_queue_entry_with_album_ref(&mut first, Some(&album_ref), &settings);
+        normalize_queue_entry_with_album_ref(&mut next, Some(&album_ref), &settings);
+
+        assert_eq!(first.image_ref, Some(album_ref.clone()));
+        assert_eq!(next.image_ref, Some(album_ref));
+    }
+
+    #[test]
+    fn queue_entry_preserves_direct_track_ref() {
+        let settings = AppSettings {
+            external_metadata_enabled: true,
+            ..AppSettings::default()
+        };
+        let album_ref = ImageRef::new("jellyfin:album:one", Some("album-tag".to_string()));
+        let track_ref = ImageRef::new("jellyfin:track:one", Some("track-tag".to_string()));
+        let mut entry =
+            queue_entry_without_cover("Example Track", "Example Artist", "Example Album");
+        entry.image_ref = Some(track_ref.clone());
+
+        normalize_queue_entry_with_album_ref(&mut entry, Some(&album_ref), &settings);
+
+        assert_eq!(entry.image_ref, Some(track_ref));
     }
 
     #[test]
