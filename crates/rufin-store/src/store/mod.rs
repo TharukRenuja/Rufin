@@ -13,12 +13,13 @@ use rufin_core::{
     SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
     SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
+    normalize_release_types,
 };
 use rufin_provider::{Lyrics, PagedResponse, PlaylistDetail, PlaylistEntry, SearchResults};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Value};
 use thiserror::Error;
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 15;
 const PRE_SMART_PLAYLISTS_SCHEMA_VERSION: i64 = 10;
 pub const LOCAL_MANIFEST_VERSION: i64 = 1;
 const CACHE_KEY_PART_MAX_LEN: usize = 180;
@@ -75,6 +76,16 @@ pub struct CoverCacheEntry {
     pub image_tag: String,
     pub size: u32,
     pub path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlbumReleaseTypeLookupCandidate {
+    pub album_id: AlbumId,
+    pub title: String,
+    pub artist: String,
+    pub musicbrainz_album_id: Option<String>,
+    pub musicbrainz_release_group_id: Option<String>,
+    pub lookup_key: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

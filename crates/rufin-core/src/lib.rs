@@ -12,6 +12,7 @@ pub use domain::{
     SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField,
     SmartPlaylistRuleGroup, SmartPlaylistRuleNode, SmartPlaylistRuleOperator,
     SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId, format_duration,
+    normalize_release_types,
 };
 pub use queue::{
     ArtistTrackScope, AutoDjReason, PlaySourceDescriptor, PlaySourceKey,

@@ -72,6 +72,10 @@ pub(super) fn album_from_row(row: &Row<'_>) -> rusqlite::Result<Album> {
         color_seed: u32_from_i64(row.get(13)?),
         image_ref: image_ref_from_row(row, 14, 15)?,
         genres: Vec::new(),
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
     })
 }
 pub(super) fn track_from_row(row: &Row<'_>) -> rusqlite::Result<Track> {
@@ -136,6 +140,43 @@ pub(super) fn optional_u32_from_row(row: &Row<'_>, index: usize) -> rusqlite::Re
 pub(super) fn optional_u8_from_row(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u8>> {
     row.get::<_, Option<i64>>(index)
         .map(|value| value.map(|value| u16_from_i64(value).min(u16::from(u8::MAX)) as u8))
+}
+pub(super) fn optional_string_column(
+    row: &Row<'_>,
+    index: usize,
+) -> rusqlite::Result<Option<String>> {
+    optional_column(row, index).map(|value: Option<String>| {
+        value.and_then(|value| (!value.trim().is_empty()).then_some(value))
+    })
+}
+fn optional_column<T: rusqlite::types::FromSql>(
+    row: &Row<'_>,
+    index: usize,
+) -> rusqlite::Result<Option<T>> {
+    match row.get::<_, Option<T>>(index) {
+        Ok(value) => Ok(value),
+        Err(rusqlite::Error::InvalidColumnIndex(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+pub(super) fn album_release_types_json(types: &[String]) -> StoreResult<String> {
+    Ok(serde_json::to_string(&normalize_release_types(types))?)
+}
+pub(super) fn album_release_types_from_json(
+    value: Option<String>,
+    index: usize,
+) -> rusqlite::Result<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let types = serde_json::from_str::<Vec<String>>(&value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })?;
+    Ok(normalize_release_types(types))
 }
 pub(super) fn image_ref_from_row(
     row: &Row<'_>,
@@ -519,6 +560,10 @@ pub(super) fn synthesize_album_from_tracks(album_id: &AlbumId, tracks: &[Track])
         color_seed: stable_seed(album_id.as_str()),
         image_ref: first.image_ref.clone(),
         genres: first.genres.clone(),
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
     }
 }
 pub(super) fn track_matches_artist(

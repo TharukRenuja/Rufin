@@ -1,5 +1,7 @@
 use std::io::Read;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use std::time::Instant;
 
 use reqwest::Url;
 use reqwest::blocking::Client;
@@ -9,13 +11,15 @@ use super::ExternalAlbumArt;
 
 const LASTFM_API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 const LASTFM_PLACEHOLDER_IMAGE_IDS: [&str; 1] = ["2a96cbd8b46e442fc41c2b86b821562f"];
-const MUSICBRAINZ_RELEASE_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release/";
-const MUSICBRAINZ_RELEASE_GROUP_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release-group/";
+pub(super) const MUSICBRAINZ_RELEASE_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/release/";
+pub(super) const MUSICBRAINZ_RELEASE_GROUP_SEARCH_URL: &str =
+    "https://musicbrainz.org/ws/2/release-group/";
 const COVER_ART_ARCHIVE_RELEASE_URL: &str = "https://coverartarchive.org/release";
 const RELEASE_GROUP_URL: &str = "https://coverartarchive.org/release-group";
 const EXTERNAL_IMAGE_MAX_BYTES: usize = 32 * 1024 * 1024;
-const EXTERNAL_METADATA_JSON_MAX_BYTES: usize = 4 * 1024 * 1024;
-const EXTERNAL_METADATA_USER_AGENT: &str = concat!(
+pub(super) const EXTERNAL_METADATA_JSON_MAX_BYTES: usize = 4 * 1024 * 1024;
+const MUSICBRAINZ_MIN_INTERVAL: Duration = Duration::from_millis(1100);
+pub(super) const EXTERNAL_METADATA_USER_AGENT: &str = concat!(
     "Rufin/",
     env!("CARGO_PKG_VERSION"),
     " (https://github.com/screwys/Rufin)"
@@ -205,7 +209,7 @@ fn musicbrainz_release_group_ids(
         [("query", query.as_str()), ("fmt", "json"), ("limit", "5")],
     )
     .map_err(|error| error.to_string())?;
-    let value = fetch_json(client, url, "MusicBrainz release-group lookup")?;
+    let value = fetch_musicbrainz_json(client, url, "MusicBrainz release-group lookup")?;
     let ids = json_ids(&value, "/release-groups");
     if ids.is_empty() {
         Err("MusicBrainz did not return matching release groups".to_string())
@@ -225,7 +229,7 @@ fn musicbrainz_release_ids(client: &Client, art: &ExternalAlbumArt) -> Result<Ve
         [("query", query.as_str()), ("fmt", "json"), ("limit", "5")],
     )
     .map_err(|error| error.to_string())?;
-    let value = fetch_json(client, url, "MusicBrainz release lookup")?;
+    let value = fetch_musicbrainz_json(client, url, "MusicBrainz release lookup")?;
     let ids = json_ids(&value, "/releases");
     if ids.is_empty() {
         Err("MusicBrainz did not return matching releases".to_string())
@@ -234,7 +238,7 @@ fn musicbrainz_release_ids(client: &Client, art: &ExternalAlbumArt) -> Result<Ve
     }
 }
 
-fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Value, String> {
+pub(super) fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Value, String> {
     let response = client.get(url).send().map_err(|error| error.to_string())?;
     if !response.status().is_success() {
         return Err(format!(
@@ -246,7 +250,31 @@ fn fetch_json(client: &Client, url: Url, context: &str) -> Result<Value, String>
     serde_json::from_slice::<Value>(&bytes).map_err(|error| error.to_string())
 }
 
-fn read_response_bounded(
+pub(super) fn fetch_musicbrainz_json(
+    client: &Client,
+    url: Url,
+    context: &str,
+) -> Result<Value, String> {
+    wait_for_musicbrainz_slot();
+    fetch_json(client, url, context)
+}
+
+fn wait_for_musicbrainz_slot() {
+    static LAST_REQUEST: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    let lock = LAST_REQUEST.get_or_init(|| Mutex::new(None));
+    let Ok(mut last_request) = lock.lock() else {
+        return;
+    };
+    if let Some(last_request) = *last_request {
+        let elapsed = last_request.elapsed();
+        if elapsed < MUSICBRAINZ_MIN_INTERVAL {
+            std::thread::sleep(MUSICBRAINZ_MIN_INTERVAL - elapsed);
+        }
+    }
+    *last_request = Some(Instant::now());
+}
+
+pub(super) fn read_response_bounded(
     response: reqwest::blocking::Response,
     limit: usize,
     context: &str,

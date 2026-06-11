@@ -72,6 +72,10 @@ async fn library_map_page() {
                 "DateCreated": "2024-03-02T09:10:11.0000000Z",
                 "ChildCount": 9,
                 "RunTimeTicks": 1800000000i64,
+                "ProviderIds": {
+                    "MusicBrainzAlbum": "mb-album-one",
+                    "MusicBrainzReleaseGroup": "mb-group-one"
+                },
                 "UserData": {
                     "IsFavorite": true,
                     "PlayCount": 12,
@@ -117,6 +121,14 @@ async fn library_map_page() {
     assert_eq!(page.items[0].last_played.as_deref(), Some("2024-04-02"));
     assert_eq!(page.items[0].play_count, Some(12));
     assert_eq!(page.items[0].user_rating, Some(5));
+    assert_eq!(
+        page.items[0].musicbrainz_album_id.as_deref(),
+        Some("mb-album-one")
+    );
+    assert_eq!(
+        page.items[0].musicbrainz_release_group_id.as_deref(),
+        Some("mb-group-one")
+    );
     assert_eq!(
         page.items[0].image_ref,
         Some(ImageRef {

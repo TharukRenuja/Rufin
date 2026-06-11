@@ -470,6 +470,10 @@ fn fake_album(index: usize, track_count: u16, artists: &[Artist]) -> Album {
         color_seed: color_seed(index as u32),
         image_ref: Some(fake_image_ref("album", index + 1)),
         genres: vec![GENRES[index % GENRES.len()].to_string()],
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
     }
 }
 

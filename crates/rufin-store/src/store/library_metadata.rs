@@ -2,6 +2,120 @@ use super::servers::*;
 use super::*;
 
 impl Store {
+    pub fn load_album_release_type_lookup_candidates(
+        &self,
+        server_id: &ServerId,
+        limit: usize,
+    ) -> StoreResult<Vec<AlbumReleaseTypeLookupCandidate>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut statement = self.connection.prepare(
+            "
+            SELECT album_id, title, artist, musicbrainz_album_id,
+                   musicbrainz_release_group_id, lookup_key
+            FROM (
+                SELECT album_id, title, artist, musicbrainz_album_id,
+                       musicbrainz_release_group_id,
+                       CASE
+                         WHEN TRIM(COALESCE(musicbrainz_release_group_id, '')) <> ''
+                           THEN 'release-group:' || TRIM(musicbrainz_release_group_id)
+                         ELSE 'release:' || TRIM(musicbrainz_album_id)
+                       END AS lookup_key
+                FROM albums
+                WHERE server_id = ?1
+                  AND release_types_json = '[]'
+                  AND (
+                    TRIM(COALESCE(musicbrainz_release_group_id, '')) <> ''
+                    OR TRIM(COALESCE(musicbrainz_album_id, '')) <> ''
+                  )
+            ) AS candidates
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM album_release_type_lookup_misses misses
+                WHERE misses.server_id = ?1
+                  AND misses.album_id = candidates.album_id
+                  AND misses.lookup_key = candidates.lookup_key
+              )
+            ORDER BY album_id
+            LIMIT ?2
+            ",
+        )?;
+        let rows = statement.query_map(params![server_id.as_str(), limit as i64], |row| {
+            Ok(AlbumReleaseTypeLookupCandidate {
+                album_id: AlbumId::new(row.get::<_, String>(0)?),
+                title: row.get(1)?,
+                artist: row.get(2)?,
+                musicbrainz_album_id: optional_string_column(row, 3)?,
+                musicbrainz_release_group_id: optional_string_column(row, 4)?,
+                lookup_key: row.get(5)?,
+            })
+        })?;
+        collect_rows(rows)
+    }
+
+    pub fn update_album_release_metadata(
+        &self,
+        server_id: &ServerId,
+        album_id: &AlbumId,
+        release_types: &[String],
+        is_compilation: Option<bool>,
+    ) -> StoreResult<()> {
+        let release_types_json = album_release_types_json(release_types)?;
+        let is_compilation = is_compilation.map(|value| if value { 1_i64 } else { 0_i64 });
+        self.connection.execute(
+            "
+            UPDATE albums
+            SET release_types_json = ?3,
+                is_compilation = ?4
+            WHERE server_id = ?1
+              AND album_id = ?2
+            ",
+            params![
+                server_id.as_str(),
+                album_id.as_str(),
+                release_types_json,
+                is_compilation
+            ],
+        )?;
+        self.connection.execute(
+            "
+            DELETE FROM album_release_type_lookup_misses
+            WHERE server_id = ?1
+              AND album_id = ?2
+            ",
+            params![server_id.as_str(), album_id.as_str()],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_album_release_type_lookup_miss(
+        &self,
+        server_id: &ServerId,
+        album_id: &AlbumId,
+        lookup_key: &str,
+        reason: &str,
+    ) -> StoreResult<()> {
+        self.connection.execute(
+            "
+            INSERT INTO album_release_type_lookup_misses (
+                server_id, album_id, lookup_key, reason, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_id, album_id, lookup_key) DO UPDATE SET
+                reason = excluded.reason,
+                updated_at = excluded.updated_at
+            ",
+            params![
+                server_id.as_str(),
+                album_id.as_str(),
+                lookup_key,
+                reason.chars().take(500).collect::<String>()
+            ],
+        )?;
+        Ok(())
+    }
+
     pub(super) fn attach_album_genres(
         &self,
         server_id: &ServerId,
@@ -27,6 +141,7 @@ impl Store {
         albums: &mut [Album],
     ) -> StoreResult<()> {
         self.attach_album_genres(server_id, albums)?;
+        self.attach_album_release_metadata(server_id, albums)?;
         self.album_track_fallback(server_id, albums)?;
         if albums.is_empty() {
             return Ok(());
@@ -39,6 +154,83 @@ impl Store {
         for album in albums {
             album.album_artist_credits =
                 credits.get(album.id.as_str()).cloned().unwrap_or_default();
+        }
+        Ok(())
+    }
+
+    pub(super) fn attach_album_release_metadata(
+        &self,
+        server_id: &ServerId,
+        albums: &mut [Album],
+    ) -> StoreResult<()> {
+        if albums.is_empty() {
+            return Ok(());
+        }
+        let ids = albums
+            .iter()
+            .map(|album| album.id.as_str().to_string())
+            .collect::<Vec<_>>();
+        let mut metadata_by_album =
+            HashMap::<String, (Vec<String>, Option<bool>, Option<String>, Option<String>)>::new();
+        for chunk in ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "
+                SELECT album_id, release_types_json, is_compilation,
+                       musicbrainz_album_id, musicbrainz_release_group_id
+                FROM albums
+                WHERE server_id = ?
+                  AND album_id IN ({placeholders})
+                "
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(server_id.as_str());
+            values.extend(chunk.iter().map(String::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    album_release_types_from_json(row.get::<_, Option<String>>(1)?, 1)?,
+                    row.get::<_, Option<i64>>(2)?.map(|value| value == 1),
+                    optional_string_column(row, 3)?,
+                    optional_string_column(row, 4)?,
+                ))
+            })?;
+            for row in rows {
+                let (
+                    album_id,
+                    release_types,
+                    is_compilation,
+                    musicbrainz_album_id,
+                    musicbrainz_release_group_id,
+                ) = row?;
+                metadata_by_album.insert(
+                    album_id,
+                    (
+                        release_types,
+                        is_compilation,
+                        musicbrainz_album_id,
+                        musicbrainz_release_group_id,
+                    ),
+                );
+            }
+        }
+
+        for album in albums {
+            if let Some((
+                release_types,
+                is_compilation,
+                musicbrainz_album_id,
+                musicbrainz_release_group_id,
+            )) = metadata_by_album.remove(album.id.as_str())
+            {
+                album.release_types = release_types;
+                album.is_compilation = is_compilation;
+                album.musicbrainz_album_id = musicbrainz_album_id;
+                album.musicbrainz_release_group_id = musicbrainz_release_group_id;
+            }
         }
         Ok(())
     }

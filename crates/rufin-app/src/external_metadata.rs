@@ -4,8 +4,12 @@ use rufin_core::{
 use rufin_provider::SearchResults;
 
 mod album_lookup;
+mod release_type_lookup;
 
 pub use album_lookup::fetch_album_cover;
+pub use release_type_lookup::{
+    AlbumReleaseMetadata, fetch_album_release_metadata, is_expected_release_type_lookup_miss,
+};
 
 const EXTERNAL_ALBUM_IMAGE_PREFIX: &str = "external:album:";
 const EXTERNAL_ALBUM_IMAGE_TAG_VERSION: &str = "external-v1";
@@ -633,6 +637,10 @@ mod tests {
             color_seed: 1,
             image_ref: None,
             genres: Vec::new(),
+            release_types: Vec::new(),
+            is_compilation: None,
+            musicbrainz_album_id: None,
+            musicbrainz_release_group_id: None,
         }
     }
 

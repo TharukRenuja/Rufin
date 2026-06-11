@@ -14,6 +14,14 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 12,
         run: migrate_to_local_manifest_schema,
     },
+    SchemaMigration {
+        from_version: 13,
+        run: migrate_to_album_release_metadata_schema,
+    },
+    SchemaMigration {
+        from_version: 14,
+        run: migrate_to_album_release_type_lookup_schema,
+    },
 ];
 const SCHEMA_VERSION_10_TABLES: &[&str] = &[
     "queue_snapshots",
@@ -199,6 +207,17 @@ const LOCAL_MANIFEST_COLUMNS: &[(&str, &str)] = &[
     ("local_artwork_manifest", "source_path"),
     ("local_artwork_manifest", "revision"),
 ];
+const ALBUM_RELEASE_METADATA_COLUMNS: &[(&str, &str)] = &[
+    ("albums", "release_types_json"),
+    ("albums", "is_compilation"),
+    ("albums", "musicbrainz_album_id"),
+    ("albums", "musicbrainz_release_group_id"),
+];
+const ALBUM_RELEASE_TYPE_LOOKUP_TABLES: &[&str] = &["album_release_type_lookup_misses"];
+const ALBUM_RELEASE_TYPE_LOOKUP_COLUMNS: &[(&str, &str)] = &[
+    ("album_release_type_lookup_misses", "lookup_key"),
+    ("album_release_type_lookup_misses", "reason"),
+];
 
 struct SchemaMigration {
     from_version: i64,
@@ -300,6 +319,16 @@ fn migrate_cover_refs(store: &Store) -> StoreResult<()> {
 }
 fn migrate_to_local_manifest_schema(store: &Store) -> StoreResult<()> {
     store.create_local_manifest_schema()
+}
+fn migrate_to_album_release_metadata_schema(store: &Store) -> StoreResult<()> {
+    store.ensure_column("albums", "release_types_json", "TEXT NOT NULL DEFAULT '[]'")?;
+    store.ensure_column("albums", "is_compilation", "INTEGER")?;
+    store.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;
+    store.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
+    Ok(())
+}
+fn migrate_to_album_release_type_lookup_schema(store: &Store) -> StoreResult<()> {
+    store.create_album_release_type_lookup_schema()
 }
 
 impl Store {
@@ -411,6 +440,13 @@ impl Store {
             13 => Ok(self.schema_is_complete_for_version(12)?
                 && self
                     .schema_has_required_parts(LOCAL_MANIFEST_TABLES, LOCAL_MANIFEST_COLUMNS)?),
+            14 => Ok(self.schema_is_complete_for_version(13)?
+                && self.schema_has_required_parts(&[], ALBUM_RELEASE_METADATA_COLUMNS)?),
+            15 => Ok(self.schema_is_complete_for_version(14)?
+                && self.schema_has_required_parts(
+                    ALBUM_RELEASE_TYPE_LOOKUP_TABLES,
+                    ALBUM_RELEASE_TYPE_LOOKUP_COLUMNS,
+                )?),
             _ => Ok(false),
         }
     }
@@ -593,6 +629,10 @@ impl Store {
                 color_seed INTEGER NOT NULL,
                 image_item_id TEXT,
                 image_tag TEXT,
+                release_types_json TEXT NOT NULL DEFAULT '[]',
+                is_compilation INTEGER,
+                musicbrainz_album_id TEXT,
+                musicbrainz_release_group_id TEXT,
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, album_id)
             );
@@ -786,6 +826,14 @@ impl Store {
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (server_id, item_id, image_tag, size)
             );
+            CREATE TABLE IF NOT EXISTS album_release_type_lookup_misses (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                album_id TEXT NOT NULL,
+                lookup_key TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, album_id, lookup_key)
+            );
             CREATE VIRTUAL TABLE IF NOT EXISTS library_fts USING fts5(
                 server_id UNINDEXED,
                 item_type UNINDEXED,
@@ -849,8 +897,28 @@ impl Store {
         self.ensure_column("tracks", "source_format", "TEXT")?;
         self.ensure_column("tracks", "comment", "TEXT")?;
         self.ensure_column("tracks", "skip_count", "INTEGER")?;
+        self.ensure_column("albums", "release_types_json", "TEXT NOT NULL DEFAULT '[]'")?;
+        self.ensure_column("albums", "is_compilation", "INTEGER")?;
+        self.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;
+        self.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
+        self.create_album_release_type_lookup_schema()?;
         self.connection
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(())
+    }
+    fn create_album_release_type_lookup_schema(&self) -> StoreResult<()> {
+        self.connection.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS album_release_type_lookup_misses (
+                server_id TEXT NOT NULL REFERENCES servers(server_id) ON DELETE CASCADE,
+                album_id TEXT NOT NULL,
+                lookup_key TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (server_id, album_id, lookup_key)
+            );
+            ",
+        )?;
         Ok(())
     }
     pub(super) fn table_exists(&self, table: &str) -> StoreResult<bool> {

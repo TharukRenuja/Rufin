@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::root::{jellyfin_id, stable_hash};
 
-pub(super) const ITEM_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
+pub(super) const ITEM_FIELDS: &str = "Path,Overview,Container,Genres,DateCreated,PremiereDate,ProductionYear,RunTimeTicks,ParentId,AlbumId,AlbumPrimaryImageTag,AlbumArtists,ArtistItems,ProviderIds,UserData,ImageTags,ChildCount,AlbumCount,SongCount";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -33,6 +33,7 @@ pub(super) struct JellyfinItem {
     artists: Option<Vec<String>>,
     genres: Option<Vec<String>>,
     artist_items: Option<Vec<NameIdPair>>,
+    provider_ids: Option<HashMap<String, String>>,
     album: Option<String>,
     pub(super) album_id: Option<String>,
     album_primary_image_tag: Option<String>,
@@ -116,6 +117,10 @@ pub(super) fn album_from_item(item: JellyfinItem) -> Album {
         color_seed: color_seed(&item_id),
         image_ref: primary_image_ref("album", &item.id, &item.image_tags),
         genres: item.genres.unwrap_or_default(),
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: provider_id(&item.provider_ids, "MusicBrainzAlbum"),
+        musicbrainz_release_group_id: provider_id(&item.provider_ids, "MusicBrainzReleaseGroup"),
     }
 }
 
@@ -309,6 +314,13 @@ fn joined_artist_names(artists: Option<&[String]>) -> Option<String> {
         .filter(|name| !name.is_empty())
         .collect::<Vec<_>>();
     (!names.is_empty()).then(|| names.join(", "))
+}
+
+fn provider_id(ids: &Option<HashMap<String, String>>, key: &str) -> Option<String> {
+    ids.as_ref()
+        .and_then(|ids| ids.get(key))
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
 }
 
 fn color_seed(id: &str) -> u32 {

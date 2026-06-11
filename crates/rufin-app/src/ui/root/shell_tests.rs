@@ -1443,12 +1443,24 @@ pub(in crate::ui) fn shell_use_statuses() {
         Some("Server settings saved. Resyncing library…")
     );
     assert_eq!(
-        preferences_login_status_toast_message("No changes to save."),
-        Some("No changes to save.")
+        preferences_login_status_toast_message("Syncing Jellyfin library…"),
+        Some("Syncing Jellyfin library…")
     );
     assert_eq!(
         preferences_login_status_toast_message("Library sync complete"),
-        None
+        Some("Library sync complete")
+    );
+    assert_eq!(
+        preferences_login_status_toast_message("Cached library ready"),
+        Some("Cached library ready")
+    );
+    assert_eq!(
+        preferences_login_status_toast_message("Sync already running."),
+        Some("Sync already running.")
+    );
+    assert_eq!(
+        preferences_login_status_toast_message("No changes to save."),
+        Some("No changes to save.")
     );
 }
 #[test]
@@ -1719,6 +1731,10 @@ pub(in crate::ui) fn test_album(artist: &str, artist_id: Option<ArtistId>) -> Al
         color_seed: 1,
         image_ref: None,
         genres: Vec::new(),
+        release_types: Vec::new(),
+        is_compilation: None,
+        musicbrainz_album_id: None,
+        musicbrainz_release_group_id: None,
     }
 }
 pub(in crate::ui) fn test_home_album_section(kind: HomeSectionKind, album_id: u32) -> HomeSection {
