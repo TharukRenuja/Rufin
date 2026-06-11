@@ -95,6 +95,15 @@ pub(in crate::controller) fn cached_lyrics_allowed(
     }
 }
 
+pub(in crate::controller) fn cached_lyrics_allowed_for_track(
+    lyrics: &Lyrics,
+    search: JellyfinLyricsSearch,
+    cue_track: bool,
+) -> bool {
+    cached_lyrics_allowed(lyrics, search)
+        && !(cue_track && lyrics.source == rufin_provider::LyricsSource::Local)
+}
+
 pub(in crate::controller) fn provider_for_saved(
     store: &StoreHandle,
     runtime: &Runtime,

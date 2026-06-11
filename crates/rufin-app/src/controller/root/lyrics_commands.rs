@@ -51,6 +51,7 @@ impl AppController {
                 .send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
             return;
         }
+        let cue_track = track_has_cue_source(&self.store, &server_id, &entry.track_id);
         let cached = use_cache.then(|| {
             self.store
                 .with_store(|store| store.load_lyrics(&server_id, &entry.track_id))
@@ -58,7 +59,7 @@ impl AppController {
         });
         if let Some(cached) = cached
             .flatten()
-            .filter(|lyrics| cached_lyrics_allowed(lyrics, search))
+            .filter(|lyrics| cached_lyrics_allowed_for_track(lyrics, search, cue_track))
         {
             debug!(track_id = %entry.track_id, "loaded lyrics from cache");
             let _sent = self

@@ -5,14 +5,14 @@ pub mod settings;
 
 pub use domain::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
-    HOME_SECTION_ITEM_LIMIT, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef, LocalFileFacts,
-    LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, LocalManifestScan,
-    LocalScanCounters, MusicFolder, MusicFolderId, Playlist, PlaylistId, ServerId, ServerIdentity,
-    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail,
-    SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule, SmartPlaylistRuleField,
-    SmartPlaylistRuleGroup, SmartPlaylistRuleNode, SmartPlaylistRuleOperator,
-    SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId, format_duration,
-    normalize_release_types,
+    HOME_SECTION_ITEM_LIMIT, HomeBlockKind, HomeSection, HomeSectionKind, ImageRef,
+    LocalCueTrackSource, LocalFileFacts, LocalManifestCover, LocalManifestCoverKind,
+    LocalManifestEntry, LocalManifestScan, LocalScanCounters, MusicFolder, MusicFolderId, Playlist,
+    PlaylistId, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
+    SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
+    SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
+    SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
+    format_duration, normalize_release_types,
 };
 pub use queue::{
     ArtistTrackScope, AutoDjReason, PlaySourceDescriptor, PlaySourceKey,

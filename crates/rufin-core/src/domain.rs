@@ -211,6 +211,21 @@ pub struct LocalManifestEntry {
     pub search_hash: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalCueTrackSource {
+    pub source_object_id: String,
+    pub track_id: TrackId,
+    pub source_path: String,
+    pub root_path: String,
+    pub relative_path: String,
+    pub cue_path: String,
+    pub cue_revision: String,
+    pub cue_track_index: i64,
+    pub segment_start_ms: i64,
+    pub segment_end_ms: i64,
+    pub sync_generation: i64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct LocalFileFacts {
     pub path: PathBuf,
@@ -241,6 +256,7 @@ pub enum LocalManifestCoverKind {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LocalManifestScan {
     pub entries: Vec<LocalManifestEntry>,
+    pub cue_track_sources: Vec<LocalCueTrackSource>,
     pub deleted_paths: Vec<PathBuf>,
     pub changed_track_ids: Vec<TrackId>,
     pub metadata_track_ids: Vec<TrackId>,

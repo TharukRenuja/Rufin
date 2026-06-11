@@ -395,6 +395,126 @@ pub(in crate::controller) fn lyrics_use_file() {
     assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
     let _cleanup = fs::remove_dir_all(dir);
 }
+
+#[test]
+pub(in crate::controller) fn lyrics_match_title_sidecar_for_separate_file_tracks() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = self::saved_server();
+    let dir = self::unique_test_dir("title-sidecar");
+    fs::create_dir_all(&dir).expect("create dir");
+    let generation = store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)?;
+            store.save_server_local_access(&ServerLocalAccess {
+                server_id: saved.server.id.clone(),
+                root_path: dir.to_string_lossy().into_owned(),
+                path_replace_from: None,
+                path_replace_to: Some(dir.to_string_lossy().into_owned()),
+            })?;
+            store.begin_sync(&saved.server.id)
+        })
+        .expect("begin sync");
+    let audio = dir.join("01 Apple.flac");
+    let lrc = dir.join("Apple.lrc");
+    fs::write(&audio, []).expect("audio");
+    fs::write(&lrc, "[00:01.00]apple line").expect("lrc");
+    let mut track = restored_track();
+    track.title = "Apple".to_string();
+    track.local_path = Some(audio.to_string_lossy().into_owned());
+    store
+        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .expect("upsert track");
+
+    let lyrics =
+        super::local_sidecar_lyrics(&store, &saved.server.id, &track.id).expect("sidecar lyrics");
+
+    assert_eq!(lyrics.source, LyricsSource::Local);
+    assert_eq!(lyrics.lines[0].text, "apple line");
+    let _cleanup = fs::remove_dir_all(dir);
+}
+
+#[test]
+pub(in crate::controller) fn lyrics_match_title_sidecar_for_cue_tracks() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let mut saved = self::saved_server();
+    saved.server.id = ServerId::new("local:server:library");
+    saved.server.provider = LOCAL_PROVIDER_ID.to_string();
+    let dir = self::unique_test_dir("cue-sidecar");
+    fs::create_dir_all(&dir).expect("create dir");
+    let audio = dir.join("fruits.flac");
+    let same_stem_lrc = dir.join("fruits.lrc");
+    let title_lrc = dir.join("Apple.lrc");
+    fs::write(&audio, []).expect("audio");
+    fs::write(&same_stem_lrc, "[00:01.00]wrong line").expect("same stem lrc");
+    fs::write(&title_lrc, "[00:01.00]apple line").expect("title lrc");
+    let track_id = TrackId::new("local:track:cue-one");
+    let mut track = restored_track();
+    track.id = track_id.clone();
+    track.title = "Apple".to_string();
+    track.local_path = Some(audio.to_string_lossy().into_owned());
+    store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            let generation = store.begin_sync(&saved.server.id)?;
+            store.upsert_tracks(&saved.server.id, &[track.clone()], generation)?;
+            let parent_id = store.upsert_local_file_source_object(
+                &saved.server.id,
+                &rufin_store::LocalFileSourceObject {
+                    source_path: audio.to_string_lossy().into_owned(),
+                    root_path: dir.to_string_lossy().into_owned(),
+                    relative_path: "album.flac".to_string(),
+                    sync_generation: 1,
+                },
+            )?;
+            store.upsert_cue_track_source_object(
+                &saved.server.id,
+                &rufin_store::CueTrackSourceObject {
+                    source_object_id: "local:cue:track:one".to_string(),
+                    track_id: track_id.clone(),
+                    source_path: audio.to_string_lossy().into_owned(),
+                    parent_source_object_id: parent_id,
+                    cue_path: dir.join("album.cue").to_string_lossy().into_owned(),
+                    cue_revision: "cue-revision-one".to_string(),
+                    cue_track_index: 1,
+                    segment_start_ms: 0,
+                    segment_end_ms: 30_000,
+                    sync_generation: 1,
+                },
+            )
+        })
+        .expect("cue source");
+
+    let lyrics =
+        super::local_sidecar_lyrics(&store, &saved.server.id, &track_id).expect("sidecar lyrics");
+
+    assert_eq!(lyrics.source, LyricsSource::Local);
+    assert_eq!(lyrics.lines[0].text, "apple line");
+    let _cleanup = fs::remove_dir_all(dir);
+}
+
+#[test]
+pub(in crate::controller) fn lyrics_ignore_cached_local_for_cue_tracks() {
+    let lyrics = Lyrics {
+        track_id: TrackId::new("local:track:cue-one"),
+        source: LyricsSource::Local,
+        lines: vec![LyricLine {
+            text: "line one".to_string(),
+            start_millis: Some(1_000),
+        }],
+    };
+
+    assert!(!super::cached_lyrics_allowed_for_track(
+        &lyrics,
+        JellyfinLyricsSearch::RemoteThenServer,
+        true,
+    ));
+    assert!(super::cached_lyrics_allowed_for_track(
+        &lyrics,
+        JellyfinLyricsSearch::RemoteThenServer,
+        false,
+    ));
+}
 #[test]
 pub(in crate::controller) fn lyrics_ignore_files() {
     let store = StoreHandle::open_memory().expect("memory store");

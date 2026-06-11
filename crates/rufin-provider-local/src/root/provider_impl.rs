@@ -304,6 +304,11 @@ pub(super) fn is_audio_file(path: &Path) -> bool {
                 .any(|candidate| extension.eq_ignore_ascii_case(candidate))
         })
 }
+pub(super) fn is_cue_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("cue"))
+}
 pub(super) fn folder_cover(dir: &Path) -> Option<PathBuf> {
     let image_paths = folder_image_paths(dir);
     image_paths

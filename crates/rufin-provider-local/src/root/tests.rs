@@ -51,6 +51,90 @@ async fn local_provider_scans_multiple_roots() {
     assert_eq!(tracks.items.len(), 2);
 }
 #[tokio::test]
+async fn local_provider_projects_single_file_cue_tracks() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let audio = dir.path().join("album.wav");
+    write_silent_wav(&audio, 8).expect("write wav");
+    fs::write(
+        dir.path().join("album.cue"),
+        r#"
+PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.wav" WAVE
+  TRACK 01 AUDIO
+    TITLE "First Cue Track"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Second Cue Track"
+    INDEX 01 00:04:00
+"#,
+    )
+    .expect("write cue");
+
+    let provider = LocalProvider::from_root(dir.path().to_path_buf()).expect("provider");
+    let tracks = provider
+        .tracks(PagedRequest::new(0, 10))
+        .await
+        .expect("tracks");
+
+    assert_eq!(tracks.total, 2);
+    assert!(
+        tracks
+            .items
+            .iter()
+            .any(|track| track.title == "First Cue Track")
+    );
+    assert!(
+        tracks
+            .items
+            .iter()
+            .any(|track| track.title == "Second Cue Track")
+    );
+    assert!(tracks.items.iter().all(|track| track.album == "Cue Album"));
+    assert_eq!(provider.manifest_scan().cue_track_sources.len(), 2);
+    assert_eq!(provider.manifest_scan().entries.len(), 2);
+}
+
+#[tokio::test]
+async fn local_provider_replaces_cached_file_track_with_cue_tracks() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let audio = dir.path().join("album.wav");
+    write_silent_wav(&audio, 8).expect("write wav");
+    let server = identity_for_root(dir.path());
+    let cold =
+        LocalProvider::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
+            .expect("cold provider");
+    let old_track_id = cold.manifest_scan().entries[0].track.id.clone();
+    fs::write(
+        dir.path().join("album.cue"),
+        r#"
+PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.wav" WAVE
+  TRACK 01 AUDIO
+    TITLE "First Cue Track"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Second Cue Track"
+    INDEX 01 00:04:00
+"#,
+    )
+    .expect("write cue");
+
+    let warm = LocalProvider::from_roots_with_manifest_cache(
+        vec![dir.path().to_path_buf()],
+        server,
+        cold.manifest_scan().entries.clone(),
+    )
+    .expect("warm provider");
+    let tracks = warm.tracks(PagedRequest::new(0, 10)).await.expect("tracks");
+
+    assert_eq!(tracks.total, 2);
+    assert_eq!(warm.manifest_scan().cue_track_sources.len(), 2);
+    assert_eq!(warm.manifest_scan().deleted_track_ids, vec![old_track_id]);
+    assert!(warm.manifest_scan().library_changed);
+}
+#[tokio::test]
 async fn local_provider_dedupes_overlapping_roots() {
     let root = tempfile::tempdir().expect("root");
     let nested = root.path().join("nested");
@@ -67,6 +151,31 @@ async fn local_provider_dedupes_overlapping_roots() {
 
     assert_eq!(tracks.total, 1);
     assert_eq!(provider.manifest_scan().entries.len(), 1);
+}
+
+fn write_silent_wav(path: &Path, seconds: u32) -> std::io::Result<()> {
+    let sample_rate = 8_000_u32;
+    let bits_per_sample = 16_u16;
+    let channels = 1_u16;
+    let sample_count = sample_rate.saturating_mul(seconds);
+    let data_len = sample_count * u32::from(channels) * u32::from(bits_per_sample / 8);
+    let byte_rate = sample_rate * u32::from(channels) * u32::from(bits_per_sample / 8);
+    let block_align = channels * (bits_per_sample / 8);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16_u32.to_le_bytes());
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&channels.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&byte_rate.to_le_bytes());
+    bytes.extend_from_slice(&block_align.to_le_bytes());
+    bytes.extend_from_slice(&bits_per_sample.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    bytes.resize(bytes.len() + data_len as usize, 0);
+    fs::write(path, bytes)
 }
 #[tokio::test]
 async fn manifest_scan_reuse() {
@@ -708,6 +817,7 @@ fn scanned_test_track(number: u32, album_id: AlbumId, cover: Option<LocalCover>)
         album_artist: "Example Artist".to_string(),
         musicbrainz_album_id: None,
         musicbrainz_release_group_id: None,
+        cue_source: None,
         cover,
         embedded_cover_path: None,
     }
