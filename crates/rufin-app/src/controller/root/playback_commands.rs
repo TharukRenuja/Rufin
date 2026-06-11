@@ -189,6 +189,8 @@ impl AppController {
     pub fn update_playback_settings(&self, mut playback_settings: PlaybackSettings) {
         playback_settings.sanitize();
         let mut settings = self.load_settings();
+        let mut previous_playback = settings.playback.clone();
+        previous_playback.sanitize();
         if settings.playback != playback_settings {
             settings.playback = playback_settings.clone();
             if let Err(error) = self.save_settings(&settings) {
@@ -205,7 +207,9 @@ impl AppController {
             snapshot.volume = playback_settings.volume;
             snapshot.muted = playback_settings.muted;
         });
-        self.prepare_next_stream();
+        if playback_settings_change_needs_next_prepare(&previous_playback, &playback_settings) {
+            self.prepare_next_stream();
+        }
         self.emit_playback_snapshot();
     }
     pub fn set_visualizer_enabled(&self, enabled: bool) {
@@ -341,6 +345,15 @@ impl AppController {
     }
 }
 
+fn playback_settings_change_needs_next_prepare(
+    previous: &PlaybackSettings,
+    next: &PlaybackSettings,
+) -> bool {
+    let mut comparable = previous.clone();
+    comparable.equalizer = next.equalizer.clone();
+    comparable != *next
+}
+
 fn timing_event_matches_current(snapshot: &PlaybackSnapshot, track_id: Option<&TrackId>) -> bool {
     let Some(track_id) = track_id else {
         return true;
@@ -364,4 +377,36 @@ fn backend_duration_is_plausible(snapshot: &PlaybackSnapshot, seconds: u32) -> b
     }
     let max_delta = known.max(60);
     seconds <= known.saturating_add(max_delta)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rufin_core::EqualizerSettings;
+
+    #[test]
+    fn equalizer_only_settings_change_does_not_prepare_next_stream() {
+        let previous = PlaybackSettings::default();
+        let mut next = previous.clone();
+        next.equalizer = EqualizerSettings {
+            enabled: true,
+            bands: vec![1.0; rufin_core::EQUALIZER_BAND_COUNT],
+            ..EqualizerSettings::default()
+        };
+
+        assert!(!playback_settings_change_needs_next_prepare(
+            &previous, &next
+        ));
+    }
+
+    #[test]
+    fn non_equalizer_settings_change_prepares_next_stream() {
+        let previous = PlaybackSettings::default();
+        let mut next = previous.clone();
+        next.crossfade_seconds = previous.crossfade_seconds.saturating_add(1);
+
+        assert!(playback_settings_change_needs_next_prepare(
+            &previous, &next
+        ));
+    }
 }

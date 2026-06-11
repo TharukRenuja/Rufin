@@ -4,8 +4,8 @@ use super::{
     LibraryListKey, LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
     MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, MIN_AUTO_DJ_REFILL_THRESHOLD,
     MIN_CROSSFADE_SECONDS, RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings,
-    SidebarRouteItem, TrackSortKey, TrackTableColumn, default_external_lyrics_providers,
-    sanitized_window_size,
+    SidebarRouteItem, TrackSortKey, TrackTableColumn, available_detail_track_fields,
+    default_external_lyrics_providers, sanitized_window_size,
 };
 #[test]
 fn settings_default_disabled() {
@@ -170,6 +170,10 @@ fn settings_restore_without_window_geometry() {
         restored.external_lyrics_providers,
         default_external_lyrics_providers()
     );
+    assert!(restored.external_site_links.enabled);
+    assert!(restored.external_site_links.lastfm);
+    assert!(restored.external_site_links.musicbrainz);
+    assert!(restored.external_site_links.server);
     assert!(restored.type_to_search_enabled);
 }
 
@@ -485,7 +489,35 @@ fn settings_keep_field() {
     let tracks = settings.library_list(LibraryListKey::Tracks);
 
     assert!(tracks.row_fields.contains(&LibraryField::TitleMerged));
-    assert!(tracks.detail_track_fields.contains(&LibraryField::Title));
+    assert_eq!(tracks.detail_track_fields, available_detail_track_fields());
+}
+#[test]
+fn settings_migrate_detail_tracks_to_text_columns() {
+    let mut settings = AppSettings {
+        library_lists: vec![super::LibraryListSettingsEntry {
+            key: LibraryListKey::Albums,
+            settings: super::LibraryListSettings {
+                layout: LibraryLayout::Detail,
+                row_fields: vec![LibraryField::Image, LibraryField::Title],
+                grid_fields: vec![LibraryField::AlbumArtist],
+                detail_track_fields: vec![
+                    LibraryField::RowIndex,
+                    LibraryField::Image,
+                    LibraryField::Title,
+                    LibraryField::PlayCount,
+                ],
+                sort_key: LibraryField::Title,
+                descending: false,
+                layout_version: 4,
+            },
+        }],
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+    let albums = settings.library_list(LibraryListKey::Albums);
+
+    assert_eq!(albums.detail_track_fields, available_detail_track_fields());
 }
 #[test]
 fn settings_migrate_state() {

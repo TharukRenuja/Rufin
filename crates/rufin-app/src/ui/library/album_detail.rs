@@ -5,6 +5,22 @@ const TABLE_TARGET_WIDTH: i32 = 44;
 const TABLE_MIN_WIDTH: i32 = 24;
 const TABLE_EXPAND_MIN_WIDTH: i32 = 140;
 
+#[derive(Clone)]
+pub(in crate::ui) struct ColumnViewWidthFit {
+    table: glib::WeakRef<gtk::ColumnView>,
+    columns: Rc<Vec<(gtk::ColumnViewColumn, i32)>>,
+}
+
+impl ColumnViewWidthFit {
+    fn apply(&self) -> bool {
+        let Some(table) = self.table.upgrade() else {
+            return false;
+        };
+        apply_column_view_width_fit(&table, self.columns.as_ref());
+        true
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum ColumnViewWidthMode {
     RouteScroller,
@@ -162,6 +178,7 @@ fn distribute_weighted_column_width(widths: &mut [i32], positions: &[usize], ext
 }
 
 pub(in crate::ui) fn install_column_view_width_fit(
+    shell: &Rc<Shell>,
     table: &gtk::ColumnView,
     columns: Vec<(gtk::ColumnViewColumn, i32)>,
     initial_width: i32,
@@ -172,6 +189,14 @@ pub(in crate::ui) fn install_column_view_width_fit(
 
     let columns = Rc::new(columns);
     fit_column_widths(columns.as_ref(), table.width().max(initial_width));
+    shell
+        .state
+        .column_view_width_fits
+        .borrow_mut()
+        .push(ColumnViewWidthFit {
+            table: table.downgrade(),
+            columns: Rc::clone(&columns),
+        });
     let columns_for_map = Rc::clone(&columns);
     table.connect_map(move |table| {
         apply_column_view_width_fit(table, columns_for_map.as_ref());
@@ -189,6 +214,10 @@ pub(in crate::ui) fn install_column_view_width_fit(
             gtk::glib::ControlFlow::Continue
         }
     });
+}
+
+pub(in crate::ui) fn refit_column_view_width_fits(fits: &mut Vec<ColumnViewWidthFit>) {
+    fits.retain(ColumnViewWidthFit::apply);
 }
 
 fn apply_column_view_width_fit(table: &gtk::ColumnView, columns: &[(gtk::ColumnViewColumn, i32)]) {
@@ -394,10 +423,33 @@ pub(in crate::ui) fn track_column_for_key(
             track.title.clone()
         }),
         LibraryField::Favorite => track_favorite_column(shell),
+        LibraryField::Artist => track_link_column(shell, "Artist", width, |track| {
+            (track.artist.clone(), track_artist_route(track))
+        }),
+        LibraryField::AlbumArtist => {
+            track_link_column(shell, LibraryField::AlbumArtist.title(), width, |track| {
+                (
+                    track_field(track, LibraryField::AlbumArtist),
+                    track_album_artist_route(track),
+                )
+            })
+        }
+        LibraryField::Album => track_link_column(shell, "Album", width, |track| {
+            (
+                track.album.clone(),
+                Some(Route::AlbumDetail(track.album_id.clone())),
+            )
+        }),
+        LibraryField::Duration => track_text_column(shell, "◷", width, false, 0.0, |track| {
+            track_field(track, LibraryField::Duration)
+        }),
         _ => track_text_column(shell, field.title(), width, false, 0.0, move |track| {
             track_field(track, field)
         }),
     }
+}
+pub(in crate::ui) fn track_column_fit_width(key: LibraryListKey, field: LibraryField) -> i32 {
+    column_fit_width(field, track_column_width(key, field))
 }
 pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField) -> i32 {
     match key {
@@ -422,6 +474,24 @@ pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField
         LibraryField::Duration => 70,
         LibraryField::Image => column_width(LibraryField::Image),
         LibraryField::Favorite => 48,
+    }
+}
+pub(in crate::ui) fn column_fit_width(field: LibraryField, width: i32) -> i32 {
+    if field == LibraryField::TitleMerged {
+        width.saturating_add(72)
+    } else {
+        width
+    }
+}
+fn track_album_artist_route(track: &Track) -> Option<Route> {
+    if let Some(credit) = track.album_artist_credits.first() {
+        Some(Route::ArtistDetail(credit.id.clone()))
+    } else {
+        let album_artist = track_field(track, LibraryField::AlbumArtist);
+        (!album_artist.trim().is_empty()).then_some(Route::Search {
+            query: album_artist,
+            kind: SearchKind::Artists,
+        })
     }
 }
 fn track_list_column_width(field: LibraryField) -> i32 {
@@ -554,6 +624,7 @@ pub(in crate::ui) struct LibraryAlbumMergedCell {
     pub(in crate::ui) cover: ArtworkTile,
     pub(in crate::ui) title: gtk::Label,
     pub(in crate::ui) subtitle: gtk::Label,
+    pub(in crate::ui) subtitle_route: Rc<RefCell<Option<Route>>>,
     pub(in crate::ui) current_album: Rc<RefCell<Option<Album>>>,
 }
 
@@ -745,6 +816,7 @@ pub(in crate::ui) fn album_merged_column(
             return;
         };
         let current_album = Rc::new(RefCell::new(None::<Album>));
+        let subtitle_route = Rc::new(RefCell::new(None::<Route>));
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_valign(gtk::Align::Center);
 
@@ -762,10 +834,22 @@ pub(in crate::ui) fn album_merged_column(
         let subtitle = gtk::Label::new(None);
         subtitle.add_css_class("muted");
         subtitle.set_xalign(0.0);
+        subtitle.set_halign(gtk::Align::Start);
+        subtitle.set_hexpand(false);
         subtitle.set_wrap(false);
         subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
         subtitle.set_single_line_mode(true);
         subtitle.set_visible(false);
+        subtitle.set_cursor_from_name(Some("pointer"));
+        add_dynamic_link_hover(subtitle.upcast_ref(), &subtitle);
+        let click_shell = Rc::clone(&setup_shell);
+        let route_for_click = Rc::clone(&subtitle_route);
+        add_label_click(&subtitle, move || {
+            let route = route_for_click.borrow().clone();
+            if let Some(route) = route {
+                click_shell.navigate(route);
+            }
+        });
         labels.append(&subtitle);
 
         row.append(&labels);
@@ -779,6 +863,7 @@ pub(in crate::ui) fn album_merged_column(
                     cover,
                     title,
                     subtitle,
+                    subtitle_route,
                     current_album,
                 },
             );
@@ -804,6 +889,8 @@ pub(in crate::ui) fn album_merged_column(
         );
         cell.title.set_text(&album.title);
         cell.subtitle.set_text(&album.artist);
+        let route = album_artist_route(&album);
+        *cell.subtitle_route.borrow_mut() = route;
         cell.subtitle.set_visible(!album.artist.trim().is_empty());
         *cell.current_album.borrow_mut() = Some(album);
     });
@@ -815,6 +902,7 @@ pub(in crate::ui) fn album_merged_column(
             cell.title.set_text("");
             cell.subtitle.set_text("");
             cell.subtitle.set_visible(false);
+            *cell.subtitle_route.borrow_mut() = None;
             cell.cover.bind_image(0, None);
             *cell.current_album.borrow_mut() = None;
         }
@@ -954,6 +1042,7 @@ pub(in crate::ui) struct LibraryTrackMergedCell {
     pub(in crate::ui) cover: ArtworkTile,
     pub(in crate::ui) title: gtk::Label,
     pub(in crate::ui) subtitle: gtk::Label,
+    pub(in crate::ui) subtitle_route: Rc<RefCell<Option<Route>>>,
     pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
 }
 
@@ -1175,6 +1264,7 @@ where
             return;
         };
         let current_track = Rc::new(RefCell::new(None::<Track>));
+        let subtitle_route = Rc::new(RefCell::new(None::<Route>));
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         row.set_valign(gtk::Align::Center);
 
@@ -1191,12 +1281,28 @@ where
 
         let subtitle = gtk::Label::new(None);
         subtitle.add_css_class("muted");
+        subtitle.add_css_class("table-link-label");
         subtitle.set_xalign(0.0);
+        subtitle.set_halign(gtk::Align::Start);
+        subtitle.set_hexpand(false);
         subtitle.set_wrap(false);
         subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
         subtitle.set_single_line_mode(true);
+        subtitle.set_width_chars(1);
+        subtitle.set_max_width_chars(28);
         subtitle.set_visible(false);
+        subtitle.set_cursor_from_name(Some("pointer"));
+        add_dynamic_link_hover(subtitle.upcast_ref(), &subtitle);
         labels.append(&subtitle);
+
+        let click_shell = Rc::clone(&setup_shell);
+        let route_for_click = Rc::clone(&subtitle_route);
+        add_label_click(&subtitle, move || {
+            let route = route_for_click.borrow().clone();
+            if let Some(route) = route {
+                click_shell.navigate(route);
+            }
+        });
 
         row.append(&labels);
         install_dynamic_track_context_menu(&row, &setup_shell, Rc::clone(&current_track));
@@ -1209,6 +1315,7 @@ where
                     cover,
                     title,
                     subtitle,
+                    subtitle_route,
                     current_track,
                 },
             );
@@ -1234,9 +1341,20 @@ where
         );
         cell.title.set_text(&title_value(&track));
         let subtitle = subtitle_value(&track);
-        cell.subtitle.set_text(&subtitle);
-        cell.subtitle.set_visible(!subtitle.trim().is_empty());
+        let subtitle_route = track_artist_route(&track);
         *cell.current_track.borrow_mut() = Some(track);
+        if subtitle.trim().is_empty() {
+            *cell.subtitle_route.borrow_mut() = None;
+            cell.subtitle.set_visible(false);
+        } else if let Some(route) = subtitle_route {
+            *cell.subtitle_route.borrow_mut() = Some(route);
+            cell.subtitle.set_text(&subtitle);
+            cell.subtitle.set_visible(true);
+        } else {
+            *cell.subtitle_route.borrow_mut() = None;
+            cell.subtitle.set_text(&subtitle);
+            cell.subtitle.set_visible(true);
+        }
     });
 
     factory.connect_unbind(|_, item| {
@@ -1246,6 +1364,7 @@ where
             cell.title.set_text("");
             cell.subtitle.set_text("");
             cell.subtitle.set_visible(false);
+            *cell.subtitle_route.borrow_mut() = None;
             cell.cover.bind_image(0, None);
             *cell.current_track.borrow_mut() = None;
         }

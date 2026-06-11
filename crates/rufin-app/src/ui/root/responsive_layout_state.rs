@@ -104,6 +104,7 @@ impl Shell {
             || previous_main_width != resolved.main_width;
         if changed {
             debug!(?resolved, "resolved layout changed");
+            self.refit_route_column_views();
             self.queue_responsive_route_render();
         }
         if previous_right == RightSidebarMode::Hidden
@@ -178,6 +179,16 @@ impl Shell {
             boundary.queue_resize();
             self.route_host.queue_resize();
         }
+    }
+
+    fn refit_route_column_views(self: &Rc<Self>) {
+        library::refit_column_view_width_fits(&mut self.state.column_view_width_fits.borrow_mut());
+        let shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            library::refit_column_view_width_fits(
+                &mut shell.state.column_view_width_fits.borrow_mut(),
+            );
+        });
     }
 
     fn sidebar_widths(&self) -> SidebarWidths {

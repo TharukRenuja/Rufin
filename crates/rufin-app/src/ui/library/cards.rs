@@ -337,16 +337,23 @@ pub(in crate::ui) struct AlbumDetailMetaLabelSpec {
     pub(in crate::ui) propagate_natural_height: bool,
     pub(in crate::ui) wrap: bool,
 }
-pub(in crate::ui) fn album_detail_meta_label_spec(width: i32) -> AlbumDetailMetaLabelSpec {
+pub(in crate::ui) fn album_detail_meta_label_spec(
+    width: i32,
+    title: bool,
+) -> AlbumDetailMetaLabelSpec {
     AlbumDetailMetaLabelSpec {
         width,
-        height: ALBUM_DETAIL_META_LABEL_HEIGHT,
+        height: if title {
+            ALBUM_DETAIL_META_LABEL_HEIGHT * 2
+        } else {
+            ALBUM_DETAIL_META_LABEL_HEIGHT
+        },
         horizontal_policy: gtk::PolicyType::Never,
         vertical_policy: gtk::PolicyType::Never,
         overflow: gtk::Overflow::Hidden,
         propagate_natural_width: false,
         propagate_natural_height: false,
-        wrap: false,
+        wrap: title,
     }
 }
 pub(in crate::ui) fn album_detail_meta_label(
@@ -354,15 +361,21 @@ pub(in crate::ui) fn album_detail_meta_label(
     css_class: &str,
     width: i32,
 ) -> gtk::Widget {
-    let spec = album_detail_meta_label_spec(width);
+    let spec = album_detail_meta_label_spec(width, css_class == "track-title");
     let label = gtk::Label::new(Some(text));
     if !css_class.is_empty() {
         label.add_css_class(css_class);
     }
     label.set_xalign(0.5);
     label.set_wrap(spec.wrap);
-    label.set_single_line_mode(true);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    if spec.wrap {
+        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        label.set_lines(2);
+        label.set_single_line_mode(false);
+    } else {
+        label.set_single_line_mode(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    }
     label.set_width_chars(1);
     label.set_halign(gtk::Align::Fill);
     label.set_hexpand(false);
@@ -605,7 +618,7 @@ pub(in crate::ui) fn available_fields_for_set(
 ) -> &'static [LibraryField] {
     match field_set {
         LibraryFieldSet::Grid => rufin_core::available_grid_fields(key),
-        LibraryFieldSet::Detail => rufin_core::available_row_fields(LibraryListKey::Tracks),
+        LibraryFieldSet::Detail => rufin_core::available_detail_track_fields(),
         LibraryFieldSet::Row => rufin_core::available_row_fields(key),
     }
 }

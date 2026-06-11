@@ -9,6 +9,9 @@ use rufin_store::CachedArtistDetail;
 
 use super::*;
 
+const DETAIL_HEADER_SPACING: i32 = 18;
+const DETAIL_SHOWCASE_SIDE_INSET: i32 = PRIMARY_ROUTE_MARGIN_END / 2;
+
 impl Shell {
     pub(super) fn artist_detail_view(self: &Rc<Self>, artist_id: ArtistId) -> gtk::Widget {
         let detail = self.artist_detail_data(&artist_id);
@@ -26,8 +29,8 @@ impl Shell {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
         content.set_margin_top(28);
         content.set_margin_bottom(36);
-        content.set_margin_start(32);
-        content.set_margin_end(32);
+        content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        content.set_margin_end(0);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);
@@ -92,7 +95,7 @@ impl Shell {
         content.set_margin_top(28);
         content.set_margin_bottom(36);
         content.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        content.set_margin_end(0);
         content.set_hexpand(true);
         content.set_halign(gtk::Align::Fill);
         content.set_width_request(1);
@@ -147,7 +150,7 @@ impl Shell {
         wrapper.set_margin_top(28);
         wrapper.set_margin_bottom(36);
         wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
-        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_margin_end(0);
         wrapper.set_hexpand(true);
         wrapper.set_vexpand(true);
         wrapper.set_width_request(1);
@@ -193,52 +196,74 @@ impl Shell {
         appears_on_count: usize,
         track_count: u32,
     ) -> gtk::Widget {
-        let content_width = detail_route_inner_width(self, 64);
+        let content_width = detail_route_inner_width(self, PRIMARY_ROUTE_MARGIN_START);
         let cover_size = detail_showcase_cover_size(content_width);
         let seed = stable_seed(artist.id.as_str());
-        let header = gtk::Box::new(
-            gtk::Orientation::Vertical,
-            detail_showcase_spacing(content_width),
-        );
+        let header = gtk::Box::new(gtk::Orientation::Vertical, 12);
         header.add_css_class("detail-showcase");
         header.add_css_class("artist-detail-showcase");
+        header.add_css_class("detail-showcase-horizontal");
         add_album_seed_gradient_class(&header, seed);
+        let external_links = artist_external_links(self, artist, tracks);
+        let body = gtk::Box::new(gtk::Orientation::Horizontal, DETAIL_HEADER_SPACING);
+        body.set_hexpand(true);
+        body.set_halign(gtk::Align::Fill);
 
         let image_ref = super::library::artist_cover_image_ref(self, artist);
         self.prime_cached_cover(image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
         let cover = self.cover_tile_for(image_ref.as_ref(), seed, cover_size, DETAIL_COVER_SIZE);
         cover.add_css_class("detail-showcase-cover");
         cover.add_css_class("artist-detail-cover");
-        cover.set_halign(gtk::Align::Center);
-        header.append(&cover);
-
-        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        metadata.set_halign(gtk::Align::Center);
-
+        cover.set_halign(gtk::Align::Start);
         let kind = gtk::Label::new(Some(&tr("Artist")));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.5);
-        kind.set_halign(gtk::Align::Center);
-
-        let title = gtk::Label::new(Some(&artist.name));
-        title.add_css_class("detail-title");
-        title.set_xalign(0.5);
-        title.set_justify(gtk::Justification::Center);
-        title.set_wrap(true);
-        title.set_width_chars(1);
-        title.set_max_width_chars(24);
-
+        kind.set_halign(gtk::Align::Fill);
+        kind.set_justify(gtk::Justification::Center);
+        kind.set_width_request(cover_size);
         let summary = gtk::Label::new(Some(&artist_summary_text(
             album_count,
             appears_on_count,
             track_count,
         )));
         summary.add_css_class("muted");
+        summary.add_css_class("detail-cover-facts");
         summary.set_xalign(0.5);
         summary.set_halign(gtk::Align::Center);
+        summary.set_justify(gtk::Justification::Center);
+        summary.set_wrap(true);
+        summary.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        summary.set_width_chars(1);
+        summary.set_max_width_chars(18);
+        let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        cover_column.set_halign(gtk::Align::Start);
+        cover_column.set_width_request(cover_size);
+        cover_column.append(&kind);
+        cover_column.append(&cover);
+        cover_column.append(&summary);
+        body.append(&cover_column);
+
+        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        metadata.set_hexpand(true);
+        metadata.set_valign(gtk::Align::Center);
+        metadata.set_halign(gtk::Align::Fill);
+        let text_limit = cover_size.saturating_sub(70).max(56);
+
+        let title = gtk::Label::new(Some(&artist.name));
+        title.add_css_class("detail-title");
+        title.set_xalign(0.0);
+        title.set_justify(gtk::Justification::Left);
+        title.set_hexpand(true);
+        title.set_halign(gtk::Align::Fill);
+        title.set_wrap(true);
+        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        title.set_width_chars(1);
+        title.set_max_width_chars(32);
+        fit_detail_text(&title, &artist.name);
 
         let actions = detail_action_row();
         actions.add_css_class("artist-detail-actions");
+        actions.set_halign(gtk::Align::Start);
 
         let play = detail_action_button("media-playback-start-symbolic", "Play");
         play.add_css_class("detail-showcase-play-button");
@@ -294,7 +319,7 @@ impl Shell {
 
         let links = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         links.add_css_class("detail-showcase-link-row");
-        links.set_halign(gtk::Align::Center);
+        links.set_halign(gtk::Align::Start);
 
         let discography = detail_link_button("media-optical-symbolic", "Discography");
         let shell = Rc::clone(self);
@@ -311,14 +336,19 @@ impl Shell {
             shell.navigate(Route::ArtistTracks(artist_id.clone()));
         });
         links.append(&all_tracks);
+        if let Some(external_links) = external_links {
+            links.append(&external_links);
+        }
 
-        metadata.append(&kind);
-        metadata.append(&title);
-        metadata.append(&summary);
+        metadata.append(&detail_text_clip(title.upcast(), text_limit));
         metadata.append(&actions);
-        metadata.append(&links);
-        header.append(&metadata);
-        detail_showcase_frame(header.upcast())
+        body.append(&metadata);
+        header.append(&body);
+        header.append(&links);
+        let showcase = detail_showcase_frame(header.upcast());
+        showcase.set_margin_start(DETAIL_SHOWCASE_SIDE_INSET);
+        showcase.set_margin_end(DETAIL_SHOWCASE_SIDE_INSET);
+        showcase
     }
 
     fn artist_detail_data(&self, artist_id: &ArtistId) -> Option<CachedArtistDetail> {

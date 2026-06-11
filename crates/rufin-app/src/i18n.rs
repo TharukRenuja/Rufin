@@ -478,6 +478,14 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Metadata");
     let _ = tr("External lyric lookup");
     let _ = tr("External cover lookup");
+    let _ = tr("External site links");
+    let _ = tr("Show external site links");
+    let _ = tr("Show external service icons on album and artist pages");
+    let _ = tr("MusicBrainz");
+    let _ = tr("Server");
+    let _ = tr("Open on Last.fm");
+    let _ = tr("Open on MusicBrainz");
+    let _ = tr("Open on Jellyfin");
     let _ = tr("Does MusicBrainz and Cover Art Archive lookups");
     let _ = tr("Try to fetch artwork from internet when server artwork is missing");
     let _ = tr("Clear Cached Library");
@@ -708,6 +716,8 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Visualizer");
     let _ = tr("Enable equalizer");
     let _ = tr("Preset");
+    let _ = tr("Custom");
+    let _ = tr("Restore selected preset to default bands.");
     let _ = tr("Flat");
     let _ = tr("Classical");
     let _ = tr("Club");

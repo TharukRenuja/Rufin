@@ -13,13 +13,6 @@ impl RouteView {
         }
     }
 
-    fn stable(widget: gtk::Widget) -> Self {
-        Self {
-            widget,
-            resize: RouteResizePolicy::Stable,
-        }
-    }
-
     fn settled_width(widget: gtk::Widget) -> Self {
         Self {
             widget,
@@ -75,16 +68,20 @@ impl Shell {
             Route::Home => RouteView::new(self.home_view()),
             Route::Albums => RouteView::new(self.library_albums_view())
                 .with_resize(self.library_route_resize_policy(LibraryListKey::Albums)),
-            Route::AlbumDetail(album_id) => RouteView::stable(self.album_detail_view(album_id)),
+            Route::AlbumDetail(album_id) => {
+                RouteView::settled_width(self.album_detail_view(album_id))
+            }
             Route::Tracks => RouteView::new(self.library_tracks_route_view())
                 .with_resize(self.library_route_resize_policy(LibraryListKey::Tracks)),
             Route::Favorites => RouteView::new(self.favorites_view())
                 .with_resize(self.library_route_resize_policy(LibraryListKey::FavoriteTracks)),
             Route::Artists => RouteView::new(self.library_artist_list_view(false))
                 .with_resize(self.library_route_resize_policy(LibraryListKey::Artists)),
-            Route::ArtistDetail(artist_id) => RouteView::stable(self.artist_detail_view(artist_id)),
+            Route::ArtistDetail(artist_id) => {
+                RouteView::settled_width(self.artist_detail_view(artist_id))
+            }
             Route::ArtistDiscography(artist_id) => {
-                RouteView::stable(self.artist_discography_view(artist_id))
+                RouteView::settled_width(self.artist_discography_view(artist_id))
             }
             Route::ArtistTracks(artist_id) => RouteView::new(self.artist_tracks_view(artist_id))
                 .with_resize(self.library_route_resize_policy(LibraryListKey::ArtistTracks)),
@@ -169,6 +166,7 @@ impl Shell {
         clear_favorite_controls(&self.state.favorite_controls);
         self.state.type_to_search.borrow_mut().take();
         self.state.current_route_boundary.borrow_mut().take();
+        self.state.column_view_width_fits.borrow_mut().clear();
         while let Some(child) = self.route_host.first_child() {
             self.route_host.remove(&child);
         }

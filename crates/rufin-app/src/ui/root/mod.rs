@@ -6,6 +6,8 @@ mod cards;
 mod chrome;
 #[path = "../discord.rs"]
 mod discord;
+#[path = "../equalizer.rs"]
+mod equalizer;
 #[path = "../favorites.rs"]
 mod favorites;
 #[path = "../folders.rs"]
@@ -80,8 +82,7 @@ use layout::{
     COMPACT_RAIL_WIDTH, DETAIL_ROUTE_SCROLL_GUTTER, HOME_ALBUM_GAP, MIN_APP_WINDOW_HEIGHT,
     MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
     PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, SidebarWidths, detail_route_inner_width,
-    detail_showcase_cover_size, detail_showcase_spacing, resolve_layout_with_sidebar_widths,
-    route_content_width,
+    detail_showcase_cover_size, resolve_layout_with_sidebar_widths, route_content_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;
@@ -168,6 +169,11 @@ pub(in crate::ui) use cover::{
     FirstRunCoverPrimeJob,
 };
 pub(in crate::ui) use cover_startup::*;
+pub(in crate::ui) use equalizer::{
+    connect_equalizer_scale_commit, equalizer_band_label_parts, equalizer_band_title,
+    equalizer_default_preset_bands, equalizer_preset_bands, equalizer_preset_name_at,
+    equalizer_preset_names, equalizer_preset_position, equalizer_selected_preset,
+};
 pub(in crate::ui) use home_refresh::*;
 pub(in crate::ui) use layout_rendering::*;
 #[cfg(test)]
@@ -286,6 +292,7 @@ pub(in crate::ui) struct AppState {
     current_route_resize_policy: Cell<RouteResizePolicy>,
     responsive_render_signature: Cell<i32>,
     current_route_boundary: RefCell<Option<gtk::Widget>>,
+    column_view_width_fits: RefCell<Vec<library::ColumnViewWidthFit>>,
     card_grid_columns: Cell<usize>,
     collection_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
@@ -531,6 +538,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         current_route_resize_policy: Cell::new(RouteResizePolicy::Stable),
         responsive_render_signature: Cell::new(0),
         current_route_boundary: RefCell::new(None),
+        column_view_width_fits: RefCell::new(Vec::new()),
         card_grid_columns: Cell::new(0),
         collection_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),

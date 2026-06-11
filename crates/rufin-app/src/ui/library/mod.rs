@@ -2,24 +2,25 @@ use super::{
     ArtworkTile, COVER_LOOKUP_LIMIT, DETAIL_ROUTE_SCROLL_GUTTER, GRID_COVER_SIZE,
     GRID_ROUTE_PAGE_SIZE, LoadedTrackPlayContext, PRIMARY_ROUTE_MARGIN_START, PagedGridCursor,
     PlaySourceDescriptor, Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE,
-    album_favorite_key, album_play_activation, append_albums_to_model, append_artists_to_model,
-    append_genres_to_model, append_playlists_to_model, append_tracks_to_model, artist_favorite_key,
-    cards, connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button,
-    finish_grid_page, icon_button, install_album_context_menu, install_artist_context_menu,
+    add_dynamic_link_hover, add_label_click, album_artist_route, album_favorite_key,
+    album_play_activation, append_albums_to_model, append_artists_to_model, append_genres_to_model,
+    append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
+    connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button, finish_grid_page,
+    icon_button, install_album_context_menu, install_artist_context_menu,
     install_dynamic_album_context_menu, install_dynamic_track_context_menu,
     install_playlist_context_menu, install_smart_playlist_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
     loaded_tracks_window_play_activation, mark_route_scroll_owner, replace_albums_in_model,
     replace_artists_in_model, replace_genres_in_model, replace_playlists_in_model,
-    selected_music_folder_id, set_favorite_button_active, stable_seed,
-    track_collection_play_context,
+    selected_music_folder_id, set_favorite_button_active, stable_seed, track_artist_route,
+    track_collection_play_context, track_link_column,
 };
 use crate::i18n::tr;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use rufin_core::{
     Album, AlbumId, Artist, Genre, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
-    LibraryListSettings, Playlist, SmartPlaylist, SmartPlaylistId, Track, TrackId,
+    LibraryListSettings, Playlist, SearchKind, SmartPlaylist, SmartPlaylistId, Track, TrackId,
     available_sort_fields, format_duration,
 };
 use std::cell::{Cell, RefCell};
@@ -50,7 +51,8 @@ const LIBRARY_TABLE_HEADER_HEIGHT: i32 = 92;
 pub(in crate::ui) const LIBRARY_TABLE_ROW_HEIGHT: i32 = 58;
 pub(in crate::ui) const LIBRARY_ROUTE_BOTTOM_MARGIN: i32 = 8;
 const ALBUM_DETAIL_INLINE_TRACK_ROWS: usize = 8;
-const ALBUM_DETAIL_TRACK_HEADER_HEIGHT: i32 = 34;
+const ALBUM_DETAIL_TRACK_ROW_HEIGHT: i32 = 36;
+const ALBUM_DETAIL_TRACK_HEADER_HEIGHT: i32 = 26;
 const ALBUM_DETAIL_META_SPACING: i32 = 6;
 const ALBUM_DETAIL_META_LABEL_HEIGHT: i32 = 20;
 const INITIAL_ROUTE_COVER_WARM_ITEMS: usize = 16;

@@ -48,6 +48,8 @@
         "test -f /app/share/icons/hicolor/scalable/actions/view-list-details-symbolic.svg",
         "test -f /app/share/icons/hicolor/scalable/status/io.github.screwys.Rufin.scrobbling-symbolic.svg",
         "test -f /app/share/icons/hicolor/512x512/apps/io.github.screwys.Rufin.png",
+        "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.external.lastfm.png",
+        "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.external.musicbrainz.png",
         "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.provider.jellyfin.png",
         "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.provider.navidrome.png",
         "test -f /app/share/icons/hicolor/64x64/apps/io.github.screwys.Rufin.provider.opensubsonic.png",

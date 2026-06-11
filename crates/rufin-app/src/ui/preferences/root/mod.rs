@@ -11,10 +11,10 @@ use adw::prelude::*;
 use rufin_core::ExternalLyricsProvider;
 use rufin_core::{
     AudioscrobblerScrobbleSettings, DiscordDisplayType, DiscordLinkType, EQUALIZER_BAND_COUNT,
-    EqualizerSettings, HomeBlockKind, LeftSidebarMode, MAX_AUTO_DJ_REFILL_THRESHOLD,
-    MAX_CROSSFADE_SECONDS, MAX_NARROW_LAYOUT_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD,
-    MIN_CROSSFADE_SECONDS, MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode,
-    RightSidebarMode, SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
+    HomeBlockKind, LeftSidebarMode, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
+    MAX_NARROW_LAYOUT_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS,
+    MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
+    SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
 };
 use rufin_playback::available_audio_outputs;
 use std::{
@@ -316,6 +316,59 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         metadata_group.add(&row);
     }
     page.add(&metadata_group);
+
+    let external_links = settings.external_site_links.clone();
+    let external_links_group = adw::PreferencesGroup::builder()
+        .title(tr("External site links"))
+        .build();
+    let external_links_row = adw::SwitchRow::builder()
+        .title(tr("Show external site links"))
+        .subtitle(tr("Show external service icons on album and artist pages"))
+        .active(external_links.enabled)
+        .build();
+    let lastfm_links_row = adw::SwitchRow::builder()
+        .title(tr("Last.fm"))
+        .active(external_links.lastfm)
+        .sensitive(external_links.enabled)
+        .build();
+    let musicbrainz_links_row = adw::SwitchRow::builder()
+        .title(tr("MusicBrainz"))
+        .active(external_links.musicbrainz)
+        .sensitive(external_links.enabled)
+        .build();
+    let server_links_row = adw::SwitchRow::builder()
+        .title(tr("Server"))
+        .active(external_links.server)
+        .sensitive(external_links.enabled)
+        .build();
+    let external_links_shell = Rc::clone(shell);
+    let lastfm_links_for_master = lastfm_links_row.clone();
+    let musicbrainz_links_for_master = musicbrainz_links_row.clone();
+    let server_links_for_master = server_links_row.clone();
+    external_links_row.connect_active_notify(move |row| {
+        let enabled = row.is_active();
+        lastfm_links_for_master.set_sensitive(enabled);
+        musicbrainz_links_for_master.set_sensitive(enabled);
+        server_links_for_master.set_sensitive(enabled);
+        external_links_shell.set_external_site_links_enabled(enabled);
+    });
+    let lastfm_links_shell = Rc::clone(shell);
+    lastfm_links_row.connect_active_notify(move |row| {
+        lastfm_links_shell.set_lastfm_site_links_enabled(row.is_active());
+    });
+    let musicbrainz_links_shell = Rc::clone(shell);
+    musicbrainz_links_row.connect_active_notify(move |row| {
+        musicbrainz_links_shell.set_musicbrainz_site_links_enabled(row.is_active());
+    });
+    let server_links_shell = Rc::clone(shell);
+    server_links_row.connect_active_notify(move |row| {
+        server_links_shell.set_server_site_links_enabled(row.is_active());
+    });
+    external_links_group.add(&external_links_row);
+    external_links_group.add(&lastfm_links_row);
+    external_links_group.add(&musicbrainz_links_row);
+    external_links_group.add(&server_links_row);
+    page.add(&external_links_group);
 
     let discord_group = adw::PreferencesGroup::builder()
         .title(tr("Discord"))

@@ -10,6 +10,11 @@ use rufin_playback::PlaybackState;
 
 use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
+use crate::ui::{
+    connect_equalizer_scale_commit, equalizer_band_label_parts, equalizer_band_title,
+    equalizer_default_preset_bands, equalizer_preset_bands, equalizer_preset_names,
+    equalizer_selected_preset,
+};
 
 use super::{
     ArtworkTile, DETAIL_COVER_SIZE, Shell, icon_button, player::BOTTOM_PLAYER_HEIGHT,
@@ -31,6 +36,7 @@ const FULLSCREEN_VISUALIZER_MIN_RATIO: f64 = 20.0 / 24_000.0;
 const FULLSCREEN_VISUALIZER_MAX_RATIO: f64 = 22_050.0 / 24_000.0;
 const FULLSCREEN_VISUALIZER_EMA_WEIGHT: f64 = 0.35;
 const FULLSCREEN_VISUALIZER_TOP_PADDING: f64 = 30.0;
+const FULLSCREEN_EQUALIZER_SCALE_HEIGHT: i32 = 196;
 
 pub(super) struct FullscreenPlayerParts {
     pub(super) root: gtk::Box,
@@ -53,7 +59,9 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) equalizer_enabled: gtk::Switch,
     pub(super) equalizer_scales: Vec<gtk::Scale>,
     pub(super) equalizer_reset_button: gtk::Button,
-    pub(super) equalizer_preset_buttons: Vec<(gtk::Button, Vec<f64>)>,
+    pub(super) equalizer_preset_button: gtk::MenuButton,
+    pub(super) equalizer_preset_popover: gtk::Popover,
+    pub(super) equalizer_preset_buttons: Vec<(gtk::Button, String)>,
     pub(super) equalizer_syncing: Rc<Cell<bool>>,
 }
 
@@ -62,7 +70,9 @@ struct EqualizerPanel {
     enabled: gtk::Switch,
     scales: Vec<gtk::Scale>,
     reset_button: gtk::Button,
-    preset_buttons: Vec<(gtk::Button, Vec<f64>)>,
+    preset_button: gtk::MenuButton,
+    preset_popover: gtk::Popover,
+    preset_buttons: Vec<(gtk::Button, String)>,
     syncing: Rc<Cell<bool>>,
 }
 
@@ -189,6 +199,8 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         equalizer_enabled: equalizer.enabled,
         equalizer_scales: equalizer.scales,
         equalizer_reset_button: equalizer.reset_button,
+        equalizer_preset_button: equalizer.preset_button,
+        equalizer_preset_popover: equalizer.preset_popover,
         equalizer_preset_buttons: equalizer.preset_buttons,
         equalizer_syncing: equalizer.syncing,
     }
@@ -525,13 +537,13 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
     let preset_menu = gtk::Box::new(gtk::Orientation::Vertical, 4);
     preset_menu.add_css_class("fullscreen-player-equalizer-preset-menu");
     let mut preset_buttons = Vec::new();
-    for (name, bands) in equalizer_presets() {
+    for name in equalizer_preset_names() {
         let button = gtk::Button::with_label(&tr(name));
         button.set_halign(gtk::Align::Fill);
         button.set_valign(gtk::Align::Center);
         button.add_css_class("flat");
         preset_menu.append(&button);
-        preset_buttons.push((button, bands));
+        preset_buttons.push((button, name.to_string()));
     }
     preset_popover.set_child(Some(&preset_menu));
     preset_button.set_popover(Some(&preset_popover));
@@ -542,39 +554,37 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
     header.append(&reset_button);
     content.append(&header);
 
+    let band_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    band_row.set_halign(gtk::Align::Center);
+    band_row.set_valign(gtk::Align::Center);
+    band_row.set_vexpand(true);
+    band_row.set_size_request(-1, 240);
+    band_row.append(&fullscreen_equalizer_level_labels());
+
     let bands = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     bands.add_css_class("fullscreen-player-equalizer-bands");
     bands.set_halign(gtk::Align::Center);
     bands.set_valign(gtk::Align::Center);
-    bands.set_vexpand(true);
     let mut scales = Vec::with_capacity(EQUALIZER_BAND_COUNT);
     for index in 0..EQUALIZER_BAND_COUNT {
+        let band = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        band.set_halign(gtk::Align::Center);
+        band.set_valign(gtk::Align::Center);
         let scale = gtk::Scale::with_range(gtk::Orientation::Vertical, -12.0, 12.0, 0.5);
         scale.set_inverted(true);
         scale.set_value(0.0);
         scale.set_draw_value(false);
-        scale.set_size_request(36, 210);
+        scale.set_size_request(36, FULLSCREEN_EQUALIZER_SCALE_HEIGHT);
         scale.set_valign(gtk::Align::Center);
         scale.set_tooltip_text(Some(&equalizer_band_title(index)));
-        scale.add_mark(
-            6.0,
-            gtk::PositionType::Left,
-            if index == 0 { Some("6 dB") } else { None },
-        );
-        scale.add_mark(
-            0.0,
-            gtk::PositionType::Left,
-            if index == 0 { Some("0 dB") } else { None },
-        );
-        scale.add_mark(
-            -6.0,
-            gtk::PositionType::Left,
-            if index == 0 { Some("-6 dB") } else { None },
-        );
-        bands.append(&scale);
+        band.append(&scale);
+        band.append(&fullscreen_equalizer_band_label(index));
+        bands.append(&band);
         scales.push(scale);
     }
-    content.append(&bands);
+    band_row.append(&bands);
+    band_row.append(&fullscreen_equalizer_level_labels());
+    content.append(&band_row);
     root.set_child(Some(&content));
 
     EqualizerPanel {
@@ -582,9 +592,51 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
         enabled,
         scales,
         reset_button,
+        preset_button,
+        preset_popover,
         preset_buttons,
         syncing: Rc::new(Cell::new(false)),
     }
+}
+
+fn fullscreen_equalizer_level_labels() -> gtk::Widget {
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    column.add_css_class("fullscreen-player-equalizer-levels");
+    column.set_height_request(FULLSCREEN_EQUALIZER_SCALE_HEIGHT);
+    column.set_valign(gtk::Align::Center);
+    for (index, value) in ["12 dB", "6 dB", "0 dB", "-6 dB", "-12 dB"]
+        .iter()
+        .enumerate()
+    {
+        if index > 0 {
+            let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            spacer.set_vexpand(true);
+            column.append(&spacer);
+        }
+        let label = gtk::Label::new(Some(value));
+        label.add_css_class("muted");
+        label.add_css_class("fullscreen-player-equalizer-level-label");
+        label.set_xalign(1.0);
+        column.append(&label);
+    }
+    column.upcast()
+}
+
+fn fullscreen_equalizer_band_label(index: usize) -> gtk::Widget {
+    let (value, unit) = equalizer_band_label_parts(index);
+    let label = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    label.add_css_class("fullscreen-player-equalizer-band-label");
+    label.set_halign(gtk::Align::Center);
+    for text in [value, unit] {
+        let row = gtk::Label::new(Some(&text));
+        row.add_css_class("muted");
+        row.set_xalign(0.5);
+        row.set_width_chars(1);
+        row.set_max_width_chars(4);
+        row.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.append(&row);
+    }
+    label.upcast()
 }
 
 pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
@@ -666,34 +718,28 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
             }
             row.set_state(enabled);
             equalizer_shell.update_playback_settings(|settings| {
-                if enabled {
-                    settings.equalizer.enabled = true;
-                    if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
-                        settings.equalizer.sanitize();
-                    }
-                } else {
-                    settings.equalizer = EqualizerSettings::default();
+                settings.equalizer.enabled = enabled;
+                if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
+                    settings.equalizer.sanitize();
                 }
             });
             glib::Propagation::Stop
         });
 
-    for (index, scale) in shell.fullscreen_player.equalizer_scales.iter().enumerate() {
-        let band_shell = Rc::clone(shell);
-        let band_guard = Rc::clone(&shell.fullscreen_player.equalizer_syncing);
-        scale.connect_value_changed(move |scale| {
-            if band_guard.get() {
-                return;
-            }
-            band_shell.update_playback_settings(|settings| {
-                if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
-                    settings.equalizer.sanitize();
-                }
-                if let Some(gain) = settings.equalizer.bands.get_mut(index) {
-                    *gain = scale.value();
-                }
-            });
-        });
+    let pending_equalizer_update = Rc::new(RefCell::new(None::<glib::SourceId>));
+    let equalizer_pointer_active = Rc::new(Cell::new(false));
+    let equalizer_commit: Rc<dyn Fn()> = {
+        let shell = Rc::clone(shell);
+        Rc::new(move || shell.update_fullscreen_equalizer_from_scales())
+    };
+    for scale in &shell.fullscreen_player.equalizer_scales {
+        connect_equalizer_scale_commit(
+            scale,
+            Rc::clone(&shell.fullscreen_player.equalizer_syncing),
+            Rc::clone(&pending_equalizer_update),
+            Rc::clone(&equalizer_pointer_active),
+            Rc::clone(&equalizer_commit),
+        );
     }
 
     let reset_shell = Rc::clone(shell);
@@ -701,71 +747,28 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
         .fullscreen_player
         .equalizer_reset_button
         .connect_clicked(move |_| {
-            reset_shell.apply_fullscreen_equalizer(EqualizerSettings::default());
+            reset_shell.reset_fullscreen_equalizer_preset();
         });
 
-    for (button, bands) in &shell.fullscreen_player.equalizer_preset_buttons {
+    for (button, name) in &shell.fullscreen_player.equalizer_preset_buttons {
         let preset_shell = Rc::clone(shell);
-        let preset_bands = bands.clone();
+        let preset_name = name.clone();
         button.connect_clicked(move |_| {
-            let mut equalizer = EqualizerSettings {
-                enabled: true,
-                bands: preset_bands.clone(),
+            let bands = {
+                let settings = preset_shell.state.settings.borrow();
+                equalizer_preset_bands(&settings.playback.equalizer, &preset_name)
             };
-            equalizer.sanitize();
-            preset_shell.apply_fullscreen_equalizer(equalizer);
+            preset_shell
+                .fullscreen_player
+                .equalizer_preset_button
+                .set_label(&tr(&preset_name));
+            preset_shell
+                .fullscreen_player
+                .equalizer_preset_popover
+                .popdown();
+            preset_shell.apply_fullscreen_equalizer_bands(true, preset_name.clone(), bands);
         });
     }
-}
-
-fn equalizer_band_title(index: usize) -> String {
-    const BANDS: [&str; EQUALIZER_BAND_COUNT] = [
-        "60 Hz", "170 Hz", "310 Hz", "600 Hz", "1 kHz", "3 kHz", "6 kHz", "12 kHz", "14 kHz",
-        "16 kHz",
-    ];
-    BANDS.get(index).copied().unwrap_or("Band").to_string()
-}
-
-fn equalizer_presets() -> Vec<(&'static str, Vec<f64>)> {
-    vec![
-        ("Flat", vec![0.0; EQUALIZER_BAND_COUNT]),
-        (
-            "Classical",
-            vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -7.2, -7.2, -7.2, -9.6],
-        ),
-        (
-            "Club",
-            vec![0.0, 0.0, 3.2, 5.6, 5.6, 5.6, 3.2, 0.0, 0.0, 0.0],
-        ),
-        (
-            "Dance",
-            vec![9.6, 7.2, 2.4, 0.0, 0.0, -5.6, -7.2, -7.2, 0.0, 0.0],
-        ),
-        (
-            "Full Bass",
-            vec![9.6, 9.6, 9.6, 5.6, 1.6, -4.0, -8.0, -10.4, -11.2, -11.2],
-        ),
-        (
-            "Full Treble",
-            vec![-9.6, -9.6, -9.6, -4.0, 2.4, 11.2, 12.0, 12.0, 12.0, 12.0],
-        ),
-        (
-            "Laptop/Headphones",
-            vec![4.8, 11.2, 5.6, -3.2, -2.4, 1.6, 4.8, 9.6, 12.0, 12.0],
-        ),
-        (
-            "Rock",
-            vec![8.0, 4.8, -5.6, -8.0, -3.2, 4.0, 8.8, 11.2, 11.2, 11.2],
-        ),
-        (
-            "Pop",
-            vec![-1.6, 4.8, 7.2, 8.0, 5.6, 0.0, -2.4, -2.4, -1.6, -1.6],
-        ),
-        (
-            "Techno",
-            vec![8.0, 5.6, 0.0, -5.6, -4.8, 0.0, 8.0, 9.6, 9.6, 8.8],
-        ),
-    ]
 }
 
 impl Shell {
@@ -873,20 +876,83 @@ impl Shell {
             .equalizer_enabled
             .set_active(equalizer.enabled);
         for (index, scale) in self.fullscreen_player.equalizer_scales.iter().enumerate() {
-            let value = if equalizer.enabled {
-                equalizer.bands.get(index).copied().unwrap_or(0.0)
-            } else {
-                0.0
-            };
+            let value = equalizer.bands.get(index).copied().unwrap_or(0.0);
             scale.set_value(value);
         }
+        self.sync_fullscreen_equalizer_preset_label(equalizer);
         self.fullscreen_player.equalizer_syncing.set(false);
     }
 
-    fn apply_fullscreen_equalizer(self: &Rc<Self>, equalizer: EqualizerSettings) {
+    fn sync_fullscreen_equalizer_preset_label(&self, equalizer: &EqualizerSettings) {
+        let label = tr(&equalizer_selected_preset(equalizer));
+        self.fullscreen_player
+            .equalizer_preset_button
+            .set_label(&label);
+    }
+
+    fn apply_fullscreen_equalizer_bands(
+        self: &Rc<Self>,
+        enabled: bool,
+        preset: String,
+        bands: Vec<f64>,
+    ) {
+        let mut equalizer = self.state.settings.borrow().playback.equalizer.clone();
+        equalizer.enabled = enabled;
+        equalizer.selected_preset = preset;
+        equalizer.bands = bands;
+        equalizer.sanitize();
         self.sync_fullscreen_equalizer_controls(&equalizer);
         self.update_playback_settings(|settings| {
-            settings.equalizer = equalizer;
+            settings.equalizer.enabled = equalizer.enabled;
+            settings.equalizer.selected_preset = equalizer.selected_preset;
+            settings.equalizer.bands = equalizer.bands;
+            settings.equalizer.sanitize();
+        });
+    }
+
+    fn reset_fullscreen_equalizer_preset(self: &Rc<Self>) {
+        let (preset, enabled) = {
+            let settings = self.state.settings.borrow();
+            (
+                equalizer_selected_preset(&settings.playback.equalizer),
+                settings.playback.equalizer.enabled,
+            )
+        };
+        let bands = equalizer_default_preset_bands(&preset);
+        let mut equalizer = self.state.settings.borrow().playback.equalizer.clone();
+        equalizer.enabled = enabled;
+        equalizer.selected_preset = preset.clone();
+        equalizer.bands = bands.clone();
+        equalizer.preset_overrides.remove(&preset);
+        equalizer.sanitize();
+        self.sync_fullscreen_equalizer_controls(&equalizer);
+        self.update_playback_settings(|settings| {
+            settings.equalizer.enabled = enabled;
+            settings.equalizer.selected_preset = preset;
+            settings.equalizer.bands = bands;
+            settings
+                .equalizer
+                .preset_overrides
+                .remove(&settings.equalizer.selected_preset);
+            settings.equalizer.sanitize();
+        });
+    }
+
+    fn update_fullscreen_equalizer_from_scales(self: &Rc<Self>) {
+        let bands = self
+            .fullscreen_player
+            .equalizer_scales
+            .iter()
+            .map(gtk::Scale::value)
+            .collect::<Vec<_>>();
+        self.update_playback_settings(|settings| {
+            if settings.equalizer.bands.len() != EQUALIZER_BAND_COUNT {
+                settings.equalizer.sanitize();
+            }
+            settings.equalizer.bands = bands.clone();
+            let preset = equalizer_selected_preset(&settings.equalizer);
+            settings.equalizer.selected_preset = preset.clone();
+            settings.equalizer.preset_overrides.insert(preset, bands);
         });
     }
 
@@ -1304,7 +1370,7 @@ pub(super) fn fullscreen_artwork_size_for(width: i32, height: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{EQUALIZER_BAND_COUNT, fullscreen_artwork_size_for};
+    use super::fullscreen_artwork_size_for;
 
     #[test]
     fn fullscreen_stay_windows() {
@@ -1352,13 +1418,5 @@ mod tests {
             super::audio_source_label_from_format("audio/mpeg").as_deref(),
             Some("MP3")
         );
-    }
-
-    #[test]
-    fn fullscreen_equalizer_presets_cover_all_bands() {
-        for (_, bands) in super::equalizer_presets() {
-            assert_eq!(bands.len(), EQUALIZER_BAND_COUNT);
-            assert!(bands.iter().all(|gain| (-12.0..=12.0).contains(gain)));
-        }
     }
 }

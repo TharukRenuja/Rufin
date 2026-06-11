@@ -256,6 +256,37 @@ msgstr ""
 msgid "External cover lookup"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:481
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:294
+msgid "External site links"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:482
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:297
+msgid "Show external site links"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:483
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:298
+msgid "Show external service icons on album and artist pages"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:487
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:978
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:1021
+msgid "Open on Last.fm"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:488
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:989
+#: crates/rufin-app/src/ui/root/layout_rendering.rs:1032
+msgid "Open on MusicBrainz"
+msgstr ""
+
+#: crates/rufin-app/src/i18n.rs:489
+msgid "Open on Jellyfin"
+msgstr ""
+
 #: crates/rufin-app/src/i18n.rs:466
 msgid "Does MusicBrainz and Cover Art Archive lookups"
 msgstr ""
@@ -1933,8 +1964,14 @@ msgstr ""
 msgid "Preset"
 msgstr ""
 
+msgid "Custom"
+msgstr ""
+
 #: crates/rufin-app/src/ui/preferences/root/general.rs:671
 msgid "Reset equalizer"
+msgstr ""
+
+msgid "Restore selected preset to default bands."
 msgstr ""
 
 #: crates/rufin-app/src/ui/preferences/root/general.rs:672
