@@ -1045,6 +1045,11 @@ fn local_library_delta(
             .cloned()
             .collect(),
         deleted_track_ids: scan.deleted_track_ids.clone(),
+        current_track_ids: snapshot
+            .tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect(),
         current_album_ids: snapshot
             .albums
             .iter()
@@ -1087,6 +1092,7 @@ fn local_library_delta(
             .collect(),
         home_sections: snapshot.home_sections,
         manifest_entries: scan.entries.clone(),
+        cue_track_sources: scan.cue_track_sources.clone(),
     }
 }
 fn load_all_cached_albums(store: &StoreHandle, server_id: &ServerId) -> Result<Vec<Album>, String> {

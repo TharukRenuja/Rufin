@@ -249,7 +249,7 @@ struct AudioSink {
 }
 #[derive(Debug, PartialEq)]
 pub(super) enum AboutToFinishAction {
-    Preload(PreparedPlaybackItem),
+    Preload(Box<PreparedPlaybackItem>),
     Ignore,
 }
 impl PlayerPipeline {
@@ -316,7 +316,7 @@ impl PlayerPipeline {
         volume: f64,
         muted: bool,
         visualizer_enabled: bool,
-        start_position_seconds: u32,
+        start_position_millis: u64,
     ) -> Result<(), String> {
         self.pipeline
             .set_state(gst::State::Ready)
@@ -324,7 +324,7 @@ impl PlayerPipeline {
         self.configure_audio(settings, visualizer_enabled)?;
         self.pipeline.set_property("uri", item.stream.uri());
         self.set_output_volume(volume, muted);
-        let startup_state = if start_position_seconds > 0 {
+        let startup_state = if start_position_millis > 0 {
             gst::State::Paused
         } else {
             gst::State::Playing
@@ -540,7 +540,10 @@ impl GstEngine {
         self.secondary.stop();
         let volume = settings.volume;
         let muted = settings.muted;
-        let start_millis = u64::from(start_position_seconds) * 1_000;
+        let start_millis = item
+            .stream
+            .source_start_millis()
+            .saturating_add(u64::from(start_position_seconds) * 1_000);
         let mut visualizer_enabled = false;
         if let Ok(mut shared) = self.shared.lock() {
             shared.settings = settings.clone();
@@ -562,7 +565,7 @@ impl GstEngine {
             volume,
             muted,
             visualizer_enabled,
-            start_position_seconds,
+            start_millis,
         )?;
         info!(
             track_id = %item.track.id.as_str(),
@@ -570,10 +573,13 @@ impl GstEngine {
             pipeline_ms = pipeline_started_at.elapsed().as_millis(),
             "queued GStreamer playback item"
         );
-        if start_position_seconds > 0 {
+        if start_millis > 0 {
             self.start_playback_seek(start_millis);
         } else {
             self.pending_seek = Some(PendingSeek::track_start(Instant::now()));
+        }
+        if item.stream.source_end_millis().is_some() {
+            self.push_duration(item.track.duration_seconds);
         }
         Ok(())
     }
@@ -951,6 +957,7 @@ impl GstEngine {
                 self.push_position(clock_millis(position));
             }
             if self.pending_seek.is_none()
+                && !self.active_stream_is_windowed()
                 && let Some(duration) = self.active_pipeline().duration()
             {
                 self.push_duration(clock_seconds(duration));
@@ -973,6 +980,15 @@ impl GstEngine {
                 self.resume_after_startup_seek();
             }
         }
+        let millis = if let Some((start_millis, end_millis)) = self.active_source_window() {
+            if millis >= end_millis {
+                push_event(&self.events, PlaybackEvent::EndOfStream);
+                return;
+            }
+            millis.saturating_sub(start_millis)
+        } else {
+            millis
+        };
         push_event(
             &self.events,
             position_event_for_track(millis, self.timing_track_id()),
@@ -990,6 +1006,17 @@ impl GstEngine {
                 seconds,
             },
         );
+    }
+
+    fn active_stream_is_windowed(&self) -> bool {
+        self.active_source_window().is_some()
+    }
+
+    fn active_source_window(&self) -> Option<(u64, u64)> {
+        let shared = self.shared.lock().ok()?;
+        let current = shared.current.as_ref()?;
+        let end = current.stream.source_end_millis()?;
+        Some((current.stream.source_start_millis(), end))
     }
 
     fn gapless_timing_is_pending(&self) -> bool {
@@ -1363,7 +1390,9 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
         return AboutToFinishAction::Ignore;
     }
 
-    if !gapless_preload_source_is_supported(next.stream.uri()) {
+    if next.stream.source_end_millis().is_some()
+        || !gapless_preload_source_is_supported(next.stream.uri())
+    {
         debug!(
             track_id = %next.track.id.as_str(),
             uri = %next.stream.redacted_uri(),
@@ -1379,7 +1408,7 @@ pub(super) fn about_to_finish_action(shared: &mut SharedPlaybackState) -> AboutT
         .expect("gapless preload checked that next item exists");
     shared.gapless_pending = Some(next.clone());
     shared.about_to_finish_pending = false;
-    AboutToFinishAction::Preload(next)
+    AboutToFinishAction::Preload(Box::new(next))
 }
 
 fn gapless_preload_should_run(shared: &SharedPlaybackState, next: &PreparedPlaybackItem) -> bool {

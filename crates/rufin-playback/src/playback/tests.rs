@@ -104,7 +104,7 @@ fn gapless_about_finish() {
 
     let action = about_to_finish_action(&mut shared);
 
-    assert_eq!(action, AboutToFinishAction::Preload(next.clone()));
+    assert_eq!(action, AboutToFinishAction::Preload(Box::new(next.clone())));
     assert!(shared.next.is_none());
     assert_eq!(shared.gapless_pending, Some(next));
 }
@@ -120,7 +120,7 @@ fn gapless_about_finish_remote() {
 
     let action = about_to_finish_action(&mut shared);
 
-    assert_eq!(action, AboutToFinishAction::Preload(next.clone()));
+    assert_eq!(action, AboutToFinishAction::Preload(Box::new(next.clone())));
     assert!(shared.next.is_none());
     assert_eq!(shared.gapless_pending, Some(next));
 }
@@ -181,7 +181,7 @@ fn album_crossfade_about() {
 
     let action = about_to_finish_action(&mut shared);
 
-    assert_eq!(action, AboutToFinishAction::Preload(next.clone()));
+    assert_eq!(action, AboutToFinishAction::Preload(Box::new(next.clone())));
     assert!(shared.next.is_none());
     assert_eq!(shared.gapless_pending, Some(next));
 }
@@ -294,6 +294,29 @@ fn playback_reject_state() {
         seconds: 78,
         millis: 78_000
     }));
+}
+#[test]
+fn playback_source_window_reports_relative_position_and_ends() {
+    let mut engine = test_engine_with_pending_seek(0);
+    engine.pending_seek = None;
+    {
+        let mut shared = engine.shared.lock().expect("shared");
+        shared.current = Some(PreparedPlaybackItem::new(
+            track(1),
+            StreamDescriptor::new("fake://track/1").with_source_window(10_000, 20_000),
+        ));
+    }
+
+    engine.push_position(12_500);
+    engine.push_position(20_000);
+
+    let events = engine.events.lock().expect("events");
+    assert!(events.contains(&PlaybackEvent::PositionChanged {
+        track_id: Some(TrackId::new("track-1")),
+        seconds: 2,
+        millis: 2_500
+    }));
+    assert!(events.contains(&PlaybackEvent::EndOfStream));
 }
 #[test]
 fn playback_start_stream() {

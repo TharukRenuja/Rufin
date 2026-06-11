@@ -9,6 +9,7 @@ pub struct LocalLibraryDelta {
     pub metadata_tracks: Vec<Track>,
     pub artwork_tracks: Vec<Track>,
     pub deleted_track_ids: Vec<TrackId>,
+    pub current_track_ids: Vec<TrackId>,
     pub current_album_ids: Vec<AlbumId>,
     pub current_artist_ids: Vec<ArtistId>,
     pub current_album_artist_ids: Vec<ArtistId>,
@@ -19,6 +20,7 @@ pub struct LocalLibraryDelta {
     pub dirty_genres: Vec<Genre>,
     pub home_sections: Vec<HomeSection>,
     pub manifest_entries: Vec<LocalManifestEntry>,
+    pub cue_track_sources: Vec<LocalCueTrackSource>,
 }
 
 impl Store {
@@ -370,6 +372,54 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    pub fn load_track_source_object(
+        &self,
+        server_id: &ServerId,
+        track_id: &TrackId,
+    ) -> StoreResult<Option<SourceObject>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT source_object_id, entity_kind, entity_id, source_kind, source_path,
+                   parent_source_object_id, cue_path, cue_revision, cue_track_index,
+                   segment_start_ms, segment_end_ms, sync_generation
+            FROM (
+                SELECT 0 AS priority, source.source_object_id, source.entity_kind,
+                       source.entity_id, source.source_kind, source.source_path,
+                       source.parent_source_object_id, source.cue_path, source.cue_revision,
+                       source.cue_track_index, source.segment_start_ms, source.segment_end_ms,
+                       source.sync_generation
+                FROM source_objects source
+                WHERE source.server_id = ?1
+                  AND source.entity_kind = 'track'
+                  AND source.entity_id = ?2
+                  AND source.source_kind = 'cue_track'
+                UNION ALL
+                SELECT 1 AS priority, source.source_object_id, source.entity_kind,
+                       source.entity_id, source.source_kind, source.source_path,
+                       source.parent_source_object_id, source.cue_path, source.cue_revision,
+                       source.cue_track_index, source.segment_start_ms, source.segment_end_ms,
+                       source.sync_generation
+                FROM entities entity
+                JOIN source_objects source
+                  ON source.server_id = entity.server_id
+                 AND source.source_object_id = entity.source_object_id
+                WHERE entity.server_id = ?1
+                  AND entity.entity_kind = 'track'
+                  AND entity.entity_id = ?2
+            )
+            ORDER BY priority
+            LIMIT 1
+            ",
+        )?;
+        statement
+            .query_row(
+                params![server_id.as_str(), track_id.as_str()],
+                source_object_from_row,
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
     pub fn delete_local_track_rows(
         &self,
         server_id: &ServerId,
@@ -541,6 +591,7 @@ impl Store {
             self.update_local_track_metadata_rows(server_id, &delta.metadata_tracks, generation)?;
             self.update_local_track_image_refs(server_id, &delta.artwork_tracks, generation)?;
             self.delete_local_track_rows(server_id, &delta.deleted_track_ids)?;
+            prune_stale_local_track_rows(connection, server_id, &delta.current_track_ids)?;
             self.upsert_albums(server_id, &delta.dirty_albums, generation)?;
             self.upsert_artists(server_id, &delta.dirty_artists, false, generation)?;
             self.upsert_artists(server_id, &delta.dirty_album_artists, true, generation)?;
@@ -549,6 +600,32 @@ impl Store {
             prune_stale_local_aggregate_rows(connection, server_id, &delta)?;
             let pruned_cover_entries = self.complete_local_sync(server_id, generation)?;
             self.replace_local_manifest(server_id, generation, &delta.manifest_entries)?;
+            for cue_source in &delta.cue_track_sources {
+                let parent_id = self.upsert_local_file_source_object(
+                    server_id,
+                    &LocalFileSourceObject {
+                        source_path: cue_source.source_path.clone(),
+                        root_path: cue_source.root_path.clone(),
+                        relative_path: cue_source.relative_path.clone(),
+                        sync_generation: generation,
+                    },
+                )?;
+                self.upsert_cue_track_source_object(
+                    server_id,
+                    &CueTrackSourceObject {
+                        source_object_id: cue_source.source_object_id.clone(),
+                        track_id: cue_source.track_id.clone(),
+                        source_path: cue_source.source_path.clone(),
+                        parent_source_object_id: parent_id,
+                        cue_path: cue_source.cue_path.clone(),
+                        cue_revision: cue_source.cue_revision.clone(),
+                        cue_track_index: cue_source.cue_track_index,
+                        segment_start_ms: cue_source.segment_start_ms,
+                        segment_end_ms: cue_source.segment_end_ms,
+                        sync_generation: generation,
+                    },
+                )?;
+            }
             Ok(pruned_cover_entries)
         })
     }
@@ -905,6 +982,62 @@ fn prune_stale_local_aggregate_rows(
         COLLECTION_COVER_GENRE,
         "local_current_genre_ids",
     )?;
+    Ok(())
+}
+
+fn prune_stale_local_track_rows(
+    connection: &Connection,
+    server_id: &ServerId,
+    current_track_ids: &[TrackId],
+) -> StoreResult<()> {
+    replace_temp_id_set(
+        connection,
+        "local_current_track_ids",
+        current_track_ids.iter().map(TrackId::as_str),
+    )?;
+    for table in [
+        "track_music_folders",
+        "track_genres",
+        "track_artist_links",
+        "tracks",
+    ] {
+        delete_rows_not_in_temp(
+            connection,
+            table,
+            "track_id",
+            server_id,
+            "local_current_track_ids",
+        )?;
+    }
+    delete_track_entity_rows_not_in_temp(connection, server_id, "local_current_track_ids")?;
+    delete_fts_not_in_temp(connection, server_id, "track", "local_current_track_ids")?;
+    Ok(())
+}
+
+fn delete_track_entity_rows_not_in_temp(
+    connection: &Connection,
+    server_id: &ServerId,
+    temp_table: &str,
+) -> StoreResult<()> {
+    for (table, column) in [
+        ("entity_content_refs", "entity_id"),
+        ("entity_facts", "entity_id"),
+        ("entity_grouping_keys", "entity_id"),
+        ("entity_identity_keys", "entity_id"),
+        ("entity_links", "entity_id"),
+        ("entities", "entity_id"),
+        ("source_objects", "entity_id"),
+    ] {
+        let sql = format!(
+            "
+            DELETE FROM {table}
+            WHERE server_id = ?1
+              AND entity_kind = 'track'
+              AND {column} NOT IN (SELECT id FROM {temp_table})
+            "
+        );
+        connection.execute(&sql, params![server_id.as_str()])?;
+    }
     Ok(())
 }
 

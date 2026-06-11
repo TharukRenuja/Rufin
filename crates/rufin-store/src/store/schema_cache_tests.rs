@@ -8,8 +8,8 @@ use crate::{
     local_file_source_object_id,
 };
 use rufin_core::{
-    ArtistCredit, ArtistId, LocalFileFacts, LocalManifestCover, LocalManifestCoverKind,
-    LocalManifestEntry, ServerId, TrackId,
+    ArtistCredit, ArtistId, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
+    LocalManifestCoverKind, LocalManifestEntry, ServerId, TrackId,
 };
 #[test]
 fn current_schema_initializes_empty_database() {
@@ -749,6 +749,7 @@ fn schema_track_commit() {
         failed_generation,
         LocalLibraryDelta {
             deleted_track_ids: vec![removed.id.clone()],
+            current_track_ids: vec![kept.id.clone()],
             current_album_ids: vec![album.id.clone()],
             dirty_albums: vec![album],
             manifest_entries: vec![kept_entry, duplicate_manifest],
@@ -822,6 +823,7 @@ fn artwork_delta_update() {
             second_generation,
             LocalLibraryDelta {
                 artwork_tracks: vec![artwork_track],
+                current_track_ids: vec![track.id.clone()],
                 current_album_ids: vec![updated_album.id.clone()],
                 dirty_albums: vec![updated_album],
                 manifest_entries: vec![local_manifest_entry()],
@@ -921,6 +923,7 @@ fn meta_delta_update() {
             second_generation,
             LocalLibraryDelta {
                 metadata_tracks: vec![updated_track.clone()],
+                current_track_ids: vec![track.id.clone(), retained_track.id.clone()],
                 current_album_ids: vec![album.id.clone()],
                 dirty_albums: vec![album],
                 manifest_entries: vec![local_manifest_entry()],
@@ -1024,6 +1027,7 @@ fn schema_update_id() {
             second_generation,
             LocalLibraryDelta {
                 changed_tracks: vec![updated_track.clone()],
+                current_track_ids: vec![updated_track.id.clone()],
                 current_album_ids: vec![second_album.id.clone()],
                 dirty_albums: vec![second_album.clone()],
                 manifest_entries: vec![local_manifest_entry()],
@@ -2152,6 +2156,124 @@ fn typed_source_object_api_writes_cue_segment_shape() {
         )
         .expect("load cue entity source object id");
     assert_eq!(entity_source_object_id, cue.source_object_id);
+}
+
+#[test]
+fn local_delta_commit_writes_cue_track_source_objects() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut track = track(1, &album);
+    track.local_path = Some("/music/album.flac".to_string());
+    let cue_source = LocalCueTrackSource {
+        source_object_id: "local:cue:track:1".to_string(),
+        track_id: track.id.clone(),
+        source_path: "/music/album.flac".to_string(),
+        root_path: "/music".to_string(),
+        relative_path: "album.flac".to_string(),
+        cue_path: "/music/album.cue".to_string(),
+        cue_revision: "cue-revision-one".to_string(),
+        cue_track_index: 1,
+        segment_start_ms: 12345,
+        segment_end_ms: 67890,
+        sync_generation: generation,
+    };
+
+    store
+        .commit_local_library_delta(
+            &saved.server.id,
+            generation,
+            LocalLibraryDelta {
+                changed_tracks: vec![track.clone()],
+                current_track_ids: vec![track.id.clone()],
+                current_album_ids: vec![album.id.clone()],
+                dirty_albums: vec![album],
+                cue_track_sources: vec![cue_source.clone()],
+                ..LocalLibraryDelta::default()
+            },
+        )
+        .expect("commit cue delta");
+
+    let source = store
+        .load_track_source_object(&saved.server.id, &track.id)
+        .expect("load track source object")
+        .expect("source object");
+    assert_eq!(source.source_kind, "cue_track");
+    assert_eq!(source.source_object_id, cue_source.source_object_id);
+    assert_eq!(source.source_path.as_deref(), Some("/music/album.flac"));
+    assert_eq!(source.segment_start_ms, Some(12345));
+    assert_eq!(source.segment_end_ms, Some(67890));
+}
+
+#[test]
+fn track_source_lookup_prefers_cue_source_over_stale_entity_pointer() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let parent_id = store
+        .upsert_local_file_source_object(
+            &saved.server.id,
+            &LocalFileSourceObject {
+                source_path: "/music/album.flac".to_string(),
+                root_path: "/music".to_string(),
+                relative_path: "album.flac".to_string(),
+                sync_generation: 1,
+            },
+        )
+        .expect("upsert backing source");
+    let stale_id = store
+        .upsert_local_file_source_object(
+            &saved.server.id,
+            &LocalFileSourceObject {
+                source_path: "/music/album.cue#track=01".to_string(),
+                root_path: "/music".to_string(),
+                relative_path: "album.cue#track=01".to_string(),
+                sync_generation: 1,
+            },
+        )
+        .expect("upsert stale source");
+    let track_id = TrackId::new("track-cue-1");
+    store
+        .upsert_cue_track_source_object(
+            &saved.server.id,
+            &CueTrackSourceObject {
+                source_object_id: "local:cue:track:1".to_string(),
+                track_id: track_id.clone(),
+                source_path: "/music/album.flac".to_string(),
+                parent_source_object_id: parent_id,
+                cue_path: "/music/album.cue".to_string(),
+                cue_revision: "cue-revision-one".to_string(),
+                cue_track_index: 1,
+                segment_start_ms: 12345,
+                segment_end_ms: 67890,
+                sync_generation: 1,
+            },
+        )
+        .expect("upsert cue source");
+    store
+        .connection
+        .execute(
+            "
+            UPDATE entities
+            SET source_object_id = ?3
+            WHERE server_id = ?1
+              AND entity_kind = 'track'
+              AND entity_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), track_id.as_str(), stale_id],
+        )
+        .expect("reset entity pointer");
+
+    let source = store
+        .load_track_source_object(&saved.server.id, &track_id)
+        .expect("load source")
+        .expect("source");
+
+    assert_eq!(source.source_kind, "cue_track");
+    assert_eq!(source.segment_start_ms, Some(12345));
+    assert_eq!(source.segment_end_ms, Some(67890));
 }
 
 #[test]

@@ -52,19 +52,36 @@ pub struct PlaybackTrack {
 pub struct StreamDescriptor {
     uri: String,
     redacted_uri: String,
+    source_start_millis: Option<u64>,
+    source_end_millis: Option<u64>,
 }
 impl StreamDescriptor {
     pub fn new(uri: impl Into<String>) -> Self {
         let uri = uri.into();
         let redacted_uri = redact_sensitive_uri(&uri);
-        Self { uri, redacted_uri }
+        Self {
+            uri,
+            redacted_uri,
+            source_start_millis: None,
+            source_end_millis: None,
+        }
     }
 
     pub fn with_redacted(uri: impl Into<String>, redacted_uri: impl Into<String>) -> Self {
         Self {
             uri: uri.into(),
             redacted_uri: redacted_uri.into(),
+            source_start_millis: None,
+            source_end_millis: None,
         }
+    }
+
+    pub fn with_source_window(mut self, start_millis: u64, end_millis: u64) -> Self {
+        if end_millis > start_millis {
+            self.source_start_millis = Some(start_millis);
+            self.source_end_millis = Some(end_millis);
+        }
+        self
     }
 
     pub fn uri(&self) -> &str {
@@ -73,6 +90,14 @@ impl StreamDescriptor {
 
     pub fn redacted_uri(&self) -> &str {
         &self.redacted_uri
+    }
+
+    pub fn source_start_millis(&self) -> u64 {
+        self.source_start_millis.unwrap_or(0)
+    }
+
+    pub fn source_end_millis(&self) -> Option<u64> {
+        self.source_end_millis
     }
 }
 impl fmt::Debug for StreamDescriptor {

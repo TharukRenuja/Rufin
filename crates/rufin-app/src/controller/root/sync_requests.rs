@@ -1,6 +1,7 @@
 use super::*;
 
 use std::io::{self, Read};
+use std::path::PathBuf;
 use std::time::Duration;
 
 const LRCLIB_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -23,6 +24,9 @@ pub(in crate::controller) fn resolve_stream(
             "fake://local/stream/{}",
             track_id.as_str()
         )));
+    }
+    if let Some(stream) = cue_track_stream(store, server_id, track_id)? {
+        return Ok(stream);
     }
     if let Some(local_path) = saved_track_path(store, &saved.server, server_id, track_id) {
         let url = reqwest::Url::from_file_path(&local_path).map_err(|()| {
@@ -52,6 +56,44 @@ pub(in crate::controller) fn resolve_stream(
                 )),
         )
         .map_err(|error| error.to_string())
+}
+
+fn cue_track_stream(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> Result<Option<StreamDescriptor>, String> {
+    let source = store
+        .with_store(|store| store.load_track_source_object(server_id, track_id))?
+        .filter(|source| source.source_kind == "cue_track");
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let Some(path) = source.source_path.as_deref().map(PathBuf::from) else {
+        return Ok(None);
+    };
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let start_millis = source
+        .segment_start_ms
+        .and_then(|value| u64::try_from(value).ok())
+        .unwrap_or_default();
+    let Some(end_millis) = source
+        .segment_end_ms
+        .and_then(|value| u64::try_from(value).ok())
+    else {
+        return Ok(None);
+    };
+    let url = reqwest::Url::from_file_path(&path).map_err(|()| {
+        format!(
+            "Could not turn cue source path into a file URI: {}",
+            path.display()
+        )
+    })?;
+    Ok(Some(
+        StreamDescriptor::new(url.to_string()).with_source_window(start_millis, end_millis),
+    ))
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -522,8 +564,17 @@ pub(in crate::controller) fn local_sidecar_lyrics(
     track_id: &TrackId,
 ) -> Option<Lyrics> {
     let audio_path = local_audio_path_for_track(store, server_id, track_id)?;
-    let path = audio_path.with_extension("lrc");
-    let content = read_text_file_bounded(&path, LOCAL_LYRICS_MAX_BYTES).ok()?;
+    let cue_track = track_has_cue_source(store, server_id, track_id);
+    let title = local_track_title(store, server_id, track_id);
+    for path in local_sidecar_candidates(&audio_path, title.as_deref(), cue_track) {
+        if let Some(lyrics) = lyrics_from_sidecar_file(track_id, &path) {
+            return Some(lyrics);
+        }
+    }
+    None
+}
+fn lyrics_from_sidecar_file(track_id: &TrackId, path: &Path) -> Option<Lyrics> {
+    let content = read_text_file_bounded(path, LOCAL_LYRICS_MAX_BYTES).ok()?;
     let lines = content
         .lines()
         .filter_map(lyric_line_from_text)
@@ -533,6 +584,76 @@ pub(in crate::controller) fn local_sidecar_lyrics(
         source: rufin_provider::LyricsSource::Local,
         lines,
     })
+}
+fn local_sidecar_candidates(
+    audio_path: &Path,
+    title: Option<&str>,
+    cue_track: bool,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if !cue_track {
+        paths.push(audio_path.with_extension("lrc"));
+    }
+    if let Some(path) = title_matched_lrc(audio_path.parent(), title)
+        && !paths.iter().any(|candidate| candidate == &path)
+    {
+        paths.push(path);
+    }
+    paths
+}
+fn title_matched_lrc(parent: Option<&Path>, title: Option<&str>) -> Option<PathBuf> {
+    let parent = parent?;
+    let title_key = normalized_lyrics_name(title?);
+    if title_key.is_empty() {
+        return None;
+    }
+    let mut matches = fs::read_dir(parent)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("lrc"))
+                && path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| normalized_lyrics_name(stem) == title_key)
+        })
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches.into_iter().next()
+}
+fn normalized_lyrics_name(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|character| character.is_alphanumeric())
+        .collect()
+}
+fn local_track_title(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> Option<String> {
+    store
+        .with_store(|store| store.load_track(server_id, track_id))
+        .ok()
+        .flatten()
+        .map(|track| track.title)
+}
+pub(in crate::controller) fn track_has_cue_source(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    track_id: &TrackId,
+) -> bool {
+    store
+        .with_store(|store| store.load_track_source_object(server_id, track_id))
+        .ok()
+        .flatten()
+        .is_some_and(|source| source.source_kind == "cue_track")
 }
 pub(in crate::controller) fn local_audio_path_for_track(
     store: &StoreHandle,

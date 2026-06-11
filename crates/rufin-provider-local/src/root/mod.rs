@@ -8,9 +8,10 @@ use lofty::tag::{ItemKey, Tag};
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use rufin_core::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Folder, FolderId, Genre, GenreId,
-    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, LocalFileFacts,
-    LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry, LocalManifestScan,
-    LocalScanCounters, Playlist, PlaylistId, ServerId, ServerIdentity, Track, TrackId,
+    HOME_SECTION_ITEM_LIMIT, HomeSection, HomeSectionKind, ImageRef, LocalCueTrackSource,
+    LocalFileFacts, LocalManifestCover, LocalManifestCoverKind, LocalManifestEntry,
+    LocalManifestScan, LocalScanCounters, Playlist, PlaylistId, ServerId, ServerIdentity, Track,
+    TrackId,
 };
 use rufin_provider::{
     AlbumDetail, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata, ImageRequest,
@@ -28,8 +29,10 @@ use std::time::{Instant, UNIX_EPOCH};
 use url::Url;
 use walkdir::WalkDir;
 
+mod cue;
 mod provider_impl;
 
+use cue::*;
 use provider_impl::*;
 
 #[cfg(test)]
@@ -80,6 +83,7 @@ struct ScannedTrack {
     album_artist: String,
     musicbrainz_album_id: Option<String>,
     musicbrainz_release_group_id: Option<String>,
+    cue_source: Option<LocalCueTrackSource>,
     cover: Option<LocalCover>,
     embedded_cover_path: Option<PathBuf>,
 }
@@ -103,6 +107,11 @@ struct LocalReusedTrack {
     scanned_track: ScannedTrack,
     entry: LocalManifestEntry,
     artwork_changed: bool,
+}
+#[derive(Clone, Debug, Default)]
+struct LocalDiscoveredFiles {
+    audio: Vec<LocalFileFacts>,
+    cues: Vec<LocalFileFacts>,
 }
 #[derive(Clone, Debug)]
 struct AlbumAccumulator {
@@ -772,7 +781,7 @@ fn scan_library(
 ) -> (LocalLibrary, LocalManifestScan) {
     let mut counters = LocalScanCounters::default();
     let walk_started = Instant::now();
-    let facts = discover_audio_files(roots, &mut counters, &mut progress);
+    let discovered = discover_local_files(roots, &mut counters, &mut progress);
     counters.filesystem_walk_elapsed_ms = elapsed_ms(walk_started);
 
     let compare_started = Instant::now();
@@ -780,8 +789,17 @@ fn scan_library(
         .into_iter()
         .map(|entry| (entry.facts.path.clone(), entry))
         .collect::<HashMap<_, _>>();
+    let cue_scan = scan_cue_sheets(&discovered.cues, &discovered.audio, &mut cache_by_path);
+    let suppressed_audio_paths = cue_scan.suppressed_audio_paths;
+    let cue_tracks = cue_scan.tracks;
+    let facts = discovered
+        .audio
+        .into_iter()
+        .filter(|facts| !suppressed_audio_paths.contains(&facts.path))
+        .collect::<Vec<_>>();
     let mut scanned = Vec::with_capacity(facts.len());
     let mut entries = Vec::with_capacity(facts.len());
+    let mut cue_track_sources = Vec::new();
     let mut changed_track_ids = Vec::new();
     let mut metadata_track_ids = Vec::new();
     let mut artwork_track_ids = Vec::new();
@@ -926,6 +944,47 @@ fn scan_library(
             }
         }
     }
+    for cue_track in cue_tracks {
+        let CueScannedTrack {
+            facts,
+            stale_entry,
+            scanned_track,
+        } = cue_track;
+        if let Some(source) = &scanned_track.cue_source {
+            cue_track_sources.push(source.clone());
+        }
+        let entry = manifest_entry_for_scanned(&facts, &scanned_track);
+        let track_changed = classify_reparsed_track(
+            stale_entry.as_ref(),
+            &entry,
+            &mut changed_track_ids,
+            &mut metadata_track_ids,
+            &mut artwork_track_ids,
+            &mut retained_track_ids,
+            &mut counters,
+        );
+        if track_changed {
+            if let Some(stale_entry) = &stale_entry {
+                mark_track_aggregate_dirty(
+                    &stale_entry.track,
+                    &mut dirty_album_ids,
+                    &mut dirty_artist_ids,
+                    &mut dirty_album_artist_ids,
+                    &mut dirty_genre_names,
+                );
+            }
+            mark_track_aggregate_dirty(
+                &scanned_track.track,
+                &mut dirty_album_ids,
+                &mut dirty_artist_ids,
+                &mut dirty_album_artist_ids,
+                &mut dirty_genre_names,
+            );
+            library_changed = true;
+        }
+        entries.push(entry);
+        scanned.push(scanned_track);
+    }
 
     let deleted_entries = cache_by_path.into_values().collect::<Vec<_>>();
     let deleted_track_ids = deleted_entries
@@ -969,6 +1028,7 @@ fn scan_library(
         library,
         LocalManifestScan {
             entries,
+            cue_track_sources,
             deleted_paths,
             changed_track_ids,
             metadata_track_ids,
@@ -1089,12 +1149,25 @@ fn classify_reparsed_track(
     false
 }
 
-fn discover_audio_files(
+#[derive(Clone, Debug, Default)]
+struct CueScan {
+    tracks: Vec<CueScannedTrack>,
+    suppressed_audio_paths: BTreeSet<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+struct CueScannedTrack {
+    facts: LocalFileFacts,
+    stale_entry: Option<LocalManifestEntry>,
+    scanned_track: ScannedTrack,
+}
+
+fn discover_local_files(
     roots: &[PathBuf],
     counters: &mut LocalScanCounters,
     progress: &mut Option<&mut dyn FnMut(LocalScanProgress)>,
-) -> Vec<LocalFileFacts> {
-    let mut facts = Vec::new();
+) -> LocalDiscoveredFiles {
+    let mut discovered = LocalDiscoveredFiles::default();
     emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, true);
     for root in roots {
         counters.roots_walked = counters.roots_walked.saturating_add(1);
@@ -1107,20 +1180,277 @@ fn discover_audio_files(
             if entry.file_type().is_file() && supported_cover_extension(entry.path()) {
                 counters.artwork_candidates = counters.artwork_candidates.saturating_add(1);
             }
-            if !entry.file_type().is_file() || !is_audio_file(entry.path()) {
+            if !entry.file_type().is_file() {
                 continue;
             }
-            counters.audio_candidates = counters.audio_candidates.saturating_add(1);
-            if let Some(file_facts) = local_file_facts_from_path(root, entry.path()) {
-                facts.push(file_facts);
+            if is_cue_file(entry.path()) {
+                if let Some(file_facts) = local_file_facts_from_path(root, entry.path()) {
+                    discovered.cues.push(file_facts);
+                }
+                continue;
+            }
+            if is_audio_file(entry.path()) {
+                counters.audio_candidates = counters.audio_candidates.saturating_add(1);
+                if let Some(file_facts) = local_file_facts_from_path(root, entry.path()) {
+                    discovered.audio.push(file_facts);
+                }
             }
             emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, false);
         }
     }
-    facts.sort_by(|left, right| left.path.cmp(&right.path));
-    facts.dedup_by(|left, right| left.path == right.path);
+    discovered
+        .audio
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    discovered
+        .audio
+        .dedup_by(|left, right| left.path == right.path);
+    discovered
+        .cues
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    discovered
+        .cues
+        .dedup_by(|left, right| left.path == right.path);
     emit_local_scan_progress(progress, LocalScanStage::Walking, counters, 0, None, true);
-    facts
+    discovered
+}
+
+fn scan_cue_sheets(
+    cue_facts: &[LocalFileFacts],
+    audio_facts: &[LocalFileFacts],
+    cache_by_path: &mut HashMap<PathBuf, LocalManifestEntry>,
+) -> CueScan {
+    let audio_by_path = audio_facts
+        .iter()
+        .map(|facts| (facts.path.clone(), facts))
+        .collect::<HashMap<_, _>>();
+    let mut scan = CueScan::default();
+    for cue_facts in cue_facts {
+        let Ok(bytes) = fs::read(&cue_facts.path) else {
+            continue;
+        };
+        let cue_text = String::from_utf8_lossy(&bytes);
+        let Some(sheet) = parse_cue_sheet(&cue_facts.path, &cue_text) else {
+            continue;
+        };
+        let cue_revision =
+            file_revision(&cue_facts.path).unwrap_or_else(|| cue_revision_from_facts(cue_facts));
+        for cue_file in &sheet.files {
+            let Some(audio_facts) = audio_by_path.get(&cue_file.path).copied() else {
+                continue;
+            };
+            let Some(backing_track) = read_track(audio_facts.path.clone()) else {
+                continue;
+            };
+            let backing_duration_ms = u64::from(backing_track.track.duration_seconds) * 1_000;
+            if backing_duration_ms == 0 {
+                continue;
+            }
+            scan.suppressed_audio_paths.insert(audio_facts.path.clone());
+            for (position, cue_track) in cue_file.tracks.iter().enumerate() {
+                let segment_start_ms = cue_track.index_start_ms;
+                let segment_end_ms = cue_file
+                    .tracks
+                    .get(position + 1)
+                    .map(|next| next.index_start_ms)
+                    .unwrap_or(backing_duration_ms);
+                if segment_end_ms <= segment_start_ms {
+                    continue;
+                }
+                let facts = cue_track_facts(cue_facts, audio_facts, cue_track.number);
+                let stale_entry = cache_by_path.remove(&facts.path);
+                let source = cue_track_source(
+                    cue_facts,
+                    audio_facts,
+                    &cue_revision,
+                    cue_track.number,
+                    segment_start_ms,
+                    segment_end_ms,
+                );
+                let scanned_track = match stale_entry.as_ref() {
+                    Some(entry) if local_file_facts_match(&entry.facts, &facts) => {
+                        let mut track = entry.track.clone();
+                        track.local_path = Some(audio_facts.path.to_string_lossy().into_owned());
+                        ScannedTrack {
+                            track,
+                            album_artist: entry.album_artist.clone(),
+                            musicbrainz_album_id: entry.musicbrainz_album_id.clone(),
+                            musicbrainz_release_group_id: entry
+                                .musicbrainz_release_group_id
+                                .clone(),
+                            cue_source: Some(source),
+                            cover: entry.cover.as_ref().map(local_cover_from_manifest),
+                            embedded_cover_path: None,
+                        }
+                    }
+                    _ => cue_scanned_track(
+                        cue_facts,
+                        audio_facts,
+                        &sheet,
+                        &backing_track,
+                        cue_track,
+                        source,
+                    ),
+                };
+                scan.tracks.push(CueScannedTrack {
+                    facts,
+                    stale_entry,
+                    scanned_track,
+                });
+            }
+        }
+    }
+    scan
+}
+
+fn cue_scanned_track(
+    cue_facts: &LocalFileFacts,
+    audio_facts: &LocalFileFacts,
+    sheet: &CueSheet,
+    backing_track: &ScannedTrack,
+    cue_track: &CueTrack,
+    cue_source: LocalCueTrackSource,
+) -> ScannedTrack {
+    let album = sheet
+        .album_title
+        .clone()
+        .unwrap_or_else(|| backing_track.track.album.clone());
+    let album_artist = sheet
+        .album_performer
+        .clone()
+        .unwrap_or_else(|| backing_track.album_artist.clone());
+    let artist = cue_track
+        .performer
+        .clone()
+        .unwrap_or_else(|| album_artist.clone());
+    let artist_credits = split_credit_names(&artist)
+        .iter()
+        .map(|name| artist_credit(name, None))
+        .collect::<Vec<_>>();
+    let album_artist_credits = split_credit_names(&album_artist)
+        .iter()
+        .map(|name| artist_credit(name, None))
+        .collect::<Vec<_>>();
+    let artist_id = artist_credits
+        .first()
+        .or_else(|| album_artist_credits.first())
+        .map(|artist| artist.id.clone());
+    let album_id = local_id(
+        "album",
+        &format!(
+            "{}:{}:{}",
+            credit_identity_value(&album_artist_credits),
+            normalized_identity_value(&album),
+            album_grouping_path(&cue_facts.path)
+        ),
+    );
+    let cue_identity = format!("{}:{}", cue_facts.path.to_string_lossy(), cue_track.number);
+    let duration_millis = cue_source
+        .segment_end_ms
+        .saturating_sub(cue_source.segment_start_ms)
+        .max(1) as u64;
+    let duration_seconds = (duration_millis / 1_000).min(u64::from(u32::MAX)).max(1) as u32;
+    ScannedTrack {
+        track: Track {
+            id: local_id("track", &cue_identity),
+            album_id,
+            title: cue_track
+                .title
+                .clone()
+                .unwrap_or_else(|| format!("Track {}", cue_track.number)),
+            artist,
+            artist_id,
+            artist_credits,
+            album_artist_credits,
+            album,
+            year: backing_track.track.year,
+            release_date: backing_track.track.release_date.clone(),
+            date_added: backing_track.track.date_added.clone(),
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds,
+            favorite: false,
+            disc_number: backing_track.track.disc_number.max(1),
+            track_number: cue_track.number,
+            image_ref: None,
+            genres: backing_track.track.genres.clone(),
+            musicbrainz_recording_id: None,
+            musicbrainz_release_track_id: None,
+            local_path: Some(audio_facts.path.to_string_lossy().into_owned()),
+            source_format: backing_track.track.source_format.clone(),
+            comment: None,
+            skip_count: None,
+        },
+        album_artist,
+        musicbrainz_album_id: backing_track.musicbrainz_album_id.clone(),
+        musicbrainz_release_group_id: backing_track.musicbrainz_release_group_id.clone(),
+        cue_source: Some(cue_source),
+        cover: backing_track.cover.clone(),
+        embedded_cover_path: backing_track.embedded_cover_path.clone(),
+    }
+}
+
+fn cue_track_source(
+    cue_facts: &LocalFileFacts,
+    audio_facts: &LocalFileFacts,
+    cue_revision: &str,
+    track_number: u16,
+    segment_start_ms: u64,
+    segment_end_ms: u64,
+) -> LocalCueTrackSource {
+    let key = format!(
+        "{}\u{1f}{}\u{1f}{track_number}",
+        cue_facts.path.to_string_lossy(),
+        audio_facts.path.to_string_lossy()
+    );
+    LocalCueTrackSource {
+        source_object_id: format!("local:cue:{:016x}", stable_hash(&key)),
+        track_id: local_id(
+            "track",
+            &format!("{}:{}", cue_facts.path.to_string_lossy(), track_number),
+        ),
+        source_path: audio_facts.path.to_string_lossy().into_owned(),
+        root_path: audio_facts.root_path.to_string_lossy().into_owned(),
+        relative_path: audio_facts.relative_path.clone(),
+        cue_path: cue_facts.path.to_string_lossy().into_owned(),
+        cue_revision: cue_revision.to_string(),
+        cue_track_index: i64::from(track_number),
+        segment_start_ms: segment_start_ms.min(i64::MAX as u64) as i64,
+        segment_end_ms: segment_end_ms.min(i64::MAX as u64) as i64,
+        sync_generation: 0,
+    }
+}
+
+fn cue_track_facts(
+    cue_facts: &LocalFileFacts,
+    audio_facts: &LocalFileFacts,
+    track_number: u16,
+) -> LocalFileFacts {
+    let path = PathBuf::from(format!(
+        "{}#track={track_number:02}",
+        cue_facts.path.to_string_lossy()
+    ));
+    let relative_path = format!("{}#track={track_number:02}", cue_facts.relative_path);
+    LocalFileFacts {
+        path,
+        root_path: cue_facts.root_path.clone(),
+        relative_path,
+        file_size: cue_facts
+            .file_size
+            .wrapping_add(audio_facts.file_size)
+            .wrapping_add(u64::from(track_number)),
+        mtime_seconds: cue_facts.mtime_seconds.max(audio_facts.mtime_seconds),
+        mtime_nanos: cue_facts.mtime_nanos.max(audio_facts.mtime_nanos),
+        inode: None,
+        device: None,
+    }
+}
+
+fn cue_revision_from_facts(facts: &LocalFileFacts) -> String {
+    format!(
+        "{}:{}:{}",
+        facts.file_size, facts.mtime_seconds, facts.mtime_nanos
+    )
 }
 fn emit_local_scan_progress(
     progress: &mut Option<&mut dyn FnMut(LocalScanProgress)>,
@@ -1166,6 +1496,7 @@ fn reuse_manifest_track(
         album_artist: cached.album_artist.clone(),
         musicbrainz_album_id: cached.musicbrainz_album_id.clone(),
         musicbrainz_release_group_id: cached.musicbrainz_release_group_id.clone(),
+        cue_source: None,
         cover: current_cover.as_ref().map(local_cover_from_manifest),
         embedded_cover_path: None,
     };
@@ -1411,6 +1742,7 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
         album_artist,
         musicbrainz_album_id,
         musicbrainz_release_group_id,
+        cue_source: None,
         cover,
         embedded_cover_path,
     })
