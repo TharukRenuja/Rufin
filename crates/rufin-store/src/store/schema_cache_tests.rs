@@ -621,6 +621,54 @@ fn schema_trip_server() {
         None
     );
 }
+
+#[test]
+fn queue_progress_updates_saved_current_entry() {
+    let store = Store::open_memory().expect("open store");
+    let server_id = ServerId::fake(1);
+    let mut queue = QueueEngine::new(server_id.clone());
+    queue.append(&track(1, &album(1)));
+    queue.append(&track(2, &album(2)));
+    queue.next_track();
+    store
+        .save_queue_snapshot(&queue.snapshot())
+        .expect("save queue snapshot");
+
+    let current = queue.current().expect("current entry");
+    assert!(
+        store
+            .save_queue_progress(&server_id, &current.id, &current.track_id, 73)
+            .expect("save queue progress")
+    );
+
+    let saved = store
+        .load_queue_snapshot(&server_id)
+        .expect("load queue snapshot")
+        .expect("saved queue");
+    assert_eq!(saved.entries, queue.snapshot().entries);
+    assert_eq!(saved.current_index, queue.snapshot().current_index);
+    assert_eq!(saved.progress_seconds, 73);
+
+    assert!(
+        !store
+            .save_queue_progress(
+                &server_id,
+                &queue.entries()[0].id,
+                &queue.entries()[0].track_id,
+                99
+            )
+            .expect("ignore stale queue progress")
+    );
+    assert_eq!(
+        store
+            .load_queue_snapshot(&server_id)
+            .expect("load queue snapshot")
+            .expect("saved queue")
+            .progress_seconds,
+        73
+    );
+}
+
 #[test]
 fn schema_trip_token() {
     let store = Store::open_memory().expect("open store");
