@@ -40,6 +40,7 @@ mod tests;
 
 pub const LOCAL_PROVIDER_ID: &str = "local";
 const LOCAL_COVER_MAX_BYTES: usize = 32 * 1024 * 1024;
+const LOCAL_CUE_MAX_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug)]
 pub struct LocalProvider {
     identity: ProviderIdentity,
@@ -675,6 +676,17 @@ fn read_cover_file_bounded(path: &Path) -> ProviderResult<Vec<u8>> {
     let file = fs::File::open(path).map_err(|error| ProviderError::Other(error.to_string()))?;
     read_bounded(file, LOCAL_COVER_MAX_BYTES, "local cover")
 }
+fn read_cue_file_bounded(facts: &LocalFileFacts) -> ProviderResult<Vec<u8>> {
+    if facts.file_size > LOCAL_CUE_MAX_BYTES as u64 {
+        return Err(ProviderError::Other(format!(
+            "local CUE sheet exceeded {} MiB limit",
+            bytes_to_mib(LOCAL_CUE_MAX_BYTES)
+        )));
+    }
+    let file =
+        fs::File::open(&facts.path).map_err(|error| ProviderError::Other(error.to_string()))?;
+    read_bounded(file, LOCAL_CUE_MAX_BYTES, "local CUE sheet")
+}
 fn picture_data_bounded(picture: &Picture) -> ProviderResult<Vec<u8>> {
     let data = picture.data();
     if data.len() > LOCAL_COVER_MAX_BYTES {
@@ -1226,7 +1238,7 @@ fn scan_cue_sheets(
         .collect::<HashMap<_, _>>();
     let mut scan = CueScan::default();
     for cue_facts in cue_facts {
-        let Ok(bytes) = fs::read(&cue_facts.path) else {
+        let Ok(bytes) = read_cue_file_bounded(cue_facts) else {
             continue;
         };
         let cue_text = String::from_utf8_lossy(&bytes);
