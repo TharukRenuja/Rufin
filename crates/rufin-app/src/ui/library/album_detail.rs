@@ -1,1506 +1,12 @@
 use super::*;
 
-const FITTED_TABLE_WIDTH_PADDING: i32 = 2;
-const TABLE_TARGET_WIDTH: i32 = 44;
-const TABLE_MIN_WIDTH: i32 = 24;
-const TABLE_EXPAND_MIN_WIDTH: i32 = 140;
+const ALBUM_DETAIL_ROW_HORIZONTAL_INSET: i32 = 8;
+const ALBUM_DETAIL_TRACK_COLUMN_GAP: i32 = 8;
+const ALBUM_DETAIL_MAX_COVER: i32 = 168;
+const ALBUM_DETAIL_MIN_COVER: i32 = 102;
+const ALBUM_DETAIL_NARROW_WIDTH: i32 = 360;
+const ALBUM_DETAIL_SEPARATOR_WIDTH: i32 = 1;
 
-#[derive(Clone)]
-pub(in crate::ui) struct ColumnViewWidthFit {
-    table: glib::WeakRef<gtk::ColumnView>,
-    columns: Rc<Vec<(gtk::ColumnViewColumn, i32)>>,
-}
-
-impl ColumnViewWidthFit {
-    fn apply(&self) -> bool {
-        let Some(table) = self.table.upgrade() else {
-            return false;
-        };
-        apply_column_view_width_fit(&table, self.columns.as_ref());
-        true
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum ColumnViewWidthMode {
-    RouteScroller,
-    Embedded,
-}
-
-pub(in crate::ui) fn route_column_view_initial_width(shell: &Shell) -> i32 {
-    column_view_initial_width(shell, 0, ColumnViewWidthMode::RouteScroller)
-}
-
-pub(in crate::ui) fn route_column_view_initial_width_with_inset(
-    shell: &Shell,
-    content_inset: i32,
-) -> i32 {
-    column_view_initial_width(shell, content_inset, ColumnViewWidthMode::RouteScroller)
-}
-
-pub(in crate::ui) fn column_view_initial_width(
-    shell: &Shell,
-    content_inset: i32,
-    mode: ColumnViewWidthMode,
-) -> i32 {
-    let scrollbar_width = match mode {
-        ColumnViewWidthMode::RouteScroller => vertical_scrollbar_width(),
-        ColumnViewWidthMode::Embedded => 0,
-    };
-    route_content_width(shell)
-        .saturating_sub(scrollbar_width)
-        .saturating_sub(content_inset.max(0))
-        .saturating_sub(FITTED_TABLE_WIDTH_PADDING)
-        .max(1)
-}
-
-fn vertical_scrollbar_width() -> i32 {
-    let scrollbar = gtk::Scrollbar::new(gtk::Orientation::Vertical, None::<&gtk::Adjustment>);
-    let (_, natural, _, _) = scrollbar.measure(gtk::Orientation::Horizontal, -1);
-    natural.max(0)
-}
-
-pub(in crate::ui) fn fitted_column_widths(base_widths: &[i32], available_width: i32) -> Vec<i32> {
-    if base_widths.is_empty() {
-        return Vec::new();
-    }
-
-    let available_width = available_width.max(base_widths.len() as i32);
-    let base_total = base_widths.iter().sum::<i32>();
-    if base_total <= available_width {
-        let mut widths = base_widths.to_vec();
-        distribute_column_width(&mut widths, available_width);
-        return widths;
-    }
-
-    let min_widths = base_widths
-        .iter()
-        .map(|width| (*width).clamp(TABLE_MIN_WIDTH, TABLE_TARGET_WIDTH))
-        .collect::<Vec<_>>();
-    let min_total = min_widths.iter().sum::<i32>();
-    if min_total >= available_width {
-        return proportional_column_widths(&min_widths, available_width);
-    }
-
-    let remaining = available_width - min_total;
-    let flex_weights = base_widths
-        .iter()
-        .zip(min_widths.iter())
-        .map(|(base, minimum)| base.saturating_sub(*minimum))
-        .collect::<Vec<_>>();
-    let flex_total = flex_weights.iter().sum::<i32>();
-    if flex_total <= 0 {
-        return min_widths;
-    }
-
-    let mut widths = min_widths
-        .iter()
-        .zip(flex_weights.iter())
-        .map(|(minimum, flex)| minimum + (flex * remaining / flex_total))
-        .collect::<Vec<_>>();
-    distribute_column_width_remainder(&mut widths, available_width);
-    widths
-}
-
-fn proportional_column_widths(weights: &[i32], available_width: i32) -> Vec<i32> {
-    let available_width = available_width.max(weights.len() as i32);
-    let total = weights.iter().sum::<i32>().max(1);
-    let mut widths = weights
-        .iter()
-        .map(|weight| (weight * available_width / total).max(1))
-        .collect::<Vec<_>>();
-    distribute_column_width_remainder(&mut widths, available_width);
-    widths
-}
-
-fn distribute_column_width_remainder(widths: &mut [i32], target: i32) {
-    let mut remainder = target - widths.iter().sum::<i32>();
-    let mut index = 0;
-    while remainder > 0 && !widths.is_empty() {
-        let len = widths.len();
-        widths[index % len] += 1;
-        remainder -= 1;
-        index += 1;
-    }
-    while remainder < 0 && widths.iter().any(|width| *width > 1) {
-        let pos = widths
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, width)| **width)
-            .map(|(pos, _)| pos)
-            .unwrap_or(0);
-        widths[pos] -= 1;
-        remainder += 1;
-    }
-}
-
-fn distribute_column_width(widths: &mut [i32], target: i32) {
-    let remainder = target - widths.iter().sum::<i32>();
-    if remainder <= 0 || widths.is_empty() {
-        return;
-    }
-    let flex_positions = widths
-        .iter()
-        .enumerate()
-        .filter_map(|(pos, width)| (*width >= TABLE_EXPAND_MIN_WIDTH).then_some(pos))
-        .collect::<Vec<_>>();
-    if !flex_positions.is_empty() {
-        distribute_weighted_column_width(widths, &flex_positions, remainder);
-        return;
-    }
-
-    let pos = widths
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, width)| **width)
-        .map(|(pos, _)| pos)
-        .unwrap_or(0);
-    widths[pos] += remainder;
-}
-
-fn distribute_weighted_column_width(widths: &mut [i32], positions: &[usize], extra: i32) {
-    let total = positions.iter().map(|pos| widths[*pos]).sum::<i32>().max(1);
-    let mut applied = 0;
-    for pos in positions {
-        let add = widths[*pos] * extra / total;
-        widths[*pos] += add;
-        applied += add;
-    }
-
-    let mut remainder = extra - applied;
-    let mut index = 0;
-    while remainder > 0 {
-        let pos = positions[index % positions.len()];
-        widths[pos] += 1;
-        remainder -= 1;
-        index += 1;
-    }
-}
-
-pub(in crate::ui) fn install_column_view_width_fit(
-    shell: &Rc<Shell>,
-    table: &gtk::ColumnView,
-    columns: Vec<(gtk::ColumnViewColumn, i32)>,
-    initial_width: i32,
-) {
-    if columns.is_empty() {
-        return;
-    }
-
-    let columns = Rc::new(columns);
-    fit_column_widths(columns.as_ref(), table.width().max(initial_width));
-    shell
-        .state
-        .column_view_width_fits
-        .borrow_mut()
-        .push(ColumnViewWidthFit {
-            table: table.downgrade(),
-            columns: Rc::clone(&columns),
-        });
-    let columns_for_map = Rc::clone(&columns);
-    table.connect_map(move |table| {
-        apply_column_view_width_fit(table, columns_for_map.as_ref());
-    });
-    let columns_for_resize = Rc::clone(&columns);
-    table.connect_notify_local(Some("width"), move |table, _| {
-        apply_column_view_width_fit(table, columns_for_resize.as_ref());
-    });
-    let columns_for_tick = Rc::clone(&columns);
-    table.add_tick_callback(move |table, _| {
-        apply_column_view_width_fit(table, columns_for_tick.as_ref());
-        if table.width() > 1 {
-            gtk::glib::ControlFlow::Break
-        } else {
-            gtk::glib::ControlFlow::Continue
-        }
-    });
-}
-
-pub(in crate::ui) fn refit_column_view_width_fits(fits: &mut Vec<ColumnViewWidthFit>) {
-    fits.retain(ColumnViewWidthFit::apply);
-}
-
-fn apply_column_view_width_fit(table: &gtk::ColumnView, columns: &[(gtk::ColumnViewColumn, i32)]) {
-    let available_width = table.width().saturating_sub(FITTED_TABLE_WIDTH_PADDING);
-    if available_width <= 1 {
-        return;
-    }
-
-    fit_column_widths(columns, available_width);
-}
-
-fn fit_column_widths(columns: &[(gtk::ColumnViewColumn, i32)], available_width: i32) {
-    if available_width <= 1 {
-        return;
-    }
-    let base_widths = columns.iter().map(|(_, width)| *width).collect::<Vec<_>>();
-    let fitted_widths = fitted_column_widths(&base_widths, available_width);
-    for ((column, _), width) in columns.iter().zip(fitted_widths) {
-        column.set_fixed_width(width.max(1));
-    }
-}
-
-pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
-    let overlay = cards::cover_overlay(size);
-
-    let genre_button = gtk::Button::new();
-    genre_button.add_css_class("album-cover-button");
-    genre_button.add_css_class("flat");
-    cards::constrain_cover_widget(&genre_button, size);
-    genre_button.set_child(Some(&shell.cover_group_tile_for(
-        genre.image_refs.clone(),
-        genre.image_ref.as_ref(),
-        stable_seed(genre.id.as_str()),
-        size,
-        THUMB_COVER_SIZE,
-    )));
-    let open_shell = Rc::clone(shell);
-    let open_genre_id = genre.id.clone();
-    genre_button
-        .connect_clicked(move |_| open_shell.navigate(Route::GenreDetail(open_genre_id.clone())));
-    overlay.set_child(Some(&genre_button));
-
-    let controls = cards::cover_play_hover_controls(size, "Play genre");
-    let controller = shell.controller.clone();
-    let genre_id = genre.id.clone();
-    let selected_music_folder_id = selected_music_folder_id(shell);
-    controls.play.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-            let tracks = detail.tracks;
-            if let Some(activation) = loaded_tracks_window_play_activation(
-                rufin_core::PlaySourceKey {
-                    descriptor: rufin_core::PlaySourceDescriptor::GenreTracks {
-                        genre_id: genre_id.clone(),
-                        selected_music_folder_id: selected_music_folder_id.clone(),
-                    },
-                    order: rufin_core::SourceOrder::Canonical,
-                },
-                tracks.len(),
-                0,
-                |index| tracks.get(index).cloned(),
-            ) {
-                controller.play_activation(activation);
-            }
-        }
-    });
-    let controller = shell.controller.clone();
-    let genre_id = genre.id.clone();
-    controls.play_next.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-            for track in detail.tracks.iter().rev() {
-                controller.play_next(track.clone());
-            }
-        }
-    });
-    let controller = shell.controller.clone();
-    let genre_id = genre.id.clone();
-    controls.play_last.connect_clicked(move |_| {
-        if let Ok(Some(detail)) = controller.cached_genre_detail(&genre_id) {
-            controller.play_last(detail.tracks);
-        }
-    });
-    controls.add_to_overlay(&overlay);
-    controls.connect_hover(&overlay);
-
-    overlay.upcast()
-}
-pub(in crate::ui) fn album_column(shell: &Rc<Shell>, field: LibraryField) -> gtk::ColumnViewColumn {
-    match field {
-        LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => {
-            album_image_column(shell, "Image", column_width(LibraryField::Image))
-        }
-        LibraryField::TitleMerged => {
-            album_merged_column(shell, "Title", column_width(LibraryField::TitleMerged))
-        }
-        LibraryField::Title => {
-            album_text_column(shell, "Title", 220, true, |album| album.title.clone())
-        }
-        LibraryField::Favorite => album_favorite_column(shell),
-        _ => album_text_column(
-            shell,
-            field.title(),
-            column_width(field),
-            false,
-            move |album| album_field(album, field),
-        ),
-    }
-}
-pub(in crate::ui) fn artist_column(
-    shell: &Rc<Shell>,
-    field: LibraryField,
-) -> gtk::ColumnViewColumn {
-    match field {
-        LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => artist_image_column(shell),
-        LibraryField::TitleMerged | LibraryField::Title => {
-            artist_text_column(shell, "Title", 220, true, |artist| artist.name.clone())
-        }
-        LibraryField::Favorite => artist_favorite_column(shell),
-        _ => artist_text_column(
-            shell,
-            field.title(),
-            column_width(field),
-            false,
-            move |artist| artist_field(artist, field),
-        ),
-    }
-}
-pub(in crate::ui) fn genre_column(field: LibraryField) -> gtk::ColumnViewColumn {
-    match field {
-        LibraryField::RowIndex => row_index_column(),
-        LibraryField::Title | LibraryField::TitleMerged => {
-            expanding_text_column::<Genre, _>("Title", 180, |genre| genre.name.clone())
-        }
-        _ => text_column::<Genre, _>(field.title(), column_width(field), move |genre| {
-            genre_field(genre, field)
-        }),
-    }
-}
-pub(in crate::ui) fn playlist_column(
-    shell: &Rc<Shell>,
-    field: LibraryField,
-) -> gtk::ColumnViewColumn {
-    match field {
-        LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => image_column::<Playlist, _, _>(
-            shell,
-            "Image",
-            column_width(LibraryField::Image),
-            |playlist| playlist.image_ref.clone(),
-            |playlist| stable_seed(playlist.id.as_str()),
-        ),
-        LibraryField::Title | LibraryField::TitleMerged => {
-            expanding_text_column::<Playlist, _>("Title", 220, |playlist| playlist.name.clone())
-        }
-        _ => text_column::<Playlist, _>(field.title(), column_width(field), move |playlist| {
-            playlist_field(playlist, field)
-        }),
-    }
-}
-pub(in crate::ui) fn smart_playlist_column(
-    shell: &Rc<Shell>,
-    field: LibraryField,
-) -> gtk::ColumnViewColumn {
-    match field {
-        LibraryField::RowIndex => row_index_column(),
-        LibraryField::Image => image_column::<SmartPlaylist, _, _>(
-            shell,
-            "Image",
-            column_width(LibraryField::Image),
-            |playlist| playlist.image_ref.clone(),
-            |playlist| stable_seed(playlist.id.as_str()),
-        ),
-        LibraryField::Title | LibraryField::TitleMerged => {
-            expanding_text_column::<SmartPlaylist, _>("Title", 220, |playlist| {
-                playlist.name.clone()
-            })
-        }
-        _ => text_column::<SmartPlaylist, _>(field.title(), column_width(field), move |playlist| {
-            smart_playlist_field(playlist, field)
-        }),
-    }
-}
-pub(in crate::ui) fn track_column_for_key(
-    shell: &Rc<Shell>,
-    key: LibraryListKey,
-    field: LibraryField,
-) -> gtk::ColumnViewColumn {
-    let width = track_column_width(key, field);
-    match field {
-        LibraryField::RowIndex => row_index_column_with_width(width),
-        LibraryField::Image => track_image_column(shell, "Image", width),
-        LibraryField::TitleMerged => track_merged_column(
-            shell,
-            "Title",
-            width,
-            |track| track.title.clone(),
-            |track| track.artist.clone(),
-            |track| track.image_ref.clone(),
-            |track| stable_seed(track.id.as_str()),
-        ),
-        LibraryField::Title => track_text_column(shell, "Title", width, true, 0.0, |track| {
-            track.title.clone()
-        }),
-        LibraryField::Favorite => track_favorite_column(shell),
-        LibraryField::Artist => track_link_column(shell, "Artist", width, |track| {
-            (track.artist.clone(), track_artist_route(track))
-        }),
-        LibraryField::AlbumArtist => {
-            track_link_column(shell, LibraryField::AlbumArtist.title(), width, |track| {
-                (
-                    track_field(track, LibraryField::AlbumArtist),
-                    track_album_artist_route(track),
-                )
-            })
-        }
-        LibraryField::Album => track_link_column(shell, "Album", width, |track| {
-            (
-                track.album.clone(),
-                Some(Route::AlbumDetail(track.album_id.clone())),
-            )
-        }),
-        LibraryField::Duration => track_text_column(shell, "◷", width, false, 0.0, |track| {
-            track_field(track, LibraryField::Duration)
-        }),
-        _ => track_text_column(shell, field.title(), width, false, 0.0, move |track| {
-            track_field(track, field)
-        }),
-    }
-}
-pub(in crate::ui) fn track_column_fit_width(key: LibraryListKey, field: LibraryField) -> i32 {
-    column_fit_width(field, track_column_width(key, field))
-}
-pub(in crate::ui) fn track_column_width(key: LibraryListKey, field: LibraryField) -> i32 {
-    match key {
-        LibraryListKey::ArtistTracks
-        | LibraryListKey::GenreTracks
-        | LibraryListKey::PlaylistTracks => return track_list_column_width(field),
-        LibraryListKey::SmartPlaylistTracks => {}
-        _ => return column_width(field),
-    }
-
-    match field {
-        LibraryField::RowIndex => 44,
-        LibraryField::Title | LibraryField::TitleMerged => 212,
-        LibraryField::Album
-        | LibraryField::Artist
-        | LibraryField::AlbumArtist
-        | LibraryField::Genre => 180,
-        LibraryField::PlayCount => play_count_column_width(),
-        LibraryField::UserRating | LibraryField::SongCount | LibraryField::AlbumCount => 82,
-        LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 108,
-        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 62,
-        LibraryField::Duration => 70,
-        LibraryField::Image => column_width(LibraryField::Image),
-        LibraryField::Favorite => 48,
-    }
-}
-pub(in crate::ui) fn column_fit_width(field: LibraryField, width: i32) -> i32 {
-    if field == LibraryField::TitleMerged {
-        width.saturating_add(72)
-    } else {
-        width
-    }
-}
-fn track_album_artist_route(track: &Track) -> Option<Route> {
-    if let Some(credit) = track.album_artist_credits.first() {
-        Some(Route::ArtistDetail(credit.id.clone()))
-    } else {
-        let album_artist = track_field(track, LibraryField::AlbumArtist);
-        (!album_artist.trim().is_empty()).then_some(Route::Search {
-            query: album_artist,
-            kind: SearchKind::Artists,
-        })
-    }
-}
-fn track_list_column_width(field: LibraryField) -> i32 {
-    match field {
-        LibraryField::RowIndex => 54,
-        LibraryField::Title | LibraryField::TitleMerged => 320,
-        LibraryField::Album => 260,
-        LibraryField::Artist | LibraryField::AlbumArtist | LibraryField::Genre => 220,
-        LibraryField::Year | LibraryField::DiscNumber | LibraryField::TrackNumber => 70,
-        LibraryField::Duration => 90,
-        LibraryField::Favorite => 76,
-        _ => column_width(field),
-    }
-}
-pub(in crate::ui) fn text_column<T, F>(title: &str, width: i32, value: F) -> gtk::ColumnViewColumn
-where
-    T: Clone + 'static,
-    F: Fn(&T) -> String + 'static,
-{
-    text_column_with_expand(title, width, false, value)
-}
-pub(in crate::ui) fn expanding_text_column<T, F>(
-    title: &str,
-    width: i32,
-    value: F,
-) -> gtk::ColumnViewColumn
-where
-    T: Clone + 'static,
-    F: Fn(&T) -> String + 'static,
-{
-    text_column_with_expand(title, width, true, value)
-}
-pub(in crate::ui) fn text_column_with_expand<T, F>(
-    title: &str,
-    width: i32,
-    expand: bool,
-    value: F,
-) -> gtk::ColumnViewColumn
-where
-    T: Clone + 'static,
-    F: Fn(&T) -> String + 'static,
-{
-    let factory = gtk::SignalListItemFactory::new();
-    let value = Rc::new(value);
-    factory.connect_setup(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let label = gtk::Label::new(None);
-            label.set_xalign(0.0);
-            label.set_halign(gtk::Align::Fill);
-            label.set_hexpand(true);
-            label.set_wrap(false);
-            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            label.set_single_line_mode(true);
-            item.set_child(Some(&label));
-        }
-    });
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(label) = item
-            .child()
-            .and_then(|child| child.downcast::<gtk::Label>().ok())
-        else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let data = boxed.borrow::<T>();
-        label.set_text(&(value)(&data));
-    });
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
-    column
-}
-pub(in crate::ui) fn row_index_column() -> gtk::ColumnViewColumn {
-    row_index_column_with_width(column_width(LibraryField::RowIndex))
-}
-pub(in crate::ui) fn row_index_column_with_width(width: i32) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let label = gtk::Label::new(None);
-            label.add_css_class("muted");
-            label.set_xalign(0.0);
-            label.set_halign(gtk::Align::Fill);
-            label.set_hexpand(true);
-            label.set_wrap(false);
-            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            label.set_single_line_mode(true);
-            item.set_child(Some(&label));
-        }
-    });
-    factory.connect_bind(|_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(label) = item
-            .child()
-            .and_then(|child| child.downcast::<gtk::Label>().ok())
-        else {
-            return;
-        };
-        label.set_text(&(item.position() + 1).to_string());
-    });
-    let column = gtk::ColumnViewColumn::new(Some("#"), Some(factory));
-    column.set_fixed_width(width);
-    column
-}
-#[derive(Clone)]
-pub(in crate::ui) struct LibraryAlbumImageCell {
-    pub(in crate::ui) cover: ArtworkTile,
-    pub(in crate::ui) current_album: Rc<RefCell<Option<Album>>>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui) struct LibraryAlbumTextCell {
-    pub(in crate::ui) label: gtk::Label,
-    pub(in crate::ui) current_album: Rc<RefCell<Option<Album>>>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui) struct LibraryAlbumMergedCell {
-    pub(in crate::ui) cover: ArtworkTile,
-    pub(in crate::ui) title: gtk::Label,
-    pub(in crate::ui) subtitle: gtk::Label,
-    pub(in crate::ui) subtitle_route: Rc<RefCell<Option<Route>>>,
-    pub(in crate::ui) current_album: Rc<RefCell<Option<Album>>>,
-}
-
-thread_local! {
-    static LIBRARY_ALBUM_IMAGE_CELLS: RefCell<HashMap<usize, LibraryAlbumImageCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_ALBUM_TEXT_CELLS: RefCell<HashMap<usize, LibraryAlbumTextCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_ALBUM_MERGED_CELLS: RefCell<HashMap<usize, LibraryAlbumMergedCell>> = RefCell::new(HashMap::new());
-}
-
-pub(in crate::ui) fn album_image_cell(item: &gtk::ListItem) -> Option<LibraryAlbumImageCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(in crate::ui) fn album_text_cell(item: &gtk::ListItem) -> Option<LibraryAlbumTextCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_ALBUM_TEXT_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(in crate::ui) fn album_merged_cell(item: &gtk::ListItem) -> Option<LibraryAlbumMergedCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_ALBUM_MERGED_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(in crate::ui) fn album_image_column(
-    shell: &Rc<Shell>,
-    title: &'static str,
-    width: i32,
-) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-
-    let setup_shell = Rc::clone(&shell);
-    factory.connect_setup(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let current_album = Rc::new(RefCell::new(None::<Album>));
-        let cover = ArtworkTile::new(48, 0);
-        let widget = cover.widget();
-        install_dynamic_album_context_menu(&widget, &setup_shell, Rc::clone(&current_album));
-        item.set_child(Some(&widget));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryAlbumImageCell {
-                    cover,
-                    current_album,
-                },
-            );
-        });
-    });
-
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(album) = item_at_from_item::<Album>(item) else {
-            return;
-        };
-        let Some(cell) = album_image_cell(item) else {
-            return;
-        };
-        shell.bind_cover_tile_for(
-            &cell.cover,
-            album.image_ref.as_ref(),
-            album.color_seed,
-            48,
-            THUMB_COVER_SIZE,
-        );
-        *cell.current_album.borrow_mut() = Some(album);
-    });
-
-    factory.connect_unbind(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = album_image_cell(item)
-        {
-            cell.cover.bind_image(0, None);
-            *cell.current_album.borrow_mut() = None;
-        }
-    });
-
-    factory.connect_teardown(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_ALBUM_IMAGE_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
-        }
-    });
-
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column
-}
-
-pub(in crate::ui) fn album_text_column<F>(
-    shell: &Rc<Shell>,
-    title: &'static str,
-    width: i32,
-    expand: bool,
-    value: F,
-) -> gtk::ColumnViewColumn
-where
-    F: Fn(&Album) -> String + 'static,
-{
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    let value = Rc::new(value);
-
-    let setup_shell = Rc::clone(&shell);
-    factory.connect_setup(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let current_album = Rc::new(RefCell::new(None::<Album>));
-        let label = gtk::Label::new(None);
-        label.set_xalign(0.0);
-        label.set_halign(gtk::Align::Fill);
-        label.set_hexpand(true);
-        label.set_wrap(false);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_single_line_mode(true);
-        install_dynamic_album_context_menu(&label, &setup_shell, Rc::clone(&current_album));
-        item.set_child(Some(&label));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_ALBUM_TEXT_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryAlbumTextCell {
-                    label,
-                    current_album,
-                },
-            );
-        });
-    });
-
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(album) = item_at_from_item::<Album>(item) else {
-            return;
-        };
-        let Some(cell) = album_text_cell(item) else {
-            return;
-        };
-        cell.label.set_text(&(value)(&album));
-        *cell.current_album.borrow_mut() = Some(album);
-    });
-
-    factory.connect_unbind(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = album_text_cell(item)
-        {
-            cell.label.set_text("");
-            *cell.current_album.borrow_mut() = None;
-        }
-    });
-
-    factory.connect_teardown(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_ALBUM_TEXT_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
-        }
-    });
-
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
-    column
-}
-
-pub(in crate::ui) fn album_merged_column(
-    shell: &Rc<Shell>,
-    title: &'static str,
-    width: i32,
-) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-
-    let setup_shell = Rc::clone(&shell);
-    factory.connect_setup(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let current_album = Rc::new(RefCell::new(None::<Album>));
-        let subtitle_route = Rc::new(RefCell::new(None::<Route>));
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        row.set_valign(gtk::Align::Center);
-
-        let cover = ArtworkTile::new(48, 0);
-        row.append(&cover.widget());
-
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        let title = gtk::Label::new(None);
-        title.set_xalign(0.0);
-        title.set_wrap(false);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        title.set_single_line_mode(true);
-        labels.append(&title);
-
-        let subtitle = gtk::Label::new(None);
-        subtitle.add_css_class("muted");
-        subtitle.set_xalign(0.0);
-        subtitle.set_halign(gtk::Align::Start);
-        subtitle.set_hexpand(false);
-        subtitle.set_wrap(false);
-        subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        subtitle.set_single_line_mode(true);
-        subtitle.set_visible(false);
-        subtitle.set_cursor_from_name(Some("pointer"));
-        add_dynamic_link_hover(subtitle.upcast_ref(), &subtitle);
-        let click_shell = Rc::clone(&setup_shell);
-        let route_for_click = Rc::clone(&subtitle_route);
-        add_label_click(&subtitle, move || {
-            let route = route_for_click.borrow().clone();
-            if let Some(route) = route {
-                click_shell.navigate(route);
-            }
-        });
-        labels.append(&subtitle);
-
-        row.append(&labels);
-        install_dynamic_album_context_menu(&row, &setup_shell, Rc::clone(&current_album));
-        item.set_child(Some(&row));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_ALBUM_MERGED_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryAlbumMergedCell {
-                    cover,
-                    title,
-                    subtitle,
-                    subtitle_route,
-                    current_album,
-                },
-            );
-        });
-    });
-
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(album) = item_at_from_item::<Album>(item) else {
-            return;
-        };
-        let Some(cell) = album_merged_cell(item) else {
-            return;
-        };
-        shell.bind_cover_tile_for(
-            &cell.cover,
-            album.image_ref.as_ref(),
-            album.color_seed,
-            48,
-            THUMB_COVER_SIZE,
-        );
-        cell.title.set_text(&album.title);
-        cell.subtitle.set_text(&album.artist);
-        let route = album_artist_route(&album);
-        *cell.subtitle_route.borrow_mut() = route;
-        cell.subtitle.set_visible(!album.artist.trim().is_empty());
-        *cell.current_album.borrow_mut() = Some(album);
-    });
-
-    factory.connect_unbind(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = album_merged_cell(item)
-        {
-            cell.title.set_text("");
-            cell.subtitle.set_text("");
-            cell.subtitle.set_visible(false);
-            *cell.subtitle_route.borrow_mut() = None;
-            cell.cover.bind_image(0, None);
-            *cell.current_album.borrow_mut() = None;
-        }
-    });
-
-    factory.connect_teardown(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_ALBUM_MERGED_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
-        }
-    });
-
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(true);
-    column
-}
-
-pub(in crate::ui) fn image_column<T, F, S>(
-    shell: &Rc<Shell>,
-    title: &str,
-    width: i32,
-    image_ref: F,
-    seed: S,
-) -> gtk::ColumnViewColumn
-where
-    T: Clone + 'static,
-    F: Fn(&T) -> Option<rufin_core::ImageRef> + 'static,
-    S: Fn(&T) -> u32 + 'static,
-{
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    let image_ref = Rc::new(image_ref);
-    let seed = Rc::new(seed);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(boxed) = item
-            .item()
-            .and_then(|item| item.downcast::<glib::BoxedAnyObject>().ok())
-        else {
-            return;
-        };
-        let data = boxed.borrow::<T>();
-        item.set_child(Some(&shell.cover_tile_for(
-            image_ref(&data).as_ref(),
-            seed(&data),
-            48,
-            THUMB_COVER_SIZE,
-        )));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column
-}
-pub(in crate::ui) fn artist_image_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(artist) = item_at_from_item::<Artist>(item) else {
-            return;
-        };
-        let image_ref = artist_cover_image_ref(&shell, &artist);
-        let cover = shell.cover_tile_for(
-            image_ref.as_ref(),
-            stable_seed(artist.id.as_str()),
-            48,
-            THUMB_COVER_SIZE,
-        );
-        install_artist_context_menu(&cover, &shell, artist);
-        item.set_child(Some(&cover));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let column = gtk::ColumnViewColumn::new(Some(&tr("Image")), Some(factory));
-    column.set_fixed_width(column_width(LibraryField::Image));
-    column
-}
-pub(in crate::ui) fn artist_text_column<F>(
-    shell: &Rc<Shell>,
-    title: &str,
-    width: i32,
-    expand: bool,
-    value: F,
-) -> gtk::ColumnViewColumn
-where
-    F: Fn(&Artist) -> String + 'static,
-{
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    let value = Rc::new(value);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(artist) = item_at_from_item::<Artist>(item) else {
-            return;
-        };
-        let label = gtk::Label::new(Some(&(value)(&artist)));
-        label.set_xalign(0.0);
-        label.set_halign(gtk::Align::Fill);
-        label.set_hexpand(true);
-        label.set_wrap(false);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_single_line_mode(true);
-        install_artist_context_menu(&label, &shell, artist);
-        item.set_child(Some(&label));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
-    column
-}
-#[derive(Clone)]
-pub(in crate::ui) struct LibraryTrackImageCell {
-    pub(in crate::ui) cover: ArtworkTile,
-    pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui) struct LibraryTrackTextCell {
-    pub(in crate::ui) label: gtk::Label,
-    pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui) struct LibraryTrackMergedCell {
-    pub(in crate::ui) cover: ArtworkTile,
-    pub(in crate::ui) title: gtk::Label,
-    pub(in crate::ui) subtitle: gtk::Label,
-    pub(in crate::ui) subtitle_route: Rc<RefCell<Option<Route>>>,
-    pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
-}
-
-#[derive(Clone)]
-pub(in crate::ui) struct LibraryTrackFavoriteCell {
-    pub(in crate::ui) button: gtk::Button,
-    pub(in crate::ui) current_track: Rc<RefCell<Option<Track>>>,
-}
-
-thread_local! {
-    static LIBRARY_TRACK_IMAGE_CELLS: RefCell<HashMap<usize, LibraryTrackImageCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_TRACK_TEXT_CELLS: RefCell<HashMap<usize, LibraryTrackTextCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_TRACK_MERGED_CELLS: RefCell<HashMap<usize, LibraryTrackMergedCell>> = RefCell::new(HashMap::new());
-    static LIBRARY_TRACK_FAVORITE_CELLS: RefCell<HashMap<usize, LibraryTrackFavoriteCell>> = RefCell::new(HashMap::new());
-}
-
-pub(in crate::ui) fn library_list_item_storage_key(list_item: &gtk::ListItem) -> usize {
-    list_item.as_ptr() as usize
-}
-
-pub(in crate::ui) fn track_image_cell(item: &gtk::ListItem) -> Option<LibraryTrackImageCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_TRACK_IMAGE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(in crate::ui) fn track_text_cell(item: &gtk::ListItem) -> Option<LibraryTrackTextCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_TRACK_TEXT_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(in crate::ui) fn track_merged_cell(item: &gtk::ListItem) -> Option<LibraryTrackMergedCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_TRACK_MERGED_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(in crate::ui) fn track_favorite_cell(item: &gtk::ListItem) -> Option<LibraryTrackFavoriteCell> {
-    let key = library_list_item_storage_key(item);
-    LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| cells.borrow().get(&key).cloned())
-}
-
-pub(in crate::ui) fn track_image_column(
-    shell: &Rc<Shell>,
-    title: &'static str,
-    width: i32,
-) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-
-    let setup_shell = Rc::clone(&shell);
-    factory.connect_setup(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let current_track = Rc::new(RefCell::new(None::<Track>));
-        let cover = ArtworkTile::new(48, 0);
-        let widget = cover.widget();
-        install_dynamic_track_context_menu(&widget, &setup_shell, Rc::clone(&current_track));
-        item.set_child(Some(&widget));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_TRACK_IMAGE_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryTrackImageCell {
-                    cover,
-                    current_track,
-                },
-            );
-        });
-    });
-
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(track) = item_at_from_item::<Track>(item) else {
-            return;
-        };
-        let Some(cell) = track_image_cell(item) else {
-            return;
-        };
-        shell.bind_cover_tile_for(
-            &cell.cover,
-            track.image_ref.as_ref(),
-            stable_seed(track.id.as_str()),
-            48,
-            THUMB_COVER_SIZE,
-        );
-        *cell.current_track.borrow_mut() = Some(track);
-    });
-
-    factory.connect_unbind(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_image_cell(item)
-        {
-            *cell.current_track.borrow_mut() = None;
-            cell.cover.bind_image(0, None);
-        }
-    });
-
-    factory.connect_teardown(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_TRACK_IMAGE_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
-        }
-    });
-
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column
-}
-pub(in crate::ui) fn track_text_column<F>(
-    shell: &Rc<Shell>,
-    title: &'static str,
-    width: i32,
-    expand: bool,
-    xalign: f32,
-    value: F,
-) -> gtk::ColumnViewColumn
-where
-    F: Fn(&Track) -> String + 'static,
-{
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    let value = Rc::new(value);
-
-    let setup_shell = Rc::clone(&shell);
-    factory.connect_setup(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let current_track = Rc::new(RefCell::new(None::<Track>));
-        let label = gtk::Label::new(None);
-        label.set_xalign(xalign);
-        label.set_halign(gtk::Align::Fill);
-        label.set_hexpand(true);
-        label.set_wrap(false);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_single_line_mode(true);
-        install_dynamic_track_context_menu(&label, &setup_shell, Rc::clone(&current_track));
-        item.set_child(Some(&label));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_TRACK_TEXT_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryTrackTextCell {
-                    label,
-                    current_track,
-                },
-            );
-        });
-    });
-
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(track) = item_at_from_item::<Track>(item) else {
-            return;
-        };
-        let Some(cell) = track_text_cell(item) else {
-            return;
-        };
-        cell.label.set_text(&(value)(&track));
-        *cell.current_track.borrow_mut() = Some(track);
-    });
-
-    factory.connect_unbind(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_text_cell(item)
-        {
-            cell.label.set_text("");
-            *cell.current_track.borrow_mut() = None;
-        }
-    });
-
-    factory.connect_teardown(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_TRACK_TEXT_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
-        }
-    });
-
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(expand);
-    column
-}
-
-pub(in crate::ui) fn track_merged_column<Title, Subtitle, Image, Seed>(
-    shell: &Rc<Shell>,
-    title: &'static str,
-    width: i32,
-    title_value: Title,
-    subtitle_value: Subtitle,
-    image_ref: Image,
-    seed: Seed,
-) -> gtk::ColumnViewColumn
-where
-    Title: Fn(&Track) -> String + 'static,
-    Subtitle: Fn(&Track) -> String + 'static,
-    Image: Fn(&Track) -> Option<rufin_core::ImageRef> + 'static,
-    Seed: Fn(&Track) -> u32 + 'static,
-{
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    let title_value = Rc::new(title_value);
-    let subtitle_value = Rc::new(subtitle_value);
-    let image_ref = Rc::new(image_ref);
-    let seed = Rc::new(seed);
-
-    let setup_shell = Rc::clone(&shell);
-    factory.connect_setup(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let current_track = Rc::new(RefCell::new(None::<Track>));
-        let subtitle_route = Rc::new(RefCell::new(None::<Route>));
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        row.set_valign(gtk::Align::Center);
-
-        let cover = ArtworkTile::new(48, 0);
-        row.append(&cover.widget());
-
-        let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        let title = gtk::Label::new(None);
-        title.set_xalign(0.0);
-        title.set_wrap(false);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        title.set_single_line_mode(true);
-        labels.append(&title);
-
-        let subtitle = gtk::Label::new(None);
-        subtitle.add_css_class("muted");
-        subtitle.add_css_class("table-link-label");
-        subtitle.set_xalign(0.0);
-        subtitle.set_halign(gtk::Align::Start);
-        subtitle.set_hexpand(false);
-        subtitle.set_wrap(false);
-        subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        subtitle.set_single_line_mode(true);
-        subtitle.set_width_chars(1);
-        subtitle.set_max_width_chars(28);
-        subtitle.set_visible(false);
-        subtitle.set_cursor_from_name(Some("pointer"));
-        add_dynamic_link_hover(subtitle.upcast_ref(), &subtitle);
-        labels.append(&subtitle);
-
-        let click_shell = Rc::clone(&setup_shell);
-        let route_for_click = Rc::clone(&subtitle_route);
-        add_label_click(&subtitle, move || {
-            let route = route_for_click.borrow().clone();
-            if let Some(route) = route {
-                click_shell.navigate(route);
-            }
-        });
-
-        row.append(&labels);
-        install_dynamic_track_context_menu(&row, &setup_shell, Rc::clone(&current_track));
-        item.set_child(Some(&row));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_TRACK_MERGED_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryTrackMergedCell {
-                    cover,
-                    title,
-                    subtitle,
-                    subtitle_route,
-                    current_track,
-                },
-            );
-        });
-    });
-
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(track) = item_at_from_item::<Track>(item) else {
-            return;
-        };
-        let Some(cell) = track_merged_cell(item) else {
-            return;
-        };
-        shell.bind_cover_tile_for(
-            &cell.cover,
-            image_ref(&track).as_ref(),
-            seed(&track),
-            48,
-            THUMB_COVER_SIZE,
-        );
-        cell.title.set_text(&title_value(&track));
-        let subtitle = subtitle_value(&track);
-        let subtitle_route = track_artist_route(&track);
-        *cell.current_track.borrow_mut() = Some(track);
-        if subtitle.trim().is_empty() {
-            *cell.subtitle_route.borrow_mut() = None;
-            cell.subtitle.set_visible(false);
-        } else if let Some(route) = subtitle_route {
-            *cell.subtitle_route.borrow_mut() = Some(route);
-            cell.subtitle.set_text(&subtitle);
-            cell.subtitle.set_visible(true);
-        } else {
-            *cell.subtitle_route.borrow_mut() = None;
-            cell.subtitle.set_text(&subtitle);
-            cell.subtitle.set_visible(true);
-        }
-    });
-
-    factory.connect_unbind(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_merged_cell(item)
-        {
-            cell.title.set_text("");
-            cell.subtitle.set_text("");
-            cell.subtitle.set_visible(false);
-            *cell.subtitle_route.borrow_mut() = None;
-            cell.cover.bind_image(0, None);
-            *cell.current_track.borrow_mut() = None;
-        }
-    });
-
-    factory.connect_teardown(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_TRACK_MERGED_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
-        }
-    });
-
-    let column = gtk::ColumnViewColumn::new(Some(&tr(title)), Some(factory));
-    column.set_fixed_width(width);
-    column.set_resizable(true);
-    column.set_expand(true);
-    column
-}
-pub(in crate::ui) fn album_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(album) = item_at_from_item::<Album>(item) else {
-            return;
-        };
-        let button = favorite_icon_button("Favorite album");
-        set_favorite_button_active(&button, album.favorite);
-        install_album_context_menu(&button, &shell, album.clone());
-        let controller = shell.controller.clone();
-        button.connect_clicked(move |button| {
-            controller.set_album_favorite(album.id.clone(), !favorite_button_is_active(button));
-        });
-        item.set_child(Some(&button));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let column = gtk::ColumnViewColumn::new(Some(""), Some(factory));
-    column.set_fixed_width(column_width(LibraryField::Favorite));
-    column
-}
-pub(in crate::ui) fn artist_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(artist) = item_at_from_item::<Artist>(item) else {
-            return;
-        };
-        let button = favorite_icon_button("Favorite artist");
-        set_favorite_button_active(&button, artist.favorite);
-        install_artist_context_menu(&button, &shell, artist.clone());
-        let controller = shell.controller.clone();
-        button.connect_clicked(move |button| {
-            controller.set_artist_favorite(artist.id.clone(), !favorite_button_is_active(button));
-        });
-        item.set_child(Some(&button));
-    });
-    factory.connect_unbind(clear_list_item_child);
-    let column = gtk::ColumnViewColumn::new(Some(""), Some(factory));
-    column.set_fixed_width(column_width(LibraryField::Favorite));
-    column
-}
-pub(in crate::ui) fn track_favorite_column(shell: &Rc<Shell>) -> gtk::ColumnViewColumn {
-    let factory = gtk::SignalListItemFactory::new();
-    let shell = Rc::clone(shell);
-
-    let setup_shell = Rc::clone(&shell);
-    factory.connect_setup(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let current_track = Rc::new(RefCell::new(None::<Track>));
-        let button = favorite_icon_button("Favorite track");
-        install_dynamic_track_context_menu(&button, &setup_shell, Rc::clone(&current_track));
-        let controller = setup_shell.controller.clone();
-        let click_track = Rc::clone(&current_track);
-        button.connect_clicked(move |button| {
-            let Some(track) = click_track.borrow().as_ref().cloned() else {
-                return;
-            };
-            controller.set_track_favorite(track.id, !favorite_button_is_active(button));
-        });
-        item.set_child(Some(&button));
-        let key = library_list_item_storage_key(item);
-        LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| {
-            cells.borrow_mut().insert(
-                key,
-                LibraryTrackFavoriteCell {
-                    button,
-                    current_track,
-                },
-            );
-        });
-    });
-
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let Some(track) = item_at_from_item::<Track>(item) else {
-            return;
-        };
-        let Some(cell) = track_favorite_cell(item) else {
-            return;
-        };
-        set_favorite_button_active(&cell.button, track.favorite);
-        *cell.current_track.borrow_mut() = Some(track);
-    });
-
-    factory.connect_unbind(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(cell) = track_favorite_cell(item)
-        {
-            *cell.current_track.borrow_mut() = None;
-        }
-    });
-
-    factory.connect_teardown(|_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let key = library_list_item_storage_key(item);
-            LIBRARY_TRACK_FAVORITE_CELLS.with(|cells| {
-                cells.borrow_mut().remove(&key);
-            });
-        }
-    });
-
-    let column = gtk::ColumnViewColumn::new(Some(""), Some(factory));
-    column.set_fixed_width(column_width(LibraryField::Favorite));
-    column
-}
 pub(in crate::ui) fn populate_album_collection_model(
     model: &gio::ListStore,
     albums: &[Album],
@@ -1516,6 +22,7 @@ pub(in crate::ui) fn populate_album_collection_model(
         populate_album_model(model, albums, settings);
     }
 }
+
 pub(in crate::ui) fn append_album_collection_model(
     model: &gio::ListStore,
     albums: Vec<Album>,
@@ -1531,6 +38,7 @@ pub(in crate::ui) fn append_album_collection_model(
         append_albums_to_model(model, albums);
     }
 }
+
 pub(in crate::ui) fn album_detail_items_for(
     albums: &[Album],
     settings: &LibraryListSettings,
@@ -1562,93 +70,1062 @@ pub(in crate::ui) fn album_detail_items_for(
 
     rows
 }
-pub(in crate::ui) fn populate_album_model(
-    model: &gio::ListStore,
-    albums: &[Album],
-    settings: &LibraryListSettings,
-) {
-    let mut values = albums.to_vec();
-    sort_albums(&mut values, settings);
-    replace_albums_in_model(model, values);
+
+pub(in crate::ui) fn album_detail_list(
+    shell: &Rc<Shell>,
+    model: gio::ListStore,
+    key: LibraryListKey,
+) -> gtk::ListView {
+    let track_selection = AlbumDetailTrackSelection::default();
+    let selection = gtk::NoSelection::new(Some(model.clone()));
+    let factory = gtk::SignalListItemFactory::new();
+    let shell_for_factory = Rc::clone(shell);
+    let selection_for_factory = track_selection.clone();
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(row) = item_at_from_item::<AlbumDetailItem>(item) else {
+            return;
+        };
+        let content = album_detail_item_row(&shell_for_factory, row, key, &selection_for_factory);
+        content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        item.set_child(Some(&content));
+    });
+    factory.connect_unbind(clear_list_item_child);
+
+    let list = gtk::ListView::new(Some(selection), Some(factory));
+    list.add_css_class("track-table");
+    list.add_css_class("album-detail-list");
+    list.set_vscroll_policy(gtk::ScrollablePolicy::Minimum);
+    list.set_hexpand(true);
+    list.set_halign(gtk::Align::Fill);
+    list.set_vexpand(true);
+    let controller = shell.controller.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
+    list.connect_activate(move |_, position| {
+        let Some(AlbumDetailItem::Track { track, .. }) =
+            item_at::<AlbumDetailItem>(&model, position)
+        else {
+            return;
+        };
+        play_album_track_from_cache(&controller, track, selected_music_folder_id.clone());
+    });
+    list
 }
-pub(in crate::ui) fn populate_artist_model(
-    model: &gio::ListStore,
-    artists: &[Artist],
-    settings: &LibraryListSettings,
-) {
-    let mut values = artists.to_vec();
-    sort_artists(&mut values, settings);
-    replace_artists_in_model(model, values);
+#[derive(Clone)]
+pub(in crate::ui) struct AlbumDetailVirtualList {
+    pub(in crate::ui) widget: gtk::Box,
+    pub(in crate::ui) top_spacer: gtk::Box,
+    pub(in crate::ui) rows: gtk::Box,
+    pub(in crate::ui) bottom_spacer: gtk::Box,
+    pub(in crate::ui) selection: AlbumDetailTrackSelection,
 }
-pub(in crate::ui) fn populate_genre_model(
-    model: &gio::ListStore,
-    genres: &[Genre],
-    settings: &LibraryListSettings,
-) {
-    let mut values = genres.to_vec();
-    sort_genres(&mut values, settings);
-    replace_genres_in_model(model, values);
+#[derive(Clone)]
+pub(in crate::ui) struct AlbumDetailVirtualRow {
+    pub(in crate::ui) item: AlbumDetailItem,
+    pub(in crate::ui) top: i32,
+    pub(in crate::ui) height: i32,
 }
-pub(in crate::ui) fn populate_playlist_model(
-    model: &gio::ListStore,
-    playlists: &[Playlist],
-    settings: &LibraryListSettings,
-) {
-    let mut values = playlists.to_vec();
-    sort_playlists(&mut values, settings);
-    replace_playlists_in_model(model, values);
+impl AlbumDetailVirtualRow {
+    pub(in crate::ui) fn bottom(&self) -> i32 {
+        self.top.saturating_add(self.height)
+    }
 }
-pub(in crate::ui) fn populate_smart_playlist_model(
-    model: &gio::ListStore,
-    playlists: &[SmartPlaylist],
-    settings: &LibraryListSettings,
-) {
-    let mut values = playlists.to_vec();
-    sort_smart_playlists(&mut values, settings);
-    let additions = values
-        .into_iter()
-        .map(glib::BoxedAnyObject::new)
-        .collect::<Vec<_>>();
-    model.splice(0, model.n_items(), &additions);
+pub(in crate::ui) fn album_detail_virtual_list() -> AlbumDetailVirtualList {
+    let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    widget.add_css_class("track-table");
+    widget.add_css_class("album-detail-list");
+    widget.set_hexpand(true);
+    widget.set_halign(gtk::Align::Fill);
+    widget.set_vexpand(false);
+
+    let top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    rows.set_hexpand(true);
+    rows.set_halign(gtk::Align::Fill);
+    let bottom_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    widget.append(&top_spacer);
+    widget.append(&rows);
+    widget.append(&bottom_spacer);
+
+    AlbumDetailVirtualList {
+        widget,
+        top_spacer,
+        rows,
+        bottom_spacer,
+        selection: AlbumDetailTrackSelection::default(),
+    }
 }
-pub(in crate::ui) fn tracks_for_settings(
-    tracks: &[Track],
-    settings: &LibraryListSettings,
-    query: &str,
-    favorite_first: bool,
-) -> Vec<Track> {
-    let query = query.trim().to_lowercase();
-    let mut values = tracks
+pub(in crate::ui) fn connect_album_detail_virtual_list(
+    shell: &Rc<Shell>,
+    scroller: &gtk::ScrolledWindow,
+    model: &gio::ListStore,
+    key: LibraryListKey,
+    list: &AlbumDetailVirtualList,
+) {
+    let rows = Rc::new(RefCell::new(album_detail_virtual_rows(shell, key, model)));
+    let rendered = Rc::new(RefCell::new(None::<(usize, usize)>));
+    let adjustment = scroller.vadjustment();
+
+    let render = {
+        let shell = Rc::clone(shell);
+        let list = list.clone();
+        let rows = Rc::clone(&rows);
+        let rendered = Rc::clone(&rendered);
+        Rc::new(move |adjustment: &gtk::Adjustment| {
+            render_album_detail_virtual_rows(&shell, key, &list, &rows, &rendered, adjustment);
+        })
+    };
+
+    render(&adjustment);
+    {
+        let adjustment = adjustment.clone();
+        let render = Rc::clone(&render);
+        glib::idle_add_local_once(move || render(&adjustment));
+    }
+
+    {
+        let shell = Rc::clone(shell);
+        let rows = Rc::clone(&rows);
+        let rendered = Rc::clone(&rendered);
+        let adjustment = adjustment.clone();
+        let render = Rc::clone(&render);
+        model.connect_items_changed(move |model, _, _, _| {
+            *rows.borrow_mut() = album_detail_virtual_rows(&shell, key, model);
+            *rendered.borrow_mut() = None;
+            render(&adjustment);
+        });
+    }
+
+    let render_serial = Rc::new(Cell::new(0_u64));
+    let last_scroll_value = Rc::new(Cell::new(adjustment.value()));
+    adjustment.connect_value_changed(move |adjustment| {
+        let previous_value = last_scroll_value.replace(adjustment.value());
+        let delta = (adjustment.value() - previous_value).abs();
+        let serial = render_serial.get().saturating_add(1);
+        render_serial.set(serial);
+        let adjustment = adjustment.clone();
+        let render = Rc::clone(&render);
+        let render_serial_for_callback = Rc::clone(&render_serial);
+        if delta >= f64::from(fast_scroll_delta()) {
+            glib::timeout_add_local_once(Duration::from_millis(FAST_SCROLL_DELAY), move || {
+                if render_serial_for_callback.get() == serial {
+                    render(&adjustment);
+                }
+            });
+        } else {
+            glib::idle_add_local_once(move || {
+                if render_serial_for_callback.get() == serial {
+                    render(&adjustment);
+                }
+            });
+        }
+    });
+}
+pub(in crate::ui) fn album_detail_virtual_rows(
+    shell: &Shell,
+    key: LibraryListKey,
+    model: &gio::ListStore,
+) -> Vec<AlbumDetailVirtualRow> {
+    let cover_size = album_detail_row_metrics(shell, key).cover_size;
+    let mut rows = Vec::with_capacity(model.n_items() as usize);
+    let mut top = 0_i32;
+    for index in 0..model.n_items() {
+        let Some(item) = item_at::<AlbumDetailItem>(model, index) else {
+            continue;
+        };
+        let height = album_detail_item_total_height(&item, cover_size);
+        rows.push(AlbumDetailVirtualRow { item, top, height });
+        top = top.saturating_add(height);
+    }
+    rows
+}
+pub(in crate::ui) fn render_album_detail_virtual_rows(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    list: &AlbumDetailVirtualList,
+    rows: &Rc<RefCell<Vec<AlbumDetailVirtualRow>>>,
+    rendered: &Rc<RefCell<Option<(usize, usize)>>>,
+    adjustment: &gtk::Adjustment,
+) {
+    let rows_ref = rows.borrow();
+    let total_height = rows_ref
+        .last()
+        .map(AlbumDetailVirtualRow::bottom)
+        .unwrap_or(1)
+        .max(1);
+    list.widget.set_height_request(total_height);
+
+    let overscan = f64::from(album_detail_virtual_overscan_height());
+    let visible_top = (adjustment.value() - overscan).max(0.0);
+    let visible_bottom = (adjustment.value() + adjustment.page_size() + overscan)
+        .min(f64::from(total_height))
+        .max(visible_top);
+    let (start, end) = album_detail_virtual_range(&rows_ref, visible_top, visible_bottom);
+    if rendered.borrow().as_ref() == Some(&(start, end)) {
+        return;
+    }
+    *rendered.borrow_mut() = Some((start, end));
+
+    while let Some(child) = list.rows.first_child() {
+        list.rows.remove(&child);
+    }
+
+    let top_height = rows_ref.get(start).map(|row| row.top).unwrap_or(0).max(0);
+    let bottom_start = end
+        .checked_sub(1)
+        .and_then(|index| rows_ref.get(index))
+        .map(AlbumDetailVirtualRow::bottom)
+        .unwrap_or(top_height);
+    list.top_spacer.set_height_request(top_height);
+    list.bottom_spacer
+        .set_height_request(total_height.saturating_sub(bottom_start).max(0));
+
+    for row in &rows_ref[start..end] {
+        list.rows.append(&album_detail_item_row(
+            shell,
+            row.item.clone(),
+            key,
+            &list.selection,
+        ));
+    }
+}
+pub(in crate::ui) fn album_detail_virtual_range(
+    rows: &[AlbumDetailVirtualRow],
+    visible_top: f64,
+    visible_bottom: f64,
+) -> (usize, usize) {
+    let start = rows
         .iter()
-        .filter(|track| query.is_empty() || track_matches_query(track, &query))
-        .cloned()
+        .position(|row| f64::from(row.bottom()) >= visible_top)
+        .unwrap_or(rows.len());
+    let end = rows
+        .iter()
+        .position(|row| f64::from(row.top) > visible_bottom)
+        .unwrap_or(rows.len())
+        .max(start);
+    (start, end)
+}
+pub(in crate::ui) fn album_detail_virtual_overscan_height() -> i32 {
+    ALBUM_DETAIL_TRACK_ROW_HEIGHT * 8
+}
+pub(in crate::ui) const FAST_SCROLL_DELAY: u64 = 90;
+pub(in crate::ui) fn fast_scroll_delta() -> i32 {
+    album_detail_virtual_overscan_height() / 2
+}
+#[derive(Clone, Default)]
+pub(in crate::ui) struct AlbumDetailTrackSelection {
+    pub(in crate::ui) selected_track_id: Rc<RefCell<Option<TrackId>>>,
+    pub(in crate::ui) selected_row: Rc<RefCell<Option<gtk::Widget>>>,
+}
+impl AlbumDetailTrackSelection {
+    pub(in crate::ui) fn bind_row(&self, row: &gtk::Widget, track_id: &TrackId) {
+        if self.selected_track_id.borrow().as_ref() == Some(track_id) {
+            row.add_css_class("album-detail-track-selected");
+            *self.selected_row.borrow_mut() = Some(row.clone());
+        }
+    }
+
+    pub(in crate::ui) fn select_row(&self, row: &gtk::Widget, track_id: TrackId) {
+        if let Some(previous) = self.selected_row.borrow_mut().take() {
+            previous.remove_css_class("album-detail-track-selected");
+        }
+        row.add_css_class("album-detail-track-selected");
+        *self.selected_track_id.borrow_mut() = Some(track_id);
+        *self.selected_row.borrow_mut() = Some(row.clone());
+    }
+}
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::ui) enum AlbumDetailItem {
+    Lead {
+        album: Album,
+        inline_tracks: Vec<Track>,
+        last_in_album: bool,
+    },
+    Track {
+        track: Track,
+        index: usize,
+        last_in_album: bool,
+    },
+}
+pub(in crate::ui) fn album_detail_item_row(
+    shell: &Rc<Shell>,
+    row: AlbumDetailItem,
+    key: LibraryListKey,
+    selection: &AlbumDetailTrackSelection,
+) -> gtk::Widget {
+    match row {
+        AlbumDetailItem::Lead {
+            album,
+            inline_tracks,
+            last_in_album,
+        } => album_detail_lead_row(shell, &album, &inline_tracks, last_in_album, key, selection),
+        AlbumDetailItem::Track {
+            track,
+            index,
+            last_in_album,
+        } => album_detail_track_row(shell, &track, index, last_in_album, key, selection),
+    }
+}
+pub(in crate::ui) fn album_detail_lead_row(
+    shell: &Rc<Shell>,
+    album: &Album,
+    inline_tracks: &[Track],
+    last_in_album: bool,
+    key: LibraryListKey,
+    selection: &AlbumDetailTrackSelection,
+) -> gtk::Widget {
+    let metrics = album_detail_row_metrics(shell, key);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, metrics.spacing);
+    let content_height =
+        album_detail_lead_content_height(album, metrics.cover_size, inline_tracks.len());
+    row.add_css_class("album-detail-row");
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_margin_top(12);
+    row.set_margin_bottom(if last_in_album { 16 } else { 0 });
+    row.set_margin_start(4);
+    row.set_margin_end(4);
+    row.set_height_request(content_height);
+
+    row.append(&album_detail_meta(
+        shell,
+        album,
+        metrics.cover_size,
+        metrics.meta_width,
+    ));
+
+    let track_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    track_area.set_hexpand(true);
+    track_area.set_halign(gtk::Align::Fill);
+    if !inline_tracks.is_empty() {
+        let fields = shell.library_settings(key).detail_track_fields;
+        let track_width =
+            album_detail_track_area_width(shell, key, metrics.meta_width, metrics.spacing, &fields);
+        let field_widths = album_detail_track_field_widths(key, &fields, track_width);
+        track_area.set_width_request(track_width);
+        track_area.set_height_request(album_detail_track_area_height(inline_tracks.len()));
+        track_area.append(&album_detail_track_header(&field_widths));
+        for (index, track) in inline_tracks.iter().enumerate() {
+            track_area.append(&album_detail_track_cells(
+                shell,
+                track,
+                index,
+                &field_widths,
+                selection,
+            ));
+        }
+        row.append(&album_detail_separator(content_height));
+    }
+    row.append(&track_area);
+    row.upcast()
+}
+pub(in crate::ui) fn album_detail_track_row(
+    shell: &Rc<Shell>,
+    track: &Track,
+    index: usize,
+    last_in_album: bool,
+    key: LibraryListKey,
+    selection: &AlbumDetailTrackSelection,
+) -> gtk::Widget {
+    let metrics = album_detail_row_metrics(shell, key);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, metrics.spacing);
+    row.add_css_class("album-detail-row");
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_margin_bottom(if last_in_album { 16 } else { 0 });
+    row.set_margin_start(4);
+    row.set_margin_end(4);
+    row.set_height_request(ALBUM_DETAIL_TRACK_ROW_HEIGHT);
+
+    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    spacer.set_width_request(metrics.meta_width);
+    spacer.set_hexpand(false);
+    row.append(&spacer);
+    row.append(&album_detail_separator(ALBUM_DETAIL_TRACK_ROW_HEIGHT));
+
+    let fields = shell.library_settings(key).detail_track_fields;
+    let track_width =
+        album_detail_track_area_width(shell, key, metrics.meta_width, metrics.spacing, &fields);
+    let field_widths = album_detail_track_field_widths(key, &fields, track_width);
+    row.append(&album_detail_track_cells(
+        shell,
+        track,
+        index,
+        &field_widths,
+        selection,
+    ));
+    row.upcast()
+}
+pub(in crate::ui) fn album_detail_separator(height: i32) -> gtk::Widget {
+    let separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    separator.add_css_class("album-detail-separator");
+    separator.set_width_request(ALBUM_DETAIL_SEPARATOR_WIDTH);
+    separator.set_height_request(height.max(1));
+    separator.set_valign(gtk::Align::Fill);
+    separator.upcast()
+}
+pub(in crate::ui) fn album_detail_meta(
+    shell: &Rc<Shell>,
+    album: &Album,
+    cover_size: i32,
+    meta_width: i32,
+) -> gtk::Widget {
+    let meta = gtk::Box::new(gtk::Orientation::Vertical, ALBUM_DETAIL_META_SPACING);
+    meta.set_width_request(meta_width);
+    meta.set_height_request(album_detail_meta_height(album, cover_size));
+    meta.set_hexpand(false);
+    meta.append(&album_detail_cover_tile(shell, album, cover_size));
+    meta.append(&album_detail_meta_label(
+        &album.title,
+        "track-title",
+        meta_width,
+    ));
+    meta.append(&album_detail_meta_label(&album.artist, "muted", meta_width));
+    meta.append(&album_detail_meta_label(
+        &album_fact_text(album),
+        "muted",
+        meta_width,
+    ));
+    if !album.genres.is_empty() {
+        meta.append(&album_detail_meta_label(
+            &album.genres.join(", "),
+            "muted",
+            meta_width,
+        ));
+    }
+    meta.upcast()
+}
+pub(in crate::ui) fn album_detail_cover_tile(
+    shell: &Rc<Shell>,
+    album: &Album,
+    cover_size: i32,
+) -> gtk::Widget {
+    let overlay = cards::cover_overlay(cover_size);
+    let cover_button = gtk::Button::new();
+    cover_button.add_css_class("flat");
+    cover_button.add_css_class("album-cover-button");
+    cards::constrain_cover_widget(&cover_button, cover_size);
+    cover_button.set_child(Some(&shell.cover_tile_for(
+        album.image_ref.as_ref(),
+        album.color_seed,
+        cover_size,
+        GRID_COVER_SIZE,
+    )));
+    let shell_for_open = Rc::clone(shell);
+    let album_id = album.id.clone();
+    cover_button.connect_clicked(move |_| {
+        shell_for_open.navigate(Route::AlbumDetail(album_id.clone()));
+    });
+    overlay.set_child(Some(&cover_button));
+
+    let controls = cards::cover_hover_controls(cover_size, "Play album", album.favorite);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    controls
+        .play
+        .connect_clicked(move |_| controller.play_album_now(album_id.clone()));
+
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    controls.play_next.connect_clicked(move |_| {
+        if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+            for track in tracks.iter().rev() {
+                controller.play_next(track.clone());
+            }
+        }
+    });
+
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    controls.play_last.connect_clicked(move |_| {
+        if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
+            controller.play_last(tracks);
+        }
+    });
+
+    let favorite = controls.favorite.as_ref().expect("favorite button");
+    shell.register_favorite_button(album_favorite_key(&album.id), favorite);
+    let controller = shell.controller.clone();
+    let album_id = album.id.clone();
+    favorite.connect_clicked(move |button| {
+        controller.set_album_favorite(album_id.clone(), !favorite_button_is_active(button));
+    });
+
+    controls.add_to_overlay(&overlay);
+    controls.connect_hover(&overlay);
+    install_album_context_menu(&overlay, shell, album.clone());
+    overlay.upcast()
+}
+pub(in crate::ui) fn album_detail_track_header(
+    field_widths: &[(LibraryField, i32)],
+) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, ALBUM_DETAIL_TRACK_COLUMN_GAP);
+    row.add_css_class("album-detail-track-cells");
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_width_request(album_detail_track_cells_width(field_widths));
+    row.set_height_request(ALBUM_DETAIL_TRACK_HEADER_HEIGHT);
+    row.set_margin_end(album_detail_track_trailing_inset(field_widths));
+    for (field, width) in field_widths {
+        row.append(&album_detail_track_cell_box(
+            *field,
+            *width,
+            ALBUM_DETAIL_TRACK_HEADER_HEIGHT,
+            album_detail_track_header_cell(*field, *width),
+        ));
+    }
+    row.upcast()
+}
+pub(in crate::ui) fn album_detail_track_header_cell(
+    field: LibraryField,
+    width: i32,
+) -> gtk::Widget {
+    if field == LibraryField::Duration {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        row.set_width_request(width);
+        row.set_halign(gtk::Align::Fill);
+        let image = gtk::Image::from_icon_name("appointment-soon-symbolic");
+        let label = tr("Duration");
+        image.add_css_class("muted");
+        image.set_halign(gtk::Align::Start);
+        image.set_tooltip_text(Some(&label));
+        image.update_property(&[gtk::accessible::Property::Label(&label)]);
+        row.append(&image);
+        return row.upcast();
+    }
+
+    let label = album_detail_track_label(&tr(field.title()), field, width, false);
+    label.add_css_class("muted");
+    label.upcast()
+}
+pub(in crate::ui) fn album_detail_track_cells(
+    shell: &Rc<Shell>,
+    track: &Track,
+    index: usize,
+    field_widths: &[(LibraryField, i32)],
+    selection: &AlbumDetailTrackSelection,
+) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, ALBUM_DETAIL_TRACK_COLUMN_GAP);
+    row.add_css_class("album-detail-track-row");
+    row.set_hexpand(true);
+    row.set_halign(gtk::Align::Fill);
+    row.set_width_request(album_detail_track_cells_width(field_widths));
+    row.set_height_request(ALBUM_DETAIL_TRACK_ROW_HEIGHT);
+    row.set_valign(gtk::Align::Center);
+    row.set_margin_end(album_detail_track_trailing_inset(field_widths));
+    row.set_focusable(false);
+    row.update_property(&[gtk::accessible::Property::Label(&format!(
+        "{} {}",
+        track.title, track.artist
+    ))]);
+    selection.bind_row(row.upcast_ref(), &track.id);
+    for (field, width) in field_widths {
+        row.append(&album_detail_track_cell(
+            shell, track, index, *field, *width,
+        ));
+    }
+    install_track_context_menu(&row, shell, track.clone());
+
+    let controller = shell.controller.clone();
+    let track = track.clone();
+    let selected_music_folder_id = selected_music_folder_id(shell);
+    let selection = selection.clone();
+    let row_for_click = row.clone();
+    let gesture = gtk::GestureClick::new();
+    gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+    gesture.set_button(1);
+    gesture.connect_pressed(move |gesture, n_press, _, _| {
+        if album_detail_play_click(n_press) {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            let controller = controller.clone();
+            let track = track.clone();
+            let selected_music_folder_id = selected_music_folder_id.clone();
+            glib::idle_add_local_once(move || {
+                play_album_track_from_cache(&controller, track, selected_music_folder_id)
+            });
+        } else if n_press == 1 {
+            selection.select_row(row_for_click.upcast_ref(), track.id.clone());
+        }
+    });
+    row.add_controller(gesture);
+    row.upcast()
+}
+fn album_detail_play_click(n_press: i32) -> bool {
+    n_press >= 2 && n_press % 2 == 0
+}
+
+fn play_album_track_from_cache(
+    controller: &crate::controller::AppController,
+    track: Track,
+    selected_music_folder_id: Option<rufin_core::MusicFolderId>,
+) {
+    let Ok(Some((album, tracks))) = controller.cached_album_detail(&track.album_id) else {
+        controller.play_now(track);
+        return;
+    };
+    let Some(anchor_index) = tracks.iter().position(|candidate| candidate.id == track.id) else {
+        controller.play_now(track);
+        return;
+    };
+    let Some(activation) =
+        album_play_activation(album.id, tracks, anchor_index, selected_music_folder_id)
+    else {
+        controller.play_now(track);
+        return;
+    };
+    controller.play_activation(activation);
+}
+pub(in crate::ui) fn album_detail_track_cell(
+    shell: &Rc<Shell>,
+    track: &Track,
+    index: usize,
+    field: LibraryField,
+    width: i32,
+) -> gtk::Widget {
+    match field {
+        LibraryField::Favorite => {
+            let button = favorite_icon_button("Favorite track");
+            set_favorite_button_active(&button, track.favorite);
+            let controller = shell.controller.clone();
+            let track_id = track.id.clone();
+            button.connect_clicked(move |button| {
+                controller.set_track_favorite(track_id.clone(), !favorite_button_is_active(button));
+            });
+            button.set_halign(gtk::Align::Center);
+            album_detail_fixed_cell(width, button.upcast())
+        }
+        LibraryField::Image => {
+            let cover = shell.cover_tile_for(
+                track.image_ref.as_ref(),
+                stable_seed(track.id.as_str()),
+                48,
+                THUMB_COVER_SIZE,
+            );
+            cover.set_halign(gtk::Align::Center);
+            album_detail_fixed_cell(width, cover)
+        }
+        _ => album_detail_track_cell_box(
+            field,
+            width,
+            ALBUM_DETAIL_TRACK_ROW_HEIGHT,
+            album_detail_track_label(
+                &album_detail_track_text(track, index, field),
+                field,
+                width,
+                true,
+            )
+            .upcast(),
+        ),
+    }
+}
+pub(in crate::ui) fn album_detail_fixed_cell(width: i32, child: gtk::Widget) -> gtk::Widget {
+    album_detail_fixed_cell_height(width, ALBUM_DETAIL_TRACK_ROW_HEIGHT, child)
+}
+pub(in crate::ui) fn album_detail_track_cell_box(
+    field: LibraryField,
+    width: i32,
+    height: i32,
+    child: gtk::Widget,
+) -> gtk::Widget {
+    if field == LibraryField::Title {
+        return album_detail_expanding_cell_height(width, height, child);
+    }
+
+    album_detail_fixed_cell_height(width, height, child)
+}
+pub(in crate::ui) fn album_detail_expanding_cell_height(
+    width: i32,
+    height: i32,
+    child: gtk::Widget,
+) -> gtk::Widget {
+    let width = width.max(1);
+    let height = height.max(1);
+    let cell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    cell.set_width_request(width);
+    cell.set_height_request(height);
+    cell.set_size_request(width, height);
+    cell.set_hexpand(true);
+    cell.set_halign(gtk::Align::Fill);
+    cell.set_valign(gtk::Align::Fill);
+    cell.set_overflow(gtk::Overflow::Hidden);
+    child.set_hexpand(true);
+    child.set_halign(gtk::Align::Fill);
+    cell.append(&child);
+    cell.upcast()
+}
+pub(in crate::ui) fn album_detail_fixed_cell_height(
+    width: i32,
+    height: i32,
+    child: gtk::Widget,
+) -> gtk::Widget {
+    let width = width.max(1);
+    let height = height.max(1);
+    let clip = gtk::ScrolledWindow::new();
+    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+    clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_min_content_width(width);
+    clip.set_max_content_width(width);
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(false);
+    clip.set_width_request(width);
+    clip.set_size_request(width, height);
+    clip.set_height_request(height);
+    clip.set_min_content_height(height);
+    clip.set_max_content_height(height);
+    clip.set_hexpand(false);
+    clip.set_halign(gtk::Align::Fill);
+    clip.set_child(Some(&child));
+    clip.upcast()
+}
+pub(in crate::ui) fn album_detail_track_label(
+    text: &str,
+    _field: LibraryField,
+    width: i32,
+    ellipsize: bool,
+) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_halign(gtk::Align::Fill);
+    label.set_valign(gtk::Align::Center);
+    label.set_wrap(false);
+    label.set_lines(1);
+    label.set_single_line_mode(true);
+    label.set_width_request(width);
+    label.set_size_request(width, -1);
+    label.set_width_chars(1);
+    label.set_max_width_chars(1);
+    label.set_hexpand(false);
+    if ellipsize {
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    }
+    label
+}
+pub(in crate::ui) fn album_detail_track_trailing_inset(
+    field_widths: &[(LibraryField, i32)],
+) -> i32 {
+    let _ = field_widths;
+    0
+}
+pub(in crate::ui) fn album_detail_track_field_widths(
+    key: LibraryListKey,
+    fields: &[LibraryField],
+    available_width: i32,
+) -> Vec<(LibraryField, i32)> {
+    let gap_count = fields.len().saturating_sub(1).min(i32::MAX as usize) as i32;
+    let gap_total = ALBUM_DETAIL_TRACK_COLUMN_GAP.saturating_mul(gap_count);
+    let available_width = available_width
+        .saturating_sub(gap_total)
+        .max(fields.len() as i32);
+    fields
+        .iter()
+        .copied()
+        .zip(album_detail_text_column_widths(
+            key,
+            fields,
+            available_width,
+        ))
+        .collect()
+}
+fn album_detail_text_column_widths(
+    key: LibraryListKey,
+    fields: &[LibraryField],
+    available_width: i32,
+) -> Vec<i32> {
+    if fields.is_empty() {
+        return Vec::new();
+    }
+
+    let base_widths = fields
+        .iter()
+        .map(|field| album_detail_track_column_width(key, *field))
         .collect::<Vec<_>>();
-    sort_tracks(&mut values, settings, favorite_first);
-    values
+    let fixed_total = fields
+        .iter()
+        .zip(base_widths.iter())
+        .filter_map(|(field, width)| (*field != LibraryField::Title).then_some(*width))
+        .sum::<i32>();
+    let title_count = fields
+        .iter()
+        .filter(|field| **field == LibraryField::Title)
+        .count()
+        .min(i32::MAX as usize) as i32;
+    if title_count == 0 {
+        return fitted_column_widths(&base_widths, available_width);
+    }
+    if fixed_total.saturating_add(title_count) > available_width {
+        return fitted_column_widths(&base_widths, available_width);
+    }
+
+    let remaining_for_title = available_width.saturating_sub(fixed_total).max(title_count);
+    fields
+        .iter()
+        .zip(base_widths.iter())
+        .map(|(field, width)| {
+            if *field == LibraryField::Title {
+                remaining_for_title / title_count
+            } else {
+                *width
+            }
+        })
+        .collect()
 }
-pub(in crate::ui) fn sort_albums(albums: &mut [Album], settings: &LibraryListSettings) {
-    albums.sort_by(|left, right| {
-        let missing = album_field_missing(left, settings.sort_key)
-            .cmp(&album_field_missing(right, settings.sort_key));
-        if missing != Ordering::Equal {
-            return missing;
-        }
-        apply_desc(
-            compare_album(left, right, settings.sort_key),
-            settings.descending,
-        )
-    });
+pub(in crate::ui) fn album_detail_track_column_width(
+    key: LibraryListKey,
+    field: LibraryField,
+) -> i32 {
+    match field {
+        LibraryField::RowIndex => 40,
+        LibraryField::TrackNumber => 52,
+        LibraryField::DiscNumber => 44,
+        LibraryField::Duration => 48,
+        LibraryField::Year => 52,
+        LibraryField::PlayCount => play_count_column_width().min(56),
+        LibraryField::UserRating | LibraryField::SongCount | LibraryField::AlbumCount => 64,
+        LibraryField::Favorite => 40,
+        LibraryField::Image => 56,
+        LibraryField::Title | LibraryField::TitleMerged => track_column_width(key, field),
+        LibraryField::Album
+        | LibraryField::Artist
+        | LibraryField::AlbumArtist
+        | LibraryField::Genre => 160,
+        LibraryField::ReleaseDate | LibraryField::DateAdded | LibraryField::LastPlayed => 96,
+    }
 }
-pub(in crate::ui) fn sort_artists(artists: &mut [Artist], settings: &LibraryListSettings) {
-    artists.sort_by(|left, right| {
-        let missing = artist_field_missing(left, settings.sort_key)
-            .cmp(&artist_field_missing(right, settings.sort_key));
-        if missing != Ordering::Equal {
-            return missing;
+pub(in crate::ui) fn album_detail_track_cells_width(field_widths: &[(LibraryField, i32)]) -> i32 {
+    let fields_width = field_widths.iter().map(|(_, width)| *width).sum::<i32>();
+    let gap_count = field_widths.len().saturating_sub(1).min(i32::MAX as usize) as i32;
+    let gap_total = ALBUM_DETAIL_TRACK_COLUMN_GAP.saturating_mul(gap_count);
+    fields_width.saturating_add(gap_total).max(1)
+}
+pub(in crate::ui) fn album_detail_track_area_width(
+    shell: &Shell,
+    key: LibraryListKey,
+    meta_width: i32,
+    spacing: i32,
+    fields: &[LibraryField],
+) -> i32 {
+    album_detail_track_area_width_for(key, route_content_width(shell), meta_width, spacing, fields)
+}
+
+fn album_detail_track_area_width_for(
+    key: LibraryListKey,
+    route_width: i32,
+    meta_width: i32,
+    spacing: i32,
+    fields: &[LibraryField],
+) -> i32 {
+    album_detail_row_content_width(key, route_width)
+        .saturating_sub(meta_width)
+        .saturating_sub(ALBUM_DETAIL_SEPARATOR_WIDTH)
+        .saturating_sub(spacing.saturating_mul(2))
+        .max(album_detail_min_track_area_width(fields))
+}
+pub(in crate::ui) fn album_detail_track_text(
+    track: &Track,
+    index: usize,
+    field: LibraryField,
+) -> String {
+    if field == LibraryField::RowIndex {
+        (index + 1).to_string()
+    } else {
+        track_field(track, field)
+    }
+}
+pub(in crate::ui) fn album_detail_lead_content_height(
+    album: &Album,
+    cover_size: i32,
+    inline_count: usize,
+) -> i32 {
+    album_detail_meta_height(album, cover_size).max(album_detail_track_area_height(inline_count))
+}
+pub(in crate::ui) fn album_detail_item_total_height(row: &AlbumDetailItem, cover_size: i32) -> i32 {
+    match row {
+        AlbumDetailItem::Lead {
+            album,
+            inline_tracks,
+            last_in_album,
+        } => {
+            album_detail_lead_content_height(album, cover_size, inline_tracks.len())
+                + 12
+                + if *last_in_album { 16 } else { 0 }
         }
-        apply_desc(
-            compare_artist(left, right, settings.sort_key),
-            settings.descending,
-        )
-    });
+        AlbumDetailItem::Track { last_in_album, .. } => {
+            ALBUM_DETAIL_TRACK_ROW_HEIGHT + if *last_in_album { 16 } else { 0 }
+        }
+    }
+}
+pub(in crate::ui) fn album_detail_meta_height(album: &Album, cover_size: i32) -> i32 {
+    cover_size
+        + album_detail_meta_label_count(album) as i32
+            * (ALBUM_DETAIL_META_LABEL_HEIGHT + ALBUM_DETAIL_META_SPACING)
+        + ALBUM_DETAIL_META_LABEL_HEIGHT
+}
+pub(in crate::ui) fn album_detail_meta_label_count(album: &Album) -> usize {
+    3 + usize::from(!album.genres.is_empty())
+}
+pub(in crate::ui) fn album_detail_track_area_height(inline_count: usize) -> i32 {
+    if inline_count == 0 {
+        0
+    } else {
+        ALBUM_DETAIL_TRACK_HEADER_HEIGHT
+            + inline_count.min(ALBUM_DETAIL_INLINE_TRACK_ROWS) as i32
+                * ALBUM_DETAIL_TRACK_ROW_HEIGHT
+    }
+}
+pub(in crate::ui) fn sort_album_detail_tracks(tracks: &mut [Track]) {
+    tracks.sort_by(|left, right| compare_track(left, right, LibraryField::TrackNumber));
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AlbumDetailRowMetrics {
+    cover_size: i32,
+    meta_width: i32,
+    spacing: i32,
+}
+
+fn album_detail_row_metrics(shell: &Shell, key: LibraryListKey) -> AlbumDetailRowMetrics {
+    album_detail_row_metrics_for_width(key, route_content_width(shell))
+}
+
+fn album_detail_row_metrics_for_width(
+    key: LibraryListKey,
+    route_width: i32,
+) -> AlbumDetailRowMetrics {
+    let row_width = album_detail_row_content_width(key, route_width);
+    let spacing = if row_width < ALBUM_DETAIL_NARROW_WIDTH {
+        8
+    } else {
+        12
+    };
+    let target_cover = if row_width < ALBUM_DETAIL_NARROW_WIDTH {
+        row_width * 38 / 100
+    } else {
+        row_width * 42 / 100
+    };
+    let cover_size = if row_width < ALBUM_DETAIL_MIN_COVER {
+        row_width
+    } else {
+        target_cover.clamp(ALBUM_DETAIL_MIN_COVER, ALBUM_DETAIL_MAX_COVER)
+    }
+    .min(row_width)
+    .max(1);
+
+    AlbumDetailRowMetrics {
+        cover_size,
+        meta_width: cover_size,
+        spacing,
+    }
+}
+
+fn album_detail_row_content_width(key: LibraryListKey, route_width: i32) -> i32 {
+    route_width
+        .saturating_sub(album_detail_route_inset(key))
+        .saturating_sub(ALBUM_DETAIL_ROW_HORIZONTAL_INSET)
+        .max(1)
+}
+
+fn album_detail_route_inset(key: LibraryListKey) -> i32 {
+    let _ = key;
+    PRIMARY_ROUTE_MARGIN_START.saturating_add(DETAIL_ROUTE_SCROLL_GUTTER)
+}
+
+fn album_detail_min_track_area_width(fields: &[LibraryField]) -> i32 {
+    let field_count = fields.len().min(i32::MAX as usize) as i32;
+    let gap_count = fields.len().saturating_sub(1).min(i32::MAX as usize) as i32;
+    field_count + ALBUM_DETAIL_TRACK_COLUMN_GAP.saturating_mul(gap_count)
+}
+
+#[cfg(test)]
+mod album_detail_width_tests {
+    use super::*;
+
+    #[test]
+    fn album_detail_meta_shrinks_with_route() {
+        let metrics = album_detail_row_metrics_for_width(LibraryListKey::Albums, 260);
+
+        assert_eq!(metrics.spacing, 8);
+        assert!(metrics.meta_width < ALBUM_DETAIL_MAX_COVER);
+        assert_eq!(metrics.cover_size, metrics.meta_width);
+    }
+
+    #[test]
+    fn album_detail_track_width_stays_in_narrow_budget() {
+        let fields = [
+            LibraryField::RowIndex,
+            LibraryField::Title,
+            LibraryField::Duration,
+        ];
+        let metrics = album_detail_row_metrics_for_width(LibraryListKey::Albums, 260);
+        let track_width = album_detail_track_area_width_for(
+            LibraryListKey::Albums,
+            260,
+            metrics.meta_width,
+            metrics.spacing,
+            &fields,
+        );
+
+        let row_width = album_detail_rendered_width(
+            metrics,
+            album_detail_track_cells_width(&album_detail_track_field_widths(
+                LibraryListKey::Albums,
+                &fields,
+                track_width,
+            )),
+        );
+        assert!(row_width <= album_detail_row_content_width(LibraryListKey::Albums, 260));
+    }
+
+    #[test]
+    fn album_detail_width_leaves_scroll_gutter() {
+        let fields = [
+            LibraryField::Image,
+            LibraryField::Title,
+            LibraryField::Year,
+            LibraryField::Duration,
+        ];
+
+        for route_width in [360, 562, 1145] {
+            let metrics = album_detail_row_metrics_for_width(LibraryListKey::Albums, route_width);
+            let track_width = album_detail_track_area_width_for(
+                LibraryListKey::Albums,
+                route_width,
+                metrics.meta_width,
+                metrics.spacing,
+                &fields,
+            );
+            let row_width = album_detail_rendered_width(
+                metrics,
+                album_detail_track_cells_width(&album_detail_track_field_widths(
+                    LibraryListKey::Albums,
+                    &fields,
+                    track_width,
+                )),
+            );
+            let route_budget = route_width
+                .saturating_sub(PRIMARY_ROUTE_MARGIN_START)
+                .saturating_sub(DETAIL_ROUTE_SCROLL_GUTTER)
+                .saturating_sub(ALBUM_DETAIL_ROW_HORIZONTAL_INSET)
+                .max(1);
+            assert!(row_width <= route_budget);
+        }
+    }
+
+    fn album_detail_rendered_width(metrics: AlbumDetailRowMetrics, track_width: i32) -> i32 {
+        metrics
+            .meta_width
+            .saturating_add(ALBUM_DETAIL_SEPARATOR_WIDTH)
+            .saturating_add(metrics.spacing.saturating_mul(2))
+            .saturating_add(track_width)
+    }
+
+    #[test]
+    fn album_detail_repeated_double_clicks_activate() {
+        assert!(!album_detail_play_click(1));
+        assert!(album_detail_play_click(2));
+        assert!(!album_detail_play_click(3));
+        assert!(album_detail_play_click(4));
+    }
 }
