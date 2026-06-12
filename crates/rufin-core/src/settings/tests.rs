@@ -588,7 +588,6 @@ fn settings_track_defaults() {
         assert_eq!(
             settings.visible_columns,
             vec![
-                TrackTableColumn::TrackNumber,
                 TrackTableColumn::Title,
                 TrackTableColumn::Album,
                 TrackTableColumn::Year,

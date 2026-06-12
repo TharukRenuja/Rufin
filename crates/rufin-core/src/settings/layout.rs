@@ -2,7 +2,6 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 use super::sidebar::*;
 use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
-pub const TRACK_TABLE_LAYOUT_VERSION: u8 = 3;
 pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 5;
 pub const QUEUE_LYRICS_LAYOUT_VERSION: u8 = 5;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
@@ -263,12 +262,6 @@ fn default_sidebar_route_items() -> Vec<SidebarRouteItemSettings> {
         })
         .collect()
 }
-pub(super) const DEFAULT_TRACK_TABLE_COLUMNS: [TrackTableColumn; 4] = [
-    TrackTableColumn::TrackNumber,
-    TrackTableColumn::Title,
-    TrackTableColumn::Album,
-    TrackTableColumn::Year,
-];
 pub(super) fn default_home_sections() -> Vec<HomeSectionKind> {
     vec![
         HomeSectionKind::Explore,
@@ -462,76 +455,6 @@ impl ScrobblingSettings {
             self.librefm.api_secret = default_librefm_api_secret();
         }
         self.listenbrainz.sanitize();
-    }
-}
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub enum TrackTableColumn {
-    TrackNumber,
-    Title,
-    Artist,
-    Album,
-    Year,
-    Duration,
-    Favorite,
-}
-impl TrackTableColumn {
-    pub fn all() -> [Self; 7] {
-        [
-            Self::TrackNumber,
-            Self::Title,
-            Self::Album,
-            Self::Year,
-            Self::Favorite,
-            Self::Artist,
-            Self::Duration,
-        ]
-    }
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::TrackNumber => "#",
-            Self::Title => "Title",
-            Self::Artist => "Artist",
-            Self::Album => "Album",
-            Self::Year => "Year",
-            Self::Duration => "Duration",
-            Self::Favorite => "Favorite",
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum TrackSortKey {
-    TrackNumber,
-    Title,
-    Artist,
-    Album,
-    Year,
-    Duration,
-    Favorite,
-}
-impl TrackSortKey {
-    pub fn all() -> [Self; 7] {
-        [
-            Self::TrackNumber,
-            Self::Title,
-            Self::Artist,
-            Self::Album,
-            Self::Year,
-            Self::Duration,
-            Self::Favorite,
-        ]
-    }
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::TrackNumber => "#",
-            Self::Title => "Title",
-            Self::Artist => "Artist",
-            Self::Album => "Album",
-            Self::Year => "Year",
-            Self::Duration => "Duration",
-            Self::Favorite => "Favorite",
-        }
     }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

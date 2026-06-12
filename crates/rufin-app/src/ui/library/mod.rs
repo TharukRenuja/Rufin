@@ -32,15 +32,21 @@ use tracing::{info, warn};
 
 mod album_detail;
 mod collections;
+mod columns;
 #[path = "cards.rs"]
 mod field_cards;
+mod models;
 mod route_shell;
 mod routes;
+mod table_sizing;
 
 pub(super) use album_detail::*;
 pub(super) use collections::*;
+pub(super) use columns::*;
 pub(super) use field_cards::*;
+pub(super) use models::*;
 pub(super) use route_shell::*;
+pub(super) use table_sizing::*;
 
 #[cfg(test)]
 mod route_tests;
