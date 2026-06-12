@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem in Rufin.
+description: Report a problem in Rufin
 title: "[Bug]: "
 body:
   - type: checkboxes
@@ -35,7 +35,6 @@ body:
         - Navidrome
         - OpenSubsonic
         - Local
-        - Irrelevant
     validations:
       required: true
 
@@ -57,22 +56,23 @@ body:
     attributes:
       label: Desktop environment/WM
       options:
-        - niri
+        - Select
         - GNOME
+        - niri
         - KDE Plasma
         - Hyprland
         - i3
         - Sway
         - Qtile
-        - Other/Irrelevant
+        - Other
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: additional-information
     attributes:
       label: Additional information
-      description: Please provide additional information if you selected Other above, if your music server is not up-to-date, or to add context that may be useful to know
+      description: Please provide additional information if bug is server related and your music server is not up-to-date, or to add context that may be useful to know
     validations:
       required: false
 
