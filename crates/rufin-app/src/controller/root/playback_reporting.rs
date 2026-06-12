@@ -5,33 +5,35 @@ impl AppController {
         let Some((server_id, current, _position)) = self.current_playback_entry() else {
             return;
         };
-        let snapshot = self.queue.lock().ok().and_then(|queue| {
-            let queue = queue.as_ref()?;
-            (queue.server_id() == &server_id
+        let current_matches = self.queue.lock().ok().is_some_and(|queue| {
+            let Some(queue) = queue.as_ref() else {
+                return false;
+            };
+            queue.server_id() == &server_id
                 && queue.current().is_some_and(|entry| {
                     entry.id == current.id && entry.track_id == current.track_id
-                }))
-            .then(|| queue.snapshot())
+                })
         });
-        let Some(snapshot) = snapshot else {
+        if !current_matches {
             return;
-        };
+        }
         let bucket = seconds / 10;
-        let should_save = self
+        let already_saved = self
             .last_progress_snapshot
             .lock()
-            .map(|mut last| {
-                let changed = last.as_ref() != Some(&(snapshot.server_id.clone(), bucket));
-                if changed {
-                    *last = Some((snapshot.server_id.clone(), bucket));
-                }
-                changed
+            .map(|last| last.as_ref() == Some(&(server_id.clone(), bucket)))
+            .unwrap_or(true);
+        if already_saved {
+            return;
+        }
+        let saved = self
+            .store
+            .with_store(|store| {
+                store.save_queue_progress(&server_id, &current.id, &current.track_id, seconds)
             })
             .unwrap_or(false);
-        if should_save {
-            let _result = self
-                .store
-                .with_store(|store| store.save_queue_snapshot(&snapshot));
+        if saved && let Ok(mut last) = self.last_progress_snapshot.lock() {
+            *last = Some((server_id, bucket));
         }
     }
     pub(in crate::controller) fn report_playback_progress_if_needed(&self, seconds: u32) {

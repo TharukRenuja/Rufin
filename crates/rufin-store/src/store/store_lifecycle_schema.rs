@@ -1307,6 +1307,39 @@ impl Store {
         )?;
         Ok(())
     }
+    pub fn save_queue_progress(
+        &self,
+        server_id: &ServerId,
+        entry_id: &QueueEntryId,
+        track_id: &TrackId,
+        progress_seconds: u32,
+    ) -> StoreResult<bool> {
+        let updated = self.connection.execute(
+            "
+            UPDATE queue_snapshots
+            SET
+                value = json_set(value, '$.progress_seconds', ?4),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE server_id = ?1
+                AND json_extract(value, '$.current_index') IS NOT NULL
+                AND json_extract(
+                    value,
+                    '$.entries[' || json_extract(value, '$.current_index') || '].id'
+                ) = ?2
+                AND json_extract(
+                    value,
+                    '$.entries[' || json_extract(value, '$.current_index') || '].track_id'
+                ) = ?3
+            ",
+            params![
+                server_id.as_str(),
+                entry_id.as_str(),
+                track_id.as_str(),
+                i64::from(progress_seconds)
+            ],
+        )?;
+        Ok(updated > 0)
+    }
     pub fn save_server(&self, saved: &SavedServer) -> StoreResult<()> {
         save_server_on_connection(&self.connection, saved)
     }
