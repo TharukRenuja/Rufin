@@ -309,6 +309,17 @@ pub(in crate::ui) fn complete_cached_page<T>(
         }
     }
 }
+fn track_page_is_complete(loaded: usize, total: usize) -> bool {
+    loaded >= total
+}
+fn track_route_has_complete_page(
+    loaded: usize,
+    total: usize,
+    settings: &LibraryListSettings,
+) -> bool {
+    library_layout_loads_complete_page(LibraryListKey::Tracks, settings)
+        && track_page_is_complete(loaded, total)
+}
 fn warm_track_covers_for_settings(
     shell: &Rc<Shell>,
     tracks: &[Track],

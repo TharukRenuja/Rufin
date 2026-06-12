@@ -94,6 +94,58 @@ FILE "album.wav" WAVE
     assert!(tracks.items.iter().all(|track| track.album == "Cue Album"));
     assert_eq!(provider.manifest_scan().cue_track_sources.len(), 2);
     assert_eq!(provider.manifest_scan().entries.len(), 2);
+    assert_eq!(provider.manifest_scan().counters.cue_sheets, 1);
+    assert_eq!(provider.manifest_scan().counters.cue_tracks, 2);
+    assert_eq!(provider.manifest_scan().counters.cue_backing_reads, 1);
+}
+
+#[tokio::test]
+async fn local_provider_reuses_unchanged_cue_tracks_without_backing_read() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let audio = dir.path().join("album.wav");
+    write_silent_wav(&audio, 8).expect("write wav");
+    fs::write(
+        dir.path().join("album.cue"),
+        r#"
+PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.wav" WAVE
+  TRACK 01 AUDIO
+    TITLE "First Cue Track"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Second Cue Track"
+    INDEX 01 00:04:00
+"#,
+    )
+    .expect("write cue");
+    let server = identity_for_root(dir.path());
+    let cold =
+        LocalProvider::from_roots_with_identity(vec![dir.path().to_path_buf()], server.clone())
+            .expect("cold provider");
+
+    let warm = LocalProvider::from_roots_with_manifest_cache(
+        vec![dir.path().to_path_buf()],
+        server,
+        cold.manifest_scan().entries.clone(),
+    )
+    .expect("warm provider");
+
+    assert_eq!(cold.manifest_scan().counters.cue_backing_reads, 1);
+    assert_eq!(warm.manifest_scan().counters.cue_sheets, 1);
+    assert_eq!(warm.manifest_scan().counters.cue_tracks, 2);
+    assert_eq!(warm.manifest_scan().counters.cue_backing_reads, 0);
+    assert_eq!(warm.manifest_scan().counters.cue_reused_tracks, 2);
+    assert_eq!(warm.manifest_scan().counters.tag_reads, 0);
+    assert_eq!(warm.manifest_scan().cue_track_sources.len(), 2);
+    assert!(!warm.manifest_scan().library_changed);
+    assert_eq!(
+        warm.tracks(PagedRequest::new(0, 10))
+            .await
+            .expect("tracks")
+            .total,
+        2
+    );
 }
 
 #[tokio::test]
