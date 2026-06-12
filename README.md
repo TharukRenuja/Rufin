@@ -1,7 +1,6 @@
 # Rufin
 
 <p align="center">
-  <a href="https://github.com/screwys/Rufin/actions/workflows/checks.yml"><img alt="Checks" src="https://github.com/screwys/Rufin/actions/workflows/checks.yml/badge.svg"></a>
   <a href="Cargo.toml"><img alt="Rust 1.95+" src="https://img.shields.io/badge/rust-1.95%2B-f74c00?logo=rust"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg"></a>
   <a href="https://gitlab.gnome.org/GNOME/libadwaita/"><img alt="GTK 4 libadwaita" src="https://img.shields.io/badge/GTK%204-libadwaita-3584E4?logo=gnome&amp;logoColor=white&amp;labelColor=2E3436"></a>
@@ -33,15 +32,15 @@
 
 # Library behavior
 
-Rufin keeps a local cache for each source, so opening the app, switching pages and browsing a large library doesn't mean asking the server or scanning folders again for every click. When a library changes, the app tries to update only the changed parts instead of everything.
+- Rufin keeps a local cache for each source, so opening the app, switching pages and browsing a large library doesn't mean asking the server or scanning folders again for every click. When a library changes, the app tries to update only the changed parts
 
-Large libraries stay normal to browse. Tracks, albums, artists, genres and playlists are full pages, they are not paginated.
+- Large libraries are normal to browse; tracks, albums, artists, genres and playlists are full pages, they are not paginated
 
-Rufin stores source IDs, MusicBrainz IDs, sort tags and display names separately. It checks those before falling back to tag text from the same server or folder which helps to put albums on correct artist pages despite tag mismatches.
+- Rufin stores source IDs, MusicBrainz IDs, sort tags and display names separately. It checks those before falling back to tag text from the same server or folder which helps to put albums on correct artist pages despite tag mismatches
 
-When a library changes, Rufin tries to update the changed parts instead of making every page reload. Cover arts and artist pictures come from source first and missing ones are tried to fetch online, and artists use album arts as fallback.
+- When a library changes, app tries to update the changed parts instead of making every page reload. Cover arts and artist pictures come from source first and missing ones are tried to fetch online, and artists use album arts as fallback
 
-If your server library also exists on disk, Rufin can play the local files directly while still reporting to the server.
+- If your server library also exists on disk, Rufin can play the local files directly while still reporting to the server
 
 # Screenshots
 
