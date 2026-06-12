@@ -1001,6 +1001,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     }
                     shell.apply_cover_unavailable(&key);
                 }
+                ControllerEvent::CoverDeferred { key } => {
+                    shell.apply_cover_deferred(&key);
+                }
                 ControllerEvent::ServerDiscovery {
                     servers,
                     status,

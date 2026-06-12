@@ -3,7 +3,7 @@ use std::thread;
 use rufin_core::{GenreId, Track};
 use rufin_provider::{PlayedFilter, RandomTrackRequest};
 
-use crate::external_metadata;
+use crate::cover_art_policy;
 
 use super::{
     AppController, ControllerEvent, SNAPSHOT_TRACK_LIMIT, load_settings_for_saved,
@@ -72,7 +72,7 @@ impl AppController {
                 )
                 .map_err(|error| error.to_string())?
         };
-        external_metadata::normalize_tracks(&mut tracks, &settings);
+        cover_art_policy::bind_tracks(&mut tracks, &settings);
         if !tracks.is_empty() {
             self.store
                 .with_store(|store| store.upsert_tracks(&saved.server.id, &tracks, 0))?;

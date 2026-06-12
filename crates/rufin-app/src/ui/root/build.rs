@@ -912,7 +912,7 @@ pub(in crate::ui) fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u
     } else if preferred_size <= GRID_COVER_SIZE {
         sizes.extend([GRID_COVER_SIZE, DETAIL_COVER_SIZE]);
     } else {
-        sizes.extend([DETAIL_COVER_SIZE, GRID_COVER_SIZE]);
+        sizes.push(DETAIL_COVER_SIZE);
     }
     let mut seen = HashSet::new();
     sizes.retain(|size| seen.insert(*size));
@@ -978,6 +978,15 @@ pub(in crate::ui) fn notification_icon_pixbuf(pixbuf: &Pixbuf) -> Option<Vec<u8>
 }
 pub(in crate::ui) fn cover_decode_size(display_size: i32, fetch_size: u32) -> i32 {
     display_size.max(fetch_size as i32).max(1)
+}
+pub(in crate::ui) fn cover_fetch_size_for_display(display_size: i32) -> u32 {
+    if display_size <= THUMB_COVER_SIZE as i32 {
+        THUMB_COVER_SIZE
+    } else if display_size <= GRID_COVER_SIZE as i32 {
+        GRID_COVER_SIZE
+    } else {
+        DETAIL_COVER_SIZE
+    }
 }
 pub(in crate::ui) fn first_run_cover_prime_refs(library: &LibrarySnapshot) -> Vec<ImageRef> {
     let mut refs = Vec::new();

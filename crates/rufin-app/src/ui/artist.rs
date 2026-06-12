@@ -210,8 +210,9 @@ impl Shell {
         body.set_halign(gtk::Align::Fill);
 
         let image_ref = super::library::artist_cover_image_ref(self, artist);
-        self.prime_cached_cover(image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
-        let cover = self.cover_tile_for(image_ref.as_ref(), seed, cover_size, DETAIL_COVER_SIZE);
+        let cover_fetch_size = cover_fetch_size_for_display(cover_size);
+        self.prime_cached_cover(image_ref.as_ref(), cover_fetch_size, cover_size);
+        let cover = self.cover_tile_for(image_ref.as_ref(), seed, cover_size, cover_fetch_size);
         cover.add_css_class("detail-showcase-cover");
         cover.add_css_class("artist-detail-cover");
         cover.set_halign(gtk::Align::Start);

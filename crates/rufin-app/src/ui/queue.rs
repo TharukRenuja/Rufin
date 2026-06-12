@@ -52,6 +52,11 @@ enum QueueScrollBehavior {
 
 impl Shell {
     pub(super) fn schedule_queue_panel_render(self: &Rc<Self>) {
+        if self.state.resolved_right_sidebar.get() == RightSidebarMode::Hidden
+            && !self.state.fullscreen_player_visible.get()
+        {
+            return;
+        }
         if self.state.queue_render_queued.replace(true) {
             return;
         }

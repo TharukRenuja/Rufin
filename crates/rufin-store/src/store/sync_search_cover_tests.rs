@@ -367,6 +367,110 @@ fn cover_cache_index_round_trips() {
         Some(entry)
     );
 }
+
+#[test]
+fn external_cover_cache_reuses_content_identity() {
+    let store = Store::open_memory().expect("open store");
+    let first = saved_server();
+    let mut second = saved_server();
+    second.server.id = ServerId::new("jellyfin:server:second");
+    store.save_server(&first).expect("save first server");
+    store.save_server(&second).expect("save second server");
+    let entry = CoverCacheEntry {
+        server_id: first.server.id.clone(),
+        item_id: "external:mb-release-group:group-one".to_string(),
+        image_tag: "external-v2-tag".to_string(),
+        size: 256,
+        path: "/tmp/rufin-external-shared-cover.jpg".to_string(),
+    };
+    store
+        .save_cover_cache_entry(&entry)
+        .expect("save external cover");
+
+    assert_eq!(
+        store
+            .load_cover_cache_entry(&second.server.id, &entry.item_id, &entry.image_tag, 256)
+            .expect("same-server lookup"),
+        None
+    );
+    assert_eq!(
+        store
+            .load_external_cover_cache_entry_by_content(&entry.item_id, &entry.image_tag, 256)
+            .expect("content lookup"),
+        Some(entry)
+    );
+}
+
+#[test]
+fn external_cover_content_cache_records_path_and_miss() {
+    let store = Store::open_memory().expect("open store");
+    let item_id = "external:mb-release-group:group-one";
+    let image_tag = "external-v2-tag";
+
+    assert_eq!(
+        store
+            .load_external_cover_content_path(item_id, image_tag, 256)
+            .expect("initial content path"),
+        None
+    );
+
+    store
+        .save_external_cover_content_miss(item_id, image_tag, 256, "not found")
+        .expect("save content miss");
+    assert!(
+        store
+            .load_external_cover_content_miss(item_id, image_tag, 256)
+            .expect("load content miss")
+    );
+
+    store
+        .save_external_cover_content_path(
+            item_id,
+            image_tag,
+            256,
+            "/tmp/rufin-external-shared-cover.jpg",
+        )
+        .expect("save content path");
+    assert_eq!(
+        store
+            .load_external_cover_content_path(item_id, image_tag, 256)
+            .expect("load content path"),
+        Some("/tmp/rufin-external-shared-cover.jpg".to_string())
+    );
+    assert!(
+        !store
+            .load_external_cover_content_miss(item_id, image_tag, 256)
+            .expect("miss cleared by content path")
+    );
+}
+
+#[test]
+fn external_lookup_miss_reuses_content_identity() {
+    let store = Store::open_memory().expect("open store");
+    let first = saved_server();
+    let mut second = saved_server();
+    second.server.id = ServerId::new("jellyfin:server:second");
+    store.save_server(&first).expect("save first server");
+    store.save_server(&second).expect("save second server");
+    let item_id = "external:mb-release-group:group-one";
+    let image_tag = "external-v2-tag";
+
+    store
+        .save_external_image_lookup_miss(&first.server.id, item_id, image_tag, 256, "not found")
+        .expect("save external miss");
+
+    assert!(
+        !store
+            .load_external_image_lookup_miss(&second.server.id, item_id, image_tag, 256)
+            .expect("same-server miss")
+    );
+    assert!(
+        store
+            .load_external_image_lookup_miss_by_content(item_id, image_tag, 256)
+            .expect("content miss")
+    );
+}
+
 #[test]
 fn sync_delete_entry() {
     let store = Store::open_memory().expect("open store");

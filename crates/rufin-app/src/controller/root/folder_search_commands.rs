@@ -61,7 +61,7 @@ impl AppController {
             if let Some(server) = &snapshot.server {
                 match store.with_store(|store| store.search_library(&server.id, &query, 50)) {
                     Ok(mut results) => {
-                        external_metadata::normalize_search_results(&mut results, &settings);
+                        cover_art_policy::bind_search_results(&mut results, &settings);
                         snapshot.search = results;
                     }
                     Err(error) => {

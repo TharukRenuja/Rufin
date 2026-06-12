@@ -682,6 +682,179 @@ impl Store {
             .optional()
             .map_err(StoreError::from)
     }
+    pub fn load_external_cover_cache_entry_by_content(
+        &self,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<Option<CoverCacheEntry>> {
+        if !item_id.starts_with("external:") {
+            return Ok(None);
+        }
+        self.connection
+            .query_row(
+                "
+                SELECT server_id, item_id, image_tag, size, path
+                FROM cover_cache
+                WHERE item_id = ?1 AND image_tag = ?2 AND size = ?3
+                ORDER BY updated_at DESC, server_id
+                LIMIT 1
+                ",
+                params![item_id, image_tag, i64::from(size)],
+                |row| {
+                    Ok(CoverCacheEntry {
+                        server_id: ServerId::new(row.get::<_, String>(0)?),
+                        item_id: row.get(1)?,
+                        image_tag: row.get(2)?,
+                        size: u32_from_i64(row.get(3)?),
+                        path: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+    pub fn save_external_cover_content_path(
+        &self,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+        path: &str,
+    ) -> StoreResult<()> {
+        if !item_id.starts_with("external:") {
+            return Ok(());
+        }
+        self.connection.execute(
+            "
+            INSERT INTO content_cache_entries (
+                cache_scope, content_kind, content_key, variant, status,
+                path_or_value, source, updated_at
+            )
+            VALUES ('external', 'cover', ?1, ?2, 'ready', ?3, 'cover-art-policy', CURRENT_TIMESTAMP)
+            ON CONFLICT(cache_scope, content_kind, content_key, variant) DO UPDATE SET
+                status = excluded.status,
+                path_or_value = excluded.path_or_value,
+                source = excluded.source,
+                updated_at = excluded.updated_at
+            ",
+            params![
+                external_cover_content_key(item_id, image_tag),
+                cover_content_variant(size),
+                path
+            ],
+        )?;
+        Ok(())
+    }
+    pub fn load_external_cover_content_path(
+        &self,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<Option<String>> {
+        if !item_id.starts_with("external:") {
+            return Ok(None);
+        }
+        self.connection
+            .query_row(
+                "
+                SELECT path_or_value
+                FROM content_cache_entries
+                WHERE cache_scope = 'external'
+                  AND content_kind = 'cover'
+                  AND content_key = ?1
+                  AND variant = ?2
+                  AND status = 'ready'
+                ",
+                params![
+                    external_cover_content_key(item_id, image_tag),
+                    cover_content_variant(size)
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+    pub fn save_external_cover_content_miss(
+        &self,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+        reason: &str,
+    ) -> StoreResult<()> {
+        if !item_id.starts_with("external:") {
+            return Ok(());
+        }
+        self.connection.execute(
+            "
+            INSERT INTO content_cache_entries (
+                cache_scope, content_kind, content_key, variant, status,
+                path_or_value, source, updated_at
+            )
+            VALUES ('external', 'cover', ?1, ?2, 'missing', ?3, 'cover-art-policy', CURRENT_TIMESTAMP)
+            ON CONFLICT(cache_scope, content_kind, content_key, variant) DO UPDATE SET
+                status = excluded.status,
+                path_or_value = excluded.path_or_value,
+                source = excluded.source,
+                updated_at = excluded.updated_at
+            ",
+            params![external_cover_content_key(item_id, image_tag), cover_content_variant(size), reason],
+        )?;
+        Ok(())
+    }
+    pub fn load_external_cover_content_miss(
+        &self,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<bool> {
+        if !item_id.starts_with("external:") {
+            return Ok(false);
+        }
+        let found = self.connection.query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1
+                FROM content_cache_entries
+                WHERE cache_scope = 'external'
+                  AND content_kind = 'cover'
+                  AND content_key = ?1
+                  AND variant = ?2
+                  AND status = 'missing'
+            )
+            ",
+            params![
+                external_cover_content_key(item_id, image_tag),
+                cover_content_variant(size)
+            ],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(found)
+    }
+    pub fn delete_external_cover_content_miss(
+        &self,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<()> {
+        if !item_id.starts_with("external:") {
+            return Ok(());
+        }
+        self.connection.execute(
+            "
+            DELETE FROM content_cache_entries
+            WHERE cache_scope = 'external'
+              AND content_kind = 'cover'
+              AND content_key = ?1
+              AND variant = ?2
+              AND status = 'missing'
+            ",
+            params![
+                external_cover_content_key(item_id, image_tag),
+                cover_content_variant(size)
+            ],
+        )?;
+        Ok(())
+    }
     pub fn delete_cover_cache_entry(
         &self,
         server_id: &ServerId,
@@ -978,6 +1151,28 @@ impl Store {
         )?;
         Ok(found)
     }
+    pub fn load_external_image_lookup_miss_by_content(
+        &self,
+        item_id: &str,
+        image_tag: &str,
+        size: u32,
+    ) -> StoreResult<bool> {
+        if !item_id.starts_with("external:") {
+            return Ok(false);
+        }
+        let found = self.connection.query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1
+                FROM external_image_lookup_misses
+                WHERE item_id = ?1 AND image_tag = ?2 AND size = ?3
+            )
+            ",
+            params![item_id, image_tag, i64::from(size)],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(found)
+    }
     pub fn delete_external_image_lookup_miss(
         &self,
         server_id: &ServerId,
@@ -1157,80 +1352,6 @@ impl Store {
             }
         }
         Ok(())
-    }
-    pub fn load_genre_fallback_albums(
-        &self,
-        server_id: &ServerId,
-        genres: &[Genre],
-    ) -> StoreResult<HashMap<GenreId, Album>> {
-        let mut fallback_by_genre = HashMap::<GenreId, Album>::new();
-        if genres.is_empty() {
-            return Ok(fallback_by_genre);
-        }
-
-        for chunk in genres.chunks(250) {
-            let values_placeholders = std::iter::repeat_n("(?, ?)", chunk.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = format!(
-                "
-                WITH wanted(genre_id, genre_name) AS (VALUES {values_placeholders}),
-                     candidates AS (
-                        SELECT w.genre_id AS fallback_genre_id, a.album_id, a.title, a.artist,
-                               a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
-                               a.play_count, a.user_rating, a.track_count, a.duration_seconds,
-                               a.favorite, a.color_seed, a.image_item_id, a.image_tag,
-                               0 AS priority
-                        FROM wanted w
-                        JOIN album_genres ag
-                            ON ag.genre_name = w.genre_name
-                        JOIN albums a
-                            ON a.server_id = ag.server_id AND a.album_id = ag.album_id
-                        WHERE ag.server_id = ?
-                        UNION ALL
-                        SELECT w.genre_id AS fallback_genre_id, a.album_id, a.title, a.artist,
-                               a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
-                               a.play_count, a.user_rating, a.track_count, a.duration_seconds,
-                               a.favorite, a.color_seed, a.image_item_id, a.image_tag,
-                               1 AS priority
-                        FROM wanted w
-                        JOIN track_genres tg
-                            ON tg.genre_name = w.genre_name
-                        JOIN tracks t
-                            ON t.server_id = tg.server_id AND t.track_id = tg.track_id
-                        JOIN albums a
-                            ON a.server_id = t.server_id AND a.album_id = t.album_id
-                        WHERE tg.server_id = ?
-                     )
-                SELECT album_id, title, artist, artist_id, year, release_date, date_added,
-                       last_played, play_count, user_rating, track_count, duration_seconds,
-                       favorite, color_seed, image_item_id, image_tag, fallback_genre_id
-                FROM candidates
-                ORDER BY fallback_genre_id, priority, year, title COLLATE NOCASE
-                "
-            );
-            let mut values = Vec::with_capacity(chunk.len().saturating_mul(2).saturating_add(2));
-            for genre in chunk {
-                values.push(Value::Text(genre.id.as_str().to_string()));
-                values.push(Value::Text(genre.name.clone()));
-            }
-            values.push(Value::Text(server_id.as_str().to_string()));
-            values.push(Value::Text(server_id.as_str().to_string()));
-
-            let mut statement = self.connection.prepare(&sql)?;
-            let rows = statement.query_map(params_from_iter(values), |row| {
-                Ok((
-                    GenreId::new(row.get::<_, String>(16)?),
-                    album_from_row(row)?,
-                ))
-            })?;
-            for row in rows {
-                let (genre_id, album) = row?;
-                fallback_by_genre.entry(genre_id).or_insert(album);
-            }
-        }
-
-        Ok(fallback_by_genre)
     }
     pub(super) fn attach_playlist_cover_image_refs(
         &self,
@@ -1697,6 +1818,14 @@ fn playlist_stats_changed(before: Option<Playlist>, after: Option<Playlist>) -> 
         (Some(before), None) => before.track_count > 0 || before.duration_seconds > 0,
         (None, None) => false,
     }
+}
+
+fn external_cover_content_key(item_id: &str, image_tag: &str) -> String {
+    format!("{item_id}\u{1f}{image_tag}")
+}
+
+fn cover_content_variant(size: u32) -> String {
+    format!("size:{size}")
 }
 
 fn collection_direct_image_ref(

@@ -283,9 +283,10 @@ pub(in crate::controller) fn external_cache_cover() {
     let image_ref = external_cover_ref();
     seed_cover_cache(&controller, &image_ref, 256, &path);
     assert_eq!(
-        controller.cached_cover_path(&image_ref, 512),
+        controller.cached_cover_path(&image_ref, 256),
         Some(path.clone())
     );
+    assert_eq!(controller.cached_cover_path(&image_ref, 512), None);
     assert_eq!(
         controller.cached_cover_path(&image_ref, 96),
         Some(path.clone())
@@ -388,6 +389,7 @@ pub(in crate::controller) fn cover_emit_unavailable() {
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
             | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. }
             | ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
@@ -402,9 +404,10 @@ pub(in crate::controller) fn cache_cover_reuse() {
     let image_ref = provider_cover_ref();
     seed_cover_cache(&controller, &image_ref, 256, &path);
     assert_eq!(
-        controller.cached_cover_path(&image_ref, 512),
+        controller.cached_cover_path(&image_ref, 256),
         Some(path.clone())
     );
+    assert_eq!(controller.cached_cover_path(&image_ref, 512), None);
     assert_eq!(
         controller.cached_cover_path(&image_ref, 96),
         Some(path.clone())
@@ -454,6 +457,42 @@ pub(in crate::controller) fn cover_read_lookup() {
         })
     );
 }
+
+#[test]
+pub(in crate::controller) fn cover_reuses_external_content_for_local_source() {
+    let (controller, _events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let path = test_cover_path("external-content-local");
+    fs::write(&path, [1_u8, 2, 3]).expect("write cover");
+    let remote = saved_server();
+    let local = local_source_saved();
+    let image_ref = ImageRef::new(
+        "external:mb-release-group:group-one",
+        Some("external-v2-test".to_string()),
+    );
+    controller
+        .store
+        .with_store(|store| {
+            store.save_server(&remote)?;
+            store.save_server(&local)?;
+            store.save_cover_cache_entry(&CoverCacheEntry {
+                server_id: remote.server.id.clone(),
+                item_id: image_ref.item_id.clone(),
+                image_tag: image_ref.tag.clone().expect("external tag"),
+                size: 256,
+                path: path.to_string_lossy().to_string(),
+            })?;
+            store.set_active_server(&local.server.id)
+        })
+        .expect("seed external cache");
+
+    assert_eq!(
+        controller.cached_cover_path(&image_ref, 256),
+        Some(path.clone())
+    );
+    let _cleanup = fs::remove_file(path);
+}
+
 #[test]
 pub(in crate::controller) fn cover_delete_token() {
     let (controller, events, snapshot, _queue, _player) =

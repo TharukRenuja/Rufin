@@ -2,16 +2,18 @@ use std::collections::HashSet;
 
 use rufin_core::{Album, AppSettings, Artist, Genre, ImageRef, Playlist, Track};
 
+use crate::cover_art_policy;
+#[cfg(test)]
 use crate::external_metadata;
 
 pub(super) fn external_album_refs(mut albums: Vec<Album>, settings: &AppSettings) -> Vec<ImageRef> {
     let mut image_refs = Vec::new();
     let mut seen = HashSet::new();
-    external_metadata::normalize_albums(&mut albums, settings);
+    cover_art_policy::bind_albums(&mut albums, settings);
     for image_ref in albums
         .iter()
         .filter_map(|album| album.image_ref.as_ref())
-        .filter(|image_ref| external_metadata::is_external_image_ref(image_ref))
+        .filter(|image_ref| cover_art_policy::is_external_image_ref(image_ref))
     {
         let key = (
             image_ref.item_id.clone(),
@@ -89,7 +91,7 @@ fn push_provider_image_ref(
     let Some(image_ref) = image_ref else {
         return;
     };
-    if external_metadata::is_external_image_ref(image_ref) {
+    if cover_art_policy::is_external_image_ref(image_ref) {
         return;
     }
     let key = (

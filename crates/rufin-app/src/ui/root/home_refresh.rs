@@ -1067,6 +1067,17 @@ impl ArtworkTile {
         self.generation.set(self.generation.get().saturating_add(1));
     }
 
+    pub(in crate::ui) fn retain_cover_image(&self, seed: u32) -> u64 {
+        let generation = self.generation.get().saturating_add(1);
+        self.generation.set(generation);
+        self.seed.set(seed);
+        self.expects_image.set(true);
+        let has_pixbuf = self.pixbuf.borrow().is_some();
+        self.sync_cover_state_classes(true, has_pixbuf);
+        self.area.queue_draw();
+        generation
+    }
+
     pub(in crate::ui) fn set_seed(&self, seed: u32) {
         self.seed.set(seed);
         self.area.queue_draw();

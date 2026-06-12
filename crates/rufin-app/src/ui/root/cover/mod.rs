@@ -46,12 +46,50 @@ pub(in crate::ui) struct CoverWarmJob {
     pub(in crate::ui) size: i32,
 }
 
+#[derive(Clone)]
 pub(in crate::ui) struct CoverPathLookupRequest {
     pub(in crate::ui) key: String,
     pub(in crate::ui) image_ref: ImageRef,
     pub(in crate::ui) fetch_size: u32,
     pub(in crate::ui) size: i32,
     pub(in crate::ui) intent: CoverPathLookupIntent,
+}
+
+#[derive(Clone)]
+pub(in crate::ui) struct CoverRequestRecord {
+    pub(in crate::ui) request: CoverPathLookupRequest,
+    pub(in crate::ui) state: CoverRequestState,
+    pub(in crate::ui) decode_failures: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum CoverRequestState {
+    PathLookup,
+    Fetching,
+    Decoding,
+    Deferred,
+    Ready,
+    FinalMissing,
+}
+
+impl CoverRequestRecord {
+    fn new(request: CoverPathLookupRequest) -> Self {
+        Self {
+            request,
+            state: CoverRequestState::PathLookup,
+            decode_failures: 0,
+        }
+    }
+
+    fn merge_request(&mut self, request: CoverPathLookupRequest) {
+        self.request.intent = self.request.intent.coalesce(request.intent);
+        self.request.size = self.request.size.max(request.size);
+        if request.fetch_size > self.request.fetch_size {
+            self.request.fetch_size = request.fetch_size;
+            self.request.image_ref = request.image_ref;
+        }
+        self.state = CoverRequestState::PathLookup;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +124,17 @@ pub(in crate::ui) fn record_cover_path_lookup_request(
     } else {
         lookups.insert(key, intent);
         true
+    }
+}
+
+pub(in crate::ui) fn record_visible_cover_request(
+    requests: &mut HashMap<String, CoverRequestRecord>,
+    request: CoverPathLookupRequest,
+) {
+    if let Some(existing) = requests.get_mut(&request.key) {
+        existing.merge_request(request);
+    } else {
+        requests.insert(request.key.clone(), CoverRequestRecord::new(request));
     }
 }
 

@@ -1022,6 +1022,7 @@ fn scan_library(
     let library_started = Instant::now();
     let (root_entries, folders) = scan_folders(roots);
     let library = build_library(scanned, root_entries, folders);
+    sync_manifest_covers_from_library(&library, &mut entries);
     counters.library_build_elapsed_ms = elapsed_ms(library_started);
 
     (
@@ -1746,6 +1747,35 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
         cover,
         embedded_cover_path,
     })
+}
+
+fn sync_manifest_covers_from_library(library: &LocalLibrary, entries: &mut [LocalManifestEntry]) {
+    let cover_by_track = library
+        .tracks
+        .iter()
+        .filter_map(|track| {
+            track
+                .image_ref
+                .as_ref()
+                .map(|image_ref| (track.id.clone(), image_ref.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    for entry in entries {
+        let Some(image_ref) = cover_by_track.get(&entry.track.id) else {
+            entry.cover = None;
+            continue;
+        };
+        entry.cover = manifest_cover_from_image_ref(image_ref);
+    }
+}
+
+fn manifest_cover_from_image_ref(image_ref: &ImageRef) -> Option<LocalManifestCover> {
+    let cover = local_cover_from_item_id(&image_ref.item_id)?;
+    let mut manifest = manifest_cover_from_local(&cover)?;
+    if let Some(tag) = &image_ref.tag {
+        manifest.revision.clone_from(tag);
+    }
+    Some(manifest)
 }
 
 fn tag_mbid(tag: &Tag, key: ItemKey) -> Option<String> {

@@ -3,6 +3,7 @@ use super::*;
 impl Shell {
     pub(in crate::ui) fn reset_route_covers(&self) {
         self.state.cover_bindings.borrow_mut().clear();
+        self.state.cover_visible_requests.borrow_mut().clear();
         clear_queued_route_cover_work(
             &mut self.state.cover_path_lookups.borrow_mut(),
             &mut self.state.cover_decode_queue.borrow_mut(),
@@ -66,30 +67,26 @@ impl Shell {
             } = job;
             match load_cover_pixbuf(path.clone(), size, priority.glib_priority()).await {
                 Ok(pixbuf) => {
-                    shell.finish_cover_decode(&key);
+                    shell.finish_cover_decode_success(&key);
                     let pixbuf = shell.remember_decoded_cover(key.clone(), pixbuf, priority);
                     let bindings = shell.take_live_cover_bindings(&key);
                     apply_pixbuf_to_bindings(bindings, pixbuf);
                 }
                 Err(error) => {
-                    shell.finish_cover_decode(&key);
+                    let retrying = shell.finish_cover_decode_failure(&key, &path);
                     warn!(%error, path = %path.display(), "failed to load cached cover");
-                    for binding in shell.take_live_cover_bindings(&key) {
-                        if !binding.clear_on_failure {
-                            continue;
-                        }
-                        let _ = binding
-                            .tile
-                            .upgrade()
-                            .is_some_and(|tile| tile.clear_image_if_current(binding.generation));
+                    if !retrying {
+                        shell.apply_cover_unavailable(&key);
                     }
                 }
             }
             shell.drain_cover_decode_queue();
         });
     }
-    pub(in crate::ui) fn finish_cover_decode(&self, key: &str) {
+    pub(in crate::ui) fn finish_cover_decode_success(&self, key: &str) {
         self.state.cover_decodes.borrow_mut().remove(key);
+        self.mark_cover_request_state(key, CoverRequestState::Ready);
+        self.state.cover_visible_requests.borrow_mut().remove(key);
         self.state
             .startup_cover_prime_pending
             .borrow_mut()
@@ -102,6 +99,36 @@ impl Shell {
             .route_cover_prime_pending
             .borrow_mut()
             .remove(key);
+    }
+    pub(in crate::ui) fn finish_cover_decode_failure(
+        self: &Rc<Self>,
+        key: &str,
+        path: &Path,
+    ) -> bool {
+        self.state.cover_decodes.borrow_mut().remove(key);
+        self.state.cover_path_cache.borrow_mut().remove(key);
+        let _ = std::fs::remove_file(path);
+        let request = {
+            let mut requests = self.state.cover_visible_requests.borrow_mut();
+            requests.get_mut(key).and_then(|record| {
+                if record.decode_failures > 0 {
+                    record.state = CoverRequestState::FinalMissing;
+                    return None;
+                }
+                record.decode_failures = record.decode_failures.saturating_add(1);
+                record.state = CoverRequestState::PathLookup;
+                Some(record.request.clone())
+            })
+        };
+        if let Some(request) = request {
+            let shell = Rc::clone(self);
+            glib::timeout_add_local_once(Duration::from_millis(250), move || {
+                shell.start_cached_cover_path_lookup(request);
+            });
+            return true;
+        }
+        self.mark_cover_request_state(key, CoverRequestState::FinalMissing);
+        false
     }
     pub(in crate::ui) fn cancel_queued_warm_cover_decodes(&self) {
         self.state
@@ -275,8 +302,8 @@ pub(in crate::ui) fn decoded_cover_satisfies_request(
     cover_size: i32,
     min_size: i32,
 ) -> bool {
+    let _ = key;
     cover_size >= min_size
-        || cover_size_from_cache_key(key).is_some_and(|requested_size| requested_size >= min_size)
 }
 pub(in crate::ui) fn decoded_cover_eviction_candidate(
     order: &mut VecDeque<DecodedCoverOrderEntry>,
@@ -314,8 +341,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn queue_accept_key() {
-        assert!(decoded_cover_satisfies_request(
+    fn queue_rejects_undersized_decode_for_larger_key() {
+        assert!(!decoded_cover_satisfies_request(
             "library/local_cover_example/untagged/256",
             180,
             256

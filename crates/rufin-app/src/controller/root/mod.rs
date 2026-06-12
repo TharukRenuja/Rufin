@@ -1,12 +1,12 @@
 use super::covers;
 pub use super::discovery::DiscoveredServer;
 pub use super::random::{RandomPlayAction, RandomPlayRequest};
-use crate::external_metadata;
 use crate::external_scrobbling::{self, ExternalScrobbleState};
 use crate::providers::{
     JellyfinLyricsSearch, LoadedProvider, StreamingProvider, login_provider, provider_display_name,
     provider_from_saved,
 };
+use crate::{cover_art_policy, external_metadata};
 use directories::ProjectDirs;
 #[cfg(test)]
 use rufin_core::ThemePreference;
@@ -368,6 +368,9 @@ pub enum ControllerEvent {
     CoverUnavailable {
         key: String,
         external_retry_generation: Option<u64>,
+    },
+    CoverDeferred {
+        key: String,
     },
     ServerDiscovery {
         servers: Vec<DiscoveredServer>,

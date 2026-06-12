@@ -419,7 +419,7 @@ impl Shell {
                     if player_cover_replacement_is_ready(has_decoded_cover, has_cached_cover_file) {
                         controls.cover.advance_generation();
                     } else {
-                        controls.cover.clear_image();
+                        controls.cover.retain_cover_image(cover_seed);
                     }
                     self.request_cover_for_tile(
                         &controls.cover,
@@ -582,7 +582,8 @@ impl Shell {
 }
 
 fn player_cover_replacement_is_ready(has_decoded_cover: bool, has_cached_cover_file: bool) -> bool {
-    has_decoded_cover || has_cached_cover_file
+    let _ = has_cached_cover_file;
+    has_decoded_cover
 }
 
 fn seek_preview_matches_position(target_seconds: u32, position_millis: u64) -> bool {
@@ -1336,7 +1337,7 @@ mod tests {
     #[test]
     fn player_keep_visible() {
         assert!(super::player_cover_replacement_is_ready(true, false));
-        assert!(super::player_cover_replacement_is_ready(false, true));
+        assert!(!super::player_cover_replacement_is_ready(false, true));
         assert!(super::player_cover_replacement_is_ready(true, true));
         assert!(!super::player_cover_replacement_is_ready(false, false));
     }

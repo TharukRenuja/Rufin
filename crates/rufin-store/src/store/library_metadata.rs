@@ -1,6 +1,10 @@
 use super::servers::*;
 use super::*;
 
+const EXTERNAL_MUSICBRAINZ_RELEASE_PREFIX: &str = "external:mb-release:";
+const EXTERNAL_MUSICBRAINZ_RELEASE_GROUP_PREFIX: &str = "external:mb-release-group:";
+const EXTERNAL_ALBUM_IDENTITY_TAG_VERSION: &str = "external-v2";
+
 impl Store {
     pub fn load_album_identity_candidates(
         &self,
@@ -442,6 +446,141 @@ impl Store {
         Ok(())
     }
 
+    pub(super) fn bind_album_fallback_image_refs(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<usize> {
+        let mut fallback_statement = self.connection.prepare(
+            "
+            SELECT a.album_id, t.image_item_id, t.image_tag
+            FROM albums a
+            JOIN tracks t
+              ON t.server_id = a.server_id AND t.album_id = a.album_id
+            WHERE a.server_id = ?1
+              AND a.image_item_id IS NULL
+              AND t.image_item_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM tracks earlier
+                  WHERE earlier.server_id = t.server_id
+                    AND earlier.album_id = t.album_id
+                    AND earlier.image_item_id IS NOT NULL
+                    AND (
+                        COALESCE(earlier.disc_number, 0) < COALESCE(t.disc_number, 0)
+                        OR (
+                            COALESCE(earlier.disc_number, 0) = COALESCE(t.disc_number, 0)
+                            AND COALESCE(earlier.track_number, 0) < COALESCE(t.track_number, 0)
+                        )
+                        OR (
+                            COALESCE(earlier.disc_number, 0) = COALESCE(t.disc_number, 0)
+                            AND COALESCE(earlier.track_number, 0) = COALESCE(t.track_number, 0)
+                            AND earlier.title COLLATE NOCASE < t.title COLLATE NOCASE
+                        )
+                        OR (
+                            COALESCE(earlier.disc_number, 0) = COALESCE(t.disc_number, 0)
+                            AND COALESCE(earlier.track_number, 0) = COALESCE(t.track_number, 0)
+                            AND earlier.title = t.title
+                            AND earlier.track_id < t.track_id
+                        )
+                    )
+              )
+            ORDER BY a.album_id
+            ",
+        )?;
+        let fallbacks = collect_rows(fallback_statement.query_map(
+            params![server_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    optional_string_column(row, 2)?,
+                ))
+            },
+        )?)?;
+        if fallbacks.is_empty() {
+            return Ok(0);
+        }
+
+        let mut bound = 0;
+        let mut update_statement = self.connection.prepare(
+            "
+            UPDATE albums
+            SET image_item_id = ?3,
+                image_tag = ?4
+            WHERE server_id = ?1
+              AND album_id = ?2
+              AND image_item_id IS NULL
+            ",
+        )?;
+        for (album_id, image_item_id, image_tag) in fallbacks {
+            bound += update_statement.execute(params![
+                server_id.as_str(),
+                album_id,
+                image_item_id,
+                image_tag,
+            ])?;
+        }
+        Ok(bound)
+    }
+
+    pub(super) fn bind_album_external_identity_image_refs(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<usize> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT album_id, musicbrainz_release_group_id, musicbrainz_album_id
+            FROM albums
+            WHERE server_id = ?1
+              AND image_item_id IS NULL
+              AND (
+                  TRIM(COALESCE(musicbrainz_release_group_id, '')) <> ''
+                  OR TRIM(COALESCE(musicbrainz_album_id, '')) <> ''
+              )
+            ORDER BY album_id
+            ",
+        )?;
+        let candidates =
+            collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    optional_string_column(row, 1)?,
+                    optional_string_column(row, 2)?,
+                ))
+            })?)?;
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+
+        let mut bound = 0;
+        let mut update_statement = self.connection.prepare(
+            "
+            UPDATE albums
+            SET image_item_id = ?3,
+                image_tag = ?4
+            WHERE server_id = ?1
+              AND album_id = ?2
+              AND image_item_id IS NULL
+            ",
+        )?;
+        for (album_id, release_group_id, release_id) in candidates {
+            let Some(image_ref) = external_album_identity_image_ref(
+                release_group_id.as_deref(),
+                release_id.as_deref(),
+            ) else {
+                continue;
+            };
+            let (image_item_id, image_tag) = image_ref_parts(Some(&image_ref));
+            bound += update_statement.execute(params![
+                server_id.as_str(),
+                album_id,
+                image_item_id,
+                image_tag,
+            ])?;
+        }
+        Ok(bound)
+    }
+
     pub fn load_album_image_refs(
         &self,
         server_id: &ServerId,
@@ -583,6 +722,43 @@ impl Store {
         Ok(())
     }
 
+    pub(super) fn bind_track_album_fallback_image_refs(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<usize> {
+        self.connection
+            .execute(
+                "
+                UPDATE tracks
+                SET image_item_id = (
+                        SELECT a.image_item_id
+                        FROM albums a
+                        WHERE a.server_id = tracks.server_id
+                          AND a.album_id = tracks.album_id
+                          AND a.image_item_id IS NOT NULL
+                    ),
+                    image_tag = (
+                        SELECT a.image_tag
+                        FROM albums a
+                        WHERE a.server_id = tracks.server_id
+                          AND a.album_id = tracks.album_id
+                          AND a.image_item_id IS NOT NULL
+                    )
+                WHERE server_id = ?1
+                  AND image_item_id IS NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM albums a
+                      WHERE a.server_id = tracks.server_id
+                        AND a.album_id = tracks.album_id
+                        AND a.image_item_id IS NOT NULL
+                  )
+                ",
+                params![server_id.as_str()],
+            )
+            .map_err(Into::into)
+    }
+
     pub(super) fn attach_artist_fallback_image_refs(
         &self,
         server_id: &ServerId,
@@ -603,12 +779,10 @@ impl Store {
                 .collect::<Vec<_>>()
                 .join(", ");
             let sql = artist_fallback_image_refs_sql(album_artist, &values_placeholders);
-            let mut values = Vec::with_capacity(chunk.len() + if album_artist { 2 } else { 4 });
+            let server_params = if album_artist { 7 } else { 6 };
+            let mut values = Vec::with_capacity(chunk.len() + server_params);
             values.extend(chunk.iter().map(String::as_str));
-            values.extend(std::iter::repeat_n(
-                server_id.as_str(),
-                if album_artist { 2 } else { 4 },
-            ));
+            values.extend(std::iter::repeat_n(server_id.as_str(), server_params));
 
             let mut statement = self.connection.prepare(&sql)?;
             let rows = statement.query_map(params_from_iter(values), |row| {
@@ -635,43 +809,52 @@ impl Store {
         Ok(())
     }
 
-    pub fn load_artist_fallback_albums(
+    pub(super) fn bind_artist_fallback_image_refs(
         &self,
         server_id: &ServerId,
         album_artist: bool,
-        artist_ids: &[ArtistId],
-    ) -> StoreResult<HashMap<ArtistId, Album>> {
-        let mut fallback_by_artist = HashMap::<ArtistId, Album>::new();
-        if artist_ids.is_empty() {
-            return Ok(fallback_by_artist);
-        }
-
-        for chunk in artist_ids.chunks(500) {
-            let values_placeholders = std::iter::repeat_n("(?)", chunk.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = artist_fallback_albums_sql(album_artist, &values_placeholders);
-            let mut values = Vec::with_capacity(chunk.len() + if album_artist { 2 } else { 4 });
-            values.extend(chunk.iter().map(ArtistId::as_str));
-            values.extend(std::iter::repeat_n(
-                server_id.as_str(),
-                if album_artist { 2 } else { 4 },
-            ));
-
-            let mut statement = self.connection.prepare(&sql)?;
-            let rows = statement.query_map(params_from_iter(values), |row| {
-                Ok((
-                    ArtistId::new(row.get::<_, String>(16)?),
-                    album_from_row(row)?,
-                ))
-            })?;
-            for row in rows {
-                let (artist_id, album) = row?;
-                fallback_by_artist.entry(artist_id).or_insert(album);
+    ) -> StoreResult<usize> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let mut bound = 0;
+        let mut offset = 0;
+        let mut statement = self.connection.prepare(&format!(
+            "
+            UPDATE {table}
+            SET image_item_id = ?3,
+                image_tag = ?4
+            WHERE server_id = ?1
+              AND artist_id = ?2
+              AND image_item_id IS NULL
+            "
+        ))?;
+        loop {
+            let mut artists =
+                self.load_artists_without_image_ref(server_id, album_artist, offset, 500)?;
+            if artists.is_empty() {
+                break;
             }
+            self.attach_artist_fallback_image_refs(server_id, &mut artists, album_artist)?;
+            let mut without_fallback = 0;
+            for artist in artists {
+                let Some(image_ref) = artist.image_ref else {
+                    without_fallback += 1;
+                    continue;
+                };
+                let (image_item_id, image_tag) = image_ref_parts(Some(&image_ref));
+                bound += statement.execute(params![
+                    server_id.as_str(),
+                    artist.id.as_str(),
+                    image_item_id,
+                    image_tag,
+                ])?;
+            }
+            offset += without_fallback;
         }
-
-        Ok(fallback_by_artist)
+        Ok(bound)
     }
 
     pub(super) fn load_genre_links(
@@ -752,4 +935,58 @@ impl Store {
         }
         Ok(by_item)
     }
+}
+
+fn external_album_identity_image_ref(
+    release_group_id: Option<&str>,
+    release_id: Option<&str>,
+) -> Option<ImageRef> {
+    if let Some(group_id) = release_group_id.and_then(valid_external_identity_value) {
+        return Some(musicbrainz_image_ref(
+            EXTERNAL_MUSICBRAINZ_RELEASE_GROUP_PREFIX,
+            group_id,
+        ));
+    }
+    release_id
+        .and_then(valid_external_identity_value)
+        .map(|release_id| musicbrainz_image_ref(EXTERNAL_MUSICBRAINZ_RELEASE_PREFIX, release_id))
+}
+
+fn musicbrainz_image_ref(prefix: &str, id: &str) -> ImageRef {
+    let item_id = format!("{prefix}{id}");
+    let tag = format!(
+        "{EXTERNAL_ALBUM_IDENTITY_TAG_VERSION}-{:016x}",
+        stable_album_hash(id, prefix)
+    );
+    ImageRef::new(item_id, Some(tag))
+}
+
+fn valid_external_identity_value(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return None;
+    }
+    Some(value)
+}
+
+fn stable_album_hash(artist: &str, album: &str) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET;
+    for byte in artist
+        .as_bytes()
+        .iter()
+        .copied()
+        .chain([0])
+        .chain(album.as_bytes().iter().copied())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }

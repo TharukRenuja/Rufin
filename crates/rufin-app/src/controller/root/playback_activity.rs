@@ -358,6 +358,7 @@ mod tests {
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. }
                 | ControllerEvent::CoverUnavailable { .. }
+                | ControllerEvent::CoverDeferred { .. }
                 | ControllerEvent::LoginStatus(_) => {}
                 ControllerEvent::Error(error) => panic!("controller error: {error}"),
             }

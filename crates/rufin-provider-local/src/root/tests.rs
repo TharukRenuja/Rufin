@@ -1,4 +1,5 @@
 use super::*;
+use lofty::picture::MimeType;
 use lofty::tag::{ItemValue, TagItem, TagType};
 #[test]
 fn local_root_identity() {
@@ -205,6 +206,69 @@ async fn manifest_scan_reuse() {
         1
     );
 }
+
+#[test]
+fn manifest_reuse_keeps_embedded_cover() {
+    let path = "/tmp/rufin-embedded-cover.flac";
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.push_picture(
+        Picture::unchecked(vec![1_u8, 2, 3])
+            .pic_type(PictureType::CoverFront)
+            .mime_type(MimeType::Png)
+            .build(),
+    );
+    let cover = embedded_cover(Path::new(path), None, Some(&tag)).expect("embedded cover");
+    let mut scanned = scanned_test_track(1, AlbumId::new("local:album:embedded"), Some(cover));
+    scanned.track.local_path = Some(path.to_string());
+    let entry = manifest_entry_for_scanned(&test_file_facts(path), &scanned);
+    let saved_cover = entry.cover.as_ref().expect("manifest cover");
+
+    assert_eq!(saved_cover.kind, LocalManifestCoverKind::Embedded);
+    assert_eq!(saved_cover.source_path, PathBuf::from(path));
+
+    let (reused, _entry, artwork_changed) = reuse_manifest_track(test_file_facts(path), entry);
+    let library = build_library(vec![reused], Vec::new(), HashMap::new());
+
+    assert!(!artwork_changed);
+    let album_ref = library.albums[0].image_ref.clone().expect("album cover");
+    assert_eq!(library.tracks[0].image_ref.as_ref(), Some(&album_ref));
+    assert_eq!(library.artists[0].image_ref.as_ref(), Some(&album_ref));
+    assert_eq!(
+        library.album_artists[0].image_ref.as_ref(),
+        Some(&album_ref)
+    );
+}
+
+#[test]
+fn manifest_sync_stores_projected_embedded_cover() {
+    let path = PathBuf::from("/tmp/rufin-projected-embedded.flac");
+    let cover = LocalCover::Embedded {
+        path: path.clone(),
+        bytes: Arc::from([1_u8, 2, 3]),
+        content_type: Some("image/png".to_string()),
+        revision: Some("embedded:projected".to_string()),
+    };
+    let image_ref = ImageRef::new(cover_id(&cover), cover_revision(&cover));
+    let mut scanned = scanned_test_track(1, AlbumId::new("local:album:projected"), None);
+    scanned.track.image_ref = Some(image_ref);
+    let mut entry = manifest_entry_for_scanned(
+        &test_file_facts(path.to_str().expect("test path")),
+        &scanned,
+    );
+    entry.cover = None;
+    let library = LocalLibrary {
+        tracks: vec![scanned.track],
+        ..LocalLibrary::default()
+    };
+
+    sync_manifest_covers_from_library(&library, std::slice::from_mut(&mut entry));
+
+    let saved_cover = entry.cover.expect("manifest cover");
+    assert_eq!(saved_cover.kind, LocalManifestCoverKind::Embedded);
+    assert_eq!(saved_cover.source_path, path);
+    assert_eq!(saved_cover.revision, "embedded:projected");
+}
+
 #[test]
 fn local_scan_reports_progress() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -449,6 +513,26 @@ fn local_share_ref() {
             .all(|track| track.image_ref.as_ref() == Some(&album_cover))
     );
 }
+
+#[test]
+fn local_repairs_album_ref_from_retained_track_ref() {
+    let album_id = AlbumId::new("local:album:test");
+    let retained_ref = ImageRef::new("local:cover:retained", Some("retained-tag".to_string()));
+    let mut scanned = scanned_test_track(1, album_id, None);
+    scanned.track.image_ref = Some(retained_ref.clone());
+
+    let library = build_library(vec![scanned], Vec::new(), HashMap::new());
+
+    assert_eq!(library.albums.len(), 1);
+    assert_eq!(library.albums[0].image_ref.as_ref(), Some(&retained_ref));
+    assert_eq!(library.tracks[0].image_ref.as_ref(), Some(&retained_ref));
+    assert_eq!(library.artists[0].image_ref.as_ref(), Some(&retained_ref));
+    assert_eq!(
+        library.album_artists[0].image_ref.as_ref(),
+        Some(&retained_ref)
+    );
+}
+
 #[tokio::test]
 async fn local_use_bytes() {
     let dir = tempfile::tempdir().expect("tempdir");

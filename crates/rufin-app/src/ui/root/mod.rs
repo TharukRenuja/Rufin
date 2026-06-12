@@ -165,7 +165,7 @@ mod shell_tests;
 pub(in crate::ui) use build::*;
 pub(in crate::ui) use cover::{
     CoverBinding, CoverDecodeJob, CoverDecodePriority, CoverPathLookupIntent,
-    CoverPathLookupRequest, CoverWarmJob, DecodedCover, DecodedCoverOrderEntry,
+    CoverPathLookupRequest, CoverRequestRecord, CoverWarmJob, DecodedCover, DecodedCoverOrderEntry,
     FirstRunCoverPrimeJob,
 };
 pub(in crate::ui) use cover_startup::*;
@@ -203,7 +203,6 @@ pub(in crate::ui) const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
 pub(in crate::ui) const COVER_VISIBLE_REQUEST_DELAY_MS: u64 = 48;
 pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
 pub(in crate::ui) const COVER_DECODE_LIMIT: usize = 16;
-pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MIN_MS: u64 = 320;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
 pub(in crate::ui) const STARTUP_HOME_SECTION_LIMIT: usize = 3;
@@ -331,6 +330,7 @@ pub(in crate::ui) struct AppState {
     cover_path_cache: RefCell<HashMap<String, PathBuf>>,
     cover_path_lookups: RefCell<HashMap<String, CoverPathLookupIntent>>,
     cover_fetches: RefCell<HashSet<String>>,
+    cover_visible_requests: RefCell<HashMap<String, CoverRequestRecord>>,
     cover_decodes: RefCell<HashMap<String, CoverDecodePriority>>,
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
@@ -577,6 +577,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         cover_path_cache: RefCell::new(HashMap::new()),
         cover_path_lookups: RefCell::new(HashMap::new()),
         cover_fetches: RefCell::new(HashSet::new()),
+        cover_visible_requests: RefCell::new(HashMap::new()),
         cover_decodes: RefCell::new(HashMap::new()),
         cover_decode_queue: RefCell::new(VecDeque::new()),
         cover_warm_generation: Cell::new(0),

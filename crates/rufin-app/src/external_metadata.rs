@@ -1,7 +1,4 @@
-use rufin_core::{
-    Album, AppSettings, Artist, HomeSection, ImageRef, QueueEntry, QueueSnapshot, Track,
-};
-use rufin_provider::SearchResults;
+use rufin_core::{Album, AppSettings, Artist, ImageRef, QueueEntry, Track};
 
 mod album_lookup;
 mod release_type_lookup;
@@ -76,18 +73,6 @@ pub fn album_art_from_image_ref(image_ref: &ImageRef) -> Option<ExternalAlbumArt
     })
 }
 
-pub fn normalize_album(album: &mut Album, settings: &AppSettings) {
-    normalize_image_ref(&mut album.image_ref, settings);
-    if enabled(settings) && album.image_ref.is_none() {
-        album.image_ref = external_album_identity_image_ref(album)
-            .or_else(|| external_album_image_ref(&album.artist, &album.title));
-    }
-}
-
-pub fn normalize_track(track: &mut Track, settings: &AppSettings) {
-    normalize_track_ref(track, None, settings);
-}
-
 pub fn normalize_track_with_album_ref(
     track: &mut Track,
     album_image_ref: Option<&ImageRef>,
@@ -96,7 +81,22 @@ pub fn normalize_track_with_album_ref(
     normalize_track_ref(track, album_image_ref, settings);
 }
 
-pub fn normalize_album_detail(album: &mut Album, tracks: &mut [Track], settings: &AppSettings) {
+#[cfg(test)]
+fn normalize_album(album: &mut Album, settings: &AppSettings) {
+    normalize_image_ref(&mut album.image_ref, settings);
+    if enabled(settings) && album.image_ref.is_none() {
+        album.image_ref = external_album_identity_image_ref(album)
+            .or_else(|| external_album_image_ref(&album.artist, &album.title));
+    }
+}
+
+#[cfg(test)]
+fn normalize_track(track: &mut Track, settings: &AppSettings) {
+    normalize_track_ref(track, None, settings);
+}
+
+#[cfg(test)]
+fn normalize_album_detail(album: &mut Album, tracks: &mut [Track], settings: &AppSettings) {
     normalize_album(album, settings);
     let album_image_ref = album.image_ref.as_ref();
     for track in tracks {
@@ -134,51 +134,6 @@ pub fn normalize_artist(artist: &mut Artist, settings: &AppSettings) {
     normalize_image_ref(&mut artist.image_ref, settings);
 }
 
-pub fn normalize_albums(albums: &mut [Album], settings: &AppSettings) {
-    for album in albums {
-        normalize_album(album, settings);
-    }
-}
-
-pub fn normalize_tracks(tracks: &mut [Track], settings: &AppSettings) {
-    for track in tracks {
-        normalize_track(track, settings);
-    }
-}
-
-pub fn normalize_artists(artists: &mut [Artist], settings: &AppSettings) {
-    for artist in artists {
-        normalize_artist(artist, settings);
-    }
-}
-
-pub fn normalize_home_sections(sections: &mut [HomeSection], settings: &AppSettings) {
-    for section in sections {
-        normalize_home_section(section, settings);
-    }
-}
-
-pub fn normalize_home_section(section: &mut HomeSection, settings: &AppSettings) {
-    normalize_albums(&mut section.albums, settings);
-    normalize_tracks(&mut section.tracks, settings);
-}
-
-pub fn normalize_search_results(results: &mut SearchResults, settings: &AppSettings) {
-    normalize_albums(&mut results.albums, settings);
-    normalize_tracks(&mut results.tracks, settings);
-    normalize_artists(&mut results.artists, settings);
-}
-
-pub fn normalize_queue_snapshot(snapshot: &mut QueueSnapshot, settings: &AppSettings) {
-    for entry in &mut snapshot.entries {
-        normalize_queue_entry(entry, settings);
-    }
-}
-
-pub fn normalize_queue_entry(entry: &mut QueueEntry, settings: &AppSettings) {
-    normalize_queue_entry_with_album_ref(entry, None, settings);
-}
-
 pub fn normalize_queue_entry_with_album_ref(
     entry: &mut QueueEntry,
     album_image_ref: Option<&ImageRef>,
@@ -201,6 +156,11 @@ pub fn normalize_queue_entry_with_album_ref(
     if enabled(settings) && entry.image_ref.is_none() {
         entry.image_ref = external_album_image_ref(&entry.artist, &entry.album);
     }
+}
+
+#[cfg(test)]
+fn normalize_queue_entry(entry: &mut QueueEntry, settings: &AppSettings) {
+    normalize_queue_entry_with_album_ref(entry, None, settings);
 }
 
 pub fn is_expected_lookup_miss(error: &str) -> bool {

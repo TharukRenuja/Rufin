@@ -51,12 +51,13 @@ impl Shell {
         let body = gtk::Box::new(gtk::Orientation::Horizontal, DETAIL_HEADER_SPACING);
         body.set_hexpand(true);
         body.set_halign(gtk::Align::Fill);
-        self.prime_cached_cover(album.image_ref.as_ref(), DETAIL_COVER_SIZE, cover_size);
+        let cover_fetch_size = cover_fetch_size_for_display(cover_size);
+        self.prime_cached_cover(album.image_ref.as_ref(), cover_fetch_size, cover_size);
         let cover = self.cover_tile_for(
             album.image_ref.as_ref(),
             album.color_seed,
             cover_size,
-            DETAIL_COVER_SIZE,
+            cover_fetch_size,
         );
         cover.add_css_class("detail-showcase-cover");
         cover.add_css_class("album-detail-cover");

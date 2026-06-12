@@ -11,14 +11,14 @@ use rufin_playback::PlaybackState;
 use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
 use crate::ui::{
-    connect_equalizer_scale_commit, equalizer_band_label_parts, equalizer_band_title,
-    equalizer_default_preset_bands, equalizer_preset_bands, equalizer_preset_names,
-    equalizer_selected_preset,
+    connect_equalizer_scale_commit, cover_fetch_size_for_display, equalizer_band_label_parts,
+    equalizer_band_title, equalizer_default_preset_bands, equalizer_preset_bands,
+    equalizer_preset_names, equalizer_selected_preset,
 };
 
 use super::{
-    ArtworkTile, DETAIL_COVER_SIZE, Shell, icon_button, player::BOTTOM_PLAYER_HEIGHT,
-    player_icons::lyrics_icon_area,
+    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE, icon_button,
+    player::BOTTOM_PLAYER_HEIGHT, player_icons::lyrics_icon_area,
 };
 
 const FULLSCREEN_PLAYER_TRANSITION_MS: u32 = 320;
@@ -779,6 +779,7 @@ impl Shell {
         self.state.fullscreen_player_visible.set(true);
         self.animate_fullscreen_player(true);
         let player = self.state.player.borrow().clone();
+        self.update_fullscreen_player_text(&player);
         self.update_fullscreen_player_cover(&player);
         let update_shell = Rc::clone(self);
         glib::timeout_add_local_once(
@@ -1083,25 +1084,41 @@ impl Shell {
             .as_ref()
             .and_then(|entry| entry.image_ref.as_ref())
         {
-            if let Some(key) = self.current_playback_cover_cache_key(image_ref, DETAIL_COVER_SIZE) {
+            let fetch_size = cover_fetch_size_for_display(cover_size);
+            if let Some(key) = self.current_playback_cover_cache_key(image_ref, fetch_size) {
                 let request_key = format!("{key}:{cover_size}");
                 let cover_key_changed = self.fullscreen_player.cover_key.borrow().as_deref()
                     != Some(request_key.as_str());
                 if cover_key_changed {
                     let has_decoded_cover = self.decoded_cover_has_min_size(&key, cover_size);
-                    let has_cached_cover_file =
-                        self.controller.cached_cover_path_for_key(&key).is_some();
-                    if has_decoded_cover || has_cached_cover_file {
-                        self.fullscreen_player.cover.advance_generation();
-                    } else {
-                        self.fullscreen_player.cover.clear_image();
+                    let preview = (!has_decoded_cover)
+                        .then(|| self.fullscreen_cover_preview(image_ref, fetch_size))
+                        .flatten();
+                    match fullscreen_cover_replacement(has_decoded_cover, preview.is_some()) {
+                        FullscreenCoverReplacement::Ready => {
+                            self.fullscreen_player.cover.advance_generation();
+                        }
+                        FullscreenCoverReplacement::Preview => {
+                            if let Some((preview_key, pixbuf)) = preview {
+                                self.touch_decoded_cover(
+                                    &preview_key,
+                                    CoverDecodePriority::Visible,
+                                );
+                                self.fullscreen_player
+                                    .cover
+                                    .bind_cover_image(cover_seed, Some(pixbuf));
+                            }
+                        }
+                        FullscreenCoverReplacement::Retain => {
+                            self.fullscreen_player.cover.retain_cover_image(cover_seed);
+                        }
                     }
                     self.request_cover_for_tile(
                         &self.fullscreen_player.cover,
                         key,
                         image_ref.clone(),
                         cover_size,
-                        DETAIL_COVER_SIZE,
+                        fetch_size,
                     );
                     *self.fullscreen_player.cover_key.borrow_mut() = Some(request_key);
                 }
@@ -1111,6 +1128,22 @@ impl Shell {
         } else {
             self.clear_fullscreen_player_cover();
         }
+    }
+
+    fn fullscreen_cover_preview(
+        &self,
+        image_ref: &rufin_core::ImageRef,
+        fetch_size: u32,
+    ) -> Option<(String, gdk_pixbuf::Pixbuf)> {
+        for size in fullscreen_cover_preview_sizes(fetch_size) {
+            let Some(key) = self.current_playback_cover_cache_key(image_ref, size) else {
+                continue;
+            };
+            if let Some(cover) = self.cloned_decoded_cover(&key, 1) {
+                return Some((key, cover.pixbuf));
+            }
+        }
+        None
     }
 
     fn update_fullscreen_player_text(&self, player: &crate::controller::PlaybackSnapshot) {
@@ -1359,6 +1392,32 @@ fn audio_source_label_from_format(value: &str) -> Option<String> {
     Some(normalized)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FullscreenCoverReplacement {
+    Ready,
+    Preview,
+    Retain,
+}
+
+fn fullscreen_cover_replacement(
+    has_decoded_cover: bool,
+    has_preview_cover: bool,
+) -> FullscreenCoverReplacement {
+    if has_decoded_cover {
+        FullscreenCoverReplacement::Ready
+    } else if has_preview_cover {
+        FullscreenCoverReplacement::Preview
+    } else {
+        FullscreenCoverReplacement::Retain
+    }
+}
+
+fn fullscreen_cover_preview_sizes(fetch_size: u32) -> Vec<u32> {
+    let mut sizes = vec![GRID_COVER_SIZE, THUMB_COVER_SIZE];
+    sizes.retain(|size| *size < fetch_size);
+    sizes
+}
+
 pub(super) fn fullscreen_artwork_size_for(width: i32, height: i32) -> i32 {
     let width_limit = (width - FULLSCREEN_PLAYER_HORIZONTAL_MARGIN).max(1);
     let height_limit = (height - FULLSCREEN_PLAYER_VERTICAL_RESERVED).max(1);
@@ -1370,7 +1429,9 @@ pub(super) fn fullscreen_artwork_size_for(width: i32, height: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::equalizer::equalizer_presets;
     use super::fullscreen_artwork_size_for;
+    use rufin_core::EQUALIZER_BAND_COUNT;
 
     #[test]
     fn fullscreen_stay_windows() {
@@ -1418,5 +1479,33 @@ mod tests {
             super::audio_source_label_from_format("audio/mpeg").as_deref(),
             Some("MP3")
         );
+    }
+
+    #[test]
+    fn fullscreen_cover_keeps_previous_until_decoded() {
+        assert_eq!(
+            super::fullscreen_cover_replacement(true, false),
+            super::FullscreenCoverReplacement::Ready
+        );
+        assert_eq!(
+            super::fullscreen_cover_replacement(false, true),
+            super::FullscreenCoverReplacement::Preview
+        );
+        assert_eq!(
+            super::fullscreen_cover_replacement(true, true),
+            super::FullscreenCoverReplacement::Ready
+        );
+        assert_eq!(
+            super::fullscreen_cover_replacement(false, false),
+            super::FullscreenCoverReplacement::Retain
+        );
+    }
+
+    #[test]
+    fn fullscreen_equalizer_presets_cover_all_bands() {
+        for (_, bands) in equalizer_presets() {
+            assert_eq!(bands.len(), EQUALIZER_BAND_COUNT);
+            assert!(bands.iter().all(|gain| (-12.0..=12.0).contains(gain)));
+        }
     }
 }
