@@ -27,6 +27,9 @@ const QUEUE_FULLSCREEN_ALBUM_MIN_WIDTH: i32 = 140;
 const QUEUE_DURATION_COLUMN_WIDTH: i32 = 82;
 const QUEUE_YEAR_COLUMN_WIDTH: i32 = 64;
 const QUEUE_FAVORITE_COLUMN_WIDTH: i32 = 64;
+const QUEUE_ROW_HEIGHT: i32 = 58;
+const QUEUE_DEFAULT_VIEWPORT_ROWS: usize = 24;
+const QUEUE_OVERSCAN_ROWS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui::root) struct QueueFullscreenColumnWidths {
@@ -40,6 +43,9 @@ pub(in crate::ui::root) struct QueueFullscreenColumnWidths {
 pub(in crate::ui::root) struct QueuePanelRenderState {
     filter: String,
     row_ids: Vec<QueueEntryId>,
+    row_indices: Vec<usize>,
+    row_start: usize,
+    row_count: usize,
     current_id: Option<QueueEntryId>,
     show_header: bool,
     empty_text: Option<String>,
@@ -110,18 +116,30 @@ impl Shell {
         layout: QueuePanelLayout,
         scroll_behavior: QueueScrollBehavior,
     ) {
-        let queue_snapshot = self.state.queue.borrow().clone();
         let has_filter = !queue_filter.is_empty();
-        let queue_scroller = queue_panel_scroller(panel).unwrap_or_else(new_queue_scroller);
-        let previous_scroll = queue_scroller.vadjustment().value();
+        let queue_scroller =
+            queue_panel_scroller(panel).unwrap_or_else(|| new_queue_scroller(self));
+        let adjustment = queue_scroller.vadjustment();
+        let previous_scroll = adjustment.value();
+        let target_scroll = match scroll_behavior {
+            QueueScrollBehavior::Preserve => previous_scroll,
+            QueueScrollBehavior::Reset => 0.0,
+        };
+        let viewport_height = adjustment.page_size();
         let fullscreen_widths = (layout == QueuePanelLayout::Fullscreen).then(|| {
             fullscreen_queue_column_widths(fullscreen_queue_available_width(
                 panel,
                 self.window.width(),
             ))
         });
-        let render_state =
-            queue_panel_render_state(&queue_snapshot, queue_filter, fullscreen_widths);
+        let queue_snapshot = self.state.queue.borrow();
+        let render_state = queue_panel_render_state(
+            &queue_snapshot,
+            queue_filter,
+            fullscreen_widths,
+            target_scroll,
+            viewport_height,
+        );
         let state_cell = match layout {
             QueuePanelLayout::Sidebar => &self.state.queue_sidebar_render_state,
             QueuePanelLayout::Fullscreen => &self.state.queue_fullscreen_render_state,
@@ -137,9 +155,7 @@ impl Shell {
             return;
         }
 
-        while let Some(child) = panel.first_child() {
-            panel.remove(&child);
-        }
+        clear_queue_panel_static_children(panel);
 
         let queue_list = gtk::ListBox::new();
         queue_list.add_css_class("queue-list");
@@ -147,27 +163,22 @@ impl Shell {
         queue_list.set_selection_mode(gtk::SelectionMode::None);
         let mut queue_has_entries = false;
         let mut show_header = false;
-        if let Some(snapshot) = &queue_snapshot {
+        if let Some(snapshot) = &*queue_snapshot {
             queue_has_entries = !snapshot.entries.is_empty();
-            let mut visible_entries = 0;
-            for (index, entry) in snapshot.entries.iter().enumerate() {
-                if !queue_entry_matches_filter(entry, queue_filter) {
-                    continue;
+            show_header = render_state.show_header;
+            for index in &render_state.row_indices {
+                if let Some(entry) = snapshot.entries.get(*index) {
+                    queue_list.append(&self.queue_row(
+                        *index,
+                        entry,
+                        snapshot.current_index,
+                        layout,
+                        fullscreen_widths,
+                    ));
                 }
-                if visible_entries == 0 {
-                    show_header = true;
-                }
-                queue_list.append(&self.queue_row(
-                    index,
-                    entry,
-                    snapshot.current_index,
-                    layout,
-                    fullscreen_widths,
-                ));
-                visible_entries += 1;
             }
         }
-        if queue_list.first_child().is_none() {
+        if render_state.row_count == 0 && queue_list.first_child().is_none() {
             let empty_text = if has_filter && queue_has_entries {
                 tr("No queue items match the search.")
             } else {
@@ -180,10 +191,28 @@ impl Shell {
             queue_list.append(&empty);
         }
         if show_header {
-            panel.append(&queue_header_row(layout, fullscreen_widths));
+            panel.prepend(&queue_header_row(layout, fullscreen_widths));
         }
-        queue_scroller.set_child(Some(&queue_list));
-        panel.append(&queue_scroller);
+        if render_state.row_count == 0 {
+            queue_scroller.set_child(Some(&queue_list));
+        } else {
+            let virtual_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            let top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            top_spacer.set_height_request(virtual_spacer_height(render_state.row_start));
+            let bottom_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            bottom_spacer.set_height_request(virtual_spacer_height(
+                render_state
+                    .row_count
+                    .saturating_sub(render_state.row_start + render_state.row_ids.len()),
+            ));
+            virtual_box.append(&top_spacer);
+            virtual_box.append(&queue_list);
+            virtual_box.append(&bottom_spacer);
+            queue_scroller.set_child(Some(&virtual_box));
+        }
+        if queue_scroller.parent().is_none() {
+            panel.append(&queue_scroller);
+        }
         match scroll_behavior {
             QueueScrollBehavior::Preserve => {
                 restore_queue_scroll_position(&queue_scroller, previous_scroll);
@@ -214,6 +243,7 @@ impl Shell {
 
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.add_css_class("queue-row");
+        row.set_height_request(QUEUE_ROW_HEIGHT);
         row.set_valign(gtk::Align::Center);
         row.set_focusable(true);
         let accessible_label = format!("{} {}", entry.title, entry.artist);
@@ -278,6 +308,7 @@ impl Shell {
     ) -> gtk::Widget {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         row.add_css_class("queue-row");
+        row.set_height_request(QUEUE_ROW_HEIGHT);
         row.set_hexpand(true);
         row.set_halign(gtk::Align::Fill);
         row.set_valign(gtk::Align::Center);
@@ -371,6 +402,8 @@ impl QueuePanelRenderState {
     fn same_rows_as(&self, next: &Self) -> bool {
         self.filter == next.filter
             && self.row_ids == next.row_ids
+            && self.row_start == next.row_start
+            && self.row_count == next.row_count
             && self.show_header == next.show_header
             && self.empty_text == next.empty_text
             && self.fullscreen_widths == next.fullscreen_widths
@@ -381,10 +414,14 @@ fn queue_panel_render_state(
     queue_snapshot: &Option<rufin_core::QueueSnapshot>,
     queue_filter: &str,
     fullscreen_widths: Option<QueueFullscreenColumnWidths>,
+    scroll_value: f64,
+    viewport_height: f64,
 ) -> QueuePanelRenderState {
     let has_filter = !queue_filter.is_empty();
     let mut queue_has_entries = false;
     let mut row_ids = Vec::new();
+    let mut row_indices = Vec::new();
+    let mut row_count = 0usize;
     let mut current_id = None;
     if let Some(snapshot) = queue_snapshot {
         queue_has_entries = !snapshot.entries.is_empty();
@@ -392,15 +429,33 @@ fn queue_panel_render_state(
             .current_index
             .and_then(|index| snapshot.entries.get(index))
             .map(|entry| entry.id.clone());
-        row_ids.extend(
-            snapshot
-                .entries
-                .iter()
-                .filter(|entry| queue_entry_matches_filter(entry, queue_filter))
-                .map(|entry| entry.id.clone()),
-        );
+        if has_filter {
+            let (window_start, window_end) =
+                queue_virtual_window(usize::MAX, scroll_value, viewport_height);
+            for (entry_index, entry) in snapshot.entries.iter().enumerate() {
+                if !queue_entry_matches_filter(entry, queue_filter) {
+                    continue;
+                }
+                if row_count >= window_start && row_count < window_end {
+                    row_ids.push(entry.id.clone());
+                    row_indices.push(entry_index);
+                }
+                row_count += 1;
+            }
+        } else {
+            row_count = snapshot.entries.len();
+            let (window_start, window_end) =
+                queue_virtual_window(row_count, scroll_value, viewport_height);
+            for entry_index in window_start..window_end {
+                if let Some(entry) = snapshot.entries.get(entry_index) {
+                    row_ids.push(entry.id.clone());
+                    row_indices.push(entry_index);
+                }
+            }
+        }
     }
-    let empty_text = row_ids.is_empty().then(|| {
+    let row_start = queue_virtual_window(row_count, scroll_value, viewport_height).0;
+    let empty_text = (row_count == 0).then(|| {
         if has_filter && queue_has_entries {
             tr("No queue items match the search.")
         } else {
@@ -409,8 +464,11 @@ fn queue_panel_render_state(
     });
     QueuePanelRenderState {
         filter: queue_filter.to_string(),
-        show_header: !row_ids.is_empty(),
+        show_header: row_count != 0,
         row_ids,
+        row_indices,
+        row_start,
+        row_count,
         current_id,
         empty_text,
         fullscreen_widths,
@@ -443,7 +501,29 @@ fn update_queue_current_rows(panel: &gtk::Box, state: &QueuePanelRenderState) ->
 
 fn queue_panel_list(panel: &gtk::Box) -> Option<gtk::ListBox> {
     let scroller = queue_panel_scroller(panel)?;
-    scroller.child()?.downcast::<gtk::ListBox>().ok()
+    let child = scroller.child()?;
+    if let Ok(list) = child.clone().downcast::<gtk::ListBox>() {
+        return Some(list);
+    }
+    let container = child.downcast::<gtk::Box>().ok()?;
+    let mut child = container.first_child();
+    while let Some(widget) = child {
+        if let Ok(list) = widget.clone().downcast::<gtk::ListBox>() {
+            return Some(list);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
+fn clear_queue_panel_static_children(panel: &gtk::Box) {
+    let mut child = panel.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if !widget.is::<gtk::ScrolledWindow>() {
+            panel.remove(&widget);
+        }
+    }
 }
 
 fn queue_content_row(widget: &gtk::Widget) -> Option<gtk::Widget> {
@@ -479,11 +559,15 @@ fn queue_entry_matches_filter(entry: &QueueEntry, filter: &str) -> bool {
         || (entry.year != 0 && entry.year.to_string().contains(filter))
 }
 
-fn new_queue_scroller() -> gtk::ScrolledWindow {
+fn new_queue_scroller(shell: &Rc<Shell>) -> gtk::ScrolledWindow {
     let scroller = gtk::ScrolledWindow::new();
     scroller.add_css_class("queue-scroller");
     scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroller.set_vexpand(true);
+    let shell = Rc::clone(shell);
+    scroller
+        .vadjustment()
+        .connect_value_changed(move |_| shell.schedule_queue_panel_render());
     scroller
 }
 
@@ -503,6 +587,36 @@ fn restore_queue_scroll_position(scroller: &gtk::ScrolledWindow, value: f64) {
     let lower = adjustment.lower();
     let upper = (adjustment.upper() - adjustment.page_size()).max(lower);
     adjustment.set_value(value.clamp(lower, upper));
+}
+
+fn queue_virtual_window(
+    row_count: usize,
+    scroll_value: f64,
+    viewport_height: f64,
+) -> (usize, usize) {
+    if row_count == 0 {
+        return (0, 0);
+    }
+    let row_height = f64::from(QUEUE_ROW_HEIGHT);
+    let overscan_height = row_height * QUEUE_OVERSCAN_ROWS as f64;
+    let viewport_height = if viewport_height > 0.0 {
+        viewport_height
+    } else {
+        row_height * QUEUE_DEFAULT_VIEWPORT_ROWS as f64
+    };
+    let top = (scroll_value - overscan_height).max(0.0);
+    let bottom = scroll_value + viewport_height + overscan_height;
+    let start = (top / row_height).floor().max(0.0) as usize;
+    let end = (bottom / row_height).ceil().max(start as f64) as usize;
+    (
+        start.min(row_count),
+        end.min(row_count).max(start.min(row_count)),
+    )
+}
+
+fn virtual_spacer_height(row_count: usize) -> i32 {
+    let rows = i32::try_from(row_count).unwrap_or(i32::MAX / QUEUE_ROW_HEIGHT);
+    rows.saturating_mul(QUEUE_ROW_HEIGHT)
 }
 
 fn queue_header_row(
@@ -1013,6 +1127,80 @@ fn add_queue_label_click(label: &gtk::Label, callback: impl Fn() + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rufin_core::{QueueSnapshot, RepeatMode, ServerId, ShuffleState, TrackId};
+
+    fn queue_entry(number: usize, title: &str) -> QueueEntry {
+        QueueEntry {
+            id: QueueEntryId::new(format!("queue-{number}")),
+            track_id: TrackId::fake(number),
+            album_id: None,
+            title: title.to_string(),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            album: "Album".to_string(),
+            year: 2026,
+            duration_seconds: 180,
+            favorite: false,
+            image_ref: None,
+            local_path: None,
+            source_format: None,
+            origin: None,
+        }
+    }
+
+    fn queue_snapshot(entries: Vec<QueueEntry>) -> Option<QueueSnapshot> {
+        Some(QueueSnapshot {
+            server_id: ServerId::fake(1),
+            entries,
+            current_index: Some(0),
+            repeat_mode: RepeatMode::All,
+            shuffle: ShuffleState::default(),
+            shuffle_order: Vec::new(),
+            progress_seconds: 0,
+        })
+    }
+
+    #[test]
+    fn queue_render_state_keeps_only_virtual_window_ids() {
+        let entries = (0..10_000)
+            .map(|number| queue_entry(number, &format!("Track {number}")))
+            .collect::<Vec<_>>();
+        let snapshot = queue_snapshot(entries);
+
+        let state =
+            queue_panel_render_state(&snapshot, "", None, 0.0, f64::from(QUEUE_ROW_HEIGHT * 10));
+
+        assert_eq!(state.row_count, 10_000);
+        assert!(state.row_ids.len() <= QUEUE_DEFAULT_VIEWPORT_ROWS);
+        assert_eq!(state.row_indices.first().copied(), Some(0));
+    }
+
+    #[test]
+    fn filtered_queue_render_state_keeps_only_virtual_window_ids() {
+        let entries = (0..10_000)
+            .map(|number| {
+                let title = if number % 100 == 0 {
+                    format!("Needle {number}")
+                } else {
+                    format!("Track {number}")
+                };
+                queue_entry(number, &title)
+            })
+            .collect::<Vec<_>>();
+        let snapshot = queue_snapshot(entries);
+
+        let state = queue_panel_render_state(
+            &snapshot,
+            "needle",
+            None,
+            0.0,
+            f64::from(QUEUE_ROW_HEIGHT * 10),
+        );
+
+        assert_eq!(state.row_count, 100);
+        assert!(state.row_ids.len() <= QUEUE_DEFAULT_VIEWPORT_ROWS);
+        assert_eq!(state.row_indices.first().copied(), Some(0));
+    }
 
     #[test]
     fn fullscreen_queue_text_columns_fill_available_width() {

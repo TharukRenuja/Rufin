@@ -9,7 +9,7 @@ use rufin_core::{
     Album, AlbumId, Artist, ArtistCredit, ArtistId, Genre, GenreId, HomeSection, HomeSectionKind,
     ImageRef, LibraryField, LocalCueTrackSource, LocalFileFacts, LocalManifestCover,
     LocalManifestCoverKind, LocalManifestEntry, MusicFolder, MusicFolderId, Playlist, PlaylistId,
-    QueueSnapshot, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
+    QueueEntryId, QueueSnapshot, ServerId, ServerIdentity, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId, SmartPlaylistMatchMode,
     SmartPlaylistRule, SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
     SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortField, Track, TrackId,
