@@ -1275,6 +1275,9 @@ fn artist_image_use() {
             generation,
         )
         .expect("upsert artist");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
     let loaded = store
         .load_artists(&saved.server.id, false, 0, 10)
         .expect("load artists")
@@ -1356,6 +1359,9 @@ fn album_artist_image() {
             generation,
         )
         .expect("upsert album artist");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
     let loaded = store
         .load_artists(&saved.server.id, true, 0, 10)
         .expect("load album artists")
@@ -1587,6 +1593,20 @@ fn schema_trip_page() {
     album.musicbrainz_album_id = Some("mb-album-one".to_string());
     album.musicbrainz_release_group_id = Some("mb-group-one".to_string());
     let tracks = vec![track(1, &album), track(2, &album)];
+    let selected_ref = ImageRef::new(
+        "external:mb-release-group:mb-group-one",
+        Some("external-v2-46c4966fcc822df3".to_string()),
+    );
+    let mut expected_album = album.clone();
+    expected_album.image_ref = Some(selected_ref.clone());
+    let expected_tracks = tracks
+        .iter()
+        .cloned()
+        .map(|mut track| {
+            track.image_ref = Some(selected_ref.clone());
+            track
+        })
+        .collect::<Vec<_>>();
     store
         .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
         .expect("upsert album");
@@ -1604,9 +1624,9 @@ fn schema_trip_page() {
         .expect("load detail")
         .expect("detail");
     assert_eq!(albums.total, 1);
-    assert_eq!(albums.items, vec![album.clone()]);
-    assert_eq!(detail.0, album);
-    assert_eq!(detail.1, tracks);
+    assert_eq!(albums.items, vec![expected_album.clone()]);
+    assert_eq!(detail.0, expected_album);
+    assert_eq!(detail.1, expected_tracks);
 }
 #[test]
 fn album_release_type_lookup_candidates_skip_cached_and_misses() {

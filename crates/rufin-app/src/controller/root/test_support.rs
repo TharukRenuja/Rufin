@@ -63,7 +63,8 @@ pub(in crate::controller) fn wait_for_snapshot(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
@@ -100,7 +101,8 @@ pub(in crate::controller) fn wait_for_favorite_changed(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
@@ -136,7 +138,8 @@ pub(in crate::controller) fn wait_for_playlist_changed(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::LoginStatus(_) => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
@@ -168,7 +171,8 @@ pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>)
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
@@ -201,7 +205,8 @@ pub(in crate::controller) fn wait_for_queue(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
@@ -259,7 +264,8 @@ pub(in crate::controller) fn wait_for_cover_ready(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
@@ -292,7 +298,8 @@ pub(in crate::controller) fn wait_for_lyrics(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
         }
     }
@@ -344,7 +351,8 @@ pub(in crate::controller) fn wait_for_playback_state(
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. }
-                | ControllerEvent::CoverUnavailable { .. } => {}
+                | ControllerEvent::CoverUnavailable { .. }
+                | ControllerEvent::CoverDeferred { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::LibrarySyncStatus(_)
                 | ControllerEvent::LibraryDelta(_)
@@ -386,7 +394,8 @@ pub(in crate::controller) fn wait_for_playback_position(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::Snapshot(_)
             | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::LibraryDelta(_)
@@ -423,7 +432,8 @@ pub(in crate::controller) fn wait_for_playback_auto_dj(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::Snapshot(_)
             | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::LibraryDelta(_)
@@ -460,7 +470,8 @@ pub(in crate::controller) fn wait_for_playback_repeat(
             | ControllerEvent::HomeSectionPrefetched { .. }
             | ControllerEvent::ServerDiscovery { .. }
             | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. } => {}
+            | ControllerEvent::CoverUnavailable { .. }
+            | ControllerEvent::CoverDeferred { .. } => {}
             ControllerEvent::Snapshot(_)
             | ControllerEvent::LibrarySyncStatus(_)
             | ControllerEvent::LibraryDelta(_)
@@ -507,7 +518,8 @@ pub(in crate::controller) fn wait_for_playback_current_favorite(
                 | ControllerEvent::HomeSectionPrefetched { .. }
                 | ControllerEvent::ServerDiscovery { .. }
                 | ControllerEvent::CoverReady { .. }
-                | ControllerEvent::CoverUnavailable { .. } => {}
+                | ControllerEvent::CoverUnavailable { .. }
+                | ControllerEvent::CoverDeferred { .. } => {}
                 ControllerEvent::Snapshot(_)
                 | ControllerEvent::LibrarySyncStatus(_)
                 | ControllerEvent::LibraryDelta(_)

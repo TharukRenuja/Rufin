@@ -123,6 +123,12 @@ impl Shell {
         self: &Rc<Self>,
         request: CoverPathLookupRequest,
     ) {
+        if request.intent != CoverPathLookupIntent::Warm {
+            record_visible_cover_request(
+                &mut self.state.cover_visible_requests.borrow_mut(),
+                request.clone(),
+            );
+        }
         let CoverPathLookupRequest {
             key,
             image_ref,
@@ -287,6 +293,7 @@ impl Shell {
     ) {
         let Some(path) = path else {
             if self.should_fetch_cover(&key, &image_ref, fetch_size) {
+                self.mark_cover_request_state(&key, CoverRequestState::Fetching);
                 self.request_cover_for_key(key, image_ref, fetch_size);
                 return;
             }
@@ -296,6 +303,7 @@ impl Shell {
         self.state.cover_unavailable.borrow_mut().remove(&key);
 
         if !self.cover_binding_has_live(&key) {
+            self.state.cover_visible_requests.borrow_mut().remove(&key);
             return;
         }
 
@@ -306,6 +314,7 @@ impl Shell {
                 cover_decode_size(pending_size, fetch_size).max(size)
             })
             .unwrap_or(size);
+        self.mark_cover_request_state(&key, CoverRequestState::Decoding);
         self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
     }
     fn should_fetch_cover(&self, key: &str, image_ref: &ImageRef, fetch_size: u32) -> bool {
@@ -347,9 +356,12 @@ impl Shell {
         ) == VisibleCoverCacheMissAction::Fetch
     }
     fn request_cover_for_key(&self, key: String, image_ref: ImageRef, fetch_size: u32) {
-        self.state.cover_fetches.borrow_mut().insert(key.clone());
-        self.controller
-            .request_cover_for_key(key, image_ref, fetch_size);
+        if self
+            .controller
+            .request_cover_for_key(key.clone(), image_ref, fetch_size)
+        {
+            self.state.cover_fetches.borrow_mut().insert(key);
+        }
     }
     pub(in crate::ui) fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
         self.state.cover_fetches.borrow_mut().remove(key);
@@ -363,6 +375,8 @@ impl Shell {
             .unwrap_or(GRID_COVER_SIZE as i32);
         if let Some(cover) = self.cloned_decoded_cover(key, size) {
             self.touch_decoded_cover(key, CoverDecodePriority::Visible);
+            self.mark_cover_request_state(key, CoverRequestState::Ready);
+            self.state.cover_visible_requests.borrow_mut().remove(key);
             self.state
                 .startup_cover_prime_pending
                 .borrow_mut()
@@ -379,6 +393,7 @@ impl Shell {
             apply_pixbuf_to_bindings(bindings, cover.pixbuf);
             return;
         }
+        self.mark_cover_request_state(key, CoverRequestState::Decoding);
         self.start_cover_decode_from_path(
             key.to_string(),
             path.to_path_buf(),
@@ -388,6 +403,8 @@ impl Shell {
     }
     pub(in crate::ui) fn apply_cover_unavailable(self: &Rc<Self>, key: &str) {
         self.state.cover_fetches.borrow_mut().remove(key);
+        self.mark_cover_request_state(key, CoverRequestState::FinalMissing);
+        self.state.cover_visible_requests.borrow_mut().remove(key);
         self.state
             .cover_unavailable
             .borrow_mut()
@@ -419,6 +436,31 @@ impl Shell {
             {
                 cleared = cleared.saturating_add(1);
             }
+        }
+    }
+    pub(in crate::ui) fn apply_cover_deferred(self: &Rc<Self>, key: &str) {
+        self.state.cover_fetches.borrow_mut().remove(key);
+        self.mark_cover_request_state(key, CoverRequestState::Deferred);
+        let request = self
+            .state
+            .cover_visible_requests
+            .borrow()
+            .get(key)
+            .map(|record| record.request.clone());
+        if request.is_none() && !self.cover_binding_has_live(key) {
+            return;
+        }
+        let Some(request) = request else {
+            return;
+        };
+        let shell = Rc::clone(self);
+        glib::timeout_add_local_once(Duration::from_millis(500), move || {
+            shell.start_cached_cover_path_lookup(request);
+        });
+    }
+    pub(in crate::ui) fn mark_cover_request_state(&self, key: &str, state: CoverRequestState) {
+        if let Some(record) = self.state.cover_visible_requests.borrow_mut().get_mut(key) {
+            record.state = state;
         }
     }
     pub(in crate::ui) fn reconcile_startup_cover_prime_pending(&self) {
@@ -541,10 +583,12 @@ impl Shell {
             return false;
         };
         self.touch_decoded_cover(key, priority);
+        self.mark_cover_request_state(key, CoverRequestState::Ready);
         self.state
             .startup_cover_prime_pending
             .borrow_mut()
             .remove(key);
+        self.state.cover_visible_requests.borrow_mut().remove(key);
         self.state
             .first_run_cover_prime_pending
             .borrow_mut()

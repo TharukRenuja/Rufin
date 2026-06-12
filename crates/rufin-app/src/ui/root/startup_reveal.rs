@@ -15,10 +15,7 @@ pub(in crate::ui) fn startup_route_reveal_action(
     if elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MAX_MS) {
         return StartupRevealAction::RevealExpired;
     }
-    if width_ready
-        && pending_covers == 0
-        && elapsed >= Duration::from_millis(STARTUP_ROUTE_REVEAL_MIN_MS)
-    {
+    if width_ready && pending_covers == 0 {
         return StartupRevealAction::RevealReady;
     }
     StartupRevealAction::Wait
@@ -203,9 +200,6 @@ impl Shell {
         let jobs = startup_cover_prime_jobs(self);
         let mut pending = HashSet::new();
         for job in jobs {
-            if external_metadata::is_external_image_ref(&job.image_ref) {
-                continue;
-            }
             if self
                 .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
                 .is_some()
@@ -485,9 +479,6 @@ impl Shell {
 
         let mut pending = HashSet::new();
         for job in jobs {
-            if external_metadata::is_external_image_ref(&job.image_ref) {
-                continue;
-            }
             if self
                 .decoded_cover_for_ref(&job.image_ref, job.fetch_size, job.size)
                 .is_some()

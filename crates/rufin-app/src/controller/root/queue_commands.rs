@@ -462,8 +462,8 @@ fn normalize_store_backed_window_tracks(
         .iter()
         .map(|item| item.track.clone())
         .collect::<Vec<_>>();
-    scrub_source_track_image_refs(saved, &mut tracks);
-    external_metadata::normalize_tracks(&mut tracks, settings);
+    scrub_selected_track_image_refs(saved, settings, &mut tracks);
+    cover_art_policy::bind_tracks(&mut tracks, settings);
     track_album_refs(store, saved, &mut tracks, &[])?;
     for (item, track) in window.items.iter_mut().zip(tracks) {
         item.track = track;

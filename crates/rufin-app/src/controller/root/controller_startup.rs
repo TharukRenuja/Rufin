@@ -95,26 +95,28 @@ fn start_sync_thread_inner(
                 if !sync_target_is_current(&context.store, &server_id) {
                     return;
                 }
-                refresh_queue_refs(&context, &saved);
-                start_album_identity_lookup(&context, &saved);
-                covers::start_cover_prefetch(covers::ExternalCoverPrefetchRequest {
-                    store: context.store.clone(),
-                    runtime: Arc::clone(&context.runtime),
-                    secrets: Arc::clone(&context.secrets),
-                    events: context.events.clone(),
-                    cover_in_flight: Arc::clone(&context.cover_in_flight),
-                    external_cover_retry_generation: Arc::clone(
-                        &context.external_cover_retry_generation,
-                    ),
-                    retry_generation: context
-                        .external_cover_retry_generation
-                        .load(Ordering::SeqCst),
-                    external_cover_prefetch_in_flight: Arc::clone(
-                        &context.external_cover_prefetch_in_flight,
-                    ),
-                    cover_slots: Arc::clone(&context.cover_slots),
-                    saved: saved.clone(),
-                });
+                if outcome.post_sync_work {
+                    refresh_queue_refs(&context, &saved);
+                    start_album_identity_lookup(&context, &saved);
+                    covers::start_cover_prefetch(covers::ExternalCoverPrefetchRequest {
+                        store: context.store.clone(),
+                        runtime: Arc::clone(&context.runtime),
+                        secrets: Arc::clone(&context.secrets),
+                        events: context.events.clone(),
+                        cover_in_flight: Arc::clone(&context.cover_in_flight),
+                        external_cover_retry_generation: Arc::clone(
+                            &context.external_cover_retry_generation,
+                        ),
+                        retry_generation: context
+                            .external_cover_retry_generation
+                            .load(Ordering::SeqCst),
+                        external_cover_prefetch_in_flight: Arc::clone(
+                            &context.external_cover_prefetch_in_flight,
+                        ),
+                        cover_slots: Arc::clone(&context.cover_slots),
+                        saved: saved.clone(),
+                    });
+                }
                 if skip_sync_snapshots {
                     send_library_sync_status(
                         &context.store,
@@ -151,16 +153,21 @@ fn start_sync_thread_inner(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::controller) struct SyncJobOutcome {
     pub(in crate::controller) delta: LibraryDelta,
+    pub(in crate::controller) post_sync_work: bool,
 }
 impl SyncJobOutcome {
     fn unchanged() -> Self {
         Self {
             delta: LibraryDelta::default(),
+            post_sync_work: false,
         }
     }
 
     fn changed(delta: LibraryDelta) -> Self {
-        Self { delta }
+        Self {
+            delta,
+            post_sync_work: true,
+        }
     }
 }
 
@@ -854,6 +861,7 @@ struct LocalProviderSnapshot {
 }
 #[derive(Clone, Debug, Default)]
 struct LocalAggregateDirty {
+    track_ids: HashSet<TrackId>,
     album_ids: HashSet<AlbumId>,
     artist_ids: HashSet<ArtistId>,
     album_artist_ids: HashSet<ArtistId>,
@@ -861,7 +869,8 @@ struct LocalAggregateDirty {
 }
 impl LocalAggregateDirty {
     fn is_empty(&self) -> bool {
-        self.album_ids.is_empty()
+        self.track_ids.is_empty()
+            && self.album_ids.is_empty()
             && self.artist_ids.is_empty()
             && self.album_artist_ids.is_empty()
             && self.genre_names.is_empty()
@@ -955,22 +964,18 @@ fn local_aggregate_image_dirty(
     server_id: &ServerId,
     snapshot: &LocalProviderSnapshot,
 ) -> Result<LocalAggregateDirty, String> {
-    let cached_albums = load_all_cached_albums(store, server_id)?;
-    let cached_artists = load_all_cached_artists(store, server_id, false)?;
-    let cached_album_artists = load_all_cached_artists(store, server_id, true)?;
-    let cached_album_refs = cached_albums
-        .into_iter()
-        .map(|album| (album.id, album.image_ref))
-        .collect::<HashMap<_, _>>();
-    let cached_artist_refs = cached_artists
-        .into_iter()
-        .map(|artist| (artist.id, artist.image_ref))
-        .collect::<HashMap<_, _>>();
-    let cached_album_artist_refs = cached_album_artists
-        .into_iter()
-        .map(|artist| (artist.id, artist.image_ref))
-        .collect::<HashMap<_, _>>();
+    let cached_track_refs = store.with_store(|store| store.load_raw_track_image_refs(server_id))?;
+    let cached_album_refs = store.with_store(|store| store.load_raw_album_image_refs(server_id))?;
+    let cached_artist_refs =
+        store.with_store(|store| store.load_raw_artist_image_refs(server_id, false))?;
+    let cached_album_artist_refs =
+        store.with_store(|store| store.load_raw_artist_image_refs(server_id, true))?;
     let mut dirty = LocalAggregateDirty::default();
+    for track in &snapshot.tracks {
+        if cached_track_refs.get(&track.id) != Some(&track.image_ref) {
+            dirty.track_ids.insert(track.id.clone());
+        }
+    }
     for album in &snapshot.albums {
         if cached_album_refs.get(&album.id) != Some(&album.image_ref) {
             dirty.album_ids.insert(album.id.clone());
@@ -988,6 +993,7 @@ fn local_aggregate_image_dirty(
     }
     Ok(dirty)
 }
+
 fn local_library_delta(
     scan: &LocalManifestScan,
     snapshot: LocalProviderSnapshot,
@@ -1008,6 +1014,10 @@ fn local_library_delta(
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
+    let mut artwork_track_ids = artwork_track_ids;
+    artwork_track_ids.extend(aggregate_dirty.track_ids.into_iter().filter(|track_id| {
+        !changed_track_ids.contains(track_id) && !metadata_track_ids.contains(track_id)
+    }));
     let mut dirty_album_ids = scan.dirty_album_ids.iter().cloned().collect::<HashSet<_>>();
     dirty_album_ids.extend(aggregate_dirty.album_ids);
     let mut dirty_artist_ids = scan
@@ -1096,37 +1106,6 @@ fn local_library_delta(
         home_sections: snapshot.home_sections,
         manifest_entries: scan.entries.clone(),
         cue_track_sources: scan.cue_track_sources.clone(),
-    }
-}
-fn load_all_cached_albums(store: &StoreHandle, server_id: &ServerId) -> Result<Vec<Album>, String> {
-    let mut albums = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page = store.with_store(|store| store.load_albums(server_id, offset, PAGE_SIZE))?;
-        let item_count = page.items.len();
-        albums.extend(page.items);
-        offset += item_count;
-        if sync_page_finished(item_count, page.total, offset) {
-            return Ok(albums);
-        }
-    }
-}
-fn load_all_cached_artists(
-    store: &StoreHandle,
-    server_id: &ServerId,
-    album_artist: bool,
-) -> Result<Vec<Artist>, String> {
-    let mut artists = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page = store
-            .with_store(|store| store.load_artists(server_id, album_artist, offset, PAGE_SIZE))?;
-        let item_count = page.items.len();
-        artists.extend(page.items);
-        offset += item_count;
-        if sync_page_finished(item_count, page.total, offset) {
-            return Ok(artists);
-        }
     }
 }
 pub(in crate::controller) fn refresh_playlists_for_saved(
@@ -1246,6 +1225,22 @@ pub(in crate::controller) async fn sync_local_provider_with_events(
     )
     .await
     .map(|_| ())
+}
+#[cfg(test)]
+pub(in crate::controller) async fn sync_local_provider_outcome(
+    store: &StoreHandle,
+    server_id: &ServerId,
+    provider: &LocalProvider,
+) -> Result<SyncJobOutcome, String> {
+    let generation = store.with_store(|store| store.begin_sync(server_id))?;
+    sync_local_provider_store_generation(
+        store,
+        server_id,
+        provider,
+        generation,
+        SyncProgressReporter::silent(provider),
+    )
+    .await
 }
 #[instrument(skip(store, provider, progress), fields(server_id = %server_id.as_str(), generation))]
 async fn sync_provider_generation(

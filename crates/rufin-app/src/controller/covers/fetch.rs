@@ -17,6 +17,8 @@ use crate::controller::{
 };
 use crate::external_metadata;
 
+use super::cover_error_is_transient;
+
 pub(super) fn fetch_and_cache_cover(
     store: &StoreHandle,
     runtime: &Runtime,
@@ -97,16 +99,28 @@ fn save_cover_bytes(
     let temp_path = path.with_extension("tmp");
     fs::write(&temp_path, normalize_cover_bytes(bytes, size)).map_err(|error| error.to_string())?;
     fs::rename(&temp_path, &path).map_err(|error| error.to_string())?;
+    let item_id = image_ref.item_id.clone();
+    let path_string = path.to_string_lossy().to_string();
 
-    store.with_store(|store| {
+    let saved_entry = store.with_store(|store| {
         store.save_cover_cache_entry(&CoverCacheEntry {
             server_id: saved.server.id.clone(),
-            item_id: image_ref.item_id,
-            image_tag: tag,
+            item_id: item_id.clone(),
+            image_tag: tag.clone(),
             size,
-            path: path.to_string_lossy().to_string(),
-        })
-    })?;
+            path: path_string.clone(),
+        })?;
+        if external_metadata::is_external_image_ref(&image_ref) {
+            store.save_external_cover_content_path(&item_id, &tag, size, &path_string)?;
+        }
+        Ok(())
+    });
+    if let Err(error) = saved_entry {
+        if cover_error_is_transient(&error) {
+            return Ok(path);
+        }
+        return Err(error);
+    }
 
     Ok(path)
 }

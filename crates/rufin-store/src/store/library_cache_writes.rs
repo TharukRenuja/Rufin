@@ -245,6 +245,11 @@ impl Store {
     ) -> StoreResult<Vec<CoverCacheEntry>> {
         self.write_batch(|_| {
             self.prune_missing_items(server_id, generation)?;
+            self.bind_album_fallback_image_refs(server_id)?;
+            self.bind_album_external_identity_image_refs(server_id)?;
+            self.bind_track_album_fallback_image_refs(server_id)?;
+            self.bind_artist_fallback_image_refs(server_id, false)?;
+            self.bind_artist_fallback_image_refs(server_id, true)?;
             self.refresh_collection_cover_refs(server_id)?;
             self.refresh_smart_playlist_cover_refs(server_id)?;
             let pruned_cover_entries = self.prune_stale_image_cache_entries(server_id)?;
@@ -262,6 +267,23 @@ impl Store {
             Ok(pruned_cover_entries)
         })
     }
+
+    pub fn repair_artwork_projections(&self, server_id: &ServerId) -> StoreResult<usize> {
+        self.write_batch(|_| {
+            let mut changed = 0;
+            changed += self.bind_album_fallback_image_refs(server_id)?;
+            changed += self.bind_album_external_identity_image_refs(server_id)?;
+            changed += self.bind_track_album_fallback_image_refs(server_id)?;
+            changed += self.bind_artist_fallback_image_refs(server_id, false)?;
+            changed += self.bind_artist_fallback_image_refs(server_id, true)?;
+            if changed > 0 {
+                self.refresh_collection_cover_refs(server_id)?;
+                self.refresh_smart_playlist_cover_refs(server_id)?;
+            }
+            Ok(changed)
+        })
+    }
+
     pub fn fail_sync(&self, server_id: &ServerId, error: &str) -> StoreResult<()> {
         self.connection.execute(
             "
@@ -685,6 +707,11 @@ impl Store {
                 .unwrap_or(0);
             repair_linked_artists(connection, server_id, generation)?;
             repair_linked_genres(connection, server_id, generation)?;
+            self.bind_album_fallback_image_refs(server_id)?;
+            self.bind_album_external_identity_image_refs(server_id)?;
+            self.bind_track_album_fallback_image_refs(server_id)?;
+            self.bind_artist_fallback_image_refs(server_id, false)?;
+            self.bind_artist_fallback_image_refs(server_id, true)?;
             connection.execute(
                 "
                 UPDATE albums

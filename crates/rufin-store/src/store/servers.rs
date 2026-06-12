@@ -286,6 +286,58 @@ pub(super) fn artist_fallback_image_refs_sql(
                         ON a.server_id = aal.server_id AND a.album_id = aal.album_id
                     WHERE aal.server_id = ?
                       AND a.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT w.artist_id, a.image_item_id, a.image_tag,
+                           2 AS priority, a.year, a.title
+                    FROM wanted w
+                    JOIN tracks t
+                        ON t.artist_id = w.artist_id
+                    JOIN albums a
+                        ON a.server_id = t.server_id AND a.album_id = t.album_id
+                    WHERE t.server_id = ?
+                      AND a.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT w.artist_id, a.image_item_id, a.image_tag,
+                           3 AS priority, a.year, a.title
+                    FROM wanted w
+                    JOIN track_artist_links tal
+                        ON tal.artist_id = w.artist_id
+                    JOIN albums a
+                        ON a.server_id = tal.server_id AND a.album_id = tal.album_id
+                    WHERE tal.server_id = ?
+                      AND a.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT w.artist_id, t.image_item_id, t.image_tag,
+                           4 AS priority, t.year, t.title
+                    FROM wanted w
+                    JOIN tracks t
+                        ON t.artist_id = w.artist_id
+                    WHERE t.server_id = ?
+                      AND t.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT w.artist_id, t.image_item_id, t.image_tag,
+                           5 AS priority, t.year, t.title
+                    FROM wanted w
+                    JOIN track_artist_links tal
+                        ON tal.artist_id = w.artist_id
+                    JOIN tracks t
+                        ON t.server_id = tal.server_id AND t.track_id = tal.track_id
+                    WHERE tal.server_id = ?
+                      AND t.image_item_id IS NOT NULL
+                    UNION ALL
+                    SELECT w.artist_id, a.image_item_id, a.image_tag,
+                           6 AS priority, a.year, a.title
+                    FROM wanted w
+                    JOIN album_artists aa
+                        ON aa.artist_id = w.artist_id
+                    JOIN album_artist_links aal
+                        ON aal.server_id = aa.server_id
+                       AND aal.name = aa.name
+                       AND aal.artist_id <> w.artist_id
+                    JOIN albums a
+                        ON a.server_id = aal.server_id AND a.album_id = aal.album_id
+                    WHERE aa.server_id = ?
+                      AND a.image_item_id IS NOT NULL
                  )
             SELECT artist_id, image_item_id, image_tag
             FROM candidates
@@ -335,105 +387,28 @@ pub(super) fn artist_fallback_image_refs_sql(
                     ON a.server_id = aal.server_id AND a.album_id = aal.album_id
                 WHERE aal.server_id = ?
                   AND a.image_item_id IS NOT NULL
+                UNION ALL
+                SELECT w.artist_id, t.image_item_id, t.image_tag,
+                       4 AS priority, t.year, t.title
+                FROM wanted w
+                JOIN tracks t
+                    ON t.artist_id = w.artist_id
+                WHERE t.server_id = ?
+                  AND t.image_item_id IS NOT NULL
+                UNION ALL
+                SELECT w.artist_id, t.image_item_id, t.image_tag,
+                       5 AS priority, t.year, t.title
+                FROM wanted w
+                JOIN track_artist_links tal
+                    ON tal.artist_id = w.artist_id
+                JOIN tracks t
+                    ON t.server_id = tal.server_id AND t.track_id = tal.track_id
+                WHERE tal.server_id = ?
+                  AND t.image_item_id IS NOT NULL
              )
         SELECT artist_id, image_item_id, image_tag
         FROM candidates
         ORDER BY priority, year, title COLLATE NOCASE
-        "
-    )
-}
-pub(super) fn artist_fallback_albums_sql(album_artist: bool, values_placeholders: &str) -> String {
-    if album_artist {
-        return format!(
-            "
-            WITH wanted(artist_id) AS (VALUES {values_placeholders}),
-                 candidates AS (
-                    SELECT w.artist_id AS fallback_artist_id, a.album_id, a.title, a.artist,
-                           a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
-                           a.play_count, a.user_rating, a.track_count, a.duration_seconds,
-                           a.favorite, a.color_seed, a.image_item_id, a.image_tag,
-                           0 AS priority
-                    FROM wanted w
-                    JOIN albums a
-                        ON a.artist_id = w.artist_id
-                    WHERE a.server_id = ?
-                    UNION ALL
-                    SELECT w.artist_id AS fallback_artist_id, a.album_id, a.title, a.artist,
-                           a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
-                           a.play_count, a.user_rating, a.track_count, a.duration_seconds,
-                           a.favorite, a.color_seed, a.image_item_id, a.image_tag,
-                           1 AS priority
-                    FROM wanted w
-                    JOIN album_artist_links aal
-                        ON aal.artist_id = w.artist_id
-                    JOIN albums a
-                        ON a.server_id = aal.server_id AND a.album_id = aal.album_id
-                    WHERE aal.server_id = ?
-                 )
-            SELECT album_id, title, artist, artist_id, year, release_date, date_added,
-                   last_played, play_count, user_rating, track_count, duration_seconds,
-                   favorite, color_seed, image_item_id, image_tag, fallback_artist_id
-            FROM candidates
-            ORDER BY fallback_artist_id, priority, year, title COLLATE NOCASE
-            "
-        );
-    }
-
-    format!(
-        "
-        WITH wanted(artist_id) AS (VALUES {values_placeholders}),
-             candidates AS (
-                SELECT w.artist_id AS fallback_artist_id, a.album_id, a.title, a.artist,
-                       a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
-                       a.play_count, a.user_rating, a.track_count, a.duration_seconds,
-                       a.favorite, a.color_seed, a.image_item_id, a.image_tag,
-                       0 AS priority
-                FROM wanted w
-                JOIN albums a
-                    ON a.artist_id = w.artist_id
-                WHERE a.server_id = ?
-                UNION ALL
-                SELECT w.artist_id AS fallback_artist_id, a.album_id, a.title, a.artist,
-                       a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
-                       a.play_count, a.user_rating, a.track_count, a.duration_seconds,
-                       a.favorite, a.color_seed, a.image_item_id, a.image_tag,
-                       1 AS priority
-                FROM wanted w
-                JOIN tracks t
-                    ON t.artist_id = w.artist_id
-                JOIN albums a
-                    ON a.server_id = t.server_id AND a.album_id = t.album_id
-                WHERE t.server_id = ?
-                UNION ALL
-                SELECT w.artist_id AS fallback_artist_id, a.album_id, a.title, a.artist,
-                       a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
-                       a.play_count, a.user_rating, a.track_count, a.duration_seconds,
-                       a.favorite, a.color_seed, a.image_item_id, a.image_tag,
-                       2 AS priority
-                FROM wanted w
-                JOIN track_artist_links tal
-                    ON tal.artist_id = w.artist_id
-                JOIN albums a
-                    ON a.server_id = tal.server_id AND a.album_id = tal.album_id
-                WHERE tal.server_id = ?
-                UNION ALL
-                SELECT w.artist_id AS fallback_artist_id, a.album_id, a.title, a.artist,
-                       a.artist_id, a.year, a.release_date, a.date_added, a.last_played,
-                       a.play_count, a.user_rating, a.track_count, a.duration_seconds,
-                       a.favorite, a.color_seed, a.image_item_id, a.image_tag,
-                       3 AS priority
-                FROM wanted w
-                JOIN album_artist_links aal
-                    ON aal.artist_id = w.artist_id
-                JOIN albums a
-                    ON a.server_id = aal.server_id AND a.album_id = aal.album_id
-                WHERE aal.server_id = ?
-             )
-        SELECT album_id, title, artist, artist_id, year, release_date, date_added,
-               last_played, play_count, user_rating, track_count, duration_seconds,
-               favorite, color_seed, image_item_id, image_tag, fallback_artist_id
-        FROM candidates
-        ORDER BY fallback_artist_id, priority, year, title COLLATE NOCASE
         "
     )
 }

@@ -6,6 +6,7 @@ impl Shell {
         self.state.cover_unavailable.borrow_mut().clear();
         self.state.cover_path_lookups.borrow_mut().clear();
         self.state.cover_fetches.borrow_mut().clear();
+        self.state.cover_visible_requests.borrow_mut().clear();
         self.state.cover_decode_queue.borrow_mut().clear();
         self.state.startup_cover_prime_pending.borrow_mut().clear();
         self.state

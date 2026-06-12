@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -227,7 +228,7 @@ impl AppController {
         });
     }
 
-    pub fn request_cover_for_key(&self, key: String, image_ref: ImageRef, size: u32) {
+    pub fn request_cover_for_key(&self, key: String, image_ref: ImageRef, size: u32) -> bool {
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
@@ -237,7 +238,7 @@ impl AppController {
         let external_cover_retry_generation = Arc::clone(&self.external_cover_retry_generation);
         let retry_generation = external_cover_retry_generation.load(Ordering::SeqCst);
         if !mark_cover_in_flight(&self.cover_in_flight, &key, retry_generation) {
-            return;
+            return false;
         }
         thread::spawn(move || {
             let is_external_cover = external_metadata::is_external_image_ref(&image_ref);
@@ -246,7 +247,7 @@ impl AppController {
                 .tag
                 .clone()
                 .unwrap_or_else(|| IMAGE_TAG_UNTAGGED.to_string());
-            let result = (|| -> Result<CoverRequestOutcome, String> {
+            let result = defer_locked_cover_prepare((|| -> Result<CoverRequestOutcome, String> {
                 if let Some(path) = cached_cover_path_for_key(&key) {
                     return Ok(CoverRequestOutcome::Ready(path));
                 }
@@ -294,8 +295,14 @@ impl AppController {
                         });
                     }
 
-                    match fetch_and_cache_cover(&store, &runtime, &secrets, &saved, image_ref, size)
-                    {
+                    match fetch_and_cache_cover(
+                        &store,
+                        &runtime,
+                        &secrets,
+                        &saved,
+                        image_ref.clone(),
+                        size,
+                    ) {
                         Ok(path) => Ok(CoverRequestOutcome::Ready(path)),
                         Err(error)
                             if cover_error_is_terminal(
@@ -343,32 +350,60 @@ impl AppController {
                 })();
                 release_cover_slot(&cover_slots);
                 result
-            })();
+            })());
 
             unmark_cover_in_flight_generation(&cover_in_flight, &key, retry_generation);
-            match result {
-                Ok(CoverRequestOutcome::Ready(path)) => {
-                    let _sent = events.send(ControllerEvent::CoverReady { key, path });
-                }
-                Ok(CoverRequestOutcome::TerminalMissing {
-                    external_retry_generation,
-                }) => {
-                    if external_retry_generation.is_some_and(|generation| {
-                        !cover_retry_check(&external_cover_retry_generation, generation)
-                    }) {
-                        return;
-                    }
-                    let _sent = events.send(ControllerEvent::CoverUnavailable {
-                        key,
-                        external_retry_generation,
-                    });
-                }
-                Ok(CoverRequestOutcome::Deferred) => {}
-                Err(error) => {
-                    warn!(%error, "failed to prepare cover");
-                }
-            }
+            emit_cover_outcome(&events, &external_cover_retry_generation, key, result);
         });
+        true
+    }
+}
+
+fn defer_locked_cover_prepare(
+    result: Result<CoverRequestOutcome, String>,
+) -> Result<CoverRequestOutcome, String> {
+    if let Err(error) = &result
+        && cover_error_is_transient(error)
+    {
+        debug!(%error, "deferred cover preparation while store is busy");
+        return Ok(CoverRequestOutcome::Deferred);
+    }
+    result
+}
+
+fn cover_error_is_transient(error: &str) -> bool {
+    error.contains("database is locked") || error.contains("database table is locked")
+}
+
+fn emit_cover_outcome(
+    events: &Sender<ControllerEvent>,
+    external_cover_retry_generation: &AtomicU64,
+    key: String,
+    result: Result<CoverRequestOutcome, String>,
+) {
+    match result {
+        Ok(CoverRequestOutcome::Ready(path)) => {
+            let _sent = events.send(ControllerEvent::CoverReady { key, path });
+        }
+        Ok(CoverRequestOutcome::TerminalMissing {
+            external_retry_generation,
+        }) => {
+            if external_retry_generation.is_some_and(|generation| {
+                !cover_retry_check(external_cover_retry_generation, generation)
+            }) {
+                return;
+            }
+            let _sent = events.send(ControllerEvent::CoverUnavailable {
+                key,
+                external_retry_generation,
+            });
+        }
+        Ok(CoverRequestOutcome::Deferred) => {
+            let _sent = events.send(ControllerEvent::CoverDeferred { key });
+        }
+        Err(error) => {
+            warn!(%error, "failed to prepare cover");
+        }
     }
 }
 
@@ -388,10 +423,14 @@ fn cover_error_is_terminal(provider: &str, is_external_cover: bool, error: &str)
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_cover_in_flight, cover_error_is_terminal, mark_cover_in_flight,
+        CoverRequestOutcome, clear_cover_in_flight, cover_error_is_terminal,
+        cover_error_is_transient, emit_cover_outcome, mark_cover_in_flight,
         unmark_cover_in_flight_generation,
     };
+    use crate::controller::ControllerEvent;
     use std::collections::HashMap;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::mpsc::channel;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -419,6 +458,35 @@ mod tests {
             rufin_provider_local::LOCAL_PROVIDER_ID,
             false,
             "No such file or directory (os error 2)"
+        ));
+    }
+
+    #[test]
+    fn cover_transient_error() {
+        assert!(cover_error_is_transient(
+            "sqlite failed: database is locked"
+        ));
+        assert!(cover_error_is_transient(
+            "sqlite failed: database table is locked"
+        ));
+        assert!(!cover_error_is_transient("cover response was empty"));
+    }
+
+    #[test]
+    fn cover_emit_deferred() {
+        let (events, receiver) = channel();
+        let key = "server::cover::256".to_string();
+
+        emit_cover_outcome(
+            &events,
+            &AtomicU64::new(0),
+            key.clone(),
+            Ok(CoverRequestOutcome::Deferred),
+        );
+
+        assert!(matches!(
+            receiver.recv().expect("cover event"),
+            ControllerEvent::CoverDeferred { key: event_key } if event_key == key
         ));
     }
 

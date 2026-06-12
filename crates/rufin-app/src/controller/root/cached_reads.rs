@@ -172,6 +172,7 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
     let sync_state = store
         .with_store(|store| store.sync_state(&saved.server.id))
         .ok();
+    store.with_store(|store| store.repair_artwork_projections(&saved.server.id))?;
     store.with_store(|store| store.ensure_collection_cover_refs(&saved.server.id))?;
     let mut home_sections = store.with_store(|store| store.load_home_sections(&saved.server.id))?;
     let mut prefetched_explore = store.with_store(|store| {
@@ -213,23 +214,17 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         &mut genres,
         &mut playlists,
         &mut favorites,
+        external_metadata::enabled(&metadata_settings),
     );
-    external_metadata::normalize_home_sections(&mut home_sections, &metadata_settings);
+    cover_art_policy::bind_home_sections(&mut home_sections, &metadata_settings);
     if let Some(section) = &mut prefetched_explore {
-        external_metadata::normalize_home_section(section, &metadata_settings);
+        cover_art_policy::bind_home_section(section, &metadata_settings);
     }
-    external_metadata::normalize_albums(&mut albums, &metadata_settings);
-    external_metadata::normalize_tracks(&mut tracks, &metadata_settings);
-    normalize_artist_collection_image_refs(store, &saved, &mut artists, false, &metadata_settings)?;
-    normalize_artist_collection_image_refs(
-        store,
-        &saved,
-        &mut album_artists,
-        true,
-        &metadata_settings,
-    )?;
-    normalize_genre_collection_image_refs(store, &saved, &mut genres, &metadata_settings)?;
-    external_metadata::normalize_tracks(&mut favorites, &metadata_settings);
+    cover_art_policy::bind_albums(&mut albums, &metadata_settings);
+    cover_art_policy::bind_tracks(&mut tracks, &metadata_settings);
+    cover_art_policy::bind_artists(&mut artists, &metadata_settings);
+    cover_art_policy::bind_artists(&mut album_artists, &metadata_settings);
+    cover_art_policy::bind_tracks(&mut favorites, &metadata_settings);
     scrub_snapshot_image_refs(
         &saved,
         &mut home_sections,
@@ -241,6 +236,7 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         &mut genres,
         &mut playlists,
         &mut favorites,
+        external_metadata::enabled(&metadata_settings),
     );
     album_track_refs(store, &saved, &mut albums)?;
     track_album_refs(store, &saved, &mut tracks, &albums)?;
@@ -333,118 +329,11 @@ pub(in crate::controller) fn normalize_artist_detail_image_refs(
     detail: &mut CachedArtistDetail,
     settings: &AppSettings,
 ) {
-    external_metadata::normalize_artist(&mut detail.artist, settings);
-    external_metadata::normalize_albums(&mut detail.albums, settings);
-    external_metadata::normalize_albums(&mut detail.appears_on, settings);
-    external_metadata::normalize_tracks(&mut detail.tracks, settings);
-    if detail.artist.image_ref.is_none() {
-        detail.artist.image_ref =
-            artist_fallback_image_ref(&detail.albums, &detail.appears_on, &detail.tracks);
-    }
-    external_metadata::normalize_artist(&mut detail.artist, settings);
-}
-pub(in crate::controller) fn normalize_artist_collection_image_refs(
-    store: &StoreHandle,
-    saved: &SavedServer,
-    artists: &mut [Artist],
-    album_artist: bool,
-    settings: &AppSettings,
-) -> Result<(), String> {
-    external_metadata::normalize_artists(artists, settings);
-    let missing_artist_ids = artists
-        .iter()
-        .filter(|artist| artist.image_ref.is_none())
-        .map(|artist| artist.id.clone())
-        .collect::<Vec<_>>();
-    if missing_artist_ids.is_empty() {
-        return Ok(());
-    }
-
-    let mut fallback_albums = store.with_store(|store| {
-        store.load_artist_fallback_albums(&saved.server.id, album_artist, &missing_artist_ids)
-    })?;
-    for album in fallback_albums.values_mut() {
-        scrub_source_image_ref(saved, &mut album.image_ref);
-    }
-    artist_album_fallback(artists, fallback_albums, settings);
-    Ok(())
-}
-pub(in crate::controller) fn artist_album_fallback(
-    artists: &mut [Artist],
-    mut fallback_albums: HashMap<ArtistId, Album>,
-    settings: &AppSettings,
-) {
-    for artist in artists {
-        if artist.image_ref.is_some() {
-            continue;
-        }
-        let Some(mut album) = fallback_albums.remove(&artist.id) else {
-            continue;
-        };
-        external_metadata::normalize_album(&mut album, settings);
-        artist.image_ref = album.image_ref;
-        external_metadata::normalize_artist(artist, settings);
-    }
-}
-pub(in crate::controller) fn normalize_genre_collection_image_refs(
-    store: &StoreHandle,
-    saved: &SavedServer,
-    genres: &mut [Genre],
-    settings: &AppSettings,
-) -> Result<(), String> {
-    if !external_metadata::enabled(settings) {
-        return Ok(());
-    }
-    let missing = genres
-        .iter()
-        .filter(|genre| genre.image_ref.is_none() && genre.image_refs.is_empty())
-        .cloned()
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let mut fallback_albums =
-        store.with_store(|store| store.load_genre_fallback_albums(&saved.server.id, &missing))?;
-    for album in fallback_albums.values_mut() {
-        scrub_source_image_ref(saved, &mut album.image_ref);
-        external_metadata::normalize_album(album, settings);
-    }
-    let cached_refs = store.with_store(|store| {
-        let mut cached_refs = HashMap::<GenreId, ImageRef>::new();
-        for (genre_id, album) in &fallback_albums {
-            let Some(image_ref) = album.image_ref.as_ref() else {
-                continue;
-            };
-            if !external_metadata::is_external_image_ref(image_ref) {
-                continue;
-            }
-            if cached_image_ref_exists(store, &saved.server.id, image_ref)? {
-                cached_refs.insert(genre_id.clone(), image_ref.clone());
-            }
-        }
-        Ok::<_, StoreError>(cached_refs)
-    })?;
-    for genre in genres {
-        if genre.image_ref.is_none()
-            && genre.image_refs.is_empty()
-            && let Some(image_ref) = cached_refs.get(&genre.id)
-        {
-            genre.image_ref = Some(image_ref.clone());
-        }
-    }
-    Ok(())
-}
-pub(in crate::controller) fn artist_fallback_image_ref(
-    albums: &[Album],
-    appears_on: &[Album],
-    tracks: &[Track],
-) -> Option<ImageRef> {
-    albums
-        .iter()
-        .chain(appears_on.iter())
-        .filter_map(|album| album.image_ref.clone())
-        .next()
-        .or_else(|| tracks.iter().find_map(|track| track.image_ref.clone()))
+    cover_art_policy::bind_artist(&mut detail.artist, settings);
+    cover_art_policy::bind_albums(&mut detail.albums, settings);
+    cover_art_policy::bind_albums(&mut detail.appears_on, settings);
+    cover_art_policy::bind_tracks(&mut detail.tracks, settings);
+    cover_art_policy::bind_artist(&mut detail.artist, settings);
 }
 pub(in crate::controller) fn track_album_refs(
     store: &StoreHandle,
@@ -481,9 +370,30 @@ pub(in crate::controller) fn track_album_refs(
         loaded.retain(|_, image_ref| source_image_ref_allowed(saved, image_ref));
         image_refs.extend(loaded);
     }
+    let missing_album_ids = tracks
+        .iter()
+        .map(|track| track.album_id.clone())
+        .filter(|album_id| !image_refs.contains_key(album_id))
+        .fold(Vec::<AlbumId>::new(), |mut ids, album_id| {
+            if !ids.iter().any(|existing| existing == &album_id) {
+                ids.push(album_id);
+            }
+            ids
+        });
+    if !missing_album_ids.is_empty() {
+        let mut loaded = store
+            .with_store(|store| store.load_albums_by_ids(&saved.server.id, &missing_album_ids))?;
+        for album in &mut loaded {
+            scrub_source_image_ref(saved, &mut album.image_ref);
+            cover_art_policy::bind_album(album, &settings);
+            if let Some(image_ref) = album.image_ref.clone() {
+                image_refs.insert(album.id.clone(), image_ref);
+            }
+        }
+    }
     for track in tracks {
         if let Some(image_ref) = image_refs.get(&track.album_id) {
-            external_metadata::normalize_track_with_album_ref(track, Some(image_ref), &settings);
+            cover_art_policy::bind_track_with_album_ref(track, Some(image_ref), &settings);
         }
     }
     Ok(())
@@ -496,18 +406,15 @@ pub(in crate::controller) fn album_track_refs(
     if saved.server.provider != LOCAL_PROVIDER_ID || albums.is_empty() {
         return Ok(());
     }
-    let album_ids = albums
-        .iter_mut()
-        .map(|album| {
-            scrub_source_image_ref(saved, &mut album.image_ref);
-            album.id.clone()
-        })
-        .fold(Vec::<AlbumId>::new(), |mut ids, album_id| {
+    let album_ids = albums.iter().map(|album| album.id.clone()).fold(
+        Vec::<AlbumId>::new(),
+        |mut ids, album_id| {
             if !ids.iter().any(|existing| existing == &album_id) {
                 ids.push(album_id);
             }
             ids
-        });
+        },
+    );
     if album_ids.is_empty() {
         return Ok(());
     }
@@ -528,7 +435,7 @@ pub(in crate::controller) fn home_image_refs(
 ) -> Result<(), String> {
     let metadata_settings = load_settings_for_saved(store, saved);
     scrub_home_refs(saved, section);
-    external_metadata::normalize_home_section(section, &metadata_settings);
+    cover_art_policy::bind_home_section(section, &metadata_settings);
     scrub_home_refs(saved, section);
     home_local_refs(store, saved, section)
 }
@@ -570,11 +477,7 @@ pub(in crate::controller) fn queue_album_refs(
             continue;
         };
         if let Some(image_ref) = image_refs.get(album_id) {
-            external_metadata::normalize_queue_entry_with_album_ref(
-                entry,
-                Some(image_ref),
-                settings,
-            );
+            cover_art_policy::bind_queue_entry_with_album_ref(entry, Some(image_ref), settings);
         }
     }
     Ok(())
@@ -789,7 +692,7 @@ pub(in crate::controller) fn restore_queue(
     let settings = load_settings_for_server(store, server);
     match store.with_store(|store| store.load_queue_snapshot(&server.id)) {
         Ok(Some(mut snapshot)) => {
-            external_metadata::normalize_queue_snapshot(&mut snapshot, &settings);
+            cover_art_policy::bind_queue_snapshot(&mut snapshot, &settings);
             if let Err(error) = queue_album_refs(store, server, &settings, &mut snapshot.entries) {
                 warn!(%error, "failed to normalize queue image refs");
             }
@@ -1128,7 +1031,10 @@ pub(in crate::controller) fn source_sync_readiness(
         && input.provider != LOCAL_PROVIDER_ID
     {
         Some(SyncRequiredReason::RemoteCacheStale)
-    } else if input.provider == LOCAL_PROVIDER_ID && input.local_library_configured {
+    } else if input.provider == LOCAL_PROVIDER_ID
+        && input.local_library_configured
+        && input.cached_item_count == 0
+    {
         Some(SyncRequiredReason::LocalManifestRefresh)
     } else {
         None
@@ -1168,7 +1074,7 @@ pub(in crate::controller) fn active_source_startup_readiness(
     store: &StoreHandle,
     server_id: &ServerId,
 ) -> Result<SourceSyncReadiness, String> {
-    active_source_readiness_inner(store, server_id, false)
+    active_source_readiness_inner(store, server_id, true)
 }
 fn active_source_readiness_inner(
     store: &StoreHandle,
@@ -1316,8 +1222,8 @@ fn generated_external_image_refs(
 ) -> Result<Vec<ImageRef>, String> {
     let mut albums = external_prune_albums(store, server_id)?;
     let mut tracks = external_prune_tracks(store, server_id)?;
-    external_metadata::normalize_albums(&mut albums, settings);
-    external_metadata::normalize_tracks(&mut tracks, settings);
+    cover_art_policy::bind_albums(&mut albums, settings);
+    cover_art_policy::bind_tracks(&mut tracks, settings);
     let mut seen = HashSet::<(String, Option<String>)>::new();
     let mut refs = Vec::new();
     for image_ref in albums
@@ -1367,16 +1273,16 @@ pub(in crate::controller) fn settings_for_server(
     mut settings: AppSettings,
     server: &ServerIdentity,
 ) -> AppSettings {
-    if server.provider == "fake" || server.provider == LOCAL_PROVIDER_ID {
+    if server.provider == "fake" {
         settings.external_metadata_enabled = false;
     }
     settings
 }
 pub(in crate::controller) fn local_initial_cover_cache_required(
-    _store: &StoreHandle,
-    _server_id: &ServerId,
+    store: &StoreHandle,
+    server_id: &ServerId,
 ) -> bool {
-    false
+    local_cover_cache_missing(store, server_id, true)
 }
 fn local_cover_cache_missing(
     store: &StoreHandle,
@@ -1513,19 +1419,6 @@ fn local_image_ref_cache_missing(
     }
     Ok(true)
 }
-fn cached_image_ref_exists(
-    store: &Store,
-    server_id: &ServerId,
-    image_ref: &ImageRef,
-) -> Result<bool, StoreError> {
-    let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-    for size in [96, 256, 512] {
-        if cover_cache_entry_exists(store, server_id, image_ref, tag, size)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
 fn cover_cache_entry_exists(
     store: &Store,
     server_id: &ServerId,
@@ -1551,6 +1444,14 @@ pub(in crate::controller) fn scrub_source_album_image_refs(
         scrub_source_image_ref(saved, &mut album.image_ref);
     }
 }
+pub(in crate::controller) fn scrub_selected_album_image_refs(
+    saved: &SavedServer,
+    settings: &AppSettings,
+    albums: &mut [Album],
+) {
+    let allow_external_identity_refs = external_metadata::enabled(settings);
+    scrub_snapshot_album_image_refs(saved, albums, allow_external_identity_refs);
+}
 pub(in crate::controller) fn scrub_source_track_image_refs(
     saved: &SavedServer,
     tracks: &mut [Track],
@@ -1559,31 +1460,37 @@ pub(in crate::controller) fn scrub_source_track_image_refs(
         scrub_source_image_ref(saved, &mut track.image_ref);
     }
 }
-pub(in crate::controller) fn scrub_source_artist_image_refs(
+pub(in crate::controller) fn scrub_selected_track_image_refs(
     saved: &SavedServer,
+    settings: &AppSettings,
+    tracks: &mut [Track],
+) {
+    let allow_external_identity_refs = external_metadata::enabled(settings);
+    scrub_snapshot_track_image_refs(saved, tracks, allow_external_identity_refs);
+}
+pub(in crate::controller) fn scrub_selected_artist_image_refs(
+    saved: &SavedServer,
+    settings: &AppSettings,
     artists: &mut [Artist],
 ) {
-    for artist in artists {
-        scrub_source_image_ref(saved, &mut artist.image_ref);
-    }
+    let allow_external_identity_refs = external_metadata::enabled(settings);
+    scrub_snapshot_artist_image_refs(saved, artists, allow_external_identity_refs);
 }
-pub(in crate::controller) fn scrub_source_genre_image_refs(
+pub(in crate::controller) fn scrub_selected_genre_image_refs(
     saved: &SavedServer,
+    settings: &AppSettings,
     genres: &mut [Genre],
 ) {
-    for genre in genres {
-        scrub_source_image_ref(saved, &mut genre.image_ref);
-        scrub_source_image_ref_vec(saved, &mut genre.image_refs);
-    }
+    let allow_external_identity_refs = external_metadata::enabled(settings);
+    scrub_snapshot_genre_image_refs(saved, genres, allow_external_identity_refs);
 }
-pub(in crate::controller) fn scrub_source_playlist_image_refs(
+pub(in crate::controller) fn scrub_selected_playlist_image_refs(
     saved: &SavedServer,
+    settings: &AppSettings,
     playlists: &mut [Playlist],
 ) {
-    for playlist in playlists {
-        scrub_source_image_ref(saved, &mut playlist.image_ref);
-        scrub_source_image_ref_vec(saved, &mut playlist.image_refs);
-    }
+    let allow_external_identity_refs = external_metadata::enabled(settings);
+    scrub_snapshot_playlist_image_refs(saved, playlists, allow_external_identity_refs);
 }
 pub(in crate::controller) fn scrub_smart_refs(
     saved: &SavedServer,
@@ -1614,20 +1521,119 @@ fn scrub_snapshot_image_refs(
     genres: &mut [Genre],
     playlists: &mut [Playlist],
     favorites: &mut [Track],
+    allow_external_identity_refs: bool,
 ) {
     for section in home_sections {
-        scrub_home_refs(saved, section);
+        scrub_snapshot_home_refs(saved, section, allow_external_identity_refs);
     }
     if let Some(section) = prefetched_explore {
-        scrub_home_refs(saved, section);
+        scrub_snapshot_home_refs(saved, section, allow_external_identity_refs);
     }
-    scrub_source_album_image_refs(saved, albums);
-    scrub_source_track_image_refs(saved, tracks);
-    scrub_source_artist_image_refs(saved, artists);
-    scrub_source_artist_image_refs(saved, album_artists);
-    scrub_source_genre_image_refs(saved, genres);
-    scrub_source_playlist_image_refs(saved, playlists);
-    scrub_source_track_image_refs(saved, favorites);
+    scrub_snapshot_album_image_refs(saved, albums, allow_external_identity_refs);
+    scrub_snapshot_track_image_refs(saved, tracks, allow_external_identity_refs);
+    scrub_snapshot_artist_image_refs(saved, artists, allow_external_identity_refs);
+    scrub_snapshot_artist_image_refs(saved, album_artists, allow_external_identity_refs);
+    scrub_snapshot_genre_image_refs(saved, genres, allow_external_identity_refs);
+    scrub_snapshot_playlist_image_refs(saved, playlists, allow_external_identity_refs);
+    scrub_snapshot_track_image_refs(saved, favorites, allow_external_identity_refs);
+}
+fn scrub_snapshot_home_refs(
+    saved: &SavedServer,
+    section: &mut HomeSection,
+    allow_external_identity_refs: bool,
+) {
+    if saved.server.provider == LOCAL_PROVIDER_ID {
+        section.albums.retain(|album| is_local_album_id(&album.id));
+        section.tracks.retain(|track| is_local_track_id(&track.id));
+    }
+    scrub_snapshot_album_image_refs(saved, &mut section.albums, allow_external_identity_refs);
+    scrub_snapshot_track_image_refs(saved, &mut section.tracks, allow_external_identity_refs);
+}
+fn scrub_snapshot_album_image_refs(
+    saved: &SavedServer,
+    albums: &mut [Album],
+    allow_external_identity_refs: bool,
+) {
+    for album in albums {
+        scrub_snapshot_image_ref(saved, &mut album.image_ref, allow_external_identity_refs);
+    }
+}
+fn scrub_snapshot_track_image_refs(
+    saved: &SavedServer,
+    tracks: &mut [Track],
+    allow_external_identity_refs: bool,
+) {
+    for track in tracks {
+        scrub_snapshot_image_ref(saved, &mut track.image_ref, allow_external_identity_refs);
+    }
+}
+fn scrub_snapshot_artist_image_refs(
+    saved: &SavedServer,
+    artists: &mut [Artist],
+    allow_external_identity_refs: bool,
+) {
+    for artist in artists {
+        scrub_snapshot_image_ref(saved, &mut artist.image_ref, allow_external_identity_refs);
+    }
+}
+fn scrub_snapshot_genre_image_refs(
+    saved: &SavedServer,
+    genres: &mut [Genre],
+    allow_external_identity_refs: bool,
+) {
+    for genre in genres {
+        scrub_snapshot_image_ref(saved, &mut genre.image_ref, allow_external_identity_refs);
+        scrub_snapshot_image_ref_vec(saved, &mut genre.image_refs, allow_external_identity_refs);
+    }
+}
+fn scrub_snapshot_playlist_image_refs(
+    saved: &SavedServer,
+    playlists: &mut [Playlist],
+    allow_external_identity_refs: bool,
+) {
+    for playlist in playlists {
+        scrub_snapshot_image_ref(saved, &mut playlist.image_ref, allow_external_identity_refs);
+        scrub_snapshot_image_ref_vec(
+            saved,
+            &mut playlist.image_refs,
+            allow_external_identity_refs,
+        );
+    }
+}
+fn scrub_snapshot_image_ref(
+    saved: &SavedServer,
+    image_ref: &mut Option<ImageRef>,
+    allow_external_identity_refs: bool,
+) {
+    let Some(ref_value) = image_ref else {
+        return;
+    };
+    if snapshot_image_ref_allowed(saved, ref_value, allow_external_identity_refs) {
+        return;
+    }
+    *image_ref = None;
+}
+fn scrub_snapshot_image_ref_vec(
+    saved: &SavedServer,
+    image_refs: &mut Vec<ImageRef>,
+    allow_external_identity_refs: bool,
+) {
+    image_refs.retain(|image_ref| {
+        snapshot_image_ref_allowed(saved, image_ref, allow_external_identity_refs)
+    });
+}
+fn snapshot_image_ref_allowed(
+    saved: &SavedServer,
+    image_ref: &ImageRef,
+    allow_external_identity_refs: bool,
+) -> bool {
+    source_image_ref_allowed(saved, image_ref)
+        || (allow_external_identity_refs && external_identity_image_ref(image_ref))
+}
+fn external_identity_image_ref(image_ref: &ImageRef) -> bool {
+    external_metadata::album_art_from_image_ref(image_ref).is_some_and(|art| {
+        art.musicbrainz_release_id.is_some() || art.musicbrainz_release_group_id.is_some()
+    })
 }
 fn scrub_source_image_ref(saved: &SavedServer, image_ref: &mut Option<ImageRef>) {
     let Some(ref_value) = image_ref else {

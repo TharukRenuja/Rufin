@@ -61,7 +61,13 @@ pub(super) fn build_library(
                 let cover_id = cover_id(&cover);
                 let revision = cover_revision(&cover);
                 covers.entry(cover_id.clone()).or_insert(cover);
-                album_entry.album.image_ref = Some(ImageRef::new(cover_id, revision));
+                let image_ref = ImageRef::new(cover_id, revision);
+                track.image_ref = Some(image_ref.clone());
+                album_entry.album.image_ref = Some(image_ref);
+            } else if let Some(image_ref) = track.image_ref.as_ref()
+                && is_local_cover_ref(image_ref)
+            {
+                album_entry.album.image_ref = Some(image_ref.clone());
             } else if album_entry.embedded_cover_path.is_none() {
                 album_entry.embedded_cover_path = embedded_cover_path;
             }
@@ -124,6 +130,7 @@ pub(super) fn build_library(
                 &mut covers,
                 &mut attempted_album_artist_cover_dirs,
             );
+            artist_entry.tracks.insert(track.id.clone());
             artist_entry.albums.insert(track.album_id.clone());
         }
         for genre_name in &track.genres {
@@ -164,7 +171,9 @@ pub(super) fn build_library(
         })
         .collect::<HashMap<_, _>>();
     for track in &mut tracks {
-        track.image_ref = album_image_refs.get(&track.album_id).cloned();
+        if track.image_ref.is_none() {
+            track.image_ref = album_image_refs.get(&track.album_id).cloned();
+        }
     }
     let track_image_refs = tracks
         .iter()
@@ -275,6 +284,10 @@ fn artist_fallback_image_ref(
                 .iter()
                 .find_map(|id| track_image_refs.get(id).cloned())
         })
+}
+
+fn is_local_cover_ref(image_ref: &ImageRef) -> bool {
+    image_ref.item_id.starts_with("local:cover:")
 }
 
 pub(super) fn artist_from_accumulator(id: ArtistId, artist: ArtistAccumulator) -> Artist {

@@ -15,9 +15,9 @@ impl AppController {
         else {
             return Ok(None);
         };
-        scrub_source_album_image_refs(&saved, std::slice::from_mut(&mut album));
-        scrub_source_track_image_refs(&saved, &mut tracks);
-        external_metadata::normalize_album_detail(&mut album, &mut tracks, &settings);
+        scrub_selected_album_image_refs(&saved, &settings, std::slice::from_mut(&mut album));
+        scrub_selected_track_image_refs(&saved, &settings, &mut tracks);
+        cover_art_policy::bind_album_detail(&mut album, &mut tracks, &settings);
         track_album_refs(
             &self.store,
             &saved,
@@ -38,8 +38,8 @@ impl AppController {
             .store
             .with_store(|store| store.load_tracks_for_albums(&saved.server.id, album_ids))?;
         for tracks in tracks_by_album.values_mut() {
-            scrub_source_track_image_refs(&saved, tracks);
-            external_metadata::normalize_tracks(tracks, &settings);
+            scrub_selected_track_image_refs(&saved, &settings, tracks);
+            cover_art_policy::bind_tracks(tracks, &settings);
             track_album_refs(&self.store, &saved, tracks, &[])?;
         }
         Ok(tracks_by_album)
@@ -58,10 +58,14 @@ impl AppController {
         else {
             return Ok(None);
         };
-        scrub_source_artist_image_refs(&saved, std::slice::from_mut(&mut detail.artist));
-        scrub_source_album_image_refs(&saved, &mut detail.albums);
-        scrub_source_album_image_refs(&saved, &mut detail.appears_on);
-        scrub_source_track_image_refs(&saved, &mut detail.tracks);
+        scrub_selected_artist_image_refs(
+            &saved,
+            &settings,
+            std::slice::from_mut(&mut detail.artist),
+        );
+        scrub_selected_album_image_refs(&saved, &settings, &mut detail.albums);
+        scrub_selected_album_image_refs(&saved, &settings, &mut detail.appears_on);
+        scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
         normalize_artist_detail_image_refs(&mut detail, &settings);
         track_album_refs(&self.store, &saved, &mut detail.tracks, &detail.albums)?;
         Ok(Some(detail))
@@ -80,16 +84,16 @@ impl AppController {
         else {
             return Ok(None);
         };
-        scrub_source_track_image_refs(&saved, &mut detail.tracks);
-        external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+        scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
+        cover_art_policy::bind_tracks(&mut detail.tracks, &settings);
         track_album_refs(&self.store, &saved, &mut detail.tracks, &[])?;
         let mut entry_tracks = detail
             .entries
             .iter()
             .map(|entry| entry.track.clone())
             .collect::<Vec<_>>();
-        scrub_source_track_image_refs(&saved, &mut entry_tracks);
-        external_metadata::normalize_tracks(&mut entry_tracks, &settings);
+        scrub_selected_track_image_refs(&saved, &settings, &mut entry_tracks);
+        cover_art_policy::bind_tracks(&mut entry_tracks, &settings);
         track_album_refs(&self.store, &saved, &mut entry_tracks, &[])?;
         for (entry, track) in detail.entries.iter_mut().zip(entry_tracks) {
             entry.track = track;
@@ -110,10 +114,10 @@ impl AppController {
         else {
             return Ok(None);
         };
-        scrub_source_album_image_refs(&saved, &mut detail.albums);
-        scrub_source_track_image_refs(&saved, &mut detail.tracks);
-        external_metadata::normalize_albums(&mut detail.albums, &settings);
-        external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+        scrub_selected_album_image_refs(&saved, &settings, &mut detail.albums);
+        scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
+        cover_art_policy::bind_albums(&mut detail.albums, &settings);
+        cover_art_policy::bind_tracks(&mut detail.tracks, &settings);
         track_album_refs(&self.store, &saved, &mut detail.tracks, &detail.albums)?;
         Ok(Some(detail))
     }
@@ -126,13 +130,13 @@ impl AppController {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_albums(&saved.server.id, offset, limit))
-            .map(|mut page| {
-                scrub_source_album_image_refs(&saved, &mut page.items);
-                external_metadata::normalize_albums(&mut page.items, &settings);
-                page
-            })
+        let mut page = self
+            .store
+            .with_store(|store| store.load_albums(&saved.server.id, offset, limit))?;
+        scrub_selected_album_image_refs(&saved, &settings, &mut page.items);
+        cover_art_policy::bind_albums(&mut page.items, &settings);
+        album_track_refs(&self.store, &saved, &mut page.items)?;
+        Ok(page)
     }
     pub fn cached_albums_page_matching(
         &self,
@@ -144,13 +148,13 @@ impl AppController {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
         let settings = load_settings_for_saved(&self.store, &saved);
-        self.store
-            .with_store(|store| store.load_albums_matching(&saved.server.id, query, offset, limit))
-            .map(|mut page| {
-                scrub_source_album_image_refs(&saved, &mut page.items);
-                external_metadata::normalize_albums(&mut page.items, &settings);
-                page
-            })
+        let mut page = self.store.with_store(|store| {
+            store.load_albums_matching(&saved.server.id, query, offset, limit)
+        })?;
+        scrub_selected_album_image_refs(&saved, &settings, &mut page.items);
+        cover_art_policy::bind_albums(&mut page.items, &settings);
+        album_track_refs(&self.store, &saved, &mut page.items)?;
+        Ok(page)
     }
     pub fn cached_tracks_page(
         &self,
@@ -171,8 +175,8 @@ impl AppController {
                 limit,
             )
         })?;
-        scrub_source_track_image_refs(&saved, &mut page.items);
-        external_metadata::normalize_tracks(&mut page.items, &settings);
+        scrub_selected_track_image_refs(&saved, &settings, &mut page.items);
+        cover_art_policy::bind_tracks(&mut page.items, &settings);
         track_album_refs(&self.store, &saved, &mut page.items, &[])?;
         Ok(page)
     }
@@ -187,8 +191,8 @@ impl AppController {
         else {
             return Ok(None);
         };
-        scrub_source_track_image_refs(&saved, std::slice::from_mut(&mut track));
-        external_metadata::normalize_track(&mut track, &settings);
+        scrub_selected_track_image_refs(&saved, &settings, std::slice::from_mut(&mut track));
+        cover_art_policy::bind_track(&mut track, &settings);
         track_album_refs(&self.store, &saved, std::slice::from_mut(&mut track), &[])?;
         Ok(Some(track))
     }
@@ -213,8 +217,8 @@ impl AppController {
                 limit,
             )
         })?;
-        scrub_source_track_image_refs(&saved, &mut page.items);
-        external_metadata::normalize_tracks(&mut page.items, &settings);
+        scrub_selected_track_image_refs(&saved, &settings, &mut page.items);
+        cover_art_policy::bind_tracks(&mut page.items, &settings);
         track_album_refs(&self.store, &saved, &mut page.items, &[])?;
         Ok(page)
     }
@@ -226,8 +230,8 @@ impl AppController {
         let mut tracks = self
             .store
             .with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
-        scrub_source_track_image_refs(&saved, &mut tracks);
-        external_metadata::normalize_tracks(&mut tracks, &settings);
+        scrub_selected_track_image_refs(&saved, &settings, &mut tracks);
+        cover_art_policy::bind_tracks(&mut tracks, &settings);
         track_album_refs(&self.store, &saved, &mut tracks, &[])?;
         Ok(tracks)
     }
@@ -243,7 +247,7 @@ impl AppController {
         let mut results = self
             .store
             .with_store(|store| store.search_library(&saved.server.id, query, limit))?;
-        external_metadata::normalize_search_results(&mut results, &settings);
+        cover_art_policy::bind_search_results(&mut results, &settings);
         Ok(results)
     }
     pub fn cached_artists_page(
@@ -259,14 +263,8 @@ impl AppController {
         let mut page = self.store.with_store(|store| {
             store.load_artists(&saved.server.id, album_artist, offset, limit)
         })?;
-        scrub_source_artist_image_refs(&saved, &mut page.items);
-        normalize_artist_collection_image_refs(
-            &self.store,
-            &saved,
-            &mut page.items,
-            album_artist,
-            &settings,
-        )?;
+        scrub_selected_artist_image_refs(&saved, &settings, &mut page.items);
+        cover_art_policy::bind_artists(&mut page.items, &settings);
         Ok(page)
     }
     pub fn cached_artists_page_matching(
@@ -283,14 +281,8 @@ impl AppController {
         let mut page = self.store.with_store(|store| {
             store.load_artists_matching(&saved.server.id, album_artist, query, offset, limit)
         })?;
-        scrub_source_artist_image_refs(&saved, &mut page.items);
-        normalize_artist_collection_image_refs(
-            &self.store,
-            &saved,
-            &mut page.items,
-            album_artist,
-            &settings,
-        )?;
+        scrub_selected_artist_image_refs(&saved, &settings, &mut page.items);
+        cover_art_policy::bind_artists(&mut page.items, &settings);
         Ok(page)
     }
     pub fn cached_genres_page(
@@ -305,8 +297,7 @@ impl AppController {
         let mut page = self
             .store
             .with_store(|store| store.load_genres(&saved.server.id, offset, limit))?;
-        scrub_source_genre_image_refs(&saved, &mut page.items);
-        normalize_genre_collection_image_refs(&self.store, &saved, &mut page.items, &settings)?;
+        scrub_selected_genre_image_refs(&saved, &settings, &mut page.items);
         Ok(page)
     }
     pub fn cached_genres_page_matching(
@@ -322,8 +313,7 @@ impl AppController {
         let mut page = self.store.with_store(|store| {
             store.load_genres_matching(&saved.server.id, query, offset, limit)
         })?;
-        scrub_source_genre_image_refs(&saved, &mut page.items);
-        normalize_genre_collection_image_refs(&self.store, &saved, &mut page.items, &settings)?;
+        scrub_selected_genre_image_refs(&saved, &settings, &mut page.items);
         Ok(page)
     }
     pub fn cached_playlists_page(
@@ -334,10 +324,11 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| store.load_playlists(&saved.server.id, offset, limit))
             .map(|mut page| {
-                scrub_source_playlist_image_refs(&saved, &mut page.items);
+                scrub_selected_playlist_image_refs(&saved, &settings, &mut page.items);
                 page
             })
     }
@@ -350,12 +341,13 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(rufin_provider::PagedResponse::new(Vec::new(), 0));
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| {
                 store.load_playlists_matching(&saved.server.id, query, offset, limit)
             })
             .map(|mut page| {
-                scrub_source_playlist_image_refs(&saved, &mut page.items);
+                scrub_selected_playlist_image_refs(&saved, &settings, &mut page.items);
                 page
             })
     }
@@ -381,6 +373,7 @@ impl AppController {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(None);
         };
+        let settings = load_settings_for_saved(&self.store, &saved);
         self.store
             .with_store(|store| {
                 store.load_smart_playlist_detail(&saved.server.id, smart_playlist_id)
@@ -388,7 +381,7 @@ impl AppController {
             .map(|mut detail| {
                 if let Some(detail) = detail.as_mut() {
                     scrub_smart_refs(&saved, std::slice::from_mut(&mut detail.smart_playlist));
-                    scrub_source_track_image_refs(&saved, &mut detail.tracks);
+                    scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
                 }
                 detail
             })

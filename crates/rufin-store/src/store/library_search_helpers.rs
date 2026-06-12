@@ -453,7 +453,7 @@ impl Store {
             "
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let mut items = collect_rows(statement.query_map(
+        let items = collect_rows(statement.query_map(
             params![
                 server_id.as_str(),
                 item_type,
@@ -463,7 +463,6 @@ impl Store {
             ],
             artist_from_row,
         )?)?;
-        self.attach_artist_fallback_image_refs(server_id, &mut items, album_artist)?;
         Ok(PagedResponse::new(items, total))
     }
     pub(super) fn load_artists_like(
@@ -507,11 +506,10 @@ impl Store {
             "
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let mut items = collect_rows(statement.query_map(
+        let items = collect_rows(statement.query_map(
             params![server_id.as_str(), pattern, limit as i64, offset as i64],
             artist_from_row,
         )?)?;
-        self.attach_artist_fallback_image_refs(server_id, &mut items, album_artist)?;
         Ok(PagedResponse::new(items, total.max(0) as usize))
     }
     pub(super) fn search_playlists(

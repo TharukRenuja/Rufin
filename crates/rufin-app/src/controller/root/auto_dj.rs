@@ -92,7 +92,7 @@ fn auto_dj_handles(
     let mut tracks = store
         .with_store(|store| store.load_tracks(&state.server_id, 0, AUTO_DJ_LIBRARY_LIMIT))
         .map(|page| page.items)?;
-    external_metadata::normalize_tracks(&mut tracks, &settings);
+    cover_art_policy::bind_tracks(&mut tracks, &settings);
     let mut candidates = auto_dj_candidates(
         &tracks,
         &state.current,

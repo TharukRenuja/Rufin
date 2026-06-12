@@ -259,7 +259,7 @@ pub(in crate::controller) fn load_folder_detail(
     let mut detail = runtime
         .block_on(music_provider.folder(folder_id, selected_music_folder_id.as_ref()))
         .map_err(|error| error.to_string())?;
-    external_metadata::normalize_tracks(&mut detail.tracks, &settings);
+    cover_art_policy::bind_tracks(&mut detail.tracks, &settings);
     Ok(detail)
 }
 

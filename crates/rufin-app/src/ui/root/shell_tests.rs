@@ -82,15 +82,7 @@ pub(in crate::ui) fn shell_reuse_cover() {
     let candidates = super::decoded_cover_candidate_sizes(super::DETAIL_COVER_SIZE);
 
     assert!(candidates.contains(&super::DETAIL_COVER_SIZE));
-    assert!(candidates.contains(&super::GRID_COVER_SIZE));
-    assert!(
-        candidates
-            .iter()
-            .position(|size| *size == super::DETAIL_COVER_SIZE)
-            < candidates
-                .iter()
-                .position(|size| *size == super::GRID_COVER_SIZE)
-    );
+    assert!(!candidates.contains(&super::GRID_COVER_SIZE));
 }
 #[test]
 pub(in crate::ui) fn shell_use_thumbnail() {
@@ -535,11 +527,11 @@ pub(in crate::ui) fn startup_route_reveal() {
         StartupRevealAction::RevealExpired
     );
     assert_eq!(
-        startup_route_reveal_action(
-            true,
-            0,
-            Duration::from_millis(super::STARTUP_ROUTE_REVEAL_MIN_MS)
-        ),
+        startup_route_reveal_action(true, 0, Duration::from_millis(32)),
+        StartupRevealAction::RevealReady
+    );
+    assert_eq!(
+        startup_route_reveal_action(true, 0, Duration::ZERO),
         StartupRevealAction::RevealReady
     );
 }
@@ -604,6 +596,22 @@ pub(in crate::ui) fn shell_collection_cover_uses_thumbnail_extent() {
     assert_eq!(
         collection_cover_decode_extent(super::GRID_COVER_SIZE, 180),
         180
+    );
+}
+
+#[test]
+pub(in crate::ui) fn shell_cover_fetch_size_matches_display_tier() {
+    assert_eq!(
+        super::cover_fetch_size_for_display(72),
+        super::THUMB_COVER_SIZE
+    );
+    assert_eq!(
+        super::cover_fetch_size_for_display(250),
+        super::GRID_COVER_SIZE
+    );
+    assert_eq!(
+        super::cover_fetch_size_for_display(320),
+        super::DETAIL_COVER_SIZE
     );
 }
 

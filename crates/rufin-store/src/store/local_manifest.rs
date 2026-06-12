@@ -1,5 +1,6 @@
 use super::servers::{
-    COLLECTION_COVER_GENRE, bool_to_i64, collect_rows, image_ref_parts, u32_from_i64,
+    COLLECTION_COVER_GENRE, bool_to_i64, collect_rows, image_ref_from_row, image_ref_parts,
+    u32_from_i64,
 };
 use super::*;
 
@@ -24,6 +25,81 @@ pub struct LocalLibraryDelta {
 }
 
 impl Store {
+    pub fn load_raw_track_image_refs(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<HashMap<TrackId, Option<ImageRef>>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT track_id, image_item_id, image_tag
+            FROM tracks
+            WHERE server_id = ?1
+            ",
+        )?;
+        Ok(
+            collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+                Ok((
+                    TrackId::new(row.get::<_, String>(0)?),
+                    image_ref_from_row(row, 1, 2)?,
+                ))
+            })?)?
+            .into_iter()
+            .collect(),
+        )
+    }
+
+    pub fn load_raw_album_image_refs(
+        &self,
+        server_id: &ServerId,
+    ) -> StoreResult<HashMap<AlbumId, Option<ImageRef>>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT album_id, image_item_id, image_tag
+            FROM albums
+            WHERE server_id = ?1
+            ",
+        )?;
+        Ok(
+            collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+                Ok((
+                    AlbumId::new(row.get::<_, String>(0)?),
+                    image_ref_from_row(row, 1, 2)?,
+                ))
+            })?)?
+            .into_iter()
+            .collect(),
+        )
+    }
+
+    pub fn load_raw_artist_image_refs(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+    ) -> StoreResult<HashMap<ArtistId, Option<ImageRef>>> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let mut statement = self.connection.prepare(&format!(
+            "
+            SELECT artist_id, image_item_id, image_tag
+            FROM {table}
+            WHERE server_id = ?1
+            "
+        ))?;
+        Ok(
+            collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+                Ok((
+                    ArtistId::new(row.get::<_, String>(0)?),
+                    image_ref_from_row(row, 1, 2)?,
+                ))
+            })?)?
+            .into_iter()
+            .collect(),
+        )
+    }
+
     pub fn load_local_manifest(
         &self,
         server_id: &ServerId,

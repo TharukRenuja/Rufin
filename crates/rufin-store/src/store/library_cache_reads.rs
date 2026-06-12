@@ -215,6 +215,47 @@ impl Store {
         self.attach_album_metadata(server_id, &mut items)?;
         Ok(PagedResponse::new(items, total))
     }
+    pub fn load_albums_by_ids(
+        &self,
+        server_id: &ServerId,
+        album_ids: &[AlbumId],
+    ) -> StoreResult<Vec<Album>> {
+        let mut unique_ids = Vec::<AlbumId>::new();
+        for album_id in album_ids {
+            if !unique_ids.iter().any(|existing| existing == album_id) {
+                unique_ids.push(album_id.clone());
+            }
+        }
+        if unique_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut albums = Vec::new();
+        for chunk in unique_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "
+                SELECT album_id, title, artist, artist_id, year, release_date, date_added,
+                       last_played, play_count, user_rating, track_count, duration_seconds,
+                       favorite, color_seed, image_item_id, image_tag
+                FROM albums
+                WHERE server_id = ?
+                  AND album_id IN ({placeholders})
+                "
+            );
+            let mut values = Vec::with_capacity(chunk.len() + 1);
+            values.push(server_id.as_str());
+            values.extend(chunk.iter().map(AlbumId::as_str));
+            let mut statement = self.connection.prepare(&sql)?;
+            albums.extend(collect_rows(
+                statement.query_map(rusqlite::params_from_iter(values), album_from_row)?,
+            )?);
+        }
+        self.attach_album_metadata(server_id, &mut albums)?;
+        Ok(albums)
+    }
     pub fn load_albums_without_image_ref(
         &self,
         server_id: &ServerId,
@@ -499,12 +540,7 @@ impl Store {
             &tracks,
         )?;
         let artist = match artist {
-            Some(mut artist) => {
-                if artist.image_ref.is_none() {
-                    artist.image_ref = artist_fallback_image_ref(&albums, &appears_on, &tracks);
-                }
-                artist
-            }
+            Some(artist) => artist,
             None if albums.is_empty() && tracks.is_empty() => return Ok(None),
             None => synthesize_artist_from_links(artist_id, &albums, &appears_on, &tracks),
         };
@@ -771,11 +807,10 @@ impl Store {
             "
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let mut items = collect_rows(statement.query_map(
+        let items = collect_rows(statement.query_map(
             params![server_id.as_str(), limit as i64, offset as i64],
             artist_from_row,
         )?)?;
-        self.attach_artist_fallback_image_refs(server_id, &mut items, album_artist)?;
         Ok(PagedResponse::new(items, total))
     }
     pub fn load_artists_without_image_ref(
