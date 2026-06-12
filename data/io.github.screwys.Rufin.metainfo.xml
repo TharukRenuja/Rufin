@@ -30,28 +30,69 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/play_random.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/play_random.png</image>
     </screenshot>
     <screenshot>
       <caption>Tune playback settings</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.6.5/data/playback.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.0" date="2026-06-12">
+      <description>
+        <p>Thanks for everyone's patience, we fixed some critical bugs this release, which had to wait since there were so many things to test as well, given the size of the release:</p>
+        <ul>
+          <li>Added release type groups on artist pages, so albums, EPs, singles, collections and appears-on releases are no longer mixed together</li>
+        </ul>
+        <ul>
+          <li>Added CUE support for local libraries. CUE tracks are split into playable tracks</li>
+        </ul>
+        <ul>
+          <li>Added more external lyrics providers, configurable from preferences</li>
+        </ul>
+        <ul>
+          <li>Added external site links on album and artist pages for Last.fm, MusicBrainz and the current music sever, toggleable</li>
+        </ul>
+        <ul>
+          <li>Improved album and artist detail layouts especially for resizing, and repaired several equalizer/fullscreen controls</li>
+        </ul>
+        <ul>
+          <li>Reworked library identity and metadata handling, fixing cases where local tags or sort fields could create duplicate or wrong artist entries</li>
+        </ul>
+        <ul>
+          <li>Made cover art selection and readiness across startup, routes, queue, playback and fullscreen player, so cached or resolvable covers should no longer fall back to placeholders easily, gated by a policy</li>
+        </ul>
+        <ul>
+          <li>Added mouse back/forward button navigation</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug lyrics panel height didn't respect user preference</li>
+        </ul>
+        <ul>
+          <li>Fixed queue/player artwork mismatches where one track from an album could show fallback art while track already had the cover</li>
+        </ul>
+        <ul>
+          <li>Fixed several bugs where high bitrate remote tracks crashed the app or the player</li>
+        </ul>
+        <ul>
+          <li>Fixed a bug where layout gets calculated repeatadly while resizing pages, causing high CPU usage</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.5" date="2026-06-08">
       <description>
         <p>Thanks to everyone who reported issues again. We got to fix several bugs &amp; unwanted behavior this release!</p>
