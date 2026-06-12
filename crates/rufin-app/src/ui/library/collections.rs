@@ -191,7 +191,7 @@ pub(in crate::ui) fn album_grid(
     key: LibraryListKey,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
@@ -234,7 +234,7 @@ pub(in crate::ui) fn artist_grid(
     key: LibraryListKey,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
@@ -273,7 +273,7 @@ pub(in crate::ui) fn artist_grid(
 }
 pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
@@ -307,7 +307,7 @@ pub(in crate::ui) fn genre_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk
 }
 pub(in crate::ui) fn playlist_grid(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
@@ -348,7 +348,7 @@ pub(in crate::ui) fn smart_playlist_grid(
     model: gio::ListStore,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
     factory.connect_bind(move |_, item| {
@@ -391,7 +391,7 @@ pub(in crate::ui) fn track_grid(
     play_context: Option<LoadedTrackPlayContext>,
 ) -> gtk::GridView {
     let (columns, card_size) = shell.collection_card_grid_metrics();
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
     let model_for_factory = model.clone();
@@ -452,7 +452,7 @@ pub(in crate::ui) fn album_table(
     model: gio::ListStore,
     key: LibraryListKey,
 ) -> gtk::ColumnView {
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
     let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
@@ -480,7 +480,7 @@ pub(in crate::ui) fn artist_table(
     model: gio::ListStore,
     key: LibraryListKey,
 ) -> gtk::ColumnView {
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
     let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
@@ -504,7 +504,7 @@ pub(in crate::ui) fn artist_table(
     table
 }
 pub(in crate::ui) fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
-    let selection = gtk::SingleSelection::new(Some(model));
+    let selection = gtk::NoSelection::new(Some(model));
     let table = gtk::ColumnView::new(Some(selection));
     let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
@@ -527,7 +527,7 @@ pub(in crate::ui) fn genre_table(shell: &Rc<Shell>, model: gio::ListStore) -> gt
     table
 }
 pub(in crate::ui) fn playlist_table(shell: &Rc<Shell>, model: gio::ListStore) -> gtk::ColumnView {
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
     let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
@@ -560,7 +560,7 @@ pub(in crate::ui) fn smart_playlist_table(
     shell: &Rc<Shell>,
     model: gio::ListStore,
 ) -> gtk::ColumnView {
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
     let initial_width = route_column_view_initial_width(shell);
     table.add_css_class("track-table");
@@ -623,10 +623,7 @@ pub(in crate::ui) fn track_table(
     content_inset: i32,
     width_mode: ColumnViewWidthMode,
 ) -> gtk::ColumnView {
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
-    selection.set_autoselect(false);
-    selection.set_can_unselect(true);
-    selection.set_selected(gtk::INVALID_LIST_POSITION);
+    let selection = gtk::NoSelection::new(Some(model.clone()));
     let table = gtk::ColumnView::new(Some(selection));
     let initial_width = column_view_initial_width(shell, content_inset, width_mode);
     table.add_css_class("track-table");
