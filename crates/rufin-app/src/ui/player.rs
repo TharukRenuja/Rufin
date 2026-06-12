@@ -414,9 +414,7 @@ impl Shell {
                 if cover_key_changed {
                     let has_decoded_cover =
                         self.decoded_cover_has_min_size(&key, BOTTOM_PLAYER_COVER_SIZE);
-                    let has_cached_cover_file =
-                        self.controller.cached_cover_path_for_key(&key).is_some();
-                    if player_cover_replacement_is_ready(has_decoded_cover, has_cached_cover_file) {
+                    if has_decoded_cover {
                         controls.cover.advance_generation();
                     } else {
                         controls.cover.retain_cover_image(cover_seed);
@@ -579,11 +577,6 @@ impl Shell {
     fn clear_player_seek_preview(&self) {
         self.state.seek_preview_seconds.set(None);
     }
-}
-
-fn player_cover_replacement_is_ready(has_decoded_cover: bool, has_cached_cover_file: bool) -> bool {
-    let _ = has_cached_cover_file;
-    has_decoded_cover
 }
 
 fn seek_preview_matches_position(target_seconds: u32, position_millis: u64) -> bool {
@@ -1334,14 +1327,6 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn player_keep_visible() {
-        assert!(super::player_cover_replacement_is_ready(true, false));
-        assert!(!super::player_cover_replacement_is_ready(false, true));
-        assert!(super::player_cover_replacement_is_ready(true, true));
-        assert!(!super::player_cover_replacement_is_ready(false, false));
-    }
-
     #[test]
     fn player_scale_narrows() {
         assert_eq!(super::bottom_player_volume_width(2560), 160);

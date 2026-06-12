@@ -2,7 +2,18 @@ use super::*;
 
 impl AppController {
     pub(in crate::controller) fn persist_progress_if_needed(&self, seconds: u32) {
-        let Some(snapshot) = self.queue_snapshot() else {
+        let Some((server_id, current, _position)) = self.current_playback_entry() else {
+            return;
+        };
+        let snapshot = self.queue.lock().ok().and_then(|queue| {
+            let queue = queue.as_ref()?;
+            (queue.server_id() == &server_id
+                && queue.current().is_some_and(|entry| {
+                    entry.id == current.id && entry.track_id == current.track_id
+                }))
+            .then(|| queue.snapshot())
+        });
+        let Some(snapshot) = snapshot else {
             return;
         };
         let bucket = seconds / 10;
@@ -56,7 +67,7 @@ impl AppController {
         let Some(current) = snapshot.current.clone() else {
             return;
         };
-        let Some((server_id, _, _)) = self.current_queue_entry() else {
+        let Some(server_id) = snapshot.current_server_id.clone() else {
             return;
         };
         let settings = self.load_settings_with_scrobbling_secrets();

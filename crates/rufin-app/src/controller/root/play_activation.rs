@@ -9,13 +9,7 @@ pub const MATERIALIZED_WINDOW_BEFORE_ANCHOR: usize = 20;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlayActivation {
-    pub action: PlayAction,
     pub target: PlayTarget,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PlayAction {
-    ReplaceNow,
 }
 
 // Track-only activations are accepted by the seam before route conversion emits them.
@@ -73,7 +67,7 @@ pub struct NormalizedPlayActivation {
 pub fn normalize_loaded_source_activation(
     activation: PlayActivation,
 ) -> Result<NormalizedPlayActivation, String> {
-    let PlayActivation { target, .. } = activation;
+    let PlayActivation { target } = activation;
     let target = match target {
         PlayTarget::TrackOnly(track) => NormalizedPlayTarget::TrackOnly(Box::new(track)),
         PlayTarget::LoadedSource {
@@ -109,12 +103,10 @@ fn normalize_loaded_source_target(
         .iter()
         .map(|item| QueueItemInput::Source {
             track: item.track.clone(),
+            source_index: item.source_index,
         })
         .collect::<Vec<_>>();
-    let source = QueueSourceInput {
-        source_key,
-        materialized_start: items[materialized_start].source_index,
-    };
+    let source = QueueSourceInput { source_key };
     Ok(NormalizedPlayTarget::Replacement(QueueReplacement {
         source: QueueReplacementSource::Source(source),
         items: materialized_items,
@@ -253,7 +245,6 @@ mod tests {
         anchor: PlayAnchor,
     ) -> PlayActivation {
         PlayActivation {
-            action: PlayAction::ReplaceNow,
             target: PlayTarget::LoadedSource {
                 source_key: source_key(),
                 completeness,
@@ -283,10 +274,9 @@ mod tests {
             panic!("expected queue replacement");
         };
         assert_eq!(replacement.items.len(), MATERIALIZED_WINDOW_LIMIT);
-        let QueueReplacementSource::Source(source) = replacement.source else {
+        let QueueReplacementSource::Source(_source) = replacement.source else {
             panic!("expected source replacement");
         };
-        assert_eq!(source.materialized_start, 630);
         assert_eq!(
             replacement.anchor,
             QueueAnchor::SourcePosition {
@@ -316,10 +306,9 @@ mod tests {
             panic!("expected queue replacement");
         };
         assert_eq!(replacement.items.len(), MATERIALIZED_WINDOW_LIMIT);
-        let QueueReplacementSource::Source(source) = replacement.source else {
+        let QueueReplacementSource::Source(_source) = replacement.source else {
             panic!("expected source replacement");
         };
-        assert_eq!(source.materialized_start, 230);
         assert_eq!(
             replacement.anchor,
             QueueAnchor::SourcePosition {

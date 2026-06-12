@@ -139,7 +139,6 @@ impl Shell {
             return;
         }
         if matches!(route, Route::Home) {
-            self.state.home_refresh_started_for_visit.set(false);
             reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
         }
         if matches!(route, Route::Playlists) {
@@ -156,9 +155,7 @@ impl Shell {
             }
         }
         self.render_current_route_preserving_scroll();
-        if matches!(route, Route::Home) {
-            self.refresh_home_for_current_visit();
-        } else if matches!(route, Route::Playlists) {
+        if matches!(route, Route::Playlists) {
             self.refresh_playlists_for_current_visit();
         }
     }

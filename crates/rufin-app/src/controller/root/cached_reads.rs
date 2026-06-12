@@ -710,6 +710,7 @@ pub(in crate::controller) struct QueueActivationContext<'a> {
     pub(in crate::controller) store: &'a StoreHandle,
     pub(in crate::controller) queue: &'a Arc<Mutex<Option<QueueEngine>>>,
     pub(in crate::controller) playback_request_generation: &'a Arc<AtomicU64>,
+    pub(in crate::controller) next_preload: &'a Arc<Mutex<NextPreloadState>>,
     pub(in crate::controller) playback: &'a Arc<Mutex<Box<dyn PlaybackBackend>>>,
     pub(in crate::controller) playback_snapshot: &'a Arc<Mutex<PlaybackSnapshot>>,
     pub(in crate::controller) auto_dj_enabled: &'a Arc<Mutex<bool>>,
@@ -801,7 +802,7 @@ pub(in crate::controller) fn activate_saved_queue(
         return Ok(());
     };
     invalidate_playback_requests(context.playback_request_generation);
-    stop_playback_backend(context.playback, context.events);
+    stop_playback_backend(context.playback, context.next_preload, context.events);
     let _sent = context
         .events
         .send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));
@@ -848,8 +849,10 @@ pub(in crate::controller) fn activate_queue_for_saved(
 }
 pub(in crate::controller) fn stop_playback_backend(
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
+    next_preload: &Arc<Mutex<NextPreloadState>>,
     events: &Sender<ControllerEvent>,
 ) {
+    clear_next_preload(next_preload);
     if let Err(error) = playback
         .lock()
         .map_err(|_| "playback lock was poisoned".to_string())
@@ -881,6 +884,7 @@ pub(in crate::controller) fn playback_request_generation_matches(
 pub(in crate::controller) fn clear_queue_and_stop_playback(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
     playback_request_generation: &Arc<AtomicU64>,
+    next_preload: &Arc<Mutex<NextPreloadState>>,
     playback: &Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
     auto_dj_enabled: &Arc<Mutex<bool>>,
@@ -890,7 +894,7 @@ pub(in crate::controller) fn clear_queue_and_stop_playback(
     if let Ok(mut queue) = queue.lock() {
         *queue = None;
     }
-    stop_playback_backend(playback, events);
+    stop_playback_backend(playback, next_preload, events);
     let player = PlaybackSnapshot {
         auto_dj_enabled: auto_dj_enabled
             .lock()
@@ -1685,6 +1689,7 @@ pub(in crate::controller) fn playback_snapshot_from_queue(
                 .and_then(|key| cached_waveform_peaks(key, duration_seconds));
 
             PlaybackSnapshot {
+                current_server_id: Some(queue.server_id().clone()),
                 current: queue.current().cloned(),
                 state: PlaybackState::Stopped,
                 position_seconds: queue.progress_seconds(),
@@ -1750,13 +1755,25 @@ pub(in crate::controller) fn request_generation_match(
         && current_request_valid(queue, server_id, entry)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
+pub(in crate::controller) struct NextPreloadState {
+    generation: u64,
+    request: Option<NextPreloadRequest>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::controller) struct NextPreloadRequest {
     pub(in crate::controller) server_id: ServerId,
     pub(in crate::controller) current_entry_id: QueueEntryId,
     pub(in crate::controller) next_entry_id: QueueEntryId,
     pub(in crate::controller) next_entry: QueueEntry,
-    pub(in crate::controller) playback_settings: PlaybackSettings,
+    pub(in crate::controller) stream_quality: StreamQuality,
+}
+
+#[derive(Clone, Debug)]
+struct NextPreloadTicket {
+    generation: u64,
+    request: NextPreloadRequest,
 }
 
 fn preload_request_match(queue: Option<&QueueEngine>, request: &NextPreloadRequest) -> bool {
@@ -1773,6 +1790,50 @@ fn preload_request_match(queue: Option<&QueueEngine>, request: &NextPreloadReque
         return false;
     }
     next_queue_entry_after_current(queue).is_some_and(|entry| entry.id == request.next_entry_id)
+}
+fn begin_next_preload(
+    next_preload: &Arc<Mutex<NextPreloadState>>,
+    request: NextPreloadRequest,
+) -> Option<NextPreloadTicket> {
+    let mut state = next_preload.lock().ok()?;
+    if state.request.as_ref() == Some(&request) {
+        return None;
+    }
+    state.generation = state.generation.wrapping_add(1);
+    state.request = Some(request.clone());
+    Some(NextPreloadTicket {
+        generation: state.generation,
+        request,
+    })
+}
+
+pub(in crate::controller) fn clear_next_preload(next_preload: &Arc<Mutex<NextPreloadState>>) {
+    if let Ok(mut state) = next_preload.lock() {
+        state.generation = state.generation.wrapping_add(1);
+        state.request = None;
+    }
+}
+
+fn next_preload_ticket_valid(
+    next_preload: &Arc<Mutex<NextPreloadState>>,
+    ticket: &NextPreloadTicket,
+) -> bool {
+    next_preload.lock().ok().is_some_and(|state| {
+        state.generation == ticket.generation && state.request.as_ref() == Some(&ticket.request)
+    })
+}
+
+fn clear_matching_next_preload(
+    next_preload: &Arc<Mutex<NextPreloadState>>,
+    ticket: &NextPreloadTicket,
+) {
+    if let Ok(mut state) = next_preload.lock()
+        && state.generation == ticket.generation
+        && state.request.as_ref() == Some(&ticket.request)
+    {
+        state.generation = state.generation.wrapping_add(1);
+        state.request = None;
+    }
 }
 pub(in crate::controller) fn shuffle_seed() -> u64 {
     SystemTime::now()
@@ -1969,10 +2030,12 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
     secrets: Arc<dyn SecretStore>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     queue: Arc<Mutex<Option<QueueEngine>>>,
+    next_preload: Arc<Mutex<NextPreloadState>>,
     events: Sender<ControllerEvent>,
 ) {
     let playback_settings = load_settings_from_store(&store).playback;
-    let Some(request) = next_preload_request_from_queue(&queue, playback_settings) else {
+    let Some(request) = next_preload_request_from_queue(&queue, &playback_settings) else {
+        clear_next_preload(&next_preload);
         if let Err(error) = playback
             .lock()
             .map_err(|_| "playback lock was poisoned".to_string())
@@ -1986,6 +2049,9 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
         }
         return;
     };
+    let Some(ticket) = begin_next_preload(&next_preload, request) else {
+        return;
+    };
 
     thread::spawn(move || {
         let preload_started_at = Instant::now();
@@ -1993,27 +2059,33 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
             &store,
             &runtime,
             &secrets,
-            &request.server_id,
-            &request.next_entry,
-            &request.playback_settings,
+            &ticket.request.server_id,
+            &ticket.request.next_entry,
+            &playback_settings,
         ) {
             Ok(prepared) => prepared,
             Err(error) => {
+                clear_matching_next_preload(&next_preload, &ticket);
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
         };
         info!(
-            track_id = %request.next_entry.track_id.as_str(),
+            track_id = %ticket.request.next_entry.track_id.as_str(),
             elapsed_ms = preload_started_at.elapsed().as_millis(),
             "resolved next playback stream"
         );
-        let _sent = send_prepared_next(&playback, &queue, &events, &request, prepared);
+        if !next_preload_ticket_valid(&next_preload, &ticket) {
+            return;
+        }
+        if !send_prepared_next(&playback, &queue, &events, &ticket.request, prepared) {
+            clear_matching_next_preload(&next_preload, &ticket);
+        }
     });
 }
 pub(in crate::controller) fn next_preload_request_from_queue(
     queue: &Arc<Mutex<Option<QueueEngine>>>,
-    playback_settings: PlaybackSettings,
+    playback_settings: &PlaybackSettings,
 ) -> Option<NextPreloadRequest> {
     queue.lock().ok().and_then(|queue| {
         let queue = queue.as_ref()?;
@@ -2029,7 +2101,7 @@ pub(in crate::controller) fn next_preload_request_from_queue(
             current_entry_id,
             next_entry_id,
             next_entry,
-            playback_settings,
+            stream_quality: playback_settings.stream_quality,
         })
     })
 }

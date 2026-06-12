@@ -25,20 +25,29 @@ pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Alb
         .map(|album| album.id.clone());
 
     let mut seen = HashSet::new();
-    let candidates = library
+    let section_candidates = library
         .home_sections
         .iter()
         .filter(|section| section.kind != HomeSectionKind::Explore)
         .flat_map(|section| section.albums.iter())
-        .chain(library.albums.iter())
         .filter(|album| explore_first_id.as_ref() != Some(&album.id))
         .filter(|album| seen.insert(album.id.clone()))
         .collect::<Vec<_>>();
 
-    if !candidates.is_empty() {
-        return candidates
-            .get((seed as usize) % candidates.len())
+    if !section_candidates.is_empty() {
+        return section_candidates
+            .get((seed as usize) % section_candidates.len())
             .map(|album| (*album).clone());
+    }
+
+    if !library.albums.is_empty() {
+        let mut album_index = (seed as usize) % library.albums.len();
+        if explore_first_id.as_ref() == Some(&library.albums[album_index].id) {
+            album_index = (album_index + 1) % library.albums.len();
+        }
+        if explore_first_id.as_ref() != Some(&library.albums[album_index].id) {
+            return library.albums.get(album_index).cloned();
+        }
     }
 
     library
@@ -47,7 +56,6 @@ pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Alb
         .find(|section| section.kind == HomeSectionKind::Explore)
         .and_then(|section| section.albums.first())
         .cloned()
-        .or_else(|| library.albums.first().cloned())
 }
 
 fn home_showcase_facts(album: &Album) -> String {
@@ -80,7 +88,7 @@ impl Shell {
         content.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
 
         let blocks = self.state.settings.borrow().home_blocks.clone();
-        let library = self.state.library.borrow().clone();
+        let library = self.state.library.borrow();
         let mut appended = false;
         for block in blocks {
             let child = match block {
@@ -303,7 +311,6 @@ impl Shell {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
         let section_kind = section_data.kind;
-        let albums = section_data.albums.clone();
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
@@ -341,7 +348,14 @@ impl Shell {
         });
 
         self.register_home_section_view(section_kind, &section, &row, &previous, &next);
-        render_home_album_page(self, &row, &previous, &next, section_kind, &albums);
+        render_home_album_page(
+            self,
+            &row,
+            &previous,
+            &next,
+            section_kind,
+            &section_data.albums,
+        );
         section.upcast()
     }
 
@@ -349,7 +363,6 @@ impl Shell {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
         section.set_hexpand(true);
         let section_kind = section_data.kind;
-        let tracks = section_data.tracks.clone();
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let heading = gtk::Label::new(Some(&tr(section_data.kind.title())));
@@ -387,7 +400,14 @@ impl Shell {
         });
 
         self.register_home_section_view(section_kind, &section, &row, &previous, &next);
-        render_home_track_page(self, &row, &previous, &next, section_kind, &tracks);
+        render_home_track_page(
+            self,
+            &row,
+            &previous,
+            &next,
+            section_kind,
+            &section_data.tracks,
+        );
         section.upcast()
     }
 }

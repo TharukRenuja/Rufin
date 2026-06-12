@@ -44,6 +44,35 @@ impl PlaybackBackend for QueuedPlaybackEvents {
     }
 }
 
+struct RejectingPlaybackBackend {
+    commands: Arc<Mutex<Vec<PlaybackCommand>>>,
+}
+
+impl RejectingPlaybackBackend {
+    fn new(commands: Arc<Mutex<Vec<PlaybackCommand>>>) -> Self {
+        Self { commands }
+    }
+}
+
+impl PlaybackBackend for RejectingPlaybackBackend {
+    fn send(&mut self, command: PlaybackCommand) -> Result<(), rufin_playback::PlaybackError> {
+        self.commands
+            .lock()
+            .expect("commands")
+            .push(command.clone());
+        match command {
+            PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. } => Err(
+                rufin_playback::PlaybackError::Backend("start rejected".to_string()),
+            ),
+            _ => Ok(()),
+        }
+    }
+
+    fn drain_events(&mut self) -> Vec<PlaybackEvent> {
+        Vec::new()
+    }
+}
+
 fn wait_for_queue_matching(
     events: &Receiver<ControllerEvent>,
     mut matches: impl FnMut(&QueueSnapshot) -> bool,
@@ -55,6 +84,28 @@ fn wait_for_queue_matching(
         }
     }
     panic!("matching queue event was not emitted");
+}
+
+fn wait_for_playback_matching(
+    controller: &AppController,
+    events: &Receiver<ControllerEvent>,
+    mut matches: impl FnMut(&PlaybackSnapshot) -> bool,
+) -> PlaybackSnapshot {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for playback"
+        );
+        controller.poll_playback_events();
+        match events.recv_timeout(Duration::from_millis(50)) {
+            Ok(ControllerEvent::Playback(playback)) if matches(&playback) => return *playback,
+            Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("controller event channel closed")
+            }
+        }
+    }
 }
 
 fn wait_for_repeat_without_queue(
@@ -628,6 +679,165 @@ pub(in crate::controller) fn cover_start_stream() {
     assert_eq!(item.track.id, second.id);
 }
 #[test]
+pub(in crate::controller) fn playback_duplicate_current_start_ignored() {
+    let (controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") =
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first, second]);
+    let _play = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+    let _prepare = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    commands.lock().expect("commands").clear();
+
+    controller.start_current_track();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    assert!(commands.lock().expect("commands").is_empty());
+}
+
+#[test]
+pub(in crate::controller) fn rejected_start_keeps_committed_playback_current() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") =
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first.clone(), second.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+
+    commands.lock().expect("commands").clear();
+    *controller.playback.lock().expect("playback") =
+        Box::new(RejectingPlaybackBackend::new(Arc::clone(&commands)));
+    let second_entry = controller
+        .queue_snapshot()
+        .expect("queue")
+        .entries
+        .iter()
+        .find(|entry| entry.track_id == second.id)
+        .expect("second entry")
+        .id
+        .clone();
+
+    controller.activate_queue_entry(second_entry);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _rejected = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.state, PlaybackState::Playing);
+    assert_eq!(playback.current.expect("current").track_id, first.id);
+}
+
+#[test]
+pub(in crate::controller) fn stale_desired_queue_current_does_not_receive_playback_progress() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") =
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first.clone(), second.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+
+    commands.lock().expect("commands").clear();
+    *controller.playback.lock().expect("playback") =
+        Box::new(RejectingPlaybackBackend::new(Arc::clone(&commands)));
+    let second_entry = controller
+        .queue_snapshot()
+        .expect("queue")
+        .entries
+        .iter()
+        .find(|entry| entry.track_id == second.id)
+        .expect("second entry")
+        .id
+        .clone();
+
+    controller.activate_queue_entry(second_entry);
+    let queue = wait_for_queue(&events).expect("queue");
+    assert_eq!(queue.current_index, Some(1));
+    let _rejected = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+
+    *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
+        PlaybackEvent::PositionChanged {
+            track_id: Some(first.id.clone()),
+            seconds: 42,
+            millis: 42_000,
+        },
+    ]));
+    controller.poll_playback_events();
+
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.current.expect("current").track_id, first.id);
+    assert_eq!(playback.position_seconds, 42);
+    let queue = controller.queue_snapshot().expect("queue");
+    assert_eq!(queue.current_index, Some(1));
+    assert_eq!(
+        queue.entries[queue.current_index.expect("current")].track_id,
+        second.id
+    );
+    assert_eq!(queue.progress_seconds, 0);
+}
+
+#[test]
+pub(in crate::controller) fn playback_current_queue_activation_restarts() {
+    let (controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") =
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first.clone(), second]);
+    let _play = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+    let _prepare = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let current_entry_id = controller
+        .queue_snapshot()
+        .expect("queue")
+        .entries
+        .first()
+        .expect("current entry")
+        .id
+        .clone();
+    commands.lock().expect("commands").clear();
+
+    controller.activate_queue_entry(current_entry_id);
+
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+    let PlaybackCommand::PlayPrepared { item, .. } = command else {
+        panic!("expected prepared play command");
+    };
+    assert_eq!(item.track.id, first.id);
+}
+#[test]
 pub(in crate::controller) fn cover_change_backend() {
     let (controller, _events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
@@ -684,7 +894,7 @@ pub(in crate::controller) fn prepared_send_reject() {
     let replacement_next_entry_id = engine.append(&repeated);
     let queue = Arc::new(Mutex::new(Some(engine)));
     let request =
-        next_preload_request_from_queue(&queue, PlaybackSettings::default()).expect("request");
+        next_preload_request_from_queue(&queue, &PlaybackSettings::default()).expect("request");
     assert_eq!(request.next_entry_id, initial_next_entry_id);
     {
         let mut queue = queue.lock().expect("queue");
@@ -725,7 +935,7 @@ pub(in crate::controller) fn prepared_skip_current_repeat() {
     engine.play_now(&track);
     let queue = Arc::new(Mutex::new(Some(engine)));
 
-    assert!(next_preload_request_from_queue(&queue, PlaybackSettings::default()).is_none());
+    assert!(next_preload_request_from_queue(&queue, &PlaybackSettings::default()).is_none());
 }
 #[test]
 pub(in crate::controller) fn prepared_uses_shuffled_next() {
@@ -746,7 +956,7 @@ pub(in crate::controller) fn prepared_uses_shuffled_next() {
     let queue = Arc::new(Mutex::new(Some(engine)));
 
     let request =
-        next_preload_request_from_queue(&queue, PlaybackSettings::default()).expect("request");
+        next_preload_request_from_queue(&queue, &PlaybackSettings::default()).expect("request");
 
     assert_eq!(request.next_entry_id, expected);
 }
@@ -763,9 +973,80 @@ pub(in crate::controller) fn prepared_uses_appended_next() {
     let queue = Arc::new(Mutex::new(Some(engine)));
 
     let request =
-        next_preload_request_from_queue(&queue, PlaybackSettings::default()).expect("request");
+        next_preload_request_from_queue(&queue, &PlaybackSettings::default()).expect("request");
 
     assert_eq!(request.next_entry_id, appended);
+}
+#[test]
+pub(in crate::controller) fn prepared_next_dedupes_until_cleared() {
+    let (controller, _events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let server_id = snapshot.server.as_ref().expect("server").id.clone();
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    let mut engine = QueueEngine::new(server_id);
+    engine.play_now(&first);
+    engine.append(&second);
+    let queue = Arc::new(Mutex::new(Some(engine)));
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let playback = Arc::new(Mutex::new(
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands))) as Box<dyn PlaybackBackend>,
+    ));
+    let next_preload = Arc::new(Mutex::new(NextPreloadState::default()));
+    let events = controller.events.clone();
+
+    prepare_next_stream_from_handles(
+        controller.store.clone(),
+        Arc::clone(&controller.runtime),
+        Arc::clone(&controller.secrets),
+        Arc::clone(&playback),
+        Arc::clone(&queue),
+        Arc::clone(&next_preload),
+        events.clone(),
+    );
+    prepare_next_stream_from_handles(
+        controller.store.clone(),
+        Arc::clone(&controller.runtime),
+        Arc::clone(&controller.secrets),
+        Arc::clone(&playback),
+        Arc::clone(&queue),
+        Arc::clone(&next_preload),
+        events.clone(),
+    );
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let PlaybackCommand::PrepareNext(Some(item)) = command else {
+        panic!("expected prepared next command");
+    };
+    assert_eq!(item.track.id, second.id);
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let prepare_count = commands
+        .lock()
+        .expect("commands")
+        .iter()
+        .filter(|command| matches!(command, PlaybackCommand::PrepareNext(Some(_))))
+        .count();
+    assert_eq!(prepare_count, 1);
+
+    clear_next_preload(&next_preload);
+    commands.lock().expect("commands").clear();
+    prepare_next_stream_from_handles(
+        controller.store.clone(),
+        Arc::clone(&controller.runtime),
+        Arc::clone(&controller.secrets),
+        Arc::clone(&playback),
+        Arc::clone(&queue),
+        next_preload,
+        events,
+    );
+    let command = wait_for_recorded_command(&commands, |command| {
+        matches!(command, PlaybackCommand::PrepareNext(Some(_)))
+    });
+    let PlaybackCommand::PrepareNext(Some(item)) = command else {
+        panic!("expected prepared next command");
+    };
+    assert_eq!(item.track.id, second.id);
 }
 #[test]
 pub(in crate::controller) fn cover_reject_switch() {
@@ -838,7 +1119,13 @@ pub(in crate::controller) fn cover_track_selected() {
     controller.activate_queue_entry(second_entry);
     let queue = wait_for_queue(&events).expect("activated queue");
     assert_eq!(queue.current_index, Some(1));
-    let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let playback = wait_for_playback_matching(&controller, &events, |playback| {
+        playback.state == PlaybackState::Playing
+            && playback
+                .current
+                .as_ref()
+                .is_some_and(|entry| entry.track_id == second.id)
+    });
     assert_eq!(playback.current.expect("current").track_id, second.id);
 }
 #[test]
@@ -1378,11 +1665,13 @@ pub(in crate::controller) fn cover_track_event() {
 
     controller.poll_playback_events();
 
-    let playback = controller
-        .playback_snapshot
-        .lock()
-        .expect("playback snapshot")
-        .clone();
+    let playback = wait_for_playback_matching(&controller, &events, |playback| {
+        playback.state == PlaybackState::Buffering
+            && playback
+                .current
+                .as_ref()
+                .is_some_and(|entry| entry.track_id == second.id)
+    });
     assert_eq!(playback.current.expect("current").track_id, second.id);
     assert_eq!(playback.state, PlaybackState::Buffering);
     assert_eq!(playback.position_seconds, 0);
@@ -1402,6 +1691,12 @@ pub(in crate::controller) fn cover_track_queue() {
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
     controller.advance_after_end_of_stream();
     let _queue = wait_for_queue(&events).expect("next queue");
+    let _playback = wait_for_playback_matching(&controller, &events, |playback| {
+        playback
+            .current
+            .as_ref()
+            .is_some_and(|entry| entry.track_id == second.id)
+    });
     *controller.playback.lock().expect("playback") = Box::new(QueuedPlaybackEvents::new(vec![
         PlaybackEvent::PositionChanged {
             track_id: Some(first.id.clone()),

@@ -112,6 +112,7 @@ pub(in crate::ui) fn startup_cover_prime_targets(shell: &Shell) -> Vec<CoverWarm
                 Vec::new()
             });
         *shell.state.smart_playlists.borrow_mut() = playlists;
+        shell.state.smart_playlists_loaded.set(true);
     }
     targets.extend(startup_route_cover_targets(shell, &route));
     let Some(server_id) = shell
@@ -234,14 +235,6 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
                     false,
                     metrics,
                 );
-            }
-        }
-        Route::Favorites if library.favorites.is_empty() && library.cached_track_count > 0 => {
-            let list_settings = settings.library_list(LibraryListKey::FavoriteTracks);
-            drop(settings);
-            drop(library);
-            if let Ok(tracks) = shell.controller.cached_favorite_tracks() {
-                push_track_source_warm_targets(&mut targets, tracks, &list_settings, true, metrics);
             }
         }
         Route::Albums if library.albums.is_empty() && library.cached_album_count > 0 => {

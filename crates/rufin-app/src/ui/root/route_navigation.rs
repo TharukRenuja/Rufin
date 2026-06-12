@@ -16,8 +16,9 @@ impl Shell {
         self.state.route_cover_prime_pending.borrow_mut().clear();
         self.state.cover_warm_pending.borrow_mut().take();
         self.state.cover_warm_started.borrow_mut().take();
-        self.state.route_tracks.borrow_mut().clear();
+        self.state.route_track_refs.borrow_mut().clear();
         self.state.smart_playlists.borrow_mut().clear();
+        self.state.smart_playlists_loaded.set(false);
         self.cancel_cover_warm();
     }
 
@@ -41,9 +42,6 @@ impl Shell {
         self.state.routes.borrow_mut().navigate(route.clone());
         self.handle_home_route_transition(&previous, &route);
         self.request_current_route_render();
-        if matches!(route, Route::Home) {
-            self.refresh_home_for_current_visit();
-        }
         if matches!(route, Route::Playlists) {
             self.refresh_playlists_for_current_visit();
         }
@@ -56,9 +54,6 @@ impl Shell {
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
             self.request_current_route_render();
-            if matches!(route, Route::Home) {
-                self.refresh_home_for_current_visit();
-            }
             if matches!(route, Route::Playlists) {
                 self.refresh_playlists_for_current_visit();
             }
@@ -72,9 +67,6 @@ impl Shell {
             self.refresh_search_results_for_route(&route);
             self.handle_home_route_transition(&previous, &route);
             self.request_current_route_render();
-            if matches!(route, Route::Home) {
-                self.refresh_home_for_current_visit();
-            }
             if matches!(route, Route::Playlists) {
                 self.refresh_playlists_for_current_visit();
             }

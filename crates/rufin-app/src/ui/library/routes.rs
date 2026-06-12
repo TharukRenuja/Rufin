@@ -855,14 +855,7 @@ impl Shell {
     }
     pub(in crate::ui) fn library_smart_playlists_view(self: &Rc<Self>) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::SmartPlaylists);
-        let page = self
-            .controller
-            .cached_smart_playlists_page(0, 1_000)
-            .unwrap_or_else(|error| {
-                warn!(%error, "failed to load cached smart playlists page");
-                rufin_provider::PagedResponse::new(Vec::new(), 0)
-            });
-        let items = page.items;
+        let items = self.smart_playlists_for_route();
         self.state.smart_playlists.replace(items.clone());
         let source_playlists = Rc::new(items.clone());
         let playlists = Rc::new(RefCell::new(items));
@@ -922,6 +915,20 @@ impl Shell {
             load_next: None,
             configure_scroller: Some(configure_scroller),
         })
+    }
+    fn smart_playlists_for_route(&self) -> Vec<SmartPlaylist> {
+        if self.state.smart_playlists_loaded.get() {
+            return self.state.smart_playlists.borrow().clone();
+        }
+        let page = self
+            .controller
+            .cached_smart_playlists_page(0, 1_000)
+            .unwrap_or_else(|error| {
+                warn!(%error, "failed to load cached smart playlists page");
+                rufin_provider::PagedResponse::new(Vec::new(), 0)
+            });
+        self.state.smart_playlists_loaded.set(true);
+        page.items
     }
     pub(in crate::ui) fn library_tracks_panel_with_source(
         self: &Rc<Self>,
@@ -1069,9 +1076,15 @@ impl Shell {
         let query = Rc::new(RefCell::new(String::new()));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let settings = self.library_settings(key);
-        let visible_count =
-            populate_track_model_for_settings(&model, source_tracks.as_ref(), &settings, "", false);
-        warm_track_covers_for_settings(self, source_tracks.as_ref(), &settings);
+        let visible_tracks = tracks_for_settings(source_tracks.as_ref(), &settings, "", false);
+        let visible_count = visible_tracks.len();
+        if track_route_tracks_key(key, width_mode).is_some() {
+            self.state
+                .route_track_refs
+                .replace(track_image_refs(&visible_tracks));
+        }
+        warm_track_covers_for_settings(self, &visible_tracks, &settings);
+        replace_tracks_in_model(&model, visible_tracks);
         if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
             on_visible_count_changed(visible_count);
         }
@@ -1087,14 +1100,21 @@ impl Shell {
             search.connect_search_changed(move |entry| {
                 *query.borrow_mut() = entry.text().trim().to_string();
                 let settings = shell.library_settings(key);
-                let visible_count = populate_track_model_for_settings(
-                    &model,
+                let visible_tracks = tracks_for_settings(
                     source_tracks.as_ref(),
                     &settings,
                     entry.text().as_str(),
                     false,
                 );
-                warm_track_covers_for_settings(&shell, source_tracks.as_ref(), &settings);
+                let visible_count = visible_tracks.len();
+                if track_route_tracks_key(key, width_mode).is_some() {
+                    shell
+                        .state
+                        .route_track_refs
+                        .replace(track_image_refs(&visible_tracks));
+                }
+                warm_track_covers_for_settings(&shell, &visible_tracks, &settings);
+                replace_tracks_in_model(&model, visible_tracks);
                 if let Some(on_visible_count_changed) = on_visible_count_changed.as_ref() {
                     on_visible_count_changed(visible_count);
                 }
@@ -1113,4 +1133,14 @@ impl Shell {
         );
         (empty, search, view, model, settings)
     }
+}
+
+fn track_route_tracks_key(
+    key: LibraryListKey,
+    width_mode: ColumnViewWidthMode,
+) -> Option<LibraryListKey> {
+    if width_mode != ColumnViewWidthMode::RouteScroller {
+        return None;
+    }
+    matches!(key, LibraryListKey::FavoriteTracks).then_some(key)
 }

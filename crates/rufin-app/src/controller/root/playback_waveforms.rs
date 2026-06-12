@@ -12,17 +12,19 @@ const WAVEFORM_WARM_QUEUE_LIMIT: usize = 4;
 const WAVEFORM_WARM_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
 const CURRENT_WAVEFORM_GENERATION_DELAY: std::time::Duration =
     std::time::Duration::from_millis(750);
-static WAVEFORM_GENERATION_IN_FLIGHT: std::sync::OnceLock<Mutex<HashSet<String>>> =
+static WAVEFORM_FOREGROUND_IN_FLIGHT: std::sync::OnceLock<Mutex<HashSet<String>>> =
     std::sync::OnceLock::new();
-static WAVEFORM_WARM_ACTIVE: std::sync::OnceLock<Mutex<bool>> = std::sync::OnceLock::new();
+static WAVEFORM_WARM_IN_FLIGHT: std::sync::OnceLock<Mutex<HashSet<String>>> =
+    std::sync::OnceLock::new();
 
 struct WaveformGenerationPermit {
     cache_key: String,
+    kind: WaveformGenerationKind,
 }
 
 impl Drop for WaveformGenerationPermit {
     fn drop(&mut self) {
-        if let Some(in_flight) = WAVEFORM_GENERATION_IN_FLIGHT.get()
+        if let Some(in_flight) = self.kind.in_flight().get()
             && let Ok(mut in_flight) = in_flight.lock()
         {
             in_flight.remove(&self.cache_key);
@@ -30,14 +32,17 @@ impl Drop for WaveformGenerationPermit {
     }
 }
 
-struct WaveformWarmPermit;
+#[derive(Clone, Copy)]
+enum WaveformGenerationKind {
+    Foreground,
+    Warm,
+}
 
-impl Drop for WaveformWarmPermit {
-    fn drop(&mut self) {
-        if let Some(active) = WAVEFORM_WARM_ACTIVE.get()
-            && let Ok(mut active) = active.lock()
-        {
-            *active = false;
+impl WaveformGenerationKind {
+    fn in_flight(self) -> &'static std::sync::OnceLock<Mutex<HashSet<String>>> {
+        match self {
+            Self::Foreground => &WAVEFORM_FOREGROUND_IN_FLIGHT,
+            Self::Warm => &WAVEFORM_WARM_IN_FLIGHT,
         }
     }
 }
@@ -60,16 +65,26 @@ struct WaveformGenerationRequest {
     redacted_uri: String,
 }
 
+struct WaveformWarmWorker {
+    store: StoreHandle,
+    runtime: Arc<Runtime>,
+    secrets: Arc<dyn SecretStore>,
+    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
+    generation: Arc<AtomicU64>,
+    request_generation: u64,
+    events: Sender<ControllerEvent>,
+}
+
 impl AppController {
     pub fn request_waveform_for_current(&self) {
         if !self.load_settings().seekbar_waveform_enabled {
             return;
         }
-        let Some((server_id, entry, _next, _position, playback_settings)) =
-            self.current_playback_request()
-        else {
+        self.cancel_waveform_warm();
+        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
             return;
         };
+        let playback_settings = self.load_settings().playback;
         let cache_key = waveform_cache_key(&server_id, &entry.track_id, entry.duration_seconds);
         self.update_playback_snapshot(|snapshot| {
             set_waveform_cache_key(snapshot, Some(cache_key.clone()));
@@ -83,7 +98,9 @@ impl AppController {
         ) {
             return;
         }
-        let Some(permit) = acquire_waveform_generation_permit(&cache_key) else {
+        let Some(permit) =
+            acquire_waveform_generation_permit(&cache_key, WaveformGenerationKind::Foreground)
+        else {
             return;
         };
 
@@ -137,18 +154,23 @@ impl AppController {
         if requests.is_empty() {
             return;
         }
-        let Some(permit) = acquire_waveform_warm_permit() else {
-            return;
-        };
+        let generation = self.waveform_warm_generation.fetch_add(1, Ordering::AcqRel) + 1;
         start_waveform_warm_worker(
-            permit,
             requests,
-            self.store.clone(),
-            Arc::clone(&self.runtime),
-            Arc::clone(&self.secrets),
-            Arc::clone(&self.playback_snapshot),
-            self.events.clone(),
+            WaveformWarmWorker {
+                store: self.store.clone(),
+                runtime: Arc::clone(&self.runtime),
+                secrets: Arc::clone(&self.secrets),
+                playback_snapshot: Arc::clone(&self.playback_snapshot),
+                generation: Arc::clone(&self.waveform_warm_generation),
+                request_generation: generation,
+                events: self.events.clone(),
+            },
         );
+    }
+
+    pub(in crate::controller) fn cancel_waveform_warm(&self) {
+        self.waveform_warm_generation.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -168,7 +190,9 @@ pub(in crate::controller) fn request_waveform_for_prepared_item(
     ) {
         return;
     }
-    let Some(permit) = acquire_waveform_generation_permit(&cache_key) else {
+    let Some(permit) =
+        acquire_waveform_generation_permit(&cache_key, WaveformGenerationKind::Foreground)
+    else {
         return;
     };
     thread::spawn(move || {
@@ -228,39 +252,28 @@ fn generate_and_publish_waveform(
     publish_waveform_peaks(&playback_snapshot, &events, &request.cache_key, peaks);
 }
 
-fn start_waveform_warm_worker(
-    permit: WaveformWarmPermit,
-    requests: Vec<WaveformWarmRequest>,
-    store: StoreHandle,
-    runtime: Arc<Runtime>,
-    secrets: Arc<dyn SecretStore>,
-    playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
-    events: Sender<ControllerEvent>,
-) {
+fn start_waveform_warm_worker(requests: Vec<WaveformWarmRequest>, worker: WaveformWarmWorker) {
     thread::spawn(move || {
-        let _permit = permit;
         for request in requests {
-            warm_waveform_request(
-                &store,
-                &runtime,
-                &secrets,
-                &playback_snapshot,
-                &events,
-                request,
-            );
+            if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
+                return;
+            }
             thread::sleep(WAVEFORM_WARM_DELAY);
+            if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
+                return;
+            }
+            warm_waveform_request(&worker, request);
+            if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
+                return;
+            }
         }
     });
 }
 
-fn warm_waveform_request(
-    store: &StoreHandle,
-    runtime: &Runtime,
-    secrets: &Arc<dyn SecretStore>,
-    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
-    events: &Sender<ControllerEvent>,
-    request: WaveformWarmRequest,
-) {
+fn warm_waveform_request(worker: &WaveformWarmWorker, request: WaveformWarmRequest) {
+    if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
+        return;
+    }
     let cache_key = waveform_cache_key(
         &request.server_id,
         &request.track_id,
@@ -269,24 +282,33 @@ fn warm_waveform_request(
     if load_cached_waveform(&cache_key, request.duration_seconds).is_some() {
         return;
     }
-    let Some(_permit) = acquire_waveform_generation_permit(&cache_key) else {
+    let Some(_permit) =
+        acquire_waveform_generation_permit(&cache_key, WaveformGenerationKind::Warm)
+    else {
         return;
     };
     if load_cached_waveform(&cache_key, request.duration_seconds).is_some() {
         return;
     }
-    let Some((uri, redacted_uri)) = waveform_source_for_track(store, runtime, secrets, &request)
+    if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
+        return;
+    }
+    let Some((uri, redacted_uri)) =
+        waveform_source_for_track(&worker.store, &worker.runtime, &worker.secrets, &request)
     else {
         return;
     };
+    if !waveform_warm_generation_matches(&worker.generation, worker.request_generation) {
+        return;
+    }
     if waveform_generation_source_is_remote(&uri)
-        && !remote_waveform_warm_can_run(playback_snapshot)
+        && !remote_waveform_warm_can_run(&worker.playback_snapshot)
     {
         return;
     }
     generate_and_publish_waveform(
-        Arc::clone(playback_snapshot),
-        events.clone(),
+        Arc::clone(&worker.playback_snapshot),
+        worker.events.clone(),
         WaveformGenerationRequest {
             cache_key,
             track_id: request.track_id,
@@ -334,7 +356,10 @@ fn waveform_warm_requests(
     playback_settings: &PlaybackSettings,
     limit: usize,
 ) -> Vec<WaveformWarmRequest> {
-    let start = snapshot.current_index.unwrap_or(0);
+    let start = snapshot
+        .current_index
+        .map(|index| index.saturating_add(1))
+        .unwrap_or(0);
     snapshot
         .entries
         .iter()
@@ -351,25 +376,23 @@ fn waveform_warm_requests(
         .collect()
 }
 
-fn acquire_waveform_generation_permit(cache_key: &str) -> Option<WaveformGenerationPermit> {
-    let in_flight = WAVEFORM_GENERATION_IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()));
+fn acquire_waveform_generation_permit(
+    cache_key: &str,
+    kind: WaveformGenerationKind,
+) -> Option<WaveformGenerationPermit> {
+    let in_flight = kind.in_flight().get_or_init(|| Mutex::new(HashSet::new()));
     let mut in_flight = in_flight.lock().ok()?;
     if !in_flight.insert(cache_key.to_string()) {
         return None;
     }
     Some(WaveformGenerationPermit {
         cache_key: cache_key.to_string(),
+        kind,
     })
 }
 
-fn acquire_waveform_warm_permit() -> Option<WaveformWarmPermit> {
-    let active = WAVEFORM_WARM_ACTIVE.get_or_init(|| Mutex::new(false));
-    let mut active = active.lock().ok()?;
-    if *active {
-        return None;
-    }
-    *active = true;
-    Some(WaveformWarmPermit)
+fn waveform_warm_generation_matches(generation: &Arc<AtomicU64>, request_generation: u64) -> bool {
+    generation.load(Ordering::Acquire) == request_generation
 }
 
 fn waveform_generation_source_is_local(uri: &str) -> bool {
@@ -599,11 +622,24 @@ mod tests {
     fn playback_waveform_key() {
         let cache_key = "test-server/test-track-42.json";
 
-        let permit = acquire_waveform_generation_permit(cache_key).expect("first permit");
-        assert!(acquire_waveform_generation_permit(cache_key).is_none());
+        let permit = acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Warm)
+            .expect("first warm permit");
+        assert!(
+            acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Warm).is_none()
+        );
+        let foreground =
+            acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Foreground)
+                .expect("foreground permit");
+        assert!(
+            acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Foreground)
+                .is_none()
+        );
 
         drop(permit);
-        assert!(acquire_waveform_generation_permit(cache_key).is_some());
+        assert!(
+            acquire_waveform_generation_permit(cache_key, WaveformGenerationKind::Warm).is_some()
+        );
+        drop(foreground);
     }
 
     #[test]
@@ -640,10 +676,10 @@ mod tests {
 
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].server_id, server_id);
-        assert_eq!(requests[0].track_id, TrackId::new("track-3"));
-        assert_eq!(requests[0].source_format, None);
-        assert_eq!(requests[1].track_id, TrackId::new("track-4"));
-        assert_eq!(requests[1].source_format.as_deref(), Some("flac"));
+        assert_eq!(requests[0].track_id, TrackId::new("track-4"));
+        assert_eq!(requests[0].source_format.as_deref(), Some("flac"));
+        assert_eq!(requests[1].track_id, TrackId::new("track-5"));
+        assert_eq!(requests[1].source_format, None);
     }
 
     #[test]

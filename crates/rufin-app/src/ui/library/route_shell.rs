@@ -71,7 +71,9 @@ impl Shell {
         let tracks = Rc::new(RefCell::new(tracks));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let visible_tracks = tracks_for_settings(&tracks.borrow(), &settings, "", false);
-        self.state.route_tracks.replace(visible_tracks.clone());
+        self.state
+            .route_track_refs
+            .replace(track_image_refs(&visible_tracks));
         replace_tracks_in_model(&model, visible_tracks);
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
@@ -97,7 +99,10 @@ impl Shell {
                     let visible_tracks =
                         tracks_for_settings(&tracks.borrow(), &settings, &text, false);
                     let visible_count = visible_tracks.len();
-                    shell.state.route_tracks.replace(visible_tracks.clone());
+                    shell
+                        .state
+                        .route_track_refs
+                        .replace(track_image_refs(&visible_tracks));
                     replace_tracks_in_model(&model, visible_tracks);
                     warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                     cursor.offset.set(visible_count);
@@ -129,7 +134,10 @@ impl Shell {
                         *tracks.borrow_mut() = page.items;
                         let visible_tracks =
                             tracks_for_settings(&tracks.borrow(), &settings, "", false);
-                        shell.state.route_tracks.replace(visible_tracks.clone());
+                        shell
+                            .state
+                            .route_track_refs
+                            .replace(track_image_refs(&visible_tracks));
                         replace_tracks_in_model(&model, visible_tracks);
                         warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, page.total);

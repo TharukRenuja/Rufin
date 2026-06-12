@@ -30,6 +30,7 @@ impl AppController {
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
         let playback = Arc::clone(&self.playback);
+        let next_preload = Arc::clone(&self.next_preload);
         let queue_persist_generation = Arc::clone(&self.queue_persist_generation);
         let events = self.events.clone();
         thread::spawn(
@@ -49,7 +50,13 @@ impl AppController {
                         let _sent = events.send(ControllerEvent::Queue(Box::new(Some(snapshot))));
                     }
                     prepare_next_stream_from_handles(
-                        store, runtime, secrets, playback, queue, events,
+                        store,
+                        runtime,
+                        secrets,
+                        playback,
+                        queue,
+                        next_preload,
+                        events,
                     );
                 }
                 Ok(false) => {}

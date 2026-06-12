@@ -56,7 +56,7 @@ mod tray;
 use crate::controller::{
     AppController, ControllerEvent, DiscoveredServer, FULL_LOADED_LIMIT, LibrarySnapshot,
     LibrarySyncStatus, LoadedCompleteness, LyricsSearchResult, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
-    MATERIALIZED_WINDOW_LIMIT, PlayAction, PlayActivation, PlayAnchor, PlaySourceItem, PlayTarget,
+    MATERIALIZED_WINDOW_LIMIT, PlayActivation, PlayAnchor, PlaySourceItem, PlayTarget,
     PlaybackSnapshot, grouped_cover_refs_for_items, track_cover_refs_for_items,
 };
 use crate::external_metadata;
@@ -274,6 +274,8 @@ pub(in crate::ui) struct AppState {
     #[cfg(unix)]
     mpris_player: RefCell<Option<Rc<MprisPlayer>>>,
     #[cfg(unix)]
+    mpris_metadata_key: RefCell<Option<String>>,
+    #[cfg(unix)]
     tray_handle: RefCell<Option<tray::TrayHandle>>,
     #[cfg(unix)]
     tray_command_source: RefCell<Option<glib::SourceId>>,
@@ -283,6 +285,8 @@ pub(in crate::ui) struct AppState {
     seek_generation: Cell<u64>,
     queue_filter: RefCell<String>,
     queue_render_queued: Cell<bool>,
+    queue_sidebar_render_state: RefCell<Option<queue::QueuePanelRenderState>>,
+    queue_fullscreen_render_state: RefCell<Option<queue::QueuePanelRenderState>>,
     lyrics_panel_visible: Cell<bool>,
     fullscreen_player_visible: Cell<bool>,
     queue_lyrics_position_save_suppressed: Rc<Cell<u32>>,
@@ -297,9 +301,9 @@ pub(in crate::ui) struct AppState {
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
     prefetched_explore: RefCell<Option<PrefetchedHomeSection>>,
-    home_refresh_started_for_visit: Cell<bool>,
-    route_tracks: RefCell<Vec<Track>>,
+    route_track_refs: RefCell<Vec<Option<ImageRef>>>,
     smart_playlists: RefCell<Vec<SmartPlaylist>>,
+    smart_playlists_loaded: Cell<bool>,
     playlist_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
     route_load_generation: Cell<u64>,
@@ -521,6 +525,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         #[cfg(unix)]
         mpris_player: RefCell::new(None),
         #[cfg(unix)]
+        mpris_metadata_key: RefCell::new(None),
+        #[cfg(unix)]
         tray_handle: RefCell::new(None),
         #[cfg(unix)]
         tray_command_source: RefCell::new(None),
@@ -530,6 +536,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         seek_generation: Cell::new(0),
         queue_filter: RefCell::new(String::new()),
         queue_render_queued: Cell::new(false),
+        queue_sidebar_render_state: RefCell::new(None),
+        queue_fullscreen_render_state: RefCell::new(None),
         lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
         fullscreen_player_visible: Cell::new(false),
         queue_lyrics_position_save_suppressed: Rc::new(Cell::new(0)),
@@ -544,9 +552,9 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         home_section_state: RefCell::new(HashMap::new()),
         home_section_views: RefCell::new(HashMap::new()),
         prefetched_explore: RefCell::new(prefetched_explore),
-        home_refresh_started_for_visit: Cell::new(false),
-        route_tracks: RefCell::new(Vec::new()),
+        route_track_refs: RefCell::new(Vec::new()),
         smart_playlists: RefCell::new(Vec::new()),
+        smart_playlists_loaded: Cell::new(false),
         playlist_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
         route_load_generation: Cell::new(0),
@@ -751,7 +759,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         shell.render_startup_loading_view();
     } else {
         shell.render_current_route();
-        shell.refresh_home_for_current_visit();
     }
     shell.render_queue_panel();
     shell.render_lyrics_panel();

@@ -1611,18 +1611,6 @@ pub(in crate::ui) fn populate_smart_playlist_model(
         .collect::<Vec<_>>();
     model.splice(0, model.n_items(), &additions);
 }
-pub(in crate::ui) fn populate_track_model_for_settings(
-    model: &gio::ListStore,
-    tracks: &[Track],
-    settings: &LibraryListSettings,
-    query: &str,
-    favorite_first: bool,
-) -> usize {
-    let values = tracks_for_settings(tracks, settings, query, favorite_first);
-    let visible_count = values.len();
-    replace_tracks_in_model(model, values);
-    visible_count
-}
 pub(in crate::ui) fn tracks_for_settings(
     tracks: &[Track],
     settings: &LibraryListSettings,

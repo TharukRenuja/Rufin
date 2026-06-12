@@ -98,7 +98,7 @@ impl AppController {
         }
         self.record_current_skip_if_needed();
         self.start_queue_emit();
-        self.start_current_track();
+        self.restart_current_track();
         self.auto_dj_top_up_deferred();
     }
     pub fn previous_track(&self) {
@@ -126,7 +126,7 @@ impl AppController {
             return;
         }
         self.start_queue_emit();
-        self.start_current_track();
+        self.restart_current_track();
         self.auto_dj_top_up_deferred();
     }
     pub fn seek(&self, seconds: u32) {
@@ -261,16 +261,16 @@ impl AppController {
                     if !accepting_position {
                         continue;
                     }
-                    let _result = self.with_queue_mut(|queue| {
-                        queue.set_progress_seconds(seconds);
-                        Ok(())
-                    });
+                    let queue_progress_updated =
+                        self.set_queue_progress_for_playback_current(seconds);
                     self.update_playback_snapshot(|snapshot| {
                         snapshot.position_seconds = seconds;
                         snapshot.position_millis = millis;
                     });
                     self.record_playback_activity_progress(seconds);
-                    self.persist_progress_if_needed(seconds);
+                    if queue_progress_updated {
+                        self.persist_progress_if_needed(seconds);
+                    }
                     self.report_playback_progress_if_needed(seconds);
                     playback_changed = true;
                 }
@@ -349,9 +349,7 @@ fn playback_settings_change_needs_next_prepare(
     previous: &PlaybackSettings,
     next: &PlaybackSettings,
 ) -> bool {
-    let mut comparable = previous.clone();
-    comparable.equalizer = next.equalizer.clone();
-    comparable != *next
+    previous.stream_quality != next.stream_quality
 }
 
 fn timing_event_matches_current(snapshot: &PlaybackSnapshot, track_id: Option<&TrackId>) -> bool {
@@ -400,10 +398,21 @@ mod tests {
     }
 
     #[test]
-    fn non_equalizer_settings_change_prepares_next_stream() {
+    fn non_stream_settings_change_does_not_prepare_next_stream() {
         let previous = PlaybackSettings::default();
         let mut next = previous.clone();
         next.crossfade_seconds = previous.crossfade_seconds.saturating_add(1);
+
+        assert!(!playback_settings_change_needs_next_prepare(
+            &previous, &next
+        ));
+    }
+
+    #[test]
+    fn stream_quality_settings_change_prepares_next_stream() {
+        let previous = PlaybackSettings::default();
+        let mut next = previous.clone();
+        next.stream_quality = rufin_core::StreamQuality::MaxBitrateKbps(320);
 
         assert!(playback_settings_change_needs_next_prepare(
             &previous, &next
