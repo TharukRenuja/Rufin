@@ -38,7 +38,14 @@ workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
 deny = []
-skip = []
+skip = [
+    { crate = "core-foundation@0.9.4", reason = "pulled by system-configuration via hyper-util while rustls-platform-verifier uses core-foundation 0.10" },
+    { crate = "getrandom@0.2.17", reason = "pulled by redox_users through directories; direct randomness uses getrandom 0.4" },
+    { crate = "getrandom@0.3.4", reason = "pulled by jobserver through cc while workspace code and tempfile use getrandom 0.4" },
+    { crate = "hashbrown@0.16.1", reason = "pulled by rsqlite-vfs through sqlite-wasm-rs while rusqlite hashlink uses hashbrown 0.17" },
+    { crate = "r-efi@5.3.0", reason = "pulled by getrandom 0.3 while getrandom 0.4 uses r-efi 6" },
+    { crate = "wit-bindgen@0.51.0", reason = "pulled by wasip3 through getrandom 0.4 while wasip2 uses wit-bindgen 0.57" },
+]
 skip-tree = []
 
 [sources]
