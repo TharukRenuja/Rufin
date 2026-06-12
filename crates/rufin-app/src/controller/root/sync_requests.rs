@@ -44,6 +44,12 @@ pub(in crate::controller) fn resolve_stream(
         );
         return Ok(StreamDescriptor::new(url.to_string()));
     }
+    if saved.server.provider == LOCAL_PROVIDER_ID {
+        return Err(format!(
+            "Cached local source is missing for track {}. Resync the local library.",
+            track_id.as_str()
+        ));
+    }
 
     let provider = provider_for_saved(store, runtime, secrets, &saved)?;
     runtime

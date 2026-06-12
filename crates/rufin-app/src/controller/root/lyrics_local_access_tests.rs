@@ -765,6 +765,63 @@ pub(in crate::controller) fn lyrics_use_source() {
     assert!(stream.uri().contains("Track.flac"));
     let _cleanup = fs::remove_dir_all(root);
 }
+
+#[test]
+pub(in crate::controller) fn local_stream_resolution_does_not_rescan_missing_cached_path() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let root = self::unique_test_dir("local-stream-no-rescan");
+    let audio = root.join("Album/Track.flac");
+    fs::create_dir_all(audio.parent().expect("parent")).expect("create dir");
+    fs::write(&audio, []).expect("audio");
+    let saved = SavedServer {
+        server: ServerIdentity {
+            id: ServerId::new("local:server:no-rescan"),
+            provider: LOCAL_PROVIDER_ID.to_string(),
+            name: "Local".to_string(),
+            base_url: root.to_string_lossy().into_owned(),
+        },
+        user_id: "local".to_string(),
+        username: "Local".to_string(),
+        trust_invalid_cert: false,
+    };
+    let runtime = Arc::new(Runtime::new().expect("runtime"));
+    let provider =
+        LocalProvider::from_roots_with_identity(vec![root.clone()], saved.server.clone())
+            .expect("local provider");
+    let mut track = runtime
+        .block_on(provider.tracks(rufin_provider::PagedRequest::new(0, 1)))
+        .expect("tracks")
+        .items
+        .into_iter()
+        .next()
+        .expect("track");
+    track.local_path = None;
+    let generation = store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)?;
+            store.begin_sync(&saved.server.id)
+        })
+        .expect("begin sync");
+    store
+        .with_store(|store| store.upsert_tracks(&saved.server.id, &[track.clone()], generation))
+        .expect("upsert track");
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+    let error = super::resolve_stream(
+        &store,
+        &runtime,
+        &secrets,
+        &saved.server.id,
+        &track.id,
+        &PlaybackSettings::default(),
+    )
+    .expect_err("stale local source error");
+
+    assert!(error.contains("Cached local source is missing"));
+    let _cleanup = fs::remove_dir_all(root);
+}
+
 #[test]
 pub(in crate::controller) fn lyrics_match_path() {
     let store = StoreHandle::open_memory().expect("memory store");

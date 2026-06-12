@@ -801,7 +801,12 @@ fn scan_library(
         .into_iter()
         .map(|entry| (entry.facts.path.clone(), entry))
         .collect::<HashMap<_, _>>();
-    let cue_scan = scan_cue_sheets(&discovered.cues, &discovered.audio, &mut cache_by_path);
+    let cue_scan = scan_cue_sheets(
+        &discovered.cues,
+        &discovered.audio,
+        &mut cache_by_path,
+        &mut counters,
+    );
     let suppressed_audio_paths = cue_scan.suppressed_audio_paths;
     let cue_tracks = cue_scan.tracks;
     let facts = discovered
@@ -1231,6 +1236,7 @@ fn scan_cue_sheets(
     cue_facts: &[LocalFileFacts],
     audio_facts: &[LocalFileFacts],
     cache_by_path: &mut HashMap<PathBuf, LocalManifestEntry>,
+    counters: &mut LocalScanCounters,
 ) -> CueScan {
     let audio_by_path = audio_facts
         .iter()
@@ -1245,12 +1251,25 @@ fn scan_cue_sheets(
         let Some(sheet) = parse_cue_sheet(&cue_facts.path, &cue_text) else {
             continue;
         };
+        counters.cue_sheets = counters.cue_sheets.saturating_add(1);
         let cue_revision =
             file_revision(&cue_facts.path).unwrap_or_else(|| cue_revision_from_facts(cue_facts));
         for cue_file in &sheet.files {
             let Some(audio_facts) = audio_by_path.get(&cue_file.path).copied() else {
                 continue;
             };
+            if reuse_cached_cue_file(
+                cue_facts,
+                audio_facts,
+                cue_file,
+                &cue_revision,
+                cache_by_path,
+                counters,
+                &mut scan,
+            ) {
+                continue;
+            }
+            counters.cue_backing_reads = counters.cue_backing_reads.saturating_add(1);
             let Some(backing_track) = read_track(audio_facts.path.clone()) else {
                 continue;
             };
@@ -1281,19 +1300,8 @@ fn scan_cue_sheets(
                 );
                 let scanned_track = match stale_entry.as_ref() {
                     Some(entry) if local_file_facts_match(&entry.facts, &facts) => {
-                        let mut track = entry.track.clone();
-                        track.local_path = Some(audio_facts.path.to_string_lossy().into_owned());
-                        ScannedTrack {
-                            track,
-                            album_artist: entry.album_artist.clone(),
-                            musicbrainz_album_id: entry.musicbrainz_album_id.clone(),
-                            musicbrainz_release_group_id: entry
-                                .musicbrainz_release_group_id
-                                .clone(),
-                            cue_source: Some(source),
-                            cover: entry.cover.as_ref().map(local_cover_from_manifest),
-                            embedded_cover_path: None,
-                        }
+                        counters.cue_reused_tracks = counters.cue_reused_tracks.saturating_add(1);
+                        reused_cue_manifest_track(entry, audio_facts, source)
                     }
                     _ => cue_scanned_track(
                         cue_facts,
@@ -1304,6 +1312,7 @@ fn scan_cue_sheets(
                         source,
                     ),
                 };
+                counters.cue_tracks = counters.cue_tracks.saturating_add(1);
                 scan.tracks.push(CueScannedTrack {
                     facts,
                     stale_entry,
@@ -1313,6 +1322,83 @@ fn scan_cue_sheets(
         }
     }
     scan
+}
+
+fn reuse_cached_cue_file(
+    cue_facts: &LocalFileFacts,
+    audio_facts: &LocalFileFacts,
+    cue_file: &CueFile,
+    cue_revision: &str,
+    cache_by_path: &mut HashMap<PathBuf, LocalManifestEntry>,
+    counters: &mut LocalScanCounters,
+    scan: &mut CueScan,
+) -> bool {
+    let mut candidates = Vec::new();
+    for (position, cue_track) in cue_file.tracks.iter().enumerate() {
+        let segment_start_ms = cue_track.index_start_ms;
+        let facts = cue_track_facts(cue_facts, audio_facts, cue_track.number);
+        let Some(entry) = cache_by_path.get(&facts.path) else {
+            return false;
+        };
+        if !local_file_facts_match(&entry.facts, &facts) {
+            return false;
+        }
+        let segment_end_ms = cue_file
+            .tracks
+            .get(position + 1)
+            .map(|next| next.index_start_ms)
+            .unwrap_or_else(|| {
+                segment_start_ms.saturating_add(u64::from(entry.track.duration_seconds) * 1_000)
+            });
+        if segment_end_ms <= segment_start_ms {
+            continue;
+        }
+        let source = cue_track_source(
+            cue_facts,
+            audio_facts,
+            cue_revision,
+            cue_track.number,
+            segment_start_ms,
+            segment_end_ms,
+        );
+        candidates.push((facts, source));
+    }
+    if candidates.is_empty() {
+        return false;
+    }
+    scan.suppressed_audio_paths.insert(audio_facts.path.clone());
+    for (facts, source) in candidates {
+        let Some(stale_entry) = cache_by_path.remove(&facts.path) else {
+            continue;
+        };
+        let scanned_track = reused_cue_manifest_track(&stale_entry, audio_facts, source);
+        counters.cue_tracks = counters.cue_tracks.saturating_add(1);
+        counters.cue_reused_tracks = counters.cue_reused_tracks.saturating_add(1);
+        scan.tracks.push(CueScannedTrack {
+            facts,
+            stale_entry: Some(stale_entry),
+            scanned_track,
+        });
+    }
+    true
+}
+
+fn reused_cue_manifest_track(
+    entry: &LocalManifestEntry,
+    audio_facts: &LocalFileFacts,
+    source: LocalCueTrackSource,
+) -> ScannedTrack {
+    let mut track = entry.track.clone();
+    track.local_path = Some(audio_facts.path.to_string_lossy().into_owned());
+    ScannedTrack {
+        track,
+        album_artist: entry.album_artist.clone(),
+        musicbrainz_album_id: entry.musicbrainz_album_id.clone(),
+        musicbrainz_release_group_id: entry.musicbrainz_release_group_id.clone(),
+        cue_source: Some(source),
+        cover: entry.cover.as_ref().map(local_cover_from_manifest),
+        embedded_cover_path: None,
+    }
 }
 
 fn cue_scanned_track(

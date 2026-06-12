@@ -277,13 +277,6 @@ impl Shell {
                     self.state.library.borrow().cached_track_count,
                 )
             });
-        let page = complete_cached_page(
-            page,
-            library_layout_loads_complete_page(LibraryListKey::Tracks, &settings),
-            |limit| self.controller.cached_tracks_page(0, limit),
-            "tracks",
-        );
-
         self.library_tracks_page(page.items, page.total)
     }
     pub(in crate::ui) fn library_artist_list_view(

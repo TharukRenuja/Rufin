@@ -168,6 +168,18 @@ fn route_load_fully_for_fallback_layouts() {
 }
 
 #[test]
+fn route_track_snapshot_limit_is_not_library_limit() {
+    let settings = LibraryListSettings::for_key(LibraryListKey::Tracks);
+
+    assert!(super::track_route_has_complete_page(
+        40_000, 40_000, &settings
+    ));
+    assert!(!super::track_route_has_complete_page(
+        40_000, 70_000, &settings
+    ));
+}
+
+#[test]
 fn route_warm_overscan() {
     let ranges =
         super::track_viewport_cover_ranges(2_000, 1_000, 13).expect("track viewport ranges");

@@ -14,6 +14,50 @@ pub(in crate::ui) struct LibraryPageShellOptions {
     pub(in crate::ui) configure_scroller: Option<LibraryRouteScrollerConfigurator>,
 }
 
+fn next_track_hydration(generation: &Rc<Cell<u64>>) -> u64 {
+    let next = generation.get().saturating_add(1);
+    generation.set(next);
+    next
+}
+
+fn schedule_track_hydration(
+    shell: &Rc<Shell>,
+    load_next: Rc<dyn Fn()>,
+    cursor: Rc<PagedGridCursor>,
+    generation: Rc<Cell<u64>>,
+    expected_generation: u64,
+    route_generation: u64,
+) {
+    if track_page_is_complete(cursor.offset.get(), cursor.total.get()) {
+        return;
+    }
+    let shell = Rc::clone(shell);
+    glib::idle_add_local(move || {
+        if generation.get() != expected_generation
+            || shell.state.route_load_generation.get() != route_generation
+            || shell.state.routes.borrow().current() != &Route::Tracks
+        {
+            return glib::ControlFlow::Break;
+        }
+        if track_page_is_complete(cursor.offset.get(), cursor.total.get()) {
+            return glib::ControlFlow::Break;
+        }
+        if cursor.loading.get() {
+            return glib::ControlFlow::Continue;
+        }
+        let previous_offset = cursor.offset.get();
+        load_next();
+        if cursor.offset.get() <= previous_offset {
+            return glib::ControlFlow::Break;
+        }
+        if track_page_is_complete(cursor.offset.get(), cursor.total.get()) {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
 impl Shell {
     pub(in crate::ui) fn library_album_collection_panel(
         self: &Rc<Self>,
@@ -66,7 +110,7 @@ impl Shell {
         total: usize,
     ) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::Tracks);
-        let complete_page = library_layout_loads_complete_page(LibraryListKey::Tracks, &settings);
+        let complete_page = track_route_has_complete_page(tracks.len(), total, &settings);
 
         let tracks = Rc::new(RefCell::new(tracks));
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
@@ -85,70 +129,8 @@ impl Shell {
         });
         let query = Rc::new(RefCell::new(String::new()));
         let play_query = Rc::clone(&query);
-        {
-            let shell = Rc::clone(self);
-            let model = model.clone();
-            let tracks = Rc::clone(&tracks);
-            let cursor = Rc::clone(&cursor);
-            let query = Rc::clone(&query);
-            search.connect_search_changed(move |entry| {
-                let text = entry.text().trim().to_string();
-                *query.borrow_mut() = text.clone();
-                if complete_page {
-                    let settings = shell.library_settings(LibraryListKey::Tracks);
-                    let visible_tracks =
-                        tracks_for_settings(&tracks.borrow(), &settings, &text, false);
-                    let visible_count = visible_tracks.len();
-                    shell
-                        .state
-                        .route_track_refs
-                        .replace(track_image_refs(&visible_tracks));
-                    replace_tracks_in_model(&model, visible_tracks);
-                    warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
-                    cursor.offset.set(visible_count);
-                    cursor.total.set(visible_count);
-                    cursor.loading.set(false);
-                    return;
-                }
-
-                cursor.offset.set(0);
-                cursor.total.set(usize::MAX);
-                cursor.loading.set(true);
-                match shell
-                    .controller
-                    .cached_tracks_page_matching(&text, 0, TRACK_ROUTE_PAGE_SIZE)
-                {
-                    Ok(page) => {
-                        let settings = shell.library_settings(LibraryListKey::Tracks);
-                        let page = complete_cached_page(
-                            page,
-                            library_layout_loads_complete_page(LibraryListKey::Tracks, &settings),
-                            |limit| {
-                                shell
-                                    .controller
-                                    .cached_tracks_page_matching(&text, 0, limit)
-                            },
-                            "tracks search",
-                        );
-                        let count = page.items.len();
-                        *tracks.borrow_mut() = page.items;
-                        let visible_tracks =
-                            tracks_for_settings(&tracks.borrow(), &settings, "", false);
-                        shell
-                            .state
-                            .route_track_refs
-                            .replace(track_image_refs(&visible_tracks));
-                        replace_tracks_in_model(&model, visible_tracks);
-                        warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
-                        finish_grid_page(&cursor, 0, count, page.total);
-                    }
-                    Err(error) => {
-                        warn!(%error, "failed to search cached tracks page");
-                        cursor.loading.set(false);
-                    }
-                }
-            });
-        }
+        let route_generation = self.state.route_load_generation.get();
+        let hydration_generation = Rc::new(Cell::new(0_u64));
         let load_next = {
             let shell = Rc::clone(self);
             let model = model.clone();
@@ -183,6 +165,82 @@ impl Shell {
                 }
             }) as Rc<dyn Fn()>
         };
+        {
+            let shell = Rc::clone(self);
+            let model = model.clone();
+            let tracks = Rc::clone(&tracks);
+            let cursor = Rc::clone(&cursor);
+            let query = Rc::clone(&query);
+            let load_next = Rc::clone(&load_next);
+            let hydration_generation = Rc::clone(&hydration_generation);
+            search.connect_search_changed(move |entry| {
+                let text = entry.text().trim().to_string();
+                *query.borrow_mut() = text.clone();
+                let hydration = next_track_hydration(&hydration_generation);
+                if complete_page {
+                    let settings = shell.library_settings(LibraryListKey::Tracks);
+                    let visible_tracks =
+                        tracks_for_settings(&tracks.borrow(), &settings, &text, false);
+                    let visible_count = visible_tracks.len();
+                    shell
+                        .state
+                        .route_track_refs
+                        .replace(track_image_refs(&visible_tracks));
+                    replace_tracks_in_model(&model, visible_tracks);
+                    warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
+                    cursor.offset.set(visible_count);
+                    cursor.total.set(visible_count);
+                    cursor.loading.set(false);
+                    return;
+                }
+
+                cursor.offset.set(0);
+                cursor.total.set(usize::MAX);
+                cursor.loading.set(true);
+                match shell
+                    .controller
+                    .cached_tracks_page_matching(&text, 0, TRACK_ROUTE_PAGE_SIZE)
+                {
+                    Ok(page) => {
+                        let settings = shell.library_settings(LibraryListKey::Tracks);
+                        let count = page.items.len();
+                        *tracks.borrow_mut() = page.items;
+                        let visible_tracks =
+                            tracks_for_settings(&tracks.borrow(), &settings, "", false);
+                        shell
+                            .state
+                            .route_track_refs
+                            .replace(track_image_refs(&visible_tracks));
+                        replace_tracks_in_model(&model, visible_tracks);
+                        warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
+                        finish_grid_page(&cursor, 0, count, page.total);
+                        schedule_track_hydration(
+                            &shell,
+                            Rc::clone(&load_next),
+                            Rc::clone(&cursor),
+                            Rc::clone(&hydration_generation),
+                            hydration,
+                            route_generation,
+                        );
+                    }
+                    Err(error) => {
+                        warn!(%error, "failed to search cached tracks page");
+                        cursor.loading.set(false);
+                    }
+                }
+            });
+        }
+        if !complete_page {
+            let hydration = next_track_hydration(&hydration_generation);
+            schedule_track_hydration(
+                self,
+                Rc::clone(&load_next),
+                Rc::clone(&cursor),
+                Rc::clone(&hydration_generation),
+                hydration,
+                route_generation,
+            );
+        }
         let track_viewport_warm = {
             let shell = Rc::clone(self);
             let model = model.clone();
