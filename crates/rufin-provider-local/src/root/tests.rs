@@ -136,6 +136,44 @@ FILE "album.wav" WAVE
     assert!(warm.manifest_scan().library_changed);
 }
 #[tokio::test]
+async fn local_provider_skips_oversized_cue_sheet() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let audio = dir.path().join("album.wav");
+    write_silent_wav(&audio, 8).expect("write wav");
+    let cue = dir.path().join("album.cue");
+    fs::write(
+        &cue,
+        r#"
+PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.wav" WAVE
+  TRACK 01 AUDIO
+    TITLE "First Cue Track"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Second Cue Track"
+    INDEX 01 00:04:00
+"#,
+    )
+    .expect("write cue");
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&cue)
+        .expect("cue file");
+    file.set_len((LOCAL_CUE_MAX_BYTES + 1) as u64)
+        .expect("cue length");
+
+    let provider = LocalProvider::from_root(dir.path().to_path_buf()).expect("provider");
+    let tracks = provider
+        .tracks(PagedRequest::new(0, 10))
+        .await
+        .expect("tracks");
+
+    assert_eq!(tracks.total, 1);
+    assert_eq!(provider.manifest_scan().cue_track_sources.len(), 0);
+    assert_eq!(provider.manifest_scan().entries.len(), 1);
+}
+#[tokio::test]
 async fn local_provider_dedupes_overlapping_roots() {
     let root = tempfile::tempdir().expect("root");
     let nested = root.path().join("nested");
