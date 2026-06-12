@@ -7,6 +7,7 @@ impl AppController {
         let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let next_preload = Arc::clone(&self.next_preload);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
@@ -39,6 +40,7 @@ impl AppController {
                             store: &store,
                             queue: &queue,
                             playback_request_generation: &playback_request_generation,
+                            next_preload: &next_preload,
                             playback: &playback,
                             playback_snapshot: &playback_snapshot,
                             auto_dj_enabled: &auto_dj_enabled,
@@ -80,6 +82,7 @@ impl AppController {
                         clear_queue_and_stop_playback(
                             &queue,
                             &playback_request_generation,
+                            &next_preload,
                             &playback,
                             &playback_snapshot,
                             &auto_dj_enabled,
@@ -93,6 +96,7 @@ impl AppController {
                             store: &store,
                             queue: &queue,
                             playback_request_generation: &playback_request_generation,
+                            next_preload: &next_preload,
                             playback: &playback,
                             playback_snapshot: &playback_snapshot,
                             auto_dj_enabled: &auto_dj_enabled,

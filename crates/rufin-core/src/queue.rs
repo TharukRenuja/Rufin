@@ -184,7 +184,6 @@ pub struct PlaySourceKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueueSourceInput {
     pub source_key: PlaySourceKey,
-    pub materialized_start: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -220,6 +219,7 @@ pub enum QueueReplacementSource {
 pub enum QueueItemInput {
     Source {
         track: Track,
+        source_index: usize,
     },
     Manual {
         track: Track,
@@ -634,6 +634,30 @@ impl QueueEngine {
         true
     }
 
+    pub fn activate_source_occurrence(
+        &mut self,
+        source_key: &PlaySourceKey,
+        source_index: usize,
+        track_id: &TrackId,
+    ) -> Option<QueueEntryId> {
+        let shuffle_key = source_shuffle_key(source_key, source_index, track_id);
+        let entry_id = self
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.track_id == *track_id
+                    && matches!(
+                        entry.origin.as_ref(),
+                        Some(QueueEntryOrigin::Source {
+                            shuffle_key: entry_shuffle_key,
+                        }) if *entry_shuffle_key == shuffle_key
+                    )
+            })?
+            .id
+            .clone();
+        self.activate(&entry_id).then_some(entry_id)
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
         self.current_index = None;
@@ -814,26 +838,28 @@ impl QueueEngine {
             return Err(QueueError::AnchorNotFound);
         }
 
-        let mut tracks = Vec::with_capacity(items.len());
+        let mut source_items = Vec::with_capacity(items.len());
         for item in items {
-            let QueueItemInput::Source { track } = item else {
+            let QueueItemInput::Source {
+                track,
+                source_index,
+            } = item
+            else {
                 return Err(QueueError::WrongItemKind);
             };
-            tracks.push(track);
+            source_items.push((track, source_index));
         }
-        if tracks
+        if source_items
             .get(anchor_index)
-            .is_none_or(|track| track.id != anchor_track_id)
+            .is_none_or(|(track, _)| track.id != anchor_track_id)
         {
             return Err(QueueError::AnchorNotFound);
         }
 
-        let entries = tracks
+        let entries = source_items
             .into_iter()
-            .enumerate()
-            .map(|(materialized_index, track)| {
+            .map(|(track, source_index)| {
                 let mut entry = self.entry_from_track(&track);
-                let source_index = source.materialized_start.saturating_add(materialized_index);
                 entry.origin = Some(QueueEntryOrigin::Source {
                     shuffle_key: source_shuffle_key(&source.source_key, source_index, &track.id),
                 });
@@ -1229,7 +1255,15 @@ mod tests {
     }
 
     fn source_item(track: Track) -> QueueItemInput {
-        QueueItemInput::Source { track }
+        let source_index = usize::from(track.track_number.saturating_sub(1));
+        source_item_at(track, source_index)
+    }
+
+    fn source_item_at(track: Track, source_index: usize) -> QueueItemInput {
+        QueueItemInput::Source {
+            track,
+            source_index,
+        }
     }
 
     #[test]
@@ -1239,7 +1273,6 @@ mod tests {
             .replace_all(QueueReplacement {
                 source: QueueReplacementSource::Source(QueueSourceInput {
                     source_key: source_key("playlist"),
-                    materialized_start: 0,
                 }),
                 items: vec![
                     source_item(track(1)),
@@ -1276,6 +1309,49 @@ mod tests {
     }
 
     #[test]
+    fn queue_activate_source_occurrence() {
+        let mut queue = QueueEngine::new(ServerId::fake(1));
+        let source_key = source_key("playlist");
+        let repeated = track(1);
+        queue
+            .replace_all(QueueReplacement {
+                source: QueueReplacementSource::Source(QueueSourceInput {
+                    source_key: source_key.clone(),
+                }),
+                items: vec![
+                    source_item_at(repeated.clone(), 0),
+                    source_item_at(repeated.clone(), 1),
+                    source_item_at(track(2), 2),
+                ],
+                anchor: QueueAnchor::SourcePosition {
+                    position: 0,
+                    track_id: repeated.id.clone(),
+                },
+            })
+            .expect("source queue replacement should be valid");
+        let ids = queue
+            .entries()
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+
+        let activated = queue
+            .activate_source_occurrence(&source_key, 1, &repeated.id)
+            .expect("source occurrence should be materialized");
+
+        assert_eq!(Some(&activated), ids.get(1));
+        assert_eq!(queue.snapshot().current_index, Some(1));
+        assert_eq!(
+            queue
+                .entries()
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>(),
+            ids
+        );
+    }
+
+    #[test]
     fn queue_reject_anchor() {
         let mut queue = QueueEngine::new(ServerId::fake(1));
         queue.append(&track(9));
@@ -1284,7 +1360,6 @@ mod tests {
         let result = queue.replace_all(QueueReplacement {
             source: QueueReplacementSource::Source(QueueSourceInput {
                 source_key: source_key("playlist"),
-                materialized_start: 0,
             }),
             items: vec![source_item(track(1)), source_item(track(2))],
             anchor: QueueAnchor::SourcePosition {
@@ -1577,7 +1652,6 @@ mod tests {
     fn queue_source_history() {
         let source = QueueSourceInput {
             source_key: source_key("shuffle"),
-            materialized_start: 0,
         };
         let replacement = || QueueReplacement {
             source: QueueReplacementSource::Source(source.clone()),
@@ -1621,7 +1695,6 @@ mod tests {
             .replace_all(QueueReplacement {
                 source: QueueReplacementSource::Source(QueueSourceInput {
                     source_key: source_key("display"),
-                    materialized_start: 0,
                 }),
                 items: vec![
                     source_item(track(1)),

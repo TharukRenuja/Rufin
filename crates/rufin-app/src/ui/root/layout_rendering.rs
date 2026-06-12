@@ -58,7 +58,6 @@ pub(in crate::ui) fn loaded_track_items_play_activation(
 ) -> Option<PlayActivation> {
     let (anchor_track, anchor_source_item_id) = items.get(anchor_index).cloned()?;
     Some(PlayActivation {
-        action: PlayAction::ReplaceNow,
         target: PlayTarget::LoadedSource {
             source_key,
             completeness: LoadedCompleteness::Complete,
@@ -114,7 +113,6 @@ pub(in crate::ui) fn loaded_tracks_window_play_activation(
         .get(anchor_index.saturating_sub(start))
         .map(|item| item.track.clone())?;
     Some(PlayActivation {
-        action: PlayAction::ReplaceNow,
         target: PlayTarget::LoadedSource {
             source_key,
             completeness,
@@ -179,7 +177,6 @@ pub(in crate::ui) fn playlist_entry_play_activation(
     state: &PlaylistEntryListState,
 ) -> Option<PlayActivation> {
     Some(PlayActivation {
-        action: PlayAction::ReplaceNow,
         target: PlayTarget::StoreBackedSource {
             source_key: playlist_play_source_key(playlist_id, state),
             anchor: PlayAnchor {

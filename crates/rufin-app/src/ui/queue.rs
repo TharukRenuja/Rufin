@@ -4,9 +4,7 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use rufin_core::{
-    Playlist, QueueEntry, QueueEntryId, RightSidebarMode, Route, SearchKind, format_duration,
-};
+use rufin_core::{QueueEntry, QueueEntryId, RightSidebarMode, Route, SearchKind, format_duration};
 
 use crate::controller::AppController;
 use crate::i18n::tr;
@@ -31,11 +29,21 @@ const QUEUE_YEAR_COLUMN_WIDTH: i32 = 64;
 const QUEUE_FAVORITE_COLUMN_WIDTH: i32 = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct QueueFullscreenColumnWidths {
+pub(in crate::ui::root) struct QueueFullscreenColumnWidths {
     title: i32,
     album: i32,
     show_album: bool,
     show_year: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui::root) struct QueuePanelRenderState {
+    filter: String,
+    row_ids: Vec<QueueEntryId>,
+    current_id: Option<QueueEntryId>,
+    show_header: bool,
+    empty_text: Option<String>,
+    fullscreen_widths: Option<QueueFullscreenColumnWidths>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -93,7 +101,6 @@ impl Shell {
                 scroll_behavior,
             );
         }
-        self.controller.warm_waveforms_for_queue();
     }
 
     fn render_queue_panel_into(
@@ -104,7 +111,6 @@ impl Shell {
         scroll_behavior: QueueScrollBehavior,
     ) {
         let queue_snapshot = self.state.queue.borrow().clone();
-        let playlists = context_menu_playlists(self);
         let has_filter = !queue_filter.is_empty();
         let queue_scroller = queue_panel_scroller(panel).unwrap_or_else(new_queue_scroller);
         let previous_scroll = queue_scroller.vadjustment().value();
@@ -114,6 +120,22 @@ impl Shell {
                 self.window.width(),
             ))
         });
+        let render_state =
+            queue_panel_render_state(&queue_snapshot, queue_filter, fullscreen_widths);
+        let state_cell = match layout {
+            QueuePanelLayout::Sidebar => &self.state.queue_sidebar_render_state,
+            QueuePanelLayout::Fullscreen => &self.state.queue_fullscreen_render_state,
+        };
+        if scroll_behavior == QueueScrollBehavior::Preserve
+            && state_cell
+                .borrow()
+                .as_ref()
+                .is_some_and(|previous| previous.same_rows_as(&render_state))
+            && update_queue_current_rows(panel, &render_state)
+        {
+            *state_cell.borrow_mut() = Some(render_state);
+            return;
+        }
 
         while let Some(child) = panel.first_child() {
             panel.remove(&child);
@@ -141,7 +163,6 @@ impl Shell {
                     snapshot.current_index,
                     layout,
                     fullscreen_widths,
-                    &playlists,
                 ));
                 visible_entries += 1;
             }
@@ -171,6 +192,7 @@ impl Shell {
                 restore_queue_scroll_position(&queue_scroller, 0.0);
             }
         }
+        *state_cell.borrow_mut() = Some(render_state);
     }
 
     fn queue_row(
@@ -180,7 +202,6 @@ impl Shell {
         current_index: Option<usize>,
         layout: QueuePanelLayout,
         fullscreen_widths: Option<QueueFullscreenColumnWidths>,
-        playlists: &[Playlist],
     ) -> gtk::Widget {
         if layout == QueuePanelLayout::Fullscreen {
             return self.fullscreen_queue_row(
@@ -188,7 +209,6 @@ impl Shell {
                 entry,
                 current_index,
                 fullscreen_widths.unwrap_or_else(|| fullscreen_queue_column_widths(1)),
-                playlists,
             );
         }
 
@@ -245,7 +265,7 @@ impl Shell {
         row.append(&labels);
         row.append(&year);
         install_queue_row_activation(&row, &self.controller, entry.id.clone());
-        install_queue_row_context_menu(&row, self, entry, playlists);
+        install_queue_row_context_menu(&row, self, entry);
         row.upcast()
     }
 
@@ -255,7 +275,6 @@ impl Shell {
         entry: &QueueEntry,
         current_index: Option<usize>,
         widths: QueueFullscreenColumnWidths,
-        playlists: &[Playlist],
     ) -> gtk::Widget {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         row.add_css_class("queue-row");
@@ -323,7 +342,7 @@ impl Shell {
         }
 
         install_queue_row_activation(&row, &self.controller, entry.id.clone());
-        install_queue_row_context_menu(&row, self, entry, playlists);
+        install_queue_row_context_menu(&row, self, entry);
         row.upcast()
     }
 
@@ -346,6 +365,97 @@ impl Shell {
         cell.set_center_widget(Some(&button));
         cell.upcast()
     }
+}
+
+impl QueuePanelRenderState {
+    fn same_rows_as(&self, next: &Self) -> bool {
+        self.filter == next.filter
+            && self.row_ids == next.row_ids
+            && self.show_header == next.show_header
+            && self.empty_text == next.empty_text
+            && self.fullscreen_widths == next.fullscreen_widths
+    }
+}
+
+fn queue_panel_render_state(
+    queue_snapshot: &Option<rufin_core::QueueSnapshot>,
+    queue_filter: &str,
+    fullscreen_widths: Option<QueueFullscreenColumnWidths>,
+) -> QueuePanelRenderState {
+    let has_filter = !queue_filter.is_empty();
+    let mut queue_has_entries = false;
+    let mut row_ids = Vec::new();
+    let mut current_id = None;
+    if let Some(snapshot) = queue_snapshot {
+        queue_has_entries = !snapshot.entries.is_empty();
+        current_id = snapshot
+            .current_index
+            .and_then(|index| snapshot.entries.get(index))
+            .map(|entry| entry.id.clone());
+        row_ids.extend(
+            snapshot
+                .entries
+                .iter()
+                .filter(|entry| queue_entry_matches_filter(entry, queue_filter))
+                .map(|entry| entry.id.clone()),
+        );
+    }
+    let empty_text = row_ids.is_empty().then(|| {
+        if has_filter && queue_has_entries {
+            tr("No queue items match the search.")
+        } else {
+            tr("Add music to start a queue.")
+        }
+    });
+    QueuePanelRenderState {
+        filter: queue_filter.to_string(),
+        show_header: !row_ids.is_empty(),
+        row_ids,
+        current_id,
+        empty_text,
+        fullscreen_widths,
+    }
+}
+
+fn update_queue_current_rows(panel: &gtk::Box, state: &QueuePanelRenderState) -> bool {
+    let Some(list) = queue_panel_list(panel) else {
+        return false;
+    };
+    let mut row_position = 0usize;
+    let mut child = list.first_child();
+    while let Some(widget) = child {
+        if row_position >= state.row_ids.len() {
+            return false;
+        }
+        let Some(row) = queue_content_row(&widget) else {
+            return false;
+        };
+        if state.current_id.as_ref() == Some(&state.row_ids[row_position]) {
+            row.add_css_class("queue-row-current");
+        } else {
+            row.remove_css_class("queue-row-current");
+        }
+        row_position += 1;
+        child = widget.next_sibling();
+    }
+    row_position == state.row_ids.len()
+}
+
+fn queue_panel_list(panel: &gtk::Box) -> Option<gtk::ListBox> {
+    let scroller = queue_panel_scroller(panel)?;
+    scroller.child()?.downcast::<gtk::ListBox>().ok()
+}
+
+fn queue_content_row(widget: &gtk::Widget) -> Option<gtk::Widget> {
+    if widget.has_css_class("queue-row") {
+        return Some(widget.clone());
+    }
+    widget
+        .clone()
+        .downcast::<gtk::ListBoxRow>()
+        .ok()
+        .and_then(|row| row.child())
+        .filter(|child| child.has_css_class("queue-row"))
 }
 
 pub(super) fn connect_queue_panel_controls(shell: &Rc<Shell>) {
@@ -652,12 +762,55 @@ fn install_queue_row_activation(
     row.add_controller(click);
 }
 
-fn install_queue_row_context_menu(
+fn install_queue_row_context_menu(row: &gtk::Box, shell: &Rc<Shell>, entry: &QueueEntry) {
+    let shell = Rc::clone(shell);
+    let entry = entry.clone();
+
+    let click_shell = Rc::clone(&shell);
+    let click_entry = entry.clone();
+    let click_row = row.downgrade();
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    click.connect_pressed(move |click, _, x, y| {
+        click.set_state(gtk::EventSequenceState::Claimed);
+        if let Some(row) = click_row.upgrade() {
+            show_queue_row_context_menu(
+                &row,
+                &click_shell,
+                &click_entry,
+                Some(gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)),
+            );
+        }
+    });
+    row.add_controller(click);
+
+    let key_shell = Rc::clone(&shell);
+    let key_entry = entry;
+    let key_row = row.downgrade();
+    let key_controller = gtk::EventControllerKey::new();
+    key_controller.connect_key_pressed(move |_, key, _, state| {
+        let opens_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if opens_menu {
+            if let Some(row) = key_row.upgrade() {
+                show_queue_row_context_menu(&row, &key_shell, &key_entry, None);
+            }
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    row.add_controller(key_controller);
+}
+
+fn show_queue_row_context_menu(
     row: &gtk::Box,
     shell: &Rc<Shell>,
     entry: &QueueEntry,
-    playlists: &[Playlist],
+    pointing_to: Option<gtk::gdk::Rectangle>,
 ) {
+    let playlists = context_menu_playlists(shell);
     let menu = gio::Menu::new();
     menu.append(Some(&tr("Remove from Queue")), Some("queue.remove"));
     menu.append(Some(&tr("Play Now")), Some("queue.play-now"));
@@ -695,6 +848,8 @@ fn install_queue_row_context_menu(
     let popover = gtk::PopoverMenu::from_model(Some(&menu));
     popover.add_css_class("queue-context-menu");
     popover.set_parent(row);
+    popover.set_pointing_to(pointing_to.as_ref());
+    popover.connect_closed(|popover| popover.unparent());
 
     let actions = gio::SimpleActionGroup::new();
     let controller = shell.controller.clone();
@@ -797,37 +952,7 @@ fn install_queue_row_context_menu(
     }
 
     row.insert_action_group("queue", Some(&actions));
-
-    let click_popover = popover.downgrade();
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    click.set_propagation_phase(gtk::PropagationPhase::Capture);
-    click.connect_pressed(move |click, _, x, y| {
-        click.set_state(gtk::EventSequenceState::Claimed);
-        if let Some(popover) = click_popover.upgrade() {
-            let rect = gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
-            popover.set_pointing_to(Some(&rect));
-            popover.popup();
-        }
-    });
-    row.add_controller(click);
-
-    let key_popover = popover.downgrade();
-    let key_controller = gtk::EventControllerKey::new();
-    key_controller.connect_key_pressed(move |_, key, _, state| {
-        let opens_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && state.contains(gtk::gdk::ModifierType::SHIFT_MASK));
-        if opens_menu {
-            if let Some(popover) = key_popover.upgrade() {
-                popover.set_pointing_to(None);
-                popover.popup();
-            }
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
-    row.add_controller(key_controller);
+    popover.popup();
 }
 
 fn queue_artist_route(entry: &QueueEntry) -> Option<Route> {

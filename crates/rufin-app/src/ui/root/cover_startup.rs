@@ -733,18 +733,25 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     }
                 }
                 ControllerEvent::LibrarySyncStatus(status) => {
+                    let event_started = Instant::now();
+                    let sync_status = status.sync_status.clone();
+                    let delta_empty = status.delta.is_empty();
                     let last_error = status.last_error.clone();
                     let toast_message = preferences_login_status_toast_message(&status.sync_status)
                         .map(str::to_string);
                     let delta = status.delta.clone();
+                    let apply_started = Instant::now();
                     let applied = {
                         let mut library = shell.state.library.borrow_mut();
                         apply_library_sync_status(&mut library, *status)
                     };
+                    let apply_ms = apply_started.elapsed().as_millis() as u64;
                     if !applied {
                         continue;
                     }
+                    let selector_started = Instant::now();
                     shell.update_server_selector();
+                    let selector_ms = selector_started.elapsed().as_millis() as u64;
                     if let Some(error) = last_error {
                         warn!(%error, "library sync update reported an error");
                         shell.show_preferences_toast(&error);
@@ -766,7 +773,17 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             shell.schedule_startup_route_reveal();
                         }
                     } else {
+                        let delta_started = Instant::now();
                         shell.apply_library_delta(delta);
+                        info!(
+                            sync_status = %sync_status,
+                            delta_empty,
+                            apply_ms,
+                            selector_ms,
+                            delta_ms = delta_started.elapsed().as_millis() as u64,
+                            total_ms = event_started.elapsed().as_millis() as u64,
+                            "handled library sync status"
+                        );
                     }
                 }
                 ControllerEvent::LibraryDelta(delta) => {
@@ -842,6 +859,8 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     snapshot,
                 } => {
                     *shell.state.library.borrow_mut() = *snapshot;
+                    shell.state.smart_playlists.borrow_mut().clear();
+                    shell.state.smart_playlists_loaded.set(false);
                     shell.update_server_selector();
                     let route = shell.state.routes.borrow().current().clone();
                     if matches!(route, Route::SmartPlaylists) {
@@ -878,8 +897,6 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         continue;
                     }
                     shell.schedule_queue_panel_render();
-                    shell.update_bottom_player();
-                    shell.update_fullscreen_player();
                 }
                 ControllerEvent::Playback(player) => {
                     let previous_player = shell.state.player.borrow().clone();
@@ -1136,18 +1153,8 @@ pub(in crate::ui) fn route_visible_cover_targets(
 fn visible_cover_window(shell: &Shell, route: &Route) -> VisibleCoverWindow {
     match route {
         Route::Home => home_visible_cover_window(shell),
-        Route::Favorites => track_visible_cover_window(
-            shell,
-            LibraryListKey::FavoriteTracks,
-            shell.state.library.borrow().favorites.clone(),
-            true,
-        ),
-        Route::Tracks => track_visible_cover_window(
-            shell,
-            LibraryListKey::Tracks,
-            shell.state.library.borrow().tracks.clone(),
-            false,
-        ),
+        Route::Favorites => track_visible_cover_window(shell, LibraryListKey::FavoriteTracks, true),
+        Route::Tracks => track_visible_cover_window(shell, LibraryListKey::Tracks, false),
         Route::Albums => album_visible_cover_window(shell),
         Route::Artists => artist_visible_cover_window(shell, false),
         Route::AlbumArtists => artist_visible_cover_window(shell, true),
@@ -1173,25 +1180,59 @@ fn home_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
 fn track_visible_cover_window(
     shell: &Shell,
     key: LibraryListKey,
-    mut tracks: Vec<Track>,
     favorite_first: bool,
 ) -> VisibleCoverWindow {
     let settings = shell.library_settings(key);
     let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
         return VisibleCoverWindow { refs: Vec::new() };
     };
-    let tracks = if key == LibraryListKey::Tracks {
-        let route_tracks = shell.state.route_tracks.borrow();
-        if route_tracks.is_empty() {
-            library::sort_tracks(&mut tracks, &settings, favorite_first);
-            tracks
-        } else {
-            route_tracks.clone()
+    if matches!(key, LibraryListKey::Tracks | LibraryListKey::FavoriteTracks) {
+        let route_refs = shell.state.route_track_refs.borrow();
+        if !route_refs.is_empty() {
+            return track_visible_cover_window_for_refs(
+                shell,
+                &route_refs,
+                &settings,
+                fetch_size,
+                size,
+            );
         }
-    } else {
-        library::sort_tracks(&mut tracks, &settings, favorite_first);
-        tracks
+    }
+    let mut tracks = match key {
+        LibraryListKey::FavoriteTracks => shell.state.library.borrow().favorites.clone(),
+        _ => shell.state.library.borrow().tracks.clone(),
     };
+    library::sort_tracks(&mut tracks, &settings, favorite_first);
+    track_visible_cover_window_for_tracks(shell, &tracks, &settings, fetch_size, size)
+}
+
+fn track_visible_cover_window_for_refs(
+    shell: &Shell,
+    refs: &[Option<ImageRef>],
+    settings: &LibraryListSettings,
+    fetch_size: u32,
+    size: i32,
+) -> VisibleCoverWindow {
+    let (visible_start, visible_end) = visible_index_range(shell, refs.len(), settings.layout);
+    let refs = refs[visible_start..visible_end]
+        .iter()
+        .filter_map(|image_ref| image_ref.clone())
+        .map(|image_ref| VisibleCoverRef {
+            image_ref,
+            fetch_size,
+            size,
+        })
+        .collect::<Vec<_>>();
+    VisibleCoverWindow { refs }
+}
+
+fn track_visible_cover_window_for_tracks(
+    shell: &Shell,
+    tracks: &[Track],
+    settings: &LibraryListSettings,
+    fetch_size: u32,
+    size: i32,
+) -> VisibleCoverWindow {
     let (visible_start, visible_end) = visible_index_range(shell, tracks.len(), settings.layout);
     let visible_tracks = &tracks[visible_start..visible_end];
     let refs = visible_tracks

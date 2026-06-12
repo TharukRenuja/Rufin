@@ -3,16 +3,19 @@ use super::*;
 impl AppController {
     pub fn play_activation(&self, activation: PlayActivation) {
         let generation = self.next_play_activation_generation();
-        let PlayActivation { action, target } = activation;
+        let PlayActivation { target } = activation;
         if let PlayTarget::StoreBackedSource { source_key, anchor } = target {
             self.play_store_backed_source_activation(source_key, anchor, generation);
             return;
         }
 
-        self.finish_resolved_play_activation(PlayActivation { action, target });
+        self.finish_resolved_play_activation(PlayActivation { target });
     }
 
     fn finish_resolved_play_activation(&self, activation: PlayActivation) {
+        if self.activate_materialized_source_entry(&activation) {
+            return;
+        }
         let activation = match normalize_loaded_source_activation(activation) {
             Ok(activation) => activation,
             Err(error) => {
@@ -28,6 +31,45 @@ impl AppController {
                 self.replace_queue_from_activation(replacement);
             }
         }
+    }
+
+    fn activate_materialized_source_entry(&self, activation: &PlayActivation) -> bool {
+        let PlayTarget::LoadedSource {
+            source_key,
+            completeness,
+            anchor,
+            ..
+        } = &activation.target
+        else {
+            return false;
+        };
+        if *completeness != LoadedCompleteness::Complete {
+            return false;
+        }
+
+        let mut activated = None;
+        let mut skipped_current = false;
+        let result = self.with_queue_mut(|queue| {
+            let previous_current = queue.current().map(|entry| entry.id.clone());
+            activated =
+                queue.activate_source_occurrence(source_key, anchor.source_index, &anchor.track_id);
+            if let Some(entry_id) = activated.as_ref() {
+                skipped_current = previous_current
+                    .as_ref()
+                    .is_some_and(|current| current != entry_id);
+            }
+            Ok(())
+        });
+        if result.is_err() || activated.is_none() {
+            return false;
+        }
+        if skipped_current {
+            self.record_current_skip_if_needed();
+        }
+        self.start_queue_emit();
+        self.start_current_track();
+        self.auto_dj_top_up_deferred();
+        true
     }
 
     pub(in crate::controller) fn next_play_activation_generation(&self) -> u64 {
@@ -235,7 +277,6 @@ impl AppController {
             .id
             .clone();
         PlayActivation {
-            action: PlayAction::ReplaceNow,
             target: PlayTarget::LoadedSource {
                 source_key: PlaySourceKey {
                     descriptor: PlaySourceDescriptor::Album {
@@ -361,7 +402,7 @@ impl AppController {
             self.record_current_skip_if_needed();
         }
         self.start_queue_emit();
-        self.start_current_track();
+        self.restart_current_track();
         self.auto_dj_top_up_deferred();
     }
     pub fn move_queue_entry_after_current(&self, entry_id: QueueEntryId) {
@@ -419,7 +460,7 @@ impl AppController {
             return;
         }
         self.persist_and_emit_playback();
-        self.prepare_next_stream_deferred();
+        self.prepare_next_stream();
     }
     pub fn cycle_repeat(&self) {
         let result = self.with_queue_mut(|queue| {
@@ -498,7 +539,6 @@ fn store_backed_window_play_activation(
         }
     };
     Ok(PlayActivation {
-        action: PlayAction::ReplaceNow,
         target: PlayTarget::LoadedSource {
             source_key,
             completeness,
@@ -590,7 +630,6 @@ mod tests {
         *controller.queue.lock().expect("queue") = Some(QueueEngine::new(saved.server.id.clone()));
 
         controller.play_activation(PlayActivation {
-            action: PlayAction::ReplaceNow,
             target: PlayTarget::StoreBackedSource {
                 source_key: PlaySourceKey {
                     descriptor: PlaySourceDescriptor::Playlist {
@@ -628,6 +667,140 @@ mod tests {
     }
 
     #[test]
+    fn queue_same_source_activation_reuses_entries() {
+        let (controller, events, snapshot, ..) =
+            AppController::bootstrap_with_fake(FakeScale::Small);
+        let tracks = snapshot.tracks[0..3].to_vec();
+        let source_key = PlaySourceKey {
+            descriptor: PlaySourceDescriptor::Playlist {
+                playlist_id: PlaylistId::fake(9),
+            },
+            order: SourceOrder::PlaylistDisplayed {
+                query: None,
+                sort: PlaylistEntrySortDescriptor::Position,
+                descending: false,
+            },
+        };
+        let activation = |anchor_index: usize| PlayActivation {
+            target: PlayTarget::LoadedSource {
+                source_key: source_key.clone(),
+                completeness: LoadedCompleteness::Complete,
+                items: tracks
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(source_index, track)| PlaySourceItem {
+                        track,
+                        source_index,
+                        source_item_id: Some(format!("entry-{source_index}")),
+                    })
+                    .collect(),
+                anchor: PlayAnchor {
+                    track_id: tracks[anchor_index].id.clone(),
+                    source_index: anchor_index,
+                    source_item_id: Some(format!("entry-{anchor_index}")),
+                },
+            },
+        };
+
+        controller.play_activation(activation(0));
+        let initial_queue = wait_for_queue(&events).expect("initial source queue");
+        let initial_ids = initial_queue
+            .entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+
+        controller.play_activation(activation(0));
+        let duplicate_queue = wait_for_queue(&events).expect("duplicate source queue");
+        assert_eq!(
+            duplicate_queue
+                .entries
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>(),
+            initial_ids
+        );
+
+        controller.play_activation(activation(2));
+        let moved_queue = wait_for_queue(&events).expect("moved source queue");
+        assert_eq!(moved_queue.current_index, Some(2));
+        assert_eq!(
+            moved_queue
+                .entries
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>(),
+            initial_ids
+        );
+    }
+
+    #[test]
+    fn queue_windowed_source_activation_replaces_entries() {
+        let (controller, events, ..) = AppController::bootstrap_with_fake(FakeScale::Small);
+        let tracks = (1..=8)
+            .map(|number| library_track(number, None, AlbumId::fake(1), "Artist", &[]))
+            .collect::<Vec<_>>();
+        let source_key = PlaySourceKey {
+            descriptor: PlaySourceDescriptor::Playlist {
+                playlist_id: PlaylistId::fake(10),
+            },
+            order: SourceOrder::PlaylistDisplayed {
+                query: None,
+                sort: PlaylistEntrySortDescriptor::Position,
+                descending: false,
+            },
+        };
+        let activation = |start: usize, anchor_offset: usize| PlayActivation {
+            target: PlayTarget::LoadedSource {
+                source_key: source_key.clone(),
+                completeness: LoadedCompleteness::Window {
+                    start,
+                    total: Some(tracks.len()),
+                },
+                items: tracks[start..start + 5]
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(offset, track)| PlaySourceItem {
+                        track,
+                        source_index: start + offset,
+                        source_item_id: None,
+                    })
+                    .collect(),
+                anchor: PlayAnchor {
+                    track_id: tracks[start + anchor_offset].id.clone(),
+                    source_index: start + anchor_offset,
+                    source_item_id: None,
+                },
+            },
+        };
+
+        controller.play_activation(activation(0, 0));
+        let initial_queue = wait_for_queue(&events).expect("initial source queue");
+        let initial_ids = initial_queue
+            .entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+
+        controller.play_activation(activation(3, 1));
+        let moved_queue = wait_for_queue(&events).expect("windowed source queue");
+
+        assert_eq!(moved_queue.current_index, Some(1));
+        assert_eq!(moved_queue.entries[0].track_id, tracks[3].id);
+        assert_eq!(moved_queue.entries[4].track_id, tracks[7].id);
+        assert_ne!(
+            moved_queue
+                .entries
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>(),
+            initial_ids
+        );
+    }
+
+    #[test]
     fn queue_clear_activation() {
         let (controller, events, ..) = AppController::bootstrap_memory_for_test();
         let saved = SavedServer {
@@ -657,7 +830,6 @@ mod tests {
 
         let generation = controller.next_play_activation_generation();
         let stale_activation = PlayActivation {
-            action: PlayAction::ReplaceNow,
             target: PlayTarget::LoadedSource {
                 source_key: PlaySourceKey {
                     descriptor: PlaySourceDescriptor::Album {
@@ -706,7 +878,6 @@ mod tests {
 
         let generation = controller.next_play_activation_generation();
         let stale_activation = PlayActivation {
-            action: PlayAction::ReplaceNow,
             target: PlayTarget::LoadedSource {
                 source_key: PlaySourceKey {
                     descriptor: PlaySourceDescriptor::Album {

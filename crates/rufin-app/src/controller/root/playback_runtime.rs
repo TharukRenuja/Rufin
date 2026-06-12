@@ -6,6 +6,14 @@ impl AppController {
         &self,
         command: PlaybackCommand,
     ) -> Result<(), String> {
+        if matches!(
+            &command,
+            PlaybackCommand::Stop
+                | PlaybackCommand::PrepareNext(None)
+                | PlaybackCommand::PlayPrepared { next: None, .. }
+        ) {
+            clear_next_preload(&self.next_preload);
+        }
         self.playback
             .lock()
             .map_err(|_| "playback lock was poisoned".to_string())?
@@ -50,6 +58,12 @@ impl AppController {
         }
     }
     pub(in crate::controller) fn start_current_track(&self) {
+        self.start_current_track_inner(false);
+    }
+    pub(in crate::controller) fn restart_current_track(&self) {
+        self.start_current_track_inner(true);
+    }
+    fn start_current_track_inner(&self, restart: bool) {
         let Some((server_id, entry, next_entry, position_seconds, playback_settings)) =
             self.current_playback_request()
         else {
@@ -58,33 +72,20 @@ impl AppController {
                 .send(ControllerEvent::Error("Queue is empty.".to_string()));
             return;
         };
+        if !restart && self.current_playback_start_matches(&server_id, &entry, position_seconds) {
+            return;
+        }
+        self.cancel_waveform_warm();
         let request_generation =
             next_playback_request_generation(&self.playback_request_generation);
-        self.update_playback_snapshot(|snapshot| {
-            snapshot.current = Some(entry.clone());
-            snapshot.state = PlaybackState::Buffering;
-            snapshot.position_seconds = position_seconds;
-            snapshot.position_millis = u64::from(position_seconds) * 1_000;
-            snapshot.duration_seconds = entry.duration_seconds;
-            snapshot.last_error = None;
-            set_waveform_cache_key(
-                snapshot,
-                Some(waveform_cache_key(
-                    &server_id,
-                    &entry.track_id,
-                    entry.duration_seconds,
-                )),
-            );
-        });
-        self.start_playback_activity(&server_id, &entry, position_seconds);
-        self.emit_playback_snapshot();
-        self.report_playback(PlaybackReportKind::Started, false);
         let waveform_enabled = self.load_settings().seekbar_waveform_enabled;
+        let controller = self.clone();
         let store = self.store.clone();
         let runtime = Arc::clone(&self.runtime);
         let secrets = Arc::clone(&self.secrets);
         let playback = Arc::clone(&self.playback);
         let queue = Arc::clone(&self.queue);
+        let next_preload = Arc::clone(&self.next_preload);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let events = self.events.clone();
@@ -117,7 +118,6 @@ impl AppController {
                         &entry,
                     ) {
                         if let Ok(mut snapshot) = playback_snapshot.lock() {
-                            snapshot.state = PlaybackState::Stopped;
                             snapshot.buffering_percent = None;
                             snapshot.last_error = Some(error.clone());
                         }
@@ -153,18 +153,20 @@ impl AppController {
                 start_position_seconds: position_seconds,
                 settings: playback_settings,
             };
+            clear_next_preload(&next_preload);
             if let Err(error) = playback
                 .lock()
                 .map_err(|_| "playback lock was poisoned".to_string())
                 .and_then(|mut playback| playback.send(command).map_err(|error| error.to_string()))
             {
                 if let Ok(mut snapshot) = playback_snapshot.lock() {
-                    snapshot.state = PlaybackState::Stopped;
+                    snapshot.buffering_percent = None;
                     snapshot.last_error = Some(error.clone());
                 }
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
+            controller.commit_current_playback_start(&server_id, &entry, position_seconds);
             info!(
                 track_id = %entry.track_id.as_str(),
                 elapsed_ms = resolve_started.elapsed().as_millis(),
@@ -177,6 +179,7 @@ impl AppController {
                     Arc::clone(&secrets),
                     Arc::clone(&playback),
                     queue,
+                    next_preload,
                     events.clone(),
                 );
             }
@@ -189,7 +192,53 @@ impl AppController {
                     waveform_item,
                 );
             }
+            controller.warm_waveforms_for_queue();
         });
+    }
+    fn commit_current_playback_start(
+        &self,
+        server_id: &ServerId,
+        entry: &QueueEntry,
+        position_seconds: u32,
+    ) {
+        self.update_playback_snapshot(|snapshot| {
+            snapshot.current_server_id = Some(server_id.clone());
+            snapshot.current = Some(entry.clone());
+            snapshot.state = PlaybackState::Buffering;
+            snapshot.position_seconds = position_seconds;
+            snapshot.position_millis = u64::from(position_seconds) * 1_000;
+            snapshot.duration_seconds = entry.duration_seconds;
+            snapshot.buffering_percent = None;
+            snapshot.last_error = None;
+            set_waveform_cache_key(
+                snapshot,
+                Some(waveform_cache_key(
+                    server_id,
+                    &entry.track_id,
+                    entry.duration_seconds,
+                )),
+            );
+        });
+        self.start_playback_activity(server_id, entry, position_seconds);
+        self.emit_playback_snapshot();
+        self.report_playback(PlaybackReportKind::Started, false);
+    }
+    fn current_playback_start_matches(
+        &self,
+        server_id: &ServerId,
+        entry: &QueueEntry,
+        position_seconds: u32,
+    ) -> bool {
+        self.playback_snapshot.lock().ok().is_some_and(|snapshot| {
+            matches!(
+                snapshot.state,
+                PlaybackState::Buffering | PlaybackState::Playing
+            ) && snapshot.position_seconds == position_seconds
+                && snapshot.current_server_id.as_ref() == Some(server_id)
+                && snapshot.current.as_ref().is_some_and(|current| {
+                    current.id == entry.id && current.track_id == entry.track_id
+                })
+        })
     }
     pub(in crate::controller) fn current_queue_entry(&self) -> Option<(ServerId, QueueEntry, u32)> {
         self.queue.lock().ok().and_then(|queue| {
@@ -197,6 +246,35 @@ impl AppController {
             let entry = queue.current()?.clone();
             Some((queue.server_id().clone(), entry, queue.progress_seconds()))
         })
+    }
+    pub(in crate::controller) fn current_playback_entry(
+        &self,
+    ) -> Option<(ServerId, QueueEntry, u32)> {
+        self.playback_snapshot.lock().ok().and_then(|snapshot| {
+            let server_id = snapshot.current_server_id.clone()?;
+            let entry = snapshot.current.clone()?;
+            Some((server_id, entry, snapshot.position_seconds))
+        })
+    }
+    pub(in crate::controller) fn set_queue_progress_for_playback_current(
+        &self,
+        seconds: u32,
+    ) -> bool {
+        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
+            return false;
+        };
+        self.queue
+            .lock()
+            .ok()
+            .and_then(|mut queue| {
+                let queue = queue.as_mut()?;
+                if !queue_current_matches(queue, &server_id, &entry) {
+                    return None;
+                }
+                queue.set_progress_seconds(seconds);
+                Some(())
+            })
+            .is_some()
     }
     pub(in crate::controller) fn current_playback_request(
         &self,
@@ -228,18 +306,15 @@ impl AppController {
             Arc::clone(&self.secrets),
             Arc::clone(&self.playback),
             Arc::clone(&self.queue),
+            Arc::clone(&self.next_preload),
             self.events.clone(),
         );
     }
-    pub(in crate::controller) fn prepare_next_stream_deferred(&self) {
-        let store = self.store.clone();
-        let runtime = Arc::clone(&self.runtime);
-        let secrets = Arc::clone(&self.secrets);
-        let playback = Arc::clone(&self.playback);
-        let queue = Arc::clone(&self.queue);
-        let events = self.events.clone();
-        thread::spawn(move || {
-            prepare_next_stream_from_handles(store, runtime, secrets, playback, queue, events);
-        });
-    }
+}
+
+fn queue_current_matches(queue: &QueueEngine, server_id: &ServerId, entry: &QueueEntry) -> bool {
+    queue.server_id() == server_id
+        && queue
+            .current()
+            .is_some_and(|current| current.id == entry.id && current.track_id == entry.track_id)
 }

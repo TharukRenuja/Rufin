@@ -27,7 +27,7 @@ impl AppController {
         }
         if has_next {
             self.start_queue_emit();
-            self.start_current_track();
+            self.restart_current_track();
             self.auto_dj_top_up_deferred();
         } else {
             self.stop();
@@ -82,5 +82,6 @@ impl AppController {
         self.auto_dj_top_up_deferred();
         self.prepare_next_stream();
         self.request_waveform_for_current();
+        self.warm_waveforms_for_queue();
     }
 }

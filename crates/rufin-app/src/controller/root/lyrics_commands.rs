@@ -11,7 +11,7 @@ impl AppController {
         self.lyrics_cache(false);
     }
     pub fn clear_remote_lyrics_for_current(&self) {
-        let Some((server_id, entry, _position)) = self.current_queue_entry() else {
+        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
             return;
         };
         match self
@@ -38,7 +38,7 @@ impl AppController {
     ) {
         let settings = load_settings_from_store(&self.store);
         let external_providers = settings.external_lyrics_providers.clone();
-        let Some((server_id, entry, _position)) = self.current_queue_entry() else {
+        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
             debug!("lyrics request skipped because the queue has no current track");
             let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
             return;
@@ -178,7 +178,7 @@ impl AppController {
         if artist_name.is_empty() && track_name.is_empty() {
             return;
         }
-        let Some((_server_id, entry, _position)) = self.current_queue_entry() else {
+        let Some((_server_id, entry, _position)) = self.current_playback_entry() else {
             let _sent = self
                 .events
                 .send(ControllerEvent::Error("No track is playing.".to_string()));
@@ -238,7 +238,7 @@ impl AppController {
         result: LyricsSearchResult,
         output_path: PathBuf,
     ) {
-        let Some((server_id, entry, _position)) = self.current_queue_entry() else {
+        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
             let _sent = self
                 .events
                 .send(ControllerEvent::Error("No track is playing.".to_string()));
@@ -265,7 +265,7 @@ impl AppController {
         );
     }
     pub fn preview_lyrics_search_result(&self, track_id: TrackId, result: LyricsSearchResult) {
-        let Some((server_id, entry, _position)) = self.current_queue_entry() else {
+        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
             let _sent = self
                 .events
                 .send(ControllerEvent::Error("No track is playing.".to_string()));

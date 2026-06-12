@@ -12,23 +12,56 @@ impl Shell {
         let is_playlists = matches!(next, Route::Playlists);
 
         if is_home && !was_home {
-            self.state.home_refresh_started_for_visit.set(false);
             self.state.home_showcase_seed.set(next_home_showcase_seed());
             reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
-            self.promote_cached_prefetched_explore();
+            self.prepare_cached_home_entry();
         }
         if is_playlists && !was_playlists {
             self.state.playlist_refresh_started_for_visit.set(false);
         }
     }
-    pub(in crate::ui) fn refresh_home_for_current_visit(self: &Rc<Self>) {
-        if !matches!(self.state.routes.borrow().current(), Route::Home) {
+    pub(in crate::ui) fn prepare_cached_home_entry(&self) {
+        if self.apply_prefetched_explore_for_home_entry() {
             return;
         }
-        if self.state.home_refresh_started_for_visit.replace(true) {
-            return;
+        self.rotate_cached_explore_for_home_entry();
+    }
+    fn apply_prefetched_explore_for_home_entry(&self) -> bool {
+        let Some(prefetched) = self.state.prefetched_explore.borrow_mut().take() else {
+            return false;
+        };
+        let Some(server_id) = self
+            .state
+            .library
+            .borrow()
+            .server
+            .as_ref()
+            .map(|server| server.id.clone())
+        else {
+            *self.state.prefetched_explore.borrow_mut() = Some(prefetched);
+            return false;
+        };
+        if prefetched.server_id != server_id {
+            *self.state.prefetched_explore.borrow_mut() = Some(prefetched);
+            return false;
         }
-        self.controller.prefetch_explore_for_active();
+
+        upsert_snapshot_home_section(
+            &mut self.state.library.borrow_mut().home_sections,
+            prefetched.section,
+        );
+        true
+    }
+    fn rotate_cached_explore_for_home_entry(&self) {
+        let seed = self.state.home_showcase_seed.get();
+        let section = {
+            let library = self.state.library.borrow();
+            let Some(section) = cached_explore_section(&library, seed) else {
+                return;
+            };
+            section
+        };
+        upsert_snapshot_home_section(&mut self.state.library.borrow_mut().home_sections, section);
     }
     pub(in crate::ui) fn refresh_playlists_for_current_visit(self: &Rc<Self>) {
         if !matches!(self.state.routes.borrow().current(), Route::Playlists) {
@@ -143,5 +176,105 @@ impl Shell {
         if !keep_current {
             *self.state.prefetched_explore.borrow_mut() = None;
         }
+    }
+}
+
+fn cached_explore_section(library: &LibrarySnapshot, seed: u64) -> Option<HomeSection> {
+    if let Some(section) = library
+        .home_sections
+        .iter()
+        .find(|section| section.kind == HomeSectionKind::Explore)
+    {
+        let mut section = section.clone();
+        rotate_home_section(&mut section, seed);
+        return Some(section);
+    }
+
+    let mut albums = Vec::new();
+    for album in library
+        .home_sections
+        .iter()
+        .filter(|section| section.kind != HomeSectionKind::Explore)
+        .flat_map(|section| section.albums.iter())
+    {
+        if !albums
+            .iter()
+            .any(|existing: &Album| existing.id == album.id)
+        {
+            albums.push(album.clone());
+        }
+    }
+    if !albums.is_empty() {
+        rotate_items(&mut albums, seed);
+        return Some(HomeSection {
+            kind: HomeSectionKind::Explore,
+            albums,
+            tracks: Vec::new(),
+        });
+    }
+
+    let mut tracks = Vec::new();
+    for track in library
+        .home_sections
+        .iter()
+        .filter(|section| section.kind != HomeSectionKind::Explore)
+        .flat_map(|section| section.tracks.iter())
+    {
+        if !tracks
+            .iter()
+            .any(|existing: &Track| existing.id == track.id)
+        {
+            tracks.push(track.clone());
+        }
+    }
+    if !tracks.is_empty() {
+        rotate_items(&mut tracks, seed);
+        return Some(HomeSection {
+            kind: HomeSectionKind::Explore,
+            albums: Vec::new(),
+            tracks,
+        });
+    }
+
+    super::home::showcase_album(library, seed).map(|album| HomeSection {
+        kind: HomeSectionKind::Explore,
+        albums: vec![album],
+        tracks: Vec::new(),
+    })
+}
+
+fn rotate_home_section(section: &mut HomeSection, seed: u64) {
+    rotate_items(&mut section.albums, seed);
+    rotate_items(&mut section.tracks, seed);
+}
+
+fn rotate_items<T>(items: &mut [T], seed: u64) {
+    if items.len() > 1 {
+        items.rotate_left((seed as usize) % items.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_explore_rotation_keeps_existing_items() {
+        let mut section =
+            super::super::shell_tests::test_home_album_section(HomeSectionKind::Explore, 1);
+        let second =
+            super::super::shell_tests::test_home_album_section(HomeSectionKind::Explore, 2);
+        let third = super::super::shell_tests::test_home_album_section(HomeSectionKind::Explore, 3);
+        section.albums.extend(second.albums);
+        section.albums.extend(third.albums);
+
+        let mut library = super::super::shell_tests::test_library_snapshot();
+        library.home_sections = vec![section];
+
+        let rotated = cached_explore_section(&library, 1).expect("cached explore section");
+
+        assert_eq!(rotated.kind, HomeSectionKind::Explore);
+        assert_eq!(rotated.albums.len(), 3);
+        assert_eq!(rotated.albums[0].id, AlbumId::fake(2));
     }
 }

@@ -17,13 +17,18 @@ impl AppController {
         if let Some(snapshot) = &queue_snapshot {
             self.persist_queue_snapshot_deferred(snapshot.clone());
         }
-        self.sync_playback_snapshot_from_queue();
+        if prepare_next {
+            self.sync_playback_snapshot_from_queue();
+        } else {
+            self.sync_playback_queue_metadata_from_queue();
+        }
         let _sent = self
             .events
             .send(ControllerEvent::Queue(Box::new(queue_snapshot)));
-        self.emit_playback_snapshot();
         if prepare_next {
+            self.emit_playback_snapshot();
             self.prepare_next_stream();
+            self.warm_waveforms_for_queue();
         }
     }
     pub(in crate::controller) fn persist_current_queue_snapshot(&self) {
@@ -111,6 +116,9 @@ impl AppController {
     pub(in crate::controller) fn sync_playback_snapshot_from_queue(&self) {
         sync_queue_snapshot(&self.queue, &self.playback_snapshot, &self.auto_dj_enabled);
     }
+    pub(in crate::controller) fn sync_playback_queue_metadata_from_queue(&self) {
+        sync_queue_metadata(&self.queue, &self.playback_snapshot, &self.auto_dj_enabled);
+    }
     pub(in crate::controller) fn emit_playback_snapshot(&self) {
         let snapshot = self
             .playback_snapshot
@@ -120,6 +128,57 @@ impl AppController {
         let _sent = self
             .events
             .send(ControllerEvent::Playback(Box::new(snapshot)));
+    }
+}
+
+pub(in crate::controller) fn sync_queue_metadata(
+    queue: &Arc<Mutex<Option<QueueEngine>>>,
+    playback_snapshot: &Arc<Mutex<PlaybackSnapshot>>,
+    auto_dj_enabled: &Arc<Mutex<bool>>,
+) {
+    let queue = queue.lock().ok();
+    let queue = queue.as_ref().and_then(|queue| queue.as_ref());
+    let Ok(mut snapshot) = playback_snapshot.lock() else {
+        return;
+    };
+    snapshot.repeat_mode = queue
+        .map(QueueEngine::repeat_mode)
+        .unwrap_or(RepeatMode::Off);
+    snapshot.shuffle_enabled = queue
+        .map(|queue| queue.shuffle().enabled)
+        .unwrap_or_default();
+    snapshot.auto_dj_enabled = auto_dj_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or_default();
+    let Some(queue) = queue else {
+        snapshot.current = None;
+        snapshot.position_seconds = 0;
+        snapshot.position_millis = 0;
+        snapshot.duration_seconds = 0;
+        snapshot.state = PlaybackState::Stopped;
+        snapshot.last_error = None;
+        snapshot.buffering_percent = None;
+        set_waveform_cache_key(&mut snapshot, None);
+        return;
+    };
+    let current_matches = snapshot.current.as_ref().zip(queue.current()).is_some_and(
+        |(snapshot_current, queue_current)| {
+            snapshot_current.id == queue_current.id
+                && snapshot_current.track_id == queue_current.track_id
+        },
+    );
+    if current_matches {
+        snapshot.current_server_id = Some(queue.server_id().clone());
+        snapshot.current = queue.current().cloned();
+        snapshot.position_seconds = queue.progress_seconds();
+        snapshot.position_millis = u64::from(snapshot.position_seconds) * 1_000;
+        snapshot.duration_seconds = snapshot
+            .current
+            .as_ref()
+            .map(|entry| entry.duration_seconds)
+            .unwrap_or(0);
+        set_waveform_cache_key(&mut snapshot, waveform_cache_key_for_queue(Some(queue)));
     }
 }
 
@@ -133,6 +192,7 @@ pub(in crate::controller) fn sync_queue_snapshot(
     let Ok(mut snapshot) = playback_snapshot.lock() else {
         return;
     };
+    snapshot.current_server_id = queue.map(|queue| queue.server_id().clone());
     snapshot.current = queue.and_then(|queue| queue.current().cloned());
     snapshot.position_seconds = queue.map(QueueEngine::progress_seconds).unwrap_or(0);
     snapshot.position_millis = u64::from(snapshot.position_seconds) * 1_000;
@@ -153,6 +213,7 @@ pub(in crate::controller) fn sync_queue_snapshot(
         .unwrap_or_default();
     set_waveform_cache_key(&mut snapshot, waveform_cache_key_for_queue(queue));
     if snapshot.current.is_none() {
+        snapshot.current_server_id = None;
         snapshot.state = PlaybackState::Stopped;
         snapshot.last_error = None;
         snapshot.buffering_percent = None;

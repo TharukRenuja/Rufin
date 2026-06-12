@@ -13,6 +13,7 @@ impl AppController {
         let secrets = Arc::clone(&self.secrets);
         let queue = Arc::clone(&self.queue);
         let playback = Arc::clone(&self.playback);
+        let next_preload = Arc::clone(&self.next_preload);
         let events = self.events.clone();
         thread::spawn(move || {
             let Some(root_path) = root_path.to_str().map(ToString::to_string) else {
@@ -43,12 +44,14 @@ impl AppController {
             )) {
                 warn!(%error, "failed to refresh local track matches");
             }
+            clear_next_preload(&next_preload);
             prepare_next_stream_from_handles(
                 store.clone(),
                 Arc::clone(&runtime),
                 Arc::clone(&secrets),
                 Arc::clone(&playback),
                 Arc::clone(&queue),
+                Arc::clone(&next_preload),
                 events.clone(),
             );
             match load_snapshot(&store) {
@@ -77,6 +80,7 @@ impl AppController {
         let events = sync_context.events.clone();
         let queue = Arc::clone(&self.queue);
         let playback_request_generation = Arc::clone(&self.playback_request_generation);
+        let next_preload = Arc::clone(&self.next_preload);
         let playback = Arc::clone(&self.playback);
         let playback_snapshot = Arc::clone(&self.playback_snapshot);
         let auto_dj_enabled = Arc::clone(&self.auto_dj_enabled);
@@ -132,6 +136,7 @@ impl AppController {
                             store: &store,
                             queue: &queue,
                             playback_request_generation: &playback_request_generation,
+                            next_preload: &next_preload,
                             playback: &playback,
                             playback_snapshot: &playback_snapshot,
                             auto_dj_enabled: &auto_dj_enabled,
@@ -184,6 +189,7 @@ impl AppController {
         let secrets = Arc::clone(&self.secrets);
         let queue = Arc::clone(&self.queue);
         let playback = Arc::clone(&self.playback);
+        let next_preload = Arc::clone(&self.next_preload);
         let events = self.events.clone();
         thread::spawn(move || {
             if let Err(error) = store.with_store(|store| {
@@ -193,12 +199,14 @@ impl AppController {
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
+            clear_next_preload(&next_preload);
             prepare_next_stream_from_handles(
                 store.clone(),
                 Arc::clone(&runtime),
                 Arc::clone(&secrets),
                 Arc::clone(&playback),
                 Arc::clone(&queue),
+                Arc::clone(&next_preload),
                 events.clone(),
             );
             match load_snapshot(&store) {
@@ -504,7 +512,7 @@ fn reset_identity_queue(
         *snapshot = player.clone();
     }
     invalidate_playback_requests(context.playback_request_generation);
-    stop_playback_backend(context.playback, context.events);
+    stop_playback_backend(context.playback, context.next_preload, context.events);
     let _sent = context
         .events
         .send(ControllerEvent::Queue(Box::new(Some(queue_snapshot))));

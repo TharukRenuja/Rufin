@@ -17,7 +17,7 @@ use rufin_core::{
     PlaySourceKey, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
     QueueReplacement, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist,
     SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
-    SourceOrder, Track, TrackId,
+    SourceOrder, StreamQuality, Track, TrackId,
 };
 use rufin_playback::{
     FakePlaybackBackend, LazyGStreamerPlaybackBackend, PlaybackBackend, PlaybackCommand,
@@ -111,8 +111,8 @@ pub(in crate::controller) use lyrics_local_access_tests::{
 };
 pub(crate) use play_activation::{
     FULL_LOADED_LIMIT, LoadedCompleteness, MATERIALIZED_WINDOW_BEFORE_ANCHOR,
-    MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayAction, PlayActivation, PlayAnchor,
-    PlaySourceItem, PlayTarget, normalize_loaded_source_activation,
+    MATERIALIZED_WINDOW_LIMIT, NormalizedPlayTarget, PlayActivation, PlayAnchor, PlaySourceItem,
+    PlayTarget, normalize_loaded_source_activation,
 };
 use playback_activity::PlaybackActivityState;
 pub(in crate::controller) use playback_queue::*;
@@ -224,6 +224,7 @@ pub struct LocalAccessStatus {
 }
 #[derive(Clone, Debug)]
 pub struct PlaybackSnapshot {
+    pub current_server_id: Option<ServerId>,
     pub current: Option<QueueEntry>,
     pub state: PlaybackState,
     pub position_seconds: u32,
@@ -253,6 +254,7 @@ pub struct LyricsSearchResult {
 impl Default for PlaybackSnapshot {
     fn default() -> Self {
         Self {
+            current_server_id: None,
             current: None,
             state: PlaybackState::Stopped,
             position_seconds: 0,
@@ -402,6 +404,8 @@ pub struct AppController {
     play_activation_generation: Arc<AtomicU64>,
     queue_persist_generation: Arc<AtomicU64>,
     playback_request_generation: Arc<AtomicU64>,
+    next_preload: Arc<Mutex<NextPreloadState>>,
+    waveform_warm_generation: Arc<AtomicU64>,
     playback: Arc<Mutex<Box<dyn PlaybackBackend>>>,
     playback_snapshot: Arc<Mutex<PlaybackSnapshot>>,
     playback_activity: Arc<Mutex<PlaybackActivityState>>,

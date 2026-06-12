@@ -11,10 +11,7 @@ use crate::lyrics::LyricsPane;
 
 use super::{Shell, icon_button, layout::MIN_RESTORED_WINDOW_HEIGHT, player::BOTTOM_PLAYER_HEIGHT};
 
-const QUEUE_LYRICS_MIN_QUEUE_HEIGHT: i32 = 120;
-const QUEUE_LYRICS_MIN_LYRICS_HEIGHT: i32 = 300;
-const QUEUE_LYRICS_READY_MIN_HEIGHT: i32 =
-    QUEUE_LYRICS_MIN_QUEUE_HEIGHT + QUEUE_LYRICS_MIN_LYRICS_HEIGHT;
+const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
 const QUEUE_LYRICS_DEFAULT_QUEUE_UNITS: i32 = 5;
 const QUEUE_LYRICS_DEFAULT_LYRICS_UNITS: i32 = 2;
 const QUEUE_LYRICS_FALLBACK_HEIGHT: i32 = 900 - BOTTOM_PLAYER_HEIGHT - 48;
@@ -93,7 +90,7 @@ impl Shell {
         {
             return;
         }
-        if available_height < QUEUE_LYRICS_READY_MIN_HEIGHT || position <= 0 {
+        if available_height <= 0 {
             return;
         }
         let position = clamp_queue_lyrics_position(available_height, position);
@@ -115,7 +112,7 @@ impl Shell {
             return;
         }
         self.save_queue_lyrics_split_position(
-            self.queue_lyrics_split.height(),
+            queue_lyrics_available_height(self),
             self.queue_lyrics_split.position(),
         );
     }
@@ -326,26 +323,28 @@ pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
 
 fn queue_lyrics_available_height(shell: &Shell) -> i32 {
     let panel_height = shell.right_panel.height();
-    if panel_height >= QUEUE_LYRICS_READY_MIN_HEIGHT {
+    if panel_height > 0 {
         return panel_height;
     }
     let window_height = shell.window.height();
     if window_height > MIN_RESTORED_WINDOW_HEIGHT {
-        return (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(QUEUE_LYRICS_READY_MIN_HEIGHT);
+        return (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(1);
     }
-    QUEUE_LYRICS_FALLBACK_HEIGHT.max(QUEUE_LYRICS_READY_MIN_HEIGHT)
+    QUEUE_LYRICS_FALLBACK_HEIGHT.max(1)
 }
 
 pub(super) fn clamp_queue_lyrics_position(available_height: i32, position: i32) -> i32 {
-    let max_position =
-        (available_height - QUEUE_LYRICS_MIN_LYRICS_HEIGHT).max(QUEUE_LYRICS_MIN_QUEUE_HEIGHT);
-    position.clamp(QUEUE_LYRICS_MIN_QUEUE_HEIGHT, max_position)
+    if available_height <= 1 {
+        return available_height.max(0);
+    }
+    position.clamp(1, available_height - 1)
 }
 
 pub(super) fn queue_lyrics_default_position(available_height: i32) -> i32 {
     let total_units = QUEUE_LYRICS_DEFAULT_QUEUE_UNITS + QUEUE_LYRICS_DEFAULT_LYRICS_UNITS;
     let position = available_height * QUEUE_LYRICS_DEFAULT_QUEUE_UNITS / total_units;
-    clamp_queue_lyrics_position(available_height, position)
+    let max_position = (available_height - QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT).max(1);
+    position.clamp(1, max_position)
 }
 
 pub(super) fn queue_lyrics_position_ratio(available_height: i32, position: i32) -> f64 {
@@ -365,13 +364,13 @@ pub(super) fn queue_lyrics_initial_position(
     saved_position: Option<i32>,
     saved_ratio: Option<f64>,
 ) -> i32 {
-    saved_position
-        .filter(|position| *position > 0)
-        .map(|position| clamp_queue_lyrics_position(available_height, position))
+    saved_ratio
+        .filter(|ratio| ratio.is_finite())
+        .map(|ratio| queue_lyrics_position_from_ratio(available_height, ratio))
         .or_else(|| {
-            saved_ratio
-                .filter(|ratio| ratio.is_finite())
-                .map(|ratio| queue_lyrics_position_from_ratio(available_height, ratio))
+            saved_position
+                .filter(|position| *position > 0)
+                .map(|position| clamp_queue_lyrics_position(available_height, position))
         })
         .unwrap_or_else(|| queue_lyrics_default_position(available_height))
 }
@@ -393,6 +392,6 @@ mod tests {
         let available_height = 360;
         let position = clamp_queue_lyrics_position(available_height, 280);
 
-        assert_eq!(position, QUEUE_LYRICS_MIN_QUEUE_HEIGHT);
+        assert_eq!(position, 280);
     }
 }

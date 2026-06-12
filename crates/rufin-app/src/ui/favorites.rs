@@ -91,13 +91,7 @@ pub(super) fn clear_favorite_controls(controls: &FavoriteControls) {
 
 impl Shell {
     pub(super) fn favorites_view(self: &Rc<Self>) -> gtk::Widget {
-        let favorites = self
-            .controller
-            .cached_favorite_tracks()
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "failed to load cached favorite tracks");
-                self.state.library.borrow().favorites.clone()
-            });
+        let favorites = self.state.library.borrow().favorites.clone();
         self.library_tracks_route_panel(
             favorites,
             LibraryListKey::FavoriteTracks,

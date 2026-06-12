@@ -178,7 +178,7 @@ impl Shell {
         self.log_layout_snapshot("startup_prepare_before_hidden_render");
         self.state.home_section_views.borrow_mut().clear();
         if matches!(self.state.routes.borrow().current(), Route::Home) {
-            self.promote_cached_prefetched_explore();
+            self.prepare_cached_home_entry();
         }
         self.render_current_route_content();
         self.render_queue_panel();
@@ -332,9 +332,6 @@ impl Shell {
                     shell.update_layout();
                     shell.render_current_route();
                     shell.state.startup_route_content_prepared.set(true);
-                    if matches!(shell.state.routes.borrow().current(), Route::Home) {
-                        shell.refresh_home_for_current_visit();
-                    }
                     shell.render_queue_panel();
                     shell.render_lyrics_panel();
                     shell.update_bottom_player();
@@ -431,6 +428,7 @@ impl Shell {
             }
             if let Some(smart_playlists) = smart_playlists.as_ref() {
                 *shell.state.smart_playlists.borrow_mut() = smart_playlists.clone();
+                shell.state.smart_playlists_loaded.set(true);
             }
 
             let targets = source_warm_targets(

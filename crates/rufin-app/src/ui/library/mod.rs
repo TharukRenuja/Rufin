@@ -310,6 +310,9 @@ fn warm_track_covers_for_settings(
 ) {
     warm_track_covers(shell, tracks, settings);
 }
+pub(in crate::ui) fn track_image_refs(tracks: &[Track]) -> Vec<Option<ImageRef>> {
+    tracks.iter().map(|track| track.image_ref.clone()).collect()
+}
 fn warm_track_covers(shell: &Rc<Shell>, tracks: &[Track], settings: &LibraryListSettings) {
     let Some((fetch_size, size)) = track_cover_warm_sizes(shell, settings) else {
         return;

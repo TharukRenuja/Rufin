@@ -19,7 +19,7 @@ impl Shell {
             return;
         };
         let snapshot = self.state.player.borrow().clone();
-        let metadata = self.mpris_metadata(&snapshot);
+        let metadata = self.mpris_metadata_update(&snapshot);
         let playback_status = match snapshot.state {
             PlaybackState::Playing | PlaybackState::Buffering => PlaybackStatus::Playing,
             PlaybackState::Paused => PlaybackStatus::Paused,
@@ -38,7 +38,9 @@ impl Shell {
             let _updated = player.set_playback_status(playback_status).await;
             let _updated = player.set_loop_status(loop_status).await;
             let _updated = player.set_shuffle(snapshot.shuffle_enabled).await;
-            let _updated = player.set_metadata(metadata).await;
+            if let Some(metadata) = metadata {
+                let _updated = player.set_metadata(metadata).await;
+            }
             let _updated = player.set_volume(volume).await;
             let _updated = player.set_can_play(has_current).await;
             let _updated = player.set_can_pause(has_current).await;
@@ -49,7 +51,20 @@ impl Shell {
         });
     }
 
-    fn mpris_metadata(&self, snapshot: &PlaybackSnapshot) -> Metadata {
+    fn mpris_metadata_update(&self, snapshot: &PlaybackSnapshot) -> Option<Metadata> {
+        let key = mpris_metadata_key(snapshot);
+        if self.state.mpris_metadata_key.borrow().as_deref() == Some(key.as_str()) {
+            return None;
+        }
+        *self.state.mpris_metadata_key.borrow_mut() = Some(key);
+        let art_url = snapshot
+            .current
+            .as_ref()
+            .and_then(|entry| self.current_art_url(entry));
+        Some(self.mpris_metadata(snapshot, art_url))
+    }
+
+    fn mpris_metadata(&self, snapshot: &PlaybackSnapshot, art_url: Option<String>) -> Metadata {
         let Some(entry) = snapshot.current.as_ref() else {
             return Metadata::builder().trackid(MprisTrackId::NO_TRACK).build();
         };
@@ -59,7 +74,7 @@ impl Shell {
             .artist([entry.artist.clone()])
             .album(entry.album.clone())
             .length(Time::from_secs(i64::from(entry.duration_seconds)));
-        if let Some(art_url) = self.current_art_url(entry) {
+        if let Some(art_url) = art_url {
             builder = builder.art_url(art_url);
         }
         builder.build()
@@ -152,4 +167,24 @@ fn mpris_track_id(track_id: &str) -> MprisTrackId {
     }
     MprisTrackId::try_from(format!("/io/github/screwys/Rufin/track/{encoded}"))
         .unwrap_or(MprisTrackId::NO_TRACK)
+}
+
+fn mpris_metadata_key(snapshot: &PlaybackSnapshot) -> String {
+    let Some(entry) = snapshot.current.as_ref() else {
+        return "none".to_string();
+    };
+    let image = entry
+        .image_ref
+        .as_ref()
+        .map(|image| format!("{}:{}", image.item_id, image.tag.as_deref().unwrap_or("")))
+        .unwrap_or_default();
+    format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        entry.track_id.as_str(),
+        entry.title,
+        entry.artist,
+        entry.album,
+        entry.duration_seconds,
+        image,
+    )
 }

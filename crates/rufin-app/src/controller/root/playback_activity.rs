@@ -258,6 +258,7 @@ mod tests {
         let second = snapshot.tracks[1].clone();
         controller.play_tracks_now(vec![first.clone(), second]);
         let _queue = wait_for_queue(&events).expect("queue");
+        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Buffering);
 
         controller.next_track();
         let delta = wait_for_activity_delta(&events);
