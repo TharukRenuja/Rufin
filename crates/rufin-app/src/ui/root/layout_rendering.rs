@@ -417,10 +417,7 @@ pub(in crate::ui) fn playlist_entries_table_panel(
     content_inset: i32,
 ) -> (gtk::Widget, gio::ListStore) {
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    let selection = gtk::SingleSelection::new(Some(model.clone()));
-    selection.set_autoselect(false);
-    selection.set_can_unselect(true);
-    selection.set_selected(gtk::INVALID_LIST_POSITION);
+    let selection = gtk::NoSelection::new(Some(model.clone()));
 
     let table = gtk::ColumnView::new(Some(selection));
     table.add_css_class("track-table");
@@ -952,44 +949,6 @@ pub(in crate::ui) fn fit_detail_text(label: &gtk::Label, text: &str) {
     } else if count >= 24 {
         label.add_css_class("detail-text-long");
     }
-}
-
-pub(in crate::ui) fn detail_text_clip(child: gtk::Widget, height: i32) -> gtk::Widget {
-    let height = height.max(1);
-    let clip = gtk::ScrolledWindow::new();
-    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
-    clip.set_overflow(gtk::Overflow::Hidden);
-    clip.set_min_content_width(0);
-    clip.set_min_content_height(height);
-    clip.set_max_content_height(height);
-    clip.set_height_request(height);
-    clip.set_propagate_natural_width(false);
-    clip.set_propagate_natural_height(false);
-    clip.set_hexpand(true);
-    clip.set_halign(gtk::Align::Fill);
-    clip.set_child(Some(&child));
-    clip.upcast()
-}
-
-pub(in crate::ui) fn detail_showcase_frame_with_links(
-    header: gtk::Widget,
-    links: Option<gtk::Widget>,
-) -> gtk::Widget {
-    let header = detail_showcase_frame(header);
-    let Some(links) = links else {
-        return header;
-    };
-
-    let overlay = gtk::Overlay::new();
-    overlay.set_hexpand(true);
-    overlay.set_halign(gtk::Align::Fill);
-    overlay.set_child(Some(&header));
-    links.set_halign(gtk::Align::End);
-    links.set_valign(gtk::Align::End);
-    links.set_margin_end(16);
-    links.set_margin_bottom(14);
-    overlay.add_overlay(&links);
-    overlay.upcast()
 }
 
 pub(in crate::ui) fn album_external_links(shell: &Rc<Shell>, album: &Album) -> Option<gtk::Widget> {

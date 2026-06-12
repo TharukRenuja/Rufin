@@ -62,12 +62,6 @@ impl Shell {
         cover.add_css_class("detail-showcase-cover");
         cover.add_css_class("album-detail-cover");
         cover.set_halign(gtk::Align::Start);
-        let kind = gtk::Label::new(Some(&tr("Album")));
-        kind.add_css_class("eyebrow");
-        kind.set_xalign(0.5);
-        kind.set_halign(gtk::Align::Fill);
-        kind.set_justify(gtk::Justification::Center);
-        kind.set_width_request(cover_size);
         let facts = gtk::Label::new(Some(&format!(
             "{} • {} {} • {}",
             album.year,
@@ -77,32 +71,34 @@ impl Shell {
         )));
         facts.add_css_class("muted");
         facts.add_css_class("detail-cover-facts");
-        facts.set_xalign(0.5);
-        facts.set_halign(gtk::Align::Center);
-        facts.set_justify(gtk::Justification::Center);
+        facts.set_xalign(0.0);
+        facts.set_halign(gtk::Align::Start);
+        facts.set_justify(gtk::Justification::Left);
         facts.set_wrap(true);
         facts.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         facts.set_width_chars(1);
-        facts.set_max_width_chars(18);
+        facts.set_max_width_chars(32);
         let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
         cover_column.set_halign(gtk::Align::Start);
         cover_column.set_width_request(cover_size);
-        cover_column.append(&kind);
         cover_column.append(&cover);
-        cover_column.append(&facts);
+        if let Some(external_links) = external_links {
+            external_links.set_halign(gtk::Align::Center);
+            cover_column.append(&external_links);
+        }
         body.append(&cover_column);
 
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
         metadata.set_hexpand(true);
-        metadata.set_valign(gtk::Align::Center);
+        metadata.set_valign(gtk::Align::Start);
         metadata.set_halign(gtk::Align::Fill);
-        if external_links.is_some() {
-            metadata.set_margin_bottom(42);
-        }
-        let text_limit = cover_size.saturating_sub(70).max(56);
         let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);
+        let kind = gtk::Label::new(Some(&tr("Album")));
+        kind.add_css_class("eyebrow");
+        kind.set_xalign(0.0);
+        kind.set_halign(gtk::Align::Start);
         let title = gtk::Label::new(Some(&album.title));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
@@ -140,8 +136,10 @@ impl Shell {
                 });
             });
         }
+        text_stack.append(&kind);
         text_stack.append(&title);
         text_stack.append(&artist);
+        text_stack.append(&facts);
         let actions = detail_action_row();
         actions.add_css_class("album-detail-actions");
         actions.set_halign(gtk::Align::Start);
@@ -190,11 +188,11 @@ impl Shell {
         });
         actions.append(&favorite);
 
-        metadata.append(&detail_text_clip(text_stack.upcast(), text_limit));
+        metadata.append(&text_stack);
         metadata.append(&actions);
         body.append(&metadata);
         header.append(&body);
-        let showcase = detail_showcase_frame_with_links(header.upcast(), external_links);
+        let showcase = detail_showcase_frame(header.upcast());
         showcase.set_margin_start(DETAIL_SHOWCASE_SIDE_INSET);
         showcase.set_margin_end(DETAIL_SHOWCASE_SIDE_INSET);
         content.append(&showcase);

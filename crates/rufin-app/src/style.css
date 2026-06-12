@@ -60,7 +60,7 @@ listview.album-detail-list row:selected {
 
 .album-detail-track-row:focus,
 .album-detail-track-row.album-detail-track-selected {
-  background: color-mix(in srgb, @accent_bg_color 16%, transparent);
+  background: transparent;
 }
 
 .track-list-header {
@@ -75,10 +75,17 @@ listview.album-detail-list row:selected {
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
+.track-table row:selected,
+.track-table row:selected:hover,
+.album-grid > child:selected,
+.album-grid > child:selected:hover {
+  background: transparent;
+}
+
 .track-list-row:focus,
 .track-list row:selected .track-list-row,
 .track-list-row.track-list-row-selected {
-  background: color-mix(in srgb, @accent_bg_color 16%, transparent);
+  background: transparent;
 }
 
 .startup-loading-page {
@@ -636,7 +643,7 @@ scale.volume-slider trough {
 .album-detail-showcase,
 .detail-showcase,
 .playlist-detail-showcase {
-  padding: 26px;
+  padding: 25px;
   border-radius: 8px;
   color: @window_fg_color;
   box-shadow:
@@ -652,10 +659,6 @@ scale.volume-slider trough {
 .album-detail-showcase .detail-title {
   font-size: 34px;
   line-height: 1.08;
-}
-
-.detail-showcase-horizontal {
-  min-height: 236px;
 }
 
 .detail-showcase-horizontal .detail-title {

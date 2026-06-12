@@ -77,7 +77,7 @@ impl Shell {
             "",
             options.favorite_first,
         );
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
+        let selection = gtk::NoSelection::new(Some(model.clone()));
         let table = gtk::ColumnView::new(Some(selection));
         table.add_css_class("track-table");
         table.set_vexpand(options.expand);

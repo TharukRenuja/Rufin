@@ -12,8 +12,8 @@ use crate::i18n::tr;
 use super::cards::{render_home_album_page, render_home_track_page};
 use super::{
     GRID_COVER_SIZE, HOME_ALBUM_GAP, PLAY_LATER_ICON, PLAY_NEXT_ICON, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class, icon_button,
-    mark_route_scroll_owner,
+    PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class, add_card_label_link,
+    add_widget_click, album_artist_route, icon_button, mark_route_scroll_owner,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -137,12 +137,18 @@ impl Shell {
             GRID_COVER_SIZE,
         );
         cover.add_css_class("home-showcase-cover");
+        cover.set_cursor_from_name(Some("pointer"));
+        let shell = Rc::clone(self);
+        let album_id = album.id.clone();
+        add_widget_click(&cover, move || {
+            shell.navigate(Route::AlbumDetail(album_id.clone()));
+        });
         let facts = gtk::Label::new(Some(&home_showcase_facts(&album)));
         facts.add_css_class("muted");
         facts.add_css_class("home-showcase-facts");
-        facts.set_xalign(0.5);
-        facts.set_halign(gtk::Align::Center);
-        facts.set_justify(gtk::Justification::Center);
+        facts.set_xalign(0.0);
+        facts.set_halign(gtk::Align::Start);
+        facts.set_justify(gtk::Justification::Left);
         facts.set_wrap(true);
         facts.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         facts.set_width_chars(1);
@@ -151,7 +157,6 @@ impl Shell {
         cover_column.set_width_request(196);
         cover_column.set_halign(gtk::Align::Start);
         cover_column.append(&cover);
-        cover_column.append(&facts);
         body.append(&cover_column);
 
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -169,7 +174,15 @@ impl Shell {
         artist.add_css_class("muted");
         artist.set_xalign(0.0);
         artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        add_card_label_link(
+            self,
+            artist.upcast_ref(),
+            &artist,
+            &album.artist,
+            album_artist_route(&album),
+        );
         metadata.append(&artist);
+        metadata.append(&facts);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.add_css_class("home-showcase-actions");
