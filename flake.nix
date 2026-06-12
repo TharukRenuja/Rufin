@@ -137,6 +137,7 @@
         default = {
           type = "app";
           program = "${self.packages.${system}.default}/bin/rufin";
+          meta.description = self.packages.${system}.default.meta.description;
         };
       });
 
@@ -184,6 +185,6 @@
         }
       );
 
-      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-rfc-style);
+      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);
     };
 }
