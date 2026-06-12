@@ -9,6 +9,9 @@
   "dependencyDashboard": false,
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
+  "lockFileMaintenance": {
+    "enabled": true
+  },
   "automergeType": "pr",
   "platformAutomerge": false,
   "prConcurrentLimit": 3,
