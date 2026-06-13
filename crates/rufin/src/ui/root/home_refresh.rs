@@ -718,23 +718,18 @@ pub(in crate::ui) fn context_menu_playlist_label(name: &str) -> String {
         .collect()
 }
 pub(in crate::ui) fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
-    shell
-        .controller
-        .cached_playlists_page(0, CONTEXT_MENU_PLAYLIST_LIMIT)
-        .map(|page| page.items)
-        .unwrap_or_else(|_| shell.state.library.borrow().playlists.clone())
+    context_menu_playlist_items(&shell.state.library.borrow().playlists)
+}
+fn context_menu_playlist_items(playlists: &[Playlist]) -> Vec<Playlist> {
+    playlists
+        .iter()
+        .take(CONTEXT_MENU_PLAYLIST_LIMIT)
+        .cloned()
+        .collect()
 }
 pub(in crate::ui) fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
-    shell
-        .controller
-        .cached_track(&fallback.id)
-        .ok()
-        .flatten()
-        .or_else(|| {
-            let library = shell.state.library.borrow();
-            library_track(&library, &fallback.id)
-        })
-        .unwrap_or_else(|| fallback.clone())
+    let library = shell.state.library.borrow();
+    library_track(&library, &fallback.id).unwrap_or_else(|| fallback.clone())
 }
 pub(in crate::ui) fn library_track(library: &LibrarySnapshot, track_id: &TrackId) -> Option<Track> {
     library
@@ -793,12 +788,8 @@ pub(in crate::ui) fn library_artist(
 }
 pub(in crate::ui) fn current_player_track(shell: &Rc<Shell>) -> Option<Track> {
     let entry = shell.state.player.borrow().current.clone()?;
-    shell
-        .controller
-        .cached_track(&entry.track_id)
-        .ok()
-        .flatten()
-        .or_else(|| track_from_queue_entry(&entry))
+    let library = shell.state.library.borrow();
+    library_track(&library, &entry.track_id).or_else(|| track_from_queue_entry(&entry))
 }
 pub(in crate::ui) fn track_from_queue_entry(entry: &QueueEntry) -> Option<Track> {
     Some(Track {
@@ -1501,5 +1492,35 @@ mod tests {
             CONTEXT_MENU_PLAYLIST_LABEL_CHARS
         );
         assert!(wide_label.ends_with(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER));
+    }
+
+    #[test]
+    fn context_menu_playlist_items_use_snapshot_order_with_limit() {
+        let playlists = (0..CONTEXT_MENU_PLAYLIST_LIMIT + 2)
+            .map(test_playlist)
+            .collect::<Vec<_>>();
+
+        let items = context_menu_playlist_items(&playlists);
+
+        assert_eq!(items.len(), CONTEXT_MENU_PLAYLIST_LIMIT);
+        assert_eq!(
+            items.first().map(|playlist| playlist.name.as_str()),
+            Some("List 0")
+        );
+        assert_eq!(
+            items.last().map(|playlist| playlist.name.as_str()),
+            Some("List 99")
+        );
+    }
+
+    fn test_playlist(index: usize) -> Playlist {
+        Playlist {
+            id: PlaylistId::fake(index + 1),
+            name: format!("List {index}"),
+            track_count: index as u32,
+            duration_seconds: index as u32 * 60,
+            image_refs: Vec::new(),
+            image_ref: None,
+        }
     }
 }

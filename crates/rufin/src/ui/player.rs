@@ -17,8 +17,9 @@ use super::player_icons::{
 use super::{
     ArtworkTile, CoverDecodePriority, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
     add_label_click, add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
-    favorite_icon_button, icon_button_with_image, install_current_track_context_menu,
-    seekbar_target_seconds, set_active_class, set_favorite_button_active,
+    favorite_icon_button, icon_button, icon_button_with_image, install_current_track_context_menu,
+    present_current_track_context_menu, seekbar_target_seconds, set_active_class,
+    set_favorite_button_active,
 };
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
@@ -35,6 +36,7 @@ const BOTTOM_PLAYER_BUTTON_OFFSET_Y: f64 = 3.0;
 const BOTTOM_PLAYER_BUTTON_STEP: f64 = 38.0;
 const BOTTOM_PLAYER_WAVEFORM_HEIGHT: i32 = 32;
 const BOTTOM_PLAYER_ACTION_BUTTON_SIZE: i32 = 34;
+const BOTTOM_PLAYER_TITLE_MENU_BUTTON_SIZE: i32 = 24;
 const BOTTOM_PLAYER_ACTION_SPACING: i32 = 3;
 const BOTTOM_PLAYER_VOLUME_SPACING: i32 = 1;
 const BOTTOM_PLAYER_VOLUME_MIN_WIDTH: i32 = 48;
@@ -64,6 +66,7 @@ pub(super) struct PlayerControls {
     pub(super) cover: ArtworkTile,
     pub(super) cover_key: RefCell<Option<String>>,
     pub(super) title: gtk::Label,
+    pub(super) menu_button: gtk::Button,
     pub(super) artist: gtk::Label,
     pub(super) album: gtk::Label,
     pub(super) random_button: gtk::Button,
@@ -98,6 +101,7 @@ struct NowPlayingControls {
     root: gtk::Box,
     cover: ArtworkTile,
     title: gtk::Label,
+    menu_button: gtk::Button,
     artist: gtk::Label,
     album: gtk::Label,
 }
@@ -471,6 +475,7 @@ impl Shell {
         controls.artist.set_text(&artist);
         controls.album.set_text(album);
         controls.title.set_sensitive(player.current.is_some());
+        controls.menu_button.set_sensitive(player.current.is_some());
         controls.artist.set_sensitive(
             player
                 .current
@@ -604,6 +609,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         root: now_playing,
         cover,
         title,
+        menu_button,
         artist,
         album,
     } = build_now_playing_controls();
@@ -663,6 +669,7 @@ pub(super) fn build_bottom_player() -> PlayerControls {
         cover,
         cover_key: RefCell::new(None),
         title,
+        menu_button,
         artist,
         album,
         random_button,
@@ -719,9 +726,24 @@ fn build_now_playing_controls() -> NowPlayingControls {
     identity.set_hexpand(true);
     identity.set_valign(gtk::Align::Center);
     let title = player_link("player-title");
+    title.set_hexpand(true);
+    let menu_button = icon_button("view-more-symbolic", "More actions");
+    menu_button.add_css_class("player-title-menu-button");
+    menu_button.set_size_request(
+        BOTTOM_PLAYER_TITLE_MENU_BUTTON_SIZE,
+        BOTTOM_PLAYER_TITLE_MENU_BUTTON_SIZE,
+    );
+    menu_button.set_sensitive(false);
+    let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    title_row.add_css_class("player-title-row");
+    title_row.set_halign(gtk::Align::Start);
+    title_row.set_valign(gtk::Align::Center);
+    title_row.set_hexpand(true);
+    title_row.append(&title);
+    title_row.append(&menu_button);
     let artist = player_link("muted");
     let album = player_link("muted");
-    identity.append(&title);
+    identity.append(&title_row);
     identity.append(&artist);
     identity.append(&album);
     root.append(&identity);
@@ -730,6 +752,7 @@ fn build_now_playing_controls() -> NowPlayingControls {
         root,
         cover,
         title,
+        menu_button,
         artist,
         album,
     }
@@ -1089,6 +1112,11 @@ fn commit_player_seek_preview(shell: &Rc<Shell>, generation: u64) {
 pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
     connect_bottom_player_volume_resize(shell);
     install_current_track_context_menu(&shell.player_controls.cover.area, shell);
+    let menu_shell = Rc::clone(shell);
+    shell
+        .player_controls
+        .menu_button
+        .connect_clicked(move |button| present_current_track_context_menu(button, &menu_shell));
     let fullscreen_shell = Rc::clone(shell);
     add_widget_click(shell.player_controls.cover.area.upcast_ref(), move || {
         fullscreen_shell.toggle_fullscreen_player();

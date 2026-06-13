@@ -18,9 +18,10 @@ impl AppController {
         scrub_selected_album_image_refs(&saved, &settings, std::slice::from_mut(&mut album));
         scrub_selected_track_image_refs(&saved, &settings, &mut tracks);
         cover_art_policy::bind_album_detail(&mut album, &mut tracks, &settings);
-        track_album_refs(
+        track_album_refs_with_settings(
             &self.store,
             &saved,
+            &settings,
             &mut tracks,
             std::slice::from_ref(&album),
         )?;
@@ -67,7 +68,13 @@ impl AppController {
         scrub_selected_album_image_refs(&saved, &settings, &mut detail.appears_on);
         scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
         normalize_artist_detail_image_refs(&mut detail, &settings);
-        track_album_refs(&self.store, &saved, &mut detail.tracks, &detail.albums)?;
+        track_album_refs_with_settings(
+            &self.store,
+            &saved,
+            &settings,
+            &mut detail.tracks,
+            &detail.albums,
+        )?;
         Ok(Some(detail))
     }
     pub fn cached_playlist_detail(
@@ -78,6 +85,31 @@ impl AppController {
             return Ok(None);
         };
         let settings = load_settings_for_saved(&self.store, &saved);
+        self.cached_playlist_detail_for_saved(playlist_id, &saved, &settings)
+    }
+
+    pub fn cached_playlist_detail_for_server(
+        &self,
+        playlist_id: &PlaylistId,
+        server: &ServerIdentity,
+        settings: &AppSettings,
+    ) -> Result<Option<source::PlaylistDetail>, String> {
+        let saved = SavedServer {
+            server: server.clone(),
+            user_id: String::new(),
+            username: String::new(),
+            trust_invalid_cert: false,
+        };
+        let settings = settings_for_server(settings.clone(), &saved.server);
+        self.cached_playlist_detail_for_saved(playlist_id, &saved, &settings)
+    }
+
+    fn cached_playlist_detail_for_saved(
+        &self,
+        playlist_id: &PlaylistId,
+        saved: &SavedServer,
+        settings: &AppSettings,
+    ) -> Result<Option<source::PlaylistDetail>, String> {
         let Some(mut detail) = self
             .store
             .with_store(|store| store.load_playlist_detail(&saved.server.id, playlist_id))?
@@ -85,23 +117,14 @@ impl AppController {
             return Ok(None);
         };
         scrub_selected_playlist_image_refs(
-            &saved,
-            &settings,
+            saved,
+            settings,
             std::slice::from_mut(&mut detail.playlist),
         );
-        cover_art_policy::bind_playlist_detail(&mut detail, &settings);
-        scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
-        cover_art_policy::bind_tracks(&mut detail.tracks, &settings);
-        track_album_refs(&self.store, &saved, &mut detail.tracks, &[])?;
-        let mut entry_tracks = detail
-            .entries
-            .iter()
-            .map(|entry| entry.track.clone())
-            .collect::<Vec<_>>();
-        scrub_selected_track_image_refs(&saved, &settings, &mut entry_tracks);
-        cover_art_policy::bind_tracks(&mut entry_tracks, &settings);
-        track_album_refs(&self.store, &saved, &mut entry_tracks, &[])?;
-        for (entry, track) in detail.entries.iter_mut().zip(entry_tracks) {
+        cover_art_policy::bind_playlist_detail(&mut detail, settings);
+        scrub_selected_track_image_refs(saved, settings, &mut detail.tracks);
+        cover_art_policy::bind_tracks(&mut detail.tracks, settings);
+        for (entry, track) in detail.entries.iter_mut().zip(detail.tracks.iter().cloned()) {
             entry.track = track;
         }
         Ok(Some(detail))
@@ -124,7 +147,13 @@ impl AppController {
         scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
         cover_art_policy::bind_albums(&mut detail.albums, &settings);
         cover_art_policy::bind_tracks(&mut detail.tracks, &settings);
-        track_album_refs(&self.store, &saved, &mut detail.tracks, &detail.albums)?;
+        track_album_refs_with_settings(
+            &self.store,
+            &saved,
+            &settings,
+            &mut detail.tracks,
+            &detail.albums,
+        )?;
         Ok(Some(detail))
     }
     pub fn cached_albums_page(
@@ -185,22 +214,6 @@ impl AppController {
         cover_art_policy::bind_tracks(&mut page.items, &settings);
         track_album_refs(&self.store, &saved, &mut page.items, &[])?;
         Ok(page)
-    }
-    pub fn cached_track(&self, track_id: &TrackId) -> Result<Option<Track>, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
-            return Ok(None);
-        };
-        let settings = load_settings_for_saved(&self.store, &saved);
-        let Some(mut track) = self
-            .store
-            .with_store(|store| store.load_track(&saved.server.id, track_id))?
-        else {
-            return Ok(None);
-        };
-        scrub_selected_track_image_refs(&saved, &settings, std::slice::from_mut(&mut track));
-        cover_art_policy::bind_track(&mut track, &settings);
-        track_album_refs(&self.store, &saved, std::slice::from_mut(&mut track), &[])?;
-        Ok(Some(track))
     }
     pub fn cached_tracks_page_matching(
         &self,

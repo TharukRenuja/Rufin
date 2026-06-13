@@ -399,6 +399,7 @@ impl Shell {
         relocalize_icon_button(&self.player_controls.next_button, "Next");
         relocalize_icon_button(&self.player_controls.shuffle_button, "Shuffle");
         relocalize_icon_button(&self.player_controls.random_button, "Play random");
+        relocalize_icon_button(&self.player_controls.menu_button, "More actions");
         relocalize_icon_button(&self.player_controls.favorite_button, "Favorite");
         relocalize_icon_button(&self.player_controls.mute_button, "Mute");
         relocalize_icon_button(

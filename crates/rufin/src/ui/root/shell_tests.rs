@@ -1178,7 +1178,7 @@ pub(in crate::ui) fn shell_track_field() {
         },
     );
     assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].1.entry_id, "entry-beta");
+    assert_eq!(entries[filtered[0]].entry_id, "entry-beta");
 
     let sorted = playlist_entries_for_state(
         &entries,
@@ -1188,8 +1188,8 @@ pub(in crate::ui) fn shell_track_field() {
             descending: true,
         },
     );
-    assert_eq!(sorted[0].1.entry_id, "entry-alpha");
-    assert_eq!(sorted[1].1.entry_id, "entry-beta");
+    assert_eq!(entries[sorted[0]].entry_id, "entry-alpha");
+    assert_eq!(entries[sorted[1]].entry_id, "entry-beta");
 }
 #[test]
 pub(in crate::ui) fn shell_playlist_panes() {

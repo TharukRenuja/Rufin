@@ -999,7 +999,19 @@ pub(in crate::ui) fn artist_cover_tile(
         .connect_clicked(move |_| open_shell.navigate(Route::ArtistDetail(open_artist_id.clone())));
     overlay.set_child(Some(&artist_button));
 
-    let controls = cards::cover_hover_controls(size, "Play artist", artist.favorite);
+    let mut controls = cards::cover_hover_controls(size, "Play artist", artist.favorite);
+    let menu = controls.add_context_button();
+    let menu_target = overlay.clone();
+    let menu_shell = Rc::clone(shell);
+    let menu_artist = artist.clone();
+    menu.connect_clicked(move |_| {
+        present_artist_context_menu(
+            menu_target.upcast_ref(),
+            &menu_shell,
+            context_artist(&menu_shell, &menu_artist),
+            cards::cover_context_point(size),
+        );
+    });
     let controller = shell.controller.clone();
     let artist_id = artist.id.clone();
     let selected_music_folder_id = selected_music_folder_id(shell);

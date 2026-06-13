@@ -404,7 +404,6 @@ impl Default for PlaylistEntryListState {
 pub(in crate::ui) struct PlaylistEntryTableRow {
     pub(in crate::ui) original_index: usize,
     pub(in crate::ui) display_index: usize,
-    pub(in crate::ui) entry: PlaylistEntry,
 }
 pub(in crate::ui) fn playlist_entries_table_panel(
     shell: &Rc<Shell>,
@@ -458,15 +457,19 @@ pub(in crate::ui) fn playlist_entries_table_panel(
 
     let controller = shell.controller.clone();
     let playlist_id_for_activate = playlist_id.clone();
+    let entries_for_activate = Rc::clone(&entries);
     let state_for_activate = Rc::clone(&state);
     let model_for_activate = model.clone();
     table.connect_activate(move |_, position| {
         let Some(row) = item_at::<PlaylistEntryTableRow>(&model_for_activate, position) else {
             return;
         };
+        let Some(entry) = entries_for_activate.get(row.original_index) else {
+            return;
+        };
         if let Some(activation) = playlist_entry_play_activation(
             playlist_id_for_activate.clone(),
-            &row.entry,
+            entry,
             position as usize,
             &state_for_activate.borrow(),
         ) {
@@ -488,11 +491,10 @@ pub(in crate::ui) fn rebuild_playlist_entries_model(
     let rows = playlist_entries_for_state(entries, state)
         .into_iter()
         .enumerate()
-        .map(|(display_index, (original_index, entry))| {
+        .map(|(display_index, original_index)| {
             glib::BoxedAnyObject::new(PlaylistEntryTableRow {
                 original_index,
                 display_index,
-                entry,
             })
         })
         .collect::<Vec<_>>();
@@ -501,17 +503,17 @@ pub(in crate::ui) fn rebuild_playlist_entries_model(
 pub(in crate::ui) fn playlist_entries_for_state(
     entries: &[PlaylistEntry],
     state: &PlaylistEntryListState,
-) -> Vec<(usize, PlaylistEntry)> {
+) -> Vec<usize> {
     let query = state.query.trim().to_lowercase();
     let mut rows = entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| query.is_empty() || playlist_entry_matches_query(entry, &query))
-        .map(|(index, entry)| (index, entry.clone()))
+        .map(|(index, _)| index)
         .collect::<Vec<_>>();
 
     rows.sort_by(|left, right| {
-        let ordering = compare_playlist_entry(left, right, state.sort);
+        let ordering = compare_playlist_entry(entries, *left, *right, state.sort);
         if state.descending {
             ordering.reverse()
         } else {
@@ -524,6 +526,12 @@ pub(in crate::ui) fn playlist_entry_matches_query(entry: &PlaylistEntry, query: 
     entry.track.title.to_lowercase().contains(query)
         || entry.track.artist.to_lowercase().contains(query)
         || entry.track.album.to_lowercase().contains(query)
+}
+fn playlist_entry_for_row<'a>(
+    entries: &'a [PlaylistEntry],
+    row: &PlaylistEntryTableRow,
+) -> Option<&'a PlaylistEntry> {
+    entries.get(row.original_index)
 }
 fn playlist_entry_reorder_column(
     shell: &Rc<Shell>,
@@ -539,13 +547,17 @@ fn playlist_entry_reorder_column(
         let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
             return;
         };
-        let drag = playlist_entry_drag_handle(&row.entry.entry_id);
+        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+            return;
+        };
+        let drag = playlist_entry_drag_handle(&entry.entry_id);
         install_playlist_entry_cell_actions(
             &drag,
             &shell,
             Rc::clone(&entries),
             playlist_id.clone(),
             row,
+            entry,
         );
         item.set_child(Some(&drag));
     });
@@ -569,6 +581,9 @@ fn playlist_entry_number_column(
         let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
             return;
         };
+        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+            return;
+        };
 
         let label = gtk::Label::new(Some(&(row.display_index + 1).to_string()));
         label.add_css_class("muted");
@@ -581,6 +596,7 @@ fn playlist_entry_number_column(
             Rc::clone(&entries),
             playlist_id.clone(),
             row,
+            entry,
         );
         item.set_child(Some(&label));
     });
@@ -602,7 +618,7 @@ fn playlist_entry_album_column(
         PLAYLIST_ENTRY_ALBUM_COLUMN_WIDTH,
         entries,
         playlist_id,
-        |row| row.entry.track.album.clone(),
+        |entry| entry.track.album.clone(),
     )
 }
 fn playlist_entry_play_count_column(
@@ -616,7 +632,7 @@ fn playlist_entry_play_count_column(
         play_count_column_width(),
         entries,
         playlist_id,
-        |row| playlist_entry_play_count_text(row.entry.track.play_count),
+        |entry| playlist_entry_play_count_text(entry.track.play_count),
     )
 }
 fn playlist_entry_text_column<F>(
@@ -628,7 +644,7 @@ fn playlist_entry_text_column<F>(
     value: F,
 ) -> gtk::ColumnViewColumn
 where
-    F: Fn(&PlaylistEntryTableRow) -> String + 'static,
+    F: Fn(&PlaylistEntry) -> String + 'static,
 {
     let factory = gtk::SignalListItemFactory::new();
     let shell = Rc::clone(shell);
@@ -640,12 +656,15 @@ where
         let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
             return;
         };
+        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+            return;
+        };
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         root.set_valign(gtk::Align::Center);
         root.set_halign(gtk::Align::Fill);
         root.set_hexpand(true);
 
-        let label = gtk::Label::new(Some(&value(&row)));
+        let label = gtk::Label::new(Some(&value(entry)));
         label.add_css_class("table-link-label");
         label.add_css_class("muted");
         label.set_xalign(0.0);
@@ -662,6 +681,7 @@ where
             Rc::clone(&entries),
             playlist_id.clone(),
             row,
+            entry,
         );
         item.set_child(Some(&root));
     });
@@ -686,9 +706,12 @@ fn playlist_entry_title_column(
         let Some(row) = item_at_from_item::<PlaylistEntryTableRow>(item) else {
             return;
         };
+        let Some(entry) = playlist_entry_for_row(&entries, &row) else {
+            return;
+        };
         let cover = shell.cover_tile_for(
-            row.entry.track.image_ref.as_ref(),
-            stable_seed(row.entry.track.id.as_str()),
+            entry.track.image_ref.as_ref(),
+            stable_seed(entry.track.id.as_str()),
             PLAYLIST_ENTRY_COVER_WIDTH,
             THUMB_COVER_SIZE,
         );
@@ -698,12 +721,12 @@ fn playlist_entry_title_column(
         labels.set_halign(gtk::Align::Fill);
         labels.set_width_request(1);
         labels.append(&playlist_entry_text_label(
-            &row.entry.track.title,
+            &entry.track.title,
             "",
             PLAYLIST_ENTRY_TITLE_MAX_CHARS,
         ));
         labels.append(&playlist_entry_text_label(
-            &row.entry.track.artist,
+            &entry.track.artist,
             "muted",
             PLAYLIST_ENTRY_TITLE_MAX_CHARS,
         ));
@@ -714,6 +737,7 @@ fn playlist_entry_title_column(
             Rc::clone(&entries),
             playlist_id.clone(),
             row,
+            entry,
         );
         item.set_child(Some(&title));
     });
@@ -745,14 +769,15 @@ fn install_playlist_entry_cell_actions(
     entries: Rc<Vec<PlaylistEntry>>,
     playlist_id: PlaylistId,
     row: PlaylistEntryTableRow,
+    entry: &PlaylistEntry,
 ) {
     install_playlist_entry_context_menu(
         target,
         shell,
-        row.entry.track.clone(),
+        entry.track.clone(),
         playlist_id.clone(),
-        row.entry.entry_id.clone(),
-        row.entry.track.title.clone(),
+        entry.entry_id.clone(),
+        entry.track.title.clone(),
     );
 
     let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
@@ -774,17 +799,24 @@ fn install_playlist_entry_cell_actions(
     target.add_controller(drop_target);
 }
 pub(in crate::ui) fn compare_playlist_entry(
-    left: &(usize, PlaylistEntry),
-    right: &(usize, PlaylistEntry),
+    entries: &[PlaylistEntry],
+    left: usize,
+    right: usize,
     sort: PlaylistEntrySort,
 ) -> std::cmp::Ordering {
+    let Some(left_entry) = entries.get(left) else {
+        return std::cmp::Ordering::Equal;
+    };
+    let Some(right_entry) = entries.get(right) else {
+        return std::cmp::Ordering::Equal;
+    };
     match sort {
-        PlaylistEntrySort::Order => left.0.cmp(&right.0),
-        PlaylistEntrySort::Title => cmp_text(&left.1.track.title, &right.1.track.title),
-        PlaylistEntrySort::Artist => cmp_text(&left.1.track.artist, &right.1.track.artist),
-        PlaylistEntrySort::Album => cmp_text(&left.1.track.album, &right.1.track.album),
+        PlaylistEntrySort::Order => left.cmp(&right),
+        PlaylistEntrySort::Title => cmp_text(&left_entry.track.title, &right_entry.track.title),
+        PlaylistEntrySort::Artist => cmp_text(&left_entry.track.artist, &right_entry.track.artist),
+        PlaylistEntrySort::Album => cmp_text(&left_entry.track.album, &right_entry.track.album),
     }
-    .then_with(|| left.0.cmp(&right.0))
+    .then_with(|| left.cmp(&right))
 }
 pub(in crate::ui) fn cmp_text(left: &str, right: &str) -> std::cmp::Ordering {
     left.to_lowercase().cmp(&right.to_lowercase())

@@ -1314,6 +1314,15 @@ pub(in crate::ui) fn install_current_track_context_menu(
     });
     target.add_controller(key);
 }
+pub(in crate::ui) fn present_current_track_context_menu(
+    target: &impl IsA<gtk::Widget>,
+    shell: &Rc<Shell>,
+) {
+    let target = target.as_ref();
+    if let Some(track) = current_player_track(shell) {
+        present_track_context_menu(target, shell, track, None);
+    }
+}
 
 fn context_click_gesture() -> gtk::GestureClick {
     let click = gtk::GestureClick::new();
