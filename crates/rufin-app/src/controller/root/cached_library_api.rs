@@ -228,7 +228,6 @@ impl AppController {
         track_album_refs(&self.store, &saved, &mut page.items, &[])?;
         Ok(page)
     }
-    #[cfg(test)]
     pub fn cached_favorite_tracks(&self) -> Result<Vec<Track>, String> {
         let Some(saved) = self.store.with_store(|store| store.active_server())? else {
             return Ok(Vec::new());

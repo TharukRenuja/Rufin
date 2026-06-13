@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{collections::BTreeSet, fs, path::PathBuf};
 
 use super::PRE_SMART_PLAYLISTS_SCHEMA_VERSION;
 use super::servers::COLLECTION_COVER_GENRE;
@@ -820,6 +820,159 @@ fn schema_track_commit() {
 }
 
 #[test]
+fn schema_local_delta_preserves_favorite_flags() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server_with_id("local:server:favorites");
+    store.save_server(&saved).expect("save server");
+    let mut album = album(1);
+    album.favorite = true;
+    let mut changed_track = track(10, &album);
+    changed_track.favorite = true;
+    let mut metadata_track = track(11, &album);
+    metadata_track.favorite = true;
+    let mut library_artist = artist(20, None);
+    library_artist.id = ArtistId::new("local:artist:favorites-artist");
+    library_artist.favorite = true;
+    let mut album_artist = artist(21, None);
+    album_artist.id = ArtistId::new("local:album-artist:favorites-artist");
+    album_artist.favorite = true;
+    let first_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin first sync");
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            first_generation,
+        )
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            &[changed_track.clone(), metadata_track.clone()],
+            first_generation,
+        )
+        .expect("upsert tracks");
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&library_artist),
+            false,
+            first_generation,
+        )
+        .expect("upsert artist");
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&album_artist),
+            true,
+            first_generation,
+        )
+        .expect("upsert album artist");
+    store
+        .complete_sync(&saved.server.id, first_generation)
+        .expect("complete first sync");
+
+    let mut incoming_album = album.clone();
+    incoming_album.favorite = false;
+    incoming_album.track_count += 1;
+    let mut incoming_changed_track = changed_track.clone();
+    incoming_changed_track.favorite = false;
+    incoming_changed_track.title = "Changed local title".to_string();
+    let mut incoming_metadata_track = metadata_track.clone();
+    incoming_metadata_track.favorite = false;
+    incoming_metadata_track.duration_seconds += 1;
+    let mut new_track = track(12, &album);
+    new_track.favorite = false;
+    let mut incoming_artist = library_artist.clone();
+    incoming_artist.favorite = false;
+    incoming_artist.track_count += 1;
+    let mut incoming_album_artist = album_artist.clone();
+    incoming_album_artist.favorite = false;
+    incoming_album_artist.album_count += 1;
+    let second_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin second sync");
+    store
+        .commit_local_library_delta(
+            &saved.server.id,
+            second_generation,
+            LocalLibraryDelta {
+                changed_tracks: vec![incoming_changed_track.clone(), new_track.clone()],
+                metadata_tracks: vec![incoming_metadata_track.clone()],
+                current_track_ids: vec![
+                    changed_track.id.clone(),
+                    metadata_track.id.clone(),
+                    new_track.id.clone(),
+                ],
+                current_album_ids: vec![album.id.clone()],
+                current_artist_ids: vec![library_artist.id.clone()],
+                current_album_artist_ids: vec![album_artist.id.clone()],
+                dirty_albums: vec![incoming_album.clone()],
+                dirty_artists: vec![incoming_artist.clone()],
+                dirty_album_artists: vec![incoming_album_artist.clone()],
+                ..LocalLibraryDelta::default()
+            },
+        )
+        .expect("commit local delta");
+
+    let loaded_changed = store
+        .load_track(&saved.server.id, &changed_track.id)
+        .expect("load changed track")
+        .expect("changed track");
+    let loaded_metadata = store
+        .load_track(&saved.server.id, &metadata_track.id)
+        .expect("load metadata track")
+        .expect("metadata track");
+    let loaded_new = store
+        .load_track(&saved.server.id, &new_track.id)
+        .expect("load new track")
+        .expect("new track");
+    let loaded_albums = store
+        .load_albums(&saved.server.id, 0, 10)
+        .expect("load albums")
+        .items;
+    let loaded_artists = store
+        .load_artists(&saved.server.id, false, 0, 10)
+        .expect("load artists")
+        .items;
+    let loaded_album_artists = store
+        .load_artists(&saved.server.id, true, 0, 10)
+        .expect("load album artists")
+        .items;
+    let loaded_album = loaded_albums
+        .iter()
+        .find(|candidate| candidate.id == album.id)
+        .expect("album");
+    let loaded_artist = loaded_artists
+        .iter()
+        .find(|candidate| candidate.id == library_artist.id)
+        .expect("artist");
+    let loaded_album_artist = loaded_album_artists
+        .iter()
+        .find(|candidate| candidate.id == album_artist.id)
+        .expect("album artist");
+
+    assert_eq!(loaded_changed.title, incoming_changed_track.title);
+    assert!(loaded_changed.favorite);
+    assert_eq!(
+        loaded_metadata.duration_seconds,
+        incoming_metadata_track.duration_seconds
+    );
+    assert!(loaded_metadata.favorite);
+    assert!(!loaded_new.favorite);
+    assert_eq!(loaded_album.track_count, incoming_album.track_count);
+    assert!(loaded_album.favorite);
+    assert_eq!(loaded_artist.track_count, incoming_artist.track_count);
+    assert!(loaded_artist.favorite);
+    assert_eq!(
+        loaded_album_artist.album_count,
+        incoming_album_artist.album_count
+    );
+    assert!(loaded_album_artist.favorite);
+}
+
+#[test]
 fn artwork_delta_update() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
@@ -1614,6 +1767,92 @@ fn schema_track_search() {
     assert_eq!(search.items[0].id, tracks[1].id);
     assert!(favorites.is_empty());
 }
+
+#[test]
+fn schema_favorite_tracks_are_not_capped() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let tracks = (1..=525)
+        .map(|number| {
+            let mut track = track(number, &album);
+            track.favorite = true;
+            track
+        })
+        .collect::<Vec<_>>();
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, &tracks, generation)
+        .expect("upsert tracks");
+
+    let favorites = store
+        .load_favorite_tracks(&saved.server.id)
+        .expect("load favorites");
+
+    assert_eq!(track_id_set(&favorites), track_id_set(&tracks));
+}
+
+#[test]
+fn schema_folder_favorite_tracks_are_not_capped() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let folder = MusicFolder {
+        id: MusicFolderId::fake(1),
+        name: "Music".to_string(),
+    };
+    let selected_tracks = (1..=525)
+        .map(|number| {
+            let mut track = track(number, &album);
+            track.favorite = true;
+            track
+        })
+        .collect::<Vec<_>>();
+    let mut outside_track = track(900, &album);
+    outside_track.favorite = true;
+    let mut tracks = selected_tracks.clone();
+    tracks.push(outside_track);
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, &tracks, generation)
+        .expect("upsert tracks");
+    store
+        .upsert_music_folders(&saved.server.id, std::slice::from_ref(&folder), generation)
+        .expect("upsert folder");
+    store
+        .upsert_track_music_folder_memberships(
+            &saved.server.id,
+            &folder.id,
+            &selected_tracks,
+            generation,
+        )
+        .expect("upsert memberships");
+    store
+        .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+        .expect("select folder");
+
+    let favorites = store
+        .load_favorite_tracks(&saved.server.id)
+        .expect("load favorites");
+
+    assert_eq!(track_id_set(&favorites), track_id_set(&selected_tracks));
+}
+
+fn track_id_set(tracks: &[Track]) -> BTreeSet<String> {
+    tracks
+        .iter()
+        .map(|track| track.id.as_str().to_string())
+        .collect()
+}
+
 #[test]
 fn schema_filter_folder() {
     let store = Store::open_memory().expect("open store");
