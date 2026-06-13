@@ -44,6 +44,20 @@ impl Shell {
             shell.update_lyrics_highlight();
         });
     }
+    pub(in crate::ui) fn apply_loaded_lyrics_for_track(
+        self: &Rc<Self>,
+        track_id: TrackId,
+        lyrics: Option<Lyrics>,
+    ) {
+        if !loaded_lyrics_matches_current(
+            current_playback_track_id(&self.state.player.borrow()).as_ref(),
+            &track_id,
+            lyrics.as_ref(),
+        ) {
+            return;
+        }
+        self.apply_loaded_lyrics(lyrics);
+    }
     fn restart_lyrics_follow_tracking(&self) {
         self.lyrics_pane.restart_follow_tracking();
         self.fullscreen_player.lyrics_pane.restart_follow_tracking();
@@ -151,4 +165,12 @@ pub(in crate::ui) fn allow_loaded_lyrics_cache_revisit(
     if let Some(lyrics) = lyrics {
         attempted.remove(&lyrics.track_id);
     }
+}
+pub(in crate::ui) fn loaded_lyrics_matches_current(
+    current_track: Option<&TrackId>,
+    track_id: &TrackId,
+    lyrics: Option<&Lyrics>,
+) -> bool {
+    current_track.is_some_and(|current| current == track_id)
+        && lyrics.is_none_or(|lyrics| &lyrics.track_id == track_id)
 }

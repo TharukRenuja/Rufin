@@ -355,7 +355,7 @@ mod tests {
                 | ControllerEvent::Queue(_)
                 | ControllerEvent::Playback(_)
                 | ControllerEvent::Visualizer(_)
-                | ControllerEvent::Lyrics(_)
+                | ControllerEvent::Lyrics { .. }
                 | ControllerEvent::LyricsSearchResults { .. }
                 | ControllerEvent::LyricsSearchFailed { .. }
                 | ControllerEvent::LyricsSaved { .. }

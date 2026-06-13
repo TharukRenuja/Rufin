@@ -1,5 +1,12 @@
 use super::*;
 
+fn lyrics_event(track_id: &TrackId, lyrics: Option<Lyrics>) -> ControllerEvent {
+    ControllerEvent::Lyrics {
+        track_id: track_id.clone(),
+        lyrics: Box::new(lyrics),
+    }
+}
+
 impl AppController {
     pub fn request_lyrics_for_current(&self) {
         self.lyrics_cache(true);
@@ -19,7 +26,7 @@ impl AppController {
             .with_store(|store| store.delete_remote_lyrics(&server_id, &entry.track_id))
         {
             Ok(true) => {
-                let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
+                let _sent = self.events.send(lyrics_event(&entry.track_id, None));
             }
             Ok(false) => {}
             Err(error) => {
@@ -40,7 +47,6 @@ impl AppController {
         let external_providers = settings.external_lyrics_providers.clone();
         let Some((server_id, entry, _position)) = self.current_playback_entry() else {
             debug!("lyrics request skipped because the queue has no current track");
-            let _sent = self.events.send(ControllerEvent::Lyrics(Box::new(None)));
             return;
         };
         if let Some(lyrics) = local_sidecar_lyrics(&self.store, &server_id, &entry.track_id) {
@@ -50,7 +56,7 @@ impl AppController {
                 .with_store(|store| store.save_lyrics(&server_id, &lyrics));
             let _sent = self
                 .events
-                .send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                .send(lyrics_event(&entry.track_id, Some(lyrics)));
             return;
         }
         let cue_track = track_has_cue_source(&self.store, &server_id, &entry.track_id);
@@ -65,7 +71,7 @@ impl AppController {
             debug!(track_id = %entry.track_id, "loaded lyrics from cache");
             let _sent = self
                 .events
-                .send(ControllerEvent::Lyrics(Box::new(Some(cached))));
+                .send(lyrics_event(&entry.track_id, Some(cached)));
             return;
         }
         let provider_is_local = self
@@ -89,14 +95,14 @@ impl AppController {
                         debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
                         let _saved =
                             store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
-                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                        let _sent = events.send(lyrics_event(&entry.track_id, Some(lyrics)));
                     }
                     Some(Err(error)) => {
                         debug!(track_id = %entry.track_id, %error, "external lyric fallback failed");
-                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                        let _sent = events.send(lyrics_event(&entry.track_id, None));
                     }
                     Some(Ok(None)) | None => {
-                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                        let _sent = events.send(lyrics_event(&entry.track_id, None));
                     }
                 }
             });
@@ -112,11 +118,11 @@ impl AppController {
                 .with_store(|store| store.saved_server(&server_id))
                 .unwrap_or(None)
             else {
-                let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                let _sent = events.send(lyrics_event(&entry.track_id, None));
                 return;
             };
             if saved.server.provider == "fake" {
-                let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                let _sent = events.send(lyrics_event(&entry.track_id, None));
                 return;
             }
             let result =
@@ -129,7 +135,7 @@ impl AppController {
                 Ok(Some(lyrics)) => {
                     debug!(track_id = %entry.track_id, source = ?lyrics.source, "loaded lyrics from provider");
                     let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
-                    let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                    let _sent = events.send(lyrics_event(&entry.track_id, Some(lyrics)));
                 }
                 Ok(None) => {
                     debug!(track_id = %entry.track_id, allow_remote, "provider returned no lyrics");
@@ -138,37 +144,36 @@ impl AppController {
                             debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider");
                             let _saved =
                                 store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
-                            let _sent =
-                                events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                            let _sent = events.send(lyrics_event(&entry.track_id, Some(lyrics)));
                         }
                         Some(Err(error)) => {
                             debug!(track_id = %entry.track_id, %error, "external lyric fallback failed");
-                            let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                            let _sent = events.send(lyrics_event(&entry.track_id, None));
                         }
                         Some(Ok(None)) | None => {
-                            let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
+                            let _sent = events.send(lyrics_event(&entry.track_id, None));
                         }
                     }
                 }
-                Err(error) => match allow_remote
-                    .then(|| external_best_lyrics(&entry, &external_providers))
-                {
-                    Some(Ok(Some(lyrics))) => {
-                        debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider after provider error");
-                        let _saved =
-                            store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
-                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                Err(error) => {
+                    match allow_remote.then(|| external_best_lyrics(&entry, &external_providers)) {
+                        Some(Ok(Some(lyrics))) => {
+                            debug!(track_id = %entry.track_id, provider = ?lyrics.external_provider, "loaded lyrics from external provider after provider error");
+                            let _saved =
+                                store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
+                            let _sent = events.send(lyrics_event(&entry.track_id, Some(lyrics)));
+                        }
+                        Some(Err(fallback_error)) => {
+                            debug!(track_id = %entry.track_id, %fallback_error, "external lyric fallback failed");
+                            let _sent = events.send(ControllerEvent::Error(error));
+                            let _sent = events.send(lyrics_event(&entry.track_id, None));
+                        }
+                        Some(Ok(None)) | None => {
+                            let _sent = events.send(ControllerEvent::Error(error));
+                            let _sent = events.send(lyrics_event(&entry.track_id, None));
+                        }
                     }
-                    Some(Err(fallback_error)) => {
-                        debug!(track_id = %entry.track_id, %fallback_error, "external lyric fallback failed");
-                        let _sent = events.send(ControllerEvent::Error(error));
-                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
-                    }
-                    Some(Ok(None)) | None => {
-                        let _sent = events.send(ControllerEvent::Error(error));
-                        let _sent = events.send(ControllerEvent::Lyrics(Box::new(None)));
-                    }
-                },
+                }
             }
         });
     }
@@ -279,11 +284,12 @@ impl AppController {
         }
         let store = self.store.clone();
         let events = self.events.clone();
+        let requested_track_id = entry.track_id.clone();
         thread::spawn(
             move || match lyrics_from_search_result(entry.track_id, &result) {
                 Ok(Some(lyrics)) => {
                     let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
-                    let _sent = events.send(ControllerEvent::Lyrics(Box::new(Some(lyrics))));
+                    let _sent = events.send(lyrics_event(&requested_track_id, Some(lyrics)));
                 }
                 Ok(None) => {
                     let _sent = events.send(ControllerEvent::Error(

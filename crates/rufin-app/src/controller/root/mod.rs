@@ -336,7 +336,10 @@ pub enum ControllerEvent {
     Queue(Box<Option<QueueSnapshot>>),
     Playback(Box<PlaybackSnapshot>),
     Visualizer(Vec<f64>),
-    Lyrics(Box<Option<Lyrics>>),
+    Lyrics {
+        track_id: TrackId,
+        lyrics: Box<Option<Lyrics>>,
+    },
     LyricsSearchResults {
         track_id: TrackId,
         artist_name: String,

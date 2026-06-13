@@ -1,6 +1,8 @@
 use super::cover::{collection_cover_decode_extent, cover_group_collage_ready};
 use super::grouped_detail_view::GROUPED_DETAIL_COVER_FETCH_SIZE;
-use super::lyrics_playback_state::allow_loaded_lyrics_cache_revisit;
+use super::lyrics_playback_state::{
+    allow_loaded_lyrics_cache_revisit, loaded_lyrics_matches_current,
+};
 use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
     clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_initial_position,
@@ -1451,6 +1453,56 @@ pub(in crate::ui) fn shell_allow_cache() {
     assert!(attempted.contains(&previous_failed_track_id));
     allow_loaded_lyrics_cache_revisit(&mut attempted, None);
     assert!(attempted.contains(&previous_failed_track_id));
+}
+#[test]
+pub(in crate::ui) fn shell_reject_stale_lyrics() {
+    let old_track = TrackId::fake(12);
+    let current_track = TrackId::fake(13);
+    let old_lyrics = Lyrics {
+        track_id: old_track.clone(),
+        source: LyricsSource::Remote,
+        external_provider: None,
+        lines: vec![LyricLine {
+            text: "old line".to_string(),
+            start_millis: Some(1_000),
+        }],
+    };
+    let current_lyrics = Lyrics {
+        track_id: current_track.clone(),
+        source: LyricsSource::Server,
+        external_provider: None,
+        lines: vec![LyricLine {
+            text: "current line".to_string(),
+            start_millis: None,
+        }],
+    };
+
+    assert!(!loaded_lyrics_matches_current(
+        Some(&current_track),
+        &old_track,
+        Some(&old_lyrics)
+    ));
+    assert!(!loaded_lyrics_matches_current(
+        Some(&current_track),
+        &old_track,
+        None
+    ));
+    assert!(!loaded_lyrics_matches_current(
+        Some(&current_track),
+        &current_track,
+        Some(&old_lyrics)
+    ));
+    assert!(loaded_lyrics_matches_current(
+        Some(&current_track),
+        &current_track,
+        Some(&current_lyrics)
+    ));
+    assert!(loaded_lyrics_matches_current(
+        Some(&current_track),
+        &current_track,
+        None
+    ));
+    assert!(!loaded_lyrics_matches_current(None, &old_track, None));
 }
 #[test]
 pub(in crate::ui) fn shell_use_statuses() {
