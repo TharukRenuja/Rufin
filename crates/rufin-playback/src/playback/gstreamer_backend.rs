@@ -1,4 +1,8 @@
 use super::*;
+use gstreamer_audio as gst_audio;
+use rustfft::{Fft, FftPlanner, num_complex::Complex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
 const CLASSIC_EQUALIZER_FREQUENCIES: [f64; EQUALIZER_BAND_COUNT] = [
     60.0, 170.0, 310.0, 600.0, 1000.0, 3000.0, 6000.0, 12000.0, 14000.0, 16000.0,
@@ -6,6 +10,12 @@ const CLASSIC_EQUALIZER_FREQUENCIES: [f64; EQUALIZER_BAND_COUNT] = [
 const EQUALIZER_DUMMY_LOW_FREQUENCY: f64 = 20.0;
 const EQUALIZER_DUMMY_HIGH_FREQUENCY: f64 = 20_000.0;
 const GAPLESS_BUFFERING_IGNORE_REMAINING_MS: u64 = 5_000;
+const VISUALIZER_CHANNEL_CAPACITY: usize = 2;
+const VISUALIZER_COPY_FRAMES: usize = 4_096;
+const VISUALIZER_FFT_SIZE: usize = 2_048;
+const VISUALIZER_MIN_EMIT_INTERVAL: Duration = Duration::from_millis(33);
+const VISUALIZER_NOISE_FLOOR_DB: f32 = -72.0;
+const VISUALIZER_CEILING_DB: f32 = -6.0;
 
 pub struct LazyGStreamerPlaybackBackend {
     inner: Option<Box<dyn PlaybackBackend>>,
@@ -222,12 +232,78 @@ impl SharedPlaybackState {
         }
     }
 }
+#[derive(Clone)]
+struct VisualizerTap {
+    slot: Slot,
+    sender: SyncSender<VisualizerFrame>,
+    generation: Arc<AtomicU64>,
+}
+impl VisualizerTap {
+    fn install(&self, pad: &gst::Pad) -> Option<gst::PadProbeId> {
+        let tap = self.clone();
+        pad.add_probe(gst::PadProbeType::BUFFER, move |pad, info| {
+            let Some(buffer) = info.buffer() else {
+                return gst::PadProbeReturn::Ok;
+            };
+            let Some(samples) = copy_visualizer_samples(pad, buffer) else {
+                return gst::PadProbeReturn::Ok;
+            };
+            let frame = VisualizerFrame {
+                slot: tap.slot,
+                generation: tap.generation.load(Ordering::Acquire),
+                samples,
+            };
+            match tap.sender.try_send(frame) {
+                Ok(()) | Err(TrySendError::Full(_)) => {}
+                Err(TrySendError::Disconnected(_)) => return gst::PadProbeReturn::Remove,
+            }
+            gst::PadProbeReturn::Ok
+        })
+    }
+}
+struct VisualizerFrame {
+    slot: Slot,
+    generation: u64,
+    samples: Vec<f32>,
+}
+pub(super) struct VisualizerAnalyzer {
+    sender: SyncSender<VisualizerFrame>,
+    generation: Arc<AtomicU64>,
+}
+impl VisualizerAnalyzer {
+    pub(super) fn new(
+        events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
+        shared: Arc<Mutex<SharedPlaybackState>>,
+    ) -> Self {
+        let (sender, receiver) = sync_channel(VISUALIZER_CHANNEL_CAPACITY);
+        let generation = Arc::new(AtomicU64::new(1));
+        let worker_generation = Arc::clone(&generation);
+        let _ = thread::Builder::new()
+            .name("rufin-visualizer-fft".to_string())
+            .spawn(move || run_visualizer_worker(receiver, events, shared, worker_generation))
+            .inspect_err(|error| warn!(%error, "failed to start visualizer FFT worker"));
+        Self { sender, generation }
+    }
+
+    fn tap(&self, slot: Slot) -> VisualizerTap {
+        VisualizerTap {
+            slot,
+            sender: self.sender.clone(),
+            generation: Arc::clone(&self.generation),
+        }
+    }
+
+    fn next_generation(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+    }
+}
 pub(super) struct PlayerPipeline {
     pub(super) pipeline: gst::Element,
     bus: gst::Bus,
     _about_to_finish_id: glib::SignalHandlerId,
     audio_sink_config: Option<AudioSinkConfig>,
-    visualizer: Option<gst::Element>,
+    visualizer_pad: Option<gst::Pad>,
+    visualizer_probe: Option<gst::PadProbeId>,
 }
 #[derive(Clone, Debug, PartialEq)]
 struct AudioSinkConfig {
@@ -246,7 +322,7 @@ impl AudioSinkConfig {
 }
 struct AudioSink {
     root: gst::Element,
-    visualizer: Option<gst::Element>,
+    visualizer_pad: Option<gst::Pad>,
 }
 #[derive(Debug, PartialEq)]
 pub(super) enum AboutToFinishAction {
@@ -254,11 +330,7 @@ pub(super) enum AboutToFinishAction {
     Ignore,
 }
 impl PlayerPipeline {
-    pub(super) fn new(
-        slot: Slot,
-        name: &str,
-        shared: Arc<Mutex<SharedPlaybackState>>,
-    ) -> Result<Self, String> {
+    pub(super) fn new(name: &str, shared: Arc<Mutex<SharedPlaybackState>>) -> Result<Self, String> {
         let pipeline = make_playbin(name)?;
         let bus = pipeline
             .bus()
@@ -277,36 +349,43 @@ impl PlayerPipeline {
             None
         });
 
-        let _ = slot;
         Ok(Self {
             pipeline,
             bus,
             _about_to_finish_id: about_to_finish_id,
             audio_sink_config: None,
-            visualizer: None,
+            visualizer_pad: None,
+            visualizer_probe: None,
         })
     }
 
-    fn configure_audio(
-        &mut self,
-        settings: &PlaybackSettings,
-        visualizer_enabled: bool,
-    ) -> Result<(), String> {
+    fn configure_audio(&mut self, settings: &PlaybackSettings) -> Result<(), String> {
         let config = AudioSinkConfig::new(settings);
         if self.audio_sink_config.as_ref() == Some(&config) {
-            self.set_visualizer_enabled(visualizer_enabled);
             return Ok(());
         }
-        let sink = build_audio_sink(settings, visualizer_enabled)?;
+        self.clear_visualizer_tap();
+        let sink = build_audio_sink(settings)?;
         self.pipeline.set_property("audio-sink", &sink.root);
-        self.visualizer = sink.visualizer;
+        self.visualizer_pad = sink.visualizer_pad;
         self.audio_sink_config = Some(config);
         Ok(())
     }
 
-    fn set_visualizer_enabled(&self, enabled: bool) {
-        if let Some(visualizer) = &self.visualizer {
-            visualizer.set_property("post-messages", enabled);
+    fn set_visualizer_tap(&mut self, tap: Option<VisualizerTap>) {
+        self.clear_visualizer_tap();
+        if let (Some(tap), Some(pad)) = (tap, self.visualizer_pad.as_ref()) {
+            self.visualizer_probe = tap.install(pad);
+        }
+    }
+
+    fn clear_visualizer_tap(&mut self) {
+        if let (Some(pad), Some(probe)) =
+            (self.visualizer_pad.as_ref(), self.visualizer_probe.take())
+        {
+            pad.remove_probe(probe);
+        } else {
+            self.visualizer_probe = None;
         }
     }
 
@@ -316,13 +395,12 @@ impl PlayerPipeline {
         settings: &PlaybackSettings,
         volume: f64,
         muted: bool,
-        visualizer_enabled: bool,
         start_position_millis: u64,
     ) -> Result<(), String> {
         self.pipeline
             .set_state(gst::State::Ready)
             .map_err(|error| error.to_string())?;
-        self.configure_audio(settings, visualizer_enabled)?;
+        self.configure_audio(settings)?;
         self.pipeline.set_property("uri", item.stream.uri());
         self.set_output_volume(volume, muted);
         let startup_state = if start_position_millis > 0 {
@@ -399,6 +477,7 @@ pub(super) struct GstEngine {
     pub(super) secondary: PlayerPipeline,
     pub(super) shared: Arc<Mutex<SharedPlaybackState>>,
     pub(super) events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
+    pub(super) visualizer: VisualizerAnalyzer,
     pub(super) last_position_tick: Instant,
     pub(super) state: PlaybackState,
     pub(super) pending_seek: Option<PendingSeek>,
@@ -407,18 +486,15 @@ pub(super) struct GstEngine {
 impl GstEngine {
     fn new(events: Arc<Mutex<VecDeque<PlaybackEvent>>>) -> Result<Self, String> {
         let shared = Arc::new(Mutex::new(SharedPlaybackState::new()));
-        let primary =
-            PlayerPipeline::new(Slot::Primary, "rufin-primary-player", Arc::clone(&shared))?;
-        let secondary = PlayerPipeline::new(
-            Slot::Secondary,
-            "rufin-secondary-player",
-            Arc::clone(&shared),
-        )?;
+        let primary = PlayerPipeline::new("rufin-primary-player", Arc::clone(&shared))?;
+        let secondary = PlayerPipeline::new("rufin-secondary-player", Arc::clone(&shared))?;
+        let visualizer = VisualizerAnalyzer::new(Arc::clone(&events), Arc::clone(&shared));
         Ok(Self {
             primary,
             secondary,
             shared,
             events,
+            visualizer,
             last_position_tick: Instant::now(),
             state: PlaybackState::Stopped,
             pending_seek: None,
@@ -461,10 +537,9 @@ impl GstEngine {
                         shared.volume = shared.settings.volume;
                         shared.muted = shared.settings.muted;
                     }
-                    self.primary
-                        .configure_audio(&settings, visualizer_enabled)?;
-                    self.secondary
-                        .configure_audio(&settings, visualizer_enabled)?;
+                    self.primary.configure_audio(&settings)?;
+                    self.secondary.configure_audio(&settings)?;
+                    self.sync_visualizer_taps(visualizer_enabled);
                     let (volume, muted) = self.output_state();
                     self.primary.set_output_volume(volume, muted);
                     self.secondary.set_output_volume(volume, muted);
@@ -493,6 +568,7 @@ impl GstEngine {
                 self.pending_seek = None;
                 self.primary.stop();
                 self.secondary.stop();
+                self.visualizer.next_generation();
                 if let Ok(mut shared) = self.shared.lock() {
                     shared.current = None;
                     shared.next = None;
@@ -501,6 +577,8 @@ impl GstEngine {
                     shared.crossfade = None;
                     shared.active = Slot::Primary;
                 }
+                self.primary.set_visualizer_tap(None);
+                self.secondary.set_visualizer_tap(None);
                 push_event(&self.events, position_event(0));
                 self.push_state(PlaybackState::Stopped);
                 Ok(())
@@ -527,9 +605,9 @@ impl GstEngine {
 
     fn warm_up(&mut self, settings: &PlaybackSettings) -> Result<(), String> {
         let visualizer_enabled = self.visualizer_enabled();
-        self.primary.configure_audio(settings, visualizer_enabled)?;
-        self.secondary
-            .configure_audio(settings, visualizer_enabled)?;
+        self.primary.configure_audio(settings)?;
+        self.secondary.configure_audio(settings)?;
+        self.sync_visualizer_taps(visualizer_enabled);
         if let Ok(mut shared) = self.shared.lock() {
             shared.settings = settings.clone();
             shared.volume = settings.volume;
@@ -554,6 +632,7 @@ impl GstEngine {
         self.pending_seek = None;
         settings.sanitize();
         self.secondary.stop();
+        self.secondary.set_visualizer_tap(None);
         let volume = settings.volume;
         let muted = settings.muted;
         let start_millis = item
@@ -573,16 +652,16 @@ impl GstEngine {
             shared.muted = muted;
             visualizer_enabled = shared.visualizer_enabled;
         }
+        self.visualizer.next_generation();
+        if visualizer_enabled {
+            push_event(&self.events, PlaybackEvent::Visualizer(Vec::new()));
+        }
         self.push_state(PlaybackState::Buffering);
         let pipeline_started_at = Instant::now();
-        self.primary.play_item(
-            &item,
-            &settings,
-            volume,
-            muted,
-            visualizer_enabled,
-            start_millis,
-        )?;
+        self.primary
+            .play_item(&item, &settings, volume, muted, start_millis)?;
+        let primary_tap = self.visualizer_tap(Slot::Primary, visualizer_enabled);
+        self.primary.set_visualizer_tap(primary_tap);
         info!(
             track_id = %item.track.id.as_str(),
             elapsed_ms = command_started_at.elapsed().as_millis(),
@@ -732,9 +811,6 @@ impl GstEngine {
             MessageView::Buffering(buffering) if self.is_active_slot(slot) => {
                 self.handle_buffering(buffering.percent().min(100) as u8);
             }
-            MessageView::Element(element) if self.is_active_slot(slot) => {
-                self.handle_element_message(element);
-            }
             MessageView::Eos(_) => self.handle_eos(slot),
             MessageView::Error(error_message) => {
                 let error = error_message.error().to_string();
@@ -820,21 +896,6 @@ impl GstEngine {
         self.pipeline_for_slot(crossfade.from)
             .set_output_volume(volume, muted);
         true
-    }
-
-    fn handle_element_message(&self, element: &gst::message::Element) {
-        if !self.visualizer_enabled() {
-            return;
-        }
-        let Some(structure) = element.structure() else {
-            return;
-        };
-        if structure.name() != "spectrum" {
-            return;
-        }
-        if let Some(levels) = spectrum_levels(structure) {
-            push_event(&self.events, PlaybackEvent::Visualizer(levels));
-        }
     }
 
     fn handle_stream_start(&mut self) {
@@ -1181,12 +1242,13 @@ impl GstEngine {
             return;
         }
         let visualizer_enabled = self.visualizer_enabled();
+        let tap = self.visualizer_tap(to, visualizer_enabled);
         let inactive = self.pipeline_for_slot_mut(to);
-        if let Err(error) = inactive.play_item(&next, &settings, 0.0, muted, visualizer_enabled, 0)
-        {
+        if let Err(error) = inactive.play_item(&next, &settings, 0.0, muted, 0) {
             push_event(&self.events, PlaybackEvent::Error(error));
             return;
         }
+        inactive.set_visualizer_tap(tap);
 
         if let Ok(mut shared) = self.shared.lock() {
             shared.next = None;
@@ -1302,6 +1364,17 @@ impl GstEngine {
             .unwrap_or(false)
     }
 
+    fn visualizer_tap(&self, slot: Slot, enabled: bool) -> Option<VisualizerTap> {
+        enabled.then(|| self.visualizer.tap(slot))
+    }
+
+    fn sync_visualizer_taps(&mut self, enabled: bool) {
+        let primary_tap = self.visualizer_tap(Slot::Primary, enabled);
+        let secondary_tap = self.visualizer_tap(Slot::Secondary, enabled);
+        self.primary.set_visualizer_tap(primary_tap);
+        self.secondary.set_visualizer_tap(secondary_tap);
+    }
+
     fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String> {
         let changed = {
             let Ok(mut shared) = self.shared.lock() else {
@@ -1311,9 +1384,9 @@ impl GstEngine {
             shared.visualizer_enabled = enabled;
             changed
         };
-        self.primary.set_visualizer_enabled(enabled);
-        self.secondary.set_visualizer_enabled(enabled);
-        if changed && !enabled {
+        if changed {
+            self.visualizer.next_generation();
+            self.sync_visualizer_taps(enabled);
             push_event(&self.events, PlaybackEvent::Visualizer(Vec::new()));
         }
         Ok(())
@@ -1608,19 +1681,9 @@ fn configure_playbin_for_audio(pipeline: &gst::Element) {
     };
     pipeline.set_property_from_value("flags", &flags);
 }
-fn build_audio_sink(
-    settings: &PlaybackSettings,
-    visualizer_enabled: bool,
-) -> Result<AudioSink, String> {
+fn build_audio_sink(settings: &PlaybackSettings) -> Result<AudioSink, String> {
     let has_replay_gain = settings.replay_gain != ReplayGainMode::Off;
     let has_equalizer = settings.equalizer.enabled;
-    let visualizer = optional_element("spectrum", "rufin-spectrum");
-    if !has_replay_gain && !has_equalizer && visualizer.is_none() {
-        return Ok(AudioSink {
-            root: make_audio_output(settings.audio_output.as_deref())?,
-            visualizer: None,
-        });
-    }
 
     let bin = gst::Bin::new();
     let convert_in = make_element("audioconvert", "rufin-audio-convert-in")?;
@@ -1659,16 +1722,7 @@ fn build_audio_sink(
         elements.push(equalizer);
     }
 
-    if let Some(spectrum) = &visualizer {
-        spectrum.set_property("bands", 1024u32);
-        spectrum.set_property("threshold", -85i32);
-        spectrum.set_property("post-messages", visualizer_enabled);
-        spectrum.set_property("message-magnitude", true);
-        spectrum.set_property("message-phase", false);
-        spectrum.set_property("interval", 50_000_000u64);
-        elements.push(spectrum.clone());
-    }
-
+    let visualizer_pad = convert_out.static_pad("src");
     elements.push(convert_out.clone());
     elements.push(sink.clone());
     for element in &elements {
@@ -1688,50 +1742,230 @@ fn build_audio_sink(
         .map_err(|error| error.to_string())?;
     Ok(AudioSink {
         root: bin.upcast(),
-        visualizer,
+        visualizer_pad,
     })
 }
-fn spectrum_levels(structure: &gst::StructureRef) -> Option<Vec<f64>> {
-    if let Ok(list) = structure.get::<gst::List>("magnitude") {
-        let levels = list
-            .iter()
-            .filter_map(value_level)
-            .map(normalize_spectrum_level)
-            .collect::<Vec<_>>();
-        return (!levels.is_empty()).then_some(levels);
+fn copy_visualizer_samples(pad: &gst::Pad, buffer: &gst::Buffer) -> Option<Vec<f32>> {
+    let caps = pad.current_caps()?;
+    let info = gst_audio::AudioInfo::from_caps(caps.as_ref()).ok()?;
+    let map = buffer.map_readable().ok()?;
+    copy_audio_samples(map.as_slice(), &info, VISUALIZER_COPY_FRAMES)
+}
+fn copy_audio_samples(
+    bytes: &[u8],
+    info: &gst_audio::AudioInfo,
+    max_frames: usize,
+) -> Option<Vec<f32>> {
+    if info.layout() != gst_audio::AudioLayout::Interleaved {
+        return None;
     }
-    if let Ok(array) = structure.get::<gst::Array>("magnitude") {
-        let levels = array
-            .iter()
-            .filter_map(value_level)
-            .map(normalize_spectrum_level)
-            .collect::<Vec<_>>();
-        return (!levels.is_empty()).then_some(levels);
+    let channels = usize::try_from(info.channels()).ok()?.max(1);
+    let frame_size = usize::try_from(info.bpf()).ok()?;
+    let sample_size = visualizer_sample_size(info.format())?;
+    if frame_size == 0 || sample_size == 0 || sample_size.saturating_mul(channels) > frame_size {
+        return None;
     }
-    structure
-        .get::<String>("magnitude")
-        .ok()
-        .and_then(|raw| spectrum_levels_from_text(&raw))
+    let frames = (bytes.len() / frame_size).min(max_frames);
+    let mut samples = Vec::with_capacity(frames);
+    for frame_index in 0..frames {
+        let frame_start = frame_index * frame_size;
+        let mut total = 0.0;
+        for channel in 0..channels {
+            let sample_start = frame_start + channel * sample_size;
+            let sample_end = sample_start + sample_size;
+            let sample = bytes
+                .get(sample_start..sample_end)
+                .and_then(|slice| decode_visualizer_sample(info.format(), slice))
+                .unwrap_or(0.0);
+            total += sample.clamp(-1.0, 1.0);
+        }
+        let mono = total / channels as f32;
+        samples.push(mono);
+    }
+    (!samples.is_empty()).then_some(samples)
 }
-fn value_level(value: &glib::SendValue) -> Option<f64> {
-    value
-        .get::<f64>()
-        .ok()
-        .or_else(|| value.get::<f32>().ok().map(f64::from))
-        .or_else(|| value.get::<i32>().ok().map(f64::from))
+fn visualizer_sample_size(format: gst_audio::AudioFormat) -> Option<usize> {
+    Some(match format {
+        gst_audio::AudioFormat::S8 | gst_audio::AudioFormat::U8 => 1,
+        gst_audio::AudioFormat::S16le | gst_audio::AudioFormat::U16le => 2,
+        gst_audio::AudioFormat::S24le | gst_audio::AudioFormat::U24le => 3,
+        gst_audio::AudioFormat::S2432le
+        | gst_audio::AudioFormat::U2432le
+        | gst_audio::AudioFormat::S32le
+        | gst_audio::AudioFormat::U32le
+        | gst_audio::AudioFormat::F32le => 4,
+        gst_audio::AudioFormat::F64le => 8,
+        _ => return None,
+    })
 }
-fn spectrum_levels_from_text(raw: &str) -> Option<Vec<f64>> {
-    let start = raw.find('{').map(|index| index + 1).unwrap_or(0);
-    let end = raw.rfind('}').unwrap_or(raw.len());
-    let levels = raw[start..end]
-        .split(',')
-        .filter_map(|part| part.trim().parse::<f64>().ok())
-        .map(normalize_spectrum_level)
-        .collect::<Vec<_>>();
-    (!levels.is_empty()).then_some(levels)
+fn decode_visualizer_sample(format: gst_audio::AudioFormat, bytes: &[u8]) -> Option<f32> {
+    let sample = match format {
+        gst_audio::AudioFormat::S8 => i8::from_ne_bytes([bytes[0]]) as f32 / i8::MAX as f32,
+        gst_audio::AudioFormat::U8 => (bytes[0] as f32 - 128.0) / 128.0,
+        gst_audio::AudioFormat::S16le => {
+            i16::from_le_bytes([bytes[0], bytes[1]]) as f32 / i16::MAX as f32
+        }
+        gst_audio::AudioFormat::U16le => {
+            (u16::from_le_bytes([bytes[0], bytes[1]]) as f32 - 32_768.0) / 32_768.0
+        }
+        gst_audio::AudioFormat::S24le => decode_s24le(bytes) as f32 / 8_388_607.0,
+        gst_audio::AudioFormat::U24le => (decode_u24le(bytes) as f32 - 8_388_608.0) / 8_388_608.0,
+        gst_audio::AudioFormat::S2432le => {
+            (i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) >> 8) as f32 / 8_388_607.0
+        }
+        gst_audio::AudioFormat::U2432le => {
+            ((u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) >> 8) as f32
+                - 8_388_608.0)
+                / 8_388_608.0
+        }
+        gst_audio::AudioFormat::S32le => {
+            i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32 / i32::MAX as f32
+        }
+        gst_audio::AudioFormat::U32le => {
+            (u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32 - 2_147_483_648.0)
+                / 2_147_483_648.0
+        }
+        gst_audio::AudioFormat::F32le => {
+            f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        }
+        gst_audio::AudioFormat::F64le => f64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]) as f32,
+        _ => return None,
+    };
+    Some(if sample.is_finite() { sample } else { 0.0 })
 }
-fn normalize_spectrum_level(level: f64) -> f64 {
-    ((level + 85.0) / 60.0).clamp(0.0, 1.0)
+fn decode_s24le(bytes: &[u8]) -> i32 {
+    let sign = if bytes[2] & 0x80 == 0 { 0x00 } else { 0xff };
+    i32::from_le_bytes([bytes[0], bytes[1], bytes[2], sign])
+}
+fn decode_u24le(bytes: &[u8]) -> u32 {
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0])
+}
+fn run_visualizer_worker(
+    receiver: Receiver<VisualizerFrame>,
+    events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
+    shared: Arc<Mutex<SharedPlaybackState>>,
+    generation: Arc<AtomicU64>,
+) {
+    let mut fft = VisualizerFft::new();
+    let mut current_generation = 0;
+    while let Ok(frame) = receiver.recv() {
+        if frame.generation != generation.load(Ordering::Acquire) {
+            continue;
+        }
+        if frame.generation != current_generation {
+            fft.clear();
+            current_generation = frame.generation;
+        }
+        if !visualizer_frame_is_current(&shared, frame.slot) {
+            continue;
+        }
+        fft.push_samples(&frame.samples);
+        let Some(levels) = fft.maybe_levels() else {
+            continue;
+        };
+        if frame.generation != generation.load(Ordering::Acquire)
+            || !visualizer_frame_is_current(&shared, frame.slot)
+        {
+            continue;
+        }
+        push_event(&events, PlaybackEvent::Visualizer(levels));
+    }
+}
+fn visualizer_frame_is_current(shared: &Arc<Mutex<SharedPlaybackState>>, slot: Slot) -> bool {
+    shared
+        .lock()
+        .map(|shared| shared.visualizer_enabled && shared.active == slot)
+        .unwrap_or(false)
+}
+struct VisualizerFft {
+    samples: VecDeque<f32>,
+    input: Vec<Complex<f32>>,
+    window: Vec<f32>,
+    fft: Arc<dyn Fft<f32>>,
+    last_emit: Option<Instant>,
+}
+impl VisualizerFft {
+    fn new() -> Self {
+        let mut planner = FftPlanner::<f32>::new();
+        let fft = planner.plan_fft_forward(VISUALIZER_FFT_SIZE);
+        let window = (0..VISUALIZER_FFT_SIZE)
+            .map(|index| {
+                let position = index as f32 / (VISUALIZER_FFT_SIZE - 1) as f32;
+                0.5 - 0.5 * (2.0 * std::f32::consts::PI * position).cos()
+            })
+            .collect();
+        Self {
+            samples: VecDeque::with_capacity(VISUALIZER_FFT_SIZE),
+            input: vec![Complex::new(0.0, 0.0); VISUALIZER_FFT_SIZE],
+            window,
+            fft,
+            last_emit: None,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.samples.clear();
+        self.last_emit = None;
+    }
+
+    fn push_samples(&mut self, samples: &[f32]) {
+        let start = samples.len().saturating_sub(VISUALIZER_FFT_SIZE);
+        for sample in &samples[start..] {
+            if self.samples.len() == VISUALIZER_FFT_SIZE {
+                self.samples.pop_front();
+            }
+            self.samples.push_back(*sample);
+        }
+    }
+
+    fn maybe_levels(&mut self) -> Option<Vec<f64>> {
+        if self.samples.len() < VISUALIZER_FFT_SIZE {
+            return None;
+        }
+        let now = Instant::now();
+        if self
+            .last_emit
+            .is_some_and(|last| now.duration_since(last) < VISUALIZER_MIN_EMIT_INTERVAL)
+        {
+            return None;
+        }
+        self.last_emit = Some(now);
+        Some(self.levels())
+    }
+
+    fn levels(&mut self) -> Vec<f64> {
+        for ((slot, sample), window) in self
+            .input
+            .iter_mut()
+            .zip(self.samples.iter().copied())
+            .zip(self.window.iter().copied())
+        {
+            *slot = Complex::new(sample * window, 0.0);
+        }
+        self.fft.process(&mut self.input);
+        fft_levels(&self.input)
+    }
+}
+fn fft_levels(input: &[Complex<f32>]) -> Vec<f64> {
+    let half = VISUALIZER_FFT_SIZE / 2;
+    input
+        .iter()
+        .take(half)
+        .enumerate()
+        .map(|(index, value)| {
+            if index == 0 {
+                return 0.0;
+            }
+            let magnitude = value.norm() / VISUALIZER_FFT_SIZE as f32;
+            let db = 20.0 * magnitude.max(1.0e-6).log10();
+            let level = ((db - VISUALIZER_NOISE_FLOOR_DB)
+                / (VISUALIZER_CEILING_DB - VISUALIZER_NOISE_FLOOR_DB))
+                .clamp(0.0, 1.0);
+            f64::from(level.powf(1.25))
+        })
+        .collect()
 }
 fn set_equalizer_band(
     equalizer: &gst::Element,
@@ -1832,15 +2066,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn visualizer_audio_sink_builds_when_available() {
+    fn default_audio_sink_is_tap_ready_without_spectrum() {
         gst::init().expect("initialize GStreamer");
-        if gst::ElementFactory::find("spectrum").is_none() {
-            return;
-        }
-        let sink = build_audio_sink(&PlaybackSettings::default(), true)
-            .expect("build visualizer audio sink");
-        let visualizer = sink.visualizer.expect("visualizer element");
-        assert!(visualizer.property::<bool>("post-messages"));
+        let settings = PlaybackSettings {
+            audio_output: Some("fakesink".to_string()),
+            ..PlaybackSettings::default()
+        };
+        let sink = build_audio_sink(&settings).expect("build default audio sink");
+        assert!(sink.visualizer_pad.is_some());
+        let bin = sink.root.downcast::<gst::Bin>().expect("audio sink bin");
+        let factories = bin
+            .children()
+            .iter()
+            .filter_map(|element| element.factory().map(|factory| factory.name().to_string()))
+            .collect::<Vec<_>>();
+        assert!(factories.iter().any(|factory| factory == "audioconvert"));
+        assert!(!factories.iter().any(|factory| factory == "spectrum"));
+    }
+
+    #[test]
+    fn visualizer_audio_sink_omits_visualizer_caps_chain() {
+        gst::init().expect("initialize GStreamer");
+        let settings = PlaybackSettings {
+            audio_output: Some("fakesink".to_string()),
+            ..PlaybackSettings::default()
+        };
+        let sink = build_audio_sink(&settings).expect("build visualizer audio sink");
+        let bin = sink.root.downcast::<gst::Bin>().expect("audio sink bin");
+        let factories = bin
+            .children()
+            .iter()
+            .filter_map(|element| element.factory().map(|factory| factory.name().to_string()))
+            .collect::<Vec<_>>();
+        assert!(!factories.iter().any(|factory| factory == "capsfilter"));
+        assert!(!factories.iter().any(|factory| factory == "spectrum"));
     }
 
     #[test]
@@ -1861,12 +2120,64 @@ mod tests {
     }
 
     #[test]
-    fn spectrum_text_levels_are_normalized() {
-        let levels =
-            spectrum_levels_from_text("(float){ -30.0, -45.0, -70.0 }").expect("parse levels");
-        assert!(levels[0] > levels[1]);
-        assert!(levels[1] > levels[2]);
+    fn visualizer_pcm_copy_mixes_stereo_frames() {
+        gst::init().expect("initialize GStreamer");
+        let info = gst_audio::AudioInfo::builder(gst_audio::AudioFormat::F32le, 48_000, 2)
+            .layout(gst_audio::AudioLayout::Interleaved)
+            .build()
+            .expect("audio info");
+        let mut bytes = Vec::new();
+        for sample in [(0.5_f32, -0.25_f32), (2.0_f32, 0.0_f32)] {
+            bytes.extend_from_slice(&sample.0.to_le_bytes());
+            bytes.extend_from_slice(&sample.1.to_le_bytes());
+        }
+        let samples = copy_audio_samples(&bytes, &info, 8).expect("copy samples");
+        assert_eq!(samples.len(), 2);
+        assert!((samples[0] - 0.125).abs() < 0.001);
+        assert!((samples[1] - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn visualizer_pcm_copy_mixes_s16_stereo_frames() {
+        gst::init().expect("initialize GStreamer");
+        let info = gst_audio::AudioInfo::builder(gst_audio::AudioFormat::S16le, 48_000, 2)
+            .layout(gst_audio::AudioLayout::Interleaved)
+            .build()
+            .expect("audio info");
+        let mut bytes = Vec::new();
+        for sample in [(16_384_i16, -8_192_i16), (i16::MAX, 0_i16)] {
+            bytes.extend_from_slice(&sample.0.to_le_bytes());
+            bytes.extend_from_slice(&sample.1.to_le_bytes());
+        }
+        let samples = copy_audio_samples(&bytes, &info, 8).expect("copy samples");
+        assert_eq!(samples.len(), 2);
+        assert!((samples[0] - 0.125).abs() < 0.001);
+        assert!((samples[1] - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn visualizer_fft_silence_is_quiet() {
+        let mut fft = VisualizerFft::new();
+        fft.push_samples(&vec![0.0; VISUALIZER_FFT_SIZE]);
+        let levels = fft.levels();
+        assert_eq!(levels.len(), VISUALIZER_FFT_SIZE / 2);
+        assert!(levels.iter().all(|level| (0.0..=0.01).contains(level)));
+    }
+
+    #[test]
+    fn visualizer_fft_sine_produces_bounded_energy() {
+        let mut fft = VisualizerFft::new();
+        let samples = (0..VISUALIZER_FFT_SIZE)
+            .map(|index| {
+                let phase =
+                    2.0 * std::f32::consts::PI * 16.0 * index as f32 / VISUALIZER_FFT_SIZE as f32;
+                phase.sin() * 0.8
+            })
+            .collect::<Vec<_>>();
+        fft.push_samples(&samples);
+        let levels = fft.levels();
+        let peak = levels.iter().copied().fold(0.0_f64, f64::max);
+        assert!(peak > 0.3);
         assert!(levels.iter().all(|level| (0.0..=1.0).contains(level)));
-        assert!(normalize_spectrum_level(-45.0) > 0.0);
     }
 }

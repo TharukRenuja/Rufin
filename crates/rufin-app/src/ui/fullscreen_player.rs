@@ -31,11 +31,13 @@ const FULLSCREEN_PLAYER_MAX_COVER_SIZE: i32 = 320;
 const FULLSCREEN_PLAYER_HORIZONTAL_MARGIN: i32 = 64;
 const FULLSCREEN_PLAYER_VERTICAL_RESERVED: i32 = 360;
 const FULLSCREEN_ICON_SIZE: i32 = 18;
-const FULLSCREEN_VISUALIZER_BANDS: usize = 512;
+const FULLSCREEN_VISUALIZER_BANDS: usize = 320;
 const FULLSCREEN_VISUALIZER_MIN_RATIO: f64 = 20.0 / 24_000.0;
 const FULLSCREEN_VISUALIZER_MAX_RATIO: f64 = 22_050.0 / 24_000.0;
-const FULLSCREEN_VISUALIZER_EMA_WEIGHT: f64 = 0.35;
-const FULLSCREEN_VISUALIZER_TOP_PADDING: f64 = 30.0;
+const FULLSCREEN_VISUALIZER_EMA_WEIGHT: f64 = 0.72;
+const FULLSCREEN_VISUALIZER_MIN_COLUMNS: usize = 64;
+const FULLSCREEN_VISUALIZER_MAX_COLUMNS: usize = 128;
+const FULLSCREEN_VISUALIZER_TOP_GAP: f64 = 50.0;
 const FULLSCREEN_EQUALIZER_SCALE_HEIGHT: i32 = 196;
 
 pub(super) struct FullscreenPlayerParts {
@@ -307,114 +309,182 @@ fn build_fullscreen_visualizer_area(levels: Rc<RefCell<Vec<f64>>>) -> gtk::Drawi
     area.add_css_class("fullscreen-player-visualizer-area");
     area.set_hexpand(true);
     area.set_vexpand(true);
+    area.set_halign(gtk::Align::Fill);
+    area.set_valign(gtk::Align::Fill);
     area.set_content_height(230);
-    area.set_draw_func(move |area, context, width, height| {
+    area.set_draw_func(move |_, context, width, height| {
         let levels = levels.borrow();
-        let color = area.color();
         if levels.is_empty() {
-            draw_visualizer_idle(context, width, height, &color);
+            draw_visualizer_idle(context, width, height);
         } else {
-            draw_visualizer_wave(context, width, height, &color, &levels);
+            draw_visualizer_wave(context, width, height, &levels);
         }
     });
     area
 }
 
-fn draw_visualizer_idle(
-    context: &gtk::cairo::Context,
-    width: i32,
-    height: i32,
-    color: &gtk::gdk::RGBA,
-) {
-    let _ = context;
-    let _ = width;
-    let _ = height;
-    let _ = color;
+fn draw_visualizer_idle(context: &gtk::cairo::Context, width: i32, height: i32) {
+    draw_visualizer_bars(
+        context,
+        width,
+        height,
+        &idle_visualizer_levels(),
+        0.46,
+        false,
+    );
 }
 
-fn draw_visualizer_wave(
+fn draw_visualizer_wave(context: &gtk::cairo::Context, width: i32, height: i32, levels: &[f64]) {
+    if levels.len() < 2 {
+        draw_visualizer_idle(context, width, height);
+        return;
+    }
+    draw_visualizer_bars(context, width, height, levels, 1.0, true);
+}
+
+fn draw_visualizer_bars(
     context: &gtk::cairo::Context,
     width: i32,
     height: i32,
-    color: &gtk::gdk::RGBA,
     levels: &[f64],
+    alpha: f64,
+    normalize: bool,
 ) {
     let width = f64::from(width.max(1));
     let height = f64::from(height.max(1));
-    let left = width * 0.01;
-    let right = width * 0.99;
-    let baseline = height * 0.60;
-    let amplitude = (baseline - FULLSCREEN_VISUALIZER_TOP_PADDING).max(1.0);
-    let points = visualizer_points(levels, left, right, baseline, amplitude);
-    if points.len() < 2 {
-        draw_visualizer_idle(context, width as i32, height as i32, color);
+    let gap = 2.0;
+    let left = width * 0.008;
+    let available_width = (width * 0.984).max(1.0);
+    let columns = (width / 8.0).round() as usize;
+    let columns = columns.clamp(
+        FULLSCREEN_VISUALIZER_MIN_COLUMNS,
+        FULLSCREEN_VISUALIZER_MAX_COLUMNS,
+    );
+    let cell =
+        ((available_width - gap * columns.saturating_sub(1) as f64) / columns as f64).max(2.0);
+    let grid_height = (height - FULLSCREEN_VISUALIZER_TOP_GAP).max(height * 0.64);
+    let rows = ((grid_height + gap) / (cell + gap)).floor() as usize;
+    let rows = rows.clamp(8, 32);
+    let bottom = height;
+    let bars = visualizer_bar_levels(levels, columns, normalize);
+    if bars.is_empty() {
         return;
     }
-    context.set_line_cap(gtk::cairo::LineCap::Round);
-    context.set_line_join(gtk::cairo::LineJoin::Round);
-    context.set_line_width(5.0);
-    let glow = gtk::cairo::LinearGradient::new(left, 0.0, right, 0.0);
-    glow.add_color_stop_rgba(0.0, 0.95, 0.10, 0.04, 0.16);
-    glow.add_color_stop_rgba(0.24, 1.0, 0.30, 0.04, 0.18);
-    glow.add_color_stop_rgba(0.48, 1.0, 0.62, 0.06, 0.20);
-    glow.add_color_stop_rgba(0.72, 0.95, 0.18, 0.06, 0.17);
-    glow.add_color_stop_rgba(1.0, 0.70, 0.05, 0.04, 0.13);
-    let _ = context.set_source(&glow);
-    context.move_to(points[0].0, points[0].1);
-    for &(x, y) in points.iter().skip(1) {
-        context.line_to(x, y);
-    }
-    let _ = context.stroke();
 
-    context.set_line_width(1.8);
-    let line = gtk::cairo::LinearGradient::new(left, 0.0, right, 0.0);
-    line.add_color_stop_rgba(0.0, 1.0, 0.12, 0.04, 0.98);
-    line.add_color_stop_rgba(0.18, 1.0, 0.28, 0.04, 0.98);
-    line.add_color_stop_rgba(0.35, 1.0, 0.52, 0.05, 0.98);
-    line.add_color_stop_rgba(0.48, 1.0, 0.78, 0.08, 0.98);
-    line.add_color_stop_rgba(0.62, 0.98, 0.36, 0.05, 0.98);
-    line.add_color_stop_rgba(0.78, 0.88, 0.10, 0.04, 0.96);
-    line.add_color_stop_rgba(1.0, 0.62, 0.02, 0.03, 0.86);
-    let _ = context.set_source(&line);
-    context.move_to(points[0].0, points[0].1);
-    for &(x, y) in points.iter().skip(1) {
-        context.line_to(x, y);
-    }
-    let _ = context.stroke();
+    for (column, level) in bars.iter().copied().enumerate() {
+        let scaled = level * rows as f64;
+        let x = left + column as f64 * (cell + gap);
+        let full_cells = scaled.floor().clamp(1.0, rows as f64) as usize;
+        for row in 0..full_cells {
+            let color_t = if full_cells > 1 {
+                row as f64 / (full_cells - 1) as f64
+            } else {
+                0.0
+            };
+            let (red, green, blue) = visualizer_bar_color(color_t);
+            context.set_source_rgba(red, green, blue, alpha * (0.72 + color_t * 0.24));
+            let y = bottom - cell - row as f64 * (cell + gap);
+            context.rectangle(x, y, cell, cell);
+            let _ = context.fill();
+        }
 
-    context.set_line_width(1.1);
-    let reflection = gtk::cairo::LinearGradient::new(left, 0.0, right, 0.0);
-    reflection.add_color_stop_rgba(0.0, 1.0, 0.12, 0.04, 0.05);
-    reflection.add_color_stop_rgba(0.45, 1.0, 0.55, 0.06, 0.07);
-    reflection.add_color_stop_rgba(1.0, 0.70, 0.04, 0.03, 0.04);
-    let _ = context.set_source(&reflection);
-    context.move_to(points[0].0, baseline + (baseline - points[0].1) * 0.28);
-    for &(x, y) in points.iter().skip(1) {
-        context.line_to(x, baseline + (baseline - y) * 0.28);
+        let cap_row = full_cells;
+        let cap_alpha = scaled - scaled.floor();
+        if cap_row > 0 && cap_row < rows && cap_alpha >= 0.14 {
+            let (red, green, blue) = visualizer_bar_color(1.0);
+            context.set_source_rgba(red, green, blue, alpha * cap_alpha * 0.76);
+            let y = bottom - cell - cap_row as f64 * (cell + gap);
+            context.rectangle(x, y, cell, cell);
+            let _ = context.fill();
+        }
     }
-    let _ = context.stroke();
 }
 
-fn visualizer_points(
-    levels: &[f64],
-    left: f64,
-    right: f64,
-    baseline: f64,
-    amplitude: f64,
-) -> Vec<(f64, f64)> {
-    let visible = levels.len().max(2);
-    let step = (right - left) / (visible - 1) as f64;
-    levels
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, level)| {
-            let shaped = level.clamp(0.0, 1.0);
-            let x = left + step * index as f64;
-            let y = baseline - shaped * amplitude;
-            (x, y)
+fn visualizer_bar_color(row_t: f64) -> (f64, f64, f64) {
+    let row_t = row_t.clamp(0.0, 1.0);
+    if row_t < 0.62 {
+        let mix = row_t / 0.62;
+        (
+            lerp(0.86, 1.0, mix),
+            lerp(0.10, 0.36, mix),
+            lerp(0.04, 0.03, mix),
+        )
+    } else {
+        let mix = (row_t - 0.62) / 0.38;
+        (
+            lerp(1.0, 1.0, mix),
+            lerp(0.36, 0.66, mix),
+            lerp(0.03, 0.08, mix),
+        )
+    }
+}
+
+fn lerp(start: f64, end: f64, mix: f64) -> f64 {
+    start + (end - start) * mix
+}
+
+fn idle_visualizer_levels() -> Vec<f64> {
+    (0..FULLSCREEN_VISUALIZER_BANDS)
+        .map(|index| {
+            let t = index as f64 / FULLSCREEN_VISUALIZER_BANDS as f64;
+            0.040
+                + (t * std::f64::consts::TAU * 0.85).sin() * 0.014
+                + (t * std::f64::consts::TAU * 1.75 + 1.2).sin() * 0.008
         })
         .collect()
+}
+
+fn visualizer_bar_levels(levels: &[f64], columns: usize, normalize: bool) -> Vec<f64> {
+    if columns == 0 || levels.is_empty() {
+        return Vec::new();
+    }
+    let bars = (0..columns)
+        .map(|column| {
+            let start = column * levels.len() / columns;
+            let end = ((column + 1) * levels.len() / columns).max(start + 1);
+            let mut total = 0.0;
+            let mut peak = 0.0_f64;
+            let mut count = 0;
+            for level in &levels[start..end.min(levels.len())] {
+                let level = level.clamp(0.0, 1.0);
+                total += level;
+                peak = peak.max(level);
+                count += 1;
+            }
+            let average = if count == 0 {
+                0.0
+            } else {
+                total / count as f64
+            };
+            let position = if columns > 1 {
+                column as f64 / (columns - 1) as f64
+            } else {
+                0.0
+            };
+            let low_taper = (position / 0.18).clamp(0.0, 1.0);
+            let gain = 0.82 + low_taper * low_taper * (3.0 - 2.0 * low_taper) * 0.18;
+            ((average * 0.38 + peak * 0.62) * gain * 1.28)
+                .clamp(0.0, 1.0)
+                .powf(0.62)
+        })
+        .collect::<Vec<_>>();
+    if normalize {
+        normalize_visualizer_bars(bars)
+    } else {
+        bars.into_iter().map(|level| level * 0.42).collect()
+    }
+}
+
+fn normalize_visualizer_bars(mut bars: Vec<f64>) -> Vec<f64> {
+    let peak = bars.iter().copied().fold(0.0_f64, f64::max);
+    if peak < 0.08 {
+        return bars;
+    }
+    let scale = (0.96 / peak).clamp(1.0, 2.35);
+    for level in &mut bars {
+        *level = (*level * scale).clamp(0.0, 1.0);
+    }
+    bars
 }
 
 fn visualizer_display_levels(levels: &[f64]) -> Vec<f64> {
