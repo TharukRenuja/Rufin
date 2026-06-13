@@ -1,0 +1,50 @@
+[package]
+name = "rufin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "rufin"
+path = "src/main.rs"
+
+[features]
+default = []
+dev-tools = ["dep:test_support"]
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+directories = "6.0.0"
+gettext-rs = { version = "0.7.7", features = ["gettext-system"] }
+gdk-pixbuf = "0.22.0"
+getrandom = "0.4.0"
+gtk = { package = "gtk4", version = "0.11.3", features = ["v4_20"] }
+adw = { package = "libadwaita", version = "0.9.1", features = ["v1_8", "gtk_v4_20"] }
+md5 = "0.8.0"
+reqwest = { version = "0.13.3", features = ["blocking", "form", "json"] }
+domain = { path = "../domain" }
+playback = { path = "../playback" }
+source = { path = "../source" }
+source-jellyfin = { path = "../source-jellyfin" }
+source-local = { path = "../source-local" }
+source-subsonic = { path = "../source-subsonic" }
+secrets = { path = "../secrets" }
+library = { path = "../library" }
+test_support = { package = "test-support", path = "../test-support", optional = true }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+test_support = { package = "test-support", path = "../test-support" }
+
+[target.'cfg(unix)'.dependencies]
+ksni = { version = "0.3.4", features = ["blocking"] }
+mpris-server = "0.10.0"
+
+[lints]
+workspace = true

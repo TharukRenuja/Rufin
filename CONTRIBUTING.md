@@ -13,7 +13,7 @@ This is not enforced, but it keeps the history easier to scan.
 Install the usual desktop app build dependencies. Package names vary by distro,
 but you need:
 
-- Rust 1.92 or newer, with Cargo, rustfmt, and clippy
+- Rust 1.95 or newer, with Cargo, rustfmt, and clippy
 - pkg-config or pkgconf
 - gettext
 - jq
@@ -46,7 +46,7 @@ nix --accept-flake-config develop
 For one-off commands:
 
 ```bash
-nix --accept-flake-config develop --command cargo run -p rufin-app
+nix --accept-flake-config develop --command cargo run -p rufin
 nix --accept-flake-config develop --command scripts/test-rust.sh
 ```
 
@@ -57,13 +57,13 @@ To run Rufin from source:
 ```bash
 git clone https://github.com/screwys/Rufin.git
 cd Rufin
-cargo run -p rufin-app
+cargo run -p rufin
 ```
 
 To build a release binary:
 
 ```bash
-cargo build --release -p rufin-app
+cargo build --release -p rufin
 ```
 
 ## Tests
