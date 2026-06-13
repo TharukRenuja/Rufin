@@ -61,6 +61,17 @@ pub struct ServerLocalAccess {
     pub path_replace_to: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LocalAccessStatusFacts {
+    pub sample_server_path: Option<String>,
+    pub sample_metadata_path: Option<String>,
+    pub direct_match_count: usize,
+    pub prefix_match_count: usize,
+    pub metadata_match_count: usize,
+    pub unmatched_count: usize,
+    pub total_track_count: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SyncState {
     pub server_id: ServerId,

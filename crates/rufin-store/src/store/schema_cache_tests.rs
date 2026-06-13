@@ -1225,6 +1225,69 @@ fn server_local_access_round_trips() {
         Some(access)
     );
 }
+
+#[test]
+fn local_access_status_counts_cached_mapping() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let access = ServerLocalAccess {
+        server_id: saved.server.id.clone(),
+        root_path: "/home/demo/Music".to_string(),
+        path_replace_from: Some("/server/music".to_string()),
+        path_replace_to: Some("/home/demo/Music".to_string()),
+    };
+    store
+        .save_server_local_access(&access)
+        .expect("save local access");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album = album(1);
+    let mut direct = track(1, &album);
+    direct.local_path = Some("/mnt/library/direct.flac".to_string());
+    let mut prefix = track(2, &album);
+    prefix.local_path = Some("/server/music/Album/prefix.flac".to_string());
+    let mut relative = track(3, &album);
+    relative.local_path = Some("Album/relative.flac".to_string());
+    let mut metadata = track(4, &album);
+    metadata.local_path = Some("/server/music/Album/metadata.flac".to_string());
+    let unmatched = track(5, &album);
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            &[direct, prefix, relative, metadata.clone(), unmatched],
+            generation,
+        )
+        .expect("upsert tracks");
+    store
+        .replace_track_local_matches(
+            &saved.server.id,
+            &[(
+                metadata.id.clone(),
+                "/home/demo/Music/Album/metadata.flac".to_string(),
+                "metadata".to_string(),
+            )],
+        )
+        .expect("replace local matches");
+
+    let status = store
+        .local_access_status_facts(&access)
+        .expect("local access status");
+
+    assert_eq!(status.total_track_count, 5);
+    assert_eq!(status.direct_match_count, 1);
+    assert_eq!(status.prefix_match_count, 3);
+    assert_eq!(status.metadata_match_count, 1);
+    assert_eq!(status.unmatched_count, 1);
+    assert_eq!(
+        status.sample_server_path.as_deref(),
+        Some("/server/music/Album/metadata.flac")
+    );
+    assert_eq!(
+        status.sample_metadata_path.as_deref(),
+        Some("/home/demo/Music/Album/metadata.flac")
+    );
+}
+
 #[test]
 fn track_local_path_round_trips() {
     let store = Store::open_memory().expect("open store");
