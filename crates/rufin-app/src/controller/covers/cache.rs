@@ -81,6 +81,7 @@ fn cover_cache_size_candidates(size: u32) -> Vec<u32> {
     }
 }
 
+#[cfg(test)]
 pub(super) fn external_lookup_miss_size_candidates(size: u32) -> Vec<u32> {
     let mut sizes = vec![size];
     for candidate_size in [

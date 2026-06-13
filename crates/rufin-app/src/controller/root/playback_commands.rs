@@ -1,6 +1,8 @@
 use super::*;
+use std::time::Instant;
 
 const MAX_BACKEND_DURATION_SECONDS: u32 = 12 * 60 * 60;
+const SLOW_PLAYBACK_POLL_MS: u64 = 100;
 
 impl AppController {
     pub fn play_pause(&self) {
@@ -220,14 +222,22 @@ impl AppController {
         }
     }
     pub fn poll_playback_events(&self) {
+        let poll_started = Instant::now();
+        let drain_started = Instant::now();
         let events = self
             .playback
             .lock()
             .map(|mut playback| playback.drain_events())
             .unwrap_or_default();
+        let drain_ms = drain_started.elapsed().as_millis() as u64;
         if events.is_empty() {
+            if drain_ms >= SLOW_PLAYBACK_POLL_MS {
+                warn!(drain_ms, "slow empty playback event drain");
+            }
             return;
         }
+        let event_count = events.len();
+        let handle_started = Instant::now();
         let mut playback_changed = false;
         let mut track_boundary_handled = false;
         for event in events {
@@ -339,8 +349,24 @@ impl AppController {
                 }
             }
         }
+        let handle_ms = handle_started.elapsed().as_millis() as u64;
+        let emit_started = Instant::now();
         if playback_changed {
             self.emit_playback_snapshot();
+        }
+        let emit_ms = emit_started.elapsed().as_millis() as u64;
+        let total_ms = poll_started.elapsed().as_millis() as u64;
+        if total_ms >= SLOW_PLAYBACK_POLL_MS {
+            warn!(
+                event_count,
+                drain_ms,
+                handle_ms,
+                emit_ms,
+                total_ms,
+                playback_changed,
+                track_boundary_handled,
+                "slow playback event handling"
+            );
         }
     }
 }

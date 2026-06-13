@@ -122,6 +122,7 @@ impl AppController {
         cover_retry_check(&self.external_cover_retry_generation, generation)
     }
 
+    #[cfg(test)]
     pub fn external_cover_lookup_known_missing(&self, image_ref: &ImageRef, size: u32) -> bool {
         if !external_metadata::is_external_image_ref(image_ref) {
             return false;
@@ -252,49 +253,46 @@ impl AppController {
                     return Ok(CoverRequestOutcome::Ready(path));
                 }
 
+                let settings = load_settings_from_store(&store);
+                if is_external_cover && !external_metadata::enabled(&settings) {
+                    return Ok(CoverRequestOutcome::TerminalMissing {
+                        external_retry_generation: Some(retry_generation),
+                    });
+                }
+
+                let Some(saved) = store.with_store(|store| store.active_server())? else {
+                    return Ok(CoverRequestOutcome::Deferred);
+                };
+                if saved.server.provider == "fake" {
+                    return Ok(CoverRequestOutcome::TerminalMissing {
+                        external_retry_generation: None,
+                    });
+                }
+
+                let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
+                let expected_key = image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
+                if expected_key != key {
+                    return Ok(CoverRequestOutcome::Deferred);
+                }
+
+                if let Some(path) = cached_cover_path_for_saved(&store, &saved, &image_ref, size)? {
+                    return Ok(CoverRequestOutcome::Ready(path));
+                }
+                if is_external_cover
+                    && external_lookup_miss_cached(&store, &saved, &image_ref, size)?
+                {
+                    if !cover_retry_check(&external_cover_retry_generation, retry_generation) {
+                        return Ok(CoverRequestOutcome::Deferred);
+                    }
+                    return Ok(CoverRequestOutcome::TerminalMissing {
+                        external_retry_generation: Some(retry_generation),
+                    });
+                }
+
                 if !acquire_cover_slot(&cover_slots) {
                     return Ok(CoverRequestOutcome::Deferred);
                 }
                 let result = (|| -> Result<CoverRequestOutcome, String> {
-                    let settings = load_settings_from_store(&store);
-                    if is_external_cover && !external_metadata::enabled(&settings) {
-                        return Ok(CoverRequestOutcome::TerminalMissing {
-                            external_retry_generation: Some(retry_generation),
-                        });
-                    }
-
-                    let Some(saved) = store.with_store(|store| store.active_server())? else {
-                        return Ok(CoverRequestOutcome::Deferred);
-                    };
-                    if saved.server.provider == "fake" {
-                        return Ok(CoverRequestOutcome::TerminalMissing {
-                            external_retry_generation: None,
-                        });
-                    }
-
-                    let tag = image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED);
-                    let expected_key =
-                        image_cache_key(&saved.server.id, &image_ref.item_id, tag, size);
-                    if expected_key != key {
-                        return Ok(CoverRequestOutcome::Deferred);
-                    }
-
-                    if let Some(path) =
-                        cached_cover_path_for_saved(&store, &saved, &image_ref, size)?
-                    {
-                        return Ok(CoverRequestOutcome::Ready(path));
-                    }
-                    if is_external_cover
-                        && external_lookup_miss_cached(&store, &saved, &image_ref, size)?
-                    {
-                        if !cover_retry_check(&external_cover_retry_generation, retry_generation) {
-                            return Ok(CoverRequestOutcome::Deferred);
-                        }
-                        return Ok(CoverRequestOutcome::TerminalMissing {
-                            external_retry_generation: Some(retry_generation),
-                        });
-                    }
-
                     match fetch_and_cache_cover(
                         &store,
                         &runtime,

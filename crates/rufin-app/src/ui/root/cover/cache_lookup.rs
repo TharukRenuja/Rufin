@@ -207,7 +207,16 @@ impl Shell {
             let Some(intent) = shell.state.cover_path_lookups.borrow_mut().remove(&key) else {
                 return;
             };
+            let finish_started = Instant::now();
+            let has_path = path.is_some();
             shell.finish_cached_cover_path_lookup(key, image_ref, fetch_size, size, intent, path);
+            let finish_ms = finish_started.elapsed().as_millis() as u64;
+            if finish_ms >= SLOW_COVER_CALLBACK_MS {
+                warn!(
+                    ?intent,
+                    has_path, finish_ms, "slow cached cover lookup finish"
+                );
+            }
         });
     }
     pub(in crate::ui) fn finish_cached_cover_path_lookup(
@@ -229,7 +238,7 @@ impl Shell {
             CoverPathLookupIntent::Warm => {
                 if let Some(path) = path {
                     self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Warm);
-                } else if self.should_fetch_warm_cover(&key, &image_ref, fetch_size) {
+                } else if self.should_fetch_warm_cover(&key, &image_ref) {
                     self.request_cover_for_key(key, image_ref, fetch_size);
                 }
             }
@@ -242,7 +251,7 @@ impl Shell {
                         size,
                         CoverDecodePriority::Visible,
                     );
-                } else if self.should_fetch_cover(&key, &image_ref, fetch_size) {
+                } else if self.should_fetch_cover(&key, &image_ref) {
                     self.request_cover_for_key(key, image_ref, fetch_size);
                 } else {
                     self.apply_cover_unavailable(&key);
@@ -257,7 +266,7 @@ impl Shell {
                         size,
                         CoverDecodePriority::Visible,
                     );
-                } else if self.should_fetch_cover(&key, &image_ref, fetch_size) {
+                } else if self.should_fetch_cover(&key, &image_ref) {
                     self.request_cover_for_key(key, image_ref, fetch_size);
                 } else {
                     self.state
@@ -292,7 +301,7 @@ impl Shell {
         path: Option<PathBuf>,
     ) {
         let Some(path) = path else {
-            if self.should_fetch_cover(&key, &image_ref, fetch_size) {
+            if self.should_fetch_cover(&key, &image_ref) {
                 self.mark_cover_request_state(&key, CoverRequestState::Fetching);
                 self.request_cover_for_key(key, image_ref, fetch_size);
                 return;
@@ -317,7 +326,7 @@ impl Shell {
         self.mark_cover_request_state(&key, CoverRequestState::Decoding);
         self.start_cover_decode_from_path(key, path, size, CoverDecodePriority::Visible);
     }
-    fn should_fetch_cover(&self, key: &str, image_ref: &ImageRef, fetch_size: u32) -> bool {
+    fn should_fetch_cover(&self, key: &str, image_ref: &ImageRef) -> bool {
         let provider = self
             .state
             .library
@@ -326,17 +335,10 @@ impl Shell {
             .as_ref()
             .map(|server| server.provider.clone());
         let unavailable = self.state.cover_unavailable.borrow().contains(key);
-        let external_known_missing = self
-            .controller
-            .external_cover_lookup_known_missing(image_ref, fetch_size);
-        visible_cover_cache_miss_action(
-            provider.as_deref(),
-            image_ref,
-            unavailable,
-            external_known_missing,
-        ) == VisibleCoverCacheMissAction::Fetch
+        visible_cover_cache_miss_action(provider.as_deref(), image_ref, unavailable, false)
+            == VisibleCoverCacheMissAction::Fetch
     }
-    fn should_fetch_warm_cover(&self, key: &str, image_ref: &ImageRef, fetch_size: u32) -> bool {
+    fn should_fetch_warm_cover(&self, key: &str, image_ref: &ImageRef) -> bool {
         let provider = self
             .state
             .library
@@ -345,25 +347,24 @@ impl Shell {
             .as_ref()
             .map(|server| server.provider.clone());
         let unavailable = self.state.cover_unavailable.borrow().contains(key);
-        let external_known_missing = self
-            .controller
-            .external_cover_lookup_known_missing(image_ref, fetch_size);
-        warm_cover_cache_miss_action(
-            provider.as_deref(),
-            image_ref,
-            unavailable,
-            external_known_missing,
-        ) == VisibleCoverCacheMissAction::Fetch
+        warm_cover_cache_miss_action(provider.as_deref(), image_ref, unavailable, false)
+            == VisibleCoverCacheMissAction::Fetch
     }
     fn request_cover_for_key(&self, key: String, image_ref: ImageRef, fetch_size: u32) {
-        if self
+        let enqueue_started = Instant::now();
+        let requested = self
             .controller
-            .request_cover_for_key(key.clone(), image_ref, fetch_size)
-        {
+            .request_cover_for_key(key.clone(), image_ref, fetch_size);
+        let enqueue_ms = enqueue_started.elapsed().as_millis() as u64;
+        if enqueue_ms >= SLOW_COVER_CALLBACK_MS {
+            warn!(enqueue_ms, "slow cover fetch enqueue");
+        }
+        if requested {
             self.state.cover_fetches.borrow_mut().insert(key);
         }
     }
     pub(in crate::ui) fn apply_cover_ready(self: &Rc<Self>, key: &str, path: &Path) {
+        let apply_started = Instant::now();
         self.state.cover_fetches.borrow_mut().remove(key);
         self.state.cover_unavailable.borrow_mut().remove(key);
         self.state
@@ -390,7 +391,20 @@ impl Shell {
                 .borrow_mut()
                 .remove(key);
             let bindings = self.take_live_cover_bindings(key);
+            let bindings_count = bindings.len();
+            let bind_started = Instant::now();
             apply_pixbuf_to_bindings(bindings, cover.pixbuf);
+            let bind_ms = bind_started.elapsed().as_millis() as u64;
+            let total_ms = apply_started.elapsed().as_millis() as u64;
+            if total_ms >= SLOW_COVER_CALLBACK_MS || bind_ms >= SLOW_COVER_CALLBACK_MS {
+                warn!(
+                    bindings = bindings_count,
+                    bind_ms,
+                    total_ms,
+                    cached = true,
+                    "slow cover ready apply"
+                );
+            }
             return;
         }
         self.mark_cover_request_state(key, CoverRequestState::Decoding);
@@ -400,6 +414,10 @@ impl Shell {
             size,
             CoverDecodePriority::Visible,
         );
+        let total_ms = apply_started.elapsed().as_millis() as u64;
+        if total_ms >= SLOW_COVER_CALLBACK_MS {
+            warn!(total_ms, cached = false, "slow cover ready apply");
+        }
     }
     pub(in crate::ui) fn apply_cover_unavailable(self: &Rc<Self>, key: &str) {
         self.state.cover_fetches.borrow_mut().remove(key);

@@ -145,7 +145,7 @@ pub(in crate::ui) struct FirstRunCoverPrimeJob {
     pub(in crate::ui) size: i32,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum CoverDecodePriority {
     Visible,
     Warm,

@@ -2,6 +2,9 @@ use super::*;
 
 const MOUSE_BACK_BUTTON: u32 = 8;
 const MOUSE_FORWARD_BUTTON: u32 = 9;
+const SLOW_EVENT_BATCH_MS: u64 = 100;
+const SLOW_LIBRARY_SYNC_STATUS_MS: u64 = 100;
+const SLOW_PLAYBACK_EVENT_POLL_MS: u64 = 100;
 
 pub(in crate::ui) fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let normal_back_shell = Rc::clone(shell);
@@ -595,8 +598,16 @@ fn playlist_snapshot_changed(delta: &LibraryDelta) -> bool {
 pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<ControllerEvent>) {
     let shell = Rc::clone(shell);
     glib::timeout_add_local(Duration::from_millis(33), move || {
+        let batch_started = Instant::now();
+        let playback_poll_started = Instant::now();
         shell.controller.poll_playback_events();
+        let playback_poll_ms = playback_poll_started.elapsed().as_millis() as u64;
+        if playback_poll_ms >= SLOW_PLAYBACK_EVENT_POLL_MS {
+            warn!(playback_poll_ms, "slow playback event poll");
+        }
+        let mut event_count = 0_u64;
         while let Ok(event) = receiver.try_recv() {
+            event_count += 1;
             match event {
                 ControllerEvent::Snapshot(snapshot) => {
                     let (snapshot_outcome, local_folders_changed) = {
@@ -758,6 +769,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     } else if let Some(message) = toast_message {
                         shell.show_preferences_toast(&message);
                     }
+                    let mut delta_ms = 0_u64;
                     if shell.state.local_source_preparing.get() {
                         let syncing = {
                             let library = shell.state.library.borrow();
@@ -775,14 +787,27 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     } else {
                         let delta_started = Instant::now();
                         shell.apply_library_delta(delta);
+                        delta_ms = delta_started.elapsed().as_millis() as u64;
                         info!(
                             sync_status = %sync_status,
                             delta_empty,
                             apply_ms,
                             selector_ms,
-                            delta_ms = delta_started.elapsed().as_millis() as u64,
+                            delta_ms,
                             total_ms = event_started.elapsed().as_millis() as u64,
                             "handled library sync status"
+                        );
+                    }
+                    let total_ms = event_started.elapsed().as_millis() as u64;
+                    if total_ms >= SLOW_LIBRARY_SYNC_STATUS_MS {
+                        warn!(
+                            sync_status = %sync_status,
+                            delta_empty,
+                            apply_ms,
+                            selector_ms,
+                            delta_ms,
+                            total_ms,
+                            "slow library sync status handling"
                         );
                     }
                 }
@@ -1087,6 +1112,13 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.render_current_route();
                 }
             }
+        }
+        let batch_ms = batch_started.elapsed().as_millis() as u64;
+        if batch_ms >= SLOW_EVENT_BATCH_MS {
+            warn!(
+                event_count,
+                playback_poll_ms, batch_ms, "slow controller event pump"
+            );
         }
         glib::ControlFlow::Continue
     });

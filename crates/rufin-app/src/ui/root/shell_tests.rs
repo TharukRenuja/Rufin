@@ -9,7 +9,7 @@ use super::right_panel::{
 use super::startup_reveal::{
     StartupRevealAction, connection_progress_status_label, cover_warm_delay,
     startup_loading_status_label, startup_loading_status_parts, startup_prime_action,
-    startup_route_reveal_action, take_pending_warm,
+    startup_route_reveal_action, startup_stall_delay_ms, take_pending_warm,
 };
 use super::{
     AutoLyricsRequest, LocalSourceCacheGateAction, LocalSourceCacheGateInput,
@@ -540,6 +540,17 @@ pub(in crate::ui) fn run_cover_prime() {
     assert_eq!(
         startup_prime_action(3, Duration::from_millis(super::PRIME_TIMEOUT_MS)),
         StartupRevealAction::RevealExpired
+    );
+}
+#[test]
+pub(in crate::ui) fn startup_stall_delay() {
+    assert_eq!(
+        startup_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(80)),
+        0
+    );
+    assert_eq!(
+        startup_stall_delay_ms(Duration::from_millis(100), Duration::from_millis(725)),
+        625
     );
 }
 #[test]
