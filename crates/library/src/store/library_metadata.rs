@@ -452,39 +452,59 @@ impl Store {
     ) -> StoreResult<usize> {
         let mut fallback_statement = self.connection.prepare(
             "
-            SELECT a.album_id, t.image_item_id, t.image_tag
-            FROM albums a
-            JOIN tracks t
-              ON t.server_id = a.server_id AND t.album_id = a.album_id
-            WHERE a.server_id = ?1
-              AND a.image_item_id IS NULL
-              AND t.image_item_id IS NOT NULL
-              AND NOT EXISTS (
+            WITH candidates AS (
+                SELECT a.album_id, t.image_item_id, t.image_tag,
+                       CASE WHEN t.image_item_id LIKE 'external:%' THEN 1 ELSE 0 END AS external_rank,
+                       COALESCE(t.disc_number, 0) AS disc_number,
+                       COALESCE(t.track_number, 0) AS track_number,
+                       t.title, t.track_id
+                FROM albums a
+                JOIN tracks t
+                  ON t.server_id = a.server_id AND t.album_id = a.album_id
+                WHERE a.server_id = ?1
+                  AND (
+                      a.image_item_id IS NULL
+                      OR a.image_item_id LIKE 'external:%'
+                  )
+                  AND t.image_item_id IS NOT NULL
+                  AND (
+                      a.image_item_id IS NULL
+                      OR t.image_item_id NOT LIKE 'external:%'
+                  )
+            )
+            SELECT c.album_id, c.image_item_id, c.image_tag
+            FROM candidates c
+            WHERE NOT EXISTS (
                   SELECT 1
-                  FROM tracks earlier
-                  WHERE earlier.server_id = t.server_id
-                    AND earlier.album_id = t.album_id
-                    AND earlier.image_item_id IS NOT NULL
+                  FROM candidates earlier
+                  WHERE earlier.album_id = c.album_id
                     AND (
-                        COALESCE(earlier.disc_number, 0) < COALESCE(t.disc_number, 0)
+                        earlier.external_rank < c.external_rank
                         OR (
-                            COALESCE(earlier.disc_number, 0) = COALESCE(t.disc_number, 0)
-                            AND COALESCE(earlier.track_number, 0) < COALESCE(t.track_number, 0)
+                            earlier.external_rank = c.external_rank
+                            AND earlier.disc_number < c.disc_number
                         )
                         OR (
-                            COALESCE(earlier.disc_number, 0) = COALESCE(t.disc_number, 0)
-                            AND COALESCE(earlier.track_number, 0) = COALESCE(t.track_number, 0)
-                            AND earlier.title COLLATE NOCASE < t.title COLLATE NOCASE
+                            earlier.external_rank = c.external_rank
+                            AND earlier.disc_number = c.disc_number
+                            AND earlier.track_number < c.track_number
                         )
                         OR (
-                            COALESCE(earlier.disc_number, 0) = COALESCE(t.disc_number, 0)
-                            AND COALESCE(earlier.track_number, 0) = COALESCE(t.track_number, 0)
-                            AND earlier.title = t.title
-                            AND earlier.track_id < t.track_id
+                            earlier.external_rank = c.external_rank
+                            AND earlier.disc_number = c.disc_number
+                            AND earlier.track_number = c.track_number
+                            AND earlier.title COLLATE NOCASE < c.title COLLATE NOCASE
+                        )
+                        OR (
+                            earlier.external_rank = c.external_rank
+                            AND earlier.disc_number = c.disc_number
+                            AND earlier.track_number = c.track_number
+                            AND earlier.title = c.title
+                            AND earlier.track_id < c.track_id
                         )
                     )
-              )
-            ORDER BY a.album_id
+            )
+            ORDER BY c.album_id
             ",
         )?;
         let fallbacks = collect_rows(fallback_statement.query_map(
@@ -509,7 +529,14 @@ impl Store {
                 image_tag = ?4
             WHERE server_id = ?1
               AND album_id = ?2
-              AND image_item_id IS NULL
+              AND (
+                  image_item_id IS NULL
+                  OR image_item_id LIKE 'external:%'
+              )
+              AND (
+                  image_item_id IS NOT ?3
+                  OR image_tag IS NOT ?4
+              )
             ",
         )?;
         for (album_id, image_item_id, image_tag) in fallbacks {
@@ -767,7 +794,7 @@ impl Store {
     ) -> StoreResult<()> {
         let missing_ids = artists
             .iter()
-            .filter(|artist| artist.image_ref.is_none())
+            .filter(|artist| repairable_artist_image_ref(artist.image_ref.as_ref()))
             .map(|artist| artist.id.as_str().to_string())
             .collect::<Vec<_>>();
         if missing_ids.is_empty() {
@@ -800,9 +827,7 @@ impl Store {
             }
         }
         for artist in artists {
-            if artist.image_ref.is_none()
-                && let Some(image_ref) = fallback_by_artist.remove(artist.id.as_str())
-            {
+            if let Some(image_ref) = fallback_by_artist.remove(artist.id.as_str()) {
                 artist.image_ref = Some(image_ref);
             }
         }
@@ -828,33 +853,79 @@ impl Store {
                 image_tag = ?4
             WHERE server_id = ?1
               AND artist_id = ?2
-              AND image_item_id IS NULL
+              AND (
+                  image_item_id IS NULL
+                  OR image_item_id LIKE 'external:%'
+              )
+              AND (
+                  image_item_id IS NOT ?3
+                  OR image_tag IS NOT ?4
+              )
             "
         ))?;
         loop {
             let mut artists =
-                self.load_artists_without_image_ref(server_id, album_artist, offset, 500)?;
+                self.load_artists_repairable_image_ref(server_id, album_artist, offset, 500)?;
             if artists.is_empty() {
                 break;
             }
             self.attach_artist_fallback_image_refs(server_id, &mut artists, album_artist)?;
-            let mut without_fallback = 0;
+            let mut unchanged = 0;
             for artist in artists {
                 let Some(image_ref) = artist.image_ref else {
-                    without_fallback += 1;
+                    unchanged += 1;
                     continue;
                 };
                 let (image_item_id, image_tag) = image_ref_parts(Some(&image_ref));
-                bound += statement.execute(params![
+                let changed = statement.execute(params![
                     server_id.as_str(),
                     artist.id.as_str(),
                     image_item_id,
                     image_tag,
                 ])?;
+                bound += changed;
+                if changed == 0 {
+                    unchanged += 1;
+                }
             }
-            offset += without_fallback;
+            offset += unchanged;
         }
         Ok(bound)
+    }
+
+    fn load_artists_repairable_image_ref(
+        &self,
+        server_id: &ServerId,
+        album_artist: bool,
+        offset: usize,
+        limit: usize,
+    ) -> StoreResult<Vec<Artist>> {
+        let table = if album_artist {
+            "album_artists"
+        } else {
+            "artists"
+        };
+        let artist_filter = artist_list_filter(album_artist);
+        let sql = format!(
+            "
+            SELECT artist_id, name, album_count, track_count, favorite,
+                   last_played, play_count, user_rating, image_item_id, image_tag
+            FROM {table}
+            WHERE server_id = ?1
+              AND (
+                  image_item_id IS NULL
+                  OR image_item_id LIKE 'external:%'
+              )
+              {artist_filter}
+            ORDER BY name COLLATE NOCASE
+            LIMIT ?2 OFFSET ?3
+            "
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        collect_rows(statement.query_map(
+            params![server_id.as_str(), limit as i64, offset as i64],
+            artist_from_row,
+        )?)
     }
 
     pub(super) fn load_genre_links(
@@ -951,6 +1022,12 @@ impl Store {
         }
         Ok(by_item)
     }
+}
+
+fn repairable_artist_image_ref(image_ref: Option<&ImageRef>) -> bool {
+    image_ref
+        .map(|image_ref| image_ref.item_id.starts_with("external:"))
+        .unwrap_or(true)
 }
 
 fn external_album_identity_image_ref(

@@ -342,7 +342,8 @@ pub(super) fn artist_fallback_image_refs_sql(
                  )
             SELECT artist_id, image_item_id, image_tag
             FROM candidates
-            ORDER BY priority, year, title COLLATE NOCASE
+            ORDER BY CASE WHEN image_item_id LIKE 'external:%' THEN 1 ELSE 0 END,
+                     priority, year, title COLLATE NOCASE
             "
         );
     }
@@ -409,7 +410,8 @@ pub(super) fn artist_fallback_image_refs_sql(
              )
         SELECT artist_id, image_item_id, image_tag
         FROM candidates
-        ORDER BY priority, year, title COLLATE NOCASE
+        ORDER BY CASE WHEN image_item_id LIKE 'external:%' THEN 1 ELSE 0 END,
+                 priority, year, title COLLATE NOCASE
         "
     )
 }
