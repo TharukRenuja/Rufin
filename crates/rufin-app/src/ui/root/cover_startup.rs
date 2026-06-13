@@ -1140,9 +1140,7 @@ struct VisibleCoverWindow {
 
 impl Shell {
     pub(in crate::ui) fn show_preferences_toast(&self, message: &str) {
-        if let Some(overlay) = self.state.preferences_toast_overlay.borrow().as_ref() {
-            overlay.add_toast(adw::Toast::new(message));
-        }
+        self.toast_overlay.add_toast(adw::Toast::new(message));
     }
 
     pub(in crate::ui) fn prime_route_visible_cover_window(self: &Rc<Self>, route: &Route) -> usize {

@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 pub(super) fn build_library(
     scanned: Vec<ScannedTrack>,
@@ -300,6 +301,7 @@ pub(super) fn artist_from_accumulator(id: ArtistId, artist: ArtistAccumulator) -
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: artist.image_ref,
     }
 }

@@ -245,6 +245,7 @@ pub(super) fn artist_from_item(item: JellyfinItem) -> Artist {
         ),
         play_count: play_count(&item.user_data),
         user_rating: user_rating(&item.user_data),
+        musicbrainz_artist_id: provider_id(&item.provider_ids, "MusicBrainzArtist"),
         image_ref: primary_image_ref("artist", &item.id, &item.image_tags),
     }
 }

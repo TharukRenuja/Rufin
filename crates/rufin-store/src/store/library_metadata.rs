@@ -901,20 +901,36 @@ impl Store {
         ids: &[String],
     ) -> StoreResult<HashMap<String, Vec<ArtistCredit>>> {
         let mut by_item = HashMap::<String, Vec<ArtistCredit>>::new();
+        let entity_kind = match table {
+            "track_artist_links" => "artist",
+            "album_artist_links" => "album_artist",
+            _ => "artist",
+        };
         for chunk in ids.chunks(500) {
             let placeholders = std::iter::repeat_n("?", chunk.len())
                 .collect::<Vec<_>>()
                 .join(", ");
             let sql = format!(
                 "
-                SELECT {id_column}, artist_id, name
+                SELECT {id_column}, artist_id, name,
+                       (
+                           SELECT i.value
+                           FROM entity_identity_keys i
+                           WHERE i.server_id = {table}.server_id
+                             AND i.entity_kind = ?
+                             AND i.entity_id = {table}.artist_id
+                             AND i.namespace = 'musicbrainz:artist'
+                           ORDER BY i.updated_at DESC, i.value
+                           LIMIT 1
+                       ) AS musicbrainz_artist_id
                 FROM {table}
                 WHERE server_id = ?
                   AND {id_column} IN ({placeholders})
                 ORDER BY position
                 "
             );
-            let mut values = Vec::with_capacity(chunk.len() + 1);
+            let mut values = Vec::with_capacity(chunk.len() + 2);
+            values.push(entity_kind);
             values.push(server_id.as_str());
             values.extend(chunk.iter().map(String::as_str));
             let mut statement = self.connection.prepare(&sql)?;
@@ -924,7 +940,7 @@ impl Store {
                     ArtistCredit {
                         id: ArtistId::new(row.get::<_, String>(1)?),
                         name: row.get::<_, String>(2)?,
-                        musicbrainz_artist_id: None,
+                        musicbrainz_artist_id: row.get::<_, Option<String>>(3)?,
                     },
                 ))
             })?;

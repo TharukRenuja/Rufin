@@ -316,6 +316,7 @@ pub(super) fn artist_from_dto(provider: &SubsonicProvider, artist: SubsonicArtis
         user_rating: artist
             .user_rating
             .map(|value| value.min(u32::from(u8::MAX)) as u8),
+        musicbrainz_artist_id: None,
         image_ref: image_ref(provider, artist.cover_art),
     }
 }

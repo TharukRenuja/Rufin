@@ -74,7 +74,6 @@ fn present_preferences_dialog_with_page(shell: &Rc<Shell>, initial_page: Prefere
         let mut active_dialog = shell_for_close.state.preferences_dialog.borrow_mut();
         if active_dialog.as_ref() == Some(&dialog_for_close) {
             *active_dialog = None;
-            *shell_for_close.state.preferences_toast_overlay.borrow_mut() = None;
         }
     });
 
@@ -107,10 +106,6 @@ fn rebuild_preferences_dialog(
     switcher_bar.append(&switcher);
     toolbar.add_top_bar(&switcher_bar);
     toolbar.set_content(Some(&stack));
-
-    let toast_overlay = adw::ToastOverlay::new();
-    toast_overlay.set_child(Some(&toolbar));
-    *shell.state.preferences_toast_overlay.borrow_mut() = Some(toast_overlay.clone());
 
     let general_page = general_page(shell, dialog);
     let layout_page = layout_page(shell);
@@ -151,7 +146,7 @@ fn rebuild_preferences_dialog(
         stack.set_visible_child_name("library");
     }
 
-    dialog.set_child(Some(&toast_overlay));
+    dialog.set_child(Some(&toolbar));
 }
 fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()

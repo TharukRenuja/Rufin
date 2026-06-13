@@ -29,19 +29,20 @@ impl Store {
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
         for album in albums {
+            let delta_album = canonical_album_for_write(&self.connection, server_id, album)?;
             match self.load_album_for_delta(server_id, &album.id)? {
-                Some(existing) if existing == *album => {}
+                Some(existing) if existing == delta_album => {}
                 Some(existing) => {
-                    if album_stats_changed(&existing, album) {
+                    if album_stats_changed(&existing, &delta_album) {
                         delta.albums.stats.push(album.id.clone());
                     }
-                    if album_links_changed(&existing, album) {
+                    if album_links_changed(&existing, &delta_album) {
                         delta.albums.links.push(album.id.clone());
                     }
-                    if existing.image_ref != album.image_ref {
+                    if existing.image_ref != delta_album.image_ref {
                         delta.albums.cover_refs.push(album.id.clone());
                     }
-                    if album_fields_changed(&existing, album) {
+                    if album_fields_changed(&existing, &delta_album) {
                         delta.albums.fields.push(album.id.clone());
                     }
                 }
@@ -124,9 +125,20 @@ impl Store {
         generation: i64,
     ) -> StoreResult<LibraryDelta> {
         let mut delta = LibraryDelta::default();
-        for artist in artists {
+        let canonical_artists;
+        let delta_artists = if album_artist {
+            canonical_artists =
+                canonical_album_artists_for_write(&self.connection, server_id, artists)?
+                    .into_iter()
+                    .map(|artist| artist.artist)
+                    .collect::<Vec<_>>();
+            canonical_artists.as_slice()
+        } else {
+            artists
+        };
+        for artist in delta_artists {
             match self.load_artist_for_delta(server_id, &artist.id, album_artist)? {
-                Some(existing) if existing == *artist => {}
+                Some(existing) if !artist_projection_changed(&existing, artist) => {}
                 Some(existing) => {
                     let entity = if album_artist {
                         &mut delta.album_artists
@@ -141,9 +153,7 @@ impl Store {
                     if existing.image_ref != artist.image_ref {
                         entity.cover_refs.push(artist.id.clone());
                     }
-                    if existing != *artist {
-                        entity.fields.push(artist.id.clone());
-                    }
+                    entity.fields.push(artist.id.clone());
                 }
                 None => {
                     if album_artist {
@@ -343,6 +353,10 @@ impl Store {
         generation: i64,
     ) -> StoreResult<()> {
         self.write_batch(|connection| {
+            let albums = albums
+                .iter()
+                .map(|album| canonical_album_for_write(connection, server_id, album))
+                .collect::<StoreResult<Vec<_>>>()?;
             let mut statement = connection.prepare(
                 "
                 INSERT INTO albums (
@@ -452,7 +466,7 @@ impl Store {
                 ",
             )?;
 
-            for album in albums {
+            for album in &albums {
                 let (image_item_id, image_tag) = image_ref_parts(album.image_ref.as_ref());
                 let release_types_json = album_release_types_json(&album.release_types)?;
                 statement.execute(params![
@@ -826,6 +840,20 @@ impl Store {
             "artists"
         };
         self.write_batch(|connection| {
+            let canonical_artists;
+            let artists = if album_artist {
+                canonical_artists =
+                    canonical_album_artists_for_write(connection, server_id, artists)?;
+                canonical_artists
+                    .iter()
+                    .map(|artist| (&artist.artist, artist.alias_ids.as_slice()))
+                    .collect::<Vec<_>>()
+            } else {
+                artists
+                    .iter()
+                    .map(|artist| (artist, &[][..]))
+                    .collect::<Vec<_>>()
+            };
             let sql = format!(
                 "
                 INSERT INTO {table} (
@@ -862,7 +890,7 @@ impl Store {
                 ",
             )?;
 
-            for artist in artists {
+            for (artist, alias_ids) in artists {
                 let (image_item_id, image_tag) = image_ref_parts(artist.image_ref.as_ref());
                 statement.execute(params![
                     server_id.as_str(),
@@ -886,8 +914,11 @@ impl Store {
                     } else {
                         "artist"
                     },
-                    artist.id.as_str(),
+                    artist,
                 )?;
+                for alias_id in alias_ids {
+                    apply_album_artist_alias(connection, server_id, &artist.id, alias_id)?;
+                }
                 delete_fts.execute(params![server_id.as_str(), item_type, artist.id.as_str()])?;
                 insert_fts.execute(params![
                     server_id.as_str(),
@@ -1457,8 +1488,8 @@ fn album_stats_changed(left: &Album, right: &Album) -> bool {
 
 fn album_links_changed(left: &Album, right: &Album) -> bool {
     left.artist_id != right.artist_id
-        || left.album_artist_credits != right.album_artist_credits
-        || left.artist_credits != right.artist_credits
+        || artist_credits_changed(&left.album_artist_credits, &right.album_artist_credits)
+        || artist_credits_changed(&left.artist_credits, &right.artist_credits)
         || left.genres != right.genres
 }
 
@@ -1806,31 +1837,39 @@ pub(super) fn upsert_artist_credit_entity_data_on_connection(
     entity_kind: &str,
     artist: &ArtistCredit,
 ) -> StoreResult<()> {
-    upsert_artist_entity_data_on_connection(
+    upsert_artist_entity_keys_on_connection(
         connection,
         server_id,
         entity_kind,
         artist.id.as_str(),
-    )?;
-    if let Some(artist_id) = clean_identity_value(artist.musicbrainz_artist_id.as_deref()) {
-        upsert_identity_key_on_connection(
-            connection,
-            server_id,
-            entity_kind,
-            "musicbrainz:artist",
-            artist_id,
-            artist.id.as_str(),
-            "provider",
-        )?;
-    }
-    Ok(())
+        artist.musicbrainz_artist_id.as_deref(),
+        false,
+    )
 }
 
 fn upsert_artist_entity_data_on_connection(
     connection: &rusqlite::Connection,
     server_id: &ServerId,
     entity_kind: &str,
+    artist: &Artist,
+) -> StoreResult<()> {
+    upsert_artist_entity_keys_on_connection(
+        connection,
+        server_id,
+        entity_kind,
+        artist.id.as_str(),
+        artist.musicbrainz_artist_id.as_deref(),
+        false,
+    )
+}
+
+fn upsert_artist_entity_keys_on_connection(
+    connection: &rusqlite::Connection,
+    server_id: &ServerId,
+    entity_kind: &str,
     artist_id: &str,
+    musicbrainz_artist_id: Option<&str>,
+    replace_musicbrainz_artist_id: bool,
 ) -> StoreResult<()> {
     upsert_entity_on_connection(
         connection,
@@ -1848,7 +1887,29 @@ fn upsert_artist_entity_data_on_connection(
         artist_id,
         artist_id,
         "provider",
-    )
+    )?;
+    let artist_id_value = clean_identity_value(musicbrainz_artist_id);
+    if replace_musicbrainz_artist_id || artist_id_value.is_some() {
+        delete_identity_key_on_connection(
+            connection,
+            server_id,
+            entity_kind,
+            artist_id,
+            "musicbrainz:artist",
+        )?;
+    }
+    if let Some(artist_id_value) = artist_id_value {
+        upsert_identity_key_on_connection(
+            connection,
+            server_id,
+            entity_kind,
+            "musicbrainz:artist",
+            artist_id_value,
+            artist_id,
+            "provider",
+        )?;
+    }
+    Ok(())
 }
 
 fn upsert_entity_on_connection(
@@ -2064,7 +2125,32 @@ fn track_stats_changed(left: &Track, right: &Track) -> bool {
 
 fn track_artist_links_changed(left: &Track, right: &Track) -> bool {
     left.artist_id != right.artist_id
-        || (!right.artist_credits.is_empty() && left.artist_credits != right.artist_credits)
+        || (!right.artist_credits.is_empty()
+            && artist_credits_changed(&left.artist_credits, &right.artist_credits))
+}
+
+fn artist_credits_changed(left: &[ArtistCredit], right: &[ArtistCredit]) -> bool {
+    left.len() != right.len()
+        || left.iter().zip(right.iter()).any(|(left, right)| {
+            left.id != right.id
+                || left.name != right.name
+                || right
+                    .musicbrainz_artist_id
+                    .as_ref()
+                    .is_some_and(|right_id| left.musicbrainz_artist_id.as_ref() != Some(right_id))
+        })
+}
+
+fn artist_projection_changed(left: &Artist, right: &Artist) -> bool {
+    left.id != right.id
+        || left.name != right.name
+        || left.album_count != right.album_count
+        || left.track_count != right.track_count
+        || left.favorite != right.favorite
+        || left.last_played != right.last_played
+        || left.play_count != right.play_count
+        || left.user_rating != right.user_rating
+        || left.image_ref != right.image_ref
 }
 
 fn home_keys(sections: &[HomeSection]) -> Vec<(HomeSectionKind, &'static str, String)> {

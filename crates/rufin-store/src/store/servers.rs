@@ -132,6 +132,7 @@ pub(super) fn artist_from_row(row: &Row<'_>) -> rusqlite::Result<Artist> {
         last_played: row.get(5)?,
         play_count: optional_u32_from_row(row, 6)?,
         user_rating: optional_u8_from_row(row, 7)?,
+        musicbrainz_artist_id: None,
         image_ref: image_ref_from_row(row, 8, 9)?,
     })
 }
@@ -471,6 +472,68 @@ pub(super) fn track_artist_credits(track: &Track) -> Vec<ArtistCredit> {
 pub(super) fn explicit_artist_credits(credits: &[ArtistCredit]) -> Vec<ArtistCredit> {
     artist_credits_or_scalar(credits, None, "")
 }
+pub(super) fn canonical_album_for_delta(
+    connection: &Connection,
+    server_id: &ServerId,
+    album: &Album,
+) -> StoreResult<Album> {
+    let mut normalized = album.clone();
+    let mut album_artist_credits = Vec::new();
+    for credit in &album.album_artist_credits {
+        let parts = split_compound_credit_name(&credit.name);
+        if parts.len() <= 1 {
+            album_artist_credits.push(credit.clone());
+            continue;
+        }
+        let mut resolved = Vec::new();
+        for part in &parts {
+            let Some(artist_id) =
+                unique_track_artist_for_album_name(connection, server_id, album.id.as_str(), part)?
+            else {
+                resolved.clear();
+                break;
+            };
+            resolved.push(ArtistCredit {
+                id: artist_id,
+                name: part.clone(),
+                musicbrainz_artist_id: None,
+            });
+        }
+        if resolved.len() == parts.len() {
+            if normalized.artist_id.as_ref() == Some(&credit.id)
+                && let Some(first) = resolved.first()
+            {
+                normalized.artist_id = Some(first.id.clone());
+            }
+            album_artist_credits.extend(resolved);
+        } else {
+            album_artist_credits.push(credit.clone());
+        }
+    }
+    normalized.album_artist_credits = album_artist_credits;
+    Ok(normalized)
+}
+pub(super) fn canonical_album_for_write(
+    connection: &Connection,
+    server_id: &ServerId,
+    album: &Album,
+) -> StoreResult<Album> {
+    let mut album = canonical_album_for_delta(connection, server_id, album)?;
+    for credit in &mut album.album_artist_credits {
+        if let Some(entity_id) = album_artist_alias_target(connection, server_id, &credit.id)?
+            && entity_id != credit.id
+        {
+            credit.id = entity_id;
+        }
+    }
+    if let Some(artist_id) = album.artist_id.as_ref()
+        && let Some(entity_id) = album_artist_alias_target(connection, server_id, artist_id)?
+        && entity_id != *artist_id
+    {
+        album.artist_id = Some(entity_id);
+    }
+    Ok(album)
+}
 pub(super) fn artist_credits_or_scalar(
     credits: &[ArtistCredit],
     scalar_id: Option<&ArtistId>,
@@ -617,6 +680,7 @@ pub(super) fn synthesize_artist_from_links(
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: artist_fallback_image_ref(albums, appears_on, tracks),
     }
 }
@@ -650,6 +714,8 @@ pub(super) fn repair_linked_artists(
     server_id: &ServerId,
     generation: i64,
 ) -> StoreResult<()> {
+    let album_artist_aliases =
+        normalize_compound_album_artist_links(connection, server_id, generation)?;
     connection.execute(
         "
         INSERT INTO artists (
@@ -748,10 +814,450 @@ pub(super) fn repair_linked_artists(
         ",
         params![server_id.as_str(), generation],
     )?;
+    connection.execute(
+        "
+        UPDATE album_artists
+        SET name = (
+            SELECT MIN(aal.name)
+            FROM album_artist_links aal
+            WHERE aal.server_id = album_artists.server_id
+              AND aal.artist_id = album_artists.artist_id
+              AND TRIM(aal.name) <> ''
+        )
+        WHERE server_id = ?1
+          AND EXISTS (
+              SELECT 1
+              FROM album_artist_links aal
+              WHERE aal.server_id = album_artists.server_id
+                AND aal.artist_id = album_artists.artist_id
+                AND TRIM(aal.name) <> ''
+          )
+        ",
+        params![server_id.as_str()],
+    )?;
+    for (alias_id, canonical_id) in album_artist_aliases {
+        merge_album_artist_alias(connection, server_id, &canonical_id, &alias_id, generation)?;
+    }
     refresh_artist_fts(connection, server_id, "artists", "artist")?;
     refresh_artist_fts(connection, server_id, "album_artists", "album_artist")?;
     Ok(())
 }
+
+pub(super) struct CanonicalArtist {
+    pub artist: Artist,
+    pub alias_ids: Vec<ArtistId>,
+}
+
+pub(super) fn canonical_album_artists_for_write(
+    connection: &Connection,
+    server_id: &ServerId,
+    artists: &[Artist],
+) -> StoreResult<Vec<CanonicalArtist>> {
+    let mut musicbrainz_ids = HashMap::<String, ArtistId>::new();
+    let mut indexes = HashMap::<ArtistId, usize>::new();
+    let mut result = Vec::<CanonicalArtist>::new();
+    for artist in artists {
+        let alias_id = artist.id.clone();
+        let musicbrainz_artist_id =
+            clean_artist_identity_value(artist.musicbrainz_artist_id.as_deref());
+        let canonical_id = canonical_album_artist_id_for_write(connection, server_id, artist)?
+            .or_else(|| {
+                musicbrainz_artist_id.and_then(|artist_id| musicbrainz_ids.get(artist_id).cloned())
+            })
+            .unwrap_or_else(|| artist.id.clone());
+        if let Some(artist_id) = musicbrainz_artist_id {
+            musicbrainz_ids
+                .entry(artist_id.to_string())
+                .or_insert_with(|| canonical_id.clone());
+        }
+        let alias_id = (canonical_id != alias_id).then_some(alias_id);
+        if let Some(index) = indexes.get(&canonical_id).copied() {
+            if let Some(alias_id) = alias_id {
+                result[index].alias_ids.push(alias_id);
+            }
+            if result[index].artist.musicbrainz_artist_id.is_none()
+                && artist.musicbrainz_artist_id.is_some()
+            {
+                result[index].artist.musicbrainz_artist_id = artist.musicbrainz_artist_id.clone();
+            }
+            continue;
+        }
+        let mut artist = artist.clone();
+        artist.id = canonical_id.clone();
+        let alias_ids = alias_id.into_iter().collect();
+        indexes.insert(canonical_id, result.len());
+        result.push(CanonicalArtist { artist, alias_ids });
+    }
+    Ok(result)
+}
+
+fn album_artist_alias_target(
+    connection: &Connection,
+    server_id: &ServerId,
+    artist_id: &ArtistId,
+) -> StoreResult<Option<ArtistId>> {
+    connection
+        .query_row(
+            "
+            SELECT entity_id
+            FROM entity_identity_keys
+            WHERE server_id = ?1
+              AND entity_kind = 'album_artist'
+              AND namespace = 'source:artist_id'
+              AND value = ?2
+            LIMIT 1
+            ",
+            params![server_id.as_str(), artist_id.as_str()],
+            |row| row.get::<_, String>(0).map(ArtistId::new),
+        )
+        .optional()
+        .map_err(StoreError::from)
+}
+
+pub(super) fn apply_album_artist_alias(
+    connection: &Connection,
+    server_id: &ServerId,
+    canonical_id: &ArtistId,
+    alias_id: &ArtistId,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        INSERT INTO entity_identity_keys (
+            server_id, entity_kind, namespace, value, entity_id, source, strength, updated_at
+        )
+        VALUES (?1, 'album_artist', 'source:artist_id', ?2, ?3, 'provider', 100, CURRENT_TIMESTAMP)
+        ON CONFLICT(server_id, entity_kind, namespace, value) DO UPDATE SET
+            entity_id = excluded.entity_id,
+            source = excluded.source,
+            strength = excluded.strength,
+            updated_at = excluded.updated_at
+        ",
+        params![server_id.as_str(), alias_id.as_str(), canonical_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        INSERT INTO album_artist_links (
+            server_id, album_id, artist_id, name, position, sync_generation
+        )
+        SELECT server_id, album_id, ?3, name, position, sync_generation
+        FROM album_artist_links
+        WHERE server_id = ?1
+          AND artist_id = ?2
+        ON CONFLICT(server_id, album_id, artist_id) DO UPDATE SET
+            sync_generation = MAX(sync_generation, excluded.sync_generation)
+        ",
+        params![server_id.as_str(), alias_id.as_str(), canonical_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        DELETE FROM album_artist_links
+        WHERE server_id = ?1
+          AND artist_id = ?2
+          AND artist_id <> ?3
+        ",
+        params![server_id.as_str(), alias_id.as_str(), canonical_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        UPDATE albums
+        SET artist_id = ?3
+        WHERE server_id = ?1
+          AND artist_id = ?2
+          AND artist_id <> ?3
+        ",
+        params![server_id.as_str(), alias_id.as_str(), canonical_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        DELETE FROM entity_identity_keys
+        WHERE server_id = ?1
+          AND entity_kind = 'album_artist'
+          AND entity_id = ?2
+          AND entity_id <> ?3
+        ",
+        params![server_id.as_str(), alias_id.as_str(), canonical_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        DELETE FROM album_artists
+        WHERE server_id = ?1
+          AND artist_id = ?2
+          AND artist_id <> ?3
+        ",
+        params![server_id.as_str(), alias_id.as_str(), canonical_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        DELETE FROM library_fts
+        WHERE server_id = ?1
+          AND item_type = 'album_artist'
+          AND item_id = ?2
+        ",
+        params![server_id.as_str(), alias_id.as_str()],
+    )?;
+    connection.execute(
+        "
+        DELETE FROM entities
+        WHERE server_id = ?1
+          AND entity_kind = 'album_artist'
+          AND entity_id = ?2
+          AND entity_id <> ?3
+        ",
+        params![server_id.as_str(), alias_id.as_str(), canonical_id.as_str()],
+    )?;
+    Ok(())
+}
+
+fn canonical_album_artist_id_for_write(
+    connection: &Connection,
+    server_id: &ServerId,
+    artist: &Artist,
+) -> StoreResult<Option<ArtistId>> {
+    if let Some(artist_id) = clean_artist_identity_value(artist.musicbrainz_artist_id.as_deref())
+        && let Some(entity_id) = connection
+            .query_row(
+                "
+                SELECT entity_id
+                FROM entity_identity_keys
+                WHERE server_id = ?1
+                  AND entity_kind = 'album_artist'
+                  AND namespace = 'musicbrainz:artist'
+                  AND value = ?2
+                LIMIT 1
+                ",
+                params![server_id.as_str(), artist_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        && entity_id != artist.id.as_str()
+    {
+        return Ok(Some(ArtistId::new(entity_id)));
+    }
+    if let Some(entity_id) = connection
+        .query_row(
+            "
+            SELECT entity_id
+            FROM entity_identity_keys
+            WHERE server_id = ?1
+              AND entity_kind = 'album_artist'
+              AND namespace = 'source:artist_id'
+              AND value = ?2
+            LIMIT 1
+            ",
+            params![server_id.as_str(), artist.id.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        && entity_id != artist.id.as_str()
+    {
+        return Ok(Some(ArtistId::new(entity_id)));
+    }
+    Ok(None)
+}
+
+fn clean_artist_identity_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn normalize_compound_album_artist_links(
+    connection: &Connection,
+    server_id: &ServerId,
+    generation: i64,
+) -> StoreResult<Vec<(ArtistId, ArtistId)>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT album_id, artist_id, name, position
+        FROM album_artist_links
+        WHERE server_id = ?1
+          AND (name LIKE '%/%' OR name LIKE '%;%')
+        ORDER BY album_id, position
+        ",
+    )?;
+    let links = collect_rows(statement.query_map(params![server_id.as_str()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            ArtistId::new(row.get::<_, String>(1)?),
+            row.get::<_, String>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
+    })?)?;
+    let mut aliases = Vec::new();
+    for (album_id, alias_id, name, position) in links {
+        let parts = split_compound_credit_name(&name);
+        if parts.len() <= 1 {
+            continue;
+        }
+        let mut resolved = Vec::new();
+        for part in &parts {
+            let Some(artist_id) =
+                unique_track_artist_for_album_name(connection, server_id, &album_id, part)?
+            else {
+                resolved.clear();
+                break;
+            };
+            resolved.push((artist_id, part.clone()));
+        }
+        if resolved.len() != parts.len() {
+            continue;
+        }
+        connection.execute(
+            "
+            DELETE FROM album_artist_links
+            WHERE server_id = ?1
+              AND album_id = ?2
+              AND artist_id = ?3
+            ",
+            params![server_id.as_str(), album_id, alias_id.as_str()],
+        )?;
+        for (index, (artist_id, part)) in resolved.iter().enumerate() {
+            connection.execute(
+                "
+                INSERT INTO album_artist_links (
+                    server_id, album_id, artist_id, name, position, sync_generation
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(server_id, album_id, artist_id) DO UPDATE SET
+                    name = excluded.name,
+                    position = excluded.position,
+                    sync_generation = excluded.sync_generation
+                ",
+                params![
+                    server_id.as_str(),
+                    album_id,
+                    artist_id.as_str(),
+                    part,
+                    position + index as i64,
+                    generation
+                ],
+            )?;
+        }
+        if let Some((canonical_id, _)) = resolved.first() {
+            connection.execute(
+                "
+                UPDATE albums
+                SET artist_id = ?3
+                WHERE server_id = ?1
+                  AND album_id = ?2
+                  AND artist_id = ?4
+                ",
+                params![
+                    server_id.as_str(),
+                    album_id,
+                    canonical_id.as_str(),
+                    alias_id.as_str()
+                ],
+            )?;
+            aliases.push((alias_id, canonical_id.clone()));
+        }
+    }
+    Ok(aliases)
+}
+
+fn split_compound_credit_name(name: &str) -> Vec<String> {
+    name.split(['/', ';'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn unique_track_artist_for_album_name(
+    connection: &Connection,
+    server_id: &ServerId,
+    album_id: &str,
+    name: &str,
+) -> StoreResult<Option<ArtistId>> {
+    let mut statement = connection.prepare(
+        "
+        SELECT artist_id
+        FROM (
+            SELECT DISTINCT artist_id
+            FROM track_artist_links
+            WHERE server_id = ?1
+              AND album_id = ?2
+              AND LOWER(TRIM(name)) = LOWER(TRIM(?3))
+        )
+        ORDER BY artist_id
+        LIMIT 2
+        ",
+    )?;
+    let ids = collect_rows(
+        statement.query_map(params![server_id.as_str(), album_id, name], |row| {
+            row.get::<_, String>(0).map(ArtistId::new)
+        })?,
+    )?;
+    Ok((ids.len() == 1).then(|| ids[0].clone()))
+}
+
+fn merge_album_artist_alias(
+    connection: &Connection,
+    server_id: &ServerId,
+    canonical_id: &ArtistId,
+    alias_id: &ArtistId,
+    generation: i64,
+) -> StoreResult<()> {
+    connection.execute(
+        "
+        UPDATE album_artists
+        SET album_count = MAX(album_count, COALESCE((
+                SELECT album_count FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+            ), 0)),
+            track_count = MAX(track_count, COALESCE((
+                SELECT track_count FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+            ), 0)),
+            favorite = MAX(favorite, COALESCE((
+                SELECT favorite FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+            ), 0)),
+            last_played = COALESCE((
+                SELECT last_played FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+                  AND alias.last_played IS NOT NULL
+            ), last_played),
+            play_count = COALESCE((
+                SELECT play_count FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+                  AND alias.play_count IS NOT NULL
+            ), play_count),
+            user_rating = COALESCE((
+                SELECT user_rating FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+                  AND alias.user_rating IS NOT NULL
+            ), user_rating),
+            image_item_id = COALESCE((
+                SELECT image_item_id FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+                  AND alias.image_item_id IS NOT NULL
+            ), image_item_id),
+            image_tag = COALESCE((
+                SELECT image_tag FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+                  AND alias.image_item_id IS NOT NULL
+            ), image_tag),
+            sync_generation = ?4
+        WHERE server_id = ?1
+          AND artist_id = ?2
+        ",
+        params![
+            server_id.as_str(),
+            canonical_id.as_str(),
+            alias_id.as_str(),
+            generation
+        ],
+    )?;
+    apply_album_artist_alias(connection, server_id, canonical_id, alias_id)
+}
+
 pub(super) fn repair_linked_genres(
     connection: &Connection,
     server_id: &ServerId,
