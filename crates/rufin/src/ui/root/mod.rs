@@ -98,8 +98,8 @@ use layout::{
     COMPACT_RAIL_WIDTH, DETAIL_ROUTE_SCROLL_GUTTER, HOME_ALBUM_GAP, MIN_APP_WINDOW_HEIGHT,
     MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
     PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, ResolvedLeftSidebarMode, SidebarWidths,
-    detail_route_inner_width, detail_showcase_cover_size, resolve_layout_with_sidebar_widths,
-    route_content_width,
+    configure_exact_width_clip, configure_fill_width_clip, detail_route_inner_width,
+    detail_showcase_cover_size, resolve_layout_with_sidebar_widths, route_content_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;

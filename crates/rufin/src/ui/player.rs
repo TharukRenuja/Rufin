@@ -16,10 +16,10 @@ use super::player_icons::{
 };
 use super::{
     ArtworkTile, CoverDecodePriority, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
-    add_label_click, add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
-    favorite_icon_button, icon_button, icon_button_with_image, install_current_track_context_menu,
-    present_current_track_context_menu, seekbar_target_seconds, set_active_class,
-    set_favorite_button_active,
+    add_label_click, add_widget_click, configure_fill_width_clip, cover_artwork_id_for_key,
+    cover_request_id_for_key, favorite_icon_button, icon_button, icon_button_with_image,
+    install_current_track_context_menu, present_current_track_context_menu, seekbar_target_seconds,
+    set_active_class, set_favorite_button_active,
 };
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
@@ -977,7 +977,6 @@ fn bottom_player_actions(player_width: i32) -> BottomPlayerActions {
 }
 
 struct PlayerWallSpec {
-    horizontal_policy: gtk::PolicyType,
     vertical_policy: gtk::PolicyType,
     overflow: gtk::Overflow,
     min_content_width: i32,
@@ -987,7 +986,6 @@ struct PlayerWallSpec {
 
 fn player_wall_spec() -> PlayerWallSpec {
     PlayerWallSpec {
-        horizontal_policy: gtk::PolicyType::External,
         vertical_policy: gtk::PolicyType::Never,
         overflow: gtk::Overflow::Hidden,
         min_content_width: 0,
@@ -1000,7 +998,7 @@ fn configure_player_wall(wall: &gtk::ScrolledWindow) {
     let spec = player_wall_spec();
     // this wall is intentionally boring: now playing can use all space
     // allocated to the left side, but it cannot draw into the center controls.
-    wall.set_policy(spec.horizontal_policy, spec.vertical_policy);
+    configure_fill_width_clip(wall, spec.vertical_policy);
     wall.set_overflow(spec.overflow);
     wall.set_min_content_width(spec.min_content_width);
     wall.set_propagate_natural_width(spec.propagate_natural_width);
@@ -1407,7 +1405,6 @@ mod tests {
     fn player_now_width() {
         let spec = super::player_wall_spec();
 
-        assert_eq!(spec.horizontal_policy, gtk::PolicyType::External);
         assert_eq!(spec.vertical_policy, gtk::PolicyType::Never);
         assert_eq!(spec.overflow, gtk::Overflow::Hidden);
         assert_eq!(spec.min_content_width, 0);

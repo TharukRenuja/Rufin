@@ -211,8 +211,7 @@ impl Shell {
         )));
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-        scroller.set_min_content_width(0);
+        configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
         scroller.set_vexpand(options.expand);
         if let Some(max_visible_rows) = options.max_visible_rows {
             let visible_rows = tracks.borrow().len().min(max_visible_rows).max(1);

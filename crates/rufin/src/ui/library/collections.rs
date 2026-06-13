@@ -30,11 +30,7 @@ pub(in crate::ui) fn configure_library_route_scroller(
     scroller: &gtk::ScrolledWindow,
 ) {
     scroller.add_css_class("library-route-scroller");
-    scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-    scroller.set_width_request(1);
-    scroller.set_min_content_width(0);
-    scroller.set_max_content_width(1);
-    scroller.set_propagate_natural_width(false);
+    configure_fill_width_clip(scroller, gtk::PolicyType::Automatic);
     scroller.set_propagate_natural_height(false);
     scroller.set_overlay_scrolling(false);
     scroller.set_hexpand(true);
@@ -684,12 +680,7 @@ pub(in crate::ui) fn album_card(
         size,
         Some(&shell.controller),
     ));
-    card.append(&center_label(
-        &album.title,
-        "track-title",
-        size,
-        COLLECTION_GRID_TITLE_LINES,
-    ));
+    card.append(&center_wrapping_title(&album.title, "track-title", size));
     for field in fields {
         let value = album_field(album, field);
         if !value.is_empty() {
@@ -713,12 +704,7 @@ pub(in crate::ui) fn artist_card(
     let fields = shell.library_settings(key).grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&artist_cover_tile(shell, artist, size));
-    card.append(&center_label(
-        &artist.name,
-        "track-title",
-        size,
-        COLLECTION_GRID_TITLE_LINES,
-    ));
+    card.append(&center_wrapping_title(&artist.name, "track-title", size));
     for field in fields {
         let value = artist_field(artist, field);
         if !value.is_empty() {
@@ -801,12 +787,7 @@ pub(in crate::ui) fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> 
     let fields = shell.library_settings(LibraryListKey::Genres).grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&genre_cover_tile(shell, genre, size));
-    card.append(&center_label(
-        &genre.name,
-        "track-title",
-        size,
-        COLLECTION_GRID_TITLE_LINES,
-    ));
+    card.append(&center_wrapping_title(&genre.name, "track-title", size));
     for field in fields {
         let value = genre_field(genre, field);
         if !value.is_empty() {
@@ -830,12 +811,7 @@ pub(in crate::ui) fn playlist_card(
         .grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::playlist_cover_tile(shell, playlist, size));
-    card.append(&center_label(
-        &playlist.name,
-        "track-title",
-        size,
-        COLLECTION_GRID_TITLE_LINES,
-    ));
+    card.append(&center_wrapping_title(&playlist.name, "track-title", size));
     for field in fields {
         let value = playlist_field(playlist, field);
         if !value.is_empty() {
@@ -861,12 +837,7 @@ pub(in crate::ui) fn smart_playlist_card(
     let card_height = collection_grid_card_height(size, fields.len());
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::smart_playlist_cover_tile(shell, playlist, size));
-    card.append(&center_label(
-        &playlist.name,
-        "track-title",
-        size,
-        COLLECTION_GRID_TITLE_LINES,
-    ));
+    card.append(&center_wrapping_title(&playlist.name, "track-title", size));
     for field in fields {
         let value = smart_playlist_field(playlist, field);
         if !value.is_empty() {
@@ -944,12 +915,7 @@ pub(in crate::ui) fn track_card(
     let fields = shell.library_settings(key).grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::track_play_tile(shell, track, size, play_action));
-    card.append(&center_label(
-        &track.title,
-        "track-title",
-        size,
-        COLLECTION_GRID_TITLE_LINES,
-    ));
+    card.append(&center_wrapping_title(&track.title, "track-title", size));
     for field in fields {
         let value = track_field(track, field);
         if !value.is_empty() {

@@ -10,7 +10,10 @@ use super::{
     install_artist_context_menu, install_dynamic_album_context_menu,
     install_dynamic_track_context_menu, install_playlist_context_menu,
     install_smart_playlist_context_menu, install_track_context_menu,
-    layout::{large_popup_content_height, large_popup_content_width, route_content_width},
+    layout::{
+        configure_fill_width_clip, large_popup_content_height, large_popup_content_width,
+        route_content_width,
+    },
     loaded_tracks_window_play_activation, mark_route_scroll_owner, present_artist_context_menu,
     replace_albums_in_model, replace_artists_in_model, replace_genres_in_model,
     replace_playlists_in_model, selected_music_folder_id, set_favorite_button_active, stable_seed,

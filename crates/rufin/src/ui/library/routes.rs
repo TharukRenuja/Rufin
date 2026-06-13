@@ -1049,8 +1049,6 @@ impl Shell {
             let settings = settings.clone();
             Rc::new(move |scroller: &gtk::ScrolledWindow| {
                 connect_playlist_viewport_cover_warm(&shell, scroller, &model, &settings);
-                scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-                scroller.set_min_content_width(0);
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
 
@@ -1112,8 +1110,6 @@ impl Shell {
             let settings = settings.clone();
             Rc::new(move |scroller: &gtk::ScrolledWindow| {
                 connect_smart_warm(&shell, scroller, &model, &settings);
-                scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-                scroller.set_min_content_width(0);
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
 
@@ -1212,7 +1208,6 @@ impl Shell {
         mark_route_scroll_owner(&scroller);
         configure_library_route_scroller(self, &scroller);
         connect_track_viewport_cover_warm(self, &scroller, &model, &settings);
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
         view.set_margin_start(content_margin_start);
         scroller.set_child(Some(&view));
         wrapper.append(&scroller);
