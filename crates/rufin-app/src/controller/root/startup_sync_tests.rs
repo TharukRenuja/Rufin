@@ -21,7 +21,7 @@ use rufin_provider::{MusicProvider, PagedRequest, PlaylistEntry, ProviderSession
 use rufin_secrets::{MemorySecretStore, SecretStore};
 use rufin_store::{SavedServer, ServerLocalAccess};
 use rufin_test_support::{FakeProvider, FakeScale};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
@@ -2297,64 +2297,6 @@ pub(in crate::controller) fn snapshot_reuse_album() {
         snapshot.favorites[0].image_ref.as_ref(),
         tracks[0].image_ref.as_ref()
     );
-    let (controller, _events) = controller_from_store_for_test(store);
-    let favorites = controller
-        .cached_favorite_tracks()
-        .expect("cached favorite tracks");
-    assert_eq!(favorites.len(), 1);
-    assert_eq!(
-        favorites[0].image_ref.as_ref(),
-        tracks[0].image_ref.as_ref()
-    );
-}
-
-#[test]
-pub(in crate::controller) fn cached_favorite_tracks_are_not_capped() {
-    let store = StoreHandle::open_memory().expect("memory store");
-    let local = local_source_saved();
-    let album = local_album_with_image_ref(ImageRef::new(
-        "local:cover:file%3A%2F%2Ffavorite-album",
-        None,
-    ));
-    let tracks = (1..=525)
-        .map(|number| {
-            let mut track = local_track_with_image_ref(
-                number,
-                &album,
-                ImageRef::new(
-                    format!("local:cover:embedded%3A%2Fmusic%2Ffavorite-{number}.flac"),
-                    None,
-                ),
-            );
-            track.favorite = true;
-            track
-        })
-        .collect::<Vec<_>>();
-    let mut settings = AppSettings::default();
-    settings.sources.selected = Some(LibrarySourceSelection::Local);
-    store.save_settings(&settings).expect("save settings");
-    seed_cached_library(&store, &local, std::slice::from_ref(&album), &tracks, &[]);
-
-    let (controller, _events) = controller_from_store_for_test(store);
-    let favorites = controller
-        .cached_favorite_tracks()
-        .expect("cached favorite tracks");
-
-    assert_eq!(track_id_set(&favorites), track_id_set(&tracks));
-    for favorite in &favorites {
-        let expected = tracks
-            .iter()
-            .find(|track| track.id == favorite.id)
-            .expect("favorite track");
-        assert_eq!(favorite.image_ref, expected.image_ref);
-    }
-}
-
-fn track_id_set(tracks: &[Track]) -> BTreeSet<String> {
-    tracks
-        .iter()
-        .map(|track| track.id.as_str().to_string())
-        .collect()
 }
 
 #[test]

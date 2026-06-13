@@ -565,7 +565,6 @@ fn invalidate_sync_snapshot_pages(library: &mut LibrarySnapshot, delta: &Library
     }
     if !delta.tracks.is_empty() {
         library.tracks.clear();
-        library.favorites.clear();
         library.search = rufin_provider::SearchResults::default();
     }
     if !delta.albums.is_empty() {

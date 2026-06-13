@@ -228,19 +228,6 @@ impl AppController {
         track_album_refs(&self.store, &saved, &mut page.items, &[])?;
         Ok(page)
     }
-    pub fn cached_favorite_tracks(&self) -> Result<Vec<Track>, String> {
-        let Some(saved) = self.store.with_store(|store| store.active_server())? else {
-            return Ok(Vec::new());
-        };
-        let settings = load_settings_for_saved(&self.store, &saved);
-        let mut tracks = self
-            .store
-            .with_store(|store| store.load_favorite_tracks(&saved.server.id))?;
-        scrub_selected_track_image_refs(&saved, &settings, &mut tracks);
-        cover_art_policy::bind_tracks(&mut tracks, &settings);
-        track_album_refs(&self.store, &saved, &mut tracks, &[])?;
-        Ok(tracks)
-    }
     pub fn cached_search_results(
         &self,
         query: &str,
