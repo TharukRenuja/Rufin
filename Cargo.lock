@@ -532,6 +532,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "domain"
+version = "0.7.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1722,6 +1730,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
+name = "library"
+version = "0.7.1"
+dependencies = [
+ "domain",
+ "rusqlite",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2098,6 +2116,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
+name = "playback"
+version = "0.7.1"
+dependencies = [
+ "domain",
+ "gstreamer",
+ "gstreamer-audio",
+ "gstreamer-play",
+ "rustfft",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "polling"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2380,147 +2411,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "rufin-app"
+name = "rufin"
 version = "0.7.1"
 dependencies = [
  "clap",
  "directories",
+ "domain",
  "gdk-pixbuf",
  "getrandom 0.4.2",
  "gettext-rs",
  "gtk4",
  "ksni",
  "libadwaita",
+ "library",
  "md5",
  "mpris-server",
+ "playback",
  "reqwest",
- "rufin-core",
- "rufin-playback",
- "rufin-provider",
- "rufin-provider-jellyfin",
- "rufin-provider-local",
- "rufin-provider-subsonic",
- "rufin-secrets",
- "rufin-store",
- "rufin-test-support",
+ "secrets",
  "serde",
  "serde_json",
+ "source",
+ "source-jellyfin",
+ "source-local",
+ "source-subsonic",
+ "test-support",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "rufin-core"
-version = "0.7.1"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "rufin-playback"
-version = "0.7.1"
-dependencies = [
- "gstreamer",
- "gstreamer-audio",
- "gstreamer-play",
- "rufin-core",
- "rustfft",
- "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "rufin-provider"
-version = "0.7.1"
-dependencies = [
- "async-trait",
- "rufin-core",
- "rufin-playback",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "rufin-provider-jellyfin"
-version = "0.7.1"
-dependencies = [
- "async-trait",
- "reqwest",
- "rufin-core",
- "rufin-provider",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "wiremock",
-]
-
-[[package]]
-name = "rufin-provider-local"
-version = "0.7.1"
-dependencies = [
- "async-trait",
- "lofty",
- "percent-encoding",
- "rufin-core",
- "rufin-provider",
- "tempfile",
- "tokio",
- "url",
- "walkdir",
-]
-
-[[package]]
-name = "rufin-provider-subsonic"
-version = "0.7.1"
-dependencies = [
- "async-trait",
- "getrandom 0.4.2",
- "md5",
- "reqwest",
- "rufin-core",
- "rufin-provider",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "wiremock",
-]
-
-[[package]]
-name = "rufin-secrets"
-version = "0.7.1"
-dependencies = [
- "base64",
- "rufin-core",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "rufin-store"
-version = "0.7.1"
-dependencies = [
- "rufin-core",
- "rufin-provider",
- "rusqlite",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "rufin-test-support"
-version = "0.7.1"
-dependencies = [
- "async-trait",
- "futures-executor",
- "rufin-core",
- "rufin-provider",
 ]
 
 [[package]]
@@ -2683,6 +2601,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "secrets"
+version = "0.7.1"
+dependencies = [
+ "base64",
+ "domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -2859,6 +2789,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "source"
+version = "0.7.1"
+dependencies = [
+ "async-trait",
+ "domain",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "source-jellyfin"
+version = "0.7.1"
+dependencies = [
+ "async-trait",
+ "domain",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "source",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
+name = "source-local"
+version = "0.7.1"
+dependencies = [
+ "async-trait",
+ "domain",
+ "lofty",
+ "percent-encoding",
+ "source",
+ "tempfile",
+ "tokio",
+ "url",
+ "walkdir",
+]
+
+[[package]]
+name = "source-subsonic"
+version = "0.7.1"
+dependencies = [
+ "async-trait",
+ "domain",
+ "getrandom 0.4.2",
+ "md5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "source",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "sqlite-wasm-rs"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2988,6 +2976,16 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "test-support"
+version = "0.7.1"
+dependencies = [
+ "async-trait",
+ "domain",
+ "futures-executor",
+ "source",
 ]
 
 [[package]]

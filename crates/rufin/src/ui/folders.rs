@@ -1,0 +1,798 @@
+use std::rc::Rc;
+
+use adw::prelude::*;
+use domain::{Folder, FolderPathItem, PlaySourceKey, Route, Track, format_duration};
+use source::FolderDetail;
+
+use super::{
+    PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, THUMB_COVER_SIZE,
+    folder_play_source_key, install_track_context_menu, loaded_tracks_window_play_activation,
+    mark_route_scroll_owner, route_content_width, selected_music_folder_id,
+    sort_tracks_with_options, stable_seed, track_matches_query,
+};
+use crate::i18n::tr;
+
+const FOLDER_TREE_WIDTH: i32 = 260;
+const FOLDER_TREE_MIN_WIDTH: i32 = 132;
+const FOLDER_DURATION_COLUMN_WIDTH: i32 = 72;
+const FOLDER_NAME_COLUMN_MIN_WIDTH: i32 = 112;
+const FOLDER_NAME_COLUMN_MAX_WIDTH: i32 = 280;
+const FOLDER_DETAIL_COLUMN_MIN_WIDTH: i32 = 92;
+const FOLDER_NAME_TEXT_AVERAGE_WIDTH: i32 = 7;
+const FOLDER_ROW_ARTWORK_SIZE: i32 = 28;
+const FOLDER_TABLE_COLUMN_GAPS: i32 = 24;
+
+impl Shell {
+    pub(super) fn folders_view(self: &Rc<Self>, path: Vec<FolderPathItem>) -> gtk::Widget {
+        let mut state = self.state.folder_state.borrow().clone();
+        if state.path != path || (!state.loading && state.detail.is_none() && state.error.is_none())
+        {
+            self.start_folder_load(path.clone());
+            state = self.state.folder_state.borrow().clone();
+        }
+
+        let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        wrapper.add_css_class("route-content");
+        wrapper.add_css_class("folders-route");
+        wrapper.set_margin_top(18);
+        wrapper.set_margin_bottom(28);
+        wrapper.set_margin_start(PRIMARY_ROUTE_MARGIN_START);
+        wrapper.set_margin_end(PRIMARY_ROUTE_MARGIN_END);
+        wrapper.set_hexpand(true);
+        wrapper.set_vexpand(true);
+
+        wrapper.append(&folder_breadcrumbs(self, &path));
+
+        if state.loading {
+            wrapper.append(&self.route_empty_view("Loading folders…"));
+            return wrapper.upcast();
+        }
+
+        if let Some(error) = state.error.as_deref() {
+            wrapper.append(&folder_error_view(error));
+            return wrapper.upcast();
+        }
+
+        let Some(detail) = state.detail else {
+            wrapper.append(&self.route_empty_view("No folder contents found."));
+            return wrapper.upcast();
+        };
+
+        let search = gtk::SearchEntry::new();
+        search.add_css_class("folder-search");
+        search.set_placeholder_text(Some(&tr("Search current folder")));
+        wrapper.append(&search);
+        self.install_type_to_search(&search);
+
+        let route_width = route_content_width(self);
+        let tree_width = folder_tree_width(route_width);
+        let content = gtk::Paned::new(gtk::Orientation::Horizontal);
+        content.add_css_class("folders-split");
+        content.set_position(tree_width);
+        content.set_wide_handle(false);
+        content.set_hexpand(true);
+        content.set_vexpand(true);
+
+        let tree = folder_tree(self, &path, &detail, tree_width);
+        let tree_scroller = gtk::ScrolledWindow::new();
+        tree_scroller.add_css_class("folders-tree-pane");
+        tree_scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        tree_scroller.set_min_content_width(tree_width);
+        tree_scroller.set_size_request(tree_width, -1);
+        tree_scroller.set_hexpand(false);
+        tree_scroller.set_vexpand(true);
+        tree_scroller.set_child(Some(&tree));
+        content.set_start_child(Some(&tree_scroller));
+        content.set_resize_start_child(false);
+        content.set_shrink_start_child(false);
+
+        let table = gtk::ListBox::new();
+        table.add_css_class("folders-table");
+        table.set_selection_mode(gtk::SelectionMode::Single);
+        table.set_hexpand(true);
+        table.set_vexpand(true);
+        populate_folder_table(self, &table, &path, &detail, "", tree_width);
+
+        let table_scroller = gtk::ScrolledWindow::new();
+        mark_route_scroll_owner(&table_scroller);
+        table_scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
+        table_scroller.set_min_content_width(0);
+        table_scroller.set_hexpand(true);
+        table_scroller.set_vexpand(true);
+        table_scroller.set_child(Some(&table));
+        content.set_end_child(Some(&table_scroller));
+        content.set_resize_end_child(true);
+        content.set_shrink_end_child(true);
+
+        let table_for_search = table.clone();
+        let detail_for_search = detail.clone();
+        let path_for_search = path.clone();
+        let shell_for_search = Rc::clone(self);
+        search.connect_search_changed(move |entry| {
+            populate_folder_table(
+                &shell_for_search,
+                &table_for_search,
+                &path_for_search,
+                &detail_for_search,
+                entry.text().as_str(),
+                tree_width,
+            );
+        });
+
+        wrapper.append(&content);
+        wrapper.upcast()
+    }
+}
+
+fn folder_breadcrumbs(shell: &Rc<Shell>, path: &[FolderPathItem]) -> gtk::Box {
+    let breadcrumbs = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    breadcrumbs.add_css_class("folder-breadcrumbs");
+    breadcrumbs.set_hexpand(true);
+
+    breadcrumbs.append(&breadcrumb_button(
+        shell,
+        "Folders",
+        Vec::new(),
+        path.is_empty(),
+        true,
+    ));
+    for (index, entry) in path.iter().enumerate() {
+        breadcrumbs.append(&gtk::Label::new(Some("/")));
+        breadcrumbs.append(&breadcrumb_button(
+            shell,
+            &entry.name,
+            path.iter().take(index + 1).cloned().collect(),
+            index + 1 == path.len(),
+            false,
+        ));
+    }
+
+    breadcrumbs
+}
+
+fn breadcrumb_button(
+    shell: &Rc<Shell>,
+    label: &str,
+    path: Vec<FolderPathItem>,
+    current: bool,
+    translate: bool,
+) -> gtk::Button {
+    let button = gtk::Button::with_label(&display_label(label, translate));
+    button.add_css_class("flat");
+    button.add_css_class("folder-breadcrumb");
+    button.set_sensitive(!current);
+    let shell = Rc::clone(shell);
+    button.connect_clicked(move |_| {
+        shell.navigate(Route::Folders { path: path.clone() });
+    });
+    button
+}
+
+fn folder_tree(
+    shell: &Rc<Shell>,
+    path: &[FolderPathItem],
+    detail: &FolderDetail,
+    width: i32,
+) -> gtk::ListBox {
+    let tree = gtk::ListBox::new();
+    tree.add_css_class("folder-tree");
+    tree.set_selection_mode(gtk::SelectionMode::None);
+    tree.set_size_request(width, -1);
+    tree.set_hexpand(true);
+    tree.append(&tree_row(
+        shell,
+        "Folders",
+        Vec::new(),
+        path.is_empty(),
+        0,
+        true,
+    ));
+
+    for (index, entry) in path.iter().enumerate() {
+        tree.append(&tree_row(
+            shell,
+            &entry.name,
+            path.iter().take(index + 1).cloned().collect(),
+            index + 1 == path.len(),
+            1,
+            false,
+        ));
+    }
+
+    let mut folders = detail.folders.clone();
+    folders.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    for folder in folders {
+        tree.append(&tree_row(
+            shell,
+            &folder.name,
+            path_for_child(path, &folder),
+            false,
+            path.len().saturating_add(1).min(3),
+            false,
+        ));
+    }
+
+    tree
+}
+
+fn tree_row(
+    shell: &Rc<Shell>,
+    label: &str,
+    path: Vec<FolderPathItem>,
+    current: bool,
+    depth: usize,
+    translate: bool,
+) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("folder-tree-row");
+    button.set_hexpand(true);
+    button.set_halign(gtk::Align::Fill);
+    if current {
+        button.add_css_class("active");
+    }
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.set_hexpand(true);
+    content.set_halign(gtk::Align::Fill);
+    content.set_margin_start((depth as i32) * 12);
+    content.append(&gtk::Image::from_icon_name("folder-symbolic"));
+    let text = gtk::Label::new(Some(&display_label(label, translate)));
+    text.set_xalign(0.0);
+    text.set_hexpand(true);
+    text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    content.append(&text);
+    button.set_child(Some(&content));
+
+    let shell = Rc::clone(shell);
+    button.connect_clicked(move |_| {
+        shell.navigate(Route::Folders { path: path.clone() });
+    });
+    button
+}
+
+fn populate_folder_table(
+    shell: &Rc<Shell>,
+    table: &gtk::ListBox,
+    path: &[FolderPathItem],
+    detail: &FolderDetail,
+    query: &str,
+    tree_width: i32,
+) {
+    while let Some(child) = table.first_child() {
+        table.remove(&child);
+    }
+
+    let query = query.trim().to_lowercase();
+    let mut folders = detail
+        .folders
+        .iter()
+        .filter(|folder| query.is_empty() || folder.name.to_lowercase().contains(&query))
+        .cloned()
+        .collect::<Vec<_>>();
+    folders.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut tracks = detail
+        .tracks
+        .iter()
+        .filter(|track| query.is_empty() || track_matches_query(track, &query))
+        .cloned()
+        .collect::<Vec<_>>();
+    let settings = shell.state.settings.borrow().track_table.clone();
+    sort_tracks_with_options(&mut tracks, &settings, false);
+    let source_key =
+        folder_play_source_key(path, &query, &settings, selected_music_folder_id(shell));
+
+    let name_column_width = name_column_width(shell, tree_width, &folders, &tracks);
+    table.append(&folder_table_header(name_column_width));
+
+    for folder in folders {
+        table.append(&folder_table_folder_row(
+            shell,
+            path,
+            &folder,
+            name_column_width,
+        ));
+    }
+
+    let visible_tracks = Rc::new(tracks);
+    for (position, track) in visible_tracks.iter().enumerate() {
+        table.append(&folder_table_track_row(
+            shell,
+            table,
+            Rc::clone(&visible_tracks),
+            position,
+            track,
+            name_column_width,
+            source_key.clone(),
+        ));
+    }
+
+    if table
+        .first_child()
+        .and_then(|child| child.next_sibling())
+        .is_none()
+    {
+        table.append(&folder_table_empty_row());
+    }
+}
+
+fn folder_table_header(name_column_width: i32) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    row.set_selectable(false);
+    row.set_activatable(false);
+    row.add_css_class("folder-table-header");
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    content.append(&fixed_width_cell(
+        name_column_width,
+        name_header_label().upcast(),
+    ));
+    content.append(&table_header_label("Artist / Album"));
+    content.append(&duration_header_label());
+    row.set_child(Some(&content));
+    row
+}
+
+fn name_header_label() -> gtk::Label {
+    let text = gtk::Label::new(Some(&tr("Name")));
+    text.add_css_class("muted");
+    text.set_xalign(0.0);
+    text.set_hexpand(true);
+    text
+}
+
+fn table_header_label(label: &str) -> gtk::Label {
+    let text = gtk::Label::new(Some(&tr(label)));
+    text.add_css_class("muted");
+    text.set_xalign(0.0);
+    text.set_hexpand(true);
+    text.set_width_chars(1);
+    text.set_max_width_chars(18);
+    text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    text
+}
+
+fn duration_header_label() -> gtk::Widget {
+    let wrapper = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    wrapper.set_hexpand(false);
+    wrapper.set_width_request(FOLDER_DURATION_COLUMN_WIDTH);
+    wrapper.set_halign(gtk::Align::Fill);
+
+    let image = gtk::Image::from_icon_name("appointment-soon-symbolic");
+    let label = tr("Duration");
+    image.add_css_class("muted");
+    image.set_hexpand(false);
+    image.set_halign(gtk::Align::Start);
+    image.set_tooltip_text(Some(&label));
+    image.update_property(&[gtk::accessible::Property::Label(&label)]);
+    wrapper.append(&image);
+    wrapper.upcast()
+}
+
+fn folder_table_folder_row(
+    shell: &Rc<Shell>,
+    path: &[FolderPathItem],
+    folder: &Folder,
+    name_column_width: i32,
+) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("folder-table-row");
+    button.add_css_class("folder-table-folder-row");
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    content.append(&folder_name_cell(&folder.name, name_column_width));
+    content.append(&detail_cell(&tr("Folder")));
+    content.append(&duration_cell(""));
+    button.set_child(Some(&content));
+
+    let shell = Rc::clone(shell);
+    let next_path = path_for_child(path, folder);
+    button.connect_clicked(move |_| {
+        shell.navigate(Route::Folders {
+            path: next_path.clone(),
+        });
+    });
+    button
+}
+
+fn folder_table_track_row(
+    shell: &Rc<Shell>,
+    table: &gtk::ListBox,
+    visible_tracks: Rc<Vec<Track>>,
+    position: usize,
+    track: &Track,
+    name_column_width: i32,
+    source_key: PlaySourceKey,
+) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    row.add_css_class("folder-table-row");
+    row.set_selectable(true);
+    row.set_activatable(true);
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    content.append(&track_name_cell(shell, track, name_column_width));
+    content.append(&detail_cell(&format!("{} / {}", track.artist, track.album)));
+    content.append(&duration_cell(&format_duration(track.duration_seconds)));
+    row.set_child(Some(&content));
+
+    let row_for_click = row.clone();
+    let table_for_click = table.clone();
+    let controller = shell.controller.clone();
+    let tracks_for_click = Rc::clone(&visible_tracks);
+    let gesture = gtk::GestureClick::new();
+    gesture.connect_released(move |_, n_press, _, _| {
+        table_for_click.select_row(Some(&row_for_click));
+        row_for_click.grab_focus();
+        if n_press == 2
+            && let Some(activation) = loaded_tracks_window_play_activation(
+                source_key.clone(),
+                tracks_for_click.len(),
+                position,
+                |index| tracks_for_click.get(index).cloned(),
+            )
+        {
+            controller.play_activation(activation);
+        }
+    });
+    row.add_controller(gesture);
+    install_track_context_menu(&row, shell, track.clone());
+
+    row
+}
+
+fn folder_name_cell(text: &str, width: i32) -> gtk::Widget {
+    let cell = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    cell.set_hexpand(true);
+    cell.set_halign(gtk::Align::Fill);
+    cell.append(&gtk::Image::from_icon_name("folder-symbolic"));
+    let label = gtk::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.set_width_chars(1);
+    label.set_max_width_chars(1);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    cell.append(&label);
+    fixed_width_cell(width, cell.upcast())
+}
+
+fn track_name_cell(shell: &Rc<Shell>, track: &Track, width: i32) -> gtk::Widget {
+    let cell = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    cell.set_hexpand(true);
+    cell.set_halign(gtk::Align::Fill);
+    cell.append(&shell.cover_tile_for(
+        track.image_ref.as_ref(),
+        stable_seed(track.id.as_str()),
+        FOLDER_ROW_ARTWORK_SIZE,
+        THUMB_COVER_SIZE,
+    ));
+    let label = gtk::Label::new(Some(&track.title));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.set_width_chars(1);
+    label.set_max_width_chars(1);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    cell.append(&label);
+    fixed_width_cell(width, cell.upcast())
+}
+
+fn detail_cell(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.set_width_chars(1);
+    label.set_max_width_chars(16);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label
+}
+
+fn duration_cell(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_hexpand(false);
+    label.set_width_request(FOLDER_DURATION_COLUMN_WIDTH);
+    label
+}
+
+fn fixed_width_cell(width: i32, child: gtk::Widget) -> gtk::Widget {
+    child.set_hexpand(true);
+    child.set_halign(gtk::Align::Fill);
+
+    let clip = gtk::ScrolledWindow::new();
+    clip.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+    clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_min_content_width(0);
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(true);
+    clip.set_width_request(width);
+    clip.set_hexpand(false);
+    clip.set_halign(gtk::Align::Fill);
+    clip.set_child(Some(&child));
+    clip.upcast()
+}
+
+fn folder_tree_width(route_width: i32) -> i32 {
+    if route_width < 760 {
+        (route_width / 3).clamp(FOLDER_TREE_MIN_WIDTH, FOLDER_TREE_WIDTH)
+    } else {
+        FOLDER_TREE_WIDTH
+    }
+}
+
+fn name_column_width(shell: &Shell, tree_width: i32, folders: &[Folder], tracks: &[Track]) -> i32 {
+    name_column_width_for(route_content_width(shell), tree_width, folders, tracks)
+}
+
+fn name_column_width_for(
+    route_width: i32,
+    tree_width: i32,
+    folders: &[Folder],
+    tracks: &[Track],
+) -> i32 {
+    let longest = folders
+        .iter()
+        .map(|folder| folder.name.chars().count())
+        .chain(tracks.iter().map(|track| track.title.chars().count()))
+        .max()
+        .unwrap_or(0);
+    let text_width = longest as i32 * FOLDER_NAME_TEXT_AVERAGE_WIDTH + FOLDER_ROW_ARTWORK_SIZE + 24;
+    let table_width = route_width
+        .saturating_sub(tree_width)
+        .saturating_sub(PRIMARY_ROUTE_MARGIN_END)
+        .max(1);
+    let fit_width = table_width
+        .saturating_sub(FOLDER_DETAIL_COLUMN_MIN_WIDTH)
+        .saturating_sub(FOLDER_DURATION_COLUMN_WIDTH)
+        .saturating_sub(FOLDER_TABLE_COLUMN_GAPS);
+    text_width.clamp(
+        FOLDER_NAME_COLUMN_MIN_WIDTH.min(fit_width.max(1)),
+        FOLDER_NAME_COLUMN_MAX_WIDTH.min(fit_width.max(1)),
+    )
+}
+
+fn display_label(label: &str, translate: bool) -> String {
+    if translate {
+        tr(label)
+    } else {
+        label.to_string()
+    }
+}
+
+fn folder_table_empty_row() -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    row.set_selectable(false);
+    row.set_activatable(false);
+    row.add_css_class("folder-table-empty-row");
+    row.set_child(Some(&gtk::Label::new(Some(&tr(
+        "No folder contents found.",
+    )))));
+    row
+}
+
+fn folder_error_view(error: &str) -> gtk::Widget {
+    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    wrapper.add_css_class("empty-state");
+    wrapper.set_vexpand(true);
+    wrapper.set_hexpand(true);
+    wrapper.set_valign(gtk::Align::Center);
+    wrapper.set_halign(gtk::Align::Center);
+
+    let heading = gtk::Label::new(Some(&tr("Folder browsing failed")));
+    heading.add_css_class("section-heading");
+    let body = gtk::Label::new(Some(error));
+    body.add_css_class("muted");
+    body.set_wrap(true);
+    body.set_justify(gtk::Justification::Center);
+    wrapper.append(&heading);
+    wrapper.append(&body);
+    wrapper.upcast()
+}
+
+fn path_for_child(path: &[FolderPathItem], folder: &Folder) -> Vec<FolderPathItem> {
+    let mut next = path.to_vec();
+    next.push(FolderPathItem {
+        id: folder.id.clone(),
+        name: folder.name.clone(),
+    });
+    next
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::controller::{NormalizedPlayTarget, normalize_loaded_source_activation};
+    use domain::{
+        AlbumId, FolderId, FolderPathItem, MusicFolderId, QueueAnchor, QueueReplacementSource,
+        SourceOrder, Track, TrackId, TrackSortKey, TrackTableSettings,
+    };
+
+    #[test]
+    fn folders_preserve_anchor() {
+        let tracks = [track(1), track(2), track(3)];
+        let source_key = super::folder_play_source_key(
+            &[FolderPathItem {
+                id: FolderId::fake(8),
+                name: "Rock".to_string(),
+            }],
+            "track",
+            &TrackTableSettings {
+                sort_key: TrackSortKey::Title,
+                ..TrackTableSettings::default()
+            },
+            Some(MusicFolderId::fake(4)),
+        );
+        let activation =
+            super::loaded_tracks_window_play_activation(source_key, tracks.len(), 2, |index| {
+                tracks.get(index).cloned()
+            })
+            .expect("folder activation should be available");
+        let normalized = normalize_loaded_source_activation(activation)
+            .expect("folder activation should normalize");
+
+        let NormalizedPlayTarget::Replacement(replacement) = normalized.target else {
+            panic!("folder activation should create a queue replacement");
+        };
+        assert_eq!(
+            replacement.anchor,
+            QueueAnchor::SourcePosition {
+                position: 2,
+                track_id: TrackId::fake(3),
+            }
+        );
+        assert_eq!(replacement.items.len(), 3);
+        let QueueReplacementSource::Source(source) = replacement.source else {
+            panic!("folder activation should keep folder source");
+        };
+        let SourceOrder::FolderDisplayed { query, .. } = source.source_key.order else {
+            panic!("folder activation should keep folder source order");
+        };
+        assert_eq!(query.as_deref(), Some("track"));
+    }
+
+    #[test]
+    fn folders_use_growth() {
+        let folders = Vec::new();
+        let tracks = vec![
+            domain::Track {
+                id: domain::TrackId::new("track-short"),
+                album_id: domain::AlbumId::new("album-one"),
+                title: "Short".to_string(),
+                artist: String::new(),
+                artist_id: None,
+                artist_credits: Vec::new(),
+                album_artist_credits: Vec::new(),
+                album: String::new(),
+                year: 0,
+                release_date: None,
+                date_added: None,
+                last_played: None,
+                play_count: None,
+                user_rating: None,
+                duration_seconds: 0,
+                favorite: false,
+                disc_number: 1,
+                track_number: 1,
+                image_ref: None,
+                genres: Vec::new(),
+                musicbrainz_recording_id: None,
+                musicbrainz_release_track_id: None,
+                local_path: None,
+                source_format: None,
+                comment: None,
+                skip_count: None,
+            },
+            domain::Track {
+                id: domain::TrackId::new("track-long"),
+                album_id: domain::AlbumId::new("album-one"),
+                title: "A Very Long Track Title That Still Should Not Own The Whole Row"
+                    .to_string(),
+                artist: String::new(),
+                artist_id: None,
+                artist_credits: Vec::new(),
+                album_artist_credits: Vec::new(),
+                album: String::new(),
+                year: 0,
+                release_date: None,
+                date_added: None,
+                last_played: None,
+                play_count: None,
+                user_rating: None,
+                duration_seconds: 0,
+                favorite: false,
+                disc_number: 1,
+                track_number: 2,
+                image_ref: None,
+                genres: Vec::new(),
+                musicbrainz_recording_id: None,
+                musicbrainz_release_track_id: None,
+                local_path: None,
+                source_format: None,
+                comment: None,
+                skip_count: None,
+            },
+        ];
+
+        let width = super::name_column_width_for(900, super::FOLDER_TREE_WIDTH, &folders, &tracks);
+
+        assert!(width > super::FOLDER_NAME_COLUMN_MIN_WIDTH);
+        assert!(width <= super::FOLDER_NAME_COLUMN_MAX_WIDTH);
+    }
+
+    #[test]
+    fn folders_fit_narrow_route() {
+        let folders = Vec::new();
+        let tracks = vec![domain::Track {
+            id: domain::TrackId::new("track-long"),
+            album_id: domain::AlbumId::new("album-one"),
+            title: "A Very Long Track Title That Still Should Not Own The Whole Row".to_string(),
+            artist: String::new(),
+            artist_id: None,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
+            album: String::new(),
+            year: 0,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds: 0,
+            favorite: false,
+            disc_number: 1,
+            track_number: 1,
+            image_ref: None,
+            genres: Vec::new(),
+            musicbrainz_recording_id: None,
+            musicbrainz_release_track_id: None,
+            local_path: None,
+            source_format: None,
+            comment: None,
+            skip_count: None,
+        }];
+        let tree_width = super::folder_tree_width(420);
+        let width = super::name_column_width_for(420, tree_width, &folders, &tracks);
+
+        assert!(tree_width < super::FOLDER_TREE_WIDTH);
+        assert!(width < super::FOLDER_NAME_COLUMN_MIN_WIDTH + 40);
+    }
+
+    fn track(number: u32) -> Track {
+        Track {
+            id: TrackId::fake(number),
+            album_id: AlbumId::fake(1),
+            title: format!("Track {number}"),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            artist_credits: Vec::new(),
+            album_artist_credits: Vec::new(),
+            album: "Album".to_string(),
+            year: 2026,
+            release_date: None,
+            date_added: None,
+            last_played: None,
+            play_count: None,
+            user_rating: None,
+            duration_seconds: 180,
+            favorite: false,
+            disc_number: 1,
+            track_number: number as u16,
+            image_ref: None,
+            genres: Vec::new(),
+            musicbrainz_recording_id: None,
+            musicbrainz_release_track_id: None,
+            local_path: None,
+            source_format: None,
+            comment: None,
+            skip_count: None,
+        }
+    }
+}

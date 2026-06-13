@@ -78,7 +78,7 @@
 
             cargoBuildFlags = [
               "-p"
-              "rufin-app"
+              "rufin"
             ];
 
             doCheck = false;

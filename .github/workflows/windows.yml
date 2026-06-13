@@ -117,7 +117,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          cargo build --release --locked -p rufin-app
+          cargo build --release --locked -p rufin
           target/release/rufin.exe --help >/dev/null
 
       - name: Stage Windows runtime

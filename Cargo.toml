@@ -1,15 +1,15 @@
 [workspace]
 members = [
-    "crates/rufin-app",
-    "crates/rufin-core",
-    "crates/rufin-playback",
-    "crates/rufin-provider",
-    "crates/rufin-provider-jellyfin",
-    "crates/rufin-provider-local",
-    "crates/rufin-provider-subsonic",
-    "crates/rufin-secrets",
-    "crates/rufin-store",
-    "crates/rufin-test-support",
+    "crates/rufin",
+    "crates/domain",
+    "crates/playback",
+    "crates/source",
+    "crates/source-jellyfin",
+    "crates/source-local",
+    "crates/source-subsonic",
+    "crates/secrets",
+    "crates/library",
+    "crates/test-support",
 ]
 resolver = "2"
 
