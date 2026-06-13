@@ -30,28 +30,51 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/play_random.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/play_random.png</image>
     </screenshot>
     <screenshot>
       <caption>Tune playback settings</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.0/data/playback.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.1" date="2026-06-13">
+      <description>
+        <p>This is a hotfix release for bugs that got introduced with the last release.</p>
+        <ul>
+          <li>Changed to a new visualizer and fixed a bug where it made heavier file formats crash the app</li>
+        </ul>
+        <ul>
+          <li>Improved local CUE library handling, startup/search/track-route paths avoid some expensive work that could make the app hang with CUE-heavy folders</li>
+        </ul>
+        <ul>
+          <li>Added an option to prefer server-provided playlist covers, while keeping Rufin’s generated playlist covers as the default behavior</li>
+        </ul>
+        <ul>
+          <li>Reduced the workload for queue building</li>
+        </ul>
+        <ul>
+          <li>Improved warm remote startup sync behavior, and fixed the startup freeze</li>
+        </ul>
+        <ul>
+          <li>Also updated Rust version to 1.95</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-06-12">
       <description>
         <p>Thanks for everyone's patience, we fixed some critical bugs this release, which had to wait since there were so many things to test as well, given the size of the release:</p>
