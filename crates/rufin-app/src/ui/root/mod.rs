@@ -81,8 +81,9 @@ use gtk::glib;
 use layout::{
     COMPACT_RAIL_WIDTH, DETAIL_ROUTE_SCROLL_GUTTER, HOME_ALBUM_GAP, MIN_APP_WINDOW_HEIGHT,
     MIN_APP_WINDOW_WIDTH, NORMAL_SIDEBAR_WIDTH, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, SidebarWidths, detail_route_inner_width,
-    detail_showcase_cover_size, resolve_layout_with_sidebar_widths, route_content_width,
+    PRIMARY_ROUTE_MARGIN_START, ResolvedLayout, ResolvedLeftSidebarMode, SidebarWidths,
+    detail_route_inner_width, detail_showcase_cover_size, resolve_layout_with_sidebar_widths,
+    route_content_width,
 };
 #[cfg(unix)]
 use mpris::install_mpris;
@@ -100,10 +101,10 @@ use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queu
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH, ExternalLyricsProvider, FolderPathItem, Genre, HomeBlockKind,
-    HomeSection, HomeSectionKind, ImageRef, LeftSidebarMode, LibraryField, LibraryLayout,
-    LibraryListKey, LibraryListSettings, MusicFolderId, PlaySourceDescriptor, PlaySourceKey,
-    Playlist, PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode,
-    Route, RouteStack, SearchKind, ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
+    HomeSection, HomeSectionKind, ImageRef, LibraryField, LibraryLayout, LibraryListKey,
+    LibraryListSettings, MusicFolderId, PlaySourceDescriptor, PlaySourceKey, Playlist,
+    PlaylistEntrySortDescriptor, PlaylistId, QueueEntry, QueueSnapshot, RightSidebarMode, Route,
+    RouteStack, SearchKind, ServerId, SidebarRouteItem, SmartPlaylist, SmartPlaylistBuiltin,
     SmartPlaylistDefinition, SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRule,
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
     SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortDescriptor,
@@ -257,7 +258,7 @@ pub(in crate::ui) struct AddServerDialogHandle {
 pub(in crate::ui) struct AppState {
     routes: RefCell<RouteStack>,
     settings: RefCell<AppSettings>,
-    resolved_left_sidebar: Cell<LeftSidebarMode>,
+    resolved_left_sidebar: Cell<ResolvedLeftSidebarMode>,
     resolved_right_sidebar: Cell<RightSidebarMode>,
     resolved_right_sidebar_width: Cell<i32>,
     main_content_width: Cell<i32>,
@@ -447,6 +448,7 @@ pub(in crate::ui) struct Shell {
     app_content_stack: gtk::Stack,
     login_host: gtk::Box,
     startup_loading_host: gtk::Box,
+    split_view: adw::OverlaySplitView,
     normal_nav_slot: gtk::ScrolledWindow,
     compact_nav_slot: gtk::ScrolledWindow,
     normal_nav: gtk::Box,
@@ -523,7 +525,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     let state = AppState {
         routes: RefCell::new(RouteStack::new(Route::Home)),
         settings: RefCell::new(settings.clone()),
-        resolved_left_sidebar: Cell::new(LeftSidebarMode::Full),
+        resolved_left_sidebar: Cell::new(ResolvedLeftSidebarMode::Full),
         resolved_right_sidebar: Cell::new(RightSidebarMode::Hidden),
         resolved_right_sidebar_width: Cell::new(0),
         main_content_width: Cell::new(1),
@@ -668,17 +670,21 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     upper.set_hexpand(true);
     upper.set_vexpand(true);
 
-    let normal_nav = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    let normal_nav = gtk::Box::new(gtk::Orientation::Vertical, 4);
     normal_nav.add_css_class("wide-sidebar");
     normal_nav.set_hexpand(false);
     normal_nav.set_width_request(NORMAL_SIDEBAR_WIDTH);
     let normal_nav_slot = sidebar_scroll_slot(NORMAL_SIDEBAR_WIDTH, &normal_nav);
+    normal_nav_slot.add_css_class("sidebar-pane");
+    normal_nav_slot.add_css_class("wide-sidebar-slot");
 
-    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    let compact_nav = gtk::Box::new(gtk::Orientation::Vertical, 1);
     compact_nav.add_css_class("compact-rail");
     compact_nav.set_hexpand(false);
     compact_nav.set_width_request(COMPACT_RAIL_WIDTH);
     let compact_nav_slot = sidebar_scroll_slot(COMPACT_RAIL_WIDTH, &compact_nav);
+    compact_nav_slot.add_css_class("sidebar-pane");
+    compact_nav_slot.add_css_class("compact-rail-slot");
     let server_selector = build_server_selector();
 
     let normal_back_button = sidebar_history_button("go-previous-symbolic", "Back");
@@ -699,14 +705,30 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
     let lyrics_pane = right_panel_parts.lyrics_pane;
 
     let content_chrome = build_content_chrome(&main_area, &right_panel);
+    content_chrome.root.set_margin_start(8);
     let main_menu = content_chrome.main_menu;
     let right_panel_slot = content_chrome.right_panel_slot;
     let fullscreen_player = build_fullscreen_player();
     let player_controls = build_bottom_player();
 
-    upper.append(&normal_nav_slot);
-    upper.append(&compact_nav_slot);
-    upper.append(&content_chrome.root);
+    let content_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    content_row.set_hexpand(true);
+    content_row.set_vexpand(true);
+    content_row.append(&compact_nav_slot);
+    content_row.append(&content_chrome.root);
+
+    let split_view = adw::OverlaySplitView::new();
+    split_view.set_hexpand(true);
+    split_view.set_vexpand(true);
+    split_view.set_enable_hide_gesture(false);
+    split_view.set_enable_show_gesture(false);
+    split_view.set_min_sidebar_width(NORMAL_SIDEBAR_WIDTH as f64);
+    split_view.set_max_sidebar_width(NORMAL_SIDEBAR_WIDTH as f64);
+    split_view.set_sidebar_width_unit(adw::LengthUnit::Px);
+    split_view.set_sidebar(Some(&normal_nav_slot));
+    split_view.set_content(Some(&content_row));
+
+    upper.append(&split_view);
 
     app_content_stack.add_named(&upper, Some("main"));
     app_content_overlay.set_child(Some(&app_content_stack));
@@ -734,6 +756,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         app_content_stack,
         login_host,
         startup_loading_host,
+        split_view,
         normal_nav_slot,
         compact_nav_slot,
         normal_nav,

@@ -16,9 +16,9 @@ const COMPACT_RAIL_ICON_SIZE: i32 = 22;
 const COMPACT_RAIL_LABEL_WIDTH: i32 = COMPACT_RAIL_WIDTH - 8;
 const COMPACT_RAIL_LABEL_WIDTH_CHARS: i32 = 8;
 const COMPACT_SELECTOR_BUTTON_WIDTH: i32 = COMPACT_RAIL_WIDTH - 2;
-const NORMAL_SELECTOR_NON_LABEL_WIDTH: i32 = 100;
+const NORMAL_SELECTOR_NON_LABEL_WIDTH: i32 = 54;
 const NORMAL_SELECTOR_LABEL_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - NORMAL_SELECTOR_NON_LABEL_WIDTH;
-const NORMAL_SELECTOR_LABEL_WIDTH_CHARS: i32 = 12;
+const NORMAL_SELECTOR_LABEL_WIDTH_CHARS: i32 = 18;
 const NORMAL_SELECTOR_BUTTON_WIDTH: i32 = NORMAL_SIDEBAR_WIDTH - 16;
 const SERVER_SELECTOR_POPOVER_WIDTH: i32 = 304;
 
@@ -73,9 +73,6 @@ pub(super) fn build_server_selector() -> ServerSelector {
     labels.append(&normal_name);
     normal_content.append(&labels);
 
-    let normal_menu = gtk::Image::from_icon_name("view-more-symbolic");
-    normal_menu.set_valign(gtk::Align::Center);
-    normal_content.append(&normal_menu);
     normal_button.set_child(Some(&normal_content));
 
     let compact_button = gtk::MenuButton::new();

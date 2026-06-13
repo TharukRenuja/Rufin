@@ -16,10 +16,17 @@ tooltip.background label {
   background: transparent;
 }
 
+.wide-sidebar-slot,
+.compact-rail-slot,
 .wide-sidebar,
 .compact-rail {
-  background: transparent;
-  color: @window_fg_color;
+  background: var(--sidebar-bg-color);
+  color: var(--sidebar-fg-color);
+}
+
+.wide-sidebar-slot,
+.compact-rail-slot {
+  border-right: 1px solid var(--sidebar-border-color);
 }
 
 .wide-sidebar {
@@ -27,7 +34,7 @@ tooltip.background label {
 }
 
 .compact-rail {
-  padding: 0 1px 4px;
+  padding: 0 0 4px;
 }
 
 .main-area,
@@ -163,20 +170,20 @@ listview.album-detail-list row:selected {
 }
 
 .nav-button {
-  margin: 1px 8px;
-  padding: 8px 10px;
+  margin: 0 8px;
+  padding: 7px 10px;
   border-radius: 9px;
 }
 
 .nav-button.selected {
-  background: color-mix(in srgb, currentColor 10%, transparent);
+  background: color-mix(in srgb, currentColor 13%, transparent);
 }
 
 .rail-button {
-  margin: 0 1px;
-  padding: 4px 1px;
-  min-width: 52px;
-  min-height: 50px;
+  margin: 0 2px;
+  padding: 3px 1px;
+  min-width: 48px;
+  min-height: 44px;
 }
 
 .rail-label {
@@ -184,14 +191,14 @@ listview.album-detail-list row:selected {
 }
 
 .sidebar-history-controls {
-  min-height: 48px;
+  min-height: 42px;
   margin: 0 12px;
 }
 
 .rail-history-controls {
-  min-width: 52px;
-  min-height: 42px;
-  margin: 0 1px 4px;
+  min-width: 48px;
+  min-height: 38px;
+  margin: 0 2px 3px;
 }
 
 .sidebar-history-button {
@@ -201,9 +208,9 @@ listview.album-detail-list row:selected {
 }
 
 .rail-history-controls .sidebar-history-button {
-  min-width: 26px;
-  min-height: 28px;
-  padding: 4px;
+  min-width: 24px;
+  min-height: 26px;
+  padding: 3px;
 }
 
 .nav-button:not(.server-selector):hover,
@@ -212,12 +219,16 @@ listview.album-detail-list row:selected {
 }
 
 .nav-button.selected:not(.server-selector):hover {
-  background: color-mix(in srgb, currentColor 13%, transparent);
+  background: color-mix(in srgb, currentColor 16%, transparent);
 }
 
 button:disabled,
 menubutton:disabled > button {
   opacity: 0.46;
+}
+
+.sidebar-history-button:disabled {
+  opacity: 0.62;
 }
 
 button.suggested-action:disabled {
@@ -252,9 +263,9 @@ menubutton.server-selector:not(.rail-button) > button {
 }
 
 menubutton.server-selector.rail-button > button {
-  padding: 4px 1px;
-  min-width: 52px;
-  min-height: 50px;
+  padding: 3px 1px;
+  min-width: 48px;
+  min-height: 44px;
 }
 
 menubutton.server-selector > button:hover {
