@@ -3,14 +3,14 @@ use rufin_core::{LayoutProfile, LayoutSettings, LeftSidebarMode, RightSidebarMod
 
 use super::Shell;
 
-pub(super) const COMPACT_RAIL_WIDTH: i32 = 64;
+pub(super) const COMPACT_RAIL_WIDTH: i32 = 56;
 pub(super) const NORMAL_SIDEBAR_WIDTH: i32 = 176;
 pub(super) const RIGHT_SIDEBAR_COMPACT_WIDTH: i32 = 250;
 pub(super) const RIGHT_SIDEBAR_DEFAULT_WIDTH: i32 = 300;
 pub(super) const RIGHT_SIDEBAR_COMFORTABLE_WIDTH: i32 = 400;
 pub(super) const RIGHT_SIDEBAR_SPACIOUS_WIDTH: i32 = 500;
 pub(super) const MIN_USEFUL_MAIN_WIDTH: i32 = 550;
-pub(super) const MIN_APP_WINDOW_WIDTH: i32 = COMPACT_RAIL_WIDTH + MIN_USEFUL_MAIN_WIDTH;
+pub(super) const MIN_APP_WINDOW_WIDTH: i32 = MIN_USEFUL_MAIN_WIDTH;
 pub(super) const MIN_APP_WINDOW_HEIGHT: i32 = 634;
 pub(super) const HOME_ALBUM_GAP: i32 = 14;
 pub(super) const DETAIL_ROUTE_SCROLL_GUTTER: i32 = 24;
@@ -65,9 +65,16 @@ pub(super) enum ActiveLayoutProfile {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum ResolvedLeftSidebarMode {
+    Full,
+    Compact,
+    Hidden,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct ResolvedLayout {
     pub(super) profile: ActiveLayoutProfile,
-    pub(super) left_sidebar: LeftSidebarMode,
+    pub(super) left_sidebar: ResolvedLeftSidebarMode,
     pub(super) right_sidebar: RightSidebarMode,
     pub(super) right_sidebar_width: i32,
     pub(super) main_width: i32,
@@ -88,10 +95,18 @@ impl Default for SidebarWidths {
     }
 }
 
-fn sidebar_width(mode: LeftSidebarMode, widths: SidebarWidths) -> i32 {
+fn configured_sidebar_width(mode: LeftSidebarMode, widths: SidebarWidths) -> i32 {
     match mode {
         LeftSidebarMode::Full => widths.full,
         LeftSidebarMode::Compact => widths.compact,
+    }
+}
+
+fn resolved_sidebar_width(mode: ResolvedLeftSidebarMode, widths: SidebarWidths) -> i32 {
+    match mode {
+        ResolvedLeftSidebarMode::Full => widths.full,
+        ResolvedLeftSidebarMode::Compact => widths.compact,
+        ResolvedLeftSidebarMode::Hidden => 0,
     }
 }
 
@@ -130,25 +145,35 @@ fn resolve_layout_for_profile(
     window_width: i32,
     sidebar_widths: SidebarWidths,
 ) -> ResolvedLayout {
-    let mut left_sidebar = configured.left_sidebar;
+    let mut left_sidebar = match configured.left_sidebar {
+        LeftSidebarMode::Full => ResolvedLeftSidebarMode::Full,
+        LeftSidebarMode::Compact => ResolvedLeftSidebarMode::Compact,
+    };
     let mut right_sidebar = resolved_right_sidebar_for_width(
         configured.right_sidebar,
-        window_width - sidebar_width(left_sidebar, sidebar_widths),
+        window_width - configured_sidebar_width(configured.left_sidebar, sidebar_widths),
     );
     let mut resolved_right_sidebar_width = right_sidebar_width(right_sidebar);
-    let mut main_width =
-        window_width - sidebar_width(left_sidebar, sidebar_widths) - resolved_right_sidebar_width;
+    let mut main_width = window_width
+        - resolved_sidebar_width(left_sidebar, sidebar_widths)
+        - resolved_right_sidebar_width;
 
-    if main_width < MIN_USEFUL_MAIN_WIDTH && left_sidebar == LeftSidebarMode::Full {
-        left_sidebar = LeftSidebarMode::Compact;
+    if main_width < MIN_USEFUL_MAIN_WIDTH && left_sidebar == ResolvedLeftSidebarMode::Full {
+        left_sidebar = ResolvedLeftSidebarMode::Compact;
         right_sidebar = resolved_right_sidebar_for_width(
             right_sidebar,
-            window_width - sidebar_width(left_sidebar, sidebar_widths),
+            window_width - resolved_sidebar_width(left_sidebar, sidebar_widths),
         );
         resolved_right_sidebar_width = right_sidebar_width(right_sidebar);
         main_width = window_width
-            - sidebar_width(left_sidebar, sidebar_widths)
+            - resolved_sidebar_width(left_sidebar, sidebar_widths)
             - resolved_right_sidebar_width;
+    }
+    if main_width < MIN_USEFUL_MAIN_WIDTH && left_sidebar == ResolvedLeftSidebarMode::Compact {
+        left_sidebar = ResolvedLeftSidebarMode::Hidden;
+        right_sidebar = resolved_right_sidebar_for_width(right_sidebar, window_width);
+        resolved_right_sidebar_width = right_sidebar_width(right_sidebar);
+        main_width = window_width - resolved_right_sidebar_width;
     }
 
     ResolvedLayout {
@@ -420,7 +445,7 @@ mod tests {
         let resolved = resolve_layout(&settings, 1_500);
 
         assert_eq!(resolved.profile, ActiveLayoutProfile::Default);
-        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Full);
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Full);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Comfortable);
         assert_eq!(
             resolved.right_sidebar_width,
@@ -434,7 +459,7 @@ mod tests {
         let resolved = resolve_layout(&settings, 950);
 
         assert_eq!(resolved.profile, ActiveLayoutProfile::Narrow);
-        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Compact);
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Default);
         assert_eq!(resolved.right_sidebar_width, RIGHT_SIDEBAR_DEFAULT_WIDTH);
     }
@@ -449,7 +474,7 @@ mod tests {
 
         let resolved = resolve_layout(&settings, NORMAL_SIDEBAR_WIDTH + 800);
 
-        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Full);
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Full);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Compact);
         assert!(resolved.main_width >= MIN_USEFUL_MAIN_WIDTH);
     }
@@ -461,7 +486,7 @@ mod tests {
 
         let resolved = resolve_layout(&settings, NORMAL_SIDEBAR_WIDTH + MIN_USEFUL_MAIN_WIDTH - 10);
 
-        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Compact);
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
     }
 
@@ -470,7 +495,7 @@ mod tests {
         let settings = LayoutSettings::default();
         let resolved = resolve_layout(&settings, 1);
 
-        assert_eq!(resolved.left_sidebar, LeftSidebarMode::Compact);
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Hidden);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
         assert_eq!(resolved.main_width, MIN_USEFUL_MAIN_WIDTH);
     }

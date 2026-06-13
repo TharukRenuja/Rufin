@@ -68,16 +68,17 @@ impl Shell {
             .replace(resolved.right_sidebar_width);
         let previous_main_width = self.state.main_content_width.replace(resolved.main_width);
 
-        self.normal_nav_slot.set_visible(
-            !login_active
-                && !startup_loading_active
-                && resolved.left_sidebar == LeftSidebarMode::Full,
-        );
-        self.compact_nav_slot.set_visible(
-            !login_active
-                && !startup_loading_active
-                && resolved.left_sidebar == LeftSidebarMode::Compact,
-        );
+        let app_active = !login_active && !startup_loading_active;
+        let full_sidebar = resolved.left_sidebar == ResolvedLeftSidebarMode::Full;
+        self.split_view.set_collapsed(!app_active || !full_sidebar);
+        if app_active && full_sidebar {
+            self.split_view.set_show_sidebar(true);
+        } else {
+            self.split_view.set_show_sidebar(false);
+        }
+        self.normal_nav_slot.set_visible(app_active);
+        self.compact_nav_slot
+            .set_visible(app_active && resolved.left_sidebar == ResolvedLeftSidebarMode::Compact);
         self.right_panel_slot.set_visible(
             !login_active && !startup_loading_active && resolved.right_sidebar.is_visible(),
         );
@@ -162,6 +163,9 @@ impl Shell {
             startup_loading_host_width = self.startup_loading_host.width(),
             route_host_width = self.route_host.width(),
             resolved_main_width = self.state.main_content_width.get(),
+            left_sidebar = ?self.state.resolved_left_sidebar.get(),
+            split_collapsed = self.split_view.is_collapsed(),
+            split_show_sidebar = self.split_view.shows_sidebar(),
             right_sidebar = ?self.state.resolved_right_sidebar.get(),
             right_panel_slot_visible = self.right_panel_slot.is_visible(),
             right_panel_slot_width = self.right_panel_slot.width(),
