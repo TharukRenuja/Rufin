@@ -1826,71 +1826,21 @@ pub(in crate::controller) fn local_access_status_for_server(
         return Ok(LocalAccessStatus::default());
     }
 
-    let remote_tracks =
-        store.with_store(|store| store.load_tracks_for_local_matching(&server.id))?;
-    let metadata_matches = store.with_store(|store| store.track_local_match_paths(&server.id))?;
-    let metadata_by_track = metadata_matches
-        .into_iter()
-        .collect::<HashMap<TrackId, String>>();
-
-    let sample_track = remote_tracks
-        .iter()
-        .find(|track| {
-            track
-                .local_path
-                .as_deref()
-                .is_some_and(|path| !path.trim().is_empty())
-                && metadata_by_track.contains_key(&track.id)
-        })
-        .or_else(|| {
-            remote_tracks.iter().find(|track| {
-                track
-                    .local_path
-                    .as_deref()
-                    .is_some_and(|path| !path.trim().is_empty())
-            })
-        });
-    let sample_server_path = sample_track.and_then(|track| track.local_path.clone());
-    let sample_local_path = sample_track.and_then(|track| {
-        metadata_by_track.get(&track.id).cloned().or_else(|| {
-            track
-                .local_path
-                .as_deref()
-                .and_then(|raw| potential_local_path_text(raw, access))
-        })
+    let facts = store.with_store(|store| store.local_access_status_facts(access))?;
+    let sample_local_path = facts.sample_metadata_path.clone().or_else(|| {
+        facts
+            .sample_server_path
+            .as_deref()
+            .and_then(|raw| potential_local_path_text(raw, access))
     });
-
-    let mut effective_matches = HashSet::<TrackId>::new();
-    let mut direct_match_count = 0;
-    let mut prefix_match_count = 0;
-    for track in &remote_tracks {
-        let Some(raw) = track.local_path.as_deref() else {
-            continue;
-        };
-        if map_server_path_to_local(raw, access).is_some() {
-            prefix_match_count += 1;
-            effective_matches.insert(track.id.clone());
-        } else if Path::new(raw).is_absolute() {
-            direct_match_count += 1;
-            effective_matches.insert(track.id.clone());
-        }
-    }
-
-    let metadata_match_count = metadata_by_track.len();
-    for track_id in metadata_by_track.into_keys() {
-        effective_matches.insert(track_id);
-    }
-
-    let total_track_count = remote_tracks.len();
-    let unmatched_count = total_track_count.saturating_sub(effective_matches.len());
     Ok(LocalAccessStatus {
-        sample_server_path,
+        sample_server_path: facts.sample_server_path,
         sample_local_path,
-        direct_match_count,
-        prefix_match_count,
-        metadata_match_count,
-        unmatched_count,
-        total_track_count,
+        direct_match_count: facts.direct_match_count,
+        prefix_match_count: facts.prefix_match_count,
+        metadata_match_count: facts.metadata_match_count,
+        unmatched_count: facts.unmatched_count,
+        total_track_count: facts.total_track_count,
     })
 }
 pub(in crate::controller) fn potential_local_path_text(

@@ -162,9 +162,18 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
         selected_source,
         saved,
     } = reconciled_source;
-    let local_access = store.with_store(|store| store.server_local_access(&saved.server.id))?;
-    let local_access_status =
-        local_access_status_for_server(store, &saved.server, local_access.as_ref())?;
+    let (local_access, local_access_status) = if saved.server.provider != LOCAL_PROVIDER_ID
+        && let Some(summary) = server_local_access
+            .iter()
+            .find(|summary| summary.server_id == saved.server.id)
+    {
+        (summary.access.clone(), summary.status.clone())
+    } else {
+        let local_access = store.with_store(|store| store.server_local_access(&saved.server.id))?;
+        let local_access_status =
+            local_access_status_for_server(store, &saved.server, local_access.as_ref())?;
+        (local_access, local_access_status)
+    };
     let music_folders = store.with_store(|store| store.list_music_folders(&saved.server.id))?;
     let selected_music_folder_id =
         store.with_store(|store| store.selected_music_folder_id(&saved.server.id))?;

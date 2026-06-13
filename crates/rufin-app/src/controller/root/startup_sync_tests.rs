@@ -19,7 +19,7 @@ use rufin_playback::{
 };
 use rufin_provider::{MusicProvider, PagedRequest, PlaylistEntry, ProviderSession};
 use rufin_secrets::{MemorySecretStore, SecretStore};
-use rufin_store::SavedServer;
+use rufin_store::{SavedServer, ServerLocalAccess};
 use rufin_test_support::{FakeProvider, FakeScale};
 use std::collections::HashMap;
 use std::fs;
@@ -452,6 +452,62 @@ pub(in crate::controller) fn startup_load_source() {
         .expect("active server")
         .expect("active server");
     assert_eq!(active_after.server.id, selected_saved.server.id);
+}
+
+#[test]
+pub(in crate::controller) fn startup_local_access_status_reuse() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let active_saved = saved_server();
+    let mut other_saved = saved_server();
+    other_saved.server.id = ServerId::new("jellyfin:server:other");
+    other_saved.server.name = "Other Server".to_string();
+    other_saved.server.base_url = "https://other.example.test".to_string();
+    let mut settings = AppSettings::default();
+    settings.sources.selected = Some(LibrarySourceSelection::Server(
+        active_saved.server.id.clone(),
+    ));
+    store.save_settings(&settings).expect("save settings");
+    store
+        .with_store(|store| {
+            store.save_server(&active_saved)?;
+            store.save_server(&other_saved)?;
+            store.set_active_server(&active_saved.server.id)?;
+            store.save_server_local_access(&ServerLocalAccess {
+                server_id: active_saved.server.id.clone(),
+                root_path: "/home/demo/Music".to_string(),
+                path_replace_from: Some("/server/music".to_string()),
+                path_replace_to: Some("/home/demo/Music".to_string()),
+            })?;
+            store.save_server_local_access(&ServerLocalAccess {
+                server_id: other_saved.server.id.clone(),
+                root_path: "/home/demo/Other".to_string(),
+                path_replace_from: Some("/other/music".to_string()),
+                path_replace_to: Some("/home/demo/Other".to_string()),
+            })?;
+            let generation = store.begin_sync(&active_saved.server.id)?;
+            let mut track = library_track(
+                1,
+                Some(ArtistId::fake(1)),
+                AlbumId::fake(1),
+                "Example Artist",
+                &[],
+            );
+            track.local_path = Some("/server/music/Album/Track.flac".to_string());
+            store.upsert_tracks(&active_saved.server.id, &[track], generation)
+        })
+        .expect("seed servers");
+
+    let snapshot = load_snapshot(&store).expect("load snapshot");
+
+    assert_eq!(snapshot.server_local_access.len(), 2);
+    let active_summary = snapshot
+        .server_local_access
+        .iter()
+        .find(|summary| summary.server_id == active_saved.server.id)
+        .expect("active summary");
+    assert_eq!(snapshot.local_access, active_summary.access);
+    assert_eq!(snapshot.local_access_status, active_summary.status);
+    assert_eq!(snapshot.local_access_status.prefix_match_count, 1);
 }
 
 #[test]

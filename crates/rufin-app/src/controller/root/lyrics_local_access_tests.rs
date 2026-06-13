@@ -971,7 +971,7 @@ pub(in crate::controller) fn access_match_use() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn lyrics_snapshot_candidate() {
+pub(in crate::controller) fn lyrics_local_access_status() {
     let store = StoreHandle::open_memory().expect("memory store");
     let saved = self::saved_server();
     let root = self::unique_test_dir("local-access-status");

@@ -1453,6 +1453,131 @@ impl Store {
             .optional()
             .map_err(StoreError::from)
     }
+    pub fn local_access_status_facts(
+        &self,
+        access: &ServerLocalAccess,
+    ) -> StoreResult<LocalAccessStatusFacts> {
+        let prefix = access
+            .path_replace_from
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let (
+            total_track_count,
+            direct_match_count,
+            prefix_match_count,
+            metadata_match_count,
+            effective_match_count,
+        ) = self.connection.query_row(
+            "
+            WITH mapped_tracks AS (
+                SELECT track_id,
+                       CASE
+                           WHEN TRIM(COALESCE(local_path, '')) <> ''
+                            AND (
+                                (?2 IS NOT NULL AND ?2 <> ''
+                                 AND substr(local_path, 1, length(?2)) = ?2)
+                                OR local_path NOT GLOB '/*'
+                            )
+                           THEN 1 ELSE 0
+                       END AS prefix_match,
+                       CASE
+                           WHEN TRIM(COALESCE(local_path, '')) <> ''
+                            AND local_path GLOB '/*'
+                            AND NOT (
+                                ?2 IS NOT NULL AND ?2 <> ''
+                                AND substr(local_path, 1, length(?2)) = ?2
+                            )
+                           THEN 1 ELSE 0
+                       END AS direct_match
+                FROM tracks
+                WHERE server_id = ?1
+            ),
+            effective_matches AS (
+                SELECT track_id
+                FROM mapped_tracks
+                WHERE prefix_match = 1 OR direct_match = 1
+                UNION
+                SELECT track_id
+                FROM track_local_matches
+                WHERE server_id = ?1
+            )
+            SELECT
+                (SELECT COUNT(*) FROM tracks WHERE server_id = ?1),
+                COALESCE(SUM(direct_match), 0),
+                COALESCE(SUM(prefix_match), 0),
+                (SELECT COUNT(*) FROM track_local_matches WHERE server_id = ?1),
+                (SELECT COUNT(*) FROM effective_matches)
+            FROM mapped_tracks
+            ",
+            params![access.server_id.as_str(), prefix],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )?;
+        let metadata_sample = self
+            .connection
+            .query_row(
+                "
+                SELECT t.local_path, m.local_path
+                FROM tracks t
+                JOIN track_local_matches m
+                  ON m.server_id = t.server_id AND m.track_id = t.track_id
+                WHERE t.server_id = ?1
+                  AND TRIM(COALESCE(t.local_path, '')) <> ''
+                ORDER BY t.album COLLATE NOCASE,
+                         t.disc_number,
+                         t.track_number,
+                         t.title COLLATE NOCASE
+                LIMIT 1
+                ",
+                params![access.server_id.as_str()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        let (sample_server_path, sample_metadata_path) =
+            if let Some((server_path, local_path)) = metadata_sample {
+                (Some(server_path), Some(local_path))
+            } else {
+                (
+                    self.connection
+                        .query_row(
+                            "
+                            SELECT local_path
+                            FROM tracks
+                            WHERE server_id = ?1
+                              AND TRIM(COALESCE(local_path, '')) <> ''
+                            ORDER BY album COLLATE NOCASE,
+                                     disc_number,
+                                     track_number,
+                                     title COLLATE NOCASE
+                            LIMIT 1
+                            ",
+                            params![access.server_id.as_str()],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?,
+                    None,
+                )
+            };
+        let total_track_count = usize_from_count(total_track_count);
+        let effective_match_count = usize_from_count(effective_match_count);
+        Ok(LocalAccessStatusFacts {
+            sample_server_path,
+            sample_metadata_path,
+            direct_match_count: usize_from_count(direct_match_count),
+            prefix_match_count: usize_from_count(prefix_match_count),
+            metadata_match_count: usize_from_count(metadata_match_count),
+            unmatched_count: total_track_count.saturating_sub(effective_match_count),
+            total_track_count,
+        })
+    }
     pub fn delete_server_local_access(&self, server_id: &ServerId) -> StoreResult<()> {
         self.connection.execute(
             "DELETE FROM server_local_access WHERE server_id = ?1",
@@ -1734,6 +1859,10 @@ impl Store {
         )?;
         Ok(generation)
     }
+}
+
+fn usize_from_count(value: i64) -> usize {
+    value.max(0) as usize
 }
 
 pub(super) fn save_server_on_connection(
