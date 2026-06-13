@@ -10,9 +10,9 @@ use crate::controller::AppController;
 use crate::i18n::tr;
 
 use super::{
-    FAVORITE_EMPTY_GLYPH, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, context_menu_playlists,
-    favorite_button_is_active, favorite_icon_button, set_favorite_button_active,
-    track_from_queue_entry,
+    FAVORITE_EMPTY_GLYPH, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
+    context_menu_playlist_label, context_menu_playlists, favorite_button_is_active,
+    favorite_icon_button, set_favorite_button_active, track_from_queue_entry,
 };
 
 const QUEUE_LINK_CLICK_DELAY_MS: u64 = 250;
@@ -934,8 +934,9 @@ fn show_queue_row_context_menu(
     if track.is_some() && !playlists.is_empty() {
         let playlist_menu = gio::Menu::new();
         for (index, playlist) in playlists.iter().enumerate() {
+            let label = context_menu_playlist_label(&playlist.name);
             playlist_menu.append(
-                Some(&playlist.name),
+                Some(&label),
                 Some(&format!("queue.add-to-playlist-{index}")),
             );
         }
