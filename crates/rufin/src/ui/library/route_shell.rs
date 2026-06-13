@@ -640,7 +640,7 @@ impl Shell {
         populate_library_field_rows(self, key, &fields_group, &rows);
 
         let scroller = gtk::ScrolledWindow::new();
-        scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
+        configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
         scroller.set_child(Some(&content));
         toolbar.set_content(Some(&scroller));
 

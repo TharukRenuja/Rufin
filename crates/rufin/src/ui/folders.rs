@@ -6,9 +6,10 @@ use source::FolderDetail;
 
 use super::{
     PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell, THUMB_COVER_SIZE,
-    folder_play_source_key, install_track_context_menu, loaded_tracks_window_play_activation,
-    mark_route_scroll_owner, route_content_width, selected_music_folder_id,
-    sort_tracks_with_options, stable_seed, track_matches_query,
+    configure_exact_width_clip, configure_fill_width_clip, folder_play_source_key,
+    install_track_context_menu, loaded_tracks_window_play_activation, mark_route_scroll_owner,
+    route_content_width, selected_music_folder_id, sort_tracks_with_options, stable_seed,
+    track_matches_query,
 };
 use crate::i18n::tr;
 
@@ -95,8 +96,7 @@ impl Shell {
 
         let table_scroller = gtk::ScrolledWindow::new();
         mark_route_scroll_owner(&table_scroller);
-        table_scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
-        table_scroller.set_min_content_width(0);
+        configure_fill_width_clip(&table_scroller, gtk::PolicyType::Automatic);
         table_scroller.set_hexpand(true);
         table_scroller.set_vexpand(true);
         table_scroller.set_child(Some(&table));
@@ -509,12 +509,8 @@ fn fixed_width_cell(width: i32, child: gtk::Widget) -> gtk::Widget {
     child.set_halign(gtk::Align::Fill);
 
     let clip = gtk::ScrolledWindow::new();
-    clip.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
-    clip.set_overflow(gtk::Overflow::Hidden);
-    clip.set_min_content_width(0);
-    clip.set_propagate_natural_width(false);
+    configure_exact_width_clip(&clip, width, gtk::PolicyType::Never);
     clip.set_propagate_natural_height(true);
-    clip.set_width_request(width);
     clip.set_hexpand(false);
     clip.set_halign(gtk::Align::Fill);
     clip.set_child(Some(&child));

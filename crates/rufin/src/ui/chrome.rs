@@ -3,6 +3,8 @@ use gtk::gio;
 
 use crate::i18n::tr;
 
+use super::configure_fill_width_clip;
+
 const WINDOW_CONTROLS_MARGIN_END: i32 = 12;
 const WINDOW_CONTROLS_MARGIN_TOP: i32 = 9;
 
@@ -52,21 +54,14 @@ pub(super) fn build_content_chrome(
     right_panel: &gtk::Box,
 ) -> ContentChromeParts {
     let main_well = gtk::ScrolledWindow::new();
-    main_well.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
-    main_well.set_overflow(gtk::Overflow::Hidden);
-    main_well.set_width_request(1);
-    main_well.set_min_content_width(0);
-    main_well.set_max_content_width(1);
-    main_well.set_propagate_natural_width(false);
+    configure_fill_width_clip(&main_well, gtk::PolicyType::Never);
     main_well.set_propagate_natural_height(false);
     main_well.set_hexpand(true);
     main_well.set_vexpand(true);
     main_well.set_child(Some(main_area));
 
     let right_panel_slot = gtk::ScrolledWindow::new();
-    right_panel_slot.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
-    right_panel_slot.set_overflow(gtk::Overflow::Hidden);
-    right_panel_slot.set_propagate_natural_width(false);
+    configure_fill_width_clip(&right_panel_slot, gtk::PolicyType::Never);
     right_panel_slot.set_propagate_natural_height(false);
     right_panel_slot.set_hexpand(false);
     right_panel_slot.set_vexpand(true);

@@ -278,6 +278,43 @@ pub(super) fn large_popup_content_width(base_width: i32) -> i32 {
         / LARGE_POPUP_WIDTH_DENOMINATOR
 }
 
+pub(super) fn configure_fill_width_clip(
+    scroller: &gtk::ScrolledWindow,
+    vertical_policy: gtk::PolicyType,
+) {
+    scroller.set_policy(gtk::PolicyType::External, vertical_policy);
+    scroller.set_overflow(gtk::Overflow::Hidden);
+    scroller.set_width_request(1);
+    scroller.set_min_content_width(0);
+    scroller.set_max_content_width(1);
+    scroller.set_propagate_natural_width(false);
+    lock_horizontal_adjustment(scroller);
+}
+
+pub(super) fn configure_exact_width_clip(
+    scroller: &gtk::ScrolledWindow,
+    width: i32,
+    vertical_policy: gtk::PolicyType,
+) {
+    let width = width.max(1);
+    scroller.set_policy(gtk::PolicyType::External, vertical_policy);
+    scroller.set_overflow(gtk::Overflow::Hidden);
+    scroller.set_width_request(width);
+    scroller.set_min_content_width(width);
+    scroller.set_max_content_width(width);
+    scroller.set_propagate_natural_width(false);
+    lock_horizontal_adjustment(scroller);
+}
+
+fn lock_horizontal_adjustment(scroller: &gtk::ScrolledWindow) {
+    let adjustment = scroller.hadjustment();
+    adjustment.connect_value_changed(|adjustment| {
+        if adjustment.value() != 0.0 {
+            adjustment.set_value(0.0);
+        }
+    });
+}
+
 fn card_label_width_chars(size: i32) -> i32 {
     (size / 8).clamp(8, 28)
 }

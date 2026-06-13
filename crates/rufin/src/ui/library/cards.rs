@@ -317,7 +317,8 @@ pub(in crate::ui) fn append_album_items(model: &gio::ListStore, rows: Vec<AlbumD
     model.splice(model.n_items(), 0, &additions);
 }
 pub(in crate::ui) const COLLECTION_GRID_CARD_GAP: i32 = 6;
-pub(in crate::ui) const COLLECTION_GRID_TITLE_LINES: i32 = 2;
+pub(in crate::ui) const COLLECTION_GRID_TITLE_LINES: i32 = 1;
+pub(in crate::ui) const COLLECTION_GRID_TITLE_WRAP_LINES: i32 = 2;
 pub(in crate::ui) const COLLECTION_GRID_FIELD_LINES: i32 = 1;
 const COLLECTION_GRID_LABEL_LINE_HEIGHT: i32 = 20;
 
@@ -375,6 +376,27 @@ pub(in crate::ui) fn center_label(
     clip.set_halign(gtk::Align::Center);
     clip.append(&label);
     clip.upcast()
+}
+pub(in crate::ui) fn center_wrapping_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
+    let width = width.max(1);
+    let height = collection_grid_label_height(COLLECTION_GRID_TITLE_LINES);
+    let label = gtk::Label::new(Some(text));
+    if !css_class.is_empty() {
+        label.add_css_class(css_class);
+    }
+    label.set_xalign(0.5);
+    label.set_justify(gtk::Justification::Center);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_lines(COLLECTION_GRID_TITLE_WRAP_LINES);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_chars(1);
+    label.set_max_width_chars((width / 8).clamp(8, 32));
+    label.set_size_request(width, height);
+    if !text.is_empty() {
+        label.set_tooltip_text(Some(text));
+    }
+    label.upcast()
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct AlbumDetailMetaLabelSpec {
@@ -980,8 +1002,8 @@ mod tests {
         let title_only = collection_grid_card_height(180, 0);
         let with_fields = collection_grid_card_height(180, 2);
 
-        assert_eq!(title_only, 226);
-        assert_eq!(with_fields, 278);
+        assert_eq!(title_only, 206);
+        assert_eq!(with_fields, 258);
         assert_eq!(
             with_fields - title_only,
             2 * (COLLECTION_GRID_LABEL_LINE_HEIGHT + COLLECTION_GRID_CARD_GAP)

@@ -379,9 +379,23 @@ menubutton.server-selector > button:hover {
 
 .cover-hover-button {
   border-radius: 999px;
-  background: color-mix(in srgb, @window_bg_color 78%, transparent);
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, @card_bg_color 74%, @accent_bg_color 26%) 82%,
+    transparent
+  );
   color: @window_fg_color;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.26),
+    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 14%, transparent);
+}
+
+.cover-hover-button:hover {
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, @card_bg_color 62%, @accent_bg_color 38%) 90%,
+    transparent
+  );
 }
 
 .cover-hover-transport {
@@ -406,12 +420,16 @@ menubutton.server-selector > button:hover {
 }
 
 .favorite-toggle.active-toggle {
-  color: @accent_color;
+  color: @error_color;
   background: transparent;
 }
 
 .cover-hover-button.favorite-toggle.active-toggle {
-  background: color-mix(in srgb, @window_bg_color 78%, transparent);
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, @card_bg_color 68%, @accent_bg_color 32%) 86%,
+    transparent
+  );
 }
 
 .cover-favorite-button.favorite-toggle {
@@ -779,7 +797,7 @@ scale.volume-slider trough {
 }
 
 .detail-showcase-action-button.favorite-toggle.active-toggle {
-  color: @accent_color;
+  color: @error_color;
   background: color-mix(in srgb, @window_fg_color 14%, transparent);
 }
 
