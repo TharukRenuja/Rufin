@@ -186,9 +186,15 @@ impl Shell {
         self: &Rc<Self>,
         playlist_id: PlaylistId,
     ) -> gtk::Widget {
-        let detail = self
-            .controller
-            .cached_playlist_detail(&playlist_id)
+        let settings = self.state.settings.borrow().clone();
+        let server = self.state.library.borrow().server.clone();
+        let detail = server
+            .as_ref()
+            .map(|server| {
+                self.controller
+                    .cached_playlist_detail_for_server(&playlist_id, server, &settings)
+            })
+            .unwrap_or_else(|| self.controller.cached_playlist_detail(&playlist_id))
             .ok()
             .flatten()
             .or_else(|| {
@@ -216,10 +222,7 @@ impl Shell {
         };
         let mut playlist = detail.playlist.clone();
         playlist.image_refs = cover_refs;
-        let artwork = crate::cover_art_policy::selected_playlist_artwork(
-            &playlist,
-            &self.state.settings.borrow(),
-        );
+        let artwork = crate::cover_art_policy::selected_playlist_artwork(&playlist, &settings);
         let summary = format!(
             "{} {} • {}",
             detail.playlist.track_count,

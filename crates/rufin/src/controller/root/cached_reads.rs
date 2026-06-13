@@ -355,6 +355,19 @@ pub(in crate::controller) fn track_album_refs(
         return Ok(());
     }
     let settings = load_settings_for_saved(store, saved);
+    track_album_refs_with_settings(store, saved, &settings, tracks, albums)
+}
+
+pub(in crate::controller) fn track_album_refs_with_settings(
+    store: &StoreHandle,
+    saved: &SavedServer,
+    settings: &AppSettings,
+    tracks: &mut [Track],
+    albums: &[Album],
+) -> Result<(), String> {
+    if tracks.is_empty() {
+        return Ok(());
+    }
     let mut image_refs = albums
         .iter()
         .filter_map(|album| {
@@ -395,7 +408,7 @@ pub(in crate::controller) fn track_album_refs(
             .with_store(|store| store.load_albums_by_ids(&saved.server.id, &missing_album_ids))?;
         for album in &mut loaded {
             scrub_source_image_ref(saved, &mut album.image_ref);
-            cover_art_policy::bind_album(album, &settings);
+            cover_art_policy::bind_album(album, settings);
             if let Some(image_ref) = album.image_ref.clone() {
                 image_refs.insert(album.id.clone(), image_ref);
             }
@@ -403,7 +416,7 @@ pub(in crate::controller) fn track_album_refs(
     }
     for track in tracks {
         if let Some(image_ref) = image_refs.get(&track.album_id) {
-            cover_art_policy::bind_track_with_album_ref(track, Some(image_ref), &settings);
+            cover_art_policy::bind_track_with_album_ref(track, Some(image_ref), settings);
         }
     }
     Ok(())

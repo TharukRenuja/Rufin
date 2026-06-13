@@ -394,6 +394,12 @@ menubutton.server-selector > button:hover {
   padding: 0;
 }
 
+.cover-menu-button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+
 .favorite-toggle {
   font-size: 17px;
   font-weight: 700;
@@ -428,6 +434,21 @@ menubutton.server-selector > button:hover {
 .player-now-playing-wall,
 .player-identity {
   min-width: 0;
+}
+
+.player-title-row {
+  min-width: 0;
+}
+
+.player-title-menu-button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  opacity: 0.82;
+}
+
+.player-title-menu-button:hover {
+  opacity: 1;
 }
 
 .player-transport {

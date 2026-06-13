@@ -1582,6 +1582,12 @@ msgstr "Alustamiseks lisa midagi esitusjärjekorda"
 msgid "Open fullscreen player"
 msgstr "Ava muusikaesitaja täisekraanivaates"
 
+#: crates/rufin/src/ui/cards.rs:557
+#: crates/rufin/src/ui/player.rs:730
+#: crates/rufin/src/ui/settings_persistence.rs:402
+msgid "More actions"
+msgstr ""
+
 #: crates/rufin/src/i18n.rs:758
 msgid "Close fullscreen player"
 msgstr "Sulge muusikaesitaja täisekraanivaade"

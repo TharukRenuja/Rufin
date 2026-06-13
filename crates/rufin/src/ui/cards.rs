@@ -14,8 +14,10 @@ use super::{
     Shell, THUMB_COVER_SIZE, add_card_label_link, add_link_hover, album_artist_route,
     favorite_button_is_active, favorite_icon_button, icon_button, install_album_context_menu,
     install_track_context_menu, loaded_tracks_window_play_activation,
-    playlist_entry_play_activation, playlist_play_source_key, selected_music_folder_id,
-    set_favorite_button_active, smart_playlist_play_source_key, stable_seed, track_artist_route,
+    playlist_entry_play_activation, playlist_play_source_key, present_album_context_menu,
+    present_playlist_context_menu, present_smart_playlist_context_menu, present_track_context_menu,
+    selected_music_folder_id, set_favorite_button_active, smart_playlist_play_source_key,
+    stable_seed, track_artist_route,
 };
 use crate::controller::AppController;
 
@@ -183,7 +185,19 @@ pub(super) fn album_cover_tile(
         .connect_clicked(move |_| open_shell.navigate(Route::AlbumDetail(open_album_id.clone())));
     overlay.set_child(Some(&album_button));
 
-    let controls = cover_hover_controls(size, "Play album", album.favorite);
+    let mut controls = cover_hover_controls(size, "Play album", album.favorite);
+    let menu = controls.add_context_button();
+    let menu_target = overlay.clone();
+    let menu_shell = Rc::clone(shell);
+    let menu_album = album.clone();
+    menu.connect_clicked(move |_| {
+        present_album_context_menu(
+            menu_target.upcast_ref(),
+            &menu_shell,
+            super::context_album(&menu_shell, &menu_album),
+            cover_context_point(size),
+        );
+    });
     if let Some(controller) = controller {
         let controller = controller.clone();
         let album_id = album.id.clone();
@@ -288,7 +302,19 @@ pub(super) fn track_play_tile(
     });
     overlay.set_child(Some(&cover_button));
 
-    let controls = cover_hover_controls(size, "Play track", track.favorite);
+    let mut controls = cover_hover_controls(size, "Play track", track.favorite);
+    let menu = controls.add_context_button();
+    let menu_target = overlay.clone();
+    let menu_shell = Rc::clone(shell);
+    let menu_track = track.clone();
+    menu.connect_clicked(move |_| {
+        present_track_context_menu(
+            menu_target.upcast_ref(),
+            &menu_shell,
+            super::context_track(&menu_shell, &menu_track),
+            cover_context_point(size),
+        );
+    });
     let controller = shell.controller.clone();
     let track_for_play = track.clone();
     let hover_play_action = play_action.clone();
@@ -353,7 +379,19 @@ pub(super) fn playlist_cover_tile(
     });
     overlay.set_child(Some(&playlist_button));
 
-    let controls = cover_play_hover_controls(size, "Play playlist");
+    let mut controls = cover_play_hover_controls(size, "Play playlist");
+    let menu = controls.add_context_button();
+    let menu_target = overlay.clone();
+    let menu_shell = Rc::clone(shell);
+    let menu_playlist = playlist.clone();
+    menu.connect_clicked(move |_| {
+        present_playlist_context_menu(
+            menu_target.upcast_ref(),
+            &menu_shell,
+            menu_playlist.clone(),
+            cover_context_point(size),
+        );
+    });
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
     controls.play.connect_clicked(move |_| {
@@ -421,7 +459,19 @@ pub(super) fn smart_playlist_cover_tile(
     });
     overlay.set_child(Some(&playlist_button));
 
-    let controls = cover_play_hover_controls(size, "Play smart playlist");
+    let mut controls = cover_play_hover_controls(size, "Play smart playlist");
+    let menu = controls.add_context_button();
+    let menu_target = overlay.clone();
+    let menu_shell = Rc::clone(shell);
+    let menu_playlist = playlist.clone();
+    menu.connect_clicked(move |_| {
+        present_smart_playlist_context_menu(
+            menu_target.upcast_ref(),
+            &menu_shell,
+            menu_playlist.clone(),
+            cover_context_point(size),
+        );
+    });
     let controller = shell.controller.clone();
     let playlist_id = playlist.id.clone();
     let selected_music_folder_id = selected_music_folder_id(shell);
@@ -499,12 +549,29 @@ pub(super) struct CoverHoverControls {
     pub(super) play: gtk::Button,
     pub(super) play_last: gtk::Button,
     pub(super) favorite: Option<gtk::Button>,
+    pub(super) menu: Option<gtk::Button>,
 }
 
 impl CoverHoverControls {
+    pub(super) fn add_context_button(&mut self) -> gtk::Button {
+        let menu = icon_button("view-more-symbolic", "More actions");
+        menu.add_css_class("cover-hover-button");
+        menu.add_css_class("cover-menu-button");
+        menu.set_halign(gtk::Align::Start);
+        menu.set_valign(gtk::Align::End);
+        menu.set_margin_start(6);
+        menu.set_margin_bottom(6);
+        menu.set_visible(false);
+        self.menu = Some(menu.clone());
+        menu
+    }
+
     pub(super) fn add_to_overlay(&self, overlay: &gtk::Overlay) {
         overlay.add_overlay(&self.shade);
         overlay.add_overlay(&self.transport);
+        if let Some(menu) = self.menu.as_ref() {
+            overlay.add_overlay(menu);
+        }
         if let Some(favorite) = self.favorite.as_ref() {
             overlay.add_overlay(favorite);
         }
@@ -515,21 +582,29 @@ impl CoverHoverControls {
         let shade_for_enter = self.shade.clone();
         let transport_for_enter = self.transport.clone();
         let favorite_for_enter = self.favorite.clone();
+        let menu_for_enter = self.menu.clone();
         motion.connect_enter(move |_, _, _| {
             shade_for_enter.set_visible(true);
             transport_for_enter.set_visible(true);
             if let Some(favorite) = favorite_for_enter.as_ref() {
                 favorite.set_visible(true);
             }
+            if let Some(menu) = menu_for_enter.as_ref() {
+                menu.set_visible(true);
+            }
         });
         let shade_for_leave = self.shade.clone();
         let transport_for_leave = self.transport.clone();
         let favorite_for_leave = self.favorite.clone();
+        let menu_for_leave = self.menu.clone();
         motion.connect_leave(move |_| {
             shade_for_leave.set_visible(false);
             transport_for_leave.set_visible(false);
             if let Some(favorite) = favorite_for_leave.as_ref() {
                 favorite.set_visible(false);
+            }
+            if let Some(menu) = menu_for_leave.as_ref() {
+                menu.set_visible(false);
             }
         });
         overlay.add_controller(motion);
@@ -600,7 +675,12 @@ pub(super) fn cover_play_hover_controls(size: i32, play_label: &str) -> CoverHov
         play,
         play_last,
         favorite: None,
+        menu: None,
     }
+}
+
+pub(super) fn cover_context_point(size: i32) -> Option<(f64, f64)> {
+    Some((20.0, f64::from(size.saturating_sub(20))))
 }
 
 fn pin_cover_hover_button(button: &gtk::Button, size: i32) {
