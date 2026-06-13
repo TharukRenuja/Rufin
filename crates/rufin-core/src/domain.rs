@@ -461,6 +461,8 @@ pub struct Artist {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_rating: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musicbrainz_artist_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_ref: Option<ImageRef>,
 }
 

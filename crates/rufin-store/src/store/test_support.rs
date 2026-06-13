@@ -91,6 +91,7 @@ pub(super) fn artist(number: u32, image_ref: Option<ImageRef>) -> Artist {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref,
     }
 }

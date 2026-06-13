@@ -19,7 +19,7 @@ use rufin_provider::{
     ProviderError, ProviderIdentity, ProviderResult, RandomTrackRequest, SearchResults,
     StreamDescriptor,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -1433,14 +1433,10 @@ fn cue_scanned_track(
         .first()
         .or_else(|| album_artist_credits.first())
         .map(|artist| artist.id.clone());
-    let album_id = local_id(
-        "album",
-        &format!(
-            "{}:{}:{}",
-            credit_identity_value(&album_artist_credits),
-            normalized_identity_value(&album),
-            album_grouping_path(&cue_facts.path)
-        ),
+    let album_id = local_album_id(
+        &album_artist_credits,
+        &album,
+        &album_grouping_path(&cue_facts.path),
     );
     let cue_identity = format!("{}:{}", cue_facts.path.to_string_lossy(), cue_track.number);
     let duration_millis = cue_source
@@ -1765,15 +1761,7 @@ fn read_track(path: PathBuf) -> Option<ScannedTrack> {
         .or_else(|| album_artist_credits.first())
         .map(|artist| artist.id.clone());
     let path_text = path.to_string_lossy().into_owned();
-    let album_id = local_id(
-        "album",
-        &format!(
-            "{}:{}:{}",
-            credit_identity_value(&album_artist_credits),
-            normalized_identity_value(&album),
-            album_grouping_path(&path)
-        ),
-    );
+    let album_id = local_album_id(&album_artist_credits, &album, &album_grouping_path(&path));
     let genres = tag
         .and_then(|tag| tag.genre().map(|genre| split_credit_names(&genre)))
         .unwrap_or_default();
@@ -1926,6 +1914,22 @@ fn credit_identity_value(credits: &[ArtistCredit]) -> String {
         .map(|credit| credit.id.as_str())
         .collect::<Vec<_>>()
         .join("\u{1f}")
+}
+
+fn local_album_id(
+    album_artist_credits: &[ArtistCredit],
+    album: &str,
+    grouping_key: &str,
+) -> AlbumId {
+    local_id(
+        "album",
+        &format!(
+            "{}:{}:{}",
+            credit_identity_value(album_artist_credits),
+            normalized_identity_value(album),
+            grouping_key
+        ),
+    )
 }
 
 fn normalized_identity_value(value: &str) -> String {

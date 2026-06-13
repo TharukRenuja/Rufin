@@ -442,6 +442,7 @@ fn musicbrainz_ids_become_optional_identity_data() {
     assert_eq!(credit.musicbrainz_artist_id.as_deref(), Some(artist_id));
     assert!(credit.id.as_str().contains(artist_id));
 }
+
 #[tokio::test]
 async fn manifest_scan_update() {
     let dir = tempfile::tempdir().expect("tempdir");

@@ -1641,6 +1641,494 @@ fn album_artist_image() {
     assert_eq!(loaded.image_ref, album.image_ref);
     assert_eq!(matching.image_ref, album.image_ref);
 }
+
+#[test]
+fn album_artist_provider_page_does_not_merge_label_only_projection() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let linked_id = ArtistId::new("jellyfin:artist:linked-album-artist");
+    let page_id = ArtistId::new("jellyfin:artist:provider-page-album-artist");
+    let mut album = album_with_image(9);
+    album.artist = "Linked Album Artist".to_string();
+    album.artist_id = Some(linked_id.clone());
+    album.album_artist_credits = vec![credit(linked_id.clone(), "Linked Album Artist")];
+    let mut track = track(1, &album);
+    track.album_artist_credits = album.album_artist_credits.clone();
+    let page_image = image_ref("provider-page-album-artist", "provider-page-tag");
+    let mut page_artist = artist(90, Some(page_image.clone()));
+    page_artist.id = page_id.clone();
+    page_artist.name = "Linked Album Artist".to_string();
+    page_artist.favorite = true;
+    page_artist.play_count = Some(7);
+    page_artist.user_rating = Some(80);
+
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&page_artist),
+            true,
+            generation,
+        )
+        .expect("seed provider page artist");
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .refresh_library_counts(&saved.server.id)
+        .expect("refresh counts");
+    store
+        .upsert_artists_delta(
+            &saved.server.id,
+            std::slice::from_ref(&page_artist),
+            true,
+            generation,
+        )
+        .expect("upsert provider page artist");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let loaded = store
+        .load_artists(&saved.server.id, true, 0, 10)
+        .expect("load album artists");
+    let matching = store
+        .load_artists_matching(&saved.server.id, true, "Linked Album Artist", 0, 10)
+        .expect("search album artists");
+    assert_eq!(loaded.total, 2);
+    assert_eq!(matching.total, 2);
+    assert!(loaded.items.iter().any(|artist| artist.id == linked_id));
+    assert!(loaded.items.iter().any(|artist| artist.id == page_id));
+
+    let next_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin no-op sync");
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            next_generation,
+        )
+        .expect("upsert same album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            std::slice::from_ref(&track),
+            next_generation,
+        )
+        .expect("upsert same track");
+    let delta = store
+        .upsert_artists_delta(
+            &saved.server.id,
+            std::slice::from_ref(&page_artist),
+            true,
+            next_generation,
+        )
+        .expect("upsert same provider page artist");
+    assert!(delta.album_artists.is_empty());
+}
+
+#[test]
+fn album_artist_provider_page_does_not_merge_ambiguous_linked_names() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let first_id = ArtistId::new("jellyfin:artist:first-linked");
+    let second_id = ArtistId::new("jellyfin:artist:second-linked");
+    let page_id = ArtistId::new("jellyfin:artist:ambiguous-page");
+    let mut first_album = album(10);
+    first_album.artist = "Shared Name".to_string();
+    first_album.artist_id = Some(first_id.clone());
+    first_album.album_artist_credits = vec![credit(first_id.clone(), "Shared Name")];
+    let mut second_album = album(11);
+    second_album.artist = "Shared Name".to_string();
+    second_album.artist_id = Some(second_id.clone());
+    second_album.album_artist_credits = vec![credit(second_id.clone(), "Shared Name")];
+    let mut first_track = track(1, &first_album);
+    first_track.album_artist_credits = first_album.album_artist_credits.clone();
+    let mut second_track = track(2, &second_album);
+    second_track.album_artist_credits = second_album.album_artist_credits.clone();
+    let mut page_artist = artist(91, None);
+    page_artist.id = page_id.clone();
+    page_artist.name = "Shared Name".to_string();
+
+    store
+        .upsert_albums(&saved.server.id, &[first_album, second_album], generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, &[first_track, second_track], generation)
+        .expect("upsert tracks");
+    store
+        .refresh_library_counts(&saved.server.id)
+        .expect("refresh counts");
+    let linked_count: i64 = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(DISTINCT artist_id)
+            FROM album_artist_links
+            WHERE server_id = ?1
+              AND LOWER(TRIM(name)) = LOWER(TRIM('Shared Name'))
+            ",
+            rusqlite::params![saved.server.id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("linked count");
+    assert_eq!(linked_count, 2);
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&page_artist),
+            true,
+            generation,
+        )
+        .expect("upsert provider page artist");
+
+    let loaded = store
+        .load_artists(&saved.server.id, true, 0, 10)
+        .expect("load album artists");
+    let ids = loaded
+        .items
+        .iter()
+        .filter(|artist| artist.name == "Shared Name")
+        .map(|artist| artist.id.clone())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(ids.len(), 3);
+    assert!(ids.contains(&first_id));
+    assert!(ids.contains(&second_id));
+    assert!(ids.contains(&page_id));
+}
+
+#[test]
+fn album_artist_provider_page_merges_shared_musicbrainz_identity() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let primary_id = ArtistId::new("jellyfin:artist:primary-name");
+    let alias_id = ArtistId::new("jellyfin:artist:alias-name");
+    let mut primary = artist(92, None);
+    primary.id = primary_id.clone();
+    primary.name = "Primary Name".to_string();
+    primary.musicbrainz_artist_id = Some("mb-artist-shared".to_string());
+    let mut alias = artist(93, None);
+    alias.id = alias_id.clone();
+    alias.name = "Alias Name".to_string();
+    alias.musicbrainz_artist_id = Some("mb-artist-shared".to_string());
+    let mut album = album(13);
+    album.artist = "Alias Name".to_string();
+    album.artist_id = Some(alias_id.clone());
+    album.album_artist_credits = vec![credit(alias_id.clone(), "Alias Name")];
+    let mut track = track(1, &album);
+    track.album_artist_credits = album.album_artist_credits.clone();
+
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    let delta = store
+        .upsert_artists_delta(
+            &saved.server.id,
+            &[primary.clone(), alias],
+            true,
+            generation,
+        )
+        .expect("upsert album artists");
+    let loaded = store
+        .load_artists(&saved.server.id, true, 0, 10)
+        .expect("load album artists");
+    let alias_entity_id: String = store
+        .connection
+        .query_row(
+            "
+            SELECT entity_id
+            FROM entity_identity_keys
+            WHERE server_id = ?1
+              AND entity_kind = 'album_artist'
+              AND namespace = 'source:artist_id'
+              AND value = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), alias_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("alias identity");
+    let alias_mbid_key_count: i64 = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM entity_identity_keys
+            WHERE server_id = ?1
+              AND entity_kind = 'album_artist'
+              AND namespace = 'musicbrainz:artist'
+              AND entity_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), alias_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("alias mbid keys");
+    let alias_link_count: i64 = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM album_artist_links
+            WHERE server_id = ?1
+              AND artist_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), alias_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("alias links");
+    let canonical_link_count: i64 = store
+        .connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM album_artist_links
+            WHERE server_id = ?1
+              AND artist_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), primary_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("canonical links");
+    let detail = store
+        .load_artist_detail(&saved.server.id, &primary_id)
+        .expect("load detail")
+        .expect("detail");
+
+    assert_eq!(delta.album_artists.added, vec![primary_id.clone()]);
+    assert_eq!(loaded.total, 1);
+    assert_eq!(loaded.items[0].id, primary_id);
+    assert_eq!(loaded.items[0].name, "Primary Name");
+    assert_eq!(alias_entity_id, loaded.items[0].id.as_str());
+    assert_eq!(alias_mbid_key_count, 0);
+    assert_eq!(alias_link_count, 0);
+    assert_eq!(canonical_link_count, 1);
+    assert_eq!(
+        detail
+            .albums
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<Vec<_>>(),
+        vec![album.id.clone()]
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "album_artist",
+            "musicbrainz:artist",
+            "mb-artist-shared"
+        ),
+        1
+    );
+
+    let next_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin no-op sync");
+    let album_delta = store
+        .upsert_albums_delta(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            next_generation,
+        )
+        .expect("upsert same alias album");
+    let delta = store
+        .upsert_artists_delta(
+            &saved.server.id,
+            &[primary.clone(), {
+                let mut artist = primary.clone();
+                artist.id = alias_id;
+                artist.name = "Alias Name".to_string();
+                artist
+            }],
+            true,
+            next_generation,
+        )
+        .expect("upsert same album artists");
+    assert!(album_delta.albums.links.is_empty());
+    assert!(delta.album_artists.is_empty());
+}
+
+#[test]
+fn album_artist_provider_page_replaces_stale_musicbrainz_identity() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let artist_id = ArtistId::new("jellyfin:artist:stale-mbid");
+    let mut artist = artist(94, None);
+    artist.id = artist_id;
+    artist.name = "Changing Artist".to_string();
+    artist.musicbrainz_artist_id = Some("mbid-before".to_string());
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&artist),
+            true,
+            generation,
+        )
+        .expect("upsert artist with mbid");
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "album_artist",
+            "musicbrainz:artist",
+            "mbid-before"
+        ),
+        1
+    );
+
+    artist.musicbrainz_artist_id = Some("mbid-after".to_string());
+    let next_generation = store.begin_sync(&saved.server.id).expect("begin next sync");
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&artist),
+            true,
+            next_generation,
+        )
+        .expect("upsert artist without mbid");
+
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "album_artist",
+            "musicbrainz:artist",
+            "mbid-before"
+        ),
+        0
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "album_artist",
+            "musicbrainz:artist",
+            "mbid-after"
+        ),
+        1
+    );
+}
+
+#[test]
+fn artist_page_unknown_musicbrainz_id_preserves_credit_identity() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let artist_id = ArtistId::new("local:artist:musicbrainz:credit-page");
+    let album = album(14);
+    let mut track = track(1, &album);
+    track.artist_credits = vec![mbid_credit(
+        artist_id.clone(),
+        "Credit Page Artist",
+        "credit-page-mbid",
+    )];
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    let mut artist = artist(95, None);
+    artist.id = artist_id;
+    artist.name = "Credit Page Artist".to_string();
+    artist.musicbrainz_artist_id = None;
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&artist),
+            false,
+            generation,
+        )
+        .expect("upsert artist page");
+
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "artist",
+            "musicbrainz:artist",
+            "credit-page-mbid"
+        ),
+        1
+    );
+}
+
+#[test]
+fn album_artist_repair_splits_compound_credit_when_track_artists_match() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let first_id = ArtistId::new("jellyfin:artist:compound-first");
+    let second_id = ArtistId::new("jellyfin:artist:compound-second");
+    let compound_id = ArtistId::new("jellyfin:artist:compound-alias");
+    let mut album = album(12);
+    album.artist = "Primary Artist / Score Artist".to_string();
+    album.artist_id = Some(compound_id.clone());
+    album.album_artist_credits = vec![credit(compound_id.clone(), "Primary Artist / Score Artist")];
+    let mut track = track(1, &album);
+    track.artist_credits = vec![
+        credit(first_id.clone(), "Primary Artist"),
+        credit(second_id.clone(), "Score Artist"),
+    ];
+    track.album_artist_credits = album.album_artist_credits.clone();
+
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .refresh_library_counts(&saved.server.id)
+        .expect("refresh counts");
+
+    let loaded = store
+        .load_artists(&saved.server.id, true, 0, 10)
+        .expect("load album artists");
+    let ids = loaded
+        .items
+        .iter()
+        .map(|artist| artist.id.clone())
+        .collect::<BTreeSet<_>>();
+
+    assert!(ids.contains(&first_id));
+    assert!(ids.contains(&second_id));
+    assert!(!ids.contains(&compound_id));
+    let first = loaded
+        .items
+        .iter()
+        .find(|artist| artist.id == first_id)
+        .expect("first resolved artist");
+    assert_eq!(first.name, "Primary Artist");
+
+    let next_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin no-op sync");
+    let delta = store
+        .upsert_albums_delta(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            next_generation,
+        )
+        .expect("upsert same compound album");
+    assert!(delta.albums.links.is_empty());
+}
 #[test]
 fn schema_replace_local() {
     let store = Store::open_memory().expect("open store");
@@ -1851,6 +2339,14 @@ fn track_id_set(tracks: &[Track]) -> BTreeSet<String> {
         .iter()
         .map(|track| track.id.as_str().to_string())
         .collect()
+}
+
+fn mbid_credit(id: ArtistId, name: &str, mbid: &str) -> ArtistCredit {
+    ArtistCredit {
+        id,
+        name: name.to_string(),
+        musicbrainz_artist_id: Some(mbid.to_string()),
+    }
 }
 
 #[test]
@@ -2158,6 +2654,166 @@ fn projection_writes_populate_entity_identity_rows() {
             "track",
             track.id.as_str(),
             "cover"
+        ),
+        1
+    );
+}
+
+#[test]
+fn projection_loads_artist_credit_musicbrainz_ids() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album_artist_id = ArtistId::new("local:artist:musicbrainz:album-artist-one");
+    let track_artist_id = ArtistId::new("local:artist:musicbrainz:track-artist-one");
+    let mut album = album(1);
+    album.artist_id = Some(album_artist_id.clone());
+    album.album_artist_credits = vec![mbid_credit(
+        album_artist_id.clone(),
+        "Album Artist",
+        "album-artist-one",
+    )];
+    album.artist_credits = vec![mbid_credit(
+        track_artist_id.clone(),
+        "Track Artist",
+        "track-artist-one",
+    )];
+    let mut track = track(1, &album);
+    track.artist_id = Some(track_artist_id.clone());
+    track.artist_credits = album.artist_credits.clone();
+    track.album_artist_credits = album.album_artist_credits.clone();
+
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+
+    let loaded_track = store
+        .load_track(&saved.server.id, &track.id)
+        .expect("load track")
+        .expect("track");
+    let loaded_album = store
+        .load_albums(&saved.server.id, 0, 10)
+        .expect("load albums")
+        .items
+        .into_iter()
+        .find(|loaded| loaded.id == album.id)
+        .expect("album");
+
+    assert_eq!(
+        loaded_track.artist_credits[0]
+            .musicbrainz_artist_id
+            .as_deref(),
+        Some("track-artist-one")
+    );
+    assert_eq!(
+        loaded_track.album_artist_credits[0]
+            .musicbrainz_artist_id
+            .as_deref(),
+        Some("album-artist-one")
+    );
+    assert_eq!(
+        loaded_album.album_artist_credits[0]
+            .musicbrainz_artist_id
+            .as_deref(),
+        Some("album-artist-one")
+    );
+}
+
+#[test]
+fn projection_preserves_and_replaces_artist_credit_musicbrainz_ids() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let artist_id = ArtistId::new("local:artist:musicbrainz:credit-one");
+    let album = album(1);
+    let mut track = track(1, &album);
+    track.artist_id = Some(artist_id.clone());
+    track.artist_credits = vec![mbid_credit(artist_id.clone(), "Credit Artist", "old-mbid")];
+    let first_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin first sync");
+    store
+        .upsert_albums(
+            &saved.server.id,
+            std::slice::from_ref(&album),
+            first_generation,
+        )
+        .expect("upsert album");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            std::slice::from_ref(&track),
+            first_generation,
+        )
+        .expect("upsert first track");
+
+    let mut unknown_track = track.clone();
+    unknown_track.artist_credits = vec![credit(artist_id.clone(), "Credit Artist")];
+    let second_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin second sync");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            std::slice::from_ref(&unknown_track),
+            second_generation,
+        )
+        .expect("upsert unknown track");
+    let loaded_unknown = store
+        .load_track(&saved.server.id, &track.id)
+        .expect("load unknown track")
+        .expect("track");
+    assert_eq!(
+        loaded_unknown.artist_credits[0]
+            .musicbrainz_artist_id
+            .as_deref(),
+        Some("old-mbid")
+    );
+
+    let mut changed_track = unknown_track.clone();
+    changed_track.artist_credits = vec![mbid_credit(artist_id, "Credit Artist", "new-mbid")];
+    let third_generation = store
+        .begin_sync(&saved.server.id)
+        .expect("begin third sync");
+    store
+        .upsert_tracks(
+            &saved.server.id,
+            std::slice::from_ref(&changed_track),
+            third_generation,
+        )
+        .expect("upsert changed track");
+    let loaded_changed = store
+        .load_track(&saved.server.id, &track.id)
+        .expect("load changed track")
+        .expect("track");
+
+    assert_eq!(
+        loaded_changed.artist_credits[0]
+            .musicbrainz_artist_id
+            .as_deref(),
+        Some("new-mbid")
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "artist",
+            "musicbrainz:artist",
+            "old-mbid"
+        ),
+        0
+    );
+    assert_eq!(
+        entity_key_count(
+            &store,
+            &saved.server.id,
+            "artist",
+            "musicbrainz:artist",
+            "new-mbid"
         ),
         1
     );

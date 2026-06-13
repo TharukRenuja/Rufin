@@ -15,6 +15,7 @@ fn sync_hide_artist() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let linked_artist = Artist {
@@ -26,6 +27,7 @@ fn sync_hide_artist() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut album = album(1);

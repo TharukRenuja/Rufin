@@ -583,6 +583,9 @@ async fn library_map_counts() {
                     "PlayCount": 22,
                     "LastPlayedDate": "2024-05-03T09:10:11.0000000Z",
                     "Rating": 3
+                },
+                "ProviderIds": {
+                    "MusicBrainzArtist": "mb-artist-one"
                 }
             }]
         })))
@@ -601,6 +604,10 @@ async fn library_map_counts() {
     assert_eq!(artists.items[0].last_played.as_deref(), Some("2024-05-03"));
     assert_eq!(artists.items[0].play_count, Some(22));
     assert_eq!(artists.items[0].user_rating, Some(3));
+    assert_eq!(
+        artists.items[0].musicbrainz_artist_id.as_deref(),
+        Some("mb-artist-one")
+    );
     assert!(artists.items[0].favorite);
 }
 #[tokio::test]

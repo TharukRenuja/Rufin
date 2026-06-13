@@ -391,6 +391,7 @@ fn generate_fake_library(scale: FakeScale) -> FakeLibrary {
             last_played: None,
             play_count: Some((index * 3) as u32),
             user_rating: None,
+            musicbrainz_artist_id: None,
             image_ref: Some(fake_image_ref("artist", index + 1)),
         })
         .collect::<Vec<_>>();

@@ -2850,6 +2850,7 @@ pub(in crate::controller) fn local_artist_grids_use_detail_selected_mbid_fallbac
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut settings = AppSettings {
@@ -2937,6 +2938,7 @@ pub(in crate::controller) fn startup_repairs_cached_remote_artist_art_before_rea
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     store
@@ -3134,6 +3136,7 @@ pub(in crate::controller) fn album_artist_grid_uses_track_album_fallback_art() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut settings = AppSettings::default();
@@ -3205,6 +3208,7 @@ pub(in crate::controller) fn album_artist_grid_bridges_source_duplicate_artist_i
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     store
@@ -3629,6 +3633,7 @@ pub(in crate::controller) fn artist_grid_uses_track_fallback_art() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut settings = AppSettings::default();
@@ -3706,6 +3711,7 @@ pub(in crate::controller) fn startup_snapshot_includes_artist_grid_fallback_art(
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let singer = rufin_core::Artist {
@@ -3717,6 +3723,7 @@ pub(in crate::controller) fn startup_snapshot_includes_artist_grid_fallback_art(
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut settings = AppSettings::default();

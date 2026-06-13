@@ -282,7 +282,7 @@ impl JellyfinProvider {
             .append_pair("Limit", &request.limit.to_string())
             .append_pair(
                 "Fields",
-                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags",
+                "UserData,ItemCounts,ChildCount,AlbumCount,SongCount,ImageTags,ProviderIds",
             );
 
         let response = self.get_json::<ItemQueryResult>(url).await?;

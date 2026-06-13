@@ -640,6 +640,7 @@ fn relation_track_cache() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     store
@@ -748,6 +749,7 @@ fn relation_preserve_relationships() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     store
@@ -785,6 +787,7 @@ fn artist_detail_primary() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut track = track(1, &album);
@@ -885,6 +888,7 @@ fn nonprimary_appearance() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut track = track(1, &album);
@@ -931,6 +935,7 @@ fn relation_use_missing() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     store
@@ -973,6 +978,7 @@ fn matched_track_appearance() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut track = track(1, &album);
@@ -1095,6 +1101,7 @@ fn relation_match_missing() {
         last_played: None,
         play_count: None,
         user_rating: None,
+        musicbrainz_artist_id: None,
         image_ref: None,
     };
     let mut album = album(7);
