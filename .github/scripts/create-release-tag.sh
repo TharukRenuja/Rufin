@@ -3,28 +3,23 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--push] [--replace] [--skip-flathub] [--skip-github-release] VERSION SUMMARY
+Usage: .github/scripts/create-release-tag.sh [--base TAG] [--dry-run] [--replace] [--skip-flathub] VERSION SUMMARY
 
 Updates release metadata, commits it, and creates a signed annotated tag whose
 message includes commits since the previous release tag. VERSION may be vX.Y.Z
-or X.Y.Z. With --push, opens empty-body release PRs, waits for Checks to pass,
-merges them, pushes the signed tag, gates and verifies the AUR follow-up the
-same way, publishes the GitHub Release from the tag using the authenticated gh
-user, opens or updates the Flathub repository PR, then watches the
-release-triggered AUR, Flatpak, and Nix workflows.
+or X.Y.Z. The script also updates the checked-in Flathub manifest unless
+--skip-flathub is passed.
 
 Examples:
   .github/scripts/create-release-tag.sh --dry-run v0.2.6 "More fixes"
-  .github/scripts/create-release-tag.sh --push v0.2.6 "More fixes"
+  .github/scripts/create-release-tag.sh v0.2.6 "More fixes"
 USAGE
 }
 
 base_tag=""
 dry_run=0
-push_tag=0
 replace_tag=0
 skip_flathub=0
-skip_github_release=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,20 +35,12 @@ while [[ $# -gt 0 ]]; do
       dry_run=1
       shift
       ;;
-    --push)
-      push_tag=1
-      shift
-      ;;
     --replace)
       replace_tag=1
       shift
       ;;
     --skip-flathub)
       skip_flathub=1
-      shift
-      ;;
-    --skip-github-release)
-      skip_github_release=1
       shift
       ;;
     -h|--help)
@@ -92,19 +79,6 @@ if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 plain_version="${version#v}"
-release_branch="release/$version"
-aur_branch="$release_branch-aur"
-default_branch="${RUFIN_RELEASE_DEFAULT_BRANCH:-main}"
-
-if ! git check-ref-format "refs/heads/$release_branch"; then
-  echo "release branch name is invalid: $release_branch" >&2
-  exit 1
-fi
-
-if ! git check-ref-format "refs/heads/$aur_branch"; then
-  echo "AUR branch name is invalid: $aur_branch" >&2
-  exit 1
-fi
 
 if [[ "$dry_run" != "1" && "$replace_tag" != "1" ]] &&
   git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
@@ -338,246 +312,11 @@ update_nix_cargo_hash() {
     return
   fi
 
-  if command -v distrobox >/dev/null 2>&1 &&
-    distrobox list 2>/dev/null | grep -Eq '(^|[[:space:]])rufin-arch([[:space:]]|$)'; then
-    local root_quoted
-    printf -v root_quoted '%q' "$(pwd)"
-    distrobox enter --name rufin-arch -- bash -lc \
-      "cd $root_quoted && bash .github/scripts/update-nix-cargo-hash.sh"
-    return
-  fi
-
   cat >&2 <<'MSG'
 nix is required to refresh flake.nix cargoHash during release preparation.
-Install Nix, or make sure the rufin-arch Distrobox is available with Nix
-installed, before creating a release.
+Install Nix before creating a release.
 MSG
   exit 1
-}
-
-check_github_release_prereqs() {
-  if ! command -v gh >/dev/null 2>&1; then
-    cat >&2 <<'MSG'
-gh is required to open, watch, and merge release PRs.
-Install GitHub CLI and authenticate it before using --push.
-MSG
-    exit 1
-  fi
-
-  if ! gh auth status >/dev/null 2>&1; then
-    cat >&2 <<'MSG'
-gh must be authenticated to open, watch, and merge release PRs.
-Run `gh auth login` before using --push.
-MSG
-    exit 1
-  fi
-
-  if [[ "$skip_github_release" == "1" ]]; then
-    return
-  fi
-
-  if gh release view "$version" >/dev/null 2>&1; then
-    cat >&2 <<MSG
-GitHub Release already exists for $version.
-Delete or edit the existing release, or pass --skip-github-release to skip
-publishing from this script.
-MSG
-    exit 1
-  fi
-}
-
-fetch_default_branch() {
-  git fetch origin "refs/heads/$default_branch:refs/remotes/origin/$default_branch"
-}
-
-check_release_push_branch() {
-  local current_branch
-
-  current_branch="$(git branch --show-current)"
-  if [[ "$current_branch" != "$default_branch" ]]; then
-    echo "--push releases must start from $default_branch; current branch is $current_branch" >&2
-    exit 1
-  fi
-
-  fetch_default_branch
-  if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$default_branch")" ]]; then
-    cat >&2 <<MSG
-$default_branch must match origin/$default_branch before publishing a release.
-Merge or discard local-only commits before using --push.
-MSG
-    exit 1
-  fi
-}
-
-fast_forward_default_branch() {
-  fetch_default_branch
-  git switch "$default_branch"
-  git merge --ff-only "origin/$default_branch"
-}
-
-open_release_pr() {
-  local branch="$1"
-  local title="$2"
-  local repo_slug pr_number
-
-  repo_slug="$(github_repo_from_origin)"
-  if [[ -z "$repo_slug" ]]; then
-    echo "could not determine GitHub repository from origin" >&2
-    exit 1
-  fi
-
-  pr_number="$(
-    gh pr list \
-      --repo "$repo_slug" \
-      --head "$branch" \
-      --state open \
-      --json number \
-      --jq '.[0].number // empty'
-  )"
-
-  if [[ -z "$pr_number" ]]; then
-    gh pr create \
-      --repo "$repo_slug" \
-      --base "$default_branch" \
-      --head "$branch" \
-      --title "$title" \
-      --body "" >&2
-    pr_number="$(
-      gh pr list \
-        --repo "$repo_slug" \
-        --head "$branch" \
-        --state open \
-        --json number \
-        --jq '.[0].number // empty'
-    )"
-  else
-    gh pr edit "$pr_number" \
-      --repo "$repo_slug" \
-      --title "$title" \
-      --body "" >&2
-  fi
-
-  if [[ -z "$pr_number" ]]; then
-    echo "failed to create or find release PR for $branch" >&2
-    exit 1
-  fi
-
-  printf '%s\n' "$pr_number"
-}
-
-merge_release_pr_after_checks() {
-  local pr_number="$1"
-  local phase="$2"
-  local repo_slug
-
-  repo_slug="$(github_repo_from_origin)"
-  if [[ -z "$repo_slug" ]]; then
-    echo "could not determine GitHub repository from origin" >&2
-    exit 1
-  fi
-
-  bash .local/scripts/watch-pr-checks.sh \
-    --repo "$repo_slug" \
-    "$pr_number" \
-    "$phase"
-
-  printf '\nMerging PR #%s after Checks passed...\n' "$pr_number"
-  gh pr merge "$pr_number" --repo "$repo_slug" --merge --delete-branch
-}
-
-push_branch_open_pr_and_merge() {
-  local branch="$1"
-  local title="$2"
-  local phase="$3"
-  local sha pr_number
-
-  sha="$(git rev-parse HEAD)"
-  printf '\nPushing %s to %s for PR Checks...\n' "$sha" "$branch"
-  git push --force-with-lease origin "HEAD:refs/heads/$branch"
-
-  pr_number="$(open_release_pr "$branch" "$title")"
-  merge_release_pr_after_checks "$pr_number" "$phase"
-  fast_forward_default_branch
-}
-
-publish_github_release() {
-  if [[ "$skip_github_release" == "1" ]]; then
-    printf '\nPushed signed tag %s. Skipped GitHub Release publication.\n' "$version"
-    return
-  fi
-
-  gh release create "$version" \
-    --title "$version" \
-    --notes-from-tag \
-    --verify-tag
-  printf '\nPublished GitHub Release %s with the authenticated gh user.\n' "$version"
-}
-
-open_flathub_pr() {
-  if [[ "$skip_flathub" == "1" ]]; then
-    return
-  fi
-
-  printf '\nOpening Flathub pull request for %s...\n' "$version"
-  bash .local/scripts/open-flathub-pr.sh "$version"
-}
-
-release_run_id_for_workflow() {
-  local workflow="$1"
-
-  gh run list \
-    --workflow "$workflow" \
-    --event release \
-    --branch "$version" \
-    --limit 1 \
-    --json databaseId \
-    --jq '.[0].databaseId // empty'
-}
-
-wait_for_release_run() {
-  local workflow="$1"
-  local run_id=""
-
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 \
-    13 14 15 16 17 18 19 20 21 22 23 24; do
-    run_id="$(release_run_id_for_workflow "$workflow")"
-    if [[ -n "$run_id" ]]; then
-      printf '%s\n' "$run_id"
-      return
-    fi
-    sleep 5
-  done
-
-  echo "could not find release workflow run for $workflow on $version" >&2
-  exit 1
-}
-
-watch_release_workflows() {
-  if [[ "$skip_github_release" == "1" ]]; then
-    return
-  fi
-
-  local workflow run_id
-  for workflow in AUR Flatpak Nix; do
-    run_id="$(wait_for_release_run "$workflow")"
-    printf '\nWatching %s release workflow run %s...\n' "$workflow" "$run_id"
-    gh run watch "$run_id" --compact --exit-status --interval 15
-  done
-}
-
-update_aur_stable_package() {
-  bash .github/scripts/update-aur-stable-package.sh "$version"
-  if ! git diff --quiet -- packaging/aur/rufin/PKGBUILD packaging/aur/rufin/.SRCINFO; then
-    git add packaging/aur/rufin/PKGBUILD packaging/aur/rufin/.SRCINFO
-    git commit -m "chore(aur): update stable package for $version"
-    return 0
-  fi
-
-  return 1
-}
-
-check_aur_stable_package() {
-  bash .github/scripts/update-aur-stable-package.sh --check "$version"
 }
 
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
@@ -592,11 +331,6 @@ print_notes
 
 if [[ "$dry_run" == "1" ]]; then
   exit 0
-fi
-
-if [[ "$push_tag" == "1" ]]; then
-  check_github_release_prereqs
-  check_release_push_branch
 fi
 
 bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
@@ -628,29 +362,4 @@ if [[ "$skip_flathub" != "1" && -f "$flathub_manifest" ]]; then
     git add "$flathub_manifest"
     git commit -m "chore(flatpak): update Flathub manifest for $version"
   fi
-fi
-
-if [[ "$push_tag" == "1" ]]; then
-  push_branch_open_pr_and_merge \
-    "$release_branch" \
-    "chore(release): publish $version" \
-    "release metadata and Flathub manifest"
-  if [[ "$replace_tag" == "1" ]]; then
-    git push --force origin "$version"
-  else
-    git push origin "$version"
-  fi
-  git switch -C "$aur_branch" "origin/$default_branch"
-  if update_aur_stable_package; then
-    push_branch_open_pr_and_merge \
-      "$aur_branch" \
-      "chore(aur): publish stable package for $version" \
-      "AUR stable package metadata"
-  else
-    fast_forward_default_branch
-  fi
-  check_aur_stable_package
-  publish_github_release
-  open_flathub_pr
-  watch_release_workflows
 fi

@@ -6,7 +6,7 @@ usage() {
 Usage: .github/scripts/update-aur-stable-package.sh [--check] [--skip-srcinfo] VERSION
 
 Updates the checked-in stable AUR PKGBUILD for a release tag and refreshes
-.SRCINFO when makepkg, or the rufin-arch Distrobox, is available.
+.SRCINFO when makepkg is available.
 USAGE
 }
 
@@ -114,15 +114,6 @@ refresh_srcinfo_with_makepkg() {
       cd "$pkgdir"
       makepkg --printsrcinfo > .SRCINFO
     )
-    return 0
-  fi
-
-  if command -v distrobox >/dev/null 2>&1 &&
-    distrobox list 2>/dev/null | grep -Eq '(^|[[:space:]])rufin-arch([[:space:]]|$)'; then
-    local pkgdir_quoted
-    printf -v pkgdir_quoted '%q' "$pkgdir"
-    distrobox enter --name rufin-arch -- bash -lc \
-      "cd $pkgdir_quoted && makepkg --printsrcinfo > .SRCINFO"
     return 0
   fi
 
