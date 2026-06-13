@@ -6,6 +6,26 @@ const SLOW_EVENT_BATCH_MS: u64 = 100;
 const SLOW_LIBRARY_SYNC_STATUS_MS: u64 = 100;
 const SLOW_PLAYBACK_EVENT_POLL_MS: u64 = 100;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum FullscreenPlaybackRefresh {
+    None,
+    Visualizer,
+    Static,
+}
+
+pub(in crate::ui) fn fullscreen_playback_refresh(
+    previous: &PlaybackSnapshot,
+    next: &PlaybackSnapshot,
+) -> FullscreenPlaybackRefresh {
+    if previous.current_server_id != next.current_server_id || previous.current != next.current {
+        FullscreenPlaybackRefresh::Static
+    } else if previous.state != next.state {
+        FullscreenPlaybackRefresh::Visualizer
+    } else {
+        FullscreenPlaybackRefresh::None
+    }
+}
+
 pub(in crate::ui) fn connect_shell_actions(shell: &Rc<Shell>, main_menu: gtk::MenuButton) {
     let normal_back_shell = Rc::clone(shell);
     shell
@@ -938,6 +958,8 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let lyrics_timing_changed = previous_track != next_track
                         || previous_player.state != next_snapshot.state
                         || previous_player.position_millis != next_snapshot.position_millis;
+                    let fullscreen_refresh =
+                        fullscreen_playback_refresh(&previous_player, &next_snapshot);
                     let auto_dj_enabled = next_snapshot.auto_dj_enabled;
                     *shell.state.player.borrow_mut() = next_snapshot.clone();
                     shell.maybe_clear_player_seek_preview(
@@ -973,7 +995,13 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         shell.notify_now_playing(&next_snapshot);
                     }
                     shell.update_bottom_player();
-                    shell.update_fullscreen_player();
+                    match fullscreen_refresh {
+                        FullscreenPlaybackRefresh::Static => shell.update_fullscreen_player(),
+                        FullscreenPlaybackRefresh::Visualizer => {
+                            shell.sync_fullscreen_visualizer_state()
+                        }
+                        FullscreenPlaybackRefresh::None => {}
+                    }
                     if lyrics_timing_changed {
                         shell.update_lyrics_highlight();
                     }
