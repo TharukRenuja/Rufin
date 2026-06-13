@@ -1565,6 +1565,162 @@ fn artist_image_use() {
     assert_eq!(detail.artist.image_ref, album.image_ref);
 }
 #[test]
+fn album_external_fallback_repairs_to_track_source_ref() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let track_ref = image_ref("track-source-cover", "track-source-tag");
+    let mut album = album(1);
+    album.image_ref = Some(image_ref(
+        "external:mb-release-group:group-one",
+        "external-tag-one",
+    ));
+    let mut track = track(1, &album);
+    track.image_ref = Some(track_ref.clone());
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let loaded = store
+        .load_albums(&saved.server.id, 0, 10)
+        .expect("load albums")
+        .items
+        .remove(0);
+
+    assert_eq!(loaded.image_ref.as_ref(), Some(&track_ref));
+}
+#[test]
+fn album_source_ref_survives_track_fallback_repair() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let album_ref = image_ref("album-source-cover", "album-source-tag");
+    let track_ref = image_ref("track-source-cover", "track-source-tag");
+    let mut album = album(1);
+    album.image_ref = Some(album_ref.clone());
+    let mut track = track(1, &album);
+    track.image_ref = Some(track_ref);
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let loaded = store
+        .load_albums(&saved.server.id, 0, 10)
+        .expect("load albums")
+        .items
+        .remove(0);
+
+    assert_eq!(loaded.image_ref.as_ref(), Some(&album_ref));
+}
+#[test]
+fn artist_source_fallback_wins_over_external_album_ref() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let external_ref = image_ref("external:mb-release-group:group-one", "external-tag-one");
+    let mut single = album(1);
+    single.title = "Example Single".to_string();
+    single.year = 2000;
+    single.image_ref = Some(external_ref);
+    let mut album = album_with_image(2);
+    album.title = "Example Album".to_string();
+    album.year = 2001;
+    let tracks = vec![track(1, &single), track(2, &album)];
+    let artist = artist(1, None);
+    store
+        .upsert_albums(&saved.server.id, &[single, album.clone()], generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, &tracks, generation)
+        .expect("upsert tracks");
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&artist),
+            false,
+            generation,
+        )
+        .expect("upsert artist");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let loaded = store
+        .load_artists(&saved.server.id, false, 0, 10)
+        .expect("load artists")
+        .items
+        .remove(0);
+    let detail = store
+        .load_artist_detail(&saved.server.id, &artist.id)
+        .expect("load artist detail")
+        .expect("artist detail");
+
+    assert_eq!(loaded.image_ref, album.image_ref);
+    assert_eq!(detail.artist.image_ref, album.image_ref);
+}
+#[test]
+fn artist_external_fallback_repairs_to_source_ref() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let external_ref = image_ref("external:mb-release-group:group-one", "external-tag-one");
+    let mut single = album(1);
+    single.title = "Example Single".to_string();
+    single.year = 2000;
+    single.image_ref = Some(external_ref.clone());
+    let mut album = album_with_image(2);
+    album.title = "Example Album".to_string();
+    album.year = 2001;
+    let tracks = vec![track(1, &single), track(2, &album)];
+    let artist = artist(1, Some(external_ref));
+    store
+        .upsert_albums(&saved.server.id, &[single, album.clone()], generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, &tracks, generation)
+        .expect("upsert tracks");
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&artist),
+            false,
+            generation,
+        )
+        .expect("upsert artist");
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    let loaded = store
+        .load_artists(&saved.server.id, false, 0, 10)
+        .expect("load artists")
+        .items
+        .remove(0);
+    let detail = store
+        .load_artist_detail(&saved.server.id, &artist.id)
+        .expect("load artist detail")
+        .expect("artist detail");
+
+    assert_eq!(loaded.image_ref, album.image_ref);
+    assert_eq!(detail.artist.image_ref, album.image_ref);
+}
+#[test]
 fn schema_win_fallback() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
