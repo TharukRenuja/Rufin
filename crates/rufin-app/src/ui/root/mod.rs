@@ -96,10 +96,7 @@ use paging::{PagedGridCursor, connect_paged_grid_loader, finish_grid_page};
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use preferences::{present_library_preferences_dialog, present_preferences_dialog};
 use queue::connect_queue_panel_controls;
-use right_panel::{
-    apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split,
-    restore_queue_lyrics_split_for_current_height,
-};
+use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 use rufin_core::{
     Album, AlbumId, AppSettings, Artist, ArtistId, ArtistTrackScope, DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH, ExternalLyricsProvider, FolderPathItem, Genre, HomeBlockKind,
@@ -293,7 +290,6 @@ pub(in crate::ui) struct AppState {
     queue_fullscreen_render_state: RefCell<Option<queue::QueuePanelRenderState>>,
     lyrics_panel_visible: Cell<bool>,
     fullscreen_player_visible: Cell<bool>,
-    queue_lyrics_position_save_suppressed: Rc<Cell<u32>>,
     responsive_render_queued: Cell<bool>,
     responsive_render_generation: Cell<u64>,
     current_route_resize_policy: Cell<RouteResizePolicy>,
@@ -546,7 +542,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         queue_fullscreen_render_state: RefCell::new(None),
         lyrics_panel_visible: Cell::new(settings.lyrics_panel_visible),
         fullscreen_player_visible: Cell::new(false),
-        queue_lyrics_position_save_suppressed: Rc::new(Cell::new(0)),
         responsive_render_queued: Cell::new(false),
         responsive_render_generation: Cell::new(0),
         current_route_resize_policy: Cell::new(RouteResizePolicy::Stable),
