@@ -1,6 +1,6 @@
 use super::*;
 
-const CONTEXT_MENU_PLAYLIST_LABEL_CHARS: usize = 32;
+const CONTEXT_MENU_PLAYLIST_LABEL_CHARS: usize = 18;
 const CONTEXT_MENU_PLAYLIST_LABEL_TRAILER: &str = "...";
 
 #[derive(Clone, Debug)]
@@ -706,23 +706,23 @@ pub(in crate::ui) fn menu_item(label: &str, action: &str, icon_name: &str) -> gi
     item.set_icon(&gio::ThemedIcon::new(icon_name));
     item
 }
+pub(in crate::ui) fn context_menu_playlist_label(name: &str) -> String {
+    if name.chars().count() <= CONTEXT_MENU_PLAYLIST_LABEL_CHARS {
+        return name.to_string();
+    }
+
+    let keep = CONTEXT_MENU_PLAYLIST_LABEL_CHARS - CONTEXT_MENU_PLAYLIST_LABEL_TRAILER.len();
+    name.chars()
+        .take(keep)
+        .chain(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER.chars())
+        .collect()
+}
 pub(in crate::ui) fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> {
     shell
         .controller
         .cached_playlists_page(0, CONTEXT_MENU_PLAYLIST_LIMIT)
         .map(|page| page.items)
         .unwrap_or_else(|_| shell.state.library.borrow().playlists.clone())
-}
-pub(in crate::ui) fn context_menu_playlist_label(name: &str) -> String {
-    if name.chars().count() <= CONTEXT_MENU_PLAYLIST_LABEL_CHARS {
-        return name.to_string();
-    }
-
-    let keep = CONTEXT_MENU_PLAYLIST_LABEL_CHARS
-        .saturating_sub(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER.chars().count());
-    let mut label = name.chars().take(keep).collect::<String>();
-    label.push_str(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER);
-    label
 }
 pub(in crate::ui) fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
     shell
@@ -1430,18 +1430,16 @@ mod tests {
 
     #[test]
     fn context_menu_playlist_label_caps_long_names() {
-        let short = "Morning Queue";
-        let long = "Playlist names can become intentionally excessive";
-        let wide = "長".repeat(40);
-
+        let short = "Short list";
         assert_eq!(context_menu_playlist_label(short), short);
 
-        let label = context_menu_playlist_label(long);
+        let label =
+            context_menu_playlist_label("Playlist name that is intentionally long for layout");
         assert_eq!(label.chars().count(), CONTEXT_MENU_PLAYLIST_LABEL_CHARS);
         assert!(label.ends_with(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER));
-        assert!(label.starts_with("Playlist names can"));
+        assert!(label.starts_with("Playlist name "));
 
-        let wide_label = context_menu_playlist_label(&wide);
+        let wide_label = context_menu_playlist_label("混合文字列プレイリスト名が長い追加文字列");
         assert_eq!(
             wide_label.chars().count(),
             CONTEXT_MENU_PLAYLIST_LABEL_CHARS
