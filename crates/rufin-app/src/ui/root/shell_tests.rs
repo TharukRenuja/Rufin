@@ -318,7 +318,7 @@ pub(in crate::ui) fn shell_apply_sync_delta_invalidates_loaded_pages() {
 
     assert!(applied);
     assert!(library.tracks.is_empty());
-    assert!(library.favorites.is_empty());
+    assert_eq!(library.favorites, vec![track.clone()]);
     assert!(library.search.tracks.is_empty());
     assert_eq!(library.cached_track_count, 30_000);
     assert_eq!(library.cached_playlist_count, 40);

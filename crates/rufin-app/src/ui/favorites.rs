@@ -8,7 +8,6 @@ use rufin_core::{
     Album, AlbumId, Artist, ArtistId, LibraryListKey, Route, Track, TrackId, TrackSortKey,
 };
 use rufin_provider::FavoriteItemId;
-use tracing::warn;
 
 use crate::controller::LibrarySnapshot;
 
@@ -92,30 +91,13 @@ pub(super) fn clear_favorite_controls(controls: &FavoriteControls) {
 
 impl Shell {
     pub(super) fn favorites_view(self: &Rc<Self>) -> gtk::Widget {
-        let snapshot = self.state.library.borrow().favorites.clone();
-        let (favorites, error) =
-            favorite_route_tracks(self.controller.cached_favorite_tracks(), snapshot);
-        if let Some(error) = error {
-            warn!(%error, "failed to load cached favorite tracks");
-        } else {
-            self.state.library.borrow_mut().favorites = favorites.clone();
-        }
+        let favorites = self.state.library.borrow().favorites.clone();
         self.library_tracks_route_panel(
             favorites,
             LibraryListKey::FavoriteTracks,
             "favorites",
             "Favorite tracks will appear here after you add them.",
         )
-    }
-}
-
-fn favorite_route_tracks(
-    cache: Result<Vec<Track>, String>,
-    snapshot: Vec<Track>,
-) -> (Vec<Track>, Option<String>) {
-    match cache {
-        Ok(tracks) => (tracks, None),
-        Err(error) => (snapshot, Some(error)),
     }
 }
 
@@ -250,10 +232,9 @@ fn favorite_track_source(library: &LibrarySnapshot, track_id: &TrackId) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::{LibraryCounts, LibrarySyncStatus, LocalAccessStatus};
-    use rufin_core::{AlbumId, HomeSection, HomeSectionKind, ServerId, ServerIdentity};
+    use crate::controller::LocalAccessStatus;
+    use rufin_core::{AlbumId, HomeSection, HomeSectionKind};
     use rufin_provider::SearchResults;
-    use rufin_store::LibraryDelta;
 
     fn library_with_track(track_id: TrackId) -> LibrarySnapshot {
         LibrarySnapshot {
@@ -394,56 +375,5 @@ mod tests {
             &track,
             TrackSortKey::Title,
         ));
-    }
-
-    #[test]
-    fn favorite_route_tracks_rehydrates_after_sync_invalidation() {
-        let track_id = TrackId::fake(4);
-        let mut library = library_with_track(track_id.clone());
-        let server = ServerIdentity {
-            id: ServerId::new("server:favorites"),
-            provider: "test".to_string(),
-            name: "Test".to_string(),
-            base_url: "https://music.example".to_string(),
-        };
-        let mut cached_track = library.tracks[0].clone();
-        cached_track.id = TrackId::fake(8);
-        cached_track.favorite = true;
-        library.server = Some(server.clone());
-        library.favorites = vec![library.tracks[0].clone()];
-        let fallback_snapshot = library.favorites.clone();
-
-        let applied = crate::ui::root::apply_library_sync_status(
-            &mut library,
-            LibrarySyncStatus {
-                server_id: server.id.clone(),
-                sync_status: "Cached library ready".to_string(),
-                last_error: None,
-                counts: LibraryCounts::default(),
-                home: None,
-                delta: LibraryDelta {
-                    tracks: rufin_store::TrackDelta {
-                        fields: vec![track_id],
-                        ..Default::default()
-                    },
-                    ..LibraryDelta::default()
-                },
-            },
-        );
-        assert!(applied);
-        assert!(library.favorites.is_empty());
-
-        let invalidated_snapshot = library.favorites.clone();
-        let (tracks, error) =
-            favorite_route_tracks(Ok(vec![cached_track.clone()]), invalidated_snapshot.clone());
-        assert_eq!(tracks, vec![cached_track]);
-        assert!(error.is_none());
-
-        let (tracks, error) = favorite_route_tracks(
-            Err("cache unavailable".to_string()),
-            fallback_snapshot.clone(),
-        );
-        assert_eq!(tracks, fallback_snapshot);
-        assert_eq!(error.as_deref(), Some("cache unavailable"));
     }
 }
