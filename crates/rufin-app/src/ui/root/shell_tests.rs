@@ -1108,6 +1108,45 @@ pub(in crate::ui) fn shell_use_entry() {
         None
     );
 }
+
+#[test]
+pub(in crate::ui) fn shell_fullscreen_refresh_scopes_playback_ticks() {
+    let mut previous = super::PlaybackSnapshot {
+        current_server_id: Some(ServerId::fake(1)),
+        current: Some(test_queue_entry("Current", test_image_ref("current"))),
+        state: super::PlaybackState::Playing,
+        position_seconds: 1,
+        position_millis: 1_000,
+        ..super::PlaybackSnapshot::default()
+    };
+
+    let mut position_tick = previous.clone();
+    position_tick.position_millis = 1_500;
+    assert_eq!(
+        super::fullscreen_playback_refresh(&previous, &position_tick),
+        super::FullscreenPlaybackRefresh::None
+    );
+
+    let mut state_change = previous.clone();
+    state_change.state = super::PlaybackState::Paused;
+    assert_eq!(
+        super::fullscreen_playback_refresh(&previous, &state_change),
+        super::FullscreenPlaybackRefresh::Visualizer
+    );
+
+    let mut current_change = previous.clone();
+    current_change.current = Some(test_queue_entry("Next", test_image_ref("next")));
+    assert_eq!(
+        super::fullscreen_playback_refresh(&previous, &current_change),
+        super::FullscreenPlaybackRefresh::Static
+    );
+
+    previous.current_server_id = Some(ServerId::fake(2));
+    assert_eq!(
+        super::fullscreen_playback_refresh(&position_tick, &previous),
+        super::FullscreenPlaybackRefresh::Static
+    );
+}
 #[test]
 pub(in crate::ui) fn shell_track_field() {
     let mut first = test_track("Artist B", None);

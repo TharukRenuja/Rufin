@@ -22,10 +22,11 @@ use super::{
     player_icons::lyrics_icon_area,
 };
 
-const FULLSCREEN_PLAYER_TRANSITION_MS: u32 = 320;
-const FULLSCREEN_PLAYER_TRANSITION_US: i64 = FULLSCREEN_PLAYER_TRANSITION_MS as i64 * 1_000;
-const FULLSCREEN_PLAYER_DEFERRED_UPDATE_MS: u64 = 16;
-const FULLSCREEN_PLAYER_DEFERRED_COVER_MS: u64 = 80;
+const FULLSCREEN_PLAYER_OPEN_TRANSITION_MS: u32 = 420;
+const FULLSCREEN_PLAYER_CLOSE_TRANSITION_MS: u32 = 320;
+const FULLSCREEN_PLAYER_POST_OPEN_SETTLE_MS: u64 = 40;
+const FULLSCREEN_PLAYER_DEFERRED_COVER_MS: u64 =
+    FULLSCREEN_PLAYER_OPEN_TRANSITION_MS as u64 + FULLSCREEN_PLAYER_POST_OPEN_SETTLE_MS;
 const FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE: i32 = 320;
 const FULLSCREEN_PLAYER_MIN_COVER_SIZE: i32 = 140;
 const FULLSCREEN_PLAYER_MAX_COVER_SIZE: i32 = 320;
@@ -850,18 +851,8 @@ impl Shell {
         self.state.fullscreen_player_visible.set(true);
         self.animate_fullscreen_player(true);
         let player = self.state.player.borrow().clone();
-        self.update_fullscreen_player_text(&player);
-        self.update_fullscreen_player_cover(&player);
-        let update_shell = Rc::clone(self);
-        glib::timeout_add_local_once(
-            Duration::from_millis(FULLSCREEN_PLAYER_DEFERRED_UPDATE_MS),
-            move || {
-                if update_shell.state.fullscreen_player_visible.get() {
-                    let player = update_shell.state.player.borrow().clone();
-                    update_shell.update_fullscreen_player_text(&player);
-                }
-            },
-        );
+        self.update_fullscreen_player_text_fast(&player);
+        self.update_fullscreen_player_cover_fast(&player);
         let cover_shell = Rc::clone(self);
         glib::timeout_add_local_once(
             Duration::from_millis(FULLSCREEN_PLAYER_DEFERRED_COVER_MS),
@@ -875,7 +866,7 @@ impl Shell {
         if self.fullscreen_player.stack.visible_child_name().as_deref() == Some("queue") {
             let queue_shell = Rc::clone(self);
             glib::timeout_add_local_once(
-                Duration::from_millis(u64::from(FULLSCREEN_PLAYER_TRANSITION_MS)),
+                Duration::from_millis(u64::from(FULLSCREEN_PLAYER_OPEN_TRANSITION_MS)),
                 move || {
                     if queue_shell.state.fullscreen_player_visible.get()
                         && queue_shell
@@ -892,9 +883,12 @@ impl Shell {
         }
         if self.fullscreen_player.stack.visible_child_name().as_deref() == Some("lyrics") {
             let lyrics_shell = Rc::clone(self);
-            glib::idle_add_local_once(move || {
-                lyrics_shell.refresh_fullscreen_lyrics_position();
-            });
+            glib::timeout_add_local_once(
+                Duration::from_millis(u64::from(FULLSCREEN_PLAYER_OPEN_TRANSITION_MS)),
+                move || {
+                    lyrics_shell.refresh_fullscreen_lyrics_position();
+                },
+            );
         }
         self.sync_fullscreen_visualizer_state();
         let _focused = self.fullscreen_player.close_button.grab_focus();
@@ -1041,7 +1035,7 @@ impl Shell {
         self.start_fullscreen_visualizer_tick();
     }
 
-    fn sync_fullscreen_visualizer_state(self: &Rc<Self>) {
+    pub(in crate::ui) fn sync_fullscreen_visualizer_state(self: &Rc<Self>) {
         let active = self.state.fullscreen_player_visible.get()
             && self.fullscreen_player.stack.visible_child_name().as_deref() == Some("visualizer")
             && matches!(
@@ -1200,6 +1194,49 @@ impl Shell {
         }
     }
 
+    fn update_fullscreen_player_cover_fast(
+        self: &Rc<Self>,
+        player: &crate::controller::PlaybackSnapshot,
+    ) {
+        let cover_size = self.fullscreen_player_cover_size();
+        self.fullscreen_player.cover.set_square_size(cover_size);
+        let cover_seed = player
+            .current
+            .as_ref()
+            .map(|entry| entry.duration_seconds)
+            .unwrap_or(42);
+        self.fullscreen_player.cover.set_seed(cover_seed);
+
+        if let Some(image_ref) = player
+            .current
+            .as_ref()
+            .and_then(|entry| entry.image_ref.as_ref())
+        {
+            let fetch_size = cover_fetch_size_for_display(cover_size);
+            if let Some(key) = self.current_playback_cover_cache_key(image_ref, fetch_size) {
+                let request_key = cover_request_id_for_key(&key, cover_size);
+                let pixbuf = self
+                    .cloned_decoded_cover(&key, cover_size)
+                    .map(|cover| cover.pixbuf)
+                    .or_else(|| {
+                        self.fullscreen_cover_preview(image_ref, fetch_size)
+                            .map(|(_, pixbuf)| pixbuf)
+                    });
+                self.fullscreen_player.cover.bind_selected_cover(
+                    cover_seed,
+                    cover_artwork_id_for_key(&key, image_ref),
+                    request_key.clone(),
+                    pixbuf,
+                );
+                *self.fullscreen_player.cover_key.borrow_mut() = Some(request_key);
+            } else {
+                self.clear_fullscreen_player_cover();
+            }
+        } else {
+            self.clear_fullscreen_player_cover();
+        }
+    }
+
     fn fullscreen_cover_preview(
         &self,
         image_ref: &rufin_core::ImageRef,
@@ -1216,7 +1253,19 @@ impl Shell {
         None
     }
 
+    fn update_fullscreen_player_text_fast(&self, player: &crate::controller::PlaybackSnapshot) {
+        self.update_fullscreen_player_labels(player, false);
+    }
+
     fn update_fullscreen_player_text(&self, player: &crate::controller::PlaybackSnapshot) {
+        self.update_fullscreen_player_labels(player, true);
+    }
+
+    fn update_fullscreen_player_labels(
+        &self,
+        player: &crate::controller::PlaybackSnapshot,
+        allow_source_lookup: bool,
+    ) {
         let title = player
             .current
             .as_ref()
@@ -1252,9 +1301,12 @@ impl Shell {
                 .as_ref()
                 .is_some_and(|entry| !entry.album.is_empty()),
         );
-        self.fullscreen_player
-            .meta
-            .set_text(&self.fullscreen_player_meta_text(player));
+        let meta = if allow_source_lookup {
+            self.fullscreen_player_meta_text(player)
+        } else {
+            fullscreen_player_fast_meta_text(player.current.as_ref())
+        };
+        self.fullscreen_player.meta.set_text(&meta);
         self.fullscreen_player
             .meta
             .set_visible(player.current.is_some());
@@ -1269,18 +1321,7 @@ impl Shell {
     }
 
     fn current_track_source_label(&self, entry: &QueueEntry) -> Option<String> {
-        if let Some(source) = entry
-            .source_format
-            .as_deref()
-            .and_then(audio_source_label_from_format)
-        {
-            return Some(source);
-        }
-        if let Some(source) = entry
-            .local_path
-            .as_deref()
-            .and_then(audio_source_label_from_path)
-        {
+        if let Some(source) = queue_entry_source_label(entry) {
             return Some(source);
         }
         if let Some(source) = self
@@ -1346,6 +1387,11 @@ impl Shell {
 
         let root = self.fullscreen_player.root.clone();
         let height = self.fullscreen_player_hidden_offset();
+        let duration_us = i64::from(if opening {
+            FULLSCREEN_PLAYER_OPEN_TRANSITION_MS
+        } else {
+            FULLSCREEN_PLAYER_CLOSE_TRANSITION_MS
+        }) * 1_000;
         let started_at = Rc::new(Cell::new(None));
 
         root.set_visible(true);
@@ -1363,8 +1409,7 @@ impl Shell {
                 now
             });
             let elapsed = now.saturating_sub(start);
-            let progress =
-                (elapsed as f64 / FULLSCREEN_PLAYER_TRANSITION_US as f64).clamp(0.0, 1.0);
+            let progress = (elapsed as f64 / duration_us as f64).clamp(0.0, 1.0);
             let eased = 1.0 - (1.0 - progress).powi(3);
             let offset = if opening {
                 (1.0 - eased) * f64::from(height)
@@ -1425,6 +1470,24 @@ fn fullscreen_player_meta_text(entry: Option<&QueueEntry>, source_label: Option<
     fullscreen_player_meta_parts(entry.year, source_label)
 }
 
+fn fullscreen_player_fast_meta_text(entry: Option<&QueueEntry>) -> String {
+    let source_label = entry.and_then(queue_entry_source_label);
+    fullscreen_player_meta_text(entry, source_label.as_deref())
+}
+
+fn queue_entry_source_label(entry: &QueueEntry) -> Option<String> {
+    entry
+        .source_format
+        .as_deref()
+        .and_then(audio_source_label_from_format)
+        .or_else(|| {
+            entry
+                .local_path
+                .as_deref()
+                .and_then(audio_source_label_from_path)
+        })
+}
+
 fn fullscreen_player_meta_parts(year: u16, source_label: Option<&str>) -> String {
     let mut parts = Vec::new();
     if let Some(source) = source_label
@@ -1481,7 +1544,7 @@ pub(super) fn fullscreen_artwork_size_for(width: i32, height: i32) -> i32 {
 mod tests {
     use super::super::equalizer::equalizer_presets;
     use super::fullscreen_artwork_size_for;
-    use rufin_core::EQUALIZER_BAND_COUNT;
+    use rufin_core::{EQUALIZER_BAND_COUNT, QueueEntry, QueueEntryId, TrackId};
 
     #[test]
     fn fullscreen_stay_windows() {
@@ -1503,6 +1566,37 @@ mod tests {
         assert_eq!(
             super::fullscreen_player_meta_parts(2013, Some("FLAC")),
             "FLAC - 2013"
+        );
+    }
+
+    #[test]
+    fn fullscreen_initial_meta_uses_queue_entry_source() {
+        let mut entry = queue_entry();
+        entry.source_format = Some("audio/mpeg".to_string());
+        assert_eq!(
+            super::fullscreen_player_fast_meta_text(Some(&entry)),
+            "MP3 - 2026"
+        );
+
+        entry.source_format = None;
+        entry.local_path = Some("/music/album/track.flac?token=redacted".to_string());
+        assert_eq!(
+            super::fullscreen_player_fast_meta_text(Some(&entry)),
+            "FLAC - 2026"
+        );
+
+        entry.local_path = None;
+        assert_eq!(
+            super::fullscreen_player_fast_meta_text(Some(&entry)),
+            "2026"
+        );
+    }
+
+    #[test]
+    fn fullscreen_open_defers_full_cover_until_after_animation() {
+        assert!(
+            super::FULLSCREEN_PLAYER_DEFERRED_COVER_MS
+                > u64::from(super::FULLSCREEN_PLAYER_OPEN_TRANSITION_MS)
         );
     }
 
@@ -1536,6 +1630,25 @@ mod tests {
         for (_, bands) in equalizer_presets() {
             assert_eq!(bands.len(), EQUALIZER_BAND_COUNT);
             assert!(bands.iter().all(|gain| (-12.0..=12.0).contains(gain)));
+        }
+    }
+
+    fn queue_entry() -> QueueEntry {
+        QueueEntry {
+            id: QueueEntryId::new("queue:test"),
+            track_id: TrackId::fake(1),
+            album_id: None,
+            title: "Track".to_string(),
+            artist: "Artist".to_string(),
+            artist_id: None,
+            album: "Album".to_string(),
+            year: 2026,
+            duration_seconds: 180,
+            favorite: false,
+            image_ref: None,
+            local_path: None,
+            source_format: None,
+            origin: None,
         }
     }
 }
