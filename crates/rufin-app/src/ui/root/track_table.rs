@@ -124,12 +124,17 @@ impl Shell {
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
+                let total_started = Instant::now();
+                let load_started = Instant::now();
                 match shell
                     .controller
                     .cached_tracks_page_matching(&query, 0, TRACK_ROUTE_PAGE_SIZE)
                 {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let count = page.items.len();
+                        let total = page.total;
                         *tracks_for_search.borrow_mut() = page.items;
                         let tracks = tracks_for_search.borrow();
                         populate_track_model_with_options(
@@ -139,7 +144,17 @@ impl Shell {
                             "",
                             options.favorite_first,
                         );
-                        finish_grid_page(cursor, 0, count, page.total);
+                        finish_grid_page(cursor, 0, count, total);
+                        super::library::log_route_page_timing(
+                            &Route::Tracks,
+                            "table-search",
+                            0,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached tracks page");
@@ -215,21 +230,36 @@ impl Shell {
                 if !shell.can_load_grid_page(&cursor, &Route::Tracks) {
                     return;
                 }
+                let total_started = Instant::now();
                 let offset = cursor.offset.get();
                 let query = paged_query_for_page.borrow().clone();
+                let load_started = Instant::now();
                 match shell.controller.cached_tracks_page_matching(
                     &query,
                     offset,
                     TRACK_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let count = page.items.len();
+                        let total = page.total;
                         let mut items = page.items;
                         tracks_for_page.borrow_mut().extend(items.iter().cloned());
                         let settings = shell.state.settings.borrow().track_table.clone();
                         sort_tracks_with_options(&mut items, &settings, options.favorite_first);
                         append_tracks_to_model(&model_for_page, items);
-                        finish_grid_page(&cursor, offset, count, page.total);
+                        finish_grid_page(&cursor, offset, count, total);
+                        super::library::log_route_page_timing(
+                            &Route::Tracks,
+                            "table-append",
+                            offset,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached tracks page");

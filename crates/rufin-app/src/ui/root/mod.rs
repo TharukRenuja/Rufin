@@ -163,7 +163,7 @@ pub(in crate::ui) use build::*;
 pub(in crate::ui) use cover::{
     CoverBinding, CoverDecodeJob, CoverDecodePriority, CoverPathLookupIntent,
     CoverPathLookupRequest, CoverRequestRecord, CoverWarmJob, DecodedCover, DecodedCoverOrderEntry,
-    FirstRunCoverPrimeJob,
+    FirstRunCoverPrimeJob, cover_artwork_id_for_key, cover_request_id_for_key,
 };
 pub(in crate::ui) use cover_startup::*;
 pub(in crate::ui) use equalizer::{
@@ -197,10 +197,12 @@ pub(in crate::ui) const COVER_WARM_BATCH_SIZE: usize = 3;
 pub(in crate::ui) const COVER_LOOKUP_LIMIT: usize = 12;
 pub(in crate::ui) const COVER_WARM_INTERVAL_MS: u64 = 32;
 pub(in crate::ui) const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
+pub(in crate::ui) const COVER_VISIBLE_SCROLL_PAUSE_MS: u64 = 160;
 pub(in crate::ui) const COVER_VISIBLE_REQUEST_DELAY_MS: u64 = 48;
 pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
 pub(in crate::ui) const COVER_DECODE_LIMIT: usize = 16;
 pub(in crate::ui) const SLOW_COVER_CALLBACK_MS: u64 = 100;
+pub(in crate::ui) const SLOW_ROUTE_PAGE_LOAD_MS: u64 = 100;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
 pub(in crate::ui) const STARTUP_STALL_MONITOR_INTERVAL_MS: u64 = 100;
@@ -296,7 +298,6 @@ pub(in crate::ui) struct AppState {
     responsive_render_signature: Cell<i32>,
     current_route_boundary: RefCell<Option<gtk::Widget>>,
     column_view_width_fits: RefCell<Vec<library::ColumnViewWidthFit>>,
-    card_grid_columns: Cell<usize>,
     collection_grid_columns: Cell<usize>,
     home_section_state: RefCell<HashMap<HomeSectionKind, HomeSectionState>>,
     home_section_views: RefCell<HashMap<HomeSectionKind, HomeSectionView>>,
@@ -341,6 +342,7 @@ pub(in crate::ui) struct AppState {
     cover_decode_queue: RefCell<VecDeque<CoverDecodeJob>>,
     cover_warm_generation: Cell<u64>,
     cover_warm_paused_until: Cell<Option<Instant>>,
+    cover_visible_paused_until: Cell<Option<Instant>>,
     cover_decode_resume_queued: Cell<bool>,
     decoded_covers: RefCell<HashMap<String, DecodedCover>>,
     decoded_cover_order: RefCell<VecDeque<DecodedCoverOrderEntry>>,
@@ -367,6 +369,8 @@ pub(in crate::ui) struct ArtworkTile {
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
     expects_image: Rc<Cell<bool>>,
+    artwork_id: Rc<RefCell<Option<String>>>,
+    request_key: Rc<RefCell<Option<String>>>,
     generation: Rc<Cell<u64>>,
 }
 #[derive(Clone)]
@@ -376,7 +380,21 @@ pub(in crate::ui) struct ArtworkTileWeak {
     seed: Rc<Cell<u32>>,
     pixbuf: Rc<RefCell<Option<Pixbuf>>>,
     expects_image: Rc<Cell<bool>>,
+    artwork_id: Rc<RefCell<Option<String>>>,
+    request_key: Rc<RefCell<Option<String>>>,
     generation: Rc<Cell<u64>>,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum ArtworkBindAction {
+    Request,
+    Replace,
+    Retain,
+    RetainAndRequest,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct ArtworkBindOutcome {
+    pub(in crate::ui) generation: u64,
+    pub(in crate::ui) request_needed: bool,
 }
 pub(in crate::ui) struct HomeSectionState {
     page_start: usize,
@@ -412,8 +430,7 @@ pub(in crate::ui) struct TrackTableOptions {
 }
 pub(in crate::ui) struct GroupedDetailData {
     title: String,
-    image_ref: Option<ImageRef>,
-    cover_refs: Vec<ImageRef>,
+    artwork: crate::cover_art_policy::SelectedArtwork,
     seed: u32,
     summary: String,
     tracks: Vec<Track>,
@@ -548,7 +565,6 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         responsive_render_signature: Cell::new(0),
         current_route_boundary: RefCell::new(None),
         column_view_width_fits: RefCell::new(Vec::new()),
-        card_grid_columns: Cell::new(0),
         collection_grid_columns: Cell::new(0),
         home_section_state: RefCell::new(HashMap::new()),
         home_section_views: RefCell::new(HashMap::new()),
@@ -593,6 +609,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         cover_decode_queue: RefCell::new(VecDeque::new()),
         cover_warm_generation: Cell::new(0),
         cover_warm_paused_until: Cell::new(None),
+        cover_visible_paused_until: Cell::new(None),
         cover_decode_resume_queued: Cell::new(false),
         decoded_covers: RefCell::new(HashMap::new()),
         decoded_cover_order: RefCell::new(VecDeque::new()),

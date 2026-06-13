@@ -207,8 +207,16 @@ fn track_interaction_viewport() {
 
 #[test]
 fn album_interaction_viewport() {
-    let ranges = super::album_interaction_viewport_cover_ranges(265, 143, 18)
-        .expect("album interaction viewport ranges");
+    let ranges = super::viewport_cover_ranges(
+        265,
+        143,
+        18,
+        24,
+        48,
+        super::ALBUM_WARM_BEHIND,
+        super::ALBUM_WARM_AHEAD,
+    )
+    .expect("album interaction viewport ranges");
 
     assert_eq!(ranges.priority_start, 119);
     assert_eq!(ranges.priority_end, 209);
@@ -219,17 +227,25 @@ fn album_interaction_viewport() {
 }
 
 #[test]
+fn collection_grid_extent_uses_field_slots() {
+    let mut settings = LibraryListSettings {
+        layout: LibraryLayout::Grid,
+        ..LibraryListSettings::for_key(LibraryListKey::Artists)
+    };
+
+    settings.grid_fields.clear();
+    let title_only = super::collection_grid_item_extent(180, &settings);
+    settings.grid_fields = vec![LibraryField::AlbumCount, LibraryField::SongCount];
+    let with_fields = super::collection_grid_item_extent(180, &settings);
+
+    assert_eq!(title_only, 226);
+    assert_eq!(with_fields, 278);
+}
+
+#[test]
 fn route_prime_settle() {
-    let ranges = super::viewport_cover_ranges(
-        129,
-        45,
-        15,
-        3 * super::GRID_INTERACTION_BEHIND,
-        3 * super::GRID_INTERACTION_AHEAD,
-        6,
-        18,
-    )
-    .expect("grid interaction viewport ranges");
+    let ranges = super::viewport_cover_ranges(129, 45, 15, 3 * 8, 3 * 24, 6, 18)
+        .expect("grid interaction viewport ranges");
 
     assert_eq!(ranges.priority_start, 21);
     assert_eq!(ranges.priority_end, 129);
@@ -257,7 +273,16 @@ fn route_use_stale() {
 }
 #[test]
 fn route_prioritize_visible() {
-    let ranges = super::album_viewport_cover_ranges(300, 252, 13).expect("album viewport ranges");
+    let ranges = super::viewport_cover_ranges(
+        300,
+        252,
+        13,
+        super::ALBUM_PRIORITY_BEHIND,
+        super::ALBUM_PRIORITY_AHEAD,
+        super::ALBUM_WARM_BEHIND,
+        super::ALBUM_WARM_AHEAD,
+    )
+    .expect("album viewport ranges");
 
     assert_eq!(ranges.priority_start, 252);
     assert_eq!(ranges.priority_end, 265);
@@ -405,7 +430,7 @@ fn smart_playlist_viewport() {
 
     let refs = super::smart_cover_refs(&model, 0, 1);
 
-    assert_eq!(refs, vec![first, second, fallback]);
+    assert_eq!(refs, vec![first, second]);
 }
 
 #[test]

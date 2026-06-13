@@ -17,8 +17,9 @@ use crate::ui::{
 };
 
 use super::{
-    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE, icon_button,
-    player::BOTTOM_PLAYER_HEIGHT, player_icons::lyrics_icon_area,
+    ArtworkTile, CoverDecodePriority, GRID_COVER_SIZE, Shell, THUMB_COVER_SIZE,
+    cover_artwork_id_for_key, cover_request_id_for_key, icon_button, player::BOTTOM_PLAYER_HEIGHT,
+    player_icons::lyrics_icon_area,
 };
 
 const FULLSCREEN_PLAYER_TRANSITION_MS: u32 = 320;
@@ -1156,42 +1157,41 @@ impl Shell {
         {
             let fetch_size = cover_fetch_size_for_display(cover_size);
             if let Some(key) = self.current_playback_cover_cache_key(image_ref, fetch_size) {
-                let request_key = format!("{key}:{cover_size}");
-                let cover_key_changed = self.fullscreen_player.cover_key.borrow().as_deref()
-                    != Some(request_key.as_str());
-                if cover_key_changed {
-                    let has_decoded_cover = self.decoded_cover_has_min_size(&key, cover_size);
-                    let preview = (!has_decoded_cover)
-                        .then(|| self.fullscreen_cover_preview(image_ref, fetch_size))
-                        .flatten();
-                    match fullscreen_cover_replacement(has_decoded_cover, preview.is_some()) {
-                        FullscreenCoverReplacement::Ready => {
-                            self.fullscreen_player.cover.advance_generation();
-                        }
-                        FullscreenCoverReplacement::Preview => {
-                            if let Some((preview_key, pixbuf)) = preview {
+                let request_key = cover_request_id_for_key(&key, cover_size);
+                let pixbuf = self
+                    .cloned_decoded_cover(&key, cover_size)
+                    .map(|cover| {
+                        self.touch_decoded_cover(&key, CoverDecodePriority::Visible);
+                        cover.pixbuf
+                    })
+                    .or_else(|| {
+                        self.fullscreen_cover_preview(image_ref, fetch_size).map(
+                            |(preview_key, pixbuf)| {
                                 self.touch_decoded_cover(
                                     &preview_key,
                                     CoverDecodePriority::Visible,
                                 );
-                                self.fullscreen_player
-                                    .cover
-                                    .bind_cover_image(cover_seed, Some(pixbuf));
-                            }
-                        }
-                        FullscreenCoverReplacement::Retain => {
-                            self.fullscreen_player.cover.retain_cover_image(cover_seed);
-                        }
-                    }
-                    self.request_cover_for_tile(
+                                pixbuf
+                            },
+                        )
+                    });
+                let outcome = self.fullscreen_player.cover.bind_selected_cover(
+                    cover_seed,
+                    cover_artwork_id_for_key(&key, image_ref),
+                    request_key.clone(),
+                    pixbuf,
+                );
+                if outcome.request_needed {
+                    self.request_bound_cover_for_tile(
                         &self.fullscreen_player.cover,
                         key,
                         image_ref.clone(),
+                        outcome.generation,
                         cover_size,
                         fetch_size,
                     );
-                    *self.fullscreen_player.cover_key.borrow_mut() = Some(request_key);
                 }
+                *self.fullscreen_player.cover_key.borrow_mut() = Some(request_key);
             } else {
                 self.clear_fullscreen_player_cover();
             }
@@ -1462,26 +1462,6 @@ fn audio_source_label_from_format(value: &str) -> Option<String> {
     Some(normalized)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FullscreenCoverReplacement {
-    Ready,
-    Preview,
-    Retain,
-}
-
-fn fullscreen_cover_replacement(
-    has_decoded_cover: bool,
-    has_preview_cover: bool,
-) -> FullscreenCoverReplacement {
-    if has_decoded_cover {
-        FullscreenCoverReplacement::Ready
-    } else if has_preview_cover {
-        FullscreenCoverReplacement::Preview
-    } else {
-        FullscreenCoverReplacement::Retain
-    }
-}
-
 fn fullscreen_cover_preview_sizes(fetch_size: u32) -> Vec<u32> {
     let mut sizes = vec![GRID_COVER_SIZE, THUMB_COVER_SIZE];
     sizes.retain(|size| *size < fetch_size);
@@ -1548,26 +1528,6 @@ mod tests {
         assert_eq!(
             super::audio_source_label_from_format("audio/mpeg").as_deref(),
             Some("MP3")
-        );
-    }
-
-    #[test]
-    fn fullscreen_cover_keeps_previous_until_decoded() {
-        assert_eq!(
-            super::fullscreen_cover_replacement(true, false),
-            super::FullscreenCoverReplacement::Ready
-        );
-        assert_eq!(
-            super::fullscreen_cover_replacement(false, true),
-            super::FullscreenCoverReplacement::Preview
-        );
-        assert_eq!(
-            super::fullscreen_cover_replacement(true, true),
-            super::FullscreenCoverReplacement::Ready
-        );
-        assert_eq!(
-            super::fullscreen_cover_replacement(false, false),
-            super::FullscreenCoverReplacement::Retain
         );
     }
 

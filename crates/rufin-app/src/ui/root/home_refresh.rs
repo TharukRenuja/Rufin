@@ -1031,6 +1031,8 @@ impl ArtworkTile {
         let size = Rc::new(Cell::new(width.max(height)));
         let pixbuf = Rc::new(RefCell::new(None::<Pixbuf>));
         let expects_image = Rc::new(Cell::new(false));
+        let artwork_id = Rc::new(RefCell::new(None::<String>));
+        let request_key = Rc::new(RefCell::new(None::<String>));
         let generation = Rc::new(Cell::new(0));
         let draw_seed = Rc::clone(&seed);
         let draw_pixbuf = Rc::clone(&pixbuf);
@@ -1049,6 +1051,8 @@ impl ArtworkTile {
             seed,
             pixbuf,
             expects_image,
+            artwork_id,
+            request_key,
             generation,
         }
     }
@@ -1064,6 +1068,8 @@ impl ArtworkTile {
             seed: Rc::clone(&self.seed),
             pixbuf: Rc::clone(&self.pixbuf),
             expects_image: Rc::clone(&self.expects_image),
+            artwork_id: Rc::clone(&self.artwork_id),
+            request_key: Rc::clone(&self.request_key),
             generation: Rc::clone(&self.generation),
         }
     }
@@ -1084,15 +1090,44 @@ impl ArtworkTile {
         self.generation.set(self.generation.get().saturating_add(1));
     }
 
-    pub(in crate::ui) fn retain_cover_image(&self, seed: u32) -> u64 {
-        let generation = self.generation.get().saturating_add(1);
-        self.generation.set(generation);
+    pub(in crate::ui) fn bind_selected_cover(
+        &self,
+        seed: u32,
+        artwork_id: String,
+        request_key: String,
+        pixbuf: Option<Pixbuf>,
+    ) -> ArtworkBindOutcome {
+        let same_artwork = self.artwork_id.borrow().as_deref() == Some(artwork_id.as_str());
+        let same_request = self.request_key.borrow().as_deref() == Some(request_key.as_str());
+        let has_pixbuf = self.pixbuf.borrow().is_some();
+        let action = artwork_bind_action(same_artwork, same_request, has_pixbuf, pixbuf.is_some());
+
+        let request_changed = !same_artwork || !same_request;
+        if request_changed {
+            self.advance_generation();
+            *self.artwork_id.borrow_mut() = Some(artwork_id);
+            *self.request_key.borrow_mut() = Some(request_key);
+        }
+
         self.seed.set(seed);
+        if let Some(pixbuf) = pixbuf {
+            *self.pixbuf.borrow_mut() = Some(pixbuf);
+        } else if !same_artwork {
+            *self.pixbuf.borrow_mut() = None;
+        }
         self.expects_image.set(true);
+
         let has_pixbuf = self.pixbuf.borrow().is_some();
         self.sync_cover_state_classes(true, has_pixbuf);
         self.area.queue_draw();
-        generation
+
+        ArtworkBindOutcome {
+            generation: self.generation.get(),
+            request_needed: matches!(
+                action,
+                ArtworkBindAction::Request | ArtworkBindAction::RetainAndRequest
+            ),
+        }
     }
 
     pub(in crate::ui) fn set_seed(&self, seed: u32) {
@@ -1118,10 +1153,6 @@ impl ArtworkTile {
         self.bind_image_state(seed, pixbuf, false)
     }
 
-    pub(in crate::ui) fn bind_cover_image(&self, seed: u32, pixbuf: Option<Pixbuf>) -> u64 {
-        self.bind_image_state(seed, pixbuf, true)
-    }
-
     fn bind_image_state(&self, seed: u32, pixbuf: Option<Pixbuf>, expects_image: bool) -> u64 {
         let generation = self.generation.get().saturating_add(1);
         self.generation.set(generation);
@@ -1129,6 +1160,8 @@ impl ArtworkTile {
         let has_pixbuf = pixbuf.is_some();
         *self.pixbuf.borrow_mut() = pixbuf;
         self.expects_image.set(expects_image);
+        *self.artwork_id.borrow_mut() = None;
+        *self.request_key.borrow_mut() = None;
         self.sync_cover_state_classes(expects_image, has_pixbuf);
         self.area.queue_draw();
         generation
@@ -1148,6 +1181,8 @@ impl ArtworkTile {
         self.advance_generation();
         *self.pixbuf.borrow_mut() = None;
         self.expects_image.set(false);
+        *self.artwork_id.borrow_mut() = None;
+        *self.request_key.borrow_mut() = None;
         self.sync_cover_state_classes(false, false);
         self.area.queue_draw();
     }
@@ -1159,6 +1194,8 @@ impl ArtworkTile {
         self.generation.set(self.generation.get().saturating_add(1));
         *self.pixbuf.borrow_mut() = None;
         self.expects_image.set(false);
+        *self.artwork_id.borrow_mut() = None;
+        *self.request_key.borrow_mut() = None;
         self.sync_cover_state_classes(false, false);
         self.area.queue_draw();
         true
@@ -1195,6 +1232,8 @@ impl ArtworkTileWeak {
             seed: Rc::clone(&self.seed),
             pixbuf: Rc::clone(&self.pixbuf),
             expects_image: Rc::clone(&self.expects_image),
+            artwork_id: Rc::clone(&self.artwork_id),
+            request_key: Rc::clone(&self.request_key),
             generation: Rc::clone(&self.generation),
         })
     }
@@ -1206,6 +1245,23 @@ impl ArtworkTileWeak {
     pub(in crate::ui) fn is_current_generation(&self, generation: u64) -> bool {
         self.upgrade()
             .is_some_and(|tile| tile.is_current_generation(generation))
+    }
+}
+
+pub(in crate::ui) fn artwork_bind_action(
+    same_artwork: bool,
+    same_request: bool,
+    has_pixbuf: bool,
+    decoded_ready: bool,
+) -> ArtworkBindAction {
+    if decoded_ready {
+        ArtworkBindAction::Replace
+    } else if !same_artwork || !has_pixbuf {
+        ArtworkBindAction::Request
+    } else if same_request {
+        ArtworkBindAction::Retain
+    } else {
+        ArtworkBindAction::RetainAndRequest
     }
 }
 pub(in crate::ui) async fn load_cover_pixbuf(

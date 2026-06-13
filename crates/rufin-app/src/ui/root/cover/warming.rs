@@ -120,21 +120,42 @@ impl Shell {
     }
 
     pub(in crate::ui) fn pause_cover_warm_for_interaction(self: &Rc<Self>) {
+        let now = Instant::now();
         self.state.cover_warm_paused_until.set(Some(
-            Instant::now() + Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
+            now + Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
+        ));
+        self.state.cover_visible_paused_until.set(Some(
+            now + Duration::from_millis(COVER_VISIBLE_SCROLL_PAUSE_MS),
         ));
         self.schedule_cover_decode_resume();
     }
 
     pub(in crate::ui) fn cover_warm_is_paused(&self) -> bool {
-        let Some(until) = self.state.cover_warm_paused_until.get() else {
-            return false;
-        };
-        if Instant::now() < until {
-            return true;
+        self.cover_warm_pause_remaining().is_some()
+    }
+
+    pub(in crate::ui) fn cover_warm_pause_remaining(&self) -> Option<Duration> {
+        let until = self.state.cover_warm_paused_until.get()?;
+        let now = Instant::now();
+        if now < until {
+            return Some(until.saturating_duration_since(now));
         }
         self.state.cover_warm_paused_until.set(None);
-        false
+        None
+    }
+
+    pub(in crate::ui) fn cover_visible_is_paused(&self) -> bool {
+        self.cover_visible_pause_remaining().is_some()
+    }
+
+    pub(in crate::ui) fn cover_visible_pause_remaining(&self) -> Option<Duration> {
+        let until = self.state.cover_visible_paused_until.get()?;
+        let now = Instant::now();
+        if now < until {
+            return Some(until.saturating_duration_since(now));
+        }
+        self.state.cover_visible_paused_until.set(None);
+        None
     }
 
     fn schedule_cover_decode_resume(self: &Rc<Self>) {
@@ -143,17 +164,28 @@ impl Shell {
         }
 
         let shell = Rc::clone(self);
-        glib::timeout_add_local_once(
-            Duration::from_millis(COVER_WARM_SCROLL_PAUSE_MS),
-            move || {
-                shell.state.cover_decode_resume_queued.set(false);
-                if shell.cover_warm_is_paused() {
-                    shell.schedule_cover_decode_resume();
-                } else {
-                    shell.drain_cover_decode_queue();
-                }
-            },
-        );
+        let delay = self
+            .next_cover_decode_resume_delay()
+            .unwrap_or_else(|| Duration::from_millis(COVER_VISIBLE_SCROLL_PAUSE_MS));
+        glib::timeout_add_local_once(delay, move || {
+            shell.state.cover_decode_resume_queued.set(false);
+            shell.drain_cover_decode_queue();
+            if shell.next_cover_decode_resume_delay().is_some() {
+                shell.schedule_cover_decode_resume();
+            }
+        });
+    }
+
+    fn next_cover_decode_resume_delay(&self) -> Option<Duration> {
+        match (
+            self.cover_visible_pause_remaining(),
+            self.cover_warm_pause_remaining(),
+        ) {
+            (Some(visible), Some(warm)) => Some(visible.min(warm)),
+            (Some(visible), None) => Some(visible),
+            (None, Some(warm)) => Some(warm),
+            (None, None) => None,
+        }
     }
 
     fn cover_warm_jobs_from_refs(

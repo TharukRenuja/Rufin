@@ -67,7 +67,10 @@ impl Shell {
     pub(in crate::ui) fn render_current_route_content(self: &Rc<Self>) {
         let route = self.state.routes.borrow().current().clone();
         let render_started = Instant::now();
+        let prepare_started = Instant::now();
         self.prepare_route_host(&route);
+        let prepare_ms = prepare_started.elapsed().as_millis() as u64;
+        let view_started = Instant::now();
         let view = match route.clone() {
             Route::Home => RouteView::new(self.home_view()),
             Route::Albums => RouteView::new(self.library_albums_view())
@@ -115,7 +118,10 @@ impl Shell {
 
         let resize = view.resize;
         let build_ms = render_started.elapsed().as_millis() as u64;
+        let view_ms = view_started.elapsed().as_millis() as u64;
+        let finish_started = Instant::now();
         self.finish_route_view(&route, view);
+        let finish_ms = finish_started.elapsed().as_millis() as u64;
         let total_ms = render_started.elapsed().as_millis() as u64;
         self.log_post_render_idle_delay(route.clone(), total_ms);
         if total_ms >= SLOW_ROUTE_RENDER_MS {
@@ -123,6 +129,9 @@ impl Shell {
                 ?route,
                 ?resize,
                 build_ms,
+                prepare_ms,
+                view_ms,
+                finish_ms,
                 total_ms,
                 signature = self.state.responsive_render_signature.get(),
                 "slow route render"
@@ -133,6 +142,9 @@ impl Shell {
                 ?route,
                 ?resize,
                 build_ms,
+                prepare_ms,
+                view_ms,
+                finish_ms,
                 total_ms,
                 signature = self.state.responsive_render_signature.get(),
                 "route render timing"
@@ -140,20 +152,16 @@ impl Shell {
         }
     }
     pub(in crate::ui) fn apply_library_delta(self: &Rc<Self>, delta: LibraryDelta) {
-        if delta.is_empty() {
-            return;
-        }
-        if self.login_screen_active()
-            || !self.state.startup_route_revealed.get()
-            || self.state.startup_route_render_pending.get()
-        {
+        let route_ready = sync_route_surface_ready(
+            self.login_screen_active(),
+            self.state.startup_route_revealed.get(),
+            self.state.startup_route_render_pending.get(),
+        );
+        let route = self.state.routes.borrow().current().clone();
+        if !sync_delta_refreshes_route(&route, &delta, route_ready) {
             return;
         }
 
-        let route = self.state.routes.borrow().current().clone();
-        if !route_delta_affects(&route, &delta) {
-            return;
-        }
         self.queue_sync_route_refresh(route, delta);
     }
 
@@ -186,21 +194,21 @@ impl Shell {
 
     fn run_sync_route_refresh(self: &Rc<Self>, route: Route, route_generation: u64) {
         let refresh_started = Instant::now();
-        let target_matches = self
-            .state
-            .pending_sync_route_refresh
-            .borrow()
-            .as_ref()
-            .is_some_and(|(queued_route, queued_generation)| {
-                queued_route == &route && *queued_generation == route_generation
-            });
-        if !target_matches {
+        let pending_matches = pending_sync_route_refresh_matches(
+            self.state.pending_sync_route_refresh.borrow().as_ref(),
+            &route,
+            route_generation,
+        );
+        if !pending_matches {
             return;
         }
         self.state.pending_sync_route_refresh.borrow_mut().take();
-        if self.state.route_load_generation.get() != route_generation
-            || self.state.routes.borrow().current() != &route
-        {
+        if !sync_route_refresh_target_matches(
+            &route,
+            route_generation,
+            self.state.routes.borrow().current(),
+            self.state.route_load_generation.get(),
+        ) {
             self.state.pending_sync_route_delta.borrow_mut().take();
             return;
         }
@@ -313,6 +321,37 @@ impl Shell {
         );
         self.state.route_cover_prime_pending.borrow_mut().clear();
     }
+}
+
+fn sync_route_surface_ready(
+    login_active: bool,
+    startup_revealed: bool,
+    startup_render_pending: bool,
+) -> bool {
+    !login_active && startup_revealed && !startup_render_pending
+}
+
+fn sync_delta_refreshes_route(route: &Route, delta: &LibraryDelta, surface_ready: bool) -> bool {
+    surface_ready && !delta.is_empty() && route_delta_affects(route, delta)
+}
+
+fn pending_sync_route_refresh_matches(
+    pending: Option<&(Route, u64)>,
+    route: &Route,
+    route_generation: u64,
+) -> bool {
+    pending.is_some_and(|(queued_route, queued_generation)| {
+        queued_route == route && *queued_generation == route_generation
+    })
+}
+
+fn sync_route_refresh_target_matches(
+    route: &Route,
+    route_generation: u64,
+    current_route: &Route,
+    current_generation: u64,
+) -> bool {
+    current_route == route && current_generation == route_generation
 }
 
 impl Shell {
@@ -605,6 +644,62 @@ mod tests {
         let mut delta = LibraryDelta::default();
         delta.tracks.added.push(TrackId::fake(2));
         assert!(route_delta_affects(&Route::Tracks, &delta));
+    }
+
+    #[test]
+    fn empty_sync_delta_does_not_refresh_current_route() {
+        let delta = LibraryDelta::default();
+
+        assert!(!sync_delta_refreshes_route(&Route::Tracks, &delta, true));
+        assert!(!sync_delta_refreshes_route(&Route::Albums, &delta, true));
+        assert!(!sync_delta_refreshes_route(&Route::Home, &delta, true));
+    }
+
+    #[test]
+    fn unrelated_sync_delta_keeps_current_route() {
+        let mut delta = LibraryDelta::default();
+        delta.tracks.fields.push(TrackId::fake(1));
+
+        assert!(!sync_delta_refreshes_route(&Route::Albums, &delta, true));
+        assert!(!sync_delta_refreshes_route(&Route::Artists, &delta, true));
+        assert!(sync_delta_refreshes_route(&Route::Tracks, &delta, true));
+    }
+
+    #[test]
+    fn sync_delta_waits_for_visible_route_surface() {
+        let mut delta = LibraryDelta::default();
+        delta.tracks.fields.push(TrackId::fake(1));
+
+        assert!(sync_route_surface_ready(false, true, false));
+        assert!(!sync_route_surface_ready(true, true, false));
+        assert!(!sync_route_surface_ready(false, false, false));
+        assert!(!sync_route_surface_ready(false, true, true));
+        assert!(!sync_delta_refreshes_route(&Route::Tracks, &delta, false));
+    }
+
+    #[test]
+    fn stale_sync_route_refresh_target_is_ignored() {
+        let route = Route::Tracks;
+        let pending = Some((route.clone(), 7));
+
+        assert!(pending_sync_route_refresh_matches(
+            pending.as_ref(),
+            &route,
+            7,
+        ));
+        assert!(!pending_sync_route_refresh_matches(
+            Some(&(Route::Albums, 7)),
+            &route,
+            7,
+        ));
+        assert!(sync_route_refresh_target_matches(&route, 7, &route, 7));
+        assert!(!sync_route_refresh_target_matches(&route, 7, &route, 8,));
+        assert!(!sync_route_refresh_target_matches(
+            &route,
+            7,
+            &Route::Albums,
+            7,
+        ));
     }
 
     #[test]

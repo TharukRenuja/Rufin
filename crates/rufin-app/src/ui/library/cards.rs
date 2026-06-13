@@ -316,15 +316,65 @@ pub(in crate::ui) fn append_album_items(model: &gio::ListStore, rows: Vec<AlbumD
         .collect::<Vec<_>>();
     model.splice(model.n_items(), 0, &additions);
 }
-pub(in crate::ui) fn center_label(text: &str, css_class: &str) -> gtk::Widget {
+pub(in crate::ui) const COLLECTION_GRID_CARD_GAP: i32 = 6;
+pub(in crate::ui) const COLLECTION_GRID_TITLE_LINES: i32 = 2;
+pub(in crate::ui) const COLLECTION_GRID_FIELD_LINES: i32 = 1;
+const COLLECTION_GRID_LABEL_LINE_HEIGHT: i32 = 20;
+
+fn collection_grid_label_height(lines: i32) -> i32 {
+    lines
+        .max(1)
+        .saturating_mul(COLLECTION_GRID_LABEL_LINE_HEIGHT)
+}
+
+pub(in crate::ui) fn collection_grid_card_height(size: i32, field_count: usize) -> i32 {
+    let size = size.max(1);
+    let label_count = field_count.saturating_add(1);
+    let label_count = label_count.min(i32::MAX as usize) as i32;
+    let field_count = field_count.min(i32::MAX as usize) as i32;
+    size.saturating_add(label_count.saturating_mul(COLLECTION_GRID_CARD_GAP))
+        .saturating_add(collection_grid_label_height(COLLECTION_GRID_TITLE_LINES))
+        .saturating_add(
+            field_count.saturating_mul(collection_grid_label_height(COLLECTION_GRID_FIELD_LINES)),
+        )
+}
+
+pub(in crate::ui) fn center_label(
+    text: &str,
+    css_class: &str,
+    width: i32,
+    lines: i32,
+) -> gtk::Widget {
+    let width = width.max(1);
+    let lines = lines.max(1);
+    let height = collection_grid_label_height(lines);
     let label = gtk::Label::new(Some(text));
     if !css_class.is_empty() {
         label.add_css_class(css_class);
     }
     label.set_xalign(0.5);
+    label.set_justify(gtk::Justification::Center);
     label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_lines(lines);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label.upcast()
+    label.set_width_chars(1);
+    label.set_max_width_chars((width / 8).clamp(8, 32));
+    label.set_size_request(width, height);
+    if !text.is_empty() {
+        label.set_tooltip_text(Some(text));
+    }
+
+    let clip = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    clip.add_css_class("card-label-clip");
+    clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_size_request(width, height);
+    clip.set_width_request(width);
+    clip.set_height_request(height);
+    clip.set_hexpand(false);
+    clip.set_halign(gtk::Align::Center);
+    clip.append(&label);
+    clip.upcast()
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct AlbumDetailMetaLabelSpec {
@@ -922,6 +972,19 @@ mod tests {
         assert_eq!(
             smart_playlist_field(&resolved, LibraryField::Duration),
             "2:00"
+        );
+    }
+
+    #[test]
+    fn collection_grid_card_height_reserves_field_slots() {
+        let title_only = collection_grid_card_height(180, 0);
+        let with_fields = collection_grid_card_height(180, 2);
+
+        assert_eq!(title_only, 226);
+        assert_eq!(with_fields, 278);
+        assert_eq!(
+            with_fields - title_only,
+            2 * (COLLECTION_GRID_LABEL_LINE_HEIGHT + COLLECTION_GRID_CARD_GAP)
         );
     }
 }

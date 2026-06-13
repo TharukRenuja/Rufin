@@ -1,15 +1,26 @@
 use rufin_core::{
-    Album, AppSettings, Artist, HomeSection, ImageRef, Playlist, QueueEntry, QueueSnapshot, Track,
+    Album, AppSettings, Artist, Genre, HomeSection, ImageRef, Playlist, QueueEntry, QueueSnapshot,
+    SmartPlaylist, Track,
 };
 use rufin_provider::{PlaylistDetail, SearchResults};
 
 use crate::external_metadata;
 
+const GROUP_ARTWORK_REF_LIMIT: usize = 4;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectedArtwork {
     pub image_ref: Option<ImageRef>,
+    pub image_refs: Vec<ImageRef>,
+    pub selection: ArtworkSelection,
     pub provenance: ArtworkProvenance,
     pub fetch_policy: ArtworkFetchPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArtworkSelection {
+    ImageRefs,
+    FinalMissing,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +95,22 @@ pub fn selected_artist_artwork(artist: &Artist, settings: &AppSettings) -> Selec
     selected_existing_ref(artist.image_ref.as_ref(), settings).unwrap_or_else(missing_artwork)
 }
 
+pub fn selected_genre_artwork(genre: &Genre) -> SelectedArtwork {
+    selected_collection_artwork(&genre.image_refs, genre.image_ref.as_ref(), false)
+}
+
+pub fn selected_playlist_artwork(playlist: &Playlist, settings: &AppSettings) -> SelectedArtwork {
+    selected_collection_artwork(
+        &playlist.image_refs,
+        playlist.image_ref.as_ref(),
+        settings.prefer_server_playlist_covers,
+    )
+}
+
+pub fn selected_smart_playlist_artwork(playlist: &SmartPlaylist) -> SelectedArtwork {
+    selected_collection_artwork(&playlist.image_refs, playlist.image_ref.as_ref(), false)
+}
+
 pub fn bind_album(album: &mut Album, settings: &AppSettings) -> SelectedArtwork {
     let artwork = selected_album_artwork(album, settings);
     album.image_ref = artwork.image_ref.clone();
@@ -129,17 +156,7 @@ pub fn bind_artists(artists: &mut [Artist], settings: &AppSettings) {
 }
 
 pub fn bind_playlist(playlist: &mut Playlist, settings: &AppSettings) {
-    if settings.prefer_server_playlist_covers {
-        if let Some(image_ref) = playlist.image_ref.clone() {
-            playlist.image_refs = vec![image_ref];
-        }
-        return;
-    }
-    if playlist.image_refs.is_empty()
-        && let Some(image_ref) = playlist.image_ref.clone()
-    {
-        playlist.image_refs = vec![image_ref];
-    }
+    playlist.image_refs = selected_playlist_artwork(playlist, settings).image_refs;
 }
 
 pub fn bind_playlists(playlists: &mut [Playlist], settings: &AppSettings) {
@@ -257,7 +274,9 @@ fn selected(
     fetch_policy: ArtworkFetchPolicy,
 ) -> SelectedArtwork {
     SelectedArtwork {
-        image_ref: Some(image_ref),
+        image_ref: Some(image_ref.clone()),
+        image_refs: vec![image_ref],
+        selection: ArtworkSelection::ImageRefs,
         provenance,
         fetch_policy,
     }
@@ -266,9 +285,91 @@ fn selected(
 fn missing_artwork() -> SelectedArtwork {
     SelectedArtwork {
         image_ref: None,
+        image_refs: Vec::new(),
+        selection: ArtworkSelection::FinalMissing,
         provenance: ArtworkProvenance::None,
         fetch_policy: ArtworkFetchPolicy::FinalMissing,
     }
+}
+
+fn selected_collection_artwork(
+    image_refs: &[ImageRef],
+    image_ref: Option<&ImageRef>,
+    prefer_single_ref: bool,
+) -> SelectedArtwork {
+    let selected_refs = selected_collection_refs(image_refs, image_ref, prefer_single_ref);
+    let Some(selected_ref) = selected_refs.first().cloned() else {
+        return missing_artwork();
+    };
+    let direct_selected = image_ref.is_some_and(|direct| direct == &selected_ref)
+        && (prefer_single_ref || image_refs.is_empty());
+    let provenance = if direct_selected {
+        if external_metadata::is_external_image_ref(&selected_ref) {
+            external_ref_provenance(&selected_ref)
+        } else {
+            ArtworkProvenance::Source
+        }
+    } else {
+        ArtworkProvenance::RepresentativeFallback
+    };
+    let fetch_policy = if external_metadata::is_external_image_ref(&selected_ref) {
+        ArtworkFetchPolicy::OptionalExternalNetwork
+    } else {
+        source_fetch_policy(&selected_ref)
+    };
+    SelectedArtwork {
+        image_ref: Some(selected_ref.clone()),
+        image_refs: selected_refs,
+        selection: ArtworkSelection::ImageRefs,
+        provenance,
+        fetch_policy,
+    }
+}
+
+pub fn selected_collection_refs(
+    image_refs: &[ImageRef],
+    image_ref: Option<&ImageRef>,
+    prefer_single_ref: bool,
+) -> Vec<ImageRef> {
+    let mut refs = Vec::new();
+    if prefer_single_ref {
+        push_selected_ref(&mut refs, image_ref);
+        if !refs.is_empty() {
+            return refs;
+        }
+    }
+    for image_ref in image_refs {
+        push_selected_ref(&mut refs, Some(image_ref));
+    }
+    if refs.is_empty() {
+        push_selected_ref(&mut refs, image_ref);
+    }
+    refs
+}
+
+pub fn selected_collection_slots(image_refs: &[ImageRef]) -> Vec<ImageRef> {
+    let Some(first) = image_refs.first() else {
+        return Vec::new();
+    };
+    if image_refs.len() == 1 {
+        return vec![first.clone()];
+    }
+    (0..GROUP_ARTWORK_REF_LIMIT)
+        .filter_map(|index| image_refs.get(index % image_refs.len()).cloned())
+        .collect()
+}
+
+fn push_selected_ref(refs: &mut Vec<ImageRef>, image_ref: Option<&ImageRef>) {
+    if refs.len() >= GROUP_ARTWORK_REF_LIMIT {
+        return;
+    }
+    let Some(image_ref) = image_ref else {
+        return;
+    };
+    if refs.iter().any(|existing| existing == image_ref) {
+        return;
+    }
+    refs.push(image_ref.clone());
 }
 
 fn source_fetch_policy(image_ref: &ImageRef) -> ArtworkFetchPolicy {
@@ -361,6 +462,7 @@ mod tests {
 
         assert_eq!(artwork.provenance, ArtworkProvenance::None);
         assert_eq!(artwork.fetch_policy, ArtworkFetchPolicy::FinalMissing);
+        assert_eq!(artwork.selection, ArtworkSelection::FinalMissing);
         assert!(artwork.image_ref.is_none());
     }
 
@@ -425,19 +527,108 @@ mod tests {
     }
 
     #[test]
+    fn collection_policy_dedupes_and_caps_group_art() {
+        let first = image_ref("first-cover");
+        let second = image_ref("second-cover");
+        let third = image_ref("third-cover");
+        let fourth = image_ref("fourth-cover");
+        let fifth = image_ref("fifth-cover");
+        let fallback = image_ref("fallback-cover");
+
+        let selected = selected_collection_refs(
+            &[
+                first.clone(),
+                second.clone(),
+                first.clone(),
+                third.clone(),
+                fourth.clone(),
+                fifth,
+            ],
+            Some(&fallback),
+            false,
+        );
+
+        assert_eq!(selected, vec![first, second, third, fourth]);
+    }
+
+    #[test]
+    fn collection_policy_uses_direct_ref_only_when_group_empty() {
+        let fallback = image_ref("fallback-cover");
+
+        assert_eq!(
+            selected_collection_refs(&[], Some(&fallback), false),
+            vec![fallback]
+        );
+    }
+
+    #[test]
+    fn collection_policy_binds_no_art_explicitly() {
+        let genre = Genre {
+            id: rufin_core::GenreId::new("genre:empty"),
+            name: "Empty Genre".to_string(),
+            album_count: 1,
+            track_count: 3,
+            image_ref: None,
+            image_refs: Vec::new(),
+        };
+
+        let artwork = selected_genre_artwork(&genre);
+
+        assert_eq!(artwork.selection, ArtworkSelection::FinalMissing);
+        assert_eq!(artwork.provenance, ArtworkProvenance::None);
+        assert_eq!(artwork.fetch_policy, ArtworkFetchPolicy::FinalMissing);
+        assert!(artwork.image_ref.is_none());
+        assert!(artwork.image_refs.is_empty());
+    }
+
+    #[test]
+    fn collection_policy_binds_representative_refs_explicitly() {
+        let first = image_ref("first-cover");
+        let second = image_ref("second-cover");
+        let genre = Genre {
+            id: rufin_core::GenreId::new("genre:covered"),
+            name: "Covered Genre".to_string(),
+            album_count: 2,
+            track_count: 4,
+            image_ref: None,
+            image_refs: vec![first.clone(), second.clone()],
+        };
+
+        let artwork = selected_genre_artwork(&genre);
+
+        assert_eq!(artwork.selection, ArtworkSelection::ImageRefs);
+        assert_eq!(
+            artwork.provenance,
+            ArtworkProvenance::RepresentativeFallback
+        );
+        assert_eq!(artwork.image_ref, Some(first.clone()));
+        assert_eq!(artwork.image_refs, vec![first, second]);
+    }
+
+    #[test]
+    fn collection_policy_slots_stable_without_decode_state() {
+        let first = image_ref("first-cover");
+        let second = image_ref("second-cover");
+        let slots = selected_collection_slots(&[first.clone(), second.clone()]);
+
+        assert_eq!(slots, vec![first.clone(), second.clone(), first, second]);
+    }
+
+    #[test]
     fn playlist_policy_prefers_server_art() {
         let server_ref = image_ref("server-cover");
         let group_ref = image_ref("group-cover");
         let mut playlist = playlist_with_refs(Some(server_ref.clone()), vec![group_ref]);
+        let settings = AppSettings {
+            prefer_server_playlist_covers: true,
+            ..AppSettings::default()
+        };
 
-        bind_playlist(
-            &mut playlist,
-            &AppSettings {
-                prefer_server_playlist_covers: true,
-                ..AppSettings::default()
-            },
-        );
+        let artwork = selected_playlist_artwork(&playlist, &settings);
+        bind_playlist(&mut playlist, &settings);
 
+        assert_eq!(artwork.selection, ArtworkSelection::ImageRefs);
+        assert_eq!(artwork.provenance, ArtworkProvenance::Source);
         assert_eq!(playlist.image_refs, vec![server_ref]);
     }
 
@@ -446,8 +637,10 @@ mod tests {
         let server_ref = image_ref("server-cover");
         let mut playlist = playlist_with_refs(Some(server_ref.clone()), Vec::new());
 
+        let artwork = selected_playlist_artwork(&playlist, &AppSettings::default());
         bind_playlist(&mut playlist, &AppSettings::default());
 
+        assert_eq!(artwork.provenance, ArtworkProvenance::Source);
         assert_eq!(playlist.image_refs, vec![server_ref]);
     }
 

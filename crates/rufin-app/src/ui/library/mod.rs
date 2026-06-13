@@ -1,12 +1,12 @@
 use super::{
     ArtworkTile, COVER_LOOKUP_LIMIT, DETAIL_ROUTE_SCROLL_GUTTER, GRID_COVER_SIZE,
     GRID_ROUTE_PAGE_SIZE, LoadedTrackPlayContext, PRIMARY_ROUTE_MARGIN_START, PagedGridCursor,
-    PlaySourceDescriptor, Route, Shell, THUMB_COVER_SIZE, TRACK_ROUTE_PAGE_SIZE,
-    add_dynamic_link_hover, add_label_click, album_artist_route, album_favorite_key,
-    album_play_activation, append_albums_to_model, append_artists_to_model, append_genres_to_model,
-    append_playlists_to_model, append_tracks_to_model, artist_favorite_key, cards,
-    connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button, finish_grid_page,
-    icon_button, install_album_context_menu, install_artist_context_menu,
+    PlaySourceDescriptor, Route, SLOW_ROUTE_PAGE_LOAD_MS, Shell, THUMB_COVER_SIZE,
+    TRACK_ROUTE_PAGE_SIZE, add_dynamic_link_hover, add_label_click, album_artist_route,
+    album_favorite_key, album_play_activation, append_albums_to_model, append_artists_to_model,
+    append_genres_to_model, append_playlists_to_model, append_tracks_to_model, artist_favorite_key,
+    cards, connect_paged_grid_loader, favorite_button_is_active, favorite_icon_button,
+    finish_grid_page, icon_button, install_album_context_menu, install_artist_context_menu,
     install_dynamic_album_context_menu, install_dynamic_track_context_menu,
     install_playlist_context_menu, install_smart_playlist_context_menu, install_track_context_menu,
     layout::{large_popup_content_height, large_popup_content_width, route_content_width},
@@ -15,6 +15,7 @@ use super::{
     selected_music_folder_id, set_favorite_button_active, stable_seed, track_artist_route,
     track_collection_play_context, track_link_column,
 };
+use crate::cover_art_policy;
 use crate::i18n::tr;
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -62,9 +63,6 @@ const ALBUM_DETAIL_TRACK_HEADER_HEIGHT: i32 = 26;
 const ALBUM_DETAIL_META_SPACING: i32 = 6;
 const ALBUM_DETAIL_META_LABEL_HEIGHT: i32 = 20;
 const INITIAL_ROUTE_COVER_WARM_ITEMS: usize = 16;
-const SLOW_COLLECTION_BIND_MS: u64 = 50;
-const SLOW_COLLECTION_BIND_BURST_MS: u64 = 100;
-const COLLECTION_BIND_BURST_MIN: u64 = 16;
 const SLOW_LIBRARY_ROUTE_SETUP_MS: u64 = 100;
 const TRACK_PRIORITY_AHEAD: usize = 0;
 const TRACK_PRIORITY_BEHIND: usize = 0;
@@ -79,7 +77,6 @@ const ALBUM_INTERACTION_AHEAD: usize = 48;
 const ALBUM_INTERACTION_BEHIND: usize = 24;
 const ALBUM_WARM_AHEAD: usize = 32;
 const ALBUM_WARM_BEHIND: usize = 16;
-const ALBUM_WARM_DELAY: u64 = 32;
 const GRID_PRIORITY_AHEAD: usize = 0;
 const GRID_PRIORITY_BEHIND: usize = 0;
 const GRID_INTERACTION_AHEAD: usize = 24;
@@ -126,36 +123,6 @@ fn track_interaction_viewport_cover_ranges(
         TRACK_INTERACTION_AHEAD,
         TRACK_WARM_BEHIND,
         TRACK_WARM_AHEAD,
-    )
-}
-fn album_viewport_cover_ranges(
-    total: usize,
-    visible_start: usize,
-    visible_rows: usize,
-) -> Option<TrackViewportCoverRanges> {
-    viewport_cover_ranges(
-        total,
-        visible_start,
-        visible_rows,
-        ALBUM_PRIORITY_BEHIND,
-        ALBUM_PRIORITY_AHEAD,
-        ALBUM_WARM_BEHIND,
-        ALBUM_WARM_AHEAD,
-    )
-}
-fn album_interaction_viewport_cover_ranges(
-    total: usize,
-    visible_start: usize,
-    visible_rows: usize,
-) -> Option<TrackViewportCoverRanges> {
-    viewport_cover_ranges(
-        total,
-        visible_start,
-        visible_rows,
-        ALBUM_INTERACTION_BEHIND,
-        ALBUM_INTERACTION_AHEAD,
-        ALBUM_WARM_BEHIND,
-        ALBUM_WARM_AHEAD,
     )
 }
 fn viewport_cover_ranges(
@@ -523,11 +490,10 @@ fn genre_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<Ima
         let Some(genre) = item_at::<Genre>(model, index as u32) else {
             continue;
         };
-        refs.extend(grouped_collection_cover_refs(
-            &genre.image_refs,
-            genre.image_ref.as_ref(),
-            &refs,
-        ));
+        push_selected_cover_refs(
+            &mut refs,
+            cover_art_policy::selected_genre_artwork(&genre).image_refs,
+        );
     }
     refs
 }
@@ -537,11 +503,10 @@ fn playlist_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<
         let Some(playlist) = item_at::<Playlist>(model, index as u32) else {
             continue;
         };
-        refs.extend(grouped_collection_cover_refs(
-            &playlist.image_refs,
-            None,
-            &refs,
-        ));
+        push_selected_cover_refs(
+            &mut refs,
+            cover_art_policy::selected_collection_refs(&playlist.image_refs, None, false),
+        );
     }
     refs
 }
@@ -551,29 +516,20 @@ fn smart_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<Ima
         let Some(playlist) = item_at::<SmartPlaylist>(model, index as u32) else {
             continue;
         };
-        refs.extend(grouped_collection_cover_refs(
-            &playlist.image_refs,
-            playlist.image_ref.as_ref(),
-            &refs,
-        ));
+        push_selected_cover_refs(
+            &mut refs,
+            cover_art_policy::selected_smart_playlist_artwork(&playlist).image_refs,
+        );
     }
     refs
 }
-fn grouped_collection_cover_refs(
-    image_refs: &[ImageRef],
-    image_ref: Option<&ImageRef>,
-    existing_refs: &[ImageRef],
-) -> Vec<ImageRef> {
-    let mut refs = Vec::new();
-    for candidate in image_refs.iter().chain(image_ref) {
-        if existing_refs.iter().any(|existing| existing == candidate)
-            || refs.iter().any(|existing| existing == candidate)
-        {
+fn push_selected_cover_refs(refs: &mut Vec<ImageRef>, selected_refs: Vec<ImageRef>) {
+    for image_ref in selected_refs {
+        if refs.iter().any(|existing| existing == &image_ref) {
             continue;
         }
-        refs.push(candidate.clone());
+        refs.push(image_ref);
     }
-    refs
 }
 fn connect_album_viewport_cover_warm(
     shell: &Rc<Shell>,
@@ -581,99 +537,14 @@ fn connect_album_viewport_cover_warm(
     model: &gio::ListStore,
     settings: &LibraryListSettings,
 ) {
-    if settings.layout != LibraryLayout::Row || !album_row_layout_uses_cover(settings) {
-        return;
-    }
-    let Some((fetch_size, size)) = album_cover_warm_sizes(shell, settings) else {
-        return;
-    };
-
-    let shell = Rc::clone(shell);
-    let model = model.clone();
-    let adjustment = scroller.vadjustment();
-    let generation = Rc::new(Cell::new(0_u64));
-
-    {
-        let shell = Rc::clone(&shell);
-        let model = model.clone();
-        let adjustment = adjustment.clone();
-        glib::idle_add_local_once(move || {
-            warm_album_cover_model_viewport(&shell, &model, &adjustment, fetch_size, size);
-        });
-    }
-
-    adjustment.connect_value_changed(move |adjustment| {
-        let next_generation = generation.get().saturating_add(1);
-        generation.set(next_generation);
-        let shell = Rc::clone(&shell);
-        let model = model.clone();
-        let adjustment = adjustment.clone();
-        let generation = Rc::clone(&generation);
-        glib::idle_add_local_once({
-            let shell = Rc::clone(&shell);
-            let model = model.clone();
-            let adjustment = adjustment.clone();
-            let generation = Rc::clone(&generation);
-            move || {
-                if generation.get() == next_generation {
-                    prime_album_cover_model_viewport(&shell, &model, &adjustment, fetch_size, size);
-                }
-            }
-        });
-        glib::timeout_add_local_once(Duration::from_millis(ALBUM_WARM_DELAY), move || {
-            if generation.get() != next_generation {
-                return;
-            }
-            warm_album_cover_model_viewport(&shell, &model, &adjustment, fetch_size, size);
-        });
-    });
-}
-fn warm_album_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    fetch_size: u32,
-    size: i32,
-) {
-    prepare_album_cover_model_viewport(shell, model, adjustment, fetch_size, size, true, false);
-}
-fn prime_album_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    fetch_size: u32,
-    size: i32,
-) {
-    prepare_album_cover_model_viewport(shell, model, adjustment, fetch_size, size, false, true);
-}
-fn prepare_album_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    fetch_size: u32,
-    size: i32,
-    include_warm: bool,
-    interaction: bool,
-) {
-    let row_height = f64::from(LIBRARY_TABLE_ROW_HEIGHT.max(1));
-    let visible_start = (adjustment.value().max(0.0) / row_height).floor() as usize;
-    let page_size = route_viewport_page_size(shell, adjustment);
-    let visible_rows = (page_size.max(row_height) / row_height).ceil() as usize;
-    let ranges = if interaction {
-        album_interaction_viewport_cover_ranges(
-            model.n_items() as usize,
-            visible_start,
-            visible_rows,
-        )
-    } else {
-        album_viewport_cover_ranges(model.n_items() as usize, visible_start, visible_rows)
-    };
-    let Some(ranges) = ranges else {
-        return;
-    };
-
-    let batches = viewport_cover_batches(ranges, |start, end| album_cover_refs(model, start, end));
-    prepare_viewport_cover_refs(shell, batches, fetch_size, size, include_warm);
+    connect_cover_viewport_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        album_cover_warm_sizes,
+        album_cover_refs,
+    );
 }
 fn connect_artist_viewport_cover_warm(
     shell: &Rc<Shell>,
@@ -681,126 +552,59 @@ fn connect_artist_viewport_cover_warm(
     model: &gio::ListStore,
     settings: &LibraryListSettings,
 ) {
-    let Some((fetch_size, size)) = grid_row_sizes(shell, settings) else {
-        return;
-    };
-
-    let shell = Rc::clone(shell);
-    let model = model.clone();
-    let settings = settings.clone();
-    let adjustment = scroller.vadjustment();
-    let generation = Rc::new(Cell::new(0_u64));
-
-    {
-        let shell = Rc::clone(&shell);
-        let model = model.clone();
-        let settings = settings.clone();
-        let adjustment = adjustment.clone();
-        glib::idle_add_local_once(move || {
-            warm_artist_cover_model_viewport(
-                &shell,
-                &model,
-                &adjustment,
-                &settings,
-                fetch_size,
-                size,
-            );
-        });
-    }
-
-    adjustment.connect_value_changed(move |adjustment| {
-        let next_generation = generation.get().saturating_add(1);
-        generation.set(next_generation);
-        let shell = Rc::clone(&shell);
-        let model = model.clone();
-        let settings = settings.clone();
-        let adjustment = adjustment.clone();
-        let generation = Rc::clone(&generation);
-        glib::idle_add_local_once({
-            let shell = Rc::clone(&shell);
-            let model = model.clone();
-            let settings = settings.clone();
-            let adjustment = adjustment.clone();
-            let generation = Rc::clone(&generation);
-            move || {
-                if generation.get() == next_generation {
-                    prime_artist_cover_model_viewport(
-                        &shell,
-                        &model,
-                        &adjustment,
-                        &settings,
-                        fetch_size,
-                        size,
-                    );
-                }
-            }
-        });
-        glib::timeout_add_local_once(Duration::from_millis(GRID_WARM_DELAY), move || {
-            if generation.get() != next_generation {
-                return;
-            }
-            warm_artist_cover_model_viewport(
-                &shell,
-                &model,
-                &adjustment,
-                &settings,
-                fetch_size,
-                size,
-            );
-        });
-    });
-}
-fn warm_artist_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    settings: &LibraryListSettings,
-    fetch_size: u32,
-    size: i32,
-) {
-    prepare_artist_cover_model_viewport(
-        shell, model, adjustment, settings, fetch_size, size, true, false,
+    connect_cover_viewport_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        grid_row_sizes,
+        artist_cover_refs,
     );
 }
-fn prime_artist_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    settings: &LibraryListSettings,
-    fetch_size: u32,
-    size: i32,
-) {
-    prepare_artist_cover_model_viewport(
-        shell, model, adjustment, settings, fetch_size, size, false, true,
-    );
-}
-#[allow(clippy::too_many_arguments)]
-fn prepare_artist_cover_model_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    settings: &LibraryListSettings,
+type CoverSizeResolver = fn(&Rc<Shell>, &LibraryListSettings) -> Option<(u32, i32)>;
+type CoverRefsForRange = fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>;
+
+struct CoverViewportRequest<'a> {
+    model: &'a gio::ListStore,
+    adjustment: &'a gtk::Adjustment,
+    settings: &'a LibraryListSettings,
     fetch_size: u32,
     size: i32,
     include_warm: bool,
     interaction: bool,
-) {
-    let ranges = if interaction {
+    refs_for_range: CoverRefsForRange,
+}
+
+fn prepare_item_cover_model_viewport(shell: &Rc<Shell>, request: CoverViewportRequest<'_>) {
+    let ranges = if request.interaction {
         library_interaction_viewport_cover_ranges(
             shell,
-            adjustment,
-            model.n_items() as usize,
-            settings.layout,
+            request.adjustment,
+            request.model.n_items() as usize,
+            request.settings,
         )
     } else {
-        library_viewport_cover_ranges(shell, adjustment, model.n_items() as usize, settings.layout)
+        library_viewport_cover_ranges(
+            shell,
+            request.adjustment,
+            request.model.n_items() as usize,
+            request.settings,
+        )
     };
     let Some(ranges) = ranges else {
         return;
     };
 
-    let batches = viewport_cover_batches(ranges, |start, end| artist_cover_refs(model, start, end));
-    prepare_viewport_cover_refs(shell, batches, fetch_size, size, include_warm);
+    let batches = viewport_cover_batches(ranges, |start, end| {
+        (request.refs_for_range)(request.model, start, end)
+    });
+    prepare_viewport_cover_refs(
+        shell,
+        batches,
+        request.fetch_size,
+        request.size,
+        request.include_warm,
+    );
 }
 fn connect_genre_viewport_cover_warm(
     shell: &Rc<Shell>,
@@ -808,7 +612,14 @@ fn connect_genre_viewport_cover_warm(
     model: &gio::ListStore,
     settings: &LibraryListSettings,
 ) {
-    connect_collection_warm(shell, scroller, model, settings, genre_cover_refs);
+    connect_cover_viewport_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        grid_row_sizes,
+        genre_cover_refs,
+    );
 }
 fn connect_playlist_viewport_cover_warm(
     shell: &Rc<Shell>,
@@ -816,7 +627,14 @@ fn connect_playlist_viewport_cover_warm(
     model: &gio::ListStore,
     settings: &LibraryListSettings,
 ) {
-    connect_collection_warm(shell, scroller, model, settings, playlist_cover_refs);
+    connect_cover_viewport_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        grid_row_sizes,
+        playlist_cover_refs,
+    );
 }
 fn connect_smart_warm(
     shell: &Rc<Shell>,
@@ -824,16 +642,24 @@ fn connect_smart_warm(
     model: &gio::ListStore,
     settings: &LibraryListSettings,
 ) {
-    connect_collection_warm(shell, scroller, model, settings, smart_cover_refs);
+    connect_cover_viewport_warm(
+        shell,
+        scroller,
+        model,
+        settings,
+        grid_row_sizes,
+        smart_cover_refs,
+    );
 }
-fn connect_collection_warm(
+fn connect_cover_viewport_warm(
     shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
     model: &gio::ListStore,
     settings: &LibraryListSettings,
-    refs_for_range: fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>,
+    cover_sizes: CoverSizeResolver,
+    refs_for_range: CoverRefsForRange,
 ) {
-    let Some((fetch_size, size)) = grid_row_sizes(shell, settings) else {
+    let Some((fetch_size, size)) = cover_sizes(shell, settings) else {
         return;
     };
 
@@ -849,14 +675,18 @@ fn connect_collection_warm(
         let settings = settings.clone();
         let adjustment = adjustment.clone();
         glib::idle_add_local_once(move || {
-            group_warm_viewport(
+            prepare_item_cover_model_viewport(
                 &shell,
-                &model,
-                &adjustment,
-                &settings,
-                fetch_size,
-                size,
-                refs_for_range,
+                CoverViewportRequest {
+                    model: &model,
+                    adjustment: &adjustment,
+                    settings: &settings,
+                    fetch_size,
+                    size,
+                    include_warm: true,
+                    interaction: false,
+                    refs_for_range,
+                },
             );
         });
     }
@@ -877,14 +707,18 @@ fn connect_collection_warm(
             let generation = Rc::clone(&generation);
             move || {
                 if generation.get() == next_generation {
-                    group_prime_viewport(
+                    prepare_item_cover_model_viewport(
                         &shell,
-                        &model,
-                        &adjustment,
-                        &settings,
-                        fetch_size,
-                        size,
-                        refs_for_range,
+                        CoverViewportRequest {
+                            model: &model,
+                            adjustment: &adjustment,
+                            settings: &settings,
+                            fetch_size,
+                            size,
+                            include_warm: false,
+                            interaction: true,
+                            refs_for_range,
+                        },
                     );
                 }
             }
@@ -893,100 +727,33 @@ fn connect_collection_warm(
             if generation.get() != next_generation {
                 return;
             }
-            group_warm_viewport(
+            prepare_item_cover_model_viewport(
                 &shell,
-                &model,
-                &adjustment,
-                &settings,
-                fetch_size,
-                size,
-                refs_for_range,
+                CoverViewportRequest {
+                    model: &model,
+                    adjustment: &adjustment,
+                    settings: &settings,
+                    fetch_size,
+                    size,
+                    include_warm: true,
+                    interaction: false,
+                    refs_for_range,
+                },
             );
         });
     });
-}
-fn group_warm_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    settings: &LibraryListSettings,
-    fetch_size: u32,
-    size: i32,
-    refs_for_range: fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>,
-) {
-    group_prepare_viewport(
-        shell,
-        model,
-        adjustment,
-        settings,
-        fetch_size,
-        size,
-        true,
-        false,
-        refs_for_range,
-    );
-}
-fn group_prime_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    settings: &LibraryListSettings,
-    fetch_size: u32,
-    size: i32,
-    refs_for_range: fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>,
-) {
-    group_prepare_viewport(
-        shell,
-        model,
-        adjustment,
-        settings,
-        fetch_size,
-        size,
-        false,
-        true,
-        refs_for_range,
-    );
-}
-#[allow(clippy::too_many_arguments)]
-fn group_prepare_viewport(
-    shell: &Rc<Shell>,
-    model: &gio::ListStore,
-    adjustment: &gtk::Adjustment,
-    settings: &LibraryListSettings,
-    fetch_size: u32,
-    size: i32,
-    include_warm: bool,
-    interaction: bool,
-    refs_for_range: fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>,
-) {
-    let ranges = if interaction {
-        library_interaction_viewport_cover_ranges(
-            shell,
-            adjustment,
-            model.n_items() as usize,
-            settings.layout,
-        )
-    } else {
-        library_viewport_cover_ranges(shell, adjustment, model.n_items() as usize, settings.layout)
-    };
-    let Some(ranges) = ranges else {
-        return;
-    };
-
-    let batches = viewport_cover_batches(ranges, |start, end| refs_for_range(model, start, end));
-    prepare_viewport_cover_refs(shell, batches, fetch_size, size, include_warm);
 }
 fn library_viewport_cover_ranges(
     shell: &Rc<Shell>,
     adjustment: &gtk::Adjustment,
     total: usize,
-    layout: LibraryLayout,
+    settings: &LibraryListSettings,
 ) -> Option<TrackViewportCoverRanges> {
     priority_cover_ranges(
         shell,
         adjustment,
         total,
-        layout,
+        settings,
         ALBUM_PRIORITY_BEHIND,
         ALBUM_PRIORITY_AHEAD,
         GRID_PRIORITY_BEHIND,
@@ -997,13 +764,13 @@ fn library_interaction_viewport_cover_ranges(
     shell: &Rc<Shell>,
     adjustment: &gtk::Adjustment,
     total: usize,
-    layout: LibraryLayout,
+    settings: &LibraryListSettings,
 ) -> Option<TrackViewportCoverRanges> {
     priority_cover_ranges(
         shell,
         adjustment,
         total,
-        layout,
+        settings,
         ALBUM_INTERACTION_BEHIND,
         ALBUM_INTERACTION_AHEAD,
         GRID_INTERACTION_BEHIND,
@@ -1015,7 +782,7 @@ fn priority_cover_ranges(
     shell: &Rc<Shell>,
     adjustment: &gtk::Adjustment,
     total: usize,
-    layout: LibraryLayout,
+    settings: &LibraryListSettings,
     row_priority_behind: usize,
     row_priority_ahead: usize,
     grid_priority_behind_rows: usize,
@@ -1024,7 +791,7 @@ fn priority_cover_ranges(
     if total == 0 {
         return None;
     }
-    match layout {
+    match settings.layout {
         LibraryLayout::Row => {
             let row_height = f64::from(LIBRARY_TABLE_ROW_HEIGHT.max(1));
             let visible_start = (adjustment.value().max(0.0) / row_height).floor() as usize;
@@ -1041,9 +808,9 @@ fn priority_cover_ranges(
             )
         }
         LibraryLayout::Grid | LibraryLayout::Detail => {
-            let (columns, card_size) = shell.responsive_card_grid_metrics();
+            let (columns, card_size) = shell.collection_card_grid_metrics();
             let columns = columns.max(1);
-            let item_extent = f64::from(card_size.saturating_add(88).max(1));
+            let item_extent = f64::from(collection_grid_item_extent(card_size, settings));
             let first_row = (adjustment.value().max(0.0) / item_extent).floor() as usize;
             let page_size = route_viewport_page_size(shell, adjustment);
             let rows = (page_size.max(1.0) / item_extent).ceil().max(1.0) as usize + 1;
@@ -1062,6 +829,14 @@ fn priority_cover_ranges(
         }
     }
 }
+
+pub(in crate::ui) fn collection_grid_item_extent(
+    card_size: i32,
+    settings: &LibraryListSettings,
+) -> i32 {
+    collection_grid_card_height(card_size, settings.grid_fields.len()).max(1)
+}
+
 fn warm_album_covers_for_settings(
     shell: &Rc<Shell>,
     albums: &[Album],
@@ -1080,7 +855,19 @@ fn warm_album_cover(shell: &Rc<Shell>, albums: &[Album], settings: &LibraryListS
         .take(INITIAL_ROUTE_COVER_WARM_ITEMS)
         .filter_map(|album| album.image_ref.clone())
         .collect::<Vec<ImageRef>>();
-    shell.prime_cover_refs_now(image_refs, fetch_size, size);
+    prepare_album_cover_refs(shell, image_refs, fetch_size, size);
+}
+fn prepare_album_cover_refs(
+    shell: &Rc<Shell>,
+    image_refs: Vec<ImageRef>,
+    fetch_size: u32,
+    size: i32,
+) {
+    if shell.state.startup_route_revealed.get() {
+        shell.warm_cover_refs_now(image_refs, fetch_size, size);
+    } else {
+        shell.prime_cover_refs_now(image_refs, fetch_size, size);
+    }
 }
 fn warm_artist_covers_for_settings(
     shell: &Rc<Shell>,
@@ -1118,11 +905,7 @@ fn warm_genre_cover(shell: &Rc<Shell>, genres: &[Genre], settings: &LibraryListS
     let image_refs = values
         .iter()
         .take(INITIAL_ROUTE_COVER_WARM_ITEMS)
-        .flat_map(|genre| {
-            let mut refs = genre.image_refs.clone();
-            refs.extend(genre.image_ref.iter().cloned());
-            refs
-        })
+        .flat_map(|genre| cover_art_policy::selected_genre_artwork(genre).image_refs)
         .collect::<Vec<ImageRef>>();
     shell.prime_cover_refs_now(image_refs, fetch_size, size);
 }
@@ -1142,7 +925,9 @@ fn warm_playlist_cover(shell: &Rc<Shell>, playlists: &[Playlist], settings: &Lib
     let image_refs = values
         .iter()
         .take(GRID_ROUTE_PAGE_SIZE)
-        .flat_map(|playlist| playlist.image_refs.clone())
+        .flat_map(|playlist| {
+            cover_art_policy::selected_collection_refs(&playlist.image_refs, None, false)
+        })
         .collect::<Vec<ImageRef>>();
     shell.prime_cover_refs_now(image_refs, fetch_size, size);
 }
@@ -1166,24 +951,20 @@ fn warm_smart_covers(
     let image_refs = values
         .iter()
         .take(GRID_ROUTE_PAGE_SIZE)
-        .flat_map(|playlist| {
-            let mut refs = playlist.image_refs.clone();
-            refs.extend(playlist.image_ref.iter().cloned());
-            refs
-        })
+        .flat_map(|playlist| cover_art_policy::selected_smart_playlist_artwork(playlist).image_refs)
         .collect::<Vec<ImageRef>>();
     shell.prime_cover_refs_now(image_refs, fetch_size, size);
 }
 fn track_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(u32, i32)> {
     match settings.layout {
-        LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1)),
+        LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.collection_card_grid_metrics().1)),
         LibraryLayout::Row => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Detail => None,
     }
 }
 fn album_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(u32, i32)> {
     match settings.layout {
-        LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1)),
+        LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.collection_card_grid_metrics().1)),
         LibraryLayout::Detail => Some((
             GRID_COVER_SIZE,
             if compact_detail_layout(shell) {
@@ -1199,7 +980,7 @@ fn album_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> 
 fn grid_row_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(u32, i32)> {
     match settings.layout {
         LibraryLayout::Grid | LibraryLayout::Detail => {
-            Some((GRID_COVER_SIZE, shell.responsive_card_grid_metrics().1))
+            Some((GRID_COVER_SIZE, shell.collection_card_grid_metrics().1))
         }
         LibraryLayout::Row if album_row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,

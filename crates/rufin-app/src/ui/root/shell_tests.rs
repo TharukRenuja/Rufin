@@ -1,4 +1,6 @@
-use super::cover::{collection_cover_decode_extent, cover_group_collage_ready};
+use super::cover::{
+    collection_cover_decode_extent, cover_artwork_id_for_key, cover_request_id_for_key,
+};
 use super::grouped_detail_view::GROUPED_DETAIL_COVER_FETCH_SIZE;
 use super::lyrics_playback_state::{
     allow_loaded_lyrics_cache_revisit, loaded_lyrics_matches_current,
@@ -592,13 +594,39 @@ pub(in crate::ui) fn shell_connection_progress_detail() {
     );
 }
 #[test]
-pub(in crate::ui) fn shell_group_cover_waits_for_multiple_ready_slots() {
-    assert!(!cover_group_collage_ready(0, 0));
-    assert!(!cover_group_collage_ready(1, 1));
-    assert!(!cover_group_collage_ready(2, 0));
-    assert!(!cover_group_collage_ready(2, 1));
-    assert!(cover_group_collage_ready(2, 2));
-    assert!(cover_group_collage_ready(4, 2));
+pub(in crate::ui) fn shell_cover_bind_keeps_same_artwork() {
+    assert_eq!(
+        super::artwork_bind_action(true, true, true, false),
+        super::ArtworkBindAction::Retain
+    );
+    assert_eq!(
+        super::artwork_bind_action(true, false, true, false),
+        super::ArtworkBindAction::RetainAndRequest
+    );
+    assert_eq!(
+        super::artwork_bind_action(false, false, true, false),
+        super::ArtworkBindAction::Request
+    );
+    assert_eq!(
+        super::artwork_bind_action(true, true, true, true),
+        super::ArtworkBindAction::Replace
+    );
+}
+
+#[test]
+pub(in crate::ui) fn shell_cover_artwork_id_ignores_size() {
+    let image_ref = ImageRef::new("provider:album:one", Some("tag-one".to_string()));
+    let grid = "source/provider%3Aalbum%3Aone/tag-one/256";
+    let detail = "source/provider%3Aalbum%3Aone/tag-one/512";
+
+    assert_eq!(
+        cover_artwork_id_for_key(grid, &image_ref),
+        cover_artwork_id_for_key(detail, &image_ref)
+    );
+    assert_ne!(
+        cover_request_id_for_key(grid, 180),
+        cover_request_id_for_key(grid, 220)
+    );
 }
 #[test]
 pub(in crate::ui) fn shell_collection_cover_uses_thumbnail_extent() {
@@ -971,7 +999,12 @@ pub(in crate::ui) fn shell_cover_rules() {
     let second = test_image_ref("second");
     let duplicate = first.clone();
 
-    let slots = super::cover_group_slots(&[first.clone(), second.clone(), duplicate]);
+    let selected = crate::cover_art_policy::selected_collection_refs(
+        &[first.clone(), second.clone(), duplicate],
+        None,
+        false,
+    );
+    let slots = crate::cover_art_policy::selected_collection_slots(&selected);
     let slot_refs = slots
         .iter()
         .map(|image_ref| image_ref.item_id.as_str())
@@ -983,7 +1016,7 @@ pub(in crate::ui) fn shell_cover_rules() {
             first.item_id.as_str(),
             second.item_id.as_str(),
             first.item_id.as_str(),
-            first.item_id.as_str(),
+            second.item_id.as_str(),
         ]
     );
 }
@@ -1008,7 +1041,7 @@ pub(in crate::ui) fn shell_use_geometry() {
         17
     );
     assert_eq!(
-        super::initial_visible_count_from_metrics(LibraryLayout::Grid, 900, 720, 4, 160,),
+        super::initial_visible_count_from_metrics(LibraryLayout::Grid, 900, 720, 4, 248,),
         20
     );
 }
@@ -1021,7 +1054,7 @@ pub(in crate::ui) fn grid_bottom_clamp() {
         744.0,
         50,
         4,
-        160,
+        248,
     );
 
     assert_eq!((visible_start, visible_end), (84, 100));

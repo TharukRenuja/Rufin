@@ -73,6 +73,9 @@ impl Shell {
         } else {
             detail.smart_playlist.image_refs.clone()
         };
+        let mut smart_playlist = detail.smart_playlist.clone();
+        smart_playlist.image_refs = cover_refs;
+        let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(&smart_playlist);
         let summary = format!(
             "{} {} • {}",
             detail.smart_playlist.track_count,
@@ -103,9 +106,8 @@ impl Shell {
         header.set_width_request(1);
         header.set_margin_start(route_margin);
         header.set_margin_end(route_margin);
-        let cover = self.cover_group_tile_for(
-            cover_refs,
-            detail.smart_playlist.image_ref.as_ref(),
+        let cover = self.cover_group_tile_for_artwork(
+            &artwork,
             seed,
             cover_size,
             playlist_detail_cover_fetch_size(),
@@ -212,6 +214,12 @@ impl Shell {
         } else {
             detail.playlist.image_refs.clone()
         };
+        let mut playlist = detail.playlist.clone();
+        playlist.image_refs = cover_refs;
+        let artwork = crate::cover_art_policy::selected_playlist_artwork(
+            &playlist,
+            &self.state.settings.borrow(),
+        );
         let summary = format!(
             "{} {} • {}",
             detail.playlist.track_count,
@@ -242,9 +250,8 @@ impl Shell {
         header.set_hexpand(true);
         header.set_halign(gtk::Align::Fill);
         header.set_width_request(1);
-        let cover = self.cover_group_tile_for(
-            cover_refs,
-            detail.playlist.image_ref.as_ref(),
+        let cover = self.cover_group_tile_for_artwork(
+            &artwork,
             seed,
             cover_size,
             playlist_detail_cover_fetch_size(),

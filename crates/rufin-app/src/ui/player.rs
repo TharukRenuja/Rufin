@@ -15,10 +15,10 @@ use super::player_icons::{
     skip_icon_button,
 };
 use super::{
-    ArtworkTile, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover, add_label_click,
-    add_widget_click, favorite_icon_button, icon_button_with_image,
-    install_current_track_context_menu, seekbar_target_seconds, set_active_class,
-    set_favorite_button_active,
+    ArtworkTile, CoverDecodePriority, Shell, THUMB_COVER_SIZE, add_dynamic_link_hover,
+    add_label_click, add_widget_click, cover_artwork_id_for_key, cover_request_id_for_key,
+    favorite_icon_button, icon_button_with_image, install_current_track_context_menu,
+    seekbar_target_seconds, set_active_class, set_favorite_button_active,
 };
 
 pub(super) const BOTTOM_PLAYER_HEIGHT: i32 = 96;
@@ -409,25 +409,29 @@ impl Shell {
             .and_then(|entry| entry.image_ref.as_ref())
         {
             if let Some(key) = self.current_playback_cover_cache_key(image_ref, THUMB_COVER_SIZE) {
-                let cover_key_changed =
-                    controls.cover_key.borrow().as_deref() != Some(key.as_str());
-                if cover_key_changed {
-                    let has_decoded_cover =
-                        self.decoded_cover_has_min_size(&key, BOTTOM_PLAYER_COVER_SIZE);
-                    if has_decoded_cover {
-                        controls.cover.advance_generation();
-                    } else {
-                        controls.cover.retain_cover_image(cover_seed);
-                    }
-                    self.request_cover_for_tile(
+                let pixbuf = self
+                    .cloned_decoded_cover(&key, BOTTOM_PLAYER_COVER_SIZE)
+                    .map(|cover| {
+                        self.touch_decoded_cover(&key, CoverDecodePriority::Visible);
+                        cover.pixbuf
+                    });
+                let outcome = controls.cover.bind_selected_cover(
+                    cover_seed,
+                    cover_artwork_id_for_key(&key, image_ref),
+                    cover_request_id_for_key(&key, BOTTOM_PLAYER_COVER_SIZE),
+                    pixbuf,
+                );
+                if outcome.request_needed {
+                    self.request_bound_cover_for_tile(
                         &controls.cover,
                         key.clone(),
                         image_ref.clone(),
+                        outcome.generation,
                         BOTTOM_PLAYER_COVER_SIZE,
                         THUMB_COVER_SIZE,
                     );
-                    *controls.cover_key.borrow_mut() = Some(key);
                 }
+                *controls.cover_key.borrow_mut() = Some(key);
             } else {
                 controls.cover.clear_image();
                 *controls.cover_key.borrow_mut() = None;
