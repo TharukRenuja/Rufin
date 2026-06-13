@@ -68,7 +68,6 @@ pub(super) enum ActiveLayoutProfile {
 pub(in crate::ui) enum ResolvedLeftSidebarMode {
     Full,
     Compact,
-    Hidden,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,7 +105,6 @@ fn resolved_sidebar_width(mode: ResolvedLeftSidebarMode, widths: SidebarWidths) 
     match mode {
         ResolvedLeftSidebarMode::Full => widths.full,
         ResolvedLeftSidebarMode::Compact => widths.compact,
-        ResolvedLeftSidebarMode::Hidden => 0,
     }
 }
 
@@ -169,13 +167,6 @@ fn resolve_layout_for_profile(
             - resolved_sidebar_width(left_sidebar, sidebar_widths)
             - resolved_right_sidebar_width;
     }
-    if main_width < MIN_USEFUL_MAIN_WIDTH && left_sidebar == ResolvedLeftSidebarMode::Compact {
-        left_sidebar = ResolvedLeftSidebarMode::Hidden;
-        right_sidebar = resolved_right_sidebar_for_width(right_sidebar, window_width);
-        resolved_right_sidebar_width = right_sidebar_width(right_sidebar);
-        main_width = window_width - resolved_right_sidebar_width;
-    }
-
     ResolvedLayout {
         profile,
         left_sidebar,
@@ -495,9 +486,12 @@ mod tests {
         let settings = LayoutSettings::default();
         let resolved = resolve_layout(&settings, 1);
 
-        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Hidden);
+        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
         assert_eq!(resolved.right_sidebar, RightSidebarMode::Hidden);
-        assert_eq!(resolved.main_width, MIN_USEFUL_MAIN_WIDTH);
+        assert_eq!(
+            resolved.main_width,
+            MIN_APP_WINDOW_WIDTH - COMPACT_RAIL_WIDTH
+        );
     }
 
     #[test]
