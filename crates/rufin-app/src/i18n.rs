@@ -478,6 +478,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Metadata");
     let _ = tr("External lyric lookup");
     let _ = tr("External cover lookup");
+    let _ = tr("Prefer server playlist covers");
     let _ = tr("External site links");
     let _ = tr("Show external site links");
     let _ = tr("Show external service icons on album and artist pages");

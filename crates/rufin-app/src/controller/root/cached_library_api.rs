@@ -84,6 +84,12 @@ impl AppController {
         else {
             return Ok(None);
         };
+        scrub_selected_playlist_image_refs(
+            &saved,
+            &settings,
+            std::slice::from_mut(&mut detail.playlist),
+        );
+        cover_art_policy::bind_playlist_detail(&mut detail, &settings);
         scrub_selected_track_image_refs(&saved, &settings, &mut detail.tracks);
         cover_art_policy::bind_tracks(&mut detail.tracks, &settings);
         track_album_refs(&self.store, &saved, &mut detail.tracks, &[])?;
@@ -330,6 +336,7 @@ impl AppController {
             .with_store(|store| store.load_playlists(&saved.server.id, offset, limit))
             .map(|mut page| {
                 scrub_selected_playlist_image_refs(&saved, &settings, &mut page.items);
+                cover_art_policy::bind_playlists(&mut page.items, &settings);
                 page
             })
     }
@@ -349,6 +356,7 @@ impl AppController {
             })
             .map(|mut page| {
                 scrub_selected_playlist_image_refs(&saved, &settings, &mut page.items);
+                cover_art_policy::bind_playlists(&mut page.items, &settings);
                 page
             })
     }

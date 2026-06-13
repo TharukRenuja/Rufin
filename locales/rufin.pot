@@ -246,6 +246,11 @@ msgstr ""
 msgid "Metadata"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:481
+#: crates/rufin-app/src/ui/preferences/root/mod.rs:259
+msgid "Prefer server playlist covers"
+msgstr ""
+
 #: crates/rufin-app/src/i18n.rs:464
 #: crates/rufin-app/src/ui/preferences/root/mod.rs:259
 msgid "External lyric lookup"

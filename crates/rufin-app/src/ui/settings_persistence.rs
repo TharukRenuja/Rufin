@@ -229,6 +229,23 @@ impl Shell {
         }
     }
 
+    pub(super) fn set_prefer_server_playlist_covers(self: &Rc<Self>, enabled: bool) {
+        if self
+            .update_app_settings("playlist cover setting", |settings| {
+                if settings.prefer_server_playlist_covers == enabled {
+                    return false;
+                }
+                settings.prefer_server_playlist_covers = enabled;
+                true
+            })
+            .is_none()
+        {
+            return;
+        }
+        self.controller.reload_snapshot();
+        self.refresh_cover_surfaces();
+    }
+
     pub(super) fn set_external_lyrics_provider_enabled(
         self: &Rc<Self>,
         provider: ExternalLyricsProvider,
