@@ -1,5 +1,8 @@
 use super::*;
 
+const CONTEXT_MENU_PLAYLIST_LABEL_CHARS: usize = 32;
+const CONTEXT_MENU_PLAYLIST_LABEL_TRAILER: &str = "...";
+
 #[derive(Clone, Debug)]
 pub(in crate::ui) struct PlaylistEntryContextMenuAction {
     pub(in crate::ui) playlist_id: PlaylistId,
@@ -44,8 +47,9 @@ fn present_track_context_menu_inner(
     if !playlists.is_empty() {
         let playlist_menu = gio::Menu::new();
         for (index, playlist) in playlists.iter().enumerate() {
+            let label = context_menu_playlist_label(&playlist.name);
             playlist_menu.append(
-                Some(&playlist.name),
+                Some(&label),
                 Some(&format!("track.add-to-playlist-{index}")),
             );
         }
@@ -221,8 +225,9 @@ pub(in crate::ui) fn present_album_context_menu(
     if !playlists.is_empty() {
         let playlist_menu = gio::Menu::new();
         for (index, playlist) in playlists.iter().enumerate() {
+            let label = context_menu_playlist_label(&playlist.name);
             playlist_menu.append(
-                Some(&playlist.name),
+                Some(&label),
                 Some(&format!("album.add-to-playlist-{index}")),
             );
         }
@@ -386,8 +391,9 @@ pub(in crate::ui) fn present_artist_context_menu(
     if !playlists.is_empty() {
         let playlist_menu = gio::Menu::new();
         for (index, playlist) in playlists.iter().enumerate() {
+            let label = context_menu_playlist_label(&playlist.name);
             playlist_menu.append(
-                Some(&playlist.name),
+                Some(&label),
                 Some(&format!("artist.add-to-playlist-{index}")),
             );
         }
@@ -706,6 +712,17 @@ pub(in crate::ui) fn context_menu_playlists(shell: &Rc<Shell>) -> Vec<Playlist> 
         .cached_playlists_page(0, CONTEXT_MENU_PLAYLIST_LIMIT)
         .map(|page| page.items)
         .unwrap_or_else(|_| shell.state.library.borrow().playlists.clone())
+}
+pub(in crate::ui) fn context_menu_playlist_label(name: &str) -> String {
+    if name.chars().count() <= CONTEXT_MENU_PLAYLIST_LABEL_CHARS {
+        return name.to_string();
+    }
+
+    let keep = CONTEXT_MENU_PLAYLIST_LABEL_CHARS
+        .saturating_sub(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER.chars().count());
+    let mut label = name.chars().take(keep).collect::<String>();
+    label.push_str(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER);
+    label
 }
 pub(in crate::ui) fn context_track(shell: &Rc<Shell>, fallback: &Track) -> Track {
     shell
@@ -1405,4 +1422,30 @@ pub(in crate::ui) enum PlaylistEntrySort {
     Title,
     Artist,
     Album,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_menu_playlist_label_caps_long_names() {
+        let short = "Morning Queue";
+        let long = "Playlist names can become intentionally excessive";
+        let wide = "長".repeat(40);
+
+        assert_eq!(context_menu_playlist_label(short), short);
+
+        let label = context_menu_playlist_label(long);
+        assert_eq!(label.chars().count(), CONTEXT_MENU_PLAYLIST_LABEL_CHARS);
+        assert!(label.ends_with(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER));
+        assert!(label.starts_with("Playlist names can"));
+
+        let wide_label = context_menu_playlist_label(&wide);
+        assert_eq!(
+            wide_label.chars().count(),
+            CONTEXT_MENU_PLAYLIST_LABEL_CHARS
+        );
+        assert!(wide_label.ends_with(CONTEXT_MENU_PLAYLIST_LABEL_TRAILER));
+    }
 }
