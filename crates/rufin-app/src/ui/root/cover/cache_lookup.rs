@@ -557,9 +557,14 @@ impl Shell {
         }
 
         {
+            let requires_live_binding =
+                priority == CoverDecodePriority::Visible && self.cover_binding_has_live(&key);
+            let priority = cover_decode_priority_for_interaction(
+                priority,
+                requires_live_binding,
+                self.cover_warm_is_paused(),
+            );
             let mut queue = self.state.cover_decode_queue.borrow_mut();
-            let requires_live_binding = priority == CoverDecodePriority::Visible
-                && self.state.cover_bindings.borrow().contains_key(&key);
             if let Some(position) = queue.iter().position(|job| job.key == key) {
                 let Some(mut job) = queue.remove(position) else {
                     return;

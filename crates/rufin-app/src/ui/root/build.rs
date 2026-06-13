@@ -15,16 +15,17 @@ pub(in crate::ui) struct InitialRouteCoverMetrics {
     pub(in crate::ui) home_showcase_seed: u64,
 }
 impl InitialRouteCoverMetrics {
-    fn initial_visible_count(self, layout: LibraryLayout) -> usize {
+    fn initial_visible_count(self, settings: &LibraryListSettings) -> usize {
         let viewport_height = self.route_height.max(self.app_height).max(1);
-        match layout {
+        match settings.layout {
             LibraryLayout::Row => {
                 let row_height = library::LIBRARY_TABLE_ROW_HEIGHT.max(1);
                 (viewport_height / row_height).saturating_add(2).max(1) as usize
             }
             LibraryLayout::Grid | LibraryLayout::Detail => {
                 let columns = self.grid_columns.max(1);
-                let item_extent = self.grid_card_size.saturating_add(88).max(1);
+                let item_extent =
+                    library::collection_grid_item_extent(self.grid_card_size, settings);
                 let rows = (viewport_height / item_extent).saturating_add(2).max(1) as usize;
                 rows.saturating_mul(columns)
             }
@@ -224,7 +225,7 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
     match route {
         Route::Tracks if library.tracks.is_empty() && library.cached_track_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Tracks);
-            let limit = metrics.initial_visible_count(list_settings.layout);
+            let limit = metrics.initial_visible_count(&list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_tracks_page(0, limit) {
@@ -239,7 +240,7 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
         }
         Route::Albums if library.albums.is_empty() && library.cached_album_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Albums);
-            let limit = metrics.initial_visible_count(list_settings.layout);
+            let limit = metrics.initial_visible_count(&list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_albums_page(0, limit) {
@@ -248,7 +249,7 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
         }
         Route::Artists if library.artists.is_empty() && library.cached_artist_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Artists);
-            let limit = metrics.initial_visible_count(list_settings.layout);
+            let limit = metrics.initial_visible_count(&list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_artists_page(false, 0, limit) {
@@ -259,7 +260,7 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
             if library.album_artists.is_empty() && library.cached_album_artist_count > 0 =>
         {
             let list_settings = settings.library_list(LibraryListKey::AlbumArtists);
-            let limit = metrics.initial_visible_count(list_settings.layout);
+            let limit = metrics.initial_visible_count(&list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_artists_page(true, 0, limit) {
@@ -268,7 +269,7 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
         }
         Route::Genres if library.genres.is_empty() && library.cached_genre_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Genres);
-            let limit = metrics.initial_visible_count(list_settings.layout);
+            let limit = metrics.initial_visible_count(&list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_genres_page(0, limit) {
@@ -277,7 +278,7 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
         }
         Route::Playlists if library.playlists.is_empty() && library.cached_playlist_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Playlists);
-            let limit = metrics.initial_visible_count(list_settings.layout);
+            let limit = metrics.initial_visible_count(&list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_playlists_page(0, limit) {
@@ -533,7 +534,7 @@ fn push_track_source_warm_targets(
     library::sort_tracks(&mut tracks, settings, favorite_first);
     for track in tracks
         .iter()
-        .take(route_metrics.initial_visible_count(settings.layout))
+        .take(route_metrics.initial_visible_count(settings))
     {
         push_startup_cover_target(targets, track.image_ref.as_ref(), fetch_size, size);
     }
@@ -553,7 +554,7 @@ fn push_track_targets(
         return;
     }
     let visible_rows = route_metrics
-        .initial_visible_count(settings.layout)
+        .initial_visible_count(settings)
         .max(1)
         .min(total);
     for numerator in [1_usize, 2, 3, 4] {
@@ -576,7 +577,7 @@ fn push_album_source_warm_targets(
     library::sort_albums(&mut albums, settings);
     for album in albums
         .iter()
-        .take(route_metrics.initial_visible_count(settings.layout))
+        .take(route_metrics.initial_visible_count(settings))
     {
         push_startup_cover_target(targets, album.image_ref.as_ref(), fetch_size, size);
     }
@@ -593,7 +594,7 @@ fn push_artist_source_warm_targets(
     library::sort_artists(&mut artists, settings);
     for artist in artists
         .iter()
-        .take(route_metrics.initial_visible_count(settings.layout))
+        .take(route_metrics.initial_visible_count(settings))
     {
         push_startup_cover_target(targets, artist.image_ref.as_ref(), fetch_size, size);
     }
@@ -610,7 +611,7 @@ fn push_genre_source_warm_targets(
     library::sort_genres(&mut genres, settings);
     for genre in genres
         .iter()
-        .take(route_metrics.initial_visible_count(settings.layout))
+        .take(route_metrics.initial_visible_count(settings))
     {
         for image_ref in &genre.image_refs {
             push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
@@ -630,7 +631,7 @@ fn push_playlist_source_warm_targets(
     library::sort_playlists(&mut playlists, settings);
     for playlist in playlists
         .iter()
-        .take(route_metrics.initial_visible_count(settings.layout))
+        .take(route_metrics.initial_visible_count(settings))
     {
         for image_ref in &playlist.image_refs {
             push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
@@ -649,7 +650,7 @@ fn push_smart_targets(
     library::sort_smart_playlists(&mut playlists, settings);
     for playlist in playlists
         .iter()
-        .take(route_metrics.initial_visible_count(settings.layout))
+        .take(route_metrics.initial_visible_count(settings))
     {
         for image_ref in &playlist.image_refs {
             push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
@@ -718,14 +719,13 @@ fn push_source_background_warm_targets(
     if sidebar_route_visible(settings, SidebarRouteItem::Genres) {
         let list_settings = settings.library_list(LibraryListKey::Genres);
         if let Some((fetch_size, size)) = source_collection_route_cover_size(&list_settings) {
-            push_background_cover_refs(
+            push_background_cover_ref_values(
                 targets,
                 &mut seen,
                 &mut remaining,
-                library
-                    .genres
-                    .iter()
-                    .flat_map(|genre| genre.image_refs.iter().chain(genre.image_ref.iter())),
+                library.genres.iter().flat_map(|genre| {
+                    crate::cover_art_policy::selected_genre_artwork(genre).image_refs
+                }),
                 fetch_size,
                 size,
             );
@@ -734,14 +734,14 @@ fn push_source_background_warm_targets(
     if sidebar_route_visible(settings, SidebarRouteItem::Playlists) {
         let list_settings = settings.library_list(LibraryListKey::Playlists);
         if let Some((fetch_size, size)) = source_collection_route_cover_size(&list_settings) {
-            push_background_cover_refs(
+            push_background_cover_ref_values(
                 targets,
                 &mut seen,
                 &mut remaining,
-                library
-                    .playlists
-                    .iter()
-                    .flat_map(|playlist| playlist.image_refs.iter()),
+                library.playlists.iter().flat_map(|playlist| {
+                    crate::cover_art_policy::selected_playlist_artwork(playlist, settings)
+                        .image_refs
+                }),
                 fetch_size,
                 size,
             );
@@ -750,12 +750,12 @@ fn push_source_background_warm_targets(
     if sidebar_route_visible(settings, SidebarRouteItem::SmartPlaylists) {
         let list_settings = settings.library_list(LibraryListKey::SmartPlaylists);
         if let Some((fetch_size, size)) = source_collection_route_cover_size(&list_settings) {
-            push_background_cover_refs(
+            push_background_cover_ref_values(
                 targets,
                 &mut seen,
                 &mut remaining,
                 smart_playlists.iter().flat_map(|playlist| {
-                    playlist.image_refs.iter().chain(playlist.image_ref.iter())
+                    crate::cover_art_policy::selected_smart_playlist_artwork(playlist).image_refs
                 }),
                 fetch_size,
                 size,
@@ -805,6 +805,22 @@ fn push_background_cover_refs<'a>(
 ) {
     for image_ref in image_refs {
         push_background_cover_target(targets, seen, remaining, image_ref, fetch_size, size);
+        if *remaining == 0 {
+            break;
+        }
+    }
+}
+
+fn push_background_cover_ref_values(
+    targets: &mut Vec<CoverWarmTarget>,
+    seen: &mut HashSet<String>,
+    remaining: &mut usize,
+    image_refs: impl IntoIterator<Item = ImageRef>,
+    fetch_size: u32,
+    size: i32,
+) {
+    for image_ref in image_refs {
+        push_background_cover_target(targets, seen, remaining, &image_ref, fetch_size, size);
         if *remaining == 0 {
             break;
         }
@@ -886,17 +902,6 @@ fn warm_dedupe_key(server_id: &ServerId, image_ref: &ImageRef) -> String {
         image_ref.item_id,
         image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
     )
-}
-pub(in crate::ui) fn cover_group_slots(image_refs: &[ImageRef]) -> Vec<ImageRef> {
-    let Some(first) = image_refs.first() else {
-        return Vec::new();
-    };
-    if image_refs.len() == 1 {
-        return vec![first.clone()];
-    }
-    (0..4)
-        .filter_map(|index| image_refs.get(index % image_refs.len()).cloned())
-        .collect()
 }
 pub(in crate::ui) fn decoded_cover_candidate_sizes(preferred_size: u32) -> Vec<u32> {
     let mut sizes = Vec::from([preferred_size]);

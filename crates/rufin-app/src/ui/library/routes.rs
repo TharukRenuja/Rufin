@@ -137,11 +137,15 @@ impl Shell {
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
+                let total_started = Instant::now();
+                let load_started = Instant::now();
                 match shell
                     .controller
                     .cached_albums_page_matching(&text, 0, GRID_ROUTE_PAGE_SIZE)
                 {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let settings = shell.library_settings(LibraryListKey::Albums);
                         let page = complete_cached_page(
                             page,
@@ -154,6 +158,7 @@ impl Shell {
                             "albums search",
                         );
                         let count = page.items.len();
+                        let total = page.total;
                         *albums.borrow_mut() = page.items;
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
@@ -164,7 +169,17 @@ impl Shell {
                             &settings,
                             &album_tracks.borrow(),
                         );
-                        finish_grid_page(&cursor, 0, count, page.total);
+                        finish_grid_page(&cursor, 0, count, total);
+                        log_route_page_timing(
+                            &Route::Albums,
+                            "search",
+                            0,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached albums page");
@@ -185,15 +200,20 @@ impl Shell {
                 if !shell.can_load_grid_page(&cursor, &Route::Albums) {
                     return;
                 }
+                let total_started = Instant::now();
                 let offset = cursor.offset.get();
                 let text = query.borrow().clone();
+                let load_started = Instant::now();
                 match shell.controller.cached_albums_page_matching(
                     &text,
                     offset,
                     GRID_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let count = page.items.len();
+                        let total = page.total;
                         let mut items = page.items;
                         let settings = shell.library_settings(LibraryListKey::Albums);
                         sort_albums(&mut items, &settings);
@@ -207,7 +227,17 @@ impl Shell {
                             &settings,
                             &album_tracks.borrow(),
                         );
-                        finish_grid_page(&cursor, offset, count, page.total);
+                        finish_grid_page(&cursor, offset, count, total);
+                        log_route_page_timing(
+                            &Route::Albums,
+                            "append",
+                            offset,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached albums page");
@@ -432,6 +462,7 @@ impl Shell {
             let artists = Rc::clone(&artists);
             let cursor = Rc::clone(&cursor);
             let query = Rc::clone(&query);
+            let search_route = route.clone();
             search.connect_search_changed(move |entry| {
                 let text = entry.text().trim().to_string();
                 *query.borrow_mut() = text.clone();
@@ -459,6 +490,8 @@ impl Shell {
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
+                let total_started = Instant::now();
+                let load_started = Instant::now();
                 match shell.controller.cached_artists_page_matching(
                     album_artist,
                     &text,
@@ -466,6 +499,8 @@ impl Shell {
                     GRID_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let settings = shell.library_settings(key);
                         let page = complete_cached_page(
                             page,
@@ -481,10 +516,21 @@ impl Shell {
                             "artists search",
                         );
                         let count = page.items.len();
+                        let total = page.total;
                         *artists.borrow_mut() = page.items;
                         warm_artist_covers_for_settings(&shell, &artists.borrow(), &settings);
                         populate_artist_model(&model, &artists.borrow(), &settings);
-                        finish_grid_page(&cursor, 0, count, page.total);
+                        finish_grid_page(&cursor, 0, count, total);
+                        log_route_page_timing(
+                            &search_route,
+                            "search",
+                            0,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached artists page");
@@ -505,8 +551,10 @@ impl Shell {
                 if !shell.can_load_grid_page(&cursor, &load_route) {
                     return;
                 }
+                let total_started = Instant::now();
                 let offset = cursor.offset.get();
                 let text = query.borrow().clone();
+                let load_started = Instant::now();
                 match shell.controller.cached_artists_page_matching(
                     album_artist,
                     &text,
@@ -514,7 +562,10 @@ impl Shell {
                     GRID_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let count = page.items.len();
+                        let total = page.total;
                         let mut items = page.items;
                         sort_artists(&mut items, &shell.library_settings(key));
                         warm_artist_covers_for_settings(
@@ -524,7 +575,17 @@ impl Shell {
                         );
                         artists.borrow_mut().extend(items.iter().cloned());
                         append_artists_to_model(&model, items);
-                        finish_grid_page(&cursor, offset, count, page.total);
+                        finish_grid_page(&cursor, offset, count, total);
+                        log_route_page_timing(
+                            &load_route,
+                            "append",
+                            offset,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached artists page");
@@ -677,11 +738,15 @@ impl Shell {
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
+                let total_started = Instant::now();
+                let load_started = Instant::now();
                 match shell
                     .controller
                     .cached_genres_page_matching(&text, 0, GRID_ROUTE_PAGE_SIZE)
                 {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let settings = shell.library_settings(LibraryListKey::Genres);
                         let page = complete_cached_page(
                             page,
@@ -694,10 +759,21 @@ impl Shell {
                             "genres search",
                         );
                         let count = page.items.len();
+                        let total = page.total;
                         *genres.borrow_mut() = page.items;
                         warm_genre_covers_for_settings(&shell, &genres.borrow(), &settings);
                         populate_genre_model(&model, &genres.borrow(), &settings);
-                        finish_grid_page(&cursor, 0, count, page.total);
+                        finish_grid_page(&cursor, 0, count, total);
+                        log_route_page_timing(
+                            &Route::Genres,
+                            "search",
+                            0,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached genres page");
@@ -717,15 +793,20 @@ impl Shell {
                 if !shell.can_load_grid_page(&cursor, &Route::Genres) {
                     return;
                 }
+                let total_started = Instant::now();
                 let offset = cursor.offset.get();
                 let text = query.borrow().clone();
+                let load_started = Instant::now();
                 match shell.controller.cached_genres_page_matching(
                     &text,
                     offset,
                     GRID_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let count = page.items.len();
+                        let total = page.total;
                         let mut items = page.items;
                         sort_genres(&mut items, &shell.library_settings(LibraryListKey::Genres));
                         warm_genre_covers_for_settings(
@@ -735,7 +816,17 @@ impl Shell {
                         );
                         genres.borrow_mut().extend(items.iter().cloned());
                         append_genres_to_model(&model, items);
-                        finish_grid_page(&cursor, offset, count, page.total);
+                        finish_grid_page(&cursor, offset, count, total);
+                        log_route_page_timing(
+                            &Route::Genres,
+                            "append",
+                            offset,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached genres page");
@@ -856,12 +947,16 @@ impl Shell {
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
+                let total_started = Instant::now();
+                let load_started = Instant::now();
                 match shell.controller.cached_playlists_page_matching(
                     &text,
                     0,
                     GRID_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let settings = shell.library_settings(LibraryListKey::Playlists);
                         let page = complete_cached_page(
                             page,
@@ -877,10 +972,21 @@ impl Shell {
                             "playlists search",
                         );
                         let count = page.items.len();
+                        let total = page.total;
                         *playlists.borrow_mut() = page.items;
                         warm_playlist_covers_for_settings(&shell, &playlists.borrow(), &settings);
                         populate_playlist_model(&model, &playlists.borrow(), &settings);
-                        finish_grid_page(&cursor, 0, count, page.total);
+                        finish_grid_page(&cursor, 0, count, total);
+                        log_route_page_timing(
+                            &Route::Playlists,
+                            "search",
+                            0,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to search cached playlists page");
@@ -900,15 +1006,20 @@ impl Shell {
                 if !shell.can_load_grid_page(&cursor, &Route::Playlists) {
                     return;
                 }
+                let total_started = Instant::now();
                 let offset = cursor.offset.get();
                 let text = query.borrow().clone();
+                let load_started = Instant::now();
                 match shell.controller.cached_playlists_page_matching(
                     &text,
                     offset,
                     GRID_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let count = page.items.len();
+                        let total = page.total;
                         let mut items = page.items;
                         sort_playlists(
                             &mut items,
@@ -921,7 +1032,17 @@ impl Shell {
                         );
                         playlists.borrow_mut().extend(items.iter().cloned());
                         append_playlists_to_model(&model, items);
-                        finish_grid_page(&cursor, offset, count, page.total);
+                        finish_grid_page(&cursor, offset, count, total);
+                        log_route_page_timing(
+                            &Route::Playlists,
+                            "append",
+                            offset,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached playlists page");

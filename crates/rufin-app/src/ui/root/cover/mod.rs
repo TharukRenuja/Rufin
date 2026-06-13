@@ -8,7 +8,8 @@ mod warming;
 
 use size_helpers::*;
 #[cfg(test)]
-pub(in crate::ui) use tiles::{collection_cover_decode_extent, cover_group_collage_ready};
+pub(in crate::ui) use tiles::collection_cover_decode_extent;
+pub(in crate::ui) use tiles::{cover_artwork_id_for_key, cover_request_id_for_key};
 
 #[derive(Clone)]
 pub(in crate::ui) struct CoverBinding {
@@ -203,6 +204,25 @@ pub(in crate::ui) fn queue_cover_decode_job(
     }
 }
 
+pub(in crate::ui) fn cover_decode_priority_for_interaction(
+    priority: CoverDecodePriority,
+    requires_live_binding: bool,
+    interaction_paused: bool,
+) -> CoverDecodePriority {
+    if interaction_paused && priority == CoverDecodePriority::Visible && !requires_live_binding {
+        CoverDecodePriority::Warm
+    } else {
+        priority
+    }
+}
+
+pub(in crate::ui) fn visible_cover_decode_startable(
+    job: &CoverDecodeJob,
+    visible_paused: bool,
+) -> bool {
+    job.priority == CoverDecodePriority::Visible && !visible_paused
+}
+
 pub(in crate::ui) fn cover_decode_has_capacity(
     active: &HashMap<String, CoverDecodePriority>,
     priority: CoverDecodePriority,
@@ -319,6 +339,34 @@ mod priority_work_tests {
             &active,
             CoverDecodePriority::Warm
         ));
+    }
+
+    #[test]
+    fn scroll_pause_defers_visible_decode_start() {
+        assert_eq!(
+            cover_decode_priority_for_interaction(CoverDecodePriority::Visible, false, true),
+            CoverDecodePriority::Warm
+        );
+        assert_eq!(
+            cover_decode_priority_for_interaction(CoverDecodePriority::Visible, true, true),
+            CoverDecodePriority::Visible
+        );
+
+        let mut unbound = decode_job("scroll-prime", CoverDecodePriority::Visible);
+        let mut live = decode_job("live-tile", CoverDecodePriority::Visible);
+        live.requires_live_binding = true;
+
+        assert!(!visible_cover_decode_startable(&unbound, true));
+        assert!(!visible_cover_decode_startable(&live, true));
+        assert!(visible_cover_decode_startable(&unbound, false));
+        assert!(visible_cover_decode_startable(&live, false));
+
+        unbound.priority =
+            cover_decode_priority_for_interaction(CoverDecodePriority::Visible, false, true);
+        assert!(!visible_cover_decode_startable(&unbound, false));
+        live.priority =
+            cover_decode_priority_for_interaction(CoverDecodePriority::Visible, true, true);
+        assert!(visible_cover_decode_startable(&live, false));
     }
 
     #[test]

@@ -36,10 +36,12 @@ impl Shell {
         } else {
             detail.genre.image_refs.clone()
         };
+        let mut genre = detail.genre;
+        genre.image_refs = cover_refs;
+        let artwork = crate::cover_art_policy::selected_genre_artwork(&genre);
         self.grouped_detail_view(GroupedDetailData {
-            title: detail.genre.name,
-            image_ref: detail.genre.image_ref,
-            cover_refs,
+            title: genre.name,
+            artwork,
             seed,
             summary,
             tracks: detail.tracks,

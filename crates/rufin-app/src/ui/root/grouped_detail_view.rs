@@ -10,8 +10,7 @@ impl Shell {
     ) -> gtk::Widget {
         let GroupedDetailData {
             title,
-            image_ref,
-            cover_refs,
+            artwork,
             seed,
             summary,
             tracks,
@@ -37,9 +36,8 @@ impl Shell {
         header.set_hexpand(true);
         header.set_halign(gtk::Align::Fill);
         header.set_width_request(1);
-        header.append(&self.cover_group_tile_for(
-            cover_refs,
-            image_ref.as_ref(),
+        header.append(&self.cover_group_tile_for_artwork(
+            &artwork,
             seed,
             160,
             GROUPED_DETAIL_COVER_FETCH_SIZE,

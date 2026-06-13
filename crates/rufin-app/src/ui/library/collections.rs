@@ -7,6 +7,7 @@ pub(in crate::ui) struct LibraryRouteInsetSpec {
     pub(in crate::ui) hexpand: bool,
 }
 const SMART_PLAYLIST_REORDER_WIDTH: i32 = 30;
+
 pub(in crate::ui) fn library_route_inset_spec() -> LibraryRouteInsetSpec {
     LibraryRouteInsetSpec {
         margin_start: PRIMARY_ROUTE_MARGIN_START,
@@ -44,6 +45,7 @@ pub(in crate::ui) fn configure_library_route_scroller(
         adjustment_shell.pause_cover_warm_for_interaction();
     });
 }
+
 pub(in crate::ui) fn album_collection_widget(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -179,33 +181,6 @@ fn play_track_from_model(
     controller.play_activation(activation);
 }
 
-fn record_collection_bind(
-    route: &'static str,
-    key: LibraryListKey,
-    bind_ms: u64,
-    burst_count: &Rc<Cell<u64>>,
-    burst_started: &Rc<Cell<Instant>>,
-) {
-    if bind_ms >= SLOW_COLLECTION_BIND_MS {
-        warn!(route, ?key, bind_ms, "slow collection item bind");
-    }
-
-    let count = burst_count.get().saturating_add(1);
-    burst_count.set(count);
-    let elapsed_ms = burst_started.get().elapsed().as_millis() as u64;
-    if count >= COLLECTION_BIND_BURST_MIN && elapsed_ms >= SLOW_COLLECTION_BIND_BURST_MS {
-        warn!(
-            route,
-            ?key,
-            binds = count,
-            elapsed_ms,
-            "slow collection bind burst"
-        );
-        burst_count.set(0);
-        burst_started.set(Instant::now());
-    }
-}
-
 pub(in crate::ui) fn album_grid(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -215,10 +190,7 @@ pub(in crate::ui) fn album_grid(
     let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
-    let bind_count = Rc::new(Cell::new(0_u64));
-    let bind_started = Rc::new(Cell::new(Instant::now()));
     factory.connect_bind(move |_, item| {
-        let item_started = Instant::now();
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -235,13 +207,6 @@ pub(in crate::ui) fn album_grid(
             key,
             card_size,
         )));
-        record_collection_bind(
-            "albums",
-            key,
-            item_started.elapsed().as_millis() as u64,
-            &bind_count,
-            &bind_started,
-        );
     });
     factory.connect_unbind(clear_list_item_child);
     let grid = gtk::GridView::new(Some(selection), Some(factory));
@@ -268,10 +233,7 @@ pub(in crate::ui) fn artist_grid(
     let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
-    let bind_count = Rc::new(Cell::new(0_u64));
-    let bind_started = Rc::new(Cell::new(Instant::now()));
     factory.connect_bind(move |_, item| {
-        let item_started = Instant::now();
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -288,13 +250,6 @@ pub(in crate::ui) fn artist_grid(
             key,
             card_size,
         )));
-        record_collection_bind(
-            "artists",
-            key,
-            item_started.elapsed().as_millis() as u64,
-            &bind_count,
-            &bind_started,
-        );
     });
     factory.connect_unbind(clear_list_item_child);
     let grid = gtk::GridView::new(Some(selection), Some(factory));
@@ -721,18 +676,29 @@ pub(in crate::ui) fn album_card(
     key: LibraryListKey,
     size: i32,
 ) -> gtk::Widget {
-    let card = collection_grid_card(size);
+    let fields = shell.library_settings(key).grid_fields;
+    let card = collection_grid_card(size, fields.len());
     card.append(&cards::album_cover_tile(
         shell,
         album,
         size,
         Some(&shell.controller),
     ));
-    card.append(&center_label(&album.title, "track-title"));
-    for field in shell.library_settings(key).grid_fields {
+    card.append(&center_label(
+        &album.title,
+        "track-title",
+        size,
+        COLLECTION_GRID_TITLE_LINES,
+    ));
+    for field in fields {
         let value = album_field(album, field);
         if !value.is_empty() {
-            card.append(&center_label(&value, "muted"));
+            card.append(&center_label(
+                &value,
+                "muted",
+                size,
+                COLLECTION_GRID_FIELD_LINES,
+            ));
         }
     }
     install_album_context_menu(&card, shell, album.clone());
@@ -744,13 +710,24 @@ pub(in crate::ui) fn artist_card(
     key: LibraryListKey,
     size: i32,
 ) -> gtk::Widget {
-    let card = collection_grid_card(size);
+    let fields = shell.library_settings(key).grid_fields;
+    let card = collection_grid_card(size, fields.len());
     card.append(&artist_cover_tile(shell, artist, size));
-    card.append(&center_label(&artist.name, "track-title"));
-    for field in shell.library_settings(key).grid_fields {
+    card.append(&center_label(
+        &artist.name,
+        "track-title",
+        size,
+        COLLECTION_GRID_TITLE_LINES,
+    ));
+    for field in fields {
         let value = artist_field(artist, field);
         if !value.is_empty() {
-            card.append(&center_label(&value, "muted"));
+            card.append(&center_label(
+                &value,
+                "muted",
+                size,
+                COLLECTION_GRID_FIELD_LINES,
+            ));
         }
     }
     install_artist_context_menu(&card, shell, artist.clone());
@@ -763,9 +740,9 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
     genre_button.add_css_class("album-cover-button");
     genre_button.add_css_class("flat");
     cards::constrain_cover_widget(&genre_button, size);
-    genre_button.set_child(Some(&shell.cover_group_tile_for(
-        genre.image_refs.clone(),
-        genre.image_ref.as_ref(),
+    let artwork = crate::cover_art_policy::selected_genre_artwork(genre);
+    genre_button.set_child(Some(&shell.cover_group_tile_for_artwork(
+        &artwork,
         stable_seed(genre.id.as_str()),
         size,
         THUMB_COVER_SIZE,
@@ -821,13 +798,24 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
     overlay.upcast()
 }
 pub(in crate::ui) fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> gtk::Widget {
-    let card = collection_grid_card(size);
+    let fields = shell.library_settings(LibraryListKey::Genres).grid_fields;
+    let card = collection_grid_card(size, fields.len());
     card.append(&genre_cover_tile(shell, genre, size));
-    card.append(&center_label(&genre.name, "track-title"));
-    for field in shell.library_settings(LibraryListKey::Genres).grid_fields {
+    card.append(&center_label(
+        &genre.name,
+        "track-title",
+        size,
+        COLLECTION_GRID_TITLE_LINES,
+    ));
+    for field in fields {
         let value = genre_field(genre, field);
         if !value.is_empty() {
-            card.append(&center_label(&value, "muted"));
+            card.append(&center_label(
+                &value,
+                "muted",
+                size,
+                COLLECTION_GRID_FIELD_LINES,
+            ));
         }
     }
     card.upcast()
@@ -837,16 +825,26 @@ pub(in crate::ui) fn playlist_card(
     playlist: &Playlist,
     size: i32,
 ) -> gtk::Widget {
-    let card = collection_grid_card(size);
-    card.append(&cards::playlist_cover_tile(shell, playlist, size));
-    card.append(&center_label(&playlist.name, "track-title"));
-    for field in shell
+    let fields = shell
         .library_settings(LibraryListKey::Playlists)
-        .grid_fields
-    {
+        .grid_fields;
+    let card = collection_grid_card(size, fields.len());
+    card.append(&cards::playlist_cover_tile(shell, playlist, size));
+    card.append(&center_label(
+        &playlist.name,
+        "track-title",
+        size,
+        COLLECTION_GRID_TITLE_LINES,
+    ));
+    for field in fields {
         let value = playlist_field(playlist, field);
         if !value.is_empty() {
-            card.append(&center_label(&value, "muted"));
+            card.append(&center_label(
+                &value,
+                "muted",
+                size,
+                COLLECTION_GRID_FIELD_LINES,
+            ));
         }
     }
     install_playlist_context_menu(&card, shell, playlist.clone());
@@ -857,20 +855,31 @@ pub(in crate::ui) fn smart_playlist_card(
     playlist: &SmartPlaylist,
     size: i32,
 ) -> gtk::Widget {
-    let card = collection_grid_card(size);
-    card.append(&cards::smart_playlist_cover_tile(shell, playlist, size));
-    card.append(&center_label(&playlist.name, "track-title"));
-    for field in shell
+    let fields = shell
         .library_settings(LibraryListKey::SmartPlaylists)
-        .grid_fields
-    {
+        .grid_fields;
+    let card_height = collection_grid_card_height(size, fields.len());
+    let card = collection_grid_card(size, fields.len());
+    card.append(&cards::smart_playlist_cover_tile(shell, playlist, size));
+    card.append(&center_label(
+        &playlist.name,
+        "track-title",
+        size,
+        COLLECTION_GRID_TITLE_LINES,
+    ));
+    for field in fields {
         let value = smart_playlist_field(playlist, field);
         if !value.is_empty() {
-            card.append(&center_label(&value, "muted"));
+            card.append(&center_label(
+                &value,
+                "muted",
+                size,
+                COLLECTION_GRID_FIELD_LINES,
+            ));
         }
     }
     let overlay = gtk::Overlay::new();
-    overlay.set_width_request(size);
+    overlay.set_size_request(size, card_height);
     overlay.set_hexpand(false);
     overlay.set_halign(gtk::Align::Center);
     overlay.set_child(Some(&card));
@@ -932,24 +941,38 @@ pub(in crate::ui) fn track_card(
     size: i32,
     play_action: Option<Rc<dyn Fn()>>,
 ) -> gtk::Widget {
-    let card = collection_grid_card(size);
+    let fields = shell.library_settings(key).grid_fields;
+    let card = collection_grid_card(size, fields.len());
     card.append(&cards::track_play_tile(shell, track, size, play_action));
-    card.append(&center_label(&track.title, "track-title"));
-    for field in shell.library_settings(key).grid_fields {
+    card.append(&center_label(
+        &track.title,
+        "track-title",
+        size,
+        COLLECTION_GRID_TITLE_LINES,
+    ));
+    for field in fields {
         let value = track_field(track, field);
         if !value.is_empty() {
-            card.append(&center_label(&value, "muted"));
+            card.append(&center_label(
+                &value,
+                "muted",
+                size,
+                COLLECTION_GRID_FIELD_LINES,
+            ));
         }
     }
     install_track_context_menu(&card, shell, track.clone());
     card.upcast()
 }
-fn collection_grid_card(size: i32) -> gtk::Box {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+fn collection_grid_card(size: i32, field_count: usize) -> gtk::Box {
+    let height = collection_grid_card_height(size, field_count);
+    let card = gtk::Box::new(gtk::Orientation::Vertical, COLLECTION_GRID_CARD_GAP);
     card.add_css_class("album-card");
-    card.set_width_request(size);
+    card.set_size_request(size, height);
     card.set_hexpand(false);
+    card.set_vexpand(false);
     card.set_halign(gtk::Align::Center);
+    card.set_valign(gtk::Align::Start);
     card
 }
 pub(in crate::ui) fn artist_cover_tile(

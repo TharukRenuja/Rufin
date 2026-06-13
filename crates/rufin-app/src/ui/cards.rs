@@ -24,14 +24,6 @@ impl Shell {
         album_card_widget_with_size(self, album, size, Some(&self.controller))
     }
 
-    pub(super) fn responsive_card_grid_metrics(&self) -> (usize, i32) {
-        let width = home_album_content_width(self);
-        let current = nonzero_usize(self.state.card_grid_columns.get());
-        let columns = home_album_page_size(width, current);
-        self.state.card_grid_columns.set(columns);
-        (columns, home_album_card_size(width, columns))
-    }
-
     pub(super) fn collection_card_grid_metrics(&self) -> (usize, i32) {
         let width = home_album_content_width(self);
         let current = nonzero_usize(self.state.collection_grid_columns.get());
@@ -344,9 +336,12 @@ pub(super) fn playlist_cover_tile(
     playlist_button.add_css_class("album-cover-button");
     playlist_button.add_css_class("flat");
     constrain_cover_widget(&playlist_button, size);
-    playlist_button.set_child(Some(&shell.cover_group_tile_for(
-        playlist.image_refs.clone(),
-        playlist.image_ref.as_ref(),
+    let artwork = crate::cover_art_policy::selected_playlist_artwork(
+        playlist,
+        &shell.state.settings.borrow(),
+    );
+    playlist_button.set_child(Some(&shell.cover_group_tile_for_artwork(
+        &artwork,
         stable_seed(playlist.id.as_str()),
         size,
         THUMB_COVER_SIZE,
@@ -412,9 +407,9 @@ pub(super) fn smart_playlist_cover_tile(
     playlist_button.add_css_class("album-cover-button");
     playlist_button.add_css_class("flat");
     constrain_cover_widget(&playlist_button, size);
-    playlist_button.set_child(Some(&shell.cover_group_tile_for(
-        playlist.image_refs.clone(),
-        playlist.image_ref.as_ref(),
+    let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(playlist);
+    playlist_button.set_child(Some(&shell.cover_group_tile_for_artwork(
+        &artwork,
         stable_seed(playlist.id.as_str()),
         size,
         THUMB_COVER_SIZE,

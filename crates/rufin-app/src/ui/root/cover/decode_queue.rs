@@ -38,16 +38,16 @@ impl Shell {
     fn next_cover_decode_job(&self) -> Option<CoverDecodeJob> {
         let mut queue = self.state.cover_decode_queue.borrow_mut();
         let active = self.state.cover_decodes.borrow();
+        let visible_paused = self.cover_visible_is_paused();
+        let warm_paused = self.cover_warm_is_paused();
         if cover_decode_has_capacity(&active, CoverDecodePriority::Visible)
             && let Some(visible) = queue
                 .iter()
-                .position(|job| job.priority == CoverDecodePriority::Visible)
+                .position(|job| visible_cover_decode_startable(job, visible_paused))
         {
             return queue.remove(visible);
         }
-        if self.cover_warm_is_paused()
-            || !cover_decode_has_capacity(&active, CoverDecodePriority::Warm)
-        {
+        if warm_paused || !cover_decode_has_capacity(&active, CoverDecodePriority::Warm) {
             return None;
         }
         let warm = queue
@@ -322,8 +322,8 @@ pub(in crate::ui) fn decoded_cover_satisfies_request(
     cover_size: i32,
     min_size: i32,
 ) -> bool {
-    let _ = key;
     cover_size >= min_size
+        || cover_size_from_cache_key(key).is_some_and(|key_size| key_size >= min_size)
 }
 pub(in crate::ui) fn decoded_cover_eviction_candidate(
     order: &mut VecDeque<DecodedCoverOrderEntry>,
@@ -361,8 +361,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn queue_rejects_undersized_decode_for_larger_key() {
-        assert!(!decoded_cover_satisfies_request(
+    fn grid_key_satisfies_grid_slot_for_smaller_source() {
+        assert!(decoded_cover_satisfies_request(
             "library/local_cover_example/untagged/256",
             180,
             256
@@ -370,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_reject_request() {
+    fn thumbnail_key_does_not_satisfy_grid_slot() {
         assert!(!decoded_cover_satisfies_request(
             "library/local_cover_example/untagged/96",
             96,

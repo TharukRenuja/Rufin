@@ -20,6 +20,25 @@ fn next_track_hydration(generation: &Rc<Cell<u64>>) -> u64 {
     next
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(in crate::ui) fn log_route_page_timing(
+    route: &Route,
+    action: &'static str,
+    offset: usize,
+    count: usize,
+    total: usize,
+    load_ms: u64,
+    apply_ms: u64,
+    total_ms: u64,
+) {
+    if total_ms >= SLOW_ROUTE_PAGE_LOAD_MS {
+        warn!(
+            ?route,
+            action, offset, count, total, load_ms, apply_ms, total_ms, "slow route page load"
+        );
+    }
+}
+
 fn schedule_track_hydration(
     shell: &Rc<Shell>,
     load_next: Rc<dyn Fn()>,
@@ -141,22 +160,37 @@ impl Shell {
                 if !shell.can_load_grid_page(&cursor, &Route::Tracks) {
                     return;
                 }
+                let total_started = Instant::now();
                 let offset = cursor.offset.get();
                 let text = query.borrow().clone();
+                let load_started = Instant::now();
                 match shell.controller.cached_tracks_page_matching(
                     &text,
                     offset,
                     TRACK_ROUTE_PAGE_SIZE,
                 ) {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let count = page.items.len();
+                        let total = page.total;
                         let mut items = page.items;
                         let settings = shell.library_settings(LibraryListKey::Tracks);
                         sort_tracks(&mut items, &settings, false);
                         warm_track_covers_for_settings(&shell, &items, &settings);
                         tracks.borrow_mut().extend(items.iter().cloned());
                         append_tracks_to_model(&model, items);
-                        finish_grid_page(&cursor, offset, count, page.total);
+                        finish_grid_page(&cursor, offset, count, total);
+                        log_route_page_timing(
+                            &Route::Tracks,
+                            "append",
+                            offset,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                     }
                     Err(error) => {
                         warn!(%error, "failed to append cached tracks page");
@@ -197,13 +231,18 @@ impl Shell {
                 cursor.offset.set(0);
                 cursor.total.set(usize::MAX);
                 cursor.loading.set(true);
+                let total_started = Instant::now();
+                let load_started = Instant::now();
                 match shell
                     .controller
                     .cached_tracks_page_matching(&text, 0, TRACK_ROUTE_PAGE_SIZE)
                 {
                     Ok(page) => {
+                        let load_ms = load_started.elapsed().as_millis() as u64;
+                        let apply_started = Instant::now();
                         let settings = shell.library_settings(LibraryListKey::Tracks);
                         let count = page.items.len();
+                        let total = page.total;
                         *tracks.borrow_mut() = page.items;
                         let visible_tracks =
                             tracks_for_settings(&tracks.borrow(), &settings, "", false);
@@ -213,7 +252,17 @@ impl Shell {
                             .replace(track_image_refs(&visible_tracks));
                         replace_tracks_in_model(&model, visible_tracks);
                         warm_track_covers_for_settings(&shell, &tracks.borrow(), &settings);
-                        finish_grid_page(&cursor, 0, count, page.total);
+                        finish_grid_page(&cursor, 0, count, total);
+                        log_route_page_timing(
+                            &Route::Tracks,
+                            "search",
+                            0,
+                            count,
+                            total,
+                            load_ms,
+                            apply_started.elapsed().as_millis() as u64,
+                            total_started.elapsed().as_millis() as u64,
+                        );
                         schedule_track_hydration(
                             &shell,
                             Rc::clone(&load_next),
