@@ -26,7 +26,7 @@ pub use waveform::generate_waveform_peaks;
 #[cfg(test)]
 use gstreamer_backend::{
     AboutToFinishAction, CrossfadeState, GstEngine, PendingSeek, PlayerPipeline,
-    SharedPlaybackState, Slot, about_to_finish_action, cancel_crossfade_next,
+    SharedPlaybackState, Slot, VisualizerAnalyzer, about_to_finish_action, cancel_crossfade_next,
     cancel_gapless_pending, same_album_crossfade_is_skipped,
 };
 use gstreamer_backend::{

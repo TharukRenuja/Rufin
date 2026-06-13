@@ -2,8 +2,8 @@ use super::{
     AboutToFinishAction, CrossfadeState, FakePlaybackBackend, GstEngine, PendingSeek,
     PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline,
     PreparedPlaybackItem, SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState,
-    Slot, StreamDescriptor, about_to_finish_action, cancel_crossfade_next, cancel_gapless_pending,
-    same_album_crossfade_is_skipped,
+    Slot, StreamDescriptor, VisualizerAnalyzer, about_to_finish_action, cancel_crossfade_next,
+    cancel_gapless_pending, same_album_crossfade_is_skipped,
 };
 use rufin_core::{AlbumId, PlaybackSettings, PlaybackTransitionMode, TrackId};
 use std::collections::VecDeque;
@@ -517,19 +517,18 @@ fn test_engine_with_pending_seek(target_millis: u64) -> GstEngine {
     let events = Arc::new(Mutex::new(VecDeque::new()));
     GstEngine {
         primary: test_pipeline(
-            Slot::Primary,
             "rufin-test-player-primary",
             Arc::clone(&shared),
             Arc::clone(&events),
         ),
         secondary: test_pipeline(
-            Slot::Secondary,
             "rufin-test-player-secondary",
             Arc::clone(&shared),
             Arc::clone(&events),
         ),
-        shared,
-        events,
+        shared: Arc::clone(&shared),
+        events: Arc::clone(&events),
+        visualizer: VisualizerAnalyzer::new(Arc::clone(&events), Arc::clone(&shared)),
         last_position_tick: Instant::now(),
         state: PlaybackState::Buffering,
         pending_seek: Some(PendingSeek::startup(
@@ -541,11 +540,10 @@ fn test_engine_with_pending_seek(target_millis: u64) -> GstEngine {
     }
 }
 fn test_pipeline(
-    slot: Slot,
     name: &str,
     shared: Arc<Mutex<SharedPlaybackState>>,
     _events: Arc<Mutex<VecDeque<PlaybackEvent>>>,
 ) -> PlayerPipeline {
     gstreamer::init().expect("gst init");
-    PlayerPipeline::new(slot, name, shared).expect("test pipeline")
+    PlayerPipeline::new(name, shared).expect("test pipeline")
 }
