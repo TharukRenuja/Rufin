@@ -30,28 +30,43 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/Rufin.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/tracks.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/smart_playlists.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/play_random.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/play_random.png</image>
     </screenshot>
     <screenshot>
       <caption>Tune playback settings</caption>
-      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.1/data/playback.png</image>
+      <image type="source" width="1000" height="700">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/playback.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.2" date="2026-06-13">
+      <description>
+        <p>A lot of minor bug fixes; overall performance and visual polish.</p>
+        <ul>
+          <li>Reworked left sidebar</li>
+          <li>Album artist tab now groups artists based on tags/MusicBrainz IDs</li>
+          <li>Made context menu open instantly</li>
+          <li>Added triple dot to bottom player and hover cards to access context menu easier</li>
+          <li>Removed a lot of unnecassary library lookups that improves app speed overall</li>
+          <li>Fixed a bug where grid covers were discarded on scroll and had to be waited to load again</li>
+          <li>Fixed a bug with NetEase lyrics where it wrote an empty lyrics file</li>
+          <li>Fixed a bug lyrics panel height preference was not persisted</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.1" date="2026-06-13">
       <description>
         <p>This is a hotfix release for bugs that got introduced with the last release.</p>
