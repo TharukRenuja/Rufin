@@ -430,7 +430,7 @@ pub(in crate::controller) fn cover_emit_unavailable() {
             | ControllerEvent::Queue(_)
             | ControllerEvent::Playback(_)
             | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Lyrics(_)
+            | ControllerEvent::Lyrics { .. }
             | ControllerEvent::LyricsSearchResults { .. }
             | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }

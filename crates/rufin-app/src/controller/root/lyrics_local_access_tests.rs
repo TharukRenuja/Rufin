@@ -121,7 +121,11 @@ pub(in crate::controller) fn lyrics_local_lookup() {
 
     controller.request_lyrics_for_current();
 
-    assert!(wait_for_lyrics(&events).is_none());
+    assert!(
+        events
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err()
+    );
 }
 
 #[test]

@@ -1702,7 +1702,7 @@ fn wait_for_sync_status_without_snapshot(
             | ControllerEvent::Queue(_)
             | ControllerEvent::Playback(_)
             | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Lyrics(_)
+            | ControllerEvent::Lyrics { .. }
             | ControllerEvent::LyricsSearchResults { .. }
             | ControllerEvent::LyricsSearchFailed { .. }
             | ControllerEvent::LyricsSaved { .. }

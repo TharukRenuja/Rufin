@@ -983,8 +983,8 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 ControllerEvent::Visualizer(levels) => {
                     shell.apply_fullscreen_visualizer_levels(levels);
                 }
-                ControllerEvent::Lyrics(lyrics) => {
-                    shell.apply_loaded_lyrics(*lyrics);
+                ControllerEvent::Lyrics { track_id, lyrics } => {
+                    shell.apply_loaded_lyrics_for_track(track_id, *lyrics);
                 }
                 ControllerEvent::LyricsSearchResults {
                     track_id,
