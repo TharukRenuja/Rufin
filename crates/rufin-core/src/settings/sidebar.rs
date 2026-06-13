@@ -467,11 +467,7 @@ pub struct AppSettings {
     #[serde(default = "default_lyrics_panel_visible")]
     pub lyrics_panel_visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub queue_lyrics_position: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub queue_lyrics_ratio: Option<f64>,
-    #[serde(default)]
-    pub queue_lyrics_layout_version: u8,
+    pub queue_lyrics_height: Option<i32>,
     #[serde(default)]
     pub track_table: TrackTableSettings,
     #[serde(default)]
@@ -520,9 +516,7 @@ impl Default for AppSettings {
             window_width: None,
             window_height: None,
             lyrics_panel_visible: true,
-            queue_lyrics_position: None,
-            queue_lyrics_ratio: None,
-            queue_lyrics_layout_version: QUEUE_LYRICS_LAYOUT_VERSION,
+            queue_lyrics_height: None,
             track_table: TrackTableSettings::default(),
             library_lists: default_library_list_settings(),
             lyrics_provider_settings_version: LYRICS_PROVIDER_SETTINGS_VERSION,
@@ -555,11 +549,6 @@ impl Default for ExternalSiteLinkSettings {
 }
 impl AppSettings {
     pub fn migrate_defaults(&mut self) {
-        if self.queue_lyrics_layout_version < QUEUE_LYRICS_LAYOUT_VERSION {
-            self.queue_lyrics_position = None;
-            self.queue_lyrics_ratio = None;
-            self.queue_lyrics_layout_version = QUEUE_LYRICS_LAYOUT_VERSION;
-        }
         if self.discord_client_id.trim().is_empty() {
             self.discord_client_id = default_discord_client_id();
             self.discord_presence_enabled = true;

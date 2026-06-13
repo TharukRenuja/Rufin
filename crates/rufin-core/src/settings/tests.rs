@@ -128,8 +128,7 @@ fn settings_sanitize_folders() {
 fn settings_serialize_to_json() {
     let settings = AppSettings {
         lyrics_panel_visible: false,
-        queue_lyrics_position: Some(520),
-        queue_lyrics_ratio: Some(0.7),
+        queue_lyrics_height: Some(300),
         ..AppSettings::default()
     };
 
@@ -161,8 +160,7 @@ fn settings_restore_without_window_geometry() {
         RightSidebarMode::Default
     );
     assert!(restored.sidebar.server_visible);
-    assert_eq!(restored.queue_lyrics_position, None);
-    assert_eq!(restored.queue_lyrics_ratio, None);
+    assert_eq!(restored.queue_lyrics_height, None);
     assert_eq!(restored.window_width, None);
     assert_eq!(restored.window_height, None);
     assert!(!restored.external_lyrics_enabled);
@@ -521,21 +519,16 @@ fn settings_migrate_detail_tracks_to_text_columns() {
 }
 #[test]
 fn settings_migrate_state() {
-    let mut settings = AppSettings {
-        queue_lyrics_position: Some(160),
-        queue_lyrics_ratio: Some(0.3),
-        queue_lyrics_layout_version: 2,
-        ..AppSettings::default()
-    };
+    let mut json = serde_json::to_value(AppSettings::default()).expect("serialize settings");
+    let object = json.as_object_mut().expect("settings object");
+    object.insert("queue_lyrics_position".to_string(), 160.into());
+    object.insert("queue_lyrics_ratio".to_string(), 0.3.into());
+    object.insert("queue_lyrics_layout_version".to_string(), 2.into());
 
+    let mut settings = serde_json::from_value::<AppSettings>(json).expect("deserialize settings");
     settings.migrate_defaults();
 
-    assert_eq!(settings.queue_lyrics_position, None);
-    assert_eq!(settings.queue_lyrics_ratio, None);
-    assert_eq!(
-        settings.queue_lyrics_layout_version,
-        super::QUEUE_LYRICS_LAYOUT_VERSION
-    );
+    assert_eq!(settings.queue_lyrics_height, None);
 }
 #[test]
 fn settings_migrate_defaults() {

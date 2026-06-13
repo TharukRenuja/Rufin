@@ -294,7 +294,6 @@ impl Shell {
 
         self.log_layout_snapshot("startup_reveal_before_stack_switch");
         self.update_layout();
-        restore_queue_lyrics_split_for_current_height(self);
         self.window.queue_resize();
         self.app_root.queue_resize();
         self.route_host.queue_resize();
@@ -364,7 +363,6 @@ impl Shell {
             shell.state.first_run_connection_ready.set(false);
             shell.log_layout_snapshot("first_run_reveal_before_stack_switch");
             shell.update_layout();
-            restore_queue_lyrics_split_for_current_height(&shell);
             shell.window.queue_resize();
             shell.app_root.queue_resize();
             shell.route_host.queue_resize();

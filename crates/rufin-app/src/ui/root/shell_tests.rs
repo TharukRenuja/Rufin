@@ -5,8 +5,8 @@ use super::lyrics_playback_state::{
 };
 use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
-    clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_initial_position,
-    queue_lyrics_position_from_ratio, queue_lyrics_position_ratio,
+    clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_height_for_position,
+    queue_lyrics_initial_position, queue_lyrics_position_for_height,
 };
 use super::startup_reveal::{
     StartupRevealAction, connection_progress_status_label, cover_warm_delay,
@@ -1032,25 +1032,14 @@ pub(in crate::ui) fn shell_clamp_height() {
     assert_eq!(clamp_queue_lyrics_position(800, 10), 10);
     assert_eq!(clamp_queue_lyrics_position(200, 1701), 199);
     assert_eq!(queue_lyrics_default_position(700), 400);
-    assert_eq!(queue_lyrics_default_position(1400), 1000);
-    assert_eq!(queue_lyrics_initial_position(700, None, None), 400);
-    assert_eq!(queue_lyrics_initial_position(700, None, Some(0.5)), 350);
-    assert_eq!(queue_lyrics_initial_position(700, None, Some(2.0)), 699);
-    assert_eq!(
-        queue_lyrics_initial_position(700, None, Some(f64::NAN)),
-        400
-    );
-    assert_eq!(
-        queue_lyrics_initial_position(700, Some(380), Some(0.5)),
-        350
-    );
-    assert_eq!(queue_lyrics_position_from_ratio(700, 0.5), 350);
-    assert_eq!(queue_lyrics_position_ratio(700, 350), 0.5);
-    let saved_default_ratio = queue_lyrics_position_ratio(700, 400);
-    assert_eq!(
-        queue_lyrics_initial_position(1400, None, Some(saved_default_ratio)),
-        800
-    );
+    assert_eq!(queue_lyrics_default_position(1400), 1100);
+    assert_eq!(queue_lyrics_initial_position(700, None), 400);
+    assert_eq!(queue_lyrics_initial_position(700, Some(300)), 400);
+    assert_eq!(queue_lyrics_initial_position(1400, Some(300)), 1100);
+    assert_eq!(queue_lyrics_position_for_height(700, 300), 400);
+    assert_eq!(queue_lyrics_position_for_height(700, 2_000), 1);
+    assert_eq!(queue_lyrics_height_for_position(700, 400), 300);
+    assert_eq!(queue_lyrics_height_for_position(700, 2_000), 1);
 }
 #[test]
 pub(in crate::ui) fn shell_use_entry() {
