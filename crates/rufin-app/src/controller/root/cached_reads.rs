@@ -224,6 +224,7 @@ pub(in crate::controller) fn load_snapshot(store: &StoreHandle) -> Result<Librar
     cover_art_policy::bind_tracks(&mut tracks, &metadata_settings);
     cover_art_policy::bind_artists(&mut artists, &metadata_settings);
     cover_art_policy::bind_artists(&mut album_artists, &metadata_settings);
+    cover_art_policy::bind_playlists(&mut playlists, &metadata_settings);
     cover_art_policy::bind_tracks(&mut favorites, &metadata_settings);
     scrub_snapshot_image_refs(
         &saved,

@@ -535,7 +535,7 @@ fn playlist_cover_refs(model: &gio::ListStore, start: usize, end: usize) -> Vec<
         };
         refs.extend(grouped_collection_cover_refs(
             &playlist.image_refs,
-            playlist.image_ref.as_ref(),
+            None,
             &refs,
         ));
     }
@@ -1138,11 +1138,7 @@ fn warm_playlist_cover(shell: &Rc<Shell>, playlists: &[Playlist], settings: &Lib
     let image_refs = values
         .iter()
         .take(GRID_ROUTE_PAGE_SIZE)
-        .flat_map(|playlist| {
-            let mut refs = playlist.image_refs.clone();
-            refs.extend(playlist.image_ref.iter().cloned());
-            refs
-        })
+        .flat_map(|playlist| playlist.image_refs.clone())
         .collect::<Vec<ImageRef>>();
     shell.prime_cover_refs_now(image_refs, fetch_size, size);
 }

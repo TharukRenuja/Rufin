@@ -1,7 +1,7 @@
 use rufin_core::{
-    Album, AppSettings, Artist, HomeSection, ImageRef, QueueEntry, QueueSnapshot, Track,
+    Album, AppSettings, Artist, HomeSection, ImageRef, Playlist, QueueEntry, QueueSnapshot, Track,
 };
-use rufin_provider::SearchResults;
+use rufin_provider::{PlaylistDetail, SearchResults};
 
 use crate::external_metadata;
 
@@ -128,6 +128,26 @@ pub fn bind_artists(artists: &mut [Artist], settings: &AppSettings) {
     }
 }
 
+pub fn bind_playlist(playlist: &mut Playlist, settings: &AppSettings) {
+    if settings.prefer_server_playlist_covers {
+        if let Some(image_ref) = playlist.image_ref.clone() {
+            playlist.image_refs = vec![image_ref];
+        }
+        return;
+    }
+    if playlist.image_refs.is_empty()
+        && let Some(image_ref) = playlist.image_ref.clone()
+    {
+        playlist.image_refs = vec![image_ref];
+    }
+}
+
+pub fn bind_playlists(playlists: &mut [Playlist], settings: &AppSettings) {
+    for playlist in playlists {
+        bind_playlist(playlist, settings);
+    }
+}
+
 pub fn bind_home_sections(sections: &mut [HomeSection], settings: &AppSettings) {
     for section in sections {
         bind_home_section(section, settings);
@@ -143,6 +163,7 @@ pub fn bind_search_results(results: &mut SearchResults, settings: &AppSettings) 
     bind_albums(&mut results.albums, settings);
     bind_tracks(&mut results.tracks, settings);
     bind_artists(&mut results.artists, settings);
+    bind_playlists(&mut results.playlists, settings);
 }
 
 pub fn bind_queue_snapshot(snapshot: &mut QueueSnapshot, settings: &AppSettings) {
@@ -171,6 +192,10 @@ pub fn bind_album_detail(album: &mut Album, tracks: &mut [Track], settings: &App
     for track in tracks {
         bind_track_with_album_ref(track, album_image_ref.as_ref(), settings);
     }
+}
+
+pub fn bind_playlist_detail(detail: &mut PlaylistDetail, settings: &AppSettings) {
+    bind_playlist(&mut detail.playlist, settings);
 }
 
 pub fn is_external_image_ref(image_ref: &ImageRef) -> bool {
@@ -265,7 +290,7 @@ fn external_ref_provenance(image_ref: &ImageRef) -> ArtworkProvenance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rufin_core::{AlbumId, ArtistId, TrackId};
+    use rufin_core::{AlbumId, ArtistId, PlaylistId, TrackId};
 
     #[test]
     fn policy_source_art_wins() {
@@ -388,6 +413,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn playlist_policy_keeps_group_art() {
+        let server_ref = image_ref("server-cover");
+        let group_ref = image_ref("group-cover");
+        let mut playlist = playlist_with_refs(Some(server_ref), vec![group_ref.clone()]);
+
+        bind_playlist(&mut playlist, &AppSettings::default());
+
+        assert_eq!(playlist.image_refs, vec![group_ref]);
+    }
+
+    #[test]
+    fn playlist_policy_prefers_server_art() {
+        let server_ref = image_ref("server-cover");
+        let group_ref = image_ref("group-cover");
+        let mut playlist = playlist_with_refs(Some(server_ref.clone()), vec![group_ref]);
+
+        bind_playlist(
+            &mut playlist,
+            &AppSettings {
+                prefer_server_playlist_covers: true,
+                ..AppSettings::default()
+            },
+        );
+
+        assert_eq!(playlist.image_refs, vec![server_ref]);
+    }
+
+    #[test]
+    fn playlist_policy_uses_server_art_when_group_empty() {
+        let server_ref = image_ref("server-cover");
+        let mut playlist = playlist_with_refs(Some(server_ref.clone()), Vec::new());
+
+        bind_playlist(&mut playlist, &AppSettings::default());
+
+        assert_eq!(playlist.image_refs, vec![server_ref]);
+    }
+
+    #[test]
+    fn playlist_policy_keeps_group_art_without_server_art() {
+        let group_ref = image_ref("group-cover");
+        let mut playlist = playlist_with_refs(None, vec![group_ref.clone()]);
+
+        bind_playlist(
+            &mut playlist,
+            &AppSettings {
+                prefer_server_playlist_covers: true,
+                ..AppSettings::default()
+            },
+        );
+
+        assert_eq!(playlist.image_refs, vec![group_ref]);
+    }
+
     fn album_without_cover() -> Album {
         Album {
             id: AlbumId::fake(1),
@@ -444,5 +523,20 @@ mod tests {
             comment: None,
             skip_count: None,
         }
+    }
+
+    fn playlist_with_refs(image_ref: Option<ImageRef>, image_refs: Vec<ImageRef>) -> Playlist {
+        Playlist {
+            id: PlaylistId::fake(1),
+            name: "Example Playlist".to_string(),
+            track_count: 2,
+            duration_seconds: 120,
+            image_refs,
+            image_ref,
+        }
+    }
+
+    fn image_ref(item_id: &str) -> ImageRef {
+        ImageRef::new(item_id, Some(format!("{item_id}-tag")))
     }
 }

@@ -1337,10 +1337,8 @@ fn playlist_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     let visible_playlists = &playlists[visible_start..visible_end];
     let mut image_refs = Vec::new();
     for playlist in visible_playlists {
-        let mut refs = playlist.image_refs.clone();
-        refs.extend(playlist.image_ref.iter().cloned());
-        if !refs.is_empty() {
-            image_refs.extend(refs);
+        if !playlist.image_refs.is_empty() {
+            image_refs.extend(playlist.image_refs.clone());
         }
     }
     let refs = image_refs

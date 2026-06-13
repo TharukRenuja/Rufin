@@ -417,6 +417,8 @@ pub struct AppSettings {
     pub external_metadata_enabled: bool,
     #[serde(default)]
     pub external_site_links: ExternalSiteLinkSettings,
+    #[serde(default)]
+    pub prefer_server_playlist_covers: bool,
     #[serde(default = "default_true")]
     pub prefer_server_lyrics: bool,
     #[serde(default)]
@@ -493,6 +495,7 @@ impl Default for AppSettings {
             external_lyrics_providers: default_external_lyrics_providers(),
             external_metadata_enabled: true,
             external_site_links: ExternalSiteLinkSettings::default(),
+            prefer_server_playlist_covers: false,
             prefer_server_lyrics: true,
             seekbar_waveform_enabled: true,
             tray_enabled: false,

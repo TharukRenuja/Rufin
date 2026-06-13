@@ -635,7 +635,6 @@ fn push_playlist_source_warm_targets(
         for image_ref in &playlist.image_refs {
             push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
         }
-        push_startup_cover_target(targets, playlist.image_ref.as_ref(), fetch_size, size);
     }
 }
 fn push_smart_targets(
@@ -739,9 +738,10 @@ fn push_source_background_warm_targets(
                 targets,
                 &mut seen,
                 &mut remaining,
-                library.playlists.iter().flat_map(|playlist| {
-                    playlist.image_refs.iter().chain(playlist.image_ref.iter())
-                }),
+                library
+                    .playlists
+                    .iter()
+                    .flat_map(|playlist| playlist.image_refs.iter()),
                 fetch_size,
                 size,
             );
@@ -1020,7 +1020,6 @@ pub(in crate::ui) fn first_run_cover_prime_refs(library: &LibrarySnapshot) -> Ve
         for image_ref in &playlist.image_refs {
             push_first_run_cover_ref(&mut refs, &mut seen, Some(image_ref));
         }
-        push_first_run_cover_ref(&mut refs, &mut seen, playlist.image_ref.as_ref());
     }
 
     refs

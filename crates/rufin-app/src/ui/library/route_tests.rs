@@ -385,7 +385,7 @@ fn playlist_viewport_cover() {
 
     let refs = super::playlist_cover_refs(&model, 0, 1);
 
-    assert_eq!(refs, vec![first, second, fallback]);
+    assert_eq!(refs, vec![first, second]);
 }
 
 #[test]

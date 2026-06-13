@@ -255,20 +255,14 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     let metadata_group = adw::PreferencesGroup::builder()
         .title(tr("Metadata"))
         .build();
-    let external_metadata_row = adw::SwitchRow::builder()
-        .title(tr("External cover lookup"))
-        .active(settings.external_metadata_enabled)
+    let prefer_server_playlist_row = adw::SwitchRow::builder()
+        .title(tr("Prefer server playlist covers"))
+        .active(settings.prefer_server_playlist_covers)
         .build();
-    let metadata_shell = Rc::clone(shell);
-    external_metadata_row.connect_active_notify(move |row| {
-        metadata_shell.set_external_metadata_enabled(row.is_active());
+    let prefer_server_playlist_shell = Rc::clone(shell);
+    prefer_server_playlist_row.connect_active_notify(move |row| {
+        prefer_server_playlist_shell.set_prefer_server_playlist_covers(row.is_active());
     });
-    metadata_group.add(&external_metadata_row);
-
-    let external_row = adw::SwitchRow::builder()
-        .title(tr("External lyric lookup"))
-        .active(settings.external_lyrics_enabled)
-        .build();
 
     let prefer_server_row = adw::SwitchRow::builder()
         .title(tr("Prefer server lyrics"))
@@ -279,6 +273,20 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     prefer_server_row.connect_active_notify(move |row| {
         prefer_server_shell.set_prefer_server_lyrics(row.is_active());
     });
+
+    let external_metadata_row = adw::SwitchRow::builder()
+        .title(tr("External cover lookup"))
+        .active(settings.external_metadata_enabled)
+        .build();
+    let metadata_shell = Rc::clone(shell);
+    external_metadata_row.connect_active_notify(move |row| {
+        metadata_shell.set_external_metadata_enabled(row.is_active());
+    });
+
+    let external_row = adw::SwitchRow::builder()
+        .title(tr("External lyric lookup"))
+        .active(settings.external_lyrics_enabled)
+        .build();
 
     let provider_rows = ExternalLyricsProvider::all()
         .into_iter()
@@ -310,8 +318,10 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         }
         external_shell.set_external_lyrics_enabled(enabled);
     });
-    metadata_group.add(&external_row);
+    metadata_group.add(&prefer_server_playlist_row);
     metadata_group.add(&prefer_server_row);
+    metadata_group.add(&external_metadata_row);
+    metadata_group.add(&external_row);
     for (_provider, row) in provider_rows {
         metadata_group.add(&row);
     }
