@@ -444,7 +444,6 @@ impl Store {
                         AND tmf.folder_id = ?2
                   )
                 ORDER BY t.title COLLATE NOCASE
-                LIMIT 500
                 ",
             )?;
             collect_rows(statement.query_map(
@@ -460,7 +459,6 @@ impl Store {
                 FROM tracks
                 WHERE server_id = ?1 AND favorite = 1
                 ORDER BY title COLLATE NOCASE
-                LIMIT 500
                 ",
             )?;
             collect_rows(statement.query_map(params![server_id.as_str()], track_from_row)?)?
