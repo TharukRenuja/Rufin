@@ -8,7 +8,7 @@ use super::lyrics_playback_state::{
 use super::responsive_layout_state::startup_loading_screen_active;
 use super::right_panel::{
     clamp_queue_lyrics_position, queue_lyrics_default_position, queue_lyrics_height_for_position,
-    queue_lyrics_initial_position, queue_lyrics_position_for_height,
+    queue_lyrics_initial_position, queue_lyrics_position_for_height, queue_lyrics_saved_height,
 };
 use super::startup_reveal::{
     StartupRevealAction, connection_progress_status_label, cover_warm_delay,
@@ -1073,6 +1073,11 @@ pub(in crate::ui) fn shell_clamp_height() {
     assert_eq!(queue_lyrics_position_for_height(700, 2_000), 1);
     assert_eq!(queue_lyrics_height_for_position(700, 400), 300);
     assert_eq!(queue_lyrics_height_for_position(700, 2_000), 1);
+    assert_eq!(
+        queue_lyrics_saved_height(700, queue_lyrics_position_for_height(700, 400)),
+        Some(400)
+    );
+    assert_eq!(queue_lyrics_saved_height(1, 0), None);
 }
 #[test]
 pub(in crate::ui) fn shell_use_entry() {

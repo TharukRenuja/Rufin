@@ -1,9 +1,6 @@
-use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use adw::prelude::*;
-use gtk::glib;
 use rufin_core::RightSidebarMode;
 
 use crate::i18n::tr;
@@ -12,7 +9,6 @@ use crate::lyrics::LyricsPane;
 use super::{Shell, icon_button, layout::MIN_RESTORED_WINDOW_HEIGHT, player::BOTTOM_PLAYER_HEIGHT};
 
 const QUEUE_LYRICS_DEFAULT_LYRICS_HEIGHT: i32 = 300;
-const QUEUE_LYRICS_FALLBACK_HEIGHT: i32 = 900 - BOTTOM_PLAYER_HEIGHT - 48;
 
 pub(super) struct RightPanelParts {
     pub(super) root: gtk::Box,
@@ -82,14 +78,13 @@ pub(super) fn build_right_panel() -> RightPanelParts {
 }
 
 impl Shell {
-    fn save_queue_lyrics_split_position(&self, available_height: i32, position: i32) {
+    fn save_queue_lyrics_split_position(&self, split_height: i32, position: i32) {
         if !self.state.lyrics_panel_visible.get() {
             return;
         }
-        if available_height <= 0 {
+        let Some(height) = queue_lyrics_saved_height(split_height, position) else {
             return;
-        }
-        let height = queue_lyrics_height_for_position(available_height, position);
+        };
         self.update_app_settings("queue lyrics split position", |settings| {
             if settings.queue_lyrics_height == Some(height) {
                 return false;
@@ -104,7 +99,7 @@ impl Shell {
             return;
         }
         self.save_queue_lyrics_split_position(
-            queue_lyrics_available_height(self),
+            self.queue_lyrics_split.height(),
             self.queue_lyrics_split.position(),
         );
     }
@@ -228,36 +223,15 @@ pub(super) fn connect_queue_lyrics_split(shell: &Rc<Shell>) {
     shell
         .queue_lyrics_split
         .set_position(queue_lyrics_initial_position(
-            queue_lyrics_available_height(shell),
+            queue_lyrics_restore_available_height(shell),
             saved_height,
         ));
-
-    let save_generation = Rc::new(Cell::new(0_u64));
-    {
-        let save_shell = Rc::clone(shell);
-        let save_generation_for_notify = Rc::clone(&save_generation);
-        shell.queue_lyrics_split.connect_position_notify(move |_| {
-            if !save_shell.state.lyrics_panel_visible.get() {
-                return;
-            }
-            let generation = save_generation_for_notify.get().saturating_add(1);
-            save_generation_for_notify.set(generation);
-            let save_shell = Rc::clone(&save_shell);
-            let save_generation_for_timeout = Rc::clone(&save_generation_for_notify);
-            glib::timeout_add_local_once(Duration::from_millis(250), move || {
-                if save_generation_for_timeout.get() != generation {
-                    return;
-                }
-                save_shell.remember_queue_lyrics_open_position();
-            });
-        });
-    }
 }
 
 pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
     shell.lyrics_pane.widget().set_visible(visible);
-    let available_height = shell.queue_lyrics_split.height();
     if visible {
+        let available_height = queue_lyrics_restore_available_height(&shell);
         let saved_height = shell.state.settings.borrow().queue_lyrics_height;
         shell
             .queue_lyrics_split
@@ -265,21 +239,40 @@ pub(super) fn apply_lyrics_panel_visibility(shell: Rc<Shell>, visible: bool) {
                 available_height,
                 saved_height,
             ));
-    } else if available_height > 0 {
-        shell.queue_lyrics_split.set_position(available_height);
+    } else {
+        let split_height = shell.queue_lyrics_split.height();
+        if split_height > 0 {
+            shell.queue_lyrics_split.set_position(split_height);
+        }
     }
 }
 
-fn queue_lyrics_available_height(shell: &Shell) -> i32 {
-    let panel_height = shell.right_panel.height();
-    if panel_height > 0 {
-        return panel_height;
+fn queue_lyrics_restore_available_height(shell: &Shell) -> i32 {
+    let split_height = shell.queue_lyrics_split.height();
+    if split_height > 1 {
+        return split_height;
     }
     let window_height = shell.window.height();
     if window_height > MIN_RESTORED_WINDOW_HEIGHT {
-        return (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(1);
+        return queue_lyrics_estimated_split_height(window_height);
     }
-    QUEUE_LYRICS_FALLBACK_HEIGHT.max(1)
+    if let Some(window_height) = shell.state.settings.borrow().window_height
+        && window_height > MIN_RESTORED_WINDOW_HEIGHT
+    {
+        return queue_lyrics_estimated_split_height(window_height);
+    }
+    queue_lyrics_estimated_split_height(900)
+}
+
+fn queue_lyrics_estimated_split_height(window_height: i32) -> i32 {
+    (window_height - BOTTOM_PLAYER_HEIGHT - 48).max(1)
+}
+
+pub(super) fn queue_lyrics_saved_height(split_height: i32, position: i32) -> Option<i32> {
+    if split_height <= 1 {
+        return None;
+    }
+    Some(queue_lyrics_height_for_position(split_height, position))
 }
 
 pub(super) fn clamp_queue_lyrics_position(available_height: i32, position: i32) -> i32 {
