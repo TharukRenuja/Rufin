@@ -56,7 +56,19 @@ impl Shell {
         ) {
             return;
         }
+        let has_lyrics = lyrics.is_some();
         self.apply_loaded_lyrics(lyrics);
+        if let Some(dialog) = self.state.lyrics_search_dialog.borrow().as_ref()
+            && dialog.track_id == track_id
+            && dialog.status.text().as_str() == tr("Searching…")
+        {
+            let status = if has_lyrics {
+                tr("Loaded in lyrics panel.")
+            } else {
+                tr("No lyrics found.")
+            };
+            dialog.status.set_text(&status);
+        }
     }
     fn restart_lyrics_follow_tracking(&self) {
         self.lyrics_pane.restart_follow_tracking();

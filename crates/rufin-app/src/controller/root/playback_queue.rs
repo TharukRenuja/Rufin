@@ -2,6 +2,8 @@ use super::*;
 use std::fmt::Write as _;
 
 const JELLYFIN_DEVICE_ID_RANDOM_BYTES: usize = 16;
+const NETEASE_INSTRUMENTAL_TEXT: &str = "纯音乐，请欣赏";
+const NETEASE_CREDIT_LABELS: &[&str] = &["作词", "作曲", "编曲", "制作人"];
 
 #[cfg(test)]
 pub(in crate::controller) fn lyrics_from_text(
@@ -24,8 +26,44 @@ pub(in crate::controller) fn lyrics_from_text_content(
         lines: content
             .lines()
             .filter_map(lyric_line_from_text)
+            .filter(|line| provider_line_has_content(provider, line))
             .collect::<Vec<_>>(),
     }
+}
+
+pub(in crate::controller) fn lyrics_with_displayable_content(mut lyrics: Lyrics) -> Option<Lyrics> {
+    if let Some(provider) = lyrics.external_provider {
+        lyrics
+            .lines
+            .retain(|line| provider_line_has_content(provider, line));
+    }
+    (!lyrics.lines.is_empty()).then_some(lyrics)
+}
+
+fn provider_line_has_content(
+    provider: ExternalLyricsProvider,
+    line: &rufin_provider::LyricLine,
+) -> bool {
+    match provider {
+        ExternalLyricsProvider::Netease => netease_line_has_content(&line.text),
+        ExternalLyricsProvider::Lrclib
+        | ExternalLyricsProvider::Genius
+        | ExternalLyricsProvider::SimpMusic => true,
+    }
+}
+
+fn netease_line_has_content(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty()
+        && text != NETEASE_INSTRUMENTAL_TEXT
+        && !NETEASE_CREDIT_LABELS
+            .iter()
+            .any(|label| netease_credit_line(text, label))
+}
+
+fn netease_credit_line(text: &str, label: &str) -> bool {
+    text.strip_prefix(label)
+        .is_some_and(|tail| matches!(tail.trim_start().chars().next(), Some(':') | Some('：')))
 }
 
 pub(in crate::controller) fn lyric_line_from_text(line: &str) -> Option<rufin_provider::LyricLine> {

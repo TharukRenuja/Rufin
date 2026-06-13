@@ -692,7 +692,7 @@ pub(in crate::controller) fn lyrics_from_search_result(
         return Ok(None);
     };
     let lyrics = lyrics_from_text_content(track_id, result.provider, &content);
-    Ok((!lyrics.lines.is_empty()).then_some(lyrics))
+    Ok(lyrics_with_displayable_content(lyrics))
 }
 fn external_fetch_lyrics(result: &LyricsSearchResult) -> Result<Option<String>, String> {
     match result.provider {
@@ -1070,17 +1070,23 @@ pub(in crate::controller) fn save_lrclib_result(
     entry: &QueueEntry,
     result: &LyricsSearchResult,
     output_path: PathBuf,
-) -> Result<(PathBuf, Lyrics), String> {
+) -> Result<Option<(PathBuf, Lyrics)>, String> {
     let content = match lyrics_result_content(result) {
         Some(content) => Some(content.to_string()),
         None => external_fetch_lyrics(result)?,
     }
-    .ok_or_else(|| "Selected lyric result has no lyrics to save.".to_string())?;
+    .filter(|lyrics| !lyrics.trim().is_empty());
+    let Some(content) = content else {
+        return Ok(None);
+    };
+    let lyrics = lyrics_from_text_content(entry.track_id.clone(), result.provider, &content);
+    let Some(lyrics) = lyrics_with_displayable_content(lyrics) else {
+        return Ok(None);
+    };
     let path = output_path;
     fs::write(&path, &content).map_err(|error| error.to_string())?;
-    let lyrics = lyrics_from_text_content(entry.track_id.clone(), result.provider, &content);
     debug!(server_id = %server_id, path = %path.display(), "saved lyric file");
-    Ok((path, lyrics))
+    Ok(Some((path, lyrics)))
 }
 pub(in crate::controller) fn lyrics_result_content(result: &LyricsSearchResult) -> Option<&str> {
     result

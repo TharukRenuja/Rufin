@@ -221,6 +221,51 @@ pub(in crate::controller) fn lyrics_remove_cache() {
     );
 }
 #[test]
+pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let track = snapshot.tracks[0].clone();
+    controller.play_now(track.clone());
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    let server_id = controller
+        .store
+        .with_store(|store| store.active_server())
+        .expect("load active server")
+        .expect("active server")
+        .server
+        .id;
+    let remote_lyrics = Lyrics {
+        track_id: track.id.clone(),
+        source: LyricsSource::Remote,
+        external_provider: Some(ExternalLyricsProvider::Netease),
+        lines: vec![
+            LyricLine {
+                text: "作曲 : Example Composer".to_string(),
+                start_millis: Some(0),
+            },
+            LyricLine {
+                text: "纯音乐，请欣赏".to_string(),
+                start_millis: Some(5_000),
+            },
+        ],
+    };
+    controller
+        .store
+        .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
+        .expect("save remote lyrics");
+
+    controller.request_lyrics_for_current();
+
+    assert!(wait_for_lyrics(&events).is_none());
+    assert_eq!(
+        controller
+            .store
+            .with_store(|store| store.load_lyrics(&server_id, &track.id))
+            .expect("load lyrics"),
+        None
+    );
+}
+#[test]
 pub(in crate::controller) fn lyrics_preserve_cache() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
@@ -326,22 +371,7 @@ pub(in crate::controller) fn lyrics_use_path() {
     fs::create_dir_all(&dir).expect("create dir");
     let sidecar = dir.join("Track.lrc");
     let output = dir.join("Chosen Lyrics.lrc");
-    let entry = rufin_core::QueueEntry {
-        id: rufin_core::QueueEntryId::new("queue-entry:lyrics"),
-        track_id: TrackId::new("jellyfin:track:lyrics-save"),
-        album_id: None,
-        title: "Track".to_string(),
-        artist: "Artist".to_string(),
-        artist_id: None,
-        album: "Album".to_string(),
-        year: 0,
-        duration_seconds: 180,
-        favorite: false,
-        image_ref: None,
-        local_path: Some(dir.join("Track.flac").to_string_lossy().into_owned()),
-        source_format: None,
-        origin: None,
-    };
+    let entry = lyrics_save_entry("jellyfin:track:lyrics-save", &dir);
     let result = super::LyricsSearchResult {
         provider: ExternalLyricsProvider::Lrclib,
         id: "1".to_string(),
@@ -358,7 +388,8 @@ pub(in crate::controller) fn lyrics_use_path() {
         &result,
         output.clone(),
     )
-    .expect("save lyrics");
+    .expect("save lyrics")
+    .expect("lyrics");
     assert_eq!(saved_path, output);
     assert_eq!(
         fs::read_to_string(&saved_path).expect("saved lyrics"),
@@ -368,6 +399,55 @@ pub(in crate::controller) fn lyrics_use_path() {
     assert!(!dir.join("Chosen Lyrics.lrc.tmp").exists());
     assert_eq!(lyrics.track_id, entry.track_id);
     let _cleanup = fs::remove_dir_all(dir);
+}
+#[test]
+pub(in crate::controller) fn lyrics_save_rejects_netease_placeholder() {
+    let dir = self::unique_test_dir("lyrics-placeholder-save");
+    fs::create_dir_all(&dir).expect("create dir");
+    let output = dir.join("Chosen Lyrics.lrc");
+    let entry = lyrics_save_entry("jellyfin:track:lyrics-placeholder", &dir);
+    let result = super::LyricsSearchResult {
+        provider: ExternalLyricsProvider::Netease,
+        id: "remote-placeholder-save".to_string(),
+        track_name: "Track".to_string(),
+        artist_name: "Artist".to_string(),
+        album_name: "Album".to_string(),
+        duration_seconds: 180,
+        synced_lyrics: Some(
+            "[00:00.00] 作曲 : Example Composer\n[00:05.00]纯音乐，请欣赏\n".to_string(),
+        ),
+        plain_lyrics: None,
+    };
+
+    let saved = super::save_lrclib_result(
+        &ServerId::new("jellyfin:server:lyrics"),
+        &entry,
+        &result,
+        output.clone(),
+    )
+    .expect("save result");
+
+    assert!(saved.is_none());
+    assert!(!output.exists());
+    let _cleanup = fs::remove_dir_all(dir);
+}
+fn lyrics_save_entry(track_id: &str, dir: &std::path::Path) -> rufin_core::QueueEntry {
+    rufin_core::QueueEntry {
+        id: rufin_core::QueueEntryId::new(format!("queue-entry:{track_id}")),
+        track_id: TrackId::new(track_id),
+        album_id: None,
+        title: "Track".to_string(),
+        artist: "Artist".to_string(),
+        artist_id: None,
+        album: "Album".to_string(),
+        year: 0,
+        duration_seconds: 180,
+        favorite: false,
+        image_ref: None,
+        local_path: Some(dir.join("Track.flac").to_string_lossy().into_owned()),
+        source_format: None,
+        origin: None,
+    }
 }
 #[test]
 pub(in crate::controller) fn lyrics_use_file() {
@@ -1130,6 +1210,49 @@ pub(in crate::controller) fn lyrics_track_current() {
     assert_eq!(lyrics.source, LyricsSource::Remote);
     assert_eq!(lyrics.lines[0].text, "line one");
     assert_eq!(lyrics.lines[0].start_millis, Some(1_000));
+}
+#[test]
+pub(in crate::controller) fn lyrics_reject_netease_instrumental_placeholder() {
+    let result = super::LyricsSearchResult {
+        provider: ExternalLyricsProvider::Netease,
+        id: "remote-placeholder".to_string(),
+        track_name: "Instrumental Track".to_string(),
+        artist_name: "Example Artist".to_string(),
+        album_name: "Example Album".to_string(),
+        duration_seconds: 120,
+        synced_lyrics: Some(
+            "[00:00.00] 作曲 : Example Composer\n[00:05.00]纯音乐，请欣赏\n".to_string(),
+        ),
+        plain_lyrics: None,
+    };
+
+    let lyrics = super::lyrics_from_search_result(TrackId::new("track-placeholder"), &result)
+        .expect("lyrics result");
+
+    assert!(lyrics.is_none());
+}
+#[test]
+pub(in crate::controller) fn lyrics_keep_netease_content_after_credit() {
+    let result = super::LyricsSearchResult {
+        provider: ExternalLyricsProvider::Netease,
+        id: "remote-content".to_string(),
+        track_name: "Example Track".to_string(),
+        artist_name: "Example Artist".to_string(),
+        album_name: "Example Album".to_string(),
+        duration_seconds: 120,
+        synced_lyrics: Some(
+            "[00:00.00] 作曲 : Example Composer\n[00:10.00]actual lyric line\n".to_string(),
+        ),
+        plain_lyrics: None,
+    };
+
+    let lyrics = super::lyrics_from_search_result(TrackId::new("track-content"), &result)
+        .expect("lyrics result")
+        .expect("lyrics");
+
+    assert_eq!(lyrics.lines.len(), 1);
+    assert_eq!(lyrics.lines[0].text, "actual lyric line");
+    assert_eq!(lyrics.lines[0].start_millis, Some(10_000));
 }
 #[test]
 pub(in crate::controller) fn preview_lrclib_result() {

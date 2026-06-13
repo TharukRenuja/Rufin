@@ -23,9 +23,9 @@ use super::{
     home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
     local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_result_subtitle_markup,
     lyrics_result_title_markup, lyrics_search_response_matches_query,
-    playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
-    playlist_entry_play_activation, playlist_route_margin, playlist_sort_width,
-    preferences_login_status_toast_message, queue_source_waits_for_snapshot,
+    lyrics_search_result_has_content, playlist_detail_compact_for_width, playlist_drop_index,
+    playlist_entries_for_state, playlist_entry_play_activation, playlist_route_margin,
+    playlist_sort_width, preferences_login_status_toast_message, queue_source_waits_for_snapshot,
     seekbar_target_seconds, snapshot_event_outcome,
 };
 use crate::controller::{
@@ -1607,6 +1607,44 @@ pub(in crate::ui) fn shell_lyrics_exist() {
     assert_eq!(
         lyrics_result_subtitle(&result),
         "LRCLIB - Example Album - 1:35 - Synced lyrics"
+    );
+}
+#[test]
+pub(in crate::ui) fn shell_deferred_lyrics_are_not_labeled_empty() {
+    let result = LyricsSearchResult {
+        provider: ExternalLyricsProvider::Netease,
+        id: "13".to_string(),
+        track_name: "Example Track".to_string(),
+        artist_name: "Example Artist".to_string(),
+        album_name: "Example Album".to_string(),
+        duration_seconds: 95,
+        synced_lyrics: None,
+        plain_lyrics: None,
+    };
+
+    assert!(lyrics_search_result_has_content(&result));
+    assert_eq!(
+        lyrics_result_subtitle(&result),
+        "NetEase - Example Album - 1:35 - Remote lyrics"
+    );
+}
+#[test]
+pub(in crate::ui) fn shell_lrclib_empty_result_is_not_loadable() {
+    let result = LyricsSearchResult {
+        provider: ExternalLyricsProvider::Lrclib,
+        id: "14".to_string(),
+        track_name: "Example Track".to_string(),
+        artist_name: "Example Artist".to_string(),
+        album_name: "Example Album".to_string(),
+        duration_seconds: 95,
+        synced_lyrics: None,
+        plain_lyrics: None,
+    };
+
+    assert!(!lyrics_search_result_has_content(&result));
+    assert_eq!(
+        lyrics_result_subtitle(&result),
+        "LRCLIB - Example Album - 1:35 - No lyrics"
     );
 }
 #[test]

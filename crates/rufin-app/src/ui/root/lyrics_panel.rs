@@ -242,7 +242,7 @@ impl Shell {
                     );
                     if let Some(dialog) = preview_shell.state.lyrics_search_dialog.borrow().as_ref()
                     {
-                        dialog.status.set_text(&tr("Loaded in lyrics panel."));
+                        dialog.status.set_text(&tr("Searching…"));
                     }
                 });
             }
@@ -264,6 +264,9 @@ impl Shell {
                     let Some(path) = file.path() else {
                         return;
                     };
+                    if let Some(dialog) = shell.state.lyrics_search_dialog.borrow().as_ref() {
+                        dialog.status.set_text(&tr("Searching…"));
+                    }
                     shell
                         .controller
                         .save_lyrics_search_result(track_id, result, path);
