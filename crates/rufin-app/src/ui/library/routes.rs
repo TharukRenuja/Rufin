@@ -1,12 +1,26 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(in crate::ui) struct LibraryRouteLoadTiming {
+    source: &'static str,
+    initial_load_ms: u64,
+    complete_load_ms: u64,
+    loaded_before_complete: usize,
+}
+
 impl Shell {
     pub(in crate::ui) fn library_albums_view(self: &Rc<Self>) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::Albums);
-        let page = self.complete_album_snapshot_page().unwrap_or_else(|| {
+        let initial_started = Instant::now();
+        let mut source = "snapshot";
+        let page = if let Some(page) = self.complete_album_snapshot_page() {
+            page
+        } else {
+            source = "cache";
             self.controller
                 .cached_albums_page(0, GRID_ROUTE_PAGE_SIZE)
                 .unwrap_or_else(|error| {
+                    source = "fallback";
                     warn!(%error, "failed to load cached albums page");
                     let albums = self
                         .state
@@ -22,24 +36,32 @@ impl Shell {
                         self.state.library.borrow().albums.len(),
                     )
                 })
-        });
+        };
+        let initial_load_ms = initial_started.elapsed().as_millis() as u64;
+        let loaded_before_complete = page.items.len();
+        let complete_started = Instant::now();
         let page = complete_cached_page(
             page,
             library_layout_loads_complete_page(LibraryListKey::Albums, &settings),
             |limit| self.controller.cached_albums_page(0, limit),
             "albums",
         );
-        self.library_albums_view_from_page(page)
+        let timing = LibraryRouteLoadTiming {
+            source,
+            initial_load_ms,
+            complete_load_ms: complete_started.elapsed().as_millis() as u64,
+            loaded_before_complete,
+        };
+        self.library_albums_view_from_page(page, timing)
     }
 
     pub(in crate::ui) fn library_albums_view_from_page(
         self: &Rc<Self>,
         page: rufin_provider::PagedResponse<Album>,
+        timing: LibraryRouteLoadTiming,
     ) -> gtk::Widget {
         let view_started = Instant::now();
         let settings = self.library_settings(LibraryListKey::Albums);
-        let initial_load_ms = 0;
-        let complete_load_ms = 0;
         let page_total = page.total;
         let complete_page = page.items.len() >= page.total;
         let source_albums = Rc::new(page.items.clone());
@@ -234,17 +256,45 @@ impl Shell {
             configure_scroller: Some(configure_scroller),
         });
         let shell_ms = shell_started.elapsed().as_millis() as u64;
+        let total_ms = view_started.elapsed().as_millis() as u64;
+        info!(
+            route = ?Route::Albums,
+            layout = ?settings.layout,
+            source = timing.source,
+            albums = album_count,
+            total = page_total,
+            loaded_before_complete = timing.loaded_before_complete,
+            complete_page,
+            initial_load_ms = timing.initial_load_ms,
+            complete_load_ms = timing.complete_load_ms,
+            album_tracks_ms,
+            model_ms,
+            content_ms,
+            shell_ms,
+            total_ms,
+            "library route setup timing"
+        );
+        if total_ms >= SLOW_LIBRARY_ROUTE_SETUP_MS {
+            warn!(
+                route = ?Route::Albums,
+                layout = ?settings.layout,
+                albums = album_count,
+                total = page_total,
+                total_ms,
+                "slow library route setup"
+            );
+        }
         if settings.layout == LibraryLayout::Detail {
             info!(
                 albums = album_count,
                 total = page_total,
-                initial_load_ms,
-                complete_load_ms,
+                initial_load_ms = timing.initial_load_ms,
+                complete_load_ms = timing.complete_load_ms,
                 album_tracks_ms,
                 model_ms,
                 content_ms,
                 shell_ms,
-                total_ms = view_started.elapsed().as_millis() as u64,
+                total_ms,
                 "albums detail view timing"
             );
         }
@@ -289,43 +339,58 @@ impl Shell {
             LibraryListKey::Artists
         };
         let settings = self.library_settings(key);
-        let page = self
-            .complete_artist_snapshot_page(album_artist)
-            .unwrap_or_else(|| {
-                self.controller
-                    .cached_artists_page(album_artist, 0, GRID_ROUTE_PAGE_SIZE)
-                    .unwrap_or_else(|error| {
-                        warn!(%error, album_artist, "failed to load cached artists page");
-                        let library = self.state.library.borrow();
-                        let fallback = if album_artist {
-                            &library.album_artists
-                        } else {
-                            &library.artists
-                        };
-                        rufin_provider::PagedResponse::new(
-                            fallback
-                                .iter()
-                                .take(GRID_ROUTE_PAGE_SIZE)
-                                .cloned()
-                                .collect(),
-                            fallback.len(),
-                        )
-                    })
-            });
+        let initial_started = Instant::now();
+        let mut source = "snapshot";
+        let page = if let Some(page) = self.complete_artist_snapshot_page(album_artist) {
+            page
+        } else {
+            source = "cache";
+            self.controller
+                .cached_artists_page(album_artist, 0, GRID_ROUTE_PAGE_SIZE)
+                .unwrap_or_else(|error| {
+                    source = "fallback";
+                    warn!(%error, album_artist, "failed to load cached artists page");
+                    let library = self.state.library.borrow();
+                    let fallback = if album_artist {
+                        &library.album_artists
+                    } else {
+                        &library.artists
+                    };
+                    rufin_provider::PagedResponse::new(
+                        fallback
+                            .iter()
+                            .take(GRID_ROUTE_PAGE_SIZE)
+                            .cloned()
+                            .collect(),
+                        fallback.len(),
+                    )
+                })
+        };
+        let initial_load_ms = initial_started.elapsed().as_millis() as u64;
+        let loaded_before_complete = page.items.len();
+        let complete_started = Instant::now();
         let page = complete_cached_page(
             page,
             library_layout_loads_complete_page(key, &settings),
             |limit| self.controller.cached_artists_page(album_artist, 0, limit),
             "artists",
         );
-        self.library_artist_list_view_from_page(album_artist, page)
+        let timing = LibraryRouteLoadTiming {
+            source,
+            initial_load_ms,
+            complete_load_ms: complete_started.elapsed().as_millis() as u64,
+            loaded_before_complete,
+        };
+        self.library_artist_list_view_from_page(album_artist, page, timing)
     }
 
     pub(in crate::ui) fn library_artist_list_view_from_page(
         self: &Rc<Self>,
         album_artist: bool,
         page: rufin_provider::PagedResponse<Artist>,
+        timing: LibraryRouteLoadTiming,
     ) -> gtk::Widget {
+        let view_started = Instant::now();
         let key = if album_artist {
             LibraryListKey::AlbumArtists
         } else {
@@ -338,11 +403,17 @@ impl Shell {
         };
         let settings = self.library_settings(key);
         let complete_page = page.items.len() >= page.total;
+        let page_total = page.total;
         let source_artists = Rc::new(page.items.clone());
         let artists = Rc::new(RefCell::new(page.items));
+        let artist_count = artists.borrow().len();
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let warm_started = Instant::now();
         warm_artist_covers_for_settings(self, &artists.borrow(), &settings);
+        let warm_ms = warm_started.elapsed().as_millis() as u64;
+        let model_started = Instant::now();
         populate_artist_model(&model, &artists.borrow(), &settings);
+        let model_ms = model_started.elapsed().as_millis() as u64;
 
         let search = gtk::SearchEntry::new();
         search.set_placeholder_text(Some(&tr("Search")));
@@ -429,8 +500,9 @@ impl Shell {
             let artists = Rc::clone(&artists);
             let cursor = Rc::clone(&cursor);
             let query = Rc::clone(&query);
+            let load_route = route.clone();
             Rc::new(move || {
-                if !shell.can_load_grid_page(&cursor, &route) {
+                if !shell.can_load_grid_page(&cursor, &load_route) {
                     return;
                 }
                 let offset = cursor.offset.get();
@@ -470,15 +542,49 @@ impl Shell {
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
 
-        self.library_page_shell(LibraryPageShellOptions {
+        let content_started = Instant::now();
+        let content = artist_collection_widget(self, model, key);
+        let content_ms = content_started.elapsed().as_millis() as u64;
+        let shell_started = Instant::now();
+        let view = self.library_page_shell(LibraryPageShellOptions {
             key,
             empty: artists.borrow().is_empty(),
             empty_body: "Cached rows will appear here after the background sync finishes.",
             search,
-            content: artist_collection_widget(self, model, key),
+            content,
             load_next: if complete_page { None } else { Some(load_next) },
             configure_scroller: Some(configure_scroller),
-        })
+        });
+        let shell_ms = shell_started.elapsed().as_millis() as u64;
+        let total_ms = view_started.elapsed().as_millis() as u64;
+        info!(
+            route = ?route,
+            layout = ?settings.layout,
+            source = timing.source,
+            artists = artist_count,
+            total = page_total,
+            loaded_before_complete = timing.loaded_before_complete,
+            complete_page,
+            initial_load_ms = timing.initial_load_ms,
+            complete_load_ms = timing.complete_load_ms,
+            warm_ms,
+            model_ms,
+            content_ms,
+            shell_ms,
+            total_ms,
+            "library route setup timing"
+        );
+        if total_ms >= SLOW_LIBRARY_ROUTE_SETUP_MS {
+            warn!(
+                route = ?route,
+                layout = ?settings.layout,
+                artists = artist_count,
+                total = page_total,
+                total_ms,
+                "slow library route setup"
+            );
+        }
+        view
     }
     pub(in crate::ui) fn library_genre_list_view(self: &Rc<Self>) -> gtk::Widget {
         let settings = self.library_settings(LibraryListKey::Genres);

@@ -38,6 +38,55 @@ pub(in crate::ui) fn cover_warm_delay() -> u64 {
     WARM_SETTLE_MS
 }
 
+pub(in crate::ui) fn startup_stall_delay_ms(expected: Duration, observed: Duration) -> u64 {
+    observed.saturating_sub(expected).as_millis() as u64
+}
+
+pub(in crate::ui) fn install_startup_stall_monitor(shell: &Rc<Shell>) {
+    let started_at = Instant::now();
+    let last_tick = Rc::new(Cell::new(started_at));
+    let shell = Rc::clone(shell);
+    glib::timeout_add_local(
+        Duration::from_millis(STARTUP_STALL_MONITOR_INTERVAL_MS),
+        move || {
+            let now = Instant::now();
+            let elapsed = now.duration_since(started_at);
+            let expected = Duration::from_millis(STARTUP_STALL_MONITOR_INTERVAL_MS);
+            let observed = now.duration_since(last_tick.get());
+            last_tick.set(now);
+            let delayed_ms = startup_stall_delay_ms(expected, observed);
+            if delayed_ms >= STARTUP_STALL_WARN_MS {
+                warn!(
+                    delayed_ms,
+                    observed_ms = observed.as_millis() as u64,
+                    elapsed_ms = elapsed.as_millis() as u64,
+                    route = ?shell.state.routes.borrow().current().clone(),
+                    startup_revealed = shell.state.startup_route_revealed.get(),
+                    startup_render_pending = shell.state.startup_route_render_pending.get(),
+                    startup_content_prepared = shell.state.startup_route_content_prepared.get(),
+                    cover_prime_pending = shell.state.startup_cover_prime_pending.borrow().len(),
+                    route_cover_prime_pending = shell.state.route_cover_prime_pending.borrow().len(),
+                    cover_path_lookups = shell.state.cover_path_lookups.borrow().len(),
+                    cover_fetches = shell.state.cover_fetches.borrow().len(),
+                    cover_visible_requests = shell.state.cover_visible_requests.borrow().len(),
+                    cover_bindings = shell.state.cover_bindings.borrow().len(),
+                    cover_decode_queue = shell.state.cover_decode_queue.borrow().len(),
+                    cover_decodes = shell.state.cover_decodes.borrow().len(),
+                    decoded_covers = shell.state.decoded_covers.borrow().len(),
+                    cover_warm_pending = shell.state.cover_warm_pending.borrow().is_some(),
+                    cover_warm_started = shell.state.cover_warm_started.borrow().is_some(),
+                    "startup UI thread stalled"
+                );
+            }
+            if elapsed >= Duration::from_millis(STARTUP_STALL_MONITOR_WINDOW_MS) {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        },
+    );
+}
+
 pub(in crate::ui) fn take_pending_warm(
     pending: &mut Option<(ServerId, u64)>,
     server_id: &ServerId,

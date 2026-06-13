@@ -203,8 +203,12 @@ pub(in crate::ui) const COVER_WARM_SCROLL_PAUSE_MS: u64 = 1_500;
 pub(in crate::ui) const COVER_VISIBLE_REQUEST_DELAY_MS: u64 = 48;
 pub(in crate::ui) const COVER_DECODE_MAX_IN_FLIGHT: usize = 8;
 pub(in crate::ui) const COVER_DECODE_LIMIT: usize = 16;
+pub(in crate::ui) const SLOW_COVER_CALLBACK_MS: u64 = 100;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_MAX_MS: u64 = 3_000;
 pub(in crate::ui) const STARTUP_ROUTE_REVEAL_POLL_MS: u64 = 32;
+pub(in crate::ui) const STARTUP_STALL_MONITOR_INTERVAL_MS: u64 = 100;
+pub(in crate::ui) const STARTUP_STALL_MONITOR_WINDOW_MS: u64 = 60_000;
+pub(in crate::ui) const STARTUP_STALL_WARN_MS: u64 = 100;
 pub(in crate::ui) const STARTUP_HOME_SECTION_LIMIT: usize = 3;
 pub(in crate::ui) const STARTUP_HOME_SECTION_COVER_LIMIT: usize = 4;
 pub(in crate::ui) const STARTUP_CACHED_COVER_PRIME_LIMIT: usize = 3_072;
@@ -307,6 +311,8 @@ pub(in crate::ui) struct AppState {
     playlist_refresh_started_for_visit: Cell<bool>,
     home_showcase_seed: Cell<u64>,
     route_load_generation: Cell<u64>,
+    pending_sync_route_refresh: RefCell<Option<(Route, u64)>>,
+    pending_sync_route_delta: RefCell<Option<LibraryDelta>>,
     startup_route_revealed: Cell<bool>,
     startup_route_render_pending: Cell<bool>,
     startup_route_content_prepared: Cell<bool>,
@@ -558,6 +564,8 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         playlist_refresh_started_for_visit: Cell::new(false),
         home_showcase_seed: Cell::new(next_home_showcase_seed()),
         route_load_generation: Cell::new(0),
+        pending_sync_route_refresh: RefCell::new(None),
+        pending_sync_route_delta: RefCell::new(None),
         startup_route_revealed: Cell::new(!defer_initial_route),
         startup_route_render_pending: Cell::new(false),
         startup_route_content_prepared: Cell::new(!defer_initial_route),
@@ -771,6 +779,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         apply_lyrics_panel_visibility(Rc::clone(&shell), false);
     }
     shell.request_initial_lyrics_if_needed();
+    startup_reveal::install_startup_stall_monitor(&shell);
     install_event_pump(&shell, events);
     if settings.seekbar_waveform_enabled {
         shell.controller.request_waveform_for_current();

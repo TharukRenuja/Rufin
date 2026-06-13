@@ -1241,10 +1241,22 @@ pub(in crate::ui) fn cover_pixbuf_decode_size(size: i32) -> i32 {
     }
 }
 pub(in crate::ui) fn apply_pixbuf_to_bindings(bindings: Vec<CoverBinding>, pixbuf: Pixbuf) {
+    let apply_started = Instant::now();
+    let binding_count = bindings.len();
+    let mut applied = 0_usize;
     for binding in bindings {
-        if let Some(tile) = binding.tile.upgrade() {
-            tile.set_pixbuf_if_current(binding.generation, pixbuf.clone());
+        if let Some(tile) = binding.tile.upgrade()
+            && tile.set_pixbuf_if_current(binding.generation, pixbuf.clone())
+        {
+            applied = applied.saturating_add(1);
         }
+    }
+    let apply_ms = apply_started.elapsed().as_millis() as u64;
+    if apply_ms >= SLOW_COVER_CALLBACK_MS {
+        warn!(
+            bindings = binding_count,
+            applied, apply_ms, "slow cover pixbuf binding"
+        );
     }
 }
 pub(in crate::ui) fn draw_fallback_cover(

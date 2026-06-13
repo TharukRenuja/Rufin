@@ -250,6 +250,7 @@ impl Shell {
     ) {
         let shell = Rc::clone(self);
         glib::timeout_add_local(Duration::from_millis(COVER_WARM_INTERVAL_MS), move || {
+            let tick_started = Instant::now();
             if shell.state.cover_warm_generation.get() != schedule.generation {
                 return glib::ControlFlow::Break;
             }
@@ -281,6 +282,16 @@ impl Shell {
                 shell.start_warm_cover_path_lookup(job);
             }
 
+            let tick_ms = tick_started.elapsed().as_millis() as u64;
+            if tick_ms >= SLOW_COVER_CALLBACK_MS {
+                warn!(
+                    processed,
+                    remaining = jobs.borrow().len(),
+                    in_flight,
+                    tick_ms,
+                    "slow cover warm tick"
+                );
+            }
             if jobs.borrow().is_empty() {
                 glib::ControlFlow::Break
             } else {

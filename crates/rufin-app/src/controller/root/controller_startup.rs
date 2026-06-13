@@ -1318,7 +1318,11 @@ async fn sync_provider_generation(
         library_changed,
         "completed provider cache sync"
     );
-    Ok(SyncJobOutcome::changed(delta))
+    if delta.is_empty() {
+        Ok(SyncJobOutcome::unchanged())
+    } else {
+        Ok(SyncJobOutcome::changed(delta))
+    }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::controller) enum SyncCollection {

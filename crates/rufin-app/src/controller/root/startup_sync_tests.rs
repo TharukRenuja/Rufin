@@ -3802,6 +3802,7 @@ pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
         .block_on(sync_provider_outcome(&store, &saved.server.id, &provider))
         .expect("same remote sync");
     assert!(noop.delta.is_empty());
+    assert!(!noop.post_sync_work);
 
     let mut stale_album = runtime
         .block_on(provider.albums(PagedRequest::new(0, 1)))
@@ -3832,6 +3833,7 @@ pub(in crate::controller) fn startup_remote_sync_detects_noop_and_delta() {
         .block_on(sync_provider_outcome(&store, &saved.server.id, &provider))
         .expect("changed remote sync");
     assert!(changed.delta.albums.fields.contains(&stale_album.id));
+    assert!(changed.post_sync_work);
 }
 fn seed_cached_library(
     store: &StoreHandle,

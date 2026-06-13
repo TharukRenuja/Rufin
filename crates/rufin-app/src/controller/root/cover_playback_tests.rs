@@ -446,6 +446,38 @@ pub(in crate::controller) fn cover_emit_unavailable() {
         }
     }
 }
+
+#[test]
+pub(in crate::controller) fn cover_known_external_miss_bypasses_fetch_slots() {
+    let (controller, events, _snapshot, _queue, _player) =
+        AppController::bootstrap_memory_for_test();
+    let image_ref = external_cover_ref();
+    seed_external_cover_miss(&controller, &image_ref, 256);
+    let key = controller.cover_key(&image_ref, 256).expect("cover key");
+
+    {
+        let (lock, _ready) = &*controller.cover_slots;
+        *lock.lock().expect("cover slots") = 2;
+    }
+
+    assert!(controller.request_cover_for_key(key.clone(), image_ref, 256));
+
+    let event = events.recv_timeout(Duration::from_secs(1));
+    {
+        let (lock, ready) = &*controller.cover_slots;
+        *lock.lock().expect("cover slots") = 0;
+        ready.notify_all();
+    }
+
+    assert!(matches!(
+        event.expect("controller event"),
+        ControllerEvent::CoverUnavailable {
+            key: event_key,
+            external_retry_generation: Some(0),
+        } if event_key == key
+    ));
+}
+
 #[test]
 pub(in crate::controller) fn cache_cover_reuse() {
     let (controller, _events, _snapshot, _queue, _player) =

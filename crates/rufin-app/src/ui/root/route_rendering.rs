@@ -1,5 +1,9 @@
 use super::*;
 
+const SLOW_ROUTE_RENDER_MS: u64 = 100;
+const SLOW_ROUTE_RENDER_IDLE_MS: u64 = 100;
+const SLOW_SYNC_ROUTE_REFRESH_MS: u64 = 100;
+
 struct RouteView {
     widget: gtk::Widget,
     resize: RouteResizePolicy,
@@ -112,12 +116,24 @@ impl Shell {
         let resize = view.resize;
         let build_ms = render_started.elapsed().as_millis() as u64;
         self.finish_route_view(&route, view);
+        let total_ms = render_started.elapsed().as_millis() as u64;
+        self.log_post_render_idle_delay(route.clone(), total_ms);
+        if total_ms >= SLOW_ROUTE_RENDER_MS {
+            warn!(
+                ?route,
+                ?resize,
+                build_ms,
+                total_ms,
+                signature = self.state.responsive_render_signature.get(),
+                "slow route render"
+            );
+        }
         if route_resize_diagnostics_enabled() {
             info!(
                 ?route,
                 ?resize,
                 build_ms,
-                total_ms = render_started.elapsed().as_millis() as u64,
+                total_ms,
                 signature = self.state.responsive_render_signature.get(),
                 "route render timing"
             );
@@ -138,6 +154,63 @@ impl Shell {
         if !route_delta_affects(&route, &delta) {
             return;
         }
+        self.queue_sync_route_refresh(route, delta);
+    }
+
+    fn queue_sync_route_refresh(self: &Rc<Self>, route: Route, delta: LibraryDelta) {
+        merge_pending_sync_route_delta(
+            &mut self.state.pending_sync_route_delta.borrow_mut(),
+            delta,
+        );
+        let route_generation = self.state.route_load_generation.get();
+        if self
+            .state
+            .pending_sync_route_refresh
+            .borrow()
+            .as_ref()
+            .is_some_and(|(queued_route, queued_generation)| {
+                queued_route == &route && *queued_generation == route_generation
+            })
+        {
+            return;
+        }
+
+        self.state
+            .pending_sync_route_refresh
+            .replace(Some((route.clone(), route_generation)));
+        let shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            shell.run_sync_route_refresh(route, route_generation);
+        });
+    }
+
+    fn run_sync_route_refresh(self: &Rc<Self>, route: Route, route_generation: u64) {
+        let refresh_started = Instant::now();
+        let target_matches = self
+            .state
+            .pending_sync_route_refresh
+            .borrow()
+            .as_ref()
+            .is_some_and(|(queued_route, queued_generation)| {
+                queued_route == &route && *queued_generation == route_generation
+            });
+        if !target_matches {
+            return;
+        }
+        self.state.pending_sync_route_refresh.borrow_mut().take();
+        if self.state.route_load_generation.get() != route_generation
+            || self.state.routes.borrow().current() != &route
+        {
+            self.state.pending_sync_route_delta.borrow_mut().take();
+            return;
+        }
+
+        let Some(delta) = self.state.pending_sync_route_delta.borrow_mut().take() else {
+            return;
+        };
+        if !route_delta_affects(&route, &delta) {
+            return;
+        }
         if matches!(route, Route::Home) {
             reset_home_section_pages(&mut self.state.home_section_state.borrow_mut());
         }
@@ -154,10 +227,38 @@ impl Shell {
                 }
             }
         }
+        let render_started = Instant::now();
         self.render_current_route_preserving_scroll();
+        let render_ms = render_started.elapsed().as_millis() as u64;
         if matches!(route, Route::Playlists) {
             self.refresh_playlists_for_current_visit();
         }
+        let total_ms = refresh_started.elapsed().as_millis() as u64;
+        if total_ms >= SLOW_SYNC_ROUTE_REFRESH_MS {
+            warn!(
+                ?route,
+                route_generation, render_ms, total_ms, "slow queued sync route refresh"
+            );
+        }
+    }
+    fn log_post_render_idle_delay(self: &Rc<Self>, route: Route, render_ms: u64) {
+        let shell = Rc::clone(self);
+        let route_generation = self.state.route_load_generation.get();
+        let queued_at = Instant::now();
+        glib::idle_add_local_once(move || {
+            let idle_ms = queued_at.elapsed().as_millis() as u64;
+            if idle_ms >= SLOW_ROUTE_RENDER_IDLE_MS {
+                warn!(
+                    ?route,
+                    route_generation,
+                    render_ms,
+                    idle_ms,
+                    current_route = ?shell.state.routes.borrow().current().clone(),
+                    current_generation = shell.state.route_load_generation.get(),
+                    "route post-render idle delayed"
+                );
+            }
+        });
     }
     fn prepare_route_host(self: &Rc<Self>, route: &Route) {
         clear_favorite_controls(&self.state.favorite_controls);
@@ -390,6 +491,14 @@ fn track_table_delta_affects(delta: &LibraryDelta) -> bool {
         || !delta.tracks.cover_refs.is_empty()
 }
 
+fn merge_pending_sync_route_delta(pending: &mut Option<LibraryDelta>, delta: LibraryDelta) {
+    if let Some(pending) = pending {
+        pending.merge(delta);
+    } else {
+        *pending = Some(delta);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,5 +605,39 @@ mod tests {
         let mut delta = LibraryDelta::default();
         delta.tracks.added.push(TrackId::fake(2));
         assert!(route_delta_affects(&Route::Tracks, &delta));
+    }
+
+    #[test]
+    fn pending_sync_route_delta_merges_changes() {
+        let mut first = LibraryDelta::default();
+        first.tracks.fields.push(TrackId::fake(1));
+        let mut pending = None;
+        merge_pending_sync_route_delta(&mut pending, first);
+
+        let mut second = LibraryDelta::default();
+        second.albums.fields.push(AlbumId::fake(2));
+        second.home_changed = true;
+        merge_pending_sync_route_delta(&mut pending, second);
+
+        let pending = pending.expect("merged delta");
+        assert_eq!(pending.tracks.fields, vec![TrackId::fake(1)]);
+        assert_eq!(pending.albums.fields, vec![AlbumId::fake(2)]);
+        assert!(pending.home_changed);
+    }
+
+    #[test]
+    fn pending_sync_route_delta_keeps_route_affects() {
+        let mut first = LibraryDelta::default();
+        first.tracks.fields.push(TrackId::fake(1));
+        let mut second = LibraryDelta::default();
+        second.albums.fields.push(AlbumId::fake(2));
+        let mut pending = None;
+
+        merge_pending_sync_route_delta(&mut pending, first);
+        merge_pending_sync_route_delta(&mut pending, second);
+
+        let pending = pending.expect("merged delta");
+        assert!(route_delta_affects(&Route::Tracks, &pending));
+        assert!(route_delta_affects(&Route::Albums, &pending));
     }
 }

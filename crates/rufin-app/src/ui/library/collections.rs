@@ -178,6 +178,34 @@ fn play_track_from_model(
     };
     controller.play_activation(activation);
 }
+
+fn record_collection_bind(
+    route: &'static str,
+    key: LibraryListKey,
+    bind_ms: u64,
+    burst_count: &Rc<Cell<u64>>,
+    burst_started: &Rc<Cell<Instant>>,
+) {
+    if bind_ms >= SLOW_COLLECTION_BIND_MS {
+        warn!(route, ?key, bind_ms, "slow collection item bind");
+    }
+
+    let count = burst_count.get().saturating_add(1);
+    burst_count.set(count);
+    let elapsed_ms = burst_started.get().elapsed().as_millis() as u64;
+    if count >= COLLECTION_BIND_BURST_MIN && elapsed_ms >= SLOW_COLLECTION_BIND_BURST_MS {
+        warn!(
+            route,
+            ?key,
+            binds = count,
+            elapsed_ms,
+            "slow collection bind burst"
+        );
+        burst_count.set(0);
+        burst_started.set(Instant::now());
+    }
+}
+
 pub(in crate::ui) fn album_grid(
     shell: &Rc<Shell>,
     model: gio::ListStore,
@@ -187,7 +215,10 @@ pub(in crate::ui) fn album_grid(
     let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
+    let bind_count = Rc::new(Cell::new(0_u64));
+    let bind_started = Rc::new(Cell::new(Instant::now()));
     factory.connect_bind(move |_, item| {
+        let item_started = Instant::now();
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -204,6 +235,13 @@ pub(in crate::ui) fn album_grid(
             key,
             card_size,
         )));
+        record_collection_bind(
+            "albums",
+            key,
+            item_started.elapsed().as_millis() as u64,
+            &bind_count,
+            &bind_started,
+        );
     });
     factory.connect_unbind(clear_list_item_child);
     let grid = gtk::GridView::new(Some(selection), Some(factory));
@@ -230,7 +268,10 @@ pub(in crate::ui) fn artist_grid(
     let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
+    let bind_count = Rc::new(Cell::new(0_u64));
+    let bind_started = Rc::new(Cell::new(Instant::now()));
     factory.connect_bind(move |_, item| {
+        let item_started = Instant::now();
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -247,6 +288,13 @@ pub(in crate::ui) fn artist_grid(
             key,
             card_size,
         )));
+        record_collection_bind(
+            "artists",
+            key,
+            item_started.elapsed().as_millis() as u64,
+            &bind_count,
+            &bind_started,
+        );
     });
     factory.connect_unbind(clear_list_item_child);
     let grid = gtk::GridView::new(Some(selection), Some(factory));

@@ -58,6 +58,7 @@ impl Shell {
     pub(in crate::ui) fn spawn_cover_decode_job(self: &Rc<Self>, job: CoverDecodeJob) {
         let shell = Rc::clone(self);
         glib::spawn_future_local(async move {
+            let callback_started = Instant::now();
             let CoverDecodeJob {
                 key,
                 path,
@@ -70,7 +71,21 @@ impl Shell {
                     shell.finish_cover_decode_success(&key);
                     let pixbuf = shell.remember_decoded_cover(key.clone(), pixbuf, priority);
                     let bindings = shell.take_live_cover_bindings(&key);
+                    let bindings_count = bindings.len();
+                    let bind_started = Instant::now();
                     apply_pixbuf_to_bindings(bindings, pixbuf);
+                    let bind_ms = bind_started.elapsed().as_millis() as u64;
+                    let total_ms = callback_started.elapsed().as_millis() as u64;
+                    if total_ms >= SLOW_COVER_CALLBACK_MS || bind_ms >= SLOW_COVER_CALLBACK_MS {
+                        warn!(
+                            ?priority,
+                            size,
+                            bindings = bindings_count,
+                            bind_ms,
+                            total_ms,
+                            "slow cover decode completion"
+                        );
+                    }
                 }
                 Err(error) => {
                     let retrying = shell.finish_cover_decode_failure(&key, &path);
@@ -80,7 +95,12 @@ impl Shell {
                     }
                 }
             }
+            let drain_started = Instant::now();
             shell.drain_cover_decode_queue();
+            let drain_ms = drain_started.elapsed().as_millis() as u64;
+            if drain_ms >= SLOW_COVER_CALLBACK_MS {
+                warn!(drain_ms, "slow cover decode drain after completion");
+            }
         });
     }
     pub(in crate::ui) fn finish_cover_decode_success(&self, key: &str) {
