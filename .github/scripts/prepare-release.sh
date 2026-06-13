@@ -23,11 +23,7 @@ perl -0pi -e '
   die "missing workspace package version\n" unless s/(\[workspace\.package\]\nversion = )"[^"]+"/$1"$version"/m;
 ' Cargo.toml
 
-perl -0pi -e '
-  my $version = $ENV{"VERSION"};
-  my $count = s/(^name = "rufin(?:-[^"]*)?"\nversion = )"[^"]+"/$1"$version"/mg;
-  die "missing Cargo.lock Rufin package versions\n" unless $count > 0;
-' Cargo.lock
+cargo generate-lockfile --offline
 
 perl -0pi -e '
   my $version = $ENV{"VERSION"};
