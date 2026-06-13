@@ -65,14 +65,22 @@ impl AppController {
                 .with_store(|store| store.load_lyrics(&server_id, &entry.track_id))
                 .unwrap_or(None)
         });
-        if let Some(cached) = cached.flatten().filter(|lyrics| {
-            cached_lyrics_allowed_for_track(lyrics, search, &external_providers, cue_track)
-        }) {
-            debug!(track_id = %entry.track_id, "loaded lyrics from cache");
-            let _sent = self
-                .events
-                .send(lyrics_event(&entry.track_id, Some(cached)));
-            return;
+        if let Some(cached) = cached.flatten()
+            && cached_lyrics_allowed_for_track(&cached, search, &external_providers, cue_track)
+        {
+            let delete_remote = cached.source == rufin_provider::LyricsSource::Remote;
+            if let Some(cached) = lyrics_with_displayable_content(cached) {
+                debug!(track_id = %entry.track_id, "loaded lyrics from cache");
+                let _sent = self
+                    .events
+                    .send(lyrics_event(&entry.track_id, Some(cached)));
+                return;
+            }
+            if delete_remote {
+                let _deleted = self
+                    .store
+                    .with_store(|store| store.delete_remote_lyrics(&server_id, &entry.track_id));
+            }
         }
         let provider_is_local = self
             .store
@@ -259,9 +267,12 @@ impl AppController {
         let events = self.events.clone();
         thread::spawn(
             move || match save_lrclib_result(&server_id, &entry, &result, output_path) {
-                Ok((path, lyrics)) => {
+                Ok(Some((path, lyrics))) => {
                     let _saved = store.with_store(|store| store.save_lyrics(&server_id, &lyrics));
                     let _sent = events.send(ControllerEvent::LyricsSaved { path, lyrics });
+                }
+                Ok(None) => {
+                    let _sent = events.send(lyrics_event(&entry.track_id, None));
                 }
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
@@ -292,9 +303,7 @@ impl AppController {
                     let _sent = events.send(lyrics_event(&requested_track_id, Some(lyrics)));
                 }
                 Ok(None) => {
-                    let _sent = events.send(ControllerEvent::Error(
-                        "Selected lyric result has no lyrics to load.".to_string(),
-                    ));
+                    let _sent = events.send(lyrics_event(&requested_track_id, None));
                 }
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));

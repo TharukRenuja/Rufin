@@ -640,6 +640,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("results");
     let _ = tr("Synced lyrics");
     let _ = tr("Plain lyrics");
+    let _ = tr("Remote lyrics");
     let _ = tr("No lyrics");
     let _ = tr("Loaded in lyrics panel.");
     let _ = tr("Save");

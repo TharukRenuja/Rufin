@@ -1010,6 +1010,11 @@ msgstr ""
 msgid "Plain lyrics"
 msgstr ""
 
+#: crates/rufin-app/src/i18n.rs:643
+#: crates/rufin-app/src/ui/root/cover_startup.rs:351
+msgid "Remote lyrics"
+msgstr ""
+
 #: crates/rufin-app/src/i18n.rs:620
 #: crates/rufin-app/src/ui/root/cover_startup.rs:310
 msgid "No lyrics"

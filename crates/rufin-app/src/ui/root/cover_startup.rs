@@ -347,6 +347,8 @@ pub(in crate::ui) fn lyrics_result_subtitle(result: &LyricsSearchResult) -> Stri
         .is_some_and(|lyrics| !lyrics.trim().is_empty())
     {
         subtitle.push_str(&tr("Plain lyrics"));
+    } else if result.provider != ExternalLyricsProvider::Lrclib {
+        subtitle.push_str(&tr("Remote lyrics"));
     } else {
         subtitle.push_str(&tr("No lyrics"));
     }
