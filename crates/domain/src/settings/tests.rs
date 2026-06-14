@@ -4,9 +4,25 @@ use super::{
     LibraryListKey, LocalLibraryFolder, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
     MAX_RESTORED_WINDOW_HEIGHT, MAX_RESTORED_WINDOW_WIDTH, MIN_AUTO_DJ_REFILL_THRESHOLD,
     MIN_CROSSFADE_SECONDS, RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings,
-    SidebarRouteItem, TrackSortKey, TrackTableColumn, available_detail_track_fields,
-    default_external_lyrics_providers, sanitized_window_size,
+    SecretStorageMode, SidebarRouteItem, TrackSortKey, TrackTableColumn,
+    available_detail_track_fields, default_external_lyrics_providers, sanitized_window_size,
 };
+#[test]
+fn settings_missing_secret_storage_mode_uses_legacy_config() {
+    let json = r#"{
+        "theme_preference": "System",
+        "language": "system",
+        "private_mode": false,
+        "notifications_enabled": false,
+        "external_lyrics_enabled": true,
+        "discord_presence_enabled": false
+    }"#;
+
+    let settings = serde_json::from_str::<AppSettings>(json).expect("deserialize settings");
+
+    assert_eq!(settings.secret_storage_mode, SecretStorageMode::ConfigFile);
+    assert!(settings.secret_scope_id.is_empty());
+}
 #[test]
 fn settings_clamp_range() {
     let mut settings = super::PlaybackSettings {
@@ -450,6 +466,56 @@ fn settings_keep_field() {
     assert_eq!(tracks.detail_track_fields, available_detail_track_fields());
 }
 #[test]
+fn settings_default_library_rows_skip_redundant_album_artist() {
+    for key in [LibraryListKey::Albums, LibraryListKey::ArtistAlbums] {
+        let settings = super::LibraryListSettings::for_key(key);
+
+        assert_eq!(
+            settings.row_fields,
+            vec![
+                LibraryField::TitleMerged,
+                LibraryField::PlayCount,
+                LibraryField::Year,
+                LibraryField::Favorite,
+            ],
+            "{key:?}"
+        );
+    }
+}
+#[test]
+fn settings_default_artist_tracks_use_normal_track_rows() {
+    let tracks = super::LibraryListSettings::for_key(LibraryListKey::Tracks);
+    assert_eq!(
+        tracks.row_fields,
+        vec![
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::Favorite,
+        ]
+    );
+
+    for key in [LibraryListKey::FavoriteTracks, LibraryListKey::ArtistTracks] {
+        let settings = super::LibraryListSettings::for_key(key);
+        assert_eq!(
+            settings.row_fields,
+            vec![
+                LibraryField::TitleMerged,
+                LibraryField::Album,
+                LibraryField::Year,
+                LibraryField::PlayCount,
+            ],
+            "{key:?}"
+        );
+    }
+}
+#[test]
+fn settings_default_albums_use_grid() {
+    let settings = super::LibraryListSettings::for_key(LibraryListKey::Albums);
+
+    assert_eq!(settings.layout, LibraryLayout::Grid);
+}
+#[test]
 fn settings_migrate_default_album_and_artist_track_rows() {
     let mut settings = AppSettings {
         library_lists: vec![
@@ -468,6 +534,23 @@ fn settings_migrate_default_album_and_artist_track_rows() {
                     sort_key: LibraryField::Title,
                     descending: false,
                     layout_version: 5,
+                },
+            },
+            super::LibraryListSettingsEntry {
+                key: LibraryListKey::FavoriteTracks,
+                settings: super::LibraryListSettings {
+                    layout: LibraryLayout::Row,
+                    row_fields: vec![
+                        LibraryField::TitleMerged,
+                        LibraryField::Album,
+                        LibraryField::Year,
+                        LibraryField::Favorite,
+                    ],
+                    grid_fields: Vec::new(),
+                    detail_track_fields: available_detail_track_fields().to_vec(),
+                    sort_key: LibraryField::Title,
+                    descending: false,
+                    layout_version: 6,
                 },
             },
             super::LibraryListSettingsEntry {
@@ -495,6 +578,10 @@ fn settings_migrate_default_album_and_artist_track_rows() {
     settings.migrate_defaults();
 
     assert_eq!(
+        settings.library_list(LibraryListKey::Albums).layout,
+        LibraryLayout::Grid
+    );
+    assert_eq!(
         settings.library_list(LibraryListKey::Albums).row_fields,
         vec![
             LibraryField::TitleMerged,
@@ -505,13 +592,24 @@ fn settings_migrate_default_album_and_artist_track_rows() {
     );
     assert_eq!(
         settings
+            .library_list(LibraryListKey::FavoriteTracks)
+            .row_fields,
+        vec![
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::PlayCount,
+        ]
+    );
+    assert_eq!(
+        settings
             .library_list(LibraryListKey::ArtistTracks)
             .row_fields,
         vec![
             LibraryField::TitleMerged,
             LibraryField::Album,
             LibraryField::Year,
-            LibraryField::Favorite,
+            LibraryField::PlayCount,
         ]
     );
 }

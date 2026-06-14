@@ -12,7 +12,9 @@ use adw::prelude::*;
 use domain::ServerId;
 
 use super::{
-    AddServerDialogHandle, Shell, icon_button,
+    AddServerDialogHandle, Shell,
+    chrome::window_close_controls,
+    icon_button,
     layout::{large_popup_content_height, large_popup_content_width},
     startup_reveal::connection_progress_status_label,
     text_button,
@@ -21,7 +23,7 @@ use super::{
 const ADD_SERVER_DIALOG_WIDTH: i32 = 620;
 const ADD_SERVER_DIALOG_HEIGHT: i32 = 680;
 const ADD_SERVER_CLAMP_WIDTH: i32 = 560;
-const RECONNECT_NOTICE: &str = "Rufin no longer relies on the system keyring. Connect once more to continue using this server.";
+const RECONNECT_NOTICE: &str = "Connect once more to continue using this server.";
 
 #[derive(Clone)]
 struct ServerFormPreset {
@@ -102,6 +104,7 @@ impl Shell {
         self: &Rc<Self>,
         on_connect_started: Option<Rc<dyn Fn()>>,
     ) -> gtk::Widget {
+        let embedded = on_connect_started.is_none();
         if self.state.first_run_connection_pending.get() {
             return self.connection_progress_view();
         }
@@ -431,7 +434,11 @@ impl Shell {
         );
         clamp.set_child(Some(&content));
         scroller.set_child(Some(&clamp));
-        scroller.upcast()
+        let view = scroller.upcast::<gtk::Widget>();
+        if embedded {
+            return connect_view_with_close_controls(view);
+        }
+        view
     }
 
     pub(super) fn show_reconnect_notice_if_needed(&self) {
@@ -902,4 +909,15 @@ fn connect_add_local_folder_button(
             on_changed();
         });
     });
+}
+
+fn connect_view_with_close_controls(view: gtk::Widget) -> gtk::Widget {
+    let overlay = gtk::Overlay::new();
+    overlay.set_hexpand(true);
+    overlay.set_vexpand(true);
+    overlay.set_child(Some(&view));
+    let controls = window_close_controls();
+    overlay.add_overlay(&controls);
+    overlay.set_measure_overlay(&controls, false);
+    overlay.upcast()
 }

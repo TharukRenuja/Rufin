@@ -1943,10 +1943,27 @@ pub(in crate::controller) fn playback_backend(fake: bool) -> Box<dyn PlaybackBac
     }
     Box::new(LazyGStreamerPlaybackBackend::new())
 }
-pub(in crate::controller) fn platform_config_secret_store() -> Arc<dyn SecretStore> {
-    Arc::new(CachedSecretStore::new(Arc::new(ConfigSecretStore::new(
-        config_secrets_path(),
+pub(in crate::controller) fn platform_secret_store(settings: &AppSettings) -> Arc<dyn SecretStore> {
+    match settings.secret_storage_mode {
+        SecretStorageMode::ConfigFile => Arc::new(CachedSecretStore::new(Arc::new(
+            ConfigSecretStore::with_scope(config_secrets_path(), settings.secret_scope_id.clone()),
+        ))),
+        SecretStorageMode::SystemKeyring => system_keyring_secret_store(&settings.secret_scope_id),
+    }
+}
+
+#[cfg(unix)]
+fn system_keyring_secret_store(scope_id: &str) -> Arc<dyn SecretStore> {
+    Arc::new(CachedSecretStore::new(Arc::new(SecretServiceStore::new(
+        scope_id.to_string(),
     ))))
+}
+
+#[cfg(not(unix))]
+fn system_keyring_secret_store(_scope_id: &str) -> Arc<dyn SecretStore> {
+    Arc::new(UnavailableSecretStore::new(
+        "system keyring is unavailable on this platform",
+    ))
 }
 pub(in crate::controller) fn saved_server_needs_auth(
     secrets: &Arc<dyn SecretStore>,
@@ -1965,7 +1982,7 @@ pub(in crate::controller) fn config_token_available(
         Ok(Some(_)) => true,
         Ok(None) => false,
         Err(error) => {
-            warn!(%error, server_id = %server_id, "failed to load config token");
+            warn!(%error, server_id = %server_id, "failed to load saved token");
             false
         }
     }

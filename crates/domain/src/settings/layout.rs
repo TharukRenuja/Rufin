@@ -2,7 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 use super::sidebar::*;
 use crate::domain::{HomeBlockKind, HomeSectionKind, ServerId};
-pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 6;
+pub const LIBRARY_LIST_LAYOUT_VERSION: u8 = 7;
 pub const DEFAULT_WINDOW_WIDTH: i32 = 1_500;
 pub const DEFAULT_WINDOW_HEIGHT: i32 = 900;
 pub const MIN_RESTORED_WINDOW_WIDTH: i32 = 480;
@@ -541,7 +541,7 @@ impl LibraryListKey {
 
     fn default_layout(self) -> LibraryLayout {
         match self {
-            Self::Albums => LibraryLayout::Row,
+            Self::Albums => LibraryLayout::Grid,
             Self::Tracks
             | Self::FavoriteTracks
             | Self::AlbumDetailTracks
@@ -724,6 +724,34 @@ impl LibraryListSettings {
                         LibraryField::TitleMerged,
                         LibraryField::Album,
                         LibraryField::Duration,
+                        LibraryField::Favorite,
+                    ];
+                    if self.row_fields == previous_default {
+                        self.row_fields = default_row_fields(key);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if self.layout_version < 7 {
+            match key {
+                LibraryListKey::Albums => {
+                    let previous_default = [
+                        LibraryField::TitleMerged,
+                        LibraryField::PlayCount,
+                        LibraryField::Year,
+                        LibraryField::Favorite,
+                    ];
+                    if self.layout == LibraryLayout::Row && self.row_fields == previous_default {
+                        self.layout = key.default_layout();
+                    }
+                }
+                LibraryListKey::FavoriteTracks | LibraryListKey::ArtistTracks => {
+                    let previous_default = [
+                        LibraryField::TitleMerged,
+                        LibraryField::Album,
+                        LibraryField::Year,
                         LibraryField::Favorite,
                     ];
                     if self.row_fields == previous_default {

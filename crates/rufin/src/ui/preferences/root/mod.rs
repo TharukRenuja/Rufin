@@ -14,7 +14,7 @@ use domain::{
     HomeBlockKind, LeftSidebarMode, MAX_AUTO_DJ_REFILL_THRESHOLD, MAX_CROSSFADE_SECONDS,
     MAX_NARROW_LAYOUT_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD, MIN_CROSSFADE_SECONDS,
     MIN_NARROW_LAYOUT_THRESHOLD, PlaybackTransitionMode, ReplayGainMode, RightSidebarMode,
-    SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
+    SecretStorageMode, SidebarRouteItem, SidebarRouteItemSettings, StreamQuality,
 };
 use playback::available_audio_outputs;
 use std::{
@@ -469,7 +469,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     page.add(&discord_group);
 
     let privacy_group = adw::PreferencesGroup::builder()
-        .title(tr("Privacy"))
+        .title(tr("Privacy and Security"))
         .build();
     let private_row = adw::SwitchRow::builder()
         .title(tr("Private mode"))
@@ -491,9 +491,82 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
     });
     privacy_group.add(&notifications_row);
 
+    let secret_storage_titles = [tr("Legacy"), tr("Secure storage")];
+    let secret_storage_refs = secret_storage_titles
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let secret_storage_row = adw::ComboRow::builder()
+        .title(tr("Secret storage"))
+        .model(&gtk::StringList::new(&secret_storage_refs))
+        .selected(secret_storage_mode_index(settings.secret_storage_mode))
+        .build();
+    let secret_storage_shell = Rc::clone(shell);
+    let secret_storage_guard = Rc::new(Cell::new(false));
+    let secret_storage_guard_for_row = Rc::clone(&secret_storage_guard);
+    let preferences_dialog_for_secret_storage = dialog.clone();
+    secret_storage_row.connect_selected_notify(move |row| {
+        if secret_storage_guard_for_row.get() {
+            return;
+        }
+        let mode = secret_storage_mode_from_index(row.selected());
+        let previous_mode = secret_storage_shell
+            .state
+            .settings
+            .borrow()
+            .secret_storage_mode;
+        if mode == previous_mode {
+            return;
+        }
+
+        let confirm = adw::AlertDialog::builder()
+            .heading(tr("Change Secret Storage"))
+            .body(tr(
+                "Changing secret backend removes legacy config secrets and signs you out everywhere, including API secrets. App cache is not affected.",
+            ))
+            .build();
+        let cancel = tr("Cancel");
+        let change = tr("Change");
+        confirm.add_responses(&[("cancel", cancel.as_str()), ("change", change.as_str())]);
+        confirm.set_default_response(Some("cancel"));
+        confirm.set_close_response("cancel");
+        confirm.set_response_appearance("change", adw::ResponseAppearance::Destructive);
+        let row = row.clone();
+        let shell = Rc::clone(&secret_storage_shell);
+        let guard = Rc::clone(&secret_storage_guard_for_row);
+        let preferences_dialog = preferences_dialog_for_secret_storage.clone();
+        let window = shell.window.clone();
+        confirm.choose(
+            Some(&window),
+            None::<&gtk::gio::Cancellable>,
+            move |response| {
+                if response.as_str() == "change" && shell.set_secret_storage_mode(mode) {
+                    preferences_dialog.close();
+                    return;
+                }
+                guard.set(true);
+                row.set_selected(secret_storage_mode_index(previous_mode));
+                guard.set(false);
+            },
+        );
+    });
+    privacy_group.add(&secret_storage_row);
+
     page.add(&privacy_group);
 
     page
+}
+fn secret_storage_mode_index(mode: SecretStorageMode) -> u32 {
+    match mode {
+        SecretStorageMode::ConfigFile => 0,
+        SecretStorageMode::SystemKeyring => 1,
+    }
+}
+fn secret_storage_mode_from_index(index: u32) -> SecretStorageMode {
+    match index {
+        1 => SecretStorageMode::SystemKeyring,
+        _ => SecretStorageMode::ConfigFile,
+    }
 }
 fn interface_group(shell: &Rc<Shell>) -> adw::PreferencesGroup {
     let settings = shell.state.settings.borrow().clone();

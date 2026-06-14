@@ -425,6 +425,7 @@ impl Shell {
         search.set_width_request(1);
         toolbar.append(&search);
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        controls.set_margin_end(10);
         let command_button = Rc::new(RefCell::new(None::<gtk::Button>));
         let command_compact = Rc::new(Cell::new(false));
 

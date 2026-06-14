@@ -718,42 +718,19 @@ pub(in crate::ui) fn available_fields_for_set(
 }
 pub(in crate::ui) fn set_field_enabled(
     settings: &mut LibraryListSettings,
-    key: LibraryListKey,
+    _key: LibraryListKey,
     field_set: LibraryFieldSet,
     field: LibraryField,
     enabled: bool,
 ) {
-    let order = available_fields_for_set(key, field_set).to_vec();
     let fields = active_fields_for_set_mut(settings, field_set);
     if enabled {
-        insert_field_in_order(fields, field, &order);
+        if !fields.contains(&field) {
+            fields.push(field);
+        }
     } else {
         fields.retain(|candidate| *candidate != field);
     }
-}
-pub(in crate::ui) fn insert_field_in_order(
-    fields: &mut Vec<LibraryField>,
-    field: LibraryField,
-    order: &[LibraryField],
-) {
-    if fields.contains(&field) {
-        return;
-    }
-    let target_order = order
-        .iter()
-        .position(|candidate| *candidate == field)
-        .unwrap_or(usize::MAX);
-    let insert_at = fields
-        .iter()
-        .position(|candidate| {
-            order
-                .iter()
-                .position(|ordered| ordered == candidate)
-                .unwrap_or(usize::MAX)
-                > target_order
-        })
-        .unwrap_or(fields.len());
-    fields.insert(insert_at, field);
 }
 pub(in crate::ui) fn move_visible_field(
     settings: &mut LibraryListSettings,
@@ -1030,5 +1007,20 @@ mod tests {
             with_fields - title_only,
             2 * (COLLECTION_GRID_LABEL_LINE_HEIGHT + COLLECTION_GRID_CARD_GAP)
         );
+    }
+
+    #[test]
+    fn enabling_field_appends() {
+        let mut settings = LibraryListSettings::for_key(LibraryListKey::Tracks);
+
+        set_field_enabled(
+            &mut settings,
+            LibraryListKey::Tracks,
+            LibraryFieldSet::Row,
+            LibraryField::DiscNumber,
+            true,
+        );
+
+        assert_eq!(settings.row_fields.last(), Some(&LibraryField::DiscNumber));
     }
 }

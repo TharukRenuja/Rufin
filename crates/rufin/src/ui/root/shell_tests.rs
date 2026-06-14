@@ -245,6 +245,7 @@ pub(in crate::ui) fn shell_preserve_source() {
 pub(in crate::ui) fn shell_apply_sync_status() {
     let mut library = test_library_snapshot();
     let server = test_server("active");
+    library.first_run = true;
     library.server = Some(server.clone());
     library.selected_source = Some(LibrarySourceSelection::Server(server.id.clone()));
     library.cached_track_count = 2;
@@ -266,6 +267,7 @@ pub(in crate::ui) fn shell_apply_sync_status() {
 
     assert!(applied);
     assert_eq!(library.sync_status, "Cached library ready");
+    assert!(!library.first_run);
     assert_eq!(library.cached_track_count, 2);
 }
 #[test]
@@ -1577,7 +1579,7 @@ pub(in crate::ui) fn shell_use_statuses() {
     );
     assert_eq!(
         preferences_login_status_toast_message("Cached library ready"),
-        Some("Cached library ready")
+        None
     );
     assert_eq!(
         preferences_login_status_toast_message("Sync already running."),

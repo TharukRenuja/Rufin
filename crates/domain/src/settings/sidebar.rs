@@ -99,18 +99,24 @@ pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
             LibraryField::SongCount,
             LibraryField::Duration,
         ],
-        LibraryListKey::Tracks | LibraryListKey::FavoriteTracks => vec![
+        LibraryListKey::Tracks => vec![
             LibraryField::TitleMerged,
             LibraryField::Album,
             LibraryField::Year,
             LibraryField::Favorite,
+        ],
+        LibraryListKey::FavoriteTracks => vec![
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::PlayCount,
         ],
         LibraryListKey::AlbumDetailTracks => default_detail_track_fields(),
         LibraryListKey::ArtistTracks => vec![
             LibraryField::TitleMerged,
             LibraryField::Album,
             LibraryField::Year,
-            LibraryField::Favorite,
+            LibraryField::PlayCount,
         ],
         LibraryListKey::GenreTracks | LibraryListKey::PlaylistTracks => {
             vec![
@@ -250,6 +256,28 @@ impl StreamQuality {
             Self::MaxBitrateKbps(kbps) => Some(kbps),
         }
     }
+}
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SecretStorageMode {
+    ConfigFile,
+    SystemKeyring,
+}
+impl Default for SecretStorageMode {
+    fn default() -> Self {
+        default_secret_storage_mode()
+    }
+}
+#[cfg(unix)]
+fn default_secret_storage_mode() -> SecretStorageMode {
+    SecretStorageMode::SystemKeyring
+}
+#[cfg(not(unix))]
+fn default_secret_storage_mode() -> SecretStorageMode {
+    SecretStorageMode::ConfigFile
+}
+fn legacy_secret_storage_mode() -> SecretStorageMode {
+    SecretStorageMode::ConfigFile
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EqualizerSettings {
@@ -415,6 +443,10 @@ pub struct AppSettings {
     pub language: String,
     pub private_mode: bool,
     pub notifications_enabled: bool,
+    #[serde(default = "legacy_secret_storage_mode")]
+    pub secret_storage_mode: SecretStorageMode,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub secret_scope_id: String,
     pub external_lyrics_enabled: bool,
     #[serde(default = "default_external_lyrics_providers")]
     pub external_lyrics_providers: Vec<ExternalLyricsProvider>,
@@ -492,6 +524,8 @@ impl Default for AppSettings {
             language: default_language_preference(),
             private_mode: false,
             notifications_enabled: false,
+            secret_storage_mode: SecretStorageMode::default(),
+            secret_scope_id: String::new(),
             external_lyrics_enabled: true,
             external_lyrics_providers: default_external_lyrics_providers(),
             external_metadata_enabled: true,

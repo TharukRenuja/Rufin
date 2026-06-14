@@ -17,9 +17,9 @@ use domain::{
     GenreId, HomeSection, HomeSectionKind, ImageRef, LibrarySourceSelection, LocalLibraryFolder,
     LocalManifestEntry, LocalManifestScan, MusicFolder, MusicFolderId, PlaySourceDescriptor,
     PlaySourceKey, PlaybackSettings, Playlist, PlaylistId, QueueEngine, QueueEntry, QueueEntryId,
-    QueueReplacement, QueueSnapshot, RepeatMode, ServerId, ServerIdentity, SmartPlaylist,
-    SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail, SmartPlaylistId,
-    SourceOrder, StreamDescriptor, StreamQuality, Track, TrackId,
+    QueueReplacement, QueueSnapshot, RepeatMode, SecretStorageMode, ServerId, ServerIdentity,
+    SmartPlaylist, SmartPlaylistBuiltin, SmartPlaylistDefinition, SmartPlaylistDetail,
+    SmartPlaylistId, SourceOrder, StreamDescriptor, StreamQuality, Track, TrackId,
 };
 use library::{
     CachedArtistDetail, CachedGenreDetail, CoverCacheEntry, EntityDelta, LibraryDelta,
@@ -32,7 +32,13 @@ use playback::{
 };
 #[cfg(any(test, feature = "dev-tools"))]
 use secrets::MemorySecretStore;
-use secrets::{CachedSecretStore, ConfigSecretStore, SecretKey, SecretStore};
+#[cfg(unix)]
+use secrets::SecretServiceStore;
+#[cfg(not(unix))]
+use secrets::UnavailableSecretStore;
+use secrets::{
+    CachedSecretStore, ConfigSecretStore, SecretKey, SecretStore, SwitchableSecretStore,
+};
 use serde::{Deserialize, Serialize};
 use source::{
     FavoriteItemId, FolderDetail, Lyrics, MusicProvider, PagedRequest, PlaybackReport,
@@ -401,6 +407,7 @@ pub struct AppController {
     pub(in crate::controller) store: StoreHandle,
     pub(in crate::controller) runtime: Arc<Runtime>,
     pub(in crate::controller) secrets: Arc<dyn SecretStore>,
+    secret_switch: Arc<SwitchableSecretStore>,
     settings: settings_controller::SettingsController,
     queue: Arc<Mutex<Option<QueueEngine>>>,
     play_activation_generation: Arc<AtomicU64>,

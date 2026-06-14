@@ -5,7 +5,7 @@ use adw::prelude::*;
 use domain::{
     AppSettings, DiscordDisplayType, DiscordLinkType, ExternalLyricsProvider, HomeBlockKind,
     LibraryListKey, LibraryListSettings, PlaybackSettings, Route, ScrobblingSettings,
-    sanitized_window_size,
+    SecretStorageMode, sanitized_window_size,
 };
 use tracing::warn;
 
@@ -310,6 +310,19 @@ impl Shell {
             settings.notifications_enabled = enabled;
             true
         });
+    }
+
+    pub(super) fn set_secret_storage_mode(self: &Rc<Self>, mode: SecretStorageMode) -> bool {
+        match self.controller.set_secret_storage_mode(mode) {
+            Ok(settings) => {
+                *self.state.settings.borrow_mut() = settings;
+                true
+            }
+            Err(error) => {
+                warn!(%error, "failed to change secret storage mode");
+                false
+            }
+        }
     }
 
     pub(super) fn set_type_to_search_enabled(self: &Rc<Self>, enabled: bool) {

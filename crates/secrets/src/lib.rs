@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
+use std::future::Future;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
+use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use domain::ServerId;
@@ -10,6 +14,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const CONFIG_SECRET_FORMAT: &str = "config-base64";
+#[cfg(unix)]
+const SECRET_SERVICE_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(unix)]
+static SECRET_SERVICE_KEYRING: Mutex<Option<Arc<oo7::Keyring>>> = Mutex::new(None);
+#[cfg(unix)]
+static SECRET_SERVICE_KEYRING_INIT: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
 pub enum SecretError {
@@ -49,6 +59,13 @@ impl SecretKey {
             Self::LibreFmSession => "scrobbling:librefm-session".to_string(),
             Self::ListenBrainzToken => "scrobbling:listenbrainz-token".to_string(),
         }
+    }
+
+    fn scoped_config_key(&self, scope_id: &str) -> String {
+        if scope_id.is_empty() {
+            return self.config_key();
+        }
+        format!("scope:{scope_id}:{}", self.config_key())
     }
 }
 
@@ -118,9 +135,46 @@ impl SecretStore for CachedSecretStore {
     }
 }
 
+#[derive(Clone)]
+pub struct SwitchableSecretStore {
+    inner: Arc<Mutex<Arc<dyn SecretStore>>>,
+}
+
+impl SwitchableSecretStore {
+    pub fn new(inner: Arc<dyn SecretStore>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(inner)),
+        }
+    }
+
+    pub fn replace(&self, inner: Arc<dyn SecretStore>) -> SecretResult<()> {
+        *self.inner.lock().map_err(|_| SecretError::Locked)? = inner;
+        Ok(())
+    }
+
+    fn current(&self) -> SecretResult<Arc<dyn SecretStore>> {
+        Ok(self.inner.lock().map_err(|_| SecretError::Locked)?.clone())
+    }
+}
+
+impl SecretStore for SwitchableSecretStore {
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        self.current()?.save_secret(key, secret)
+    }
+
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        self.current()?.load_secret(key)
+    }
+
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        self.current()?.delete_secret(key)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ConfigSecretStore {
     path: PathBuf,
+    scope_id: String,
     lock: Arc<Mutex<()>>,
 }
 
@@ -143,8 +197,13 @@ impl Default for ConfigSecretFile {
 
 impl ConfigSecretStore {
     pub fn new(path: PathBuf) -> Self {
+        Self::with_scope(path, String::new())
+    }
+
+    pub fn with_scope(path: PathBuf, scope_id: impl Into<String>) -> Self {
         Self {
             path,
+            scope_id: scope_id.into(),
             lock: Arc::new(Mutex::new(())),
         }
     }
@@ -177,7 +236,8 @@ impl SecretStore for ConfigSecretStore {
     fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
         let _guard = self.lock.lock().map_err(|_| SecretError::Locked)?;
         let mut file = self.read_file()?;
-        file.secrets.insert(key.config_key(), BASE64.encode(secret));
+        file.secrets
+            .insert(key.scoped_config_key(&self.scope_id), BASE64.encode(secret));
         self.write_file(file)
     }
 
@@ -185,7 +245,7 @@ impl SecretStore for ConfigSecretStore {
         let _guard = self.lock.lock().map_err(|_| SecretError::Locked)?;
         let file = self.read_file()?;
         file.secrets
-            .get(&key.config_key())
+            .get(&key.scoped_config_key(&self.scope_id))
             .map(|secret| {
                 BASE64
                     .decode(secret)
@@ -203,7 +263,11 @@ impl SecretStore for ConfigSecretStore {
             Err(error) => return Err(config_error(error)),
         }
         let mut file = self.read_file()?;
-        if file.secrets.remove(&key.config_key()).is_some() {
+        if file
+            .secrets
+            .remove(&key.scoped_config_key(&self.scope_id))
+            .is_some()
+        {
             return self.write_file(file);
         }
         Ok(())
@@ -258,11 +322,207 @@ impl SecretStore for MemorySecretStore {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct UnavailableSecretStore {
+    message: String,
+}
+
+impl UnavailableSecretStore {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl SecretStore for UnavailableSecretStore {
+    fn save_secret(&self, _key: &SecretKey, _secret: &str) -> SecretResult<()> {
+        Err(SecretError::Backend(self.message.clone()))
+    }
+
+    fn load_secret(&self, _key: &SecretKey) -> SecretResult<Option<String>> {
+        Err(SecretError::Backend(self.message.clone()))
+    }
+
+    fn delete_secret(&self, _key: &SecretKey) -> SecretResult<()> {
+        Err(SecretError::Backend(self.message.clone()))
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Debug)]
+pub struct SecretServiceStore {
+    application: String,
+    scope_id: String,
+}
+
+#[cfg(unix)]
+impl SecretServiceStore {
+    pub fn new(scope_id: impl Into<String>) -> Self {
+        Self {
+            application: "Rufin".to_string(),
+            scope_id: scope_id.into(),
+        }
+    }
+
+    fn secret_attributes(&self, key: &SecretKey) -> Vec<(String, String)> {
+        let mut attributes = vec![
+            ("application".to_string(), self.application.clone()),
+            ("scope".to_string(), self.scope_id.clone()),
+        ];
+        match key {
+            SecretKey::ProviderToken(server_id) => {
+                attributes.push(("namespace".to_string(), "provider".to_string()));
+                attributes.push(("kind".to_string(), "provider-token".to_string()));
+                attributes.push(("server_id".to_string(), server_id.as_str().to_string()));
+            }
+            SecretKey::LastFmApiSecret => {
+                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
+                attributes.push(("kind".to_string(), "lastfm-api-secret".to_string()));
+            }
+            SecretKey::LastFmSession => {
+                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
+                attributes.push(("kind".to_string(), "lastfm-session".to_string()));
+            }
+            SecretKey::LibreFmSession => {
+                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
+                attributes.push(("kind".to_string(), "librefm-session".to_string()));
+            }
+            SecretKey::ListenBrainzToken => {
+                attributes.push(("namespace".to_string(), "scrobbling".to_string()));
+                attributes.push(("kind".to_string(), "listenbrainz-token".to_string()));
+            }
+        }
+        attributes
+    }
+
+    fn secret_label(&self, key: &SecretKey) -> String {
+        match key {
+            SecretKey::ProviderToken(server_id) => {
+                format!("Rufin provider token {}", server_id.as_str())
+            }
+            SecretKey::LastFmApiSecret => "Rufin Last.fm API secret".to_string(),
+            SecretKey::LastFmSession => "Rufin Last.fm session".to_string(),
+            SecretKey::LibreFmSession => "Rufin Libre.fm session".to_string(),
+            SecretKey::ListenBrainzToken => "Rufin ListenBrainz token".to_string(),
+        }
+    }
+
+    fn run<T, Fut>(&self, operation: Fut) -> SecretResult<T>
+    where
+        Fut: Future<Output = oo7::Result<T>>,
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| SecretError::Backend(error.to_string()))?;
+        let result = runtime
+            .block_on(async { tokio::time::timeout(SECRET_SERVICE_TIMEOUT, operation).await })
+            .map_err(|_| {
+                SecretError::Backend(format!(
+                    "secret service timed out after {}s",
+                    SECRET_SERVICE_TIMEOUT.as_secs_f64()
+                ))
+            })?;
+        result.map_err(|error| SecretError::Backend(error.to_string()))
+    }
+
+    fn run_with_keyring<T, Fut, Op>(&self, operation: Op) -> SecretResult<T>
+    where
+        Fut: Future<Output = oo7::Result<T>>,
+        Op: FnOnce(Arc<oo7::Keyring>) -> Fut,
+    {
+        if oo7::ashpd::is_sandboxed() {
+            let keyring = self.cached_keyring()?;
+            return self.run(operation(keyring));
+        }
+
+        self.run(async move {
+            let keyring = Arc::new(oo7::Keyring::new().await?);
+            operation(keyring).await
+        })
+    }
+
+    fn cached_keyring(&self) -> SecretResult<Arc<oo7::Keyring>> {
+        if let Some(keyring) = SECRET_SERVICE_KEYRING
+            .lock()
+            .map_err(|_| SecretError::Locked)?
+            .clone()
+        {
+            return Ok(keyring);
+        }
+
+        let _guard = SECRET_SERVICE_KEYRING_INIT
+            .lock()
+            .map_err(|_| SecretError::Locked)?;
+        if let Some(keyring) = SECRET_SERVICE_KEYRING
+            .lock()
+            .map_err(|_| SecretError::Locked)?
+            .clone()
+        {
+            return Ok(keyring);
+        }
+
+        let keyring = Arc::new(self.run(oo7::Keyring::new())?);
+        *SECRET_SERVICE_KEYRING
+            .lock()
+            .map_err(|_| SecretError::Locked)? = Some(Arc::clone(&keyring));
+        Ok(keyring)
+    }
+}
+
+#[cfg(unix)]
+async fn load_item_secret(
+    keyring: &oo7::Keyring,
+    attributes: &Vec<(String, String)>,
+) -> oo7::Result<Option<oo7::Secret>> {
+    let Some(item) = keyring.search_items(attributes).await?.into_iter().next() else {
+        return Ok(None);
+    };
+    if item.is_locked().await? {
+        item.unlock().await?;
+    }
+    Ok(Some(item.secret().await?))
+}
+
+#[cfg(unix)]
+impl SecretStore for SecretServiceStore {
+    fn save_secret(&self, key: &SecretKey, secret: &str) -> SecretResult<()> {
+        let attributes = self.secret_attributes(key);
+        let label = self.secret_label(key);
+        let secret = secret.to_string();
+
+        self.run_with_keyring(move |keyring| async move {
+            keyring
+                .create_item(&label, &attributes, oo7::Secret::text(secret), true)
+                .await
+        })
+    }
+
+    fn load_secret(&self, key: &SecretKey) -> SecretResult<Option<String>> {
+        let attributes = self.secret_attributes(key);
+        let secret = self.run_with_keyring(move |keyring| async move {
+            load_item_secret(&keyring, &attributes).await
+        })?;
+
+        secret
+            .map(|secret| String::from_utf8(secret.as_bytes().to_vec()))
+            .transpose()
+            .map_err(|_| SecretError::Utf8)
+    }
+
+    fn delete_secret(&self, key: &SecretKey) -> SecretResult<()> {
+        let attributes = self.secret_attributes(key);
+
+        self.run_with_keyring(move |keyring| async move { keyring.delete(&attributes).await })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         CachedSecretStore, ConfigSecretStore, MemorySecretStore, SecretError, SecretKey,
-        SecretResult, SecretStore,
+        SecretResult, SecretStore, SwitchableSecretStore,
     };
     use domain::ServerId;
     use std::fs;
@@ -354,6 +614,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn config_empty_scope_preserves_legacy_keys() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("secrets.json");
+        let server_id = ServerId::fake(1);
+
+        ConfigSecretStore::new(path.clone())
+            .save_token(&server_id, "legacy-token")
+            .expect("save legacy token");
+
+        assert_eq!(
+            ConfigSecretStore::with_scope(path, "")
+                .load_token(&server_id)
+                .expect("load legacy token"),
+            Some("legacy-token".to_string())
+        );
+    }
+
+    #[test]
+    fn config_scopes_hide_old_tokens() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("secrets.json");
+        let server_id = ServerId::fake(1);
+
+        ConfigSecretStore::new(path.clone())
+            .save_token(&server_id, "legacy-token")
+            .expect("save legacy token");
+        ConfigSecretStore::with_scope(path.clone(), "new-scope")
+            .save_token(&server_id, "scoped-token")
+            .expect("save scoped token");
+
+        assert_eq!(
+            ConfigSecretStore::new(path.clone())
+                .load_token(&server_id)
+                .expect("load legacy token"),
+            Some("legacy-token".to_string())
+        );
+        assert_eq!(
+            ConfigSecretStore::with_scope(path, "other-scope")
+                .load_token(&server_id)
+                .expect("load other scope token"),
+            None
+        );
+    }
+
     #[derive(Default)]
     struct CountingSecretStore {
         inner: MemorySecretStore,
@@ -426,5 +731,32 @@ mod tests {
             None
         );
         assert_eq!(inner.load_count(), 0);
+    }
+
+    #[test]
+    fn switchable_store_replaces_cached_backend() {
+        let server_id = ServerId::fake(1);
+        let first_inner = Arc::new(CountingSecretStore::default());
+        first_inner
+            .save_token(&server_id, "first-token")
+            .expect("seed first token");
+        let second_inner = Arc::new(CountingSecretStore::default());
+        second_inner
+            .save_token(&server_id, "second-token")
+            .expect("seed second token");
+        let store = SwitchableSecretStore::new(Arc::new(CachedSecretStore::new(first_inner)));
+
+        assert_eq!(
+            store.load_token(&server_id).expect("load first token"),
+            Some("first-token".to_string())
+        );
+        store
+            .replace(Arc::new(CachedSecretStore::new(second_inner)))
+            .expect("replace backend");
+
+        assert_eq!(
+            store.load_token(&server_id).expect("load second token"),
+            Some("second-token".to_string())
+        );
     }
 }

@@ -29,6 +29,7 @@
 - Rich customization while preserving GTK menus
 - Smart playlists that support nested rules
 - System tray integration
+- Secure storage for all server and API secrets
 
 # Library behavior
 
@@ -45,9 +46,11 @@
 # Screenshots
 
 ![Tracks page](data/tracks.png)
+![Albums page](data/albums.png)
+![Artists page](data/artists.png)
+![Fullscreen player](data/fullscreen_player.png)
 ![Smart playlists](data/smart_playlists.png)
 ![Play random](data/play_random.png)
-![Playback settings](data/playback.png)
 
 
 # Installation
