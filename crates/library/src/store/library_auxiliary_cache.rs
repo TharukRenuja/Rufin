@@ -1247,6 +1247,8 @@ impl Store {
         limit: usize,
         total: usize,
     ) -> StoreResult<PagedResponse<Album>> {
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let folder_id = selected_folder.as_ref().map(|folder_id| folder_id.as_str());
         let mut statement = self.connection.prepare(
             "
             SELECT a.album_id, a.title, a.artist, a.artist_id, a.year,
@@ -1259,12 +1261,29 @@ impl Store {
             WHERE f.server_id = ?1
               AND f.item_type = 'album'
               AND library_fts MATCH ?2
+              AND (
+                  ?5 IS NULL OR EXISTS (
+                      SELECT 1
+                      FROM tracks t
+                      JOIN track_music_folders tmf
+                        ON tmf.server_id = t.server_id AND tmf.track_id = t.track_id
+                      WHERE t.server_id = a.server_id
+                        AND t.album_id = a.album_id
+                        AND tmf.folder_id = ?5
+                  )
+              )
             ORDER BY bm25(library_fts)
             LIMIT ?3 OFFSET ?4
             ",
         )?;
         let mut albums = collect_rows(statement.query_map(
-            params![server_id.as_str(), query, limit as i64, offset as i64],
+            params![
+                server_id.as_str(),
+                query,
+                limit as i64,
+                offset as i64,
+                folder_id
+            ],
             album_from_row,
         )?)?;
         self.attach_album_metadata(server_id, &mut albums)?;
@@ -1277,6 +1296,8 @@ impl Store {
         offset: usize,
         limit: usize,
     ) -> StoreResult<PagedResponse<Album>> {
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        let folder_id = selected_folder.as_ref().map(|folder_id| folder_id.as_str());
         let total = self.connection.query_row(
             "
             SELECT COUNT(*)
@@ -1294,8 +1315,19 @@ impl Store {
                         AND LOWER(ag.genre_name) LIKE ?2 ESCAPE '\\'
                   )
               )
+              AND (
+                  ?3 IS NULL OR EXISTS (
+                      SELECT 1
+                      FROM tracks t
+                      JOIN track_music_folders tmf
+                        ON tmf.server_id = t.server_id AND tmf.track_id = t.track_id
+                      WHERE t.server_id = a.server_id
+                        AND t.album_id = a.album_id
+                        AND tmf.folder_id = ?3
+                  )
+              )
             ",
-            params![server_id.as_str(), pattern],
+            params![server_id.as_str(), pattern, folder_id],
             |row| row.get::<_, i64>(0),
         )?;
         let mut statement = self.connection.prepare(
@@ -1318,12 +1350,29 @@ impl Store {
                         AND LOWER(ag.genre_name) LIKE ?2 ESCAPE '\\'
                   )
               )
+              AND (
+                  ?5 IS NULL OR EXISTS (
+                      SELECT 1
+                      FROM tracks t
+                      JOIN track_music_folders tmf
+                        ON tmf.server_id = t.server_id AND tmf.track_id = t.track_id
+                      WHERE t.server_id = a.server_id
+                        AND t.album_id = a.album_id
+                        AND tmf.folder_id = ?5
+                  )
+              )
             ORDER BY a.title COLLATE NOCASE
             LIMIT ?3 OFFSET ?4
             ",
         )?;
         let mut albums = collect_rows(statement.query_map(
-            params![server_id.as_str(), pattern, limit as i64, offset as i64],
+            params![
+                server_id.as_str(),
+                pattern,
+                limit as i64,
+                offset as i64,
+                folder_id
+            ],
             album_from_row,
         )?)?;
         self.attach_album_metadata(server_id, &mut albums)?;

@@ -2413,6 +2413,63 @@ fn schema_track_search() {
 }
 
 #[test]
+fn schema_album_search_uses_selected_music_folder() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+    let mut outside_album = album(1);
+    outside_album.title = "Shared Search Outside".to_string();
+    outside_album.genres = vec!["Fallback Tag".to_string()];
+    let mut inside_album = album(2);
+    inside_album.title = "Shared Search Inside".to_string();
+    inside_album.genres = vec!["Fallback Tag".to_string()];
+    let albums = vec![outside_album, inside_album.clone()];
+    let tracks = vec![track(1, &albums[0]), track(2, &albums[1])];
+    let folder = MusicFolder {
+        id: MusicFolderId::fake(1),
+        name: "Music".to_string(),
+    };
+    store
+        .upsert_albums(&saved.server.id, &albums, generation)
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, &tracks, generation)
+        .expect("upsert tracks");
+    store
+        .upsert_music_folders(&saved.server.id, std::slice::from_ref(&folder), generation)
+        .expect("upsert folder");
+    store
+        .upsert_track_music_folder_memberships(
+            &saved.server.id,
+            &folder.id,
+            std::slice::from_ref(&tracks[1]),
+            generation,
+        )
+        .expect("upsert membership");
+    store
+        .set_selected_music_folder_id(&saved.server.id, Some(&folder.id))
+        .expect("select folder");
+
+    let page = store
+        .load_albums(&saved.server.id, 0, 10)
+        .expect("load albums");
+    let fts_search = store
+        .load_albums_matching(&saved.server.id, "Shared Search", 0, 10)
+        .expect("search albums with fts");
+    let like_search = store
+        .load_albums_matching(&saved.server.id, "Fallback Tag", 0, 10)
+        .expect("search albums with like");
+
+    assert_eq!(page.total, 1);
+    assert_eq!(page.items[0].id, inside_album.id);
+    assert_eq!(fts_search.total, 1);
+    assert_eq!(fts_search.items[0].id, inside_album.id);
+    assert_eq!(like_search.total, 1);
+    assert_eq!(like_search.items[0].id, inside_album.id);
+}
+
+#[test]
 fn schema_favorite_tracks_are_not_capped() {
     let store = Store::open_memory().expect("open store");
     let saved = saved_server();
