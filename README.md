@@ -29,7 +29,7 @@
 - Rich customization while preserving GTK menus
 - Smart playlists that support nested rules
 - System tray integration
-- Secure storage for all server and API secrets
+- Secure storage for all server credentials and API secrets
 
 # Library behavior
 
@@ -64,7 +64,7 @@
 
 ## AUR
 
-- `rufin` for tagged binary releases, `rufin-git` to track this repository
+- AUR package is built from this repository at the same time with all releases. `rufin` for release binaries, `rufin-git` to build it from source
 
 ```bash
 yay -S rufin
