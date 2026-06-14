@@ -2140,8 +2140,8 @@ msgstr ""
 msgid "Last.fm API key"
 msgstr ""
 
-#: crates/rufin/src/ui/preferences/root/mod.rs:378
-msgid "Privacy"
+#: crates/rufin/src/ui/preferences/root/mod.rs:472
+msgid "Privacy and Security"
 msgstr ""
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:381
@@ -2150,6 +2150,30 @@ msgstr ""
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:391
 msgid "Now playing notifications"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:494
+msgid "Legacy"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:494
+msgid "Secure storage"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:500
+msgid "Secret storage"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:522
+msgid "Change Secret Storage"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:523
+msgid "Changing secret backend removes legacy config secrets and signs you out everywhere, including API secrets. App cache is not affected."
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/mod.rs:527
+msgid "Change"
 msgstr ""
 
 #: crates/rufin/src/ui/preferences/root/mod.rs:411

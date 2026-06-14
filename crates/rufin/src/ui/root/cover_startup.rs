@@ -164,7 +164,7 @@ pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Opt
     let server_check = status.starts_with("Checking ") && status.ends_with(" server…");
     let server_saved = status.starts_with("Server settings saved.");
     let sync_started = status.starts_with("Syncing ") && status.ends_with(" library…");
-    let sync_finished = status == LIBRARY_SYNC_COMPLETE_STATUS || status == "Cached library ready";
+    let sync_finished = status == LIBRARY_SYNC_COMPLETE_STATUS;
     if server_check
         || server_saved
         || sync_started
@@ -546,6 +546,9 @@ pub(in crate::ui) fn apply_library_sync_status(
     invalidate_sync_snapshot_pages(library, &status.delta);
     library.sync_status = status.sync_status;
     library.last_error = status.last_error;
+    if login_status_marks_sync_complete(&library.sync_status) {
+        library.first_run = false;
+    }
     library.cached_album_count = status.counts.albums;
     library.cached_track_count = status.counts.tracks;
     library.cached_artist_count = status.counts.artists;
@@ -781,6 +784,10 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     if !applied {
                         continue;
                     }
+                    let sync_complete = login_status_marks_sync_complete(&sync_status);
+                    if sync_complete && shell.state.first_run_connection_pending.get() {
+                        shell.state.first_run_connection_ready.set(true);
+                    }
                     let selector_started = Instant::now();
                     shell.update_server_selector();
                     let selector_ms = selector_started.elapsed().as_millis() as u64;
@@ -818,6 +825,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             total_ms = event_started.elapsed().as_millis() as u64,
                             "handled library sync status"
                         );
+                    }
+                    if sync_complete && shell.state.first_run_connection_pending.get() {
+                        shell.schedule_first_run_app_reveal();
                     }
                     let total_ms = event_started.elapsed().as_millis() as u64;
                     if total_ms >= SLOW_LIBRARY_SYNC_STATUS_MS {
@@ -1155,7 +1165,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
 
 fn login_status_marks_sync_complete(status: &str) -> bool {
     let status = status.trim();
-    status == LIBRARY_SYNC_COMPLETE_STATUS || status.starts_with("Library cache ready for ")
+    status == LIBRARY_SYNC_COMPLETE_STATUS
+        || status == "Cached library ready"
+        || status.starts_with("Library cache ready for ")
 }
 struct VisibleCoverRef {
     image_ref: ImageRef,

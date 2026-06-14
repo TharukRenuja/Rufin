@@ -100,6 +100,20 @@ pub(super) fn build_content_chrome(
     }
 }
 
+pub(super) fn window_close_controls() -> gtk::Box {
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    controls.add_css_class("window-controls");
+    controls.set_halign(gtk::Align::End);
+    controls.set_valign(gtk::Align::Start);
+    controls.set_margin_top(WINDOW_CONTROLS_MARGIN_TOP);
+    controls.set_margin_end(WINDOW_CONTROLS_MARGIN_END);
+
+    let close_button = gtk::WindowControls::new(gtk::PackType::End);
+    close_button.set_decoration_layout(Some(":close"));
+    controls.append(&close_button);
+    controls
+}
+
 fn primary_menu_button() -> gtk::MenuButton {
     let button = gtk::MenuButton::new();
     button.add_css_class("icon-button");

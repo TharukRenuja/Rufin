@@ -1680,7 +1680,10 @@ pub(in crate::controller) fn controller_from_store_for_test(
     let queue = restore_queue(&store, snapshot.server.as_ref());
     let playback_snapshot =
         playback_snapshot_from_queue(queue.as_ref(), settings.auto_dj_enabled, &settings.playback);
-    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let secret_switch = Arc::new(SwitchableSecretStore::new(Arc::new(
+        MemorySecretStore::new(),
+    )));
+    let secrets: Arc<dyn SecretStore> = secret_switch.clone();
     let controller = AppController {
         settings: super::settings_controller::SettingsController::new(
             store.clone(),
@@ -1689,6 +1692,7 @@ pub(in crate::controller) fn controller_from_store_for_test(
         store,
         runtime,
         secrets,
+        secret_switch,
         queue: Arc::new(Mutex::new(queue)),
         play_activation_generation: Arc::new(AtomicU64::new(0)),
         queue_persist_generation: Arc::new(AtomicU64::new(0)),

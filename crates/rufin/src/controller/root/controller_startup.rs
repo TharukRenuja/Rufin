@@ -20,6 +20,22 @@ pub(in crate::controller) fn start_sync_thread_with_snapshots(
 }
 
 pub(in crate::controller) fn start_login_sync_thread(context: SyncContext, saved: SavedServer) {
+    if sync_target_is_current(&context.store, &saved.server.id)
+        && cached_library_exists(&context.store, &saved.server.id)
+    {
+        send_library_sync_status(
+            &context.store,
+            &context.events,
+            &saved,
+            "Cached library ready".to_string(),
+            None,
+            LibraryDelta::default(),
+        );
+        let _sent = context.events.send(ControllerEvent::LoginStatus(
+            "Cached library ready".to_string(),
+        ));
+        return;
+    }
     start_sync_thread_inner(context, saved, false, true);
 }
 

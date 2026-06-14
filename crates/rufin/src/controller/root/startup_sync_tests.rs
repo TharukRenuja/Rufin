@@ -716,7 +716,7 @@ pub(in crate::controller) fn startup_reuse_cache() {
 }
 
 #[test]
-pub(in crate::controller) fn startup_login_sync_emits_snapshot() {
+pub(in crate::controller) fn startup_login_sync_reuses_current_cache() {
     let store = StoreHandle::open_memory().expect("memory store");
     let local = local_source_saved();
     let root = unique_test_dir("login-sync-snapshot");
@@ -741,12 +741,10 @@ pub(in crate::controller) fn startup_login_sync_emits_snapshot() {
 
     start_login_sync_thread(controller.sync_context(), local);
 
-    let snapshot = wait_for_snapshot(&events);
-    assert!(!snapshot.first_run);
-    assert_eq!(
-        snapshot.selected_source,
-        Some(LibrarySourceSelection::Local)
-    );
+    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
+    assert_eq!(status.last_error, None);
+    assert!(status.delta.is_empty());
+    assert_eq!(wait_for_status(&events), "Cached library ready");
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]

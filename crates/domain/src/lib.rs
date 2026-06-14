@@ -34,11 +34,11 @@ pub use settings::{
     MAX_CROSSFADE_SECONDS, MAX_NARROW_LAYOUT_THRESHOLD, MIN_AUTO_DJ_REFILL_THRESHOLD,
     MIN_CROSSFADE_SECONDS, MIN_NARROW_LAYOUT_THRESHOLD, PlaybackSettings, PlaybackTransitionMode,
     ReplayGainMode, RightSidebarMode, SYSTEM_LANGUAGE_PREFERENCE, ScrobblingSettings,
-    SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, StreamQuality, ThemePreference,
-    TrackSortKey, TrackTableColumn, TrackTableSettings, available_detail_track_fields,
-    available_grid_fields, available_row_fields, available_sort_fields,
-    default_external_lyrics_providers, default_language_preference, sanitize_language_preference,
-    sanitized_window_size,
+    SecretStorageMode, SidebarRouteItem, SidebarRouteItemSettings, SidebarSettings, StreamQuality,
+    ThemePreference, TrackSortKey, TrackTableColumn, TrackTableSettings,
+    available_detail_track_fields, available_grid_fields, available_row_fields,
+    available_sort_fields, default_external_lyrics_providers, default_language_preference,
+    sanitize_language_preference, sanitized_window_size,
 };
 pub use source::{
     AlbumDetail, FavoriteItemId, FolderDetail, GenreDetail, ImageBytes, ImageKind, ImageMetadata,

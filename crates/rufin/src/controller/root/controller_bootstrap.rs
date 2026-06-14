@@ -44,7 +44,10 @@ impl AppController {
             settings.auto_dj_enabled,
             &settings.playback,
         );
-        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        let secret_switch = Arc::new(SwitchableSecretStore::new(Arc::new(
+            MemorySecretStore::new(),
+        )));
+        let secrets: Arc<dyn SecretStore> = secret_switch.clone();
         let scrobbling_secrets = Arc::clone(&secrets);
         let controller = Self {
             settings: super::settings_controller::SettingsController::new(
@@ -54,6 +57,7 @@ impl AppController {
             store,
             runtime,
             secrets,
+            secret_switch,
             queue: Arc::new(Mutex::new(queue)),
             play_activation_generation: Arc::new(AtomicU64::new(0)),
             queue_persist_generation: Arc::new(AtomicU64::new(0)),
@@ -107,12 +111,13 @@ impl AppController {
                 panic!("failed to open memory store: {memory_error}")
             })
         });
-        let secrets = platform_config_secret_store();
+        let settings = load_settings_from_store(&store);
+        let secret_switch = Arc::new(SwitchableSecretStore::new(platform_secret_store(&settings)));
+        let secrets: Arc<dyn SecretStore> = secret_switch.clone();
         let snapshot = load_runtime_snapshot(&store, &secrets).unwrap_or_else(|error| {
             warn!(%error, "failed to load app snapshot");
             LibrarySnapshot::first_run()
         });
-        let settings = load_settings_from_store(&store);
         let queue = if snapshot.first_run && snapshot.server.is_some() {
             None
         } else {
@@ -133,6 +138,7 @@ impl AppController {
             store,
             runtime,
             secrets,
+            secret_switch,
             queue: Arc::new(Mutex::new(queue)),
             play_activation_generation: Arc::new(AtomicU64::new(0)),
             queue_persist_generation: Arc::new(AtomicU64::new(0)),
@@ -186,7 +192,10 @@ impl AppController {
             panic!("failed to load memory snapshot: {error}");
         });
         let settings = load_settings_from_store(&store);
-        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        let secret_switch = Arc::new(SwitchableSecretStore::new(Arc::new(
+            MemorySecretStore::new(),
+        )));
+        let secrets: Arc<dyn SecretStore> = secret_switch.clone();
         let scrobbling_secrets = Arc::clone(&secrets);
         let controller = Self {
             settings: super::settings_controller::SettingsController::new(
@@ -196,6 +205,7 @@ impl AppController {
             store,
             runtime,
             secrets,
+            secret_switch,
             queue: Arc::new(Mutex::new(None)),
             play_activation_generation: Arc::new(AtomicU64::new(0)),
             queue_persist_generation: Arc::new(AtomicU64::new(0)),
