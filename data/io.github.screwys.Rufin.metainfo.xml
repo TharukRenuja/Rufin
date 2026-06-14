@@ -30,36 +30,50 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/Rufin.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/Rufin.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse tracks</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/tracks.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/tracks.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse albums</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/albums.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/albums.png</image>
     </screenshot>
     <screenshot>
       <caption>Browse artists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/artists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/artists.png</image>
     </screenshot>
     <screenshot>
       <caption>Use the fullscreen player</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/fullscreen_player.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/fullscreen_player.png</image>
     </screenshot>
     <screenshot>
       <caption>Build smart playlists</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/smart_playlists.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/smart_playlists.png</image>
     </screenshot>
     <screenshot>
       <caption>Play random selections</caption>
-      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.2/data/play_random.png</image>
+      <image type="source" width="1040" height="740">https://raw.githubusercontent.com/screwys/Rufin/v0.7.3/data/play_random.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">io.github.screwys.Rufin.desktop</launchable>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.7.3" date="2026-06-14">
+      <description>
+        <p>More UI polish, and now you can use system keyring for saved secrets, changeable from Preferences, under Privacy &amp; Security.</p>
+        <ul>
+          <li>Improved text highlights to make them more readable</li>
+        </ul>
+        <ul>
+          <li>Detail pages now show the real release type, so EPs and singles no longer appear as Album in the header</li>
+        </ul>
+        <ul>
+          <li>Library and detail views got reworked: Album page now uses larger grids, titles stay to one line, and action buttons/hover controls are more consistent</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.2" date="2026-06-13">
       <description>
         <p>A lot of minor bug fixes; overall performance and visual polish.</p>
