@@ -292,7 +292,7 @@ impl Store {
             return self.load_albums(server_id, offset, limit);
         };
         if let Some(query) = fts_query(query) {
-            let total = self.count_fts_matches(server_id, "album", &query)?;
+            let total = self.count_album_fts_matches(server_id, &query)?;
             if total > 0 {
                 return self.search_albums_page(server_id, &query, offset, limit, total);
             }

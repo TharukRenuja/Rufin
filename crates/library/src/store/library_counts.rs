@@ -59,6 +59,43 @@ impl Store {
         }
     }
 
+    pub(super) fn count_album_fts_matches(
+        &self,
+        server_id: &ServerId,
+        query: &str,
+    ) -> StoreResult<usize> {
+        let selected_folder = self.selected_music_folder_id(server_id)?;
+        if let Some(folder_id) = selected_folder.as_ref() {
+            self.connection
+                .query_row(
+                    "
+                    SELECT COUNT(*)
+                    FROM library_fts f
+                    JOIN albums a
+                        ON a.server_id = f.server_id AND a.album_id = f.item_id
+                    WHERE f.server_id = ?1
+                      AND f.item_type = 'album'
+                      AND library_fts MATCH ?2
+                      AND EXISTS (
+                          SELECT 1
+                          FROM tracks t
+                          JOIN track_music_folders tmf
+                            ON tmf.server_id = t.server_id AND tmf.track_id = t.track_id
+                          WHERE t.server_id = a.server_id
+                            AND t.album_id = a.album_id
+                            AND tmf.folder_id = ?3
+                      )
+                    ",
+                    params![server_id.as_str(), query, folder_id.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count.max(0) as usize)
+                .map_err(StoreError::from)
+        } else {
+            self.count_fts_matches(server_id, "album", query)
+        }
+    }
+
     pub(super) fn count_artist_fts_matches(
         &self,
         server_id: &ServerId,
