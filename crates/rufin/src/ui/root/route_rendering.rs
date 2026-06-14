@@ -393,15 +393,25 @@ impl Shell {
         let settings = self.library_settings(key);
         match normalized_library_layout(key, &settings) {
             LibraryLayout::Row => 0,
-            LibraryLayout::Grid => self.grid_layout_signature(),
+            LibraryLayout::Grid => self.library_grid_signature(key, &settings),
             LibraryLayout::Detail => route_content_width(self),
         }
     }
 
     fn grid_layout_signature(&self) -> i32 {
-        let (columns, _) = self.collection_card_grid_metrics();
-        columns as i32
+        let (columns, card_size) = self.collection_card_grid_metrics();
+        grid_metric_signature(columns, card_size)
     }
+
+    fn library_grid_signature(&self, key: LibraryListKey, settings: &LibraryListSettings) -> i32 {
+        let (columns, card_size) = self.collection_card_grid_metrics_for(key, settings);
+        grid_metric_signature(columns, card_size)
+    }
+}
+
+fn grid_metric_signature(columns: usize, card_size: i32) -> i32 {
+    let columns = columns.min(i32::MAX as usize / 1024) as i32;
+    columns.saturating_mul(1024).saturating_add(card_size)
 }
 
 pub(in crate::ui) fn library_route_resize_policy_for(
@@ -566,6 +576,12 @@ mod tests {
             library_route_resize_policy_for(LibraryListKey::Artists, &settings),
             RouteResizePolicy::LayoutSignature
         );
+    }
+
+    #[test]
+    fn grid_signature_tracks_card_size() {
+        assert_ne!(grid_metric_signature(3, 180), grid_metric_signature(3, 210));
+        assert_ne!(grid_metric_signature(3, 210), grid_metric_signature(4, 210));
     }
 
     #[test]

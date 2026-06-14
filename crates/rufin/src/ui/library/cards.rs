@@ -415,10 +415,29 @@ fn grid_title(
     label.set_width_chars(1);
     label.set_max_width_chars((width / 8).clamp(8, 32));
     label.set_size_request(width, height);
+    label.set_halign(gtk::Align::Fill);
+    label.set_hexpand(false);
     if !text.is_empty() {
         label.set_tooltip_text(Some(text));
     }
-    label.upcast()
+
+    let clip = gtk::ScrolledWindow::new();
+    clip.add_css_class("card-label-clip");
+    clip.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+    clip.set_overflow(gtk::Overflow::Hidden);
+    clip.set_width_request(width);
+    clip.set_height_request(height);
+    clip.set_size_request(width, height);
+    clip.set_min_content_width(width);
+    clip.set_max_content_width(width);
+    clip.set_min_content_height(height);
+    clip.set_max_content_height(height);
+    clip.set_propagate_natural_width(false);
+    clip.set_propagate_natural_height(false);
+    clip.set_hexpand(false);
+    clip.set_halign(gtk::Align::Center);
+    clip.set_child(Some(&label));
+    clip.upcast()
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct AlbumDetailMetaLabelSpec {
