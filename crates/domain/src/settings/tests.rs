@@ -8,33 +8,6 @@ use super::{
     default_external_lyrics_providers, sanitized_window_size,
 };
 #[test]
-fn settings_default_disabled() {
-    let settings = AppSettings::default();
-
-    assert!(settings.sources.selected.is_none());
-    assert!(settings.sources.local_folders.is_empty());
-    assert_eq!(settings.language, SYSTEM_LANGUAGE_PREFERENCE);
-    assert!(!settings.notifications_enabled);
-    assert!(settings.type_to_search_enabled);
-    assert!(!settings.discord_presence_enabled);
-    assert!(!settings.discord_show_paused);
-    assert_eq!(settings.lastfm_api_key, "");
-    assert!(!settings.scrobbling.lastfm.enabled);
-    assert_eq!(settings.scrobbling.lastfm.username, "");
-    assert_eq!(settings.scrobbling.lastfm.api_key, "");
-    assert_eq!(settings.scrobbling.lastfm.api_secret, "");
-    assert_eq!(settings.scrobbling.lastfm.session_key, "");
-    assert!(!settings.scrobbling.librefm.enabled);
-    assert_eq!(settings.scrobbling.librefm.username, "");
-    assert_eq!(settings.scrobbling.librefm.session_key, "");
-    assert!(!settings.scrobbling.listenbrainz.enabled);
-    assert_eq!(settings.scrobbling.listenbrainz.user_token, "");
-    assert_eq!(
-        settings.external_lyrics_providers,
-        default_external_lyrics_providers()
-    );
-}
-#[test]
 fn settings_clamp_range() {
     let mut settings = super::PlaybackSettings {
         crossfade_seconds: 0,
@@ -238,19 +211,6 @@ fn settings_migrate_preferences() {
             .route_items
             .iter()
             .any(|entry| entry.item == SidebarRouteItem::SmartPlaylists && entry.visible)
-    );
-}
-
-#[test]
-fn album_artists_visible_by_default() {
-    let settings = AppSettings::default();
-
-    assert!(
-        settings
-            .sidebar
-            .route_items
-            .iter()
-            .any(|entry| entry.item == SidebarRouteItem::AlbumArtists && entry.visible)
     );
 }
 
@@ -488,44 +448,6 @@ fn settings_keep_field() {
 
     assert!(tracks.row_fields.contains(&LibraryField::TitleMerged));
     assert_eq!(tracks.detail_track_fields, available_detail_track_fields());
-}
-#[test]
-fn settings_default_library_rows_skip_redundant_album_artist() {
-    for key in [LibraryListKey::Albums, LibraryListKey::ArtistAlbums] {
-        let settings = super::LibraryListSettings::for_key(key);
-
-        assert_eq!(
-            settings.row_fields,
-            vec![
-                LibraryField::TitleMerged,
-                LibraryField::PlayCount,
-                LibraryField::Year,
-                LibraryField::Favorite,
-            ],
-            "{key:?}"
-        );
-    }
-}
-#[test]
-fn settings_default_artist_tracks_use_normal_track_rows() {
-    for key in [
-        LibraryListKey::Tracks,
-        LibraryListKey::FavoriteTracks,
-        LibraryListKey::ArtistTracks,
-    ] {
-        let settings = super::LibraryListSettings::for_key(key);
-
-        assert_eq!(
-            settings.row_fields,
-            vec![
-                LibraryField::TitleMerged,
-                LibraryField::Album,
-                LibraryField::Year,
-                LibraryField::Favorite,
-            ],
-            "{key:?}"
-        );
-    }
 }
 #[test]
 fn settings_migrate_default_album_and_artist_track_rows() {

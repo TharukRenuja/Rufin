@@ -39,175 +39,65 @@ pub(in crate::controller) fn library_track(
 pub(in crate::controller) fn wait_for_snapshot(
     events: &Receiver<ControllerEvent>,
 ) -> LibrarySnapshot {
-    loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::Snapshot(snapshot)
-            | ControllerEvent::HomeSectionsUpdated { snapshot, .. }
-            | ControllerEvent::PlaylistChanged { snapshot, .. }
-            | ControllerEvent::SmartPlaylistChanged { snapshot, .. } => return *snapshot,
-            ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
-            ControllerEvent::LoginStatus(_) => {}
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
-        }
-    }
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::Snapshot(snapshot)
+        | ControllerEvent::HomeSectionsUpdated { snapshot, .. }
+        | ControllerEvent::PlaylistChanged { snapshot, .. }
+        | ControllerEvent::SmartPlaylistChanged { snapshot, .. } => Some(*snapshot),
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_favorite_changed(
     events: &Receiver<ControllerEvent>,
 ) -> (FavoriteItemId, bool, LibrarySnapshot) {
-    loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::FavoriteChanged {
-                item_id,
-                favorite,
-                snapshot,
-            } => return (item_id, favorite, *snapshot),
-            ControllerEvent::Snapshot(_)
-            | ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::PlaylistChanged { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
-            ControllerEvent::LoginStatus(_) => {}
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
-        }
-    }
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::FavoriteChanged {
+            item_id,
+            favorite,
+            snapshot,
+        } => Some((item_id, favorite, *snapshot)),
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_playlist_changed(
     events: &Receiver<ControllerEvent>,
 ) -> (PlaylistId, LibrarySnapshot) {
-    loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::PlaylistChanged {
-                playlist_id,
-                snapshot,
-            } => return (playlist_id, *snapshot),
-            ControllerEvent::Snapshot(_)
-            | ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
-            ControllerEvent::LoginStatus(_) => {}
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
-        }
-    }
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::PlaylistChanged {
+            playlist_id,
+            snapshot,
+        } => Some((playlist_id, *snapshot)),
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_status(events: &Receiver<ControllerEvent>) -> String {
-    loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::LoginStatus(status) => return status,
-            ControllerEvent::Snapshot(_)
-            | ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::PlaylistChanged { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
-        }
-    }
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::LoginStatus(status) => Some(status),
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_queue(
     events: &Receiver<ControllerEvent>,
 ) -> Option<domain::QueueSnapshot> {
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::Queue(queue) => Some(*queue),
+        _ => None,
+    })
+}
+fn wait_for_event<T>(
+    events: &Receiver<ControllerEvent>,
+    context: &str,
+    mut select: impl FnMut(ControllerEvent) -> Option<T>,
+) -> T {
     loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::Queue(queue) => return *queue,
-            ControllerEvent::Snapshot(_)
-            | ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::PlaylistChanged { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::LoginStatus(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
+        let event = events.recv_timeout(Duration::from_secs(5)).expect(context);
+        match event {
             ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            event => {
+                if let Some(value) = select(event) {
+                    return value;
+                }
+            }
         }
     }
 }
@@ -238,71 +128,18 @@ pub(in crate::controller) fn wait_for_cover_ready(
     events: &Receiver<ControllerEvent>,
     expected_key: &str,
 ) -> PathBuf {
-    loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::CoverReady { key, path } if key == expected_key => return path,
-            ControllerEvent::Snapshot(_)
-            | ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::PlaylistChanged { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::LoginStatus(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
-        }
-    }
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::CoverReady { key, path } if key == expected_key => Some(path),
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_lyrics(
     events: &Receiver<ControllerEvent>,
 ) -> Option<source::Lyrics> {
-    loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::Lyrics { lyrics, .. } => return *lyrics,
-            ControllerEvent::Snapshot(_)
-            | ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::PlaylistChanged { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::LoginStatus(_)
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
-        }
-    }
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::Lyrics { lyrics, .. } => Some(*lyrics),
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_recorded_command(
     commands: &Arc<Mutex<Vec<PlaybackCommand>>>,
@@ -327,48 +164,11 @@ pub(in crate::controller) fn wait_for_playback_state(
     events: &Receiver<ControllerEvent>,
     state: PlaybackState,
 ) -> super::PlaybackSnapshot {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for playback state"
-        );
-        controller.poll_playback_events();
-        match events.recv_timeout(Duration::from_millis(50)) {
-            Ok(event) => match event {
-                ControllerEvent::Playback(playback) if playback.state == state => {
-                    return *playback;
-                }
-                ControllerEvent::Playback(_)
-                | ControllerEvent::Visualizer(_)
-                | ControllerEvent::Queue(_)
-                | ControllerEvent::Lyrics { .. }
-                | ControllerEvent::LyricsSearchResults { .. }
-                | ControllerEvent::LyricsSearchFailed { .. }
-                | ControllerEvent::LyricsSaved { .. }
-                | ControllerEvent::FolderLoaded { .. }
-                | ControllerEvent::FolderLoadFailed { .. }
-                | ControllerEvent::HomeSectionPrefetched { .. }
-                | ControllerEvent::ServerDiscovery { .. }
-                | ControllerEvent::CoverReady { .. }
-                | ControllerEvent::CoverUnavailable { .. }
-                | ControllerEvent::CoverDeferred { .. } => {}
-                ControllerEvent::Snapshot(_)
-                | ControllerEvent::LibrarySyncStatus(_)
-                | ControllerEvent::LibraryDelta(_)
-                | ControllerEvent::HomeSectionsUpdated { .. }
-                | ControllerEvent::PlaylistChanged { .. }
-                | ControllerEvent::SmartPlaylistChanged { .. }
-                | ControllerEvent::FavoriteChanged { .. }
-                | ControllerEvent::LoginStatus(_) => {}
-                ControllerEvent::Error(error) => panic!("controller error: {error}"),
-            },
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("controller event channel closed")
-            }
-        }
-    }
+    wait_for_polled_event(controller, events, "playback state", |event| match event {
+        ControllerEvent::Playback(playback) if playback.state == state => Some(*playback),
+        ControllerEvent::Error(error) => panic!("controller error: {error}"),
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_playback_track_position(
     controller: &AppController,
@@ -376,177 +176,89 @@ pub(in crate::controller) fn wait_for_playback_track_position(
     track_id: &TrackId,
     position_millis: u64,
 ) -> super::PlaybackSnapshot {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for playback track position"
-        );
-        controller.poll_playback_events();
-        match events.recv_timeout(Duration::from_millis(50)) {
-            Ok(event) => match event {
-                ControllerEvent::Playback(playback)
-                    if playback.position_millis == position_millis
-                        && playback
-                            .current
-                            .as_ref()
-                            .is_some_and(|entry| &entry.track_id == track_id) =>
-                {
-                    return *playback;
-                }
-                ControllerEvent::Playback(_)
-                | ControllerEvent::Visualizer(_)
-                | ControllerEvent::Queue(_)
-                | ControllerEvent::Lyrics { .. }
-                | ControllerEvent::LyricsSearchResults { .. }
-                | ControllerEvent::LyricsSearchFailed { .. }
-                | ControllerEvent::LyricsSaved { .. }
-                | ControllerEvent::FolderLoaded { .. }
-                | ControllerEvent::FolderLoadFailed { .. }
-                | ControllerEvent::HomeSectionPrefetched { .. }
-                | ControllerEvent::ServerDiscovery { .. }
-                | ControllerEvent::CoverReady { .. }
-                | ControllerEvent::CoverUnavailable { .. }
-                | ControllerEvent::CoverDeferred { .. } => {}
-                ControllerEvent::Snapshot(_)
-                | ControllerEvent::LibrarySyncStatus(_)
-                | ControllerEvent::LibraryDelta(_)
-                | ControllerEvent::HomeSectionsUpdated { .. }
-                | ControllerEvent::PlaylistChanged { .. }
-                | ControllerEvent::SmartPlaylistChanged { .. }
-                | ControllerEvent::FavoriteChanged { .. }
-                | ControllerEvent::LoginStatus(_) => {}
-                ControllerEvent::Error(error) => panic!("controller error: {error}"),
-            },
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("controller event channel closed")
+    wait_for_polled_event(
+        controller,
+        events,
+        "playback track position",
+        |event| match event {
+            ControllerEvent::Playback(playback)
+                if playback.position_millis == position_millis
+                    && playback
+                        .current
+                        .as_ref()
+                        .is_some_and(|entry| &entry.track_id == track_id) =>
+            {
+                Some(*playback)
             }
-        }
-    }
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            _ => None,
+        },
+    )
 }
 pub(in crate::controller) fn wait_for_playback_auto_dj(
     events: &Receiver<ControllerEvent>,
     enabled: bool,
 ) -> super::PlaybackSnapshot {
-    loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::Playback(playback) if playback.auto_dj_enabled == enabled => {
-                return *playback;
-            }
-            ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
-            ControllerEvent::Snapshot(_)
-            | ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::PlaylistChanged { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::LoginStatus(_) => {}
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::Playback(playback) if playback.auto_dj_enabled == enabled => {
+            Some(*playback)
         }
-    }
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_playback_repeat(
     events: &Receiver<ControllerEvent>,
     repeat_mode: RepeatMode,
 ) -> super::PlaybackSnapshot {
-    loop {
-        match events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("controller event")
-        {
-            ControllerEvent::Playback(playback) if playback.repeat_mode == repeat_mode => {
-                return *playback;
-            }
-            ControllerEvent::Playback(_)
-            | ControllerEvent::Visualizer(_)
-            | ControllerEvent::Queue(_)
-            | ControllerEvent::Lyrics { .. }
-            | ControllerEvent::LyricsSearchResults { .. }
-            | ControllerEvent::LyricsSearchFailed { .. }
-            | ControllerEvent::LyricsSaved { .. }
-            | ControllerEvent::FolderLoaded { .. }
-            | ControllerEvent::FolderLoadFailed { .. }
-            | ControllerEvent::HomeSectionPrefetched { .. }
-            | ControllerEvent::ServerDiscovery { .. }
-            | ControllerEvent::CoverReady { .. }
-            | ControllerEvent::CoverUnavailable { .. }
-            | ControllerEvent::CoverDeferred { .. } => {}
-            ControllerEvent::Snapshot(_)
-            | ControllerEvent::LibrarySyncStatus(_)
-            | ControllerEvent::LibraryDelta(_)
-            | ControllerEvent::HomeSectionsUpdated { .. }
-            | ControllerEvent::PlaylistChanged { .. }
-            | ControllerEvent::SmartPlaylistChanged { .. }
-            | ControllerEvent::FavoriteChanged { .. }
-            | ControllerEvent::LoginStatus(_) => {}
-            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+    wait_for_event(events, "controller event", |event| match event {
+        ControllerEvent::Playback(playback) if playback.repeat_mode == repeat_mode => {
+            Some(*playback)
         }
-    }
+        _ => None,
+    })
 }
 pub(in crate::controller) fn wait_for_playback_current_favorite(
     controller: &AppController,
     events: &Receiver<ControllerEvent>,
     favorite: bool,
 ) -> super::PlaybackSnapshot {
+    wait_for_polled_event(
+        controller,
+        events,
+        "playback favorite",
+        |event| match event {
+            ControllerEvent::Playback(playback)
+                if playback
+                    .current
+                    .as_ref()
+                    .is_some_and(|entry| entry.favorite == favorite) =>
+            {
+                Some(*playback)
+            }
+            ControllerEvent::Error(error) => panic!("controller error: {error}"),
+            _ => None,
+        },
+    )
+}
+pub(in crate::controller) fn wait_for_polled_event<T>(
+    controller: &AppController,
+    events: &Receiver<ControllerEvent>,
+    context: &str,
+    mut select: impl FnMut(ControllerEvent) -> Option<T>,
+) -> T {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         assert!(
             std::time::Instant::now() < deadline,
-            "timed out waiting for playback favorite"
+            "timed out waiting for {context}"
         );
         controller.poll_playback_events();
         match events.recv_timeout(Duration::from_millis(50)) {
-            Ok(event) => match event {
-                ControllerEvent::Playback(playback)
-                    if playback
-                        .current
-                        .as_ref()
-                        .is_some_and(|entry| entry.favorite == favorite) =>
-                {
-                    return *playback;
+            Ok(event) => {
+                if let Some(value) = select(event) {
+                    return value;
                 }
-                ControllerEvent::Playback(_)
-                | ControllerEvent::Visualizer(_)
-                | ControllerEvent::Queue(_)
-                | ControllerEvent::Lyrics { .. }
-                | ControllerEvent::LyricsSearchResults { .. }
-                | ControllerEvent::LyricsSearchFailed { .. }
-                | ControllerEvent::LyricsSaved { .. }
-                | ControllerEvent::FolderLoaded { .. }
-                | ControllerEvent::FolderLoadFailed { .. }
-                | ControllerEvent::HomeSectionPrefetched { .. }
-                | ControllerEvent::ServerDiscovery { .. }
-                | ControllerEvent::CoverReady { .. }
-                | ControllerEvent::CoverUnavailable { .. }
-                | ControllerEvent::CoverDeferred { .. } => {}
-                ControllerEvent::Snapshot(_)
-                | ControllerEvent::LibrarySyncStatus(_)
-                | ControllerEvent::LibraryDelta(_)
-                | ControllerEvent::HomeSectionsUpdated { .. }
-                | ControllerEvent::PlaylistChanged { .. }
-                | ControllerEvent::SmartPlaylistChanged { .. }
-                | ControllerEvent::FavoriteChanged { .. }
-                | ControllerEvent::LoginStatus(_) => {}
-                ControllerEvent::Error(error) => panic!("controller error: {error}"),
-            },
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 panic!("controller event channel closed")

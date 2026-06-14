@@ -82,21 +82,10 @@ fn wait_for_playback_matching(
     events: &Receiver<ControllerEvent>,
     mut matches: impl FnMut(&PlaybackSnapshot) -> bool,
 ) -> PlaybackSnapshot {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for playback"
-        );
-        controller.poll_playback_events();
-        match events.recv_timeout(Duration::from_millis(50)) {
-            Ok(ControllerEvent::Playback(playback)) if matches(&playback) => return *playback,
-            Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("controller event channel closed")
-            }
-        }
-    }
+    wait_for_polled_event(controller, events, "playback", |event| match event {
+        ControllerEvent::Playback(playback) if matches(&playback) => Some(*playback),
+        _ => None,
+    })
 }
 
 fn wait_for_repeat_without_queue(
