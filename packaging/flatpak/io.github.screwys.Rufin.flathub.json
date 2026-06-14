@@ -61,16 +61,7 @@
           "type": "git",
           "url": "https://github.com/screwys/Rufin.git",
           "tag": "v0.7.3",
-          "commit": "c82e325bfe83978a707ae73a6a15b26421f9905f",
-          "x-checker-data": {
-            "type": "json",
-            "url": "https://api.github.com/repos/screwys/Rufin/releases/latest",
-            "tag-query": ".tag_name",
-            "version-query": "$tag | sub(\"^v\"; \"\")",
-            "timestamp-query": ".published_at",
-            "is-main-source": true,
-            "release-url-template": "https://github.com/screwys/Rufin/releases/tag/v$version"
-          }
+          "commit": "c82e325bfe83978a707ae73a6a15b26421f9905f"
         },
         "cargo-sources.json"
       ]
