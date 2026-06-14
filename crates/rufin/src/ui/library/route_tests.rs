@@ -10,6 +10,17 @@ fn route_track_visible() {
     assert_eq!(super::library_table_content_height(3), 266);
 }
 #[test]
+fn embedded_track_preview_keeps_scrollable_height() {
+    assert_eq!(
+        super::capped_library_table_content_height(12, Some(5)),
+        super::library_table_content_height(5)
+    );
+    assert_eq!(
+        super::capped_library_table_content_height(3, Some(5)),
+        super::library_table_content_height(3)
+    );
+}
+#[test]
 fn route_fit_pane() {
     let fields = [
         LibraryField::RowIndex,

@@ -73,6 +73,7 @@ pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
     match key {
         LibraryListKey::Albums | LibraryListKey::ArtistAlbums => vec![
             LibraryField::TitleMerged,
+            LibraryField::PlayCount,
             LibraryField::Year,
             LibraryField::Favorite,
         ],
@@ -105,9 +106,13 @@ pub(super) fn default_row_fields(key: LibraryListKey) -> Vec<LibraryField> {
             LibraryField::Favorite,
         ],
         LibraryListKey::AlbumDetailTracks => default_detail_track_fields(),
-        LibraryListKey::ArtistTracks
-        | LibraryListKey::GenreTracks
-        | LibraryListKey::PlaylistTracks => {
+        LibraryListKey::ArtistTracks => vec![
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::Favorite,
+        ],
+        LibraryListKey::GenreTracks | LibraryListKey::PlaylistTracks => {
             vec![
                 LibraryField::RowIndex,
                 LibraryField::TitleMerged,

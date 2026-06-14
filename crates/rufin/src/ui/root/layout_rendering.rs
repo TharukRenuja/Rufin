@@ -217,28 +217,6 @@ pub(in crate::ui) fn track_collection_play_context(
         ),
     })
 }
-pub(in crate::ui) fn track_table_play_context(
-    shell: &Rc<Shell>,
-    descriptor: PlaySourceDescriptor,
-    query: Rc<RefCell<String>>,
-    favorite_first: bool,
-) -> LoadedTrackPlayContext {
-    let shell = Rc::clone(shell);
-    LoadedTrackPlayContext::new(move || {
-        let settings = shell.state.settings.borrow().track_table.clone();
-        PlaySourceKey {
-            descriptor: descriptor.clone(),
-            order: SourceOrder::LibraryDisplayed {
-                filter_key: track_table_filter_key(
-                    &settings,
-                    query.borrow().as_str(),
-                    favorite_first,
-                ),
-                sort: track_sort_descriptor(settings.sort_key),
-            },
-        }
-    })
-}
 pub(in crate::ui) fn library_displayed_source_order(
     settings: &LibraryListSettings,
     query: &str,

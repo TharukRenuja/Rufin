@@ -1158,10 +1158,43 @@ impl Shell {
         source_descriptor: Option<PlaySourceDescriptor>,
         content_inset: i32,
     ) -> gtk::Widget {
+        self.library_tracks_panel_with_source_options(
+            tracks,
+            key,
+            context,
+            source_descriptor,
+            content_inset,
+            None,
+        )
+    }
+    pub(in crate::ui) fn compact_artist_tracks_table(
+        self: &Rc<Self>,
+        tracks: Vec<Track>,
+        context: &str,
+        source_descriptor: Option<PlaySourceDescriptor>,
+    ) -> gtk::Widget {
+        self.library_tracks_panel_with_source_options(
+            tracks,
+            LibraryListKey::ArtistTracks,
+            context,
+            source_descriptor,
+            0,
+            Some(5),
+        )
+    }
+    fn library_tracks_panel_with_source_options(
+        self: &Rc<Self>,
+        tracks: Vec<Track>,
+        key: LibraryListKey,
+        context: &str,
+        source_descriptor: Option<PlaySourceDescriptor>,
+        content_inset: i32,
+        max_visible_rows: Option<usize>,
+    ) -> gtk::Widget {
         let scroller = gtk::ScrolledWindow::new();
         let resize_scroller = scroller.clone();
         let resize: Rc<dyn Fn(usize)> = Rc::new(move |row_count| {
-            set_library_table_content_height(&resize_scroller, row_count);
+            set_library_table_content_height(&resize_scroller, row_count, max_visible_rows);
         });
         let (_empty, search, view, _model, _settings) = self.searchable_track_collection(
             tracks,
@@ -1176,13 +1209,21 @@ impl Shell {
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
         wrapper.set_width_request(1);
-        wrapper.append(&self.library_toolbar(key, search.clone()));
+        let toolbar = self.library_toolbar(key, search.clone());
+        toolbar.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
+        wrapper.append(&toolbar);
         self.install_type_to_search(&search);
-        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+        if max_visible_rows.is_some() {
+            configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
+            scroller.set_overlay_scrolling(false);
+        } else {
+            scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+            scroller.set_width_request(1);
+            scroller.set_min_content_width(0);
+            scroller.set_max_content_width(1);
+            scroller.set_propagate_natural_width(false);
+        }
         scroller.set_width_request(1);
-        scroller.set_min_content_width(0);
-        scroller.set_max_content_width(1);
-        scroller.set_propagate_natural_width(false);
         scroller.set_hexpand(true);
         scroller.set_halign(gtk::Align::Fill);
         view.set_hexpand(true);

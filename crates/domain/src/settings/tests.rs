@@ -490,6 +490,110 @@ fn settings_keep_field() {
     assert_eq!(tracks.detail_track_fields, available_detail_track_fields());
 }
 #[test]
+fn settings_default_library_rows_skip_redundant_album_artist() {
+    for key in [LibraryListKey::Albums, LibraryListKey::ArtistAlbums] {
+        let settings = super::LibraryListSettings::for_key(key);
+
+        assert_eq!(
+            settings.row_fields,
+            vec![
+                LibraryField::TitleMerged,
+                LibraryField::PlayCount,
+                LibraryField::Year,
+                LibraryField::Favorite,
+            ],
+            "{key:?}"
+        );
+    }
+}
+#[test]
+fn settings_default_artist_tracks_use_normal_track_rows() {
+    for key in [
+        LibraryListKey::Tracks,
+        LibraryListKey::FavoriteTracks,
+        LibraryListKey::ArtistTracks,
+    ] {
+        let settings = super::LibraryListSettings::for_key(key);
+
+        assert_eq!(
+            settings.row_fields,
+            vec![
+                LibraryField::TitleMerged,
+                LibraryField::Album,
+                LibraryField::Year,
+                LibraryField::Favorite,
+            ],
+            "{key:?}"
+        );
+    }
+}
+#[test]
+fn settings_migrate_default_album_and_artist_track_rows() {
+    let mut settings = AppSettings {
+        library_lists: vec![
+            super::LibraryListSettingsEntry {
+                key: LibraryListKey::Albums,
+                settings: super::LibraryListSettings {
+                    layout: LibraryLayout::Row,
+                    row_fields: vec![
+                        LibraryField::TitleMerged,
+                        LibraryField::AlbumArtist,
+                        LibraryField::Year,
+                        LibraryField::Favorite,
+                    ],
+                    grid_fields: vec![LibraryField::AlbumArtist],
+                    detail_track_fields: available_detail_track_fields().to_vec(),
+                    sort_key: LibraryField::Title,
+                    descending: false,
+                    layout_version: 5,
+                },
+            },
+            super::LibraryListSettingsEntry {
+                key: LibraryListKey::ArtistTracks,
+                settings: super::LibraryListSettings {
+                    layout: LibraryLayout::Row,
+                    row_fields: vec![
+                        LibraryField::RowIndex,
+                        LibraryField::TitleMerged,
+                        LibraryField::Album,
+                        LibraryField::Duration,
+                        LibraryField::Favorite,
+                    ],
+                    grid_fields: Vec::new(),
+                    detail_track_fields: available_detail_track_fields().to_vec(),
+                    sort_key: LibraryField::TrackNumber,
+                    descending: false,
+                    layout_version: 5,
+                },
+            },
+        ],
+        ..AppSettings::default()
+    };
+
+    settings.migrate_defaults();
+
+    assert_eq!(
+        settings.library_list(LibraryListKey::Albums).row_fields,
+        vec![
+            LibraryField::TitleMerged,
+            LibraryField::PlayCount,
+            LibraryField::Year,
+            LibraryField::Favorite,
+        ]
+    );
+    assert_eq!(
+        settings
+            .library_list(LibraryListKey::ArtistTracks)
+            .row_fields,
+        vec![
+            LibraryField::TitleMerged,
+            LibraryField::Album,
+            LibraryField::Year,
+            LibraryField::Favorite,
+        ]
+    );
+}
+#[test]
 fn settings_migrate_detail_tracks_to_text_columns() {
     let mut settings = AppSettings {
         library_lists: vec![super::LibraryListSettingsEntry {
