@@ -1,5 +1,5 @@
 const APP_STYLE: &str = include_str!("../style.css");
-const SECONDARY_METADATA_COLOR: &str = "color-mix(in srgb, @window_fg_color 82%, @window_bg_color)";
+const SECONDARY_METADATA_COLOR: &str = "color-mix(in srgb, @window_fg_color 95%, @window_bg_color)";
 const METADATA_LINK_HOVER_COLOR: &str = "color-mix(in srgb, @accent_color 72%, @window_fg_color)";
 const TOOLTIP_BACKGROUND: &str = "rgba(0, 0, 0, 0.88)";
 const TOOLTIP_FOREGROUND: &str = "white";
@@ -39,7 +39,7 @@ fn dark_palette() -> ThemePalette {
 }
 
 fn secondary_metadata_color(palette: ThemePalette) -> Rgb {
-    palette.window_fg.mix(palette.window_bg, 0.82)
+    palette.window_fg.mix(palette.window_bg, 0.95)
 }
 
 fn metadata_link_hover_color(palette: ThemePalette) -> Rgb {

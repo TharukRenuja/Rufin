@@ -1,13 +1,16 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use domain::{Album, HomeSectionKind, Playlist, Route, SmartPlaylist, Track};
+use domain::{
+    Album, HomeSectionKind, LibraryLayout, LibraryListKey, LibraryListSettings, Playlist, Route,
+    SmartPlaylist, Track,
+};
 
 use super::favorites::{album_favorite_key, track_favorite_key};
 use super::layout::{
-    HOME_ALBUM_CARD_LABEL_GAP, clamp_home_album_page_start, clipped_card_label_with_lines,
-    constrain_single_line_card_label, home_album_card_height, home_album_card_size,
-    home_album_content_width, home_album_page_size,
+    HOME_ALBUM_CARD_LABEL_GAP, album_grid_card_size, album_grid_page_size,
+    clamp_home_album_page_start, clipped_card_label_with_lines, constrain_single_line_card_label,
+    home_album_card_height, home_album_card_size, home_album_content_width, home_album_page_size,
 };
 use super::{
     GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, PlaylistEntryListState,
@@ -32,6 +35,25 @@ impl Shell {
         let columns = home_album_page_size(width, current);
         self.state.collection_grid_columns.set(columns);
         (columns, home_album_card_size(width, columns))
+    }
+
+    pub(super) fn collection_card_grid_metrics_for(
+        &self,
+        key: LibraryListKey,
+        settings: &LibraryListSettings,
+    ) -> (usize, i32) {
+        if key == LibraryListKey::Albums && settings.layout == LibraryLayout::Grid {
+            return self.album_collection_card_grid_metrics();
+        }
+        self.collection_card_grid_metrics()
+    }
+
+    fn album_collection_card_grid_metrics(&self) -> (usize, i32) {
+        let width = home_album_content_width(self);
+        let current = nonzero_usize(self.state.collection_grid_columns.get());
+        let columns = album_grid_page_size(width, current);
+        self.state.collection_grid_columns.set(columns);
+        (columns, album_grid_card_size(width, columns))
     }
 }
 
@@ -141,7 +163,7 @@ fn album_card_widget_with_size(
     let title_clip = label_clip(&title, size);
     add_link_hover(&title_clip, &title, &album.title);
 
-    let artist = single_line_card_label(&album.artist, size, &["muted"]);
+    let artist = single_line_card_label(&album.artist, size, &["artist-label"]);
     let artist_clip = label_clip(&artist, size);
     add_card_label_link(
         shell,
@@ -248,7 +270,7 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
     let title_clip = clipped_card_label_with_lines(&title, size, 1);
     add_link_hover(&title_clip, &title, &track.title);
 
-    let artist = single_line_card_label(&track.artist, size, &["muted"]);
+    let artist = single_line_card_label(&track.artist, size, &["artist-label"]);
     let artist_clip = clipped_card_label_with_lines(&artist, size, 1);
     add_card_label_link(
         shell,

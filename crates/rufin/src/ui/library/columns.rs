@@ -528,7 +528,7 @@ pub(in crate::ui) fn album_merged_column(
         labels.append(&title);
 
         let subtitle = gtk::Label::new(None);
-        subtitle.add_css_class("muted");
+        subtitle.add_css_class("artist-label");
         subtitle.set_xalign(0.0);
         subtitle.set_halign(gtk::Align::Start);
         subtitle.set_hexpand(false);
@@ -976,7 +976,7 @@ where
         labels.append(&title);
 
         let subtitle = gtk::Label::new(None);
-        subtitle.add_css_class("muted");
+        subtitle.add_css_class("artist-label");
         subtitle.add_css_class("table-link-label");
         subtitle.set_xalign(0.0);
         subtitle.set_halign(gtk::Align::Start);

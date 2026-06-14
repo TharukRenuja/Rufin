@@ -31,13 +31,6 @@ pub(super) fn sidebar_history_button(icon_name: &str, label: &str) -> gtk::Butto
 pub(super) fn build_normal_navigation(shell: &Rc<Shell>) {
     shell.normal_nav.append(&normal_history_controls(shell));
 
-    let heading = gtk::Label::new(Some(&tr("My Library")));
-    heading.add_css_class("nav-heading");
-    heading.set_xalign(0.0);
-    heading.set_margin_start(18);
-    heading.set_margin_top(8);
-    shell.normal_nav.append(&heading);
-
     for item in nav_items(shell) {
         shell.normal_nav.append(&nav_button(
             shell,

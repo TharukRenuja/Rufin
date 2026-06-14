@@ -69,7 +69,7 @@ impl Shell {
             self.album_tracks_for_layout(&albums.borrow(), &settings),
         ));
         let album_tracks_ms = tracks_started.elapsed().as_millis() as u64;
-        warm_album_covers_for_settings(self, &albums.borrow(), &settings);
+        warm_album_covers_for_settings(self, &albums.borrow(), LibraryListKey::Albums, &settings);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let model_started = Instant::now();
         populate_album_collection_model(
@@ -117,6 +117,7 @@ impl Shell {
                     warm_album_covers_for_settings(
                         &shell,
                         &albums.borrow(),
+                        LibraryListKey::Albums,
                         &shell.library_settings(LibraryListKey::Albums),
                     );
                     populate_album_collection_model(
@@ -159,7 +160,12 @@ impl Shell {
                         *albums.borrow_mut() = page.items;
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
-                        warm_album_covers_for_settings(&shell, &albums.borrow(), &settings);
+                        warm_album_covers_for_settings(
+                            &shell,
+                            &albums.borrow(),
+                            LibraryListKey::Albums,
+                            &settings,
+                        );
                         populate_album_collection_model(
                             &model,
                             &albums.borrow(),
@@ -217,7 +223,12 @@ impl Shell {
                         albums.borrow_mut().extend(items.iter().cloned());
                         *album_tracks.borrow_mut() =
                             shell.album_tracks_for_layout(&albums.borrow(), &settings);
-                        warm_album_covers_for_settings(&shell, &albums.borrow(), &settings);
+                        warm_album_covers_for_settings(
+                            &shell,
+                            &albums.borrow(),
+                            LibraryListKey::Albums,
+                            &settings,
+                        );
                         append_album_collection_model(
                             &model,
                             items,
@@ -433,7 +444,7 @@ impl Shell {
         let artist_count = artists.borrow().len();
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let warm_started = Instant::now();
-        warm_artist_covers_for_settings(self, &artists.borrow(), &settings);
+        warm_artist_covers_for_settings(self, &artists.borrow(), key, &settings);
         let warm_ms = warm_started.elapsed().as_millis() as u64;
         let model_started = Instant::now();
         populate_artist_model(&model, &artists.borrow(), &settings);
@@ -472,6 +483,7 @@ impl Shell {
                     warm_artist_covers_for_settings(
                         &shell,
                         &artists.borrow(),
+                        key,
                         &shell.library_settings(key),
                     );
                     populate_artist_model(&model, &artists.borrow(), &shell.library_settings(key));
@@ -512,7 +524,7 @@ impl Shell {
                         let count = page.items.len();
                         let total = page.total;
                         *artists.borrow_mut() = page.items;
-                        warm_artist_covers_for_settings(&shell, &artists.borrow(), &settings);
+                        warm_artist_covers_for_settings(&shell, &artists.borrow(), key, &settings);
                         populate_artist_model(&model, &artists.borrow(), &settings);
                         finish_grid_page(&cursor, 0, count, total);
                         log_route_page_timing(
@@ -565,6 +577,7 @@ impl Shell {
                         warm_artist_covers_for_settings(
                             &shell,
                             &items,
+                            key,
                             &shell.library_settings(key),
                         );
                         artists.borrow_mut().extend(items.iter().cloned());
@@ -593,7 +606,7 @@ impl Shell {
             let model = model.clone();
             let settings = settings.clone();
             Rc::new(move |scroller: &gtk::ScrolledWindow| {
-                connect_artist_viewport_cover_warm(&shell, scroller, &model, &settings);
+                connect_artist_viewport_cover_warm(&shell, scroller, &model, key, &settings);
             }) as Rc<dyn Fn(&gtk::ScrolledWindow)>
         };
 

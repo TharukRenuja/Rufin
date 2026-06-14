@@ -19,6 +19,11 @@ const HOME_ALBUM_TARGET_SIZE: i32 = 180;
 const HOME_ALBUM_MAX_SIZE: i32 = 210;
 const HOME_ALBUM_MIN_COLUMNS: usize = 1;
 const HOME_ALBUM_MAX_COLUMNS: usize = 12;
+const ALBUM_GRID_MIN_SIZE: i32 = 200;
+const ALBUM_GRID_TARGET_SIZE: i32 = 256;
+const ALBUM_GRID_MAX_SIZE: i32 = 256;
+const ALBUM_GRID_MIN_COLUMNS: usize = 2;
+const ALBUM_GRID_MAX_COLUMNS: usize = 40;
 pub(super) const PRIMARY_ROUTE_MARGIN_START: i32 = 0;
 pub(super) const PRIMARY_ROUTE_MARGIN_END: i32 = 28;
 const HOME_ALBUM_HORIZONTAL_MARGINS: i32 = PRIMARY_ROUTE_MARGIN_START + PRIMARY_ROUTE_MARGIN_END;
@@ -51,6 +56,32 @@ pub(super) fn home_album_page_size(width: i32, current_page_size: Option<usize>)
     }
     while page_size < HOME_ALBUM_MAX_COLUMNS
         && home_album_raw_card_size(width, page_size) > HOME_ALBUM_MAX_SIZE
+    {
+        page_size += 1;
+    }
+
+    page_size
+}
+
+pub(super) fn album_grid_page_size(width: i32, current_page_size: Option<usize>) -> usize {
+    let width = width.max(1);
+    let mut page_size = current_page_size
+        .unwrap_or_else(|| {
+            let item_width = ALBUM_GRID_TARGET_SIZE + HOME_ALBUM_GAP;
+            ((width + HOME_ALBUM_GAP) / item_width)
+                .clamp(ALBUM_GRID_MIN_COLUMNS as i32, ALBUM_GRID_MAX_COLUMNS as i32)
+                as usize
+        })
+        .clamp(ALBUM_GRID_MIN_COLUMNS, ALBUM_GRID_MAX_COLUMNS);
+
+    while page_size > ALBUM_GRID_MIN_COLUMNS
+        && home_album_raw_card_size(width, page_size) < ALBUM_GRID_MIN_SIZE
+    {
+        page_size -= 1;
+    }
+    while page_size < ALBUM_GRID_MAX_COLUMNS
+        && home_album_raw_card_size(width, page_size) > ALBUM_GRID_MAX_SIZE
+        && home_album_raw_card_size(width, page_size + 1) >= ALBUM_GRID_MIN_SIZE
     {
         page_size += 1;
     }
@@ -260,6 +291,10 @@ pub(super) fn home_album_card_size(width: i32, page_size: usize) -> i32 {
     home_album_raw_card_size(width, page_size).clamp(1, HOME_ALBUM_MAX_SIZE)
 }
 
+pub(super) fn album_grid_card_size(width: i32, page_size: usize) -> i32 {
+    home_album_raw_card_size(width, page_size).clamp(1, ALBUM_GRID_MAX_SIZE)
+}
+
 fn home_album_raw_card_size(width: i32, page_size: usize) -> i32 {
     let page_size = page_size.max(1) as i32;
     let gaps = HOME_ALBUM_GAP * (page_size - 1);
@@ -381,6 +416,35 @@ mod tests {
         assert_eq!(home_album_page_size(four_cards_width, None), 4);
         assert_eq!(home_album_page_size(1, None), 1);
         assert_eq!(home_album_page_size(10_000, None), HOME_ALBUM_MAX_COLUMNS);
+    }
+
+    #[test]
+    fn album_grid_uses_larger_default_cards() {
+        let previous_three_card_width = HOME_ALBUM_TARGET_SIZE * 3 + HOME_ALBUM_GAP * 2;
+
+        assert_eq!(album_grid_page_size(previous_three_card_width, None), 2);
+        assert_eq!(
+            album_grid_card_size(
+                previous_three_card_width,
+                album_grid_page_size(previous_three_card_width, None)
+            ),
+            ALBUM_GRID_MAX_SIZE
+        );
+    }
+
+    #[test]
+    fn album_grid_caps_and_adds_columns_on_wide_routes() {
+        let four_columns = ALBUM_GRID_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
+        let very_wide = ALBUM_GRID_TARGET_SIZE * 20 + HOME_ALBUM_GAP * 19;
+        let extreme = ALBUM_GRID_TARGET_SIZE * 80 + HOME_ALBUM_GAP * 79;
+
+        assert_eq!(album_grid_page_size(four_columns, None), 4);
+        assert_eq!(
+            album_grid_card_size(four_columns, album_grid_page_size(four_columns, None)),
+            ALBUM_GRID_MAX_SIZE
+        );
+        assert!(album_grid_page_size(very_wide, None) > 8);
+        assert_eq!(album_grid_page_size(extreme, None), ALBUM_GRID_MAX_COLUMNS);
     }
 
     #[test]

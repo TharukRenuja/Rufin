@@ -95,7 +95,7 @@ impl Shell {
         let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);
-        let kind = gtk::Label::new(Some(&tr("Album")));
+        let kind = gtk::Label::new(Some(&tr(album_release_kind_label(&album))));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
         kind.set_halign(gtk::Align::Start);

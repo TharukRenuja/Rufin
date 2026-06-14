@@ -182,7 +182,8 @@ pub(in crate::ui) fn album_grid(
     model: gio::ListStore,
     key: LibraryListKey,
 ) -> gtk::GridView {
-    let (columns, card_size) = shell.collection_card_grid_metrics();
+    let settings = shell.library_settings(key);
+    let (columns, card_size) = shell.collection_card_grid_metrics_for(key, &settings);
     let selection = gtk::NoSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     let shell_for_factory = Rc::clone(shell);
@@ -680,16 +681,15 @@ pub(in crate::ui) fn album_card(
         size,
         Some(&shell.controller),
     ));
-    card.append(&center_wrapping_title(&album.title, "track-title", size));
+    card.append(&center_grid_title(&album.title, "track-title", size));
     for field in fields {
         let value = album_field(album, field);
         if !value.is_empty() {
-            card.append(&center_label(
-                &value,
-                "muted",
-                size,
-                COLLECTION_GRID_FIELD_LINES,
-            ));
+            let label = collection_grid_field_label(&value, field, size);
+            if matches!(field, LibraryField::Artist | LibraryField::AlbumArtist) {
+                add_card_label_link(shell, &label.0, &label.1, &value, album_artist_route(album));
+            }
+            card.append(&label.0);
         }
     }
     install_album_context_menu(&card, shell, album.clone());
@@ -704,13 +704,13 @@ pub(in crate::ui) fn artist_card(
     let fields = shell.library_settings(key).grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&artist_cover_tile(shell, artist, size));
-    card.append(&center_wrapping_title(&artist.name, "track-title", size));
+    card.append(&center_grid_title(&artist.name, "track-title", size));
     for field in fields {
         let value = artist_field(artist, field);
         if !value.is_empty() {
             card.append(&center_label(
                 &value,
-                "muted",
+                collection_grid_field_class(field),
                 size,
                 COLLECTION_GRID_FIELD_LINES,
             ));
@@ -787,7 +787,7 @@ pub(in crate::ui) fn genre_card(shell: &Rc<Shell>, genre: &Genre, size: i32) -> 
     let fields = shell.library_settings(LibraryListKey::Genres).grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&genre_cover_tile(shell, genre, size));
-    card.append(&center_wrapping_title(&genre.name, "track-title", size));
+    card.append(&center_grid_title(&genre.name, "track-title", size));
     for field in fields {
         let value = genre_field(genre, field);
         if !value.is_empty() {
@@ -811,7 +811,7 @@ pub(in crate::ui) fn playlist_card(
         .grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::playlist_cover_tile(shell, playlist, size));
-    card.append(&center_wrapping_title(&playlist.name, "track-title", size));
+    card.append(&center_grid_title(&playlist.name, "track-title", size));
     for field in fields {
         let value = playlist_field(playlist, field);
         if !value.is_empty() {
@@ -837,7 +837,7 @@ pub(in crate::ui) fn smart_playlist_card(
     let card_height = collection_grid_card_height(size, fields.len());
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::smart_playlist_cover_tile(shell, playlist, size));
-    card.append(&center_wrapping_title(&playlist.name, "track-title", size));
+    card.append(&center_grid_title(&playlist.name, "track-title", size));
     for field in fields {
         let value = smart_playlist_field(playlist, field);
         if !value.is_empty() {
@@ -915,21 +915,61 @@ pub(in crate::ui) fn track_card(
     let fields = shell.library_settings(key).grid_fields;
     let card = collection_grid_card(size, fields.len());
     card.append(&cards::track_play_tile(shell, track, size, play_action));
-    card.append(&center_wrapping_title(&track.title, "track-title", size));
+    card.append(&center_grid_title(&track.title, "track-title", size));
     for field in fields {
         let value = track_field(track, field);
         if !value.is_empty() {
-            card.append(&center_label(
-                &value,
-                "muted",
-                size,
-                COLLECTION_GRID_FIELD_LINES,
-            ));
+            let label = collection_grid_field_label(&value, field, size);
+            if let Some(route) = track_grid_artist_route(track, field) {
+                add_card_label_link(shell, &label.0, &label.1, &value, Some(route));
+            }
+            card.append(&label.0);
         }
     }
     install_track_context_menu(&card, shell, track.clone());
     card.upcast()
 }
+
+fn collection_grid_field_class(field: LibraryField) -> &'static str {
+    match field {
+        LibraryField::Artist | LibraryField::AlbumArtist => "artist-label",
+        _ => "muted",
+    }
+}
+
+fn collection_grid_field_label(
+    value: &str,
+    field: LibraryField,
+    size: i32,
+) -> (gtk::Widget, gtk::Label) {
+    center_label_with_label(
+        value,
+        collection_grid_field_class(field),
+        size,
+        COLLECTION_GRID_FIELD_LINES,
+    )
+}
+
+fn track_grid_artist_route(track: &Track, field: LibraryField) -> Option<Route> {
+    match field {
+        LibraryField::Artist => track_artist_route(track),
+        LibraryField::AlbumArtist => track_album_artist_route(track),
+        _ => None,
+    }
+}
+
+fn track_album_artist_route(track: &Track) -> Option<Route> {
+    if let Some(credit) = track.album_artist_credits.first() {
+        Some(Route::ArtistDetail(credit.id.clone()))
+    } else {
+        let album_artist = track_field(track, LibraryField::AlbumArtist);
+        (!album_artist.trim().is_empty()).then_some(Route::Search {
+            query: album_artist,
+            kind: SearchKind::Artists,
+        })
+    }
+}
+
 fn collection_grid_card(size: i32, field_count: usize) -> gtk::Box {
     let height = collection_grid_card_height(size, field_count);
     let card = gtk::Box::new(gtk::Orientation::Vertical, COLLECTION_GRID_CARD_GAP);

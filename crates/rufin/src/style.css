@@ -162,11 +162,13 @@ listview.album-detail-list row:selected {
 .nav-heading,
 .section-heading,
 .panel-title {
+  color: @window_fg_color;
   font-weight: 700;
 }
 
 .section-heading {
   font-size: 21px;
+  font-weight: 800;
 }
 
 .nav-button {
@@ -278,7 +280,7 @@ menubutton.server-selector > button:hover {
 }
 
 .server-section-label {
-  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
+  color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
   font-size: 0.9em;
 }
 
@@ -309,12 +311,13 @@ menubutton.server-selector > button:hover {
 }
 
 .home-showcase-title {
+  color: @window_fg_color;
   font-size: 36px;
   font-weight: 800;
 }
 
 .home-showcase .muted {
-  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
+  color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
 }
 
 .home-showcase-cover {
@@ -438,7 +441,13 @@ menubutton.server-selector > button:hover {
 
 .album-title,
 .player-title {
-  font-weight: 600;
+  color: @window_fg_color;
+  font-weight: 700;
+}
+
+.artist-label,
+.player-primary {
+  color: @window_fg_color;
 }
 
 .player-link {
@@ -459,8 +468,6 @@ menubutton.server-selector > button:hover {
 }
 
 .player-title-menu-button {
-  min-width: 24px;
-  min-height: 24px;
   padding: 0;
   opacity: 0.82;
 }
@@ -555,7 +562,7 @@ scale.volume-slider trough {
 }
 
 .muted {
-  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
+  color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
 }
 
 .lyrics-search-helper {
@@ -572,7 +579,8 @@ scale.volume-slider trough {
 }
 
 .track-title {
-  font-weight: 600;
+  color: @window_fg_color;
+  font-weight: 700;
 }
 
 .track-artist-link {
@@ -665,6 +673,11 @@ scale.volume-slider trough {
   min-height: 34px;
 }
 
+.icon-button.player-title-menu-button {
+  min-width: 18px;
+  min-height: 18px;
+}
+
 .icon-button.cover-play-button {
   min-width: 54px;
   min-height: 54px;
@@ -743,13 +756,17 @@ scale.volume-slider trough {
 .detail-showcase .muted,
 .album-detail-showcase .muted,
 .playlist-detail-showcase .muted {
-  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
+  color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
 }
 
 .detail-showcase .eyebrow,
 .album-detail-showcase .eyebrow,
 .playlist-detail-showcase .eyebrow {
   color: color-mix(in srgb, @accent_color 72%, @window_fg_color);
+}
+
+.album-detail-showcase .eyebrow {
+  font-size: 13px;
 }
 
 .detail-showcase-cover,
@@ -817,7 +834,7 @@ scale.volume-slider trough {
 .detail-showcase-link-button {
   min-height: 30px;
   padding: 4px 8px;
-  color: color-mix(in srgb, @window_fg_color 82%, @window_bg_color);
+  color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
   background: transparent;
   box-shadow: none;
 }
@@ -973,6 +990,7 @@ scale.volume-slider trough {
 }
 
 .fullscreen-player-title {
+  color: @window_fg_color;
   font-size: 28px;
   font-weight: 800;
 }

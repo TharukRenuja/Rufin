@@ -12,10 +12,12 @@ pub(in crate::ui) struct InitialRouteCoverMetrics {
     pub(in crate::ui) app_height: i32,
     pub(in crate::ui) grid_columns: usize,
     pub(in crate::ui) grid_card_size: i32,
+    pub(in crate::ui) album_grid_columns: usize,
+    pub(in crate::ui) album_grid_card_size: i32,
     pub(in crate::ui) home_showcase_seed: u64,
 }
 impl InitialRouteCoverMetrics {
-    fn initial_visible_count(self, settings: &LibraryListSettings) -> usize {
+    fn initial_visible_count(self, key: LibraryListKey, settings: &LibraryListSettings) -> usize {
         let viewport_height = self.route_height.max(self.app_height).max(1);
         match settings.layout {
             LibraryLayout::Row => {
@@ -23,12 +25,23 @@ impl InitialRouteCoverMetrics {
                 (viewport_height / row_height).saturating_add(2).max(1) as usize
             }
             LibraryLayout::Grid | LibraryLayout::Detail => {
-                let columns = self.grid_columns.max(1);
-                let item_extent =
-                    library::collection_grid_item_extent(self.grid_card_size, settings);
+                let (columns, card_size) = self.collection_grid_metrics(key, settings);
+                let item_extent = library::collection_grid_item_extent(card_size, settings);
                 let rows = (viewport_height / item_extent).saturating_add(2).max(1) as usize;
                 rows.saturating_mul(columns)
             }
+        }
+    }
+
+    fn collection_grid_metrics(
+        self,
+        key: LibraryListKey,
+        settings: &LibraryListSettings,
+    ) -> (usize, i32) {
+        if key == LibraryListKey::Albums && settings.layout == LibraryLayout::Grid {
+            (self.album_grid_columns, self.album_grid_card_size)
+        } else {
+            (self.grid_columns, self.grid_card_size)
         }
     }
 }
@@ -225,13 +238,14 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
     match route {
         Route::Tracks if library.tracks.is_empty() && library.cached_track_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Tracks);
-            let limit = metrics.initial_visible_count(&list_settings);
+            let limit = metrics.initial_visible_count(LibraryListKey::Tracks, &list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_tracks_page(0, limit) {
                 push_track_source_warm_targets(
                     &mut targets,
                     page.items,
+                    LibraryListKey::Tracks,
                     &list_settings,
                     false,
                     metrics,
@@ -240,7 +254,7 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
         }
         Route::Albums if library.albums.is_empty() && library.cached_album_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Albums);
-            let limit = metrics.initial_visible_count(&list_settings);
+            let limit = metrics.initial_visible_count(LibraryListKey::Albums, &list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_albums_page(0, limit) {
@@ -249,27 +263,39 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
         }
         Route::Artists if library.artists.is_empty() && library.cached_artist_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Artists);
-            let limit = metrics.initial_visible_count(&list_settings);
+            let limit = metrics.initial_visible_count(LibraryListKey::Artists, &list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_artists_page(false, 0, limit) {
-                push_artist_source_warm_targets(&mut targets, page.items, &list_settings, metrics);
+                push_artist_source_warm_targets(
+                    &mut targets,
+                    page.items,
+                    LibraryListKey::Artists,
+                    &list_settings,
+                    metrics,
+                );
             }
         }
         Route::AlbumArtists
             if library.album_artists.is_empty() && library.cached_album_artist_count > 0 =>
         {
             let list_settings = settings.library_list(LibraryListKey::AlbumArtists);
-            let limit = metrics.initial_visible_count(&list_settings);
+            let limit = metrics.initial_visible_count(LibraryListKey::AlbumArtists, &list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_artists_page(true, 0, limit) {
-                push_artist_source_warm_targets(&mut targets, page.items, &list_settings, metrics);
+                push_artist_source_warm_targets(
+                    &mut targets,
+                    page.items,
+                    LibraryListKey::AlbumArtists,
+                    &list_settings,
+                    metrics,
+                );
             }
         }
         Route::Genres if library.genres.is_empty() && library.cached_genre_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Genres);
-            let limit = metrics.initial_visible_count(&list_settings);
+            let limit = metrics.initial_visible_count(LibraryListKey::Genres, &list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_genres_page(0, limit) {
@@ -278,7 +304,7 @@ fn startup_route_cover_fallback_targets(shell: &Shell, route: &Route) -> Vec<Cov
         }
         Route::Playlists if library.playlists.is_empty() && library.cached_playlist_count > 0 => {
             let list_settings = settings.library_list(LibraryListKey::Playlists);
-            let limit = metrics.initial_visible_count(&list_settings);
+            let limit = metrics.initial_visible_count(LibraryListKey::Playlists, &list_settings);
             drop(settings);
             drop(library);
             if let Ok(page) = shell.controller.cached_playlists_page(0, limit) {
@@ -443,6 +469,7 @@ fn push_source_route_warm_targets(
         push_track_source_warm_targets(
             targets,
             library.tracks.clone(),
+            LibraryListKey::Tracks,
             &list_settings,
             false,
             route_metrics,
@@ -468,6 +495,7 @@ fn push_source_route_warm_targets(
         push_artist_source_warm_targets(
             targets,
             library.artists.clone(),
+            LibraryListKey::Artists,
             &list_settings,
             route_metrics,
         );
@@ -477,6 +505,7 @@ fn push_source_route_warm_targets(
         push_artist_source_warm_targets(
             targets,
             library.album_artists.clone(),
+            LibraryListKey::AlbumArtists,
             &list_settings,
             route_metrics,
         );
@@ -495,6 +524,7 @@ fn push_source_route_warm_targets(
         push_track_source_warm_targets(
             targets,
             library.favorites.clone(),
+            LibraryListKey::FavoriteTracks,
             &list_settings,
             true,
             route_metrics,
@@ -524,17 +554,18 @@ fn push_source_route_warm_targets(
 fn push_track_source_warm_targets(
     targets: &mut Vec<CoverWarmTarget>,
     mut tracks: Vec<Track>,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
     favorite_first: bool,
     route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+    let Some((fetch_size, size)) = source_route_cover_size(key, settings, route_metrics) else {
         return;
     };
     library::sort_tracks(&mut tracks, settings, favorite_first);
     for track in tracks
         .iter()
-        .take(route_metrics.initial_visible_count(settings))
+        .take(route_metrics.initial_visible_count(key, settings))
     {
         push_startup_cover_target(targets, track.image_ref.as_ref(), fetch_size, size);
     }
@@ -545,7 +576,9 @@ fn push_track_targets(
     settings: &LibraryListSettings,
     route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+    let Some((fetch_size, size)) =
+        source_route_cover_size(LibraryListKey::Tracks, settings, route_metrics)
+    else {
         return;
     };
     library::sort_tracks(&mut tracks, settings, false);
@@ -554,7 +587,7 @@ fn push_track_targets(
         return;
     }
     let visible_rows = route_metrics
-        .initial_visible_count(settings)
+        .initial_visible_count(LibraryListKey::Tracks, settings)
         .max(1)
         .min(total);
     for numerator in [1_usize, 2, 3, 4] {
@@ -571,13 +604,15 @@ fn push_album_source_warm_targets(
     settings: &LibraryListSettings,
     route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+    let Some((fetch_size, size)) =
+        source_route_cover_size(LibraryListKey::Albums, settings, route_metrics)
+    else {
         return;
     };
     library::sort_albums(&mut albums, settings);
     for album in albums
         .iter()
-        .take(route_metrics.initial_visible_count(settings))
+        .take(route_metrics.initial_visible_count(LibraryListKey::Albums, settings))
     {
         push_startup_cover_target(targets, album.image_ref.as_ref(), fetch_size, size);
     }
@@ -585,16 +620,17 @@ fn push_album_source_warm_targets(
 fn push_artist_source_warm_targets(
     targets: &mut Vec<CoverWarmTarget>,
     mut artists: Vec<Artist>,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
     route_metrics: InitialRouteCoverMetrics,
 ) {
-    let Some((fetch_size, size)) = source_route_cover_size(settings, route_metrics) else {
+    let Some((fetch_size, size)) = source_route_cover_size(key, settings, route_metrics) else {
         return;
     };
     library::sort_artists(&mut artists, settings);
     for artist in artists
         .iter()
-        .take(route_metrics.initial_visible_count(settings))
+        .take(route_metrics.initial_visible_count(key, settings))
     {
         push_startup_cover_target(targets, artist.image_ref.as_ref(), fetch_size, size);
     }
@@ -611,7 +647,7 @@ fn push_genre_source_warm_targets(
     library::sort_genres(&mut genres, settings);
     for genre in genres
         .iter()
-        .take(route_metrics.initial_visible_count(settings))
+        .take(route_metrics.initial_visible_count(LibraryListKey::Genres, settings))
     {
         for image_ref in &genre.image_refs {
             push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
@@ -631,7 +667,7 @@ fn push_playlist_source_warm_targets(
     library::sort_playlists(&mut playlists, settings);
     for playlist in playlists
         .iter()
-        .take(route_metrics.initial_visible_count(settings))
+        .take(route_metrics.initial_visible_count(LibraryListKey::Playlists, settings))
     {
         for image_ref in &playlist.image_refs {
             push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
@@ -650,7 +686,7 @@ fn push_smart_targets(
     library::sort_smart_playlists(&mut playlists, settings);
     for playlist in playlists
         .iter()
-        .take(route_metrics.initial_visible_count(settings))
+        .take(route_metrics.initial_visible_count(LibraryListKey::SmartPlaylists, settings))
     {
         for image_ref in &playlist.image_refs {
             push_startup_cover_target(targets, Some(image_ref), fetch_size, size);
@@ -670,7 +706,9 @@ fn push_source_background_warm_targets(
 
     if sidebar_route_visible(settings, SidebarRouteItem::Albums) {
         let list_settings = settings.library_list(LibraryListKey::Albums);
-        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+        if let Some((fetch_size, size)) =
+            source_route_cover_size(LibraryListKey::Albums, &list_settings, route_metrics)
+        {
             push_background_cover_refs(
                 targets,
                 &mut seen,
@@ -686,7 +724,9 @@ fn push_source_background_warm_targets(
     }
     if sidebar_route_visible(settings, SidebarRouteItem::Artists) {
         let list_settings = settings.library_list(LibraryListKey::Artists);
-        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+        if let Some((fetch_size, size)) =
+            source_route_cover_size(LibraryListKey::Artists, &list_settings, route_metrics)
+        {
             push_background_cover_refs(
                 targets,
                 &mut seen,
@@ -702,7 +742,9 @@ fn push_source_background_warm_targets(
     }
     if sidebar_route_visible(settings, SidebarRouteItem::AlbumArtists) {
         let list_settings = settings.library_list(LibraryListKey::AlbumArtists);
-        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+        if let Some((fetch_size, size)) =
+            source_route_cover_size(LibraryListKey::AlbumArtists, &list_settings, route_metrics)
+        {
             push_background_cover_refs(
                 targets,
                 &mut seen,
@@ -764,7 +806,9 @@ fn push_source_background_warm_targets(
     }
     if sidebar_route_visible(settings, SidebarRouteItem::Tracks) {
         let list_settings = settings.library_list(LibraryListKey::Tracks);
-        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+        if let Some((fetch_size, size)) =
+            source_route_cover_size(LibraryListKey::Tracks, &list_settings, route_metrics)
+        {
             push_background_cover_refs(
                 targets,
                 &mut seen,
@@ -780,7 +824,11 @@ fn push_source_background_warm_targets(
     }
     if sidebar_route_visible(settings, SidebarRouteItem::Favorites) {
         let list_settings = settings.library_list(LibraryListKey::FavoriteTracks);
-        if let Some((fetch_size, size)) = source_route_cover_size(&list_settings, route_metrics) {
+        if let Some((fetch_size, size)) = source_route_cover_size(
+            LibraryListKey::FavoriteTracks,
+            &list_settings,
+            route_metrics,
+        ) {
             push_background_cover_refs(
                 targets,
                 &mut seen,
@@ -854,12 +902,16 @@ fn background_warm_key(image_ref: &ImageRef) -> String {
         image_ref.tag.as_deref().unwrap_or(IMAGE_TAG_UNTAGGED),
     )
 }
-fn source_route_cover_size(
+pub(in crate::ui) fn source_route_cover_size(
+    key: LibraryListKey,
     settings: &LibraryListSettings,
     route_metrics: InitialRouteCoverMetrics,
 ) -> Option<(u32, i32)> {
     match settings.layout {
-        LibraryLayout::Grid => Some((GRID_COVER_SIZE, route_metrics.grid_card_size)),
+        LibraryLayout::Grid => Some((
+            GRID_COVER_SIZE,
+            route_metrics.collection_grid_metrics(key, settings).1,
+        )),
         LibraryLayout::Detail => Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32)),
         LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,

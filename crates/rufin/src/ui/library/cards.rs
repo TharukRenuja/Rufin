@@ -318,7 +318,6 @@ pub(in crate::ui) fn append_album_items(model: &gio::ListStore, rows: Vec<AlbumD
 }
 pub(in crate::ui) const COLLECTION_GRID_CARD_GAP: i32 = 6;
 pub(in crate::ui) const COLLECTION_GRID_TITLE_LINES: i32 = 1;
-pub(in crate::ui) const COLLECTION_GRID_TITLE_WRAP_LINES: i32 = 2;
 pub(in crate::ui) const COLLECTION_GRID_FIELD_LINES: i32 = 1;
 const COLLECTION_GRID_LABEL_LINE_HEIGHT: i32 = 20;
 
@@ -346,6 +345,15 @@ pub(in crate::ui) fn center_label(
     width: i32,
     lines: i32,
 ) -> gtk::Widget {
+    center_label_with_label(text, css_class, width, lines).0
+}
+
+pub(in crate::ui) fn center_label_with_label(
+    text: &str,
+    css_class: &str,
+    width: i32,
+    lines: i32,
+) -> (gtk::Widget, gtk::Label) {
     let width = width.max(1);
     let lines = lines.max(1);
     let height = collection_grid_label_height(lines);
@@ -375,9 +383,9 @@ pub(in crate::ui) fn center_label(
     clip.set_hexpand(false);
     clip.set_halign(gtk::Align::Center);
     clip.append(&label);
-    clip.upcast()
+    (clip.upcast(), label)
 }
-pub(in crate::ui) fn center_wrapping_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
+pub(in crate::ui) fn center_grid_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
     let width = width.max(1);
     let height = collection_grid_label_height(COLLECTION_GRID_TITLE_LINES);
     let label = gtk::Label::new(Some(text));
@@ -386,9 +394,9 @@ pub(in crate::ui) fn center_wrapping_title(text: &str, css_class: &str, width: i
     }
     label.set_xalign(0.5);
     label.set_justify(gtk::Justification::Center);
-    label.set_wrap(true);
-    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-    label.set_lines(COLLECTION_GRID_TITLE_WRAP_LINES);
+    label.set_wrap(false);
+    label.set_single_line_mode(true);
+    label.set_lines(COLLECTION_GRID_TITLE_LINES);
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.set_width_chars(1);
     label.set_max_width_chars((width / 8).clamp(8, 32));
