@@ -319,6 +319,15 @@ MSG
   exit 1
 }
 
+verify_nix_flake() {
+  if [[ ! -f flake.nix ]]; then
+    return
+  fi
+
+  bash .github/scripts/retry-nix-command.sh \
+    nix flake check --no-write-lock-file --print-build-logs
+}
+
 commit_count="$(git rev-list --count "$base_tag"..HEAD)"
 if [[ "$commit_count" == "0" ]]; then
   echo "no commits found in range $base_tag..HEAD" >&2
@@ -335,6 +344,7 @@ fi
 
 bash .github/scripts/prepare-release.sh "$plain_version" "$summary"
 update_nix_cargo_hash
+verify_nix_flake
 if ! git diff --quiet || ! git diff --cached --quiet; then
   git add Cargo.lock Cargo.toml data/io.github.screwys.Rufin.metainfo.xml .github/ISSUE_TEMPLATE/bug_report.yml
   if [[ -f flake.nix ]]; then
