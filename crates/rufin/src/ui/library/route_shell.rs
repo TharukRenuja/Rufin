@@ -116,7 +116,9 @@ impl Shell {
         wrapper.set_widget_name(context);
         wrapper.set_hexpand(true);
         wrapper.set_halign(gtk::Align::Fill);
-        wrapper.append(&self.library_toolbar(key, search.clone()));
+        let toolbar = self.library_toolbar(key, search.clone());
+        toolbar.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
+        wrapper.append(&toolbar);
         self.install_type_to_search(&search);
         wrapper.append(&non_propagating_width_clip(album_collection_widget(
             self, model, key,

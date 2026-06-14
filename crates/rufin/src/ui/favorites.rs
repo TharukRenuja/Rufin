@@ -6,7 +6,6 @@ use domain::{
     Album, AlbumId, Artist, ArtistId, LibraryListKey, Route, Track, TrackId, TrackSortKey,
 };
 use gtk::glib;
-use gtk::prelude::ObjectType;
 use source::FavoriteItemId;
 
 use crate::controller::LibrarySnapshot;
@@ -51,22 +50,6 @@ pub(super) fn register_favorite_control(
     let weak = glib::WeakRef::new();
     weak.set(Some(button));
     controls.borrow_mut().entry(key).or_default().push(weak);
-}
-
-pub(super) fn unregister_favorite_control(
-    controls: &FavoriteControls,
-    key: &FavoriteControlKey,
-    button: &gtk::Button,
-) {
-    let mut controls = controls.borrow_mut();
-    let Some(buttons) = controls.get_mut(key) else {
-        return;
-    };
-    let button_ptr = button.as_ptr();
-    buttons.retain(|weak| {
-        weak.upgrade()
-            .is_some_and(|registered| registered.as_ptr() != button_ptr)
-    });
 }
 
 pub(super) fn update_favorite_controls(

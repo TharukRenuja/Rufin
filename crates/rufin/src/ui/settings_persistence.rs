@@ -5,7 +5,7 @@ use adw::prelude::*;
 use domain::{
     AppSettings, DiscordDisplayType, DiscordLinkType, ExternalLyricsProvider, HomeBlockKind,
     LibraryListKey, LibraryListSettings, PlaybackSettings, Route, ScrobblingSettings,
-    TrackTableSettings, sanitized_window_size,
+    sanitized_window_size,
 };
 use tracing::warn;
 
@@ -545,14 +545,6 @@ impl Shell {
                 settings.scrobbling.sanitize();
             }
             changed
-        });
-    }
-
-    pub(super) fn update_track_table_settings(&self, update: impl FnOnce(&mut TrackTableSettings)) {
-        self.update_app_settings("track table settings", |settings| {
-            update(&mut settings.track_table);
-            settings.track_table.sanitize();
-            true
         });
     }
 

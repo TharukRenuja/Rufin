@@ -81,13 +81,12 @@ use domain::{
     SmartPlaylistRuleField, SmartPlaylistRuleGroup, SmartPlaylistRuleNode,
     SmartPlaylistRuleOperator, SmartPlaylistRuleValue, SmartPlaylistSortDescriptor,
     SmartPlaylistSortField, SourceOrder, Track, TrackId, TrackSortDescriptor, TrackSortKey,
-    TrackTableColumn, TrackTableSettings, format_duration, sanitized_window_size,
+    TrackTableSettings, format_duration, sanitized_window_size,
 };
 use favorites::{
     FavoriteControlKey, FavoriteControls, album_favorite_key, artist_favorite_key,
     clear_favorite_controls, favorite_change_needs_route_render, favorite_control_key,
-    merge_favorite_snapshot, register_favorite_control, track_favorite_key,
-    unregister_favorite_control, update_favorite_controls,
+    merge_favorite_snapshot, register_favorite_control, update_favorite_controls,
 };
 use fullscreen_player::{
     FullscreenPlayerParts, build_fullscreen_player, connect_fullscreen_player_controls,
@@ -157,8 +156,6 @@ mod search_view;
 mod shell_navigation;
 mod sidebar_route_controls;
 mod startup_reveal;
-mod track_table;
-mod track_table_popover;
 
 #[cfg(test)]
 mod shell_tests;
@@ -422,14 +419,6 @@ pub(in crate::ui) struct FolderRouteState {
     loading: bool,
     detail: Option<FolderDetail>,
     error: Option<String>,
-}
-#[derive(Clone)]
-pub(in crate::ui) struct TrackTableOptions {
-    paging: Option<(usize, usize)>,
-    expand: bool,
-    max_visible_rows: Option<usize>,
-    favorite_first: bool,
-    source_descriptor: Option<PlaySourceDescriptor>,
 }
 pub(in crate::ui) struct GroupedDetailData {
     title: String,
