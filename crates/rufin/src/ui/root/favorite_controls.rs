@@ -8,13 +8,6 @@ impl Shell {
     ) {
         register_favorite_control(&self.state.favorite_controls, key, button);
     }
-    pub(in crate::ui) fn unregister_favorite_button(
-        &self,
-        key: &FavoriteControlKey,
-        button: &gtk::Button,
-    ) {
-        unregister_favorite_control(&self.state.favorite_controls, key, button);
-    }
     pub(in crate::ui) fn update_visible_favorite_buttons(
         &self,
         item_id: &FavoriteItemId,

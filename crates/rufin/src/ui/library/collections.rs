@@ -653,14 +653,24 @@ pub(in crate::ui) fn track_table(
 pub(in crate::ui) fn set_library_table_content_height(
     scroller: &gtk::ScrolledWindow,
     row_count: usize,
+    max_visible_rows: Option<usize>,
 ) {
-    let height = library_table_content_height(row_count);
+    let height = max_visible_rows.map_or_else(
+        || library_table_content_height(row_count),
+        |max_visible_rows| capped_library_table_content_height(row_count, Some(max_visible_rows)),
+    );
     scroller.set_min_content_height(height);
     scroller.set_max_content_height(height);
 }
 pub(in crate::ui) fn library_table_content_height(row_count: usize) -> i32 {
+    capped_library_table_content_height(row_count, None)
+}
+pub(in crate::ui) fn capped_library_table_content_height(
+    row_count: usize,
+    max_visible_rows: Option<usize>,
+) -> i32 {
     let max_rows = ((i32::MAX - LIBRARY_TABLE_HEADER_HEIGHT) / LIBRARY_TABLE_ROW_HEIGHT) as usize;
-    let visible_rows = row_count.max(1).min(max_rows);
+    let visible_rows = row_count.max(1).min(max_visible_rows.unwrap_or(max_rows));
     LIBRARY_TABLE_HEADER_HEIGHT + visible_rows as i32 * LIBRARY_TABLE_ROW_HEIGHT
 }
 pub(in crate::ui) fn compact_detail_layout(shell: &Shell) -> bool {
