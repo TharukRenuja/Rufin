@@ -24,6 +24,7 @@ impl ColumnViewWidthFit {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum ColumnViewWidthMode {
     RouteScroller,
+    EmbeddedScroller,
     Embedded,
 }
 
@@ -43,9 +44,10 @@ pub(in crate::ui) fn column_view_initial_width(
     content_inset: i32,
     mode: ColumnViewWidthMode,
 ) -> i32 {
-    let scrollbar_width = match mode {
-        ColumnViewWidthMode::RouteScroller => vertical_scrollbar_width(),
-        ColumnViewWidthMode::Embedded => 0,
+    let scrollbar_width = if column_view_reserves_scrollbar(mode) {
+        vertical_scrollbar_width()
+    } else {
+        0
     };
     route_content_width(shell)
         .saturating_sub(scrollbar_width)
@@ -58,6 +60,13 @@ fn vertical_scrollbar_width() -> i32 {
     let scrollbar = gtk::Scrollbar::new(gtk::Orientation::Vertical, None::<&gtk::Adjustment>);
     let (_, natural, _, _) = scrollbar.measure(gtk::Orientation::Horizontal, -1);
     natural.max(0)
+}
+
+fn column_view_reserves_scrollbar(mode: ColumnViewWidthMode) -> bool {
+    matches!(
+        mode,
+        ColumnViewWidthMode::RouteScroller | ColumnViewWidthMode::EmbeddedScroller
+    )
 }
 
 pub(in crate::ui) fn fitted_column_widths(base_widths: &[i32], available_width: i32) -> Vec<i32> {
@@ -237,5 +246,20 @@ fn fit_column_widths(columns: &[(gtk::ColumnViewColumn, i32)], available_width: 
     let fitted_widths = fitted_column_widths(&base_widths, available_width);
     for ((column, _), width) in columns.iter().zip(fitted_widths) {
         column.set_fixed_width(width.max(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrollable_embedded_tables_reserve_scrollbar_width() {
+        assert!(column_view_reserves_scrollbar(
+            ColumnViewWidthMode::EmbeddedScroller
+        ));
+        assert!(!column_view_reserves_scrollbar(
+            ColumnViewWidthMode::Embedded
+        ));
     }
 }

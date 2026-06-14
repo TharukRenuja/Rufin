@@ -1,5 +1,8 @@
 use super::*;
 
+const EMBEDDED_SCROLL_LATCH_MS: u128 = 280;
+const EMBEDDED_SURFACE_SCROLL_FACTOR: f64 = 2.5;
+
 #[derive(Clone, Copy)]
 pub(in crate::ui) struct LibraryRouteLoadTiming {
     source: &'static str,
@@ -1196,13 +1199,18 @@ impl Shell {
         let resize: Rc<dyn Fn(usize)> = Rc::new(move |row_count| {
             set_library_table_content_height(&resize_scroller, row_count, max_visible_rows);
         });
+        let width_mode = if max_visible_rows.is_some() {
+            ColumnViewWidthMode::EmbeddedScroller
+        } else {
+            ColumnViewWidthMode::Embedded
+        };
         let (_empty, search, view, _model, _settings) = self.searchable_track_collection(
             tracks,
             key,
             Some(resize),
             source_descriptor,
             content_inset,
-            ColumnViewWidthMode::Embedded,
+            width_mode,
         );
         let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 10);
         wrapper.set_widget_name(context);
@@ -1216,6 +1224,8 @@ impl Shell {
         if max_visible_rows.is_some() {
             configure_fill_width_clip(&scroller, gtk::PolicyType::Automatic);
             scroller.set_overlay_scrolling(false);
+            scroller.set_margin_end(DETAIL_ROUTE_SCROLL_GUTTER);
+            install_embedded_track_scroll_latch(&scroller);
         } else {
             scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
             scroller.set_width_request(1);
@@ -1403,4 +1413,141 @@ fn track_route_tracks_key(
         return None;
     }
     matches!(key, LibraryListKey::FavoriteTracks).then_some(key)
+}
+
+fn install_embedded_track_scroll_latch(scroller: &gtk::ScrolledWindow) {
+    let last_parent_scroll = Rc::new(Cell::new(None::<Instant>));
+    let connected_parent = Rc::new(Cell::new(false));
+    let pointer_y = Rc::new(Cell::new(None::<f64>));
+
+    let motion = gtk::EventControllerMotion::new();
+    let motion_y = Rc::clone(&pointer_y);
+    motion.connect_motion(move |_, _, y| {
+        motion_y.set(Some(y));
+    });
+    let leave_y = Rc::clone(&pointer_y);
+    motion.connect_leave(move |_| {
+        leave_y.set(None);
+    });
+    scroller.add_controller(motion);
+
+    let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    wheel.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let scroller_weak = scroller.downgrade();
+    wheel.connect_scroll(move |controller, _, dy| {
+        if dy == 0.0 {
+            return gtk::glib::Propagation::Proceed;
+        }
+
+        let Some(scroller) = scroller_weak.upgrade() else {
+            return gtk::glib::Propagation::Stop;
+        };
+        let Some(parent) =
+            nearest_parent_scrolled_window(&scroller.clone().upcast::<gtk::Widget>())
+        else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        if !connected_parent.get() {
+            connected_parent.set(true);
+            let last_parent_scroll = Rc::clone(&last_parent_scroll);
+            parent.vadjustment().connect_value_changed(move |_| {
+                last_parent_scroll.set(Some(Instant::now()));
+            });
+        }
+
+        let unit = controller.unit();
+        let parent_latched = parent_scroll_is_latched(Instant::now(), last_parent_scroll.get());
+        if pointer_is_embedded_table_header(pointer_y.get())
+            || parent_latched
+            || !adjustment_can_scroll(&scroller.vadjustment(), dy, unit)
+        {
+            scroll_adjustment(&parent.vadjustment(), dy, unit);
+            return gtk::glib::Propagation::Stop;
+        }
+        gtk::glib::Propagation::Proceed
+    });
+    scroller.add_controller(wheel);
+}
+
+fn parent_scroll_is_latched(now: Instant, last_parent_scroll: Option<Instant>) -> bool {
+    last_parent_scroll
+        .and_then(|last| now.checked_duration_since(last))
+        .is_some_and(|elapsed| elapsed.as_millis() <= EMBEDDED_SCROLL_LATCH_MS)
+}
+
+fn pointer_is_embedded_table_header(y: Option<f64>) -> bool {
+    y.is_some_and(|y| y >= 0.0 && y < f64::from(LIBRARY_TABLE_HEADER_HEIGHT))
+}
+
+fn adjustment_can_scroll(
+    adjustment: &gtk::Adjustment,
+    dy: f64,
+    unit: gtk::gdk::ScrollUnit,
+) -> bool {
+    adjusted_scroll_value(adjustment, dy, unit)
+        .is_some_and(|value| (value - adjustment.value()).abs() > f64::EPSILON)
+}
+
+fn scroll_adjustment(adjustment: &gtk::Adjustment, dy: f64, unit: gtk::gdk::ScrollUnit) {
+    if let Some(value) = adjusted_scroll_value(adjustment, dy, unit) {
+        adjustment.set_value(value);
+    }
+}
+
+fn adjusted_scroll_value(
+    adjustment: &gtk::Adjustment,
+    dy: f64,
+    unit: gtk::gdk::ScrollUnit,
+) -> Option<f64> {
+    let page_size = adjustment.page_size();
+    let multiplier = match unit {
+        gtk::gdk::ScrollUnit::Surface => EMBEDDED_SURFACE_SCROLL_FACTOR,
+        _ => page_size.powf(2.0 / 3.0),
+    };
+    let max_value = (adjustment.upper() - page_size).max(adjustment.lower());
+    let value = (adjustment.value() + dy * multiplier).clamp(adjustment.lower(), max_value);
+    (value - adjustment.value())
+        .abs()
+        .gt(&f64::EPSILON)
+        .then_some(value)
+}
+
+fn nearest_parent_scrolled_window(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+    let mut parent = widget.parent();
+    while let Some(widget) = parent {
+        if let Ok(scroller) = widget.clone().downcast::<gtk::ScrolledWindow>() {
+            return Some(scroller);
+        }
+        parent = widget.parent();
+    }
+    None
+}
+
+#[cfg(test)]
+mod embedded_scroll_tests {
+    use super::*;
+
+    #[test]
+    fn parent_scroll_latch_expires() {
+        let now = Instant::now();
+
+        assert!(parent_scroll_is_latched(now, Some(now)));
+        assert!(!parent_scroll_is_latched(
+            now,
+            Some(now - Duration::from_millis(EMBEDDED_SCROLL_LATCH_MS as u64 + 1))
+        ));
+        assert!(!parent_scroll_is_latched(now, None));
+    }
+
+    #[test]
+    fn embedded_table_header_routes_to_parent() {
+        assert!(pointer_is_embedded_table_header(Some(0.0)));
+        assert!(pointer_is_embedded_table_header(Some(
+            f64::from(LIBRARY_TABLE_HEADER_HEIGHT) - 1.0
+        )));
+        assert!(!pointer_is_embedded_table_header(Some(f64::from(
+            LIBRARY_TABLE_HEADER_HEIGHT
+        ))));
+        assert!(!pointer_is_embedded_table_header(None));
+    }
 }

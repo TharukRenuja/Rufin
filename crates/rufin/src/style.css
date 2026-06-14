@@ -331,10 +331,6 @@ menubutton.server-selector > button:hover {
   line-height: 1.2;
 }
 
-.home-showcase-actions {
-  margin-top: 6px;
-}
-
 .home-genre-flow {
   padding-bottom: 4px;
 }
@@ -382,23 +378,28 @@ menubutton.server-selector > button:hover {
 
 .cover-hover-button {
   border-radius: 999px;
-  background: color-mix(
-    in srgb,
-    color-mix(in srgb, @card_bg_color 74%, @accent_bg_color 26%) 82%,
-    transparent
-  );
-  color: @window_fg_color;
+  background: white;
+  color: #111111;
   box-shadow:
     0 8px 22px rgba(0, 0, 0, 0.26),
-    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 14%, transparent);
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  transform: scale(1);
+  transition:
+    background 120ms ease-out,
+    box-shadow 120ms ease-out,
+    transform 120ms ease-out;
 }
 
 .cover-hover-button:hover {
-  background: color-mix(
-    in srgb,
-    color-mix(in srgb, @card_bg_color 62%, @accent_bg_color 38%) 90%,
-    transparent
-  );
+  background: #f7f7f7;
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  transform: scale(1.08);
+}
+
+.cover-hover-button:active {
+  transform: scale(0.96);
 }
 
 .cover-hover-transport {
@@ -428,11 +429,7 @@ menubutton.server-selector > button:hover {
 }
 
 .cover-hover-button.favorite-toggle.active-toggle {
-  background: color-mix(
-    in srgb,
-    color-mix(in srgb, @card_bg_color 68%, @accent_bg_color 32%) 86%,
-    transparent
-  );
+  background: white;
 }
 
 .cover-favorite-button.favorite-toggle {
@@ -789,22 +786,27 @@ scale.volume-slider trough {
   min-width: 48px;
   min-height: 48px;
   padding: 0;
-  background: color-mix(in srgb, @window_fg_color 14%, transparent);
-  color: @window_fg_color;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  background: white;
+  color: #111111;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 
 .detail-showcase-action-button:hover,
 .album-detail-action-button:hover,
 .playlist-detail-action-button:hover {
-  background: color-mix(in srgb, @window_fg_color 20%, transparent);
+  background: #f7f7f7;
 }
 
 .detail-showcase-play-button,
 .album-detail-play-button,
 .playlist-detail-play-button {
-  background: color-mix(in srgb, @window_fg_color 90%, transparent);
+  min-width: 56px;
+  min-height: 56px;
+  background: color-mix(in srgb, @window_fg_color 92%, transparent);
   color: @window_bg_color;
+  -gtk-icon-size: 18px;
 }
 
 .detail-showcase-play-button:hover,
@@ -815,11 +817,11 @@ scale.volume-slider trough {
 
 .detail-showcase-action-button.favorite-toggle.active-toggle {
   color: @error_color;
-  background: color-mix(in srgb, @window_fg_color 14%, transparent);
+  background: white;
 }
 
 .detail-showcase-action-button.favorite-toggle.active-toggle:hover {
-  background: color-mix(in srgb, @window_fg_color 20%, transparent);
+  background: #f7f7f7;
 }
 
 .detail-showcase-link-row {
@@ -853,34 +855,15 @@ scale.volume-slider trough {
   min-height: 32px;
   padding: 0;
   color: color-mix(in srgb, @window_fg_color 76%, @window_bg_color);
-  background: color-mix(in srgb, @window_fg_color 10%, transparent);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  background: color-mix(in srgb, @window_bg_color 90%, @window_fg_color 10%);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px color-mix(in srgb, @window_fg_color 7%, transparent);
 }
 
 .detail-external-link-button:hover {
   color: @window_fg_color;
-  background: color-mix(in srgb, @window_fg_color 18%, transparent);
-}
-
-.home-showcase-action-button {
-  min-width: 48px;
-  min-height: 48px;
-  background: color-mix(in srgb, @window_fg_color 14%, transparent);
-  color: @window_fg_color;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-
-.home-showcase-action-button:hover {
-  background: color-mix(in srgb, @window_fg_color 20%, transparent);
-}
-
-.home-showcase-play-button {
-  background: color-mix(in srgb, @window_fg_color 90%, transparent);
-  color: @window_bg_color;
-}
-
-.home-showcase-play-button:hover {
-  background: @window_fg_color;
+  background: color-mix(in srgb, @window_bg_color 82%, @window_fg_color 18%);
 }
 
 .queue-panel {

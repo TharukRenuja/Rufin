@@ -691,11 +691,11 @@ pub(in crate::ui) fn album_card(
         size,
         Some(&shell.controller),
     ));
-    card.append(&center_grid_title(&album.title, "track-title", size));
+    card.append(&left_grid_title(&album.title, "track-title", size));
     for field in fields {
         let value = album_field(album, field);
         if !value.is_empty() {
-            let label = collection_grid_field_label(&value, field, size);
+            let label = left_collection_grid_field_label(&value, field, size);
             if matches!(field, LibraryField::Artist | LibraryField::AlbumArtist) {
                 add_card_label_link(shell, &label.0, &label.1, &value, album_artist_route(album));
             }
@@ -958,6 +958,17 @@ fn collection_grid_field_label(
         size,
         COLLECTION_GRID_FIELD_LINES,
     )
+}
+
+fn left_collection_grid_field_label(
+    value: &str,
+    field: LibraryField,
+    size: i32,
+) -> (gtk::Widget, gtk::Label) {
+    let label = collection_grid_field_label(value, field, size);
+    label.1.set_xalign(0.0);
+    label.1.set_justify(gtk::Justification::Left);
+    label
 }
 
 fn track_grid_artist_route(track: &Track, field: LibraryField) -> Option<Route> {
