@@ -29,10 +29,6 @@ makedepends=(
   'git'
   'pkgconf'
 )
-optdepends=(
-  'gnome-keyring: Secret Service provider for saving Jellyfin tokens'
-  'kwallet: Secret Service provider for saving Jellyfin tokens'
-)
 provides=('rufin')
 conflicts=('rufin')
 options=('!lto')
