@@ -212,11 +212,14 @@ impl Shell {
 
         let image_ref = super::library::artist_cover_image_ref(self, artist);
         let cover_fetch_size = cover_fetch_size_for_display(cover_size);
-        self.prime_cached_cover(image_ref.as_ref(), cover_fetch_size, cover_size);
-        let cover = self.cover_tile_for(image_ref.as_ref(), seed, cover_size, cover_fetch_size);
-        cover.add_css_class("detail-showcase-cover");
-        cover.add_css_class("artist-detail-cover");
-        cover.set_halign(gtk::Align::Start);
+        let cover = detail_cover_button(
+            self,
+            image_ref.as_ref(),
+            seed,
+            cover_size,
+            cover_fetch_size,
+            "artist-detail-cover",
+        );
         let summary = gtk::Label::new(Some(&artist_summary_text(
             album_count,
             appears_on_count,

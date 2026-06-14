@@ -52,16 +52,14 @@ impl Shell {
         body.set_hexpand(true);
         body.set_halign(gtk::Align::Fill);
         let cover_fetch_size = cover_fetch_size_for_display(cover_size);
-        self.prime_cached_cover(album.image_ref.as_ref(), cover_fetch_size, cover_size);
-        let cover = self.cover_tile_for(
+        let cover = detail_cover_button(
+            self,
             album.image_ref.as_ref(),
             album.color_seed,
             cover_size,
             cover_fetch_size,
+            "album-detail-cover",
         );
-        cover.add_css_class("detail-showcase-cover");
-        cover.add_css_class("album-detail-cover");
-        cover.set_halign(gtk::Align::Start);
         let facts = gtk::Label::new(Some(&format!(
             "{} • {} {} • {}",
             album.year,
@@ -82,9 +80,15 @@ impl Shell {
         cover_column.set_halign(gtk::Align::Start);
         cover_column.set_width_request(cover_size);
         cover_column.append(&cover);
+        let link_stack = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        link_stack.add_css_class("album-detail-link-stack");
+        link_stack.set_halign(gtk::Align::Center);
         if let Some(external_links) = external_links {
             external_links.set_halign(gtk::Align::Center);
-            cover_column.append(&external_links);
+            link_stack.append(&external_links);
+        }
+        if link_stack.first_child().is_some() {
+            cover_column.append(&link_stack);
         }
         body.append(&cover_column);
 
@@ -99,6 +103,14 @@ impl Shell {
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
         kind.set_halign(gtk::Align::Start);
+        kind.set_valign(gtk::Align::Center);
+        let kind_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        kind_row.add_css_class("album-detail-kind-row");
+        kind_row.set_halign(gtk::Align::Start);
+        kind_row.append(&kind);
+        if let Some(genre_links) = self.album_genre_links(&album) {
+            kind_row.append(&genre_links);
+        }
         let title = gtk::Label::new(Some(&album.title));
         title.add_css_class("detail-title");
         title.set_xalign(0.0);
@@ -136,7 +148,7 @@ impl Shell {
                 });
             });
         }
-        text_stack.append(&kind);
+        text_stack.append(&kind_row);
         text_stack.append(&title);
         text_stack.append(&artist);
         text_stack.append(&facts);
@@ -211,5 +223,56 @@ impl Shell {
 
         wrapper.append(&detail_route_scroller(self, content.upcast()));
         wrapper.upcast()
+    }
+
+    fn album_genre_links(self: &Rc<Self>, album: &Album) -> Option<gtk::Widget> {
+        let flow = gtk::FlowBox::new();
+        flow.add_css_class("album-detail-genre-row");
+        flow.set_column_spacing(6);
+        flow.set_row_spacing(6);
+        flow.set_selection_mode(gtk::SelectionMode::None);
+        flow.set_max_children_per_line(3);
+        flow.set_valign(gtk::Align::Center);
+
+        for genre_name in album
+            .genres
+            .iter()
+            .map(|name| name.trim())
+            .filter(|name| !name.is_empty())
+        {
+            let button = gtk::Button::with_label(genre_name);
+            button.add_css_class("flat");
+            button.add_css_class("album-detail-genre-pill");
+            if let Some(genre_id) = self.album_genre_id(genre_name) {
+                let shell = Rc::clone(self);
+                button
+                    .connect_clicked(move |_| shell.navigate(Route::GenreDetail(genre_id.clone())));
+            } else {
+                button.set_sensitive(false);
+            }
+            flow.insert(&button, -1);
+        }
+
+        flow.first_child().is_some().then(|| flow.upcast())
+    }
+
+    fn album_genre_id(&self, name: &str) -> Option<domain::GenreId> {
+        let library = self.state.library.borrow();
+        if let Some(genre) = library
+            .genres
+            .iter()
+            .find(|genre| genre.name.eq_ignore_ascii_case(name))
+        {
+            return Some(genre.id.clone());
+        }
+        drop(library);
+
+        self.controller
+            .cached_genres_page_matching(name, 0, 8)
+            .ok()?
+            .items
+            .into_iter()
+            .find(|genre| genre.name.eq_ignore_ascii_case(name))
+            .map(|genre| genre.id)
     }
 }
