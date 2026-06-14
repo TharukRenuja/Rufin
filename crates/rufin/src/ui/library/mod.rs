@@ -2,12 +2,12 @@ use super::{
     ArtworkTile, COVER_LOOKUP_LIMIT, DETAIL_ROUTE_SCROLL_GUTTER, GRID_COVER_SIZE,
     GRID_ROUTE_PAGE_SIZE, LoadedTrackPlayContext, PRIMARY_ROUTE_MARGIN_START, PagedGridCursor,
     PlaySourceDescriptor, Route, SLOW_ROUTE_PAGE_LOAD_MS, Shell, THUMB_COVER_SIZE,
-    TRACK_ROUTE_PAGE_SIZE, add_dynamic_link_hover, add_label_click, album_artist_route,
-    album_favorite_key, album_play_activation, append_albums_to_model, append_artists_to_model,
-    append_genres_to_model, append_playlists_to_model, append_tracks_to_model, artist_favorite_key,
-    cards, connect_paged_grid_loader, context_artist, favorite_button_is_active,
-    favorite_icon_button, finish_grid_page, icon_button, install_album_context_menu,
-    install_artist_context_menu, install_dynamic_album_context_menu,
+    TRACK_ROUTE_PAGE_SIZE, add_card_label_link, add_dynamic_link_hover, add_label_click,
+    album_artist_route, album_favorite_key, album_play_activation, append_albums_to_model,
+    append_artists_to_model, append_genres_to_model, append_playlists_to_model,
+    append_tracks_to_model, artist_favorite_key, cards, connect_paged_grid_loader, context_artist,
+    favorite_button_is_active, favorite_icon_button, finish_grid_page, icon_button,
+    install_album_context_menu, install_artist_context_menu, install_dynamic_album_context_menu,
     install_dynamic_track_context_menu, install_playlist_context_menu,
     install_smart_playlist_context_menu, install_track_context_menu,
     layout::{
@@ -545,6 +545,7 @@ fn connect_album_viewport_cover_warm(
         shell,
         scroller,
         model,
+        LibraryListKey::Albums,
         settings,
         album_cover_warm_sizes,
         album_cover_refs,
@@ -554,23 +555,26 @@ fn connect_artist_viewport_cover_warm(
     shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
     model: &gio::ListStore,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
 ) {
     connect_cover_viewport_warm(
         shell,
         scroller,
         model,
+        key,
         settings,
         grid_row_sizes,
         artist_cover_refs,
     );
 }
-type CoverSizeResolver = fn(&Rc<Shell>, &LibraryListSettings) -> Option<(u32, i32)>;
+type CoverSizeResolver = fn(&Rc<Shell>, LibraryListKey, &LibraryListSettings) -> Option<(u32, i32)>;
 type CoverRefsForRange = fn(&gio::ListStore, usize, usize) -> Vec<ImageRef>;
 
 struct CoverViewportRequest<'a> {
     model: &'a gio::ListStore,
     adjustment: &'a gtk::Adjustment,
+    key: LibraryListKey,
     settings: &'a LibraryListSettings,
     fetch_size: u32,
     size: i32,
@@ -585,6 +589,7 @@ fn prepare_item_cover_model_viewport(shell: &Rc<Shell>, request: CoverViewportRe
             shell,
             request.adjustment,
             request.model.n_items() as usize,
+            request.key,
             request.settings,
         )
     } else {
@@ -592,6 +597,7 @@ fn prepare_item_cover_model_viewport(shell: &Rc<Shell>, request: CoverViewportRe
             shell,
             request.adjustment,
             request.model.n_items() as usize,
+            request.key,
             request.settings,
         )
     };
@@ -620,6 +626,7 @@ fn connect_genre_viewport_cover_warm(
         shell,
         scroller,
         model,
+        LibraryListKey::Genres,
         settings,
         grid_row_sizes,
         genre_cover_refs,
@@ -635,6 +642,7 @@ fn connect_playlist_viewport_cover_warm(
         shell,
         scroller,
         model,
+        LibraryListKey::Playlists,
         settings,
         grid_row_sizes,
         playlist_cover_refs,
@@ -650,6 +658,7 @@ fn connect_smart_warm(
         shell,
         scroller,
         model,
+        LibraryListKey::SmartPlaylists,
         settings,
         grid_row_sizes,
         smart_cover_refs,
@@ -659,11 +668,12 @@ fn connect_cover_viewport_warm(
     shell: &Rc<Shell>,
     scroller: &gtk::ScrolledWindow,
     model: &gio::ListStore,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
     cover_sizes: CoverSizeResolver,
     refs_for_range: CoverRefsForRange,
 ) {
-    let Some((fetch_size, size)) = cover_sizes(shell, settings) else {
+    let Some((fetch_size, size)) = cover_sizes(shell, key, settings) else {
         return;
     };
 
@@ -684,6 +694,7 @@ fn connect_cover_viewport_warm(
                 CoverViewportRequest {
                     model: &model,
                     adjustment: &adjustment,
+                    key,
                     settings: &settings,
                     fetch_size,
                     size,
@@ -716,6 +727,7 @@ fn connect_cover_viewport_warm(
                         CoverViewportRequest {
                             model: &model,
                             adjustment: &adjustment,
+                            key,
                             settings: &settings,
                             fetch_size,
                             size,
@@ -736,6 +748,7 @@ fn connect_cover_viewport_warm(
                 CoverViewportRequest {
                     model: &model,
                     adjustment: &adjustment,
+                    key,
                     settings: &settings,
                     fetch_size,
                     size,
@@ -751,12 +764,14 @@ fn library_viewport_cover_ranges(
     shell: &Rc<Shell>,
     adjustment: &gtk::Adjustment,
     total: usize,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
 ) -> Option<TrackViewportCoverRanges> {
     priority_cover_ranges(
         shell,
         adjustment,
         total,
+        key,
         settings,
         ALBUM_PRIORITY_BEHIND,
         ALBUM_PRIORITY_AHEAD,
@@ -768,12 +783,14 @@ fn library_interaction_viewport_cover_ranges(
     shell: &Rc<Shell>,
     adjustment: &gtk::Adjustment,
     total: usize,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
 ) -> Option<TrackViewportCoverRanges> {
     priority_cover_ranges(
         shell,
         adjustment,
         total,
+        key,
         settings,
         ALBUM_INTERACTION_BEHIND,
         ALBUM_INTERACTION_AHEAD,
@@ -786,6 +803,7 @@ fn priority_cover_ranges(
     shell: &Rc<Shell>,
     adjustment: &gtk::Adjustment,
     total: usize,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
     row_priority_behind: usize,
     row_priority_ahead: usize,
@@ -812,7 +830,7 @@ fn priority_cover_ranges(
             )
         }
         LibraryLayout::Grid | LibraryLayout::Detail => {
-            let (columns, card_size) = shell.collection_card_grid_metrics();
+            let (columns, card_size) = shell.collection_card_grid_metrics_for(key, settings);
             let columns = columns.max(1);
             let item_extent = f64::from(collection_grid_item_extent(card_size, settings));
             let first_row = (adjustment.value().max(0.0) / item_extent).floor() as usize;
@@ -844,12 +862,18 @@ pub(in crate::ui) fn collection_grid_item_extent(
 fn warm_album_covers_for_settings(
     shell: &Rc<Shell>,
     albums: &[Album],
+    key: LibraryListKey,
     settings: &LibraryListSettings,
 ) {
-    warm_album_cover(shell, albums, settings);
+    warm_album_cover(shell, albums, key, settings);
 }
-fn warm_album_cover(shell: &Rc<Shell>, albums: &[Album], settings: &LibraryListSettings) {
-    let Some((fetch_size, size)) = album_cover_warm_sizes(shell, settings) else {
+fn warm_album_cover(
+    shell: &Rc<Shell>,
+    albums: &[Album],
+    key: LibraryListKey,
+    settings: &LibraryListSettings,
+) {
+    let Some((fetch_size, size)) = album_cover_warm_sizes(shell, key, settings) else {
         return;
     };
     let mut values = albums.to_vec();
@@ -876,12 +900,18 @@ fn prepare_album_cover_refs(
 fn warm_artist_covers_for_settings(
     shell: &Rc<Shell>,
     artists: &[Artist],
+    key: LibraryListKey,
     settings: &LibraryListSettings,
 ) {
-    warm_artist_cover(shell, artists, settings);
+    warm_artist_cover(shell, artists, key, settings);
 }
-fn warm_artist_cover(shell: &Rc<Shell>, artists: &[Artist], settings: &LibraryListSettings) {
-    let Some((fetch_size, size)) = grid_row_sizes(shell, settings) else {
+fn warm_artist_cover(
+    shell: &Rc<Shell>,
+    artists: &[Artist],
+    key: LibraryListKey,
+    settings: &LibraryListSettings,
+) {
+    let Some((fetch_size, size)) = grid_row_sizes(shell, key, settings) else {
         return;
     };
     let mut values = artists.to_vec();
@@ -966,9 +996,16 @@ fn track_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> 
         LibraryLayout::Detail => None,
     }
 }
-fn album_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(u32, i32)> {
+fn album_cover_warm_sizes(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    settings: &LibraryListSettings,
+) -> Option<(u32, i32)> {
     match settings.layout {
-        LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.collection_card_grid_metrics().1)),
+        LibraryLayout::Grid => Some((
+            GRID_COVER_SIZE,
+            shell.collection_card_grid_metrics_for(key, settings).1,
+        )),
         LibraryLayout::Detail => Some((
             GRID_COVER_SIZE,
             if compact_detail_layout(shell) {
@@ -981,11 +1018,16 @@ fn album_cover_warm_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> 
         LibraryLayout::Row => None,
     }
 }
-fn grid_row_sizes(shell: &Rc<Shell>, settings: &LibraryListSettings) -> Option<(u32, i32)> {
+fn grid_row_sizes(
+    shell: &Rc<Shell>,
+    key: LibraryListKey,
+    settings: &LibraryListSettings,
+) -> Option<(u32, i32)> {
     match settings.layout {
-        LibraryLayout::Grid | LibraryLayout::Detail => {
-            Some((GRID_COVER_SIZE, shell.collection_card_grid_metrics().1))
-        }
+        LibraryLayout::Grid | LibraryLayout::Detail => Some((
+            GRID_COVER_SIZE,
+            shell.collection_card_grid_metrics_for(key, settings).1,
+        )),
         LibraryLayout::Row if album_row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
     }

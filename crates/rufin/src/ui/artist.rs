@@ -4,9 +4,10 @@ use ::library::CachedArtistDetail;
 use adw::prelude::*;
 use domain::{
     Album, AlbumId, Artist, ArtistId, ArtistTrackScope, PlaySourceDescriptor, PlaySourceKey, Route,
-    SourceOrder, Track, normalize_release_types,
+    SourceOrder, Track,
 };
 
+use super::release_kind::{AlbumReleaseKind, album_release_kind};
 use super::*;
 
 const DETAIL_HEADER_SPACING: i32 = 18;
@@ -448,15 +449,6 @@ fn artist_summary_text(album_count: usize, appears_on_count: usize, track_count:
     )
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ArtistReleaseGroup {
-    Albums,
-    Eps,
-    Singles,
-    Collections,
-    Other,
-}
-
 struct ArtistReleaseSection {
     title: &'static str,
     albums: Vec<Album>,
@@ -464,14 +456,14 @@ struct ArtistReleaseSection {
 
 fn artist_release_sections(albums: &[Album]) -> Vec<ArtistReleaseSection> {
     let mut grouped = [
-        (ArtistReleaseGroup::Albums, Vec::new()),
-        (ArtistReleaseGroup::Eps, Vec::new()),
-        (ArtistReleaseGroup::Singles, Vec::new()),
-        (ArtistReleaseGroup::Collections, Vec::new()),
-        (ArtistReleaseGroup::Other, Vec::new()),
+        (AlbumReleaseKind::Album, Vec::new()),
+        (AlbumReleaseKind::Ep, Vec::new()),
+        (AlbumReleaseKind::Single, Vec::new()),
+        (AlbumReleaseKind::Collection, Vec::new()),
+        (AlbumReleaseKind::Other, Vec::new()),
     ];
     for album in albums {
-        let group = artist_release_group(album);
+        let group = album_release_kind(album);
         if let Some((_, bucket)) = grouped
             .iter_mut()
             .find(|(candidate, _)| candidate == &group)
@@ -483,51 +475,11 @@ fn artist_release_sections(albums: &[Album]) -> Vec<ArtistReleaseSection> {
         .into_iter()
         .filter_map(|(group, albums)| {
             (!albums.is_empty()).then_some(ArtistReleaseSection {
-                title: group.title(),
+                title: group.section_title(),
                 albums,
             })
         })
         .collect()
-}
-
-fn artist_release_group(album: &Album) -> ArtistReleaseGroup {
-    if album.is_compilation == Some(true) {
-        return ArtistReleaseGroup::Collections;
-    }
-    let types = normalize_release_types(&album.release_types);
-    if types.is_empty() || types.iter().any(|value| value == "album") {
-        return ArtistReleaseGroup::Albums;
-    }
-    if types.iter().any(|value| {
-        matches!(
-            value.as_str(),
-            "compilation" | "compilations" | "collection" | "collections"
-        )
-    }) {
-        return ArtistReleaseGroup::Collections;
-    }
-    if types
-        .iter()
-        .any(|value| matches!(value.as_str(), "ep" | "e.p."))
-    {
-        return ArtistReleaseGroup::Eps;
-    }
-    if types.iter().any(|value| value == "single") {
-        return ArtistReleaseGroup::Singles;
-    }
-    ArtistReleaseGroup::Other
-}
-
-impl ArtistReleaseGroup {
-    fn title(self) -> &'static str {
-        match self {
-            ArtistReleaseGroup::Albums => "Albums",
-            ArtistReleaseGroup::Eps => "EPs",
-            ArtistReleaseGroup::Singles => "Singles",
-            ArtistReleaseGroup::Collections => "Collections",
-            ArtistReleaseGroup::Other => "Other",
-        }
-    }
 }
 
 fn favorite_artist_tracks(tracks: &[Track]) -> Vec<Track> {

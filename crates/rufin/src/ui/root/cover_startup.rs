@@ -1242,7 +1242,7 @@ fn track_visible_cover_window(
     favorite_first: bool,
 ) -> VisibleCoverWindow {
     let settings = shell.library_settings(key);
-    let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
+    let Some((fetch_size, size)) = cover_prime_sizes(shell, key, &settings) else {
         return VisibleCoverWindow { refs: Vec::new() };
     };
     if matches!(key, LibraryListKey::Tracks | LibraryListKey::FavoriteTracks) {
@@ -1251,6 +1251,7 @@ fn track_visible_cover_window(
             return track_visible_cover_window_for_refs(
                 shell,
                 &route_refs,
+                key,
                 &settings,
                 fetch_size,
                 size,
@@ -1262,17 +1263,18 @@ fn track_visible_cover_window(
         _ => shell.state.library.borrow().tracks.clone(),
     };
     library::sort_tracks(&mut tracks, &settings, favorite_first);
-    track_visible_cover_window_for_tracks(shell, &tracks, &settings, fetch_size, size)
+    track_visible_cover_window_for_tracks(shell, &tracks, key, &settings, fetch_size, size)
 }
 
 fn track_visible_cover_window_for_refs(
     shell: &Shell,
     refs: &[Option<ImageRef>],
+    key: LibraryListKey,
     settings: &LibraryListSettings,
     fetch_size: u32,
     size: i32,
 ) -> VisibleCoverWindow {
-    let (visible_start, visible_end) = visible_index_range(shell, refs.len(), settings);
+    let (visible_start, visible_end) = visible_index_range(shell, refs.len(), key, settings);
     let refs = refs[visible_start..visible_end]
         .iter()
         .filter_map(|image_ref| image_ref.clone())
@@ -1288,11 +1290,12 @@ fn track_visible_cover_window_for_refs(
 fn track_visible_cover_window_for_tracks(
     shell: &Shell,
     tracks: &[Track],
+    key: LibraryListKey,
     settings: &LibraryListSettings,
     fetch_size: u32,
     size: i32,
 ) -> VisibleCoverWindow {
-    let (visible_start, visible_end) = visible_index_range(shell, tracks.len(), settings);
+    let (visible_start, visible_end) = visible_index_range(shell, tracks.len(), key, settings);
     let visible_tracks = &tracks[visible_start..visible_end];
     let refs = visible_tracks
         .iter()
@@ -1308,12 +1311,14 @@ fn track_visible_cover_window_for_tracks(
 
 fn album_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     let settings = shell.library_settings(LibraryListKey::Albums);
-    let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
+    let Some((fetch_size, size)) = cover_prime_sizes(shell, LibraryListKey::Albums, &settings)
+    else {
         return VisibleCoverWindow { refs: Vec::new() };
     };
     let mut albums = shell.state.library.borrow().albums.clone();
     library::sort_albums(&mut albums, &settings);
-    let (visible_start, visible_end) = visible_index_range(shell, albums.len(), &settings);
+    let (visible_start, visible_end) =
+        visible_index_range(shell, albums.len(), LibraryListKey::Albums, &settings);
     let visible_albums = &albums[visible_start..visible_end];
     let refs = visible_albums
         .iter()
@@ -1334,7 +1339,7 @@ fn artist_visible_cover_window(shell: &Shell, album_artist: bool) -> VisibleCove
         LibraryListKey::Artists
     };
     let settings = shell.library_settings(key);
-    let Some((fetch_size, size)) = cover_prime_sizes(shell, &settings) else {
+    let Some((fetch_size, size)) = cover_prime_sizes(shell, key, &settings) else {
         return VisibleCoverWindow { refs: Vec::new() };
     };
     let mut artists = if album_artist {
@@ -1343,7 +1348,7 @@ fn artist_visible_cover_window(shell: &Shell, album_artist: bool) -> VisibleCove
         shell.state.library.borrow().artists.clone()
     };
     library::sort_artists(&mut artists, &settings);
-    let (visible_start, visible_end) = visible_index_range(shell, artists.len(), &settings);
+    let (visible_start, visible_end) = visible_index_range(shell, artists.len(), key, &settings);
     let visible_artists = &artists[visible_start..visible_end];
     let refs = visible_artists
         .iter()
@@ -1365,7 +1370,8 @@ fn genre_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     let library = shell.state.library.borrow();
     let mut genres = library.genres.clone();
     library::sort_genres(&mut genres, &settings);
-    let (visible_start, visible_end) = visible_index_range(shell, genres.len(), &settings);
+    let (visible_start, visible_end) =
+        visible_index_range(shell, genres.len(), LibraryListKey::Genres, &settings);
     let mut image_refs = Vec::new();
     for genre in &genres[visible_start..visible_end] {
         image_refs.extend(crate::cover_art_policy::selected_genre_artwork(genre).image_refs);
@@ -1381,7 +1387,8 @@ fn playlist_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     };
     let mut playlists = shell.state.library.borrow().playlists.clone();
     library::sort_playlists(&mut playlists, &settings);
-    let (visible_start, visible_end) = visible_index_range(shell, playlists.len(), &settings);
+    let (visible_start, visible_end) =
+        visible_index_range(shell, playlists.len(), LibraryListKey::Playlists, &settings);
     let visible_playlists = &playlists[visible_start..visible_end];
     let mut image_refs = Vec::new();
     for playlist in visible_playlists {
@@ -1402,7 +1409,12 @@ fn smart_playlist_visible_cover_window(shell: &Shell) -> VisibleCoverWindow {
     };
     let mut playlists = shell.state.smart_playlists.borrow().clone();
     library::sort_smart_playlists(&mut playlists, &settings);
-    let (visible_start, visible_end) = visible_index_range(shell, playlists.len(), &settings);
+    let (visible_start, visible_end) = visible_index_range(
+        shell,
+        playlists.len(),
+        LibraryListKey::SmartPlaylists,
+        &settings,
+    );
     let visible_playlists = &playlists[visible_start..visible_end];
     let mut image_refs = Vec::new();
     for playlist in visible_playlists {
@@ -1430,10 +1442,14 @@ fn visible_cover_refs(
 
 pub(in crate::ui) fn cover_prime_sizes(
     shell: &Shell,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
 ) -> Option<(u32, i32)> {
     match settings.layout {
-        LibraryLayout::Grid => Some((GRID_COVER_SIZE, shell.collection_card_grid_metrics().1)),
+        LibraryLayout::Grid => Some((
+            GRID_COVER_SIZE,
+            shell.collection_card_grid_metrics_for(key, settings).1,
+        )),
         LibraryLayout::Detail => Some((GRID_COVER_SIZE, GRID_COVER_SIZE as i32)),
         LibraryLayout::Row if row_layout_uses_cover(settings) => Some((THUMB_COVER_SIZE, 48)),
         LibraryLayout::Row => None,
@@ -1453,18 +1469,19 @@ fn collection_cover_prime_sizes(settings: &LibraryListSettings) -> Option<(u32, 
 pub(in crate::ui) fn visible_index_range(
     shell: &Shell,
     total: usize,
+    key: LibraryListKey,
     settings: &LibraryListSettings,
 ) -> (usize, usize) {
     if total == 0 {
         return (0, 0);
     }
     let Some(scroller) = find_largest_scrolled_window(&shell.route_host.clone().upcast()) else {
-        return (0, initial_visible_count(shell, settings).min(total));
+        return (0, initial_visible_count(shell, key, settings).min(total));
     };
     let adjustment = scroller.vadjustment();
     let offset = adjustment.value().max(0.0);
     let page_size = effective_page_size(shell, &scroller, &adjustment);
-    let (columns, card_size) = shell.collection_card_grid_metrics();
+    let (columns, card_size) = shell.collection_card_grid_metrics_for(key, settings);
     let grid_item_extent = library::collection_grid_item_extent(card_size, settings);
     visible_index_range_from_metrics(
         total,
@@ -1524,8 +1541,12 @@ pub(in crate::ui) fn visible_index_range_from_metrics(
     }
 }
 
-fn initial_visible_count(shell: &Shell, settings: &LibraryListSettings) -> usize {
-    let (columns, card_size) = shell.collection_card_grid_metrics();
+fn initial_visible_count(
+    shell: &Shell,
+    key: LibraryListKey,
+    settings: &LibraryListSettings,
+) -> usize {
+    let (columns, card_size) = shell.collection_card_grid_metrics_for(key, settings);
     let grid_item_extent = library::collection_grid_item_extent(card_size, settings);
     initial_visible_count_from_metrics(
         settings.layout,

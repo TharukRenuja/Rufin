@@ -87,7 +87,7 @@ impl Shell {
         let source_albums = Rc::new(albums.to_vec());
         let settings = self.library_settings(key);
         let album_tracks = self.album_tracks_for_layout(&source_albums, &settings);
-        warm_album_covers_for_settings(self, &source_albums, &settings);
+        warm_album_covers_for_settings(self, &source_albums, key, &settings);
         let model = gio::ListStore::new::<glib::BoxedAnyObject>();
         populate_album_collection_model(&model, &source_albums, &settings, &album_tracks);
 
@@ -107,7 +107,7 @@ impl Shell {
                     .collect::<Vec<_>>();
                 let settings = shell.library_settings(key);
                 let album_tracks = shell.album_tracks_for_layout(&albums, &settings);
-                warm_album_covers_for_settings(&shell, &albums, &settings);
+                warm_album_covers_for_settings(&shell, &albums, key, &settings);
                 populate_album_collection_model(&model, &albums, &settings, &album_tracks);
             });
         }

@@ -32,7 +32,6 @@ use crate::controller::{
     LibraryCounts, LibraryHomeUpdate, LibrarySyncStatus, LyricsSearchResult, NormalizedPlayTarget,
     PlayAnchor, PlayTarget, normalize_loaded_source_activation,
 };
-use domain::ExternalLyricsProvider;
 use domain::{
     Album, AlbumId, AppSettings, ArtistId, Genre, GenreId, HomeBlockKind, HomeSection,
     HomeSectionKind, ImageRef, LibraryLayout, LibrarySourceSelection, Playlist, PlaylistId,
@@ -41,6 +40,7 @@ use domain::{
     SmartPlaylistId, SmartPlaylistMatchMode, SmartPlaylistRuleGroup, SmartPlaylistSortField, Track,
     TrackId, TrackSortKey, TrackTableSettings,
 };
+use domain::{ExternalLyricsProvider, LibraryListKey, LibraryListSettings};
 use gdk_pixbuf::{Colorspace, Pixbuf};
 use library::LibraryDelta;
 use source::{LyricLine, Lyrics, LyricsSource, PlaylistEntry, SearchResults};
@@ -934,6 +934,29 @@ pub(in crate::ui) fn shell_warm_background_refs() {
             .iter()
             .any(|target| target.image_ref.item_id == background_ref.item_id)
     );
+}
+
+#[test]
+pub(in crate::ui) fn shell_album_grid_warm_uses_album_metrics() {
+    let metrics = test_initial_route_metrics();
+    let album_settings = LibraryListSettings {
+        layout: LibraryLayout::Grid,
+        ..LibraryListSettings::for_key(LibraryListKey::Albums)
+    };
+    let track_settings = LibraryListSettings {
+        layout: LibraryLayout::Grid,
+        ..LibraryListSettings::for_key(LibraryListKey::Tracks)
+    };
+
+    assert_eq!(
+        super::source_route_cover_size(LibraryListKey::Albums, &album_settings, metrics),
+        Some((super::GRID_COVER_SIZE, metrics.album_grid_card_size))
+    );
+    assert_eq!(
+        super::source_route_cover_size(LibraryListKey::Tracks, &track_settings, metrics),
+        Some((super::GRID_COVER_SIZE, metrics.grid_card_size))
+    );
+    assert_ne!(metrics.album_grid_card_size, metrics.grid_card_size);
 }
 
 #[test]
@@ -1838,6 +1861,8 @@ fn test_initial_route_metrics() -> super::InitialRouteCoverMetrics {
         app_height: 720,
         grid_columns: 4,
         grid_card_size: 160,
+        album_grid_columns: 2,
+        album_grid_card_size: 256,
         home_showcase_seed: 0,
     }
 }

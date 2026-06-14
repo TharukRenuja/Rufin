@@ -436,6 +436,14 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Favorites");
     let _ = tr("Albums");
     let _ = tr("Album");
+    let _ = tr("EPs");
+    let _ = tr("EP");
+    let _ = tr("Singles");
+    let _ = tr("Single");
+    let _ = tr("Collections");
+    let _ = tr("Collection");
+    let _ = tr("Other");
+    let _ = tr("Release");
     let _ = tr("Tracks");
     let _ = tr("Artist");
     let _ = tr("Artists");

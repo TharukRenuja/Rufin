@@ -41,6 +41,8 @@ mod preferences;
 mod queue;
 #[path = "../random_play.rs"]
 mod random_play;
+#[path = "../release_kind.rs"]
+mod release_kind;
 #[path = "../right_panel.rs"]
 mod right_panel;
 #[path = "../settings_persistence.rs"]
@@ -114,6 +116,7 @@ use playback::PlaybackState;
 use player::{PlayerControls, build_bottom_player, connect_player_controls};
 use preferences::{present_library_preferences_dialog, present_preferences_dialog};
 use queue::connect_queue_panel_controls;
+use release_kind::album_release_kind_label;
 use right_panel::{apply_lyrics_panel_visibility, build_right_panel, connect_queue_lyrics_split};
 use source::{FavoriteItemId, FolderDetail, Lyrics, LyricsSource, PlaylistEntry};
 use source_selector::{ServerSelector, build_server_selector};
