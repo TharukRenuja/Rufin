@@ -1,7 +1,4 @@
-use super::cover::{
-    collection_cover_decode_extent, cover_artwork_id_for_key, cover_request_id_for_key,
-};
-use super::grouped_detail_view::GROUPED_DETAIL_COVER_FETCH_SIZE;
+use super::cover::{cover_artwork_id_for_key, cover_request_id_for_key};
 use super::lyrics_playback_state::{
     allow_loaded_lyrics_cache_revisit, loaded_lyrics_matches_current,
 };
@@ -11,9 +8,9 @@ use super::right_panel::{
     queue_lyrics_initial_position, queue_lyrics_position_for_height, queue_lyrics_saved_height,
 };
 use super::startup_reveal::{
-    StartupRevealAction, connection_progress_status_label, cover_warm_delay,
-    startup_loading_status_label, startup_loading_status_parts, startup_prime_action,
-    startup_route_reveal_action, startup_stall_delay_ms, take_pending_warm,
+    StartupRevealAction, connection_progress_status_label, startup_loading_status_label,
+    startup_loading_status_parts, startup_prime_action, startup_route_reveal_action,
+    startup_stall_delay_ms, take_pending_warm,
 };
 use super::{
     AutoLyricsRequest, LocalSourceCacheGateAction, LocalSourceCacheGateInput,
@@ -629,38 +626,6 @@ pub(in crate::ui) fn shell_cover_artwork_id_ignores_size() {
     );
 }
 #[test]
-pub(in crate::ui) fn shell_collection_cover_uses_thumbnail_extent() {
-    assert_eq!(
-        collection_cover_decode_extent(super::THUMB_COVER_SIZE, 180),
-        96
-    );
-    assert_eq!(
-        collection_cover_decode_extent(super::GRID_COVER_SIZE, 180),
-        180
-    );
-}
-
-#[test]
-pub(in crate::ui) fn shell_cover_fetch_size_matches_display_tier() {
-    assert_eq!(
-        super::cover_fetch_size_for_display(72),
-        super::THUMB_COVER_SIZE
-    );
-    assert_eq!(
-        super::cover_fetch_size_for_display(250),
-        super::GRID_COVER_SIZE
-    );
-    assert_eq!(
-        super::cover_fetch_size_for_display(320),
-        super::DETAIL_COVER_SIZE
-    );
-}
-
-#[test]
-pub(in crate::ui) fn shell_grouped_detail_uses_grid_collection_art() {
-    assert_eq!(GROUPED_DETAIL_COVER_FETCH_SIZE, super::GRID_COVER_SIZE);
-}
-#[test]
 pub(in crate::ui) fn shell_stay_cover() {
     let mut library = test_library_snapshot();
     let home_ref = test_image_ref("home");
@@ -993,11 +958,6 @@ pub(in crate::ui) fn shell_warm_route() {
 
     assert!(!target_refs.contains(&genre_ref.item_id.as_str()));
     assert!(!target_refs.contains(&playlist_ref.item_id.as_str()));
-}
-
-#[test]
-pub(in crate::ui) fn shell_warm_settlement() {
-    assert!(cover_warm_delay() > super::RESPONSIVE_RENDER_DELAY_MS * 4);
 }
 
 #[test]

@@ -1013,83 +1013,69 @@ pub(in crate::controller) fn startup_advance_generation() {
     let _cleanup = fs::remove_dir_all(root);
 }
 #[test]
-pub(in crate::controller) fn startup_cached_local_noop_uses_status() {
-    let (store, local, root, generation) = seed_cached_local_source("local-noop-status");
-    let (controller, events) = controller_from_store_for_test(store);
+pub(in crate::controller) fn startup_cached_local_status_reports_noop_and_delta() {
+    for changed in [false, true] {
+        let label = if changed {
+            "local-delta-snapshot"
+        } else {
+            "local-noop-status"
+        };
+        let (store, local, root, generation) = seed_cached_local_source(label);
+        if changed {
+            fs::write(root.join("Artist").join("Album").join("Second.mp3"), []).expect("audio");
+        }
+        let (controller, events) = controller_from_store_for_test(store);
 
-    controller.start_sync(local);
+        controller.start_sync(local);
 
-    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
-    assert_eq!(status.last_error, None);
-    assert!(status.delta.is_empty());
-    let state = controller
-        .store
-        .with_store(|store| store.sync_state(&status.server_id))
-        .expect("final sync state");
-    assert_eq!(state.generation, generation);
-    let _cleanup = fs::remove_dir_all(root);
+        let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
+        if changed {
+            assert!(!status.delta.tracks.added.is_empty(), "{label}");
+            assert_eq!(status.counts.tracks, 2, "{label}");
+        } else {
+            assert_eq!(status.last_error, None, "{label}");
+            assert!(status.delta.is_empty(), "{label}");
+            let state = controller
+                .store
+                .with_store(|store| store.sync_state(&status.server_id))
+                .expect("final sync state");
+            assert_eq!(state.generation, generation, "{label}");
+        }
+        let _cleanup = fs::remove_dir_all(root);
+    }
 }
 #[test]
-pub(in crate::controller) fn unchanged_local_sync_skips_post_sync_work() {
-    let (store, local, root, _generation) = seed_cached_local_source("local-noop-post-sync");
-    let manifest = store
-        .with_store(|store| store.load_local_manifest(&local.server.id))
-        .expect("manifest");
-    let warm = LocalProvider::from_roots_with_manifest_cache(
-        vec![root.clone()],
-        local.server.clone(),
-        manifest,
-    )
-    .expect("warm local provider");
-    assert!(!warm.manifest_scan().library_changed);
-    let runtime = Runtime::new().expect("runtime");
+pub(in crate::controller) fn local_sync_post_sync_work_matches_manifest_change() {
+    for changed in [false, true] {
+        let label = if changed {
+            "local-changed-post-sync"
+        } else {
+            "local-noop-post-sync"
+        };
+        let (store, local, root, _generation) = seed_cached_local_source(label);
+        if changed {
+            fs::write(root.join("Artist").join("Album").join("Second.mp3"), []).expect("audio");
+        }
+        let manifest = store
+            .with_store(|store| store.load_local_manifest(&local.server.id))
+            .expect("manifest");
+        let warm = LocalProvider::from_roots_with_manifest_cache(
+            vec![root.clone()],
+            local.server.clone(),
+            manifest,
+        )
+        .expect("warm local provider");
+        assert_eq!(warm.manifest_scan().library_changed, changed, "{label}");
+        let runtime = Runtime::new().expect("runtime");
 
-    let outcome = runtime
-        .block_on(sync_local_provider_outcome(&store, &local.server.id, &warm))
-        .expect("warm local sync");
+        let outcome = runtime
+            .block_on(sync_local_provider_outcome(&store, &local.server.id, &warm))
+            .expect("local sync");
 
-    assert!(outcome.delta.is_empty());
-    assert!(!outcome.post_sync_work);
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn changed_local_sync_keeps_post_sync_work() {
-    let (store, local, root, _generation) = seed_cached_local_source("local-changed-post-sync");
-    let album_dir = root.join("Artist").join("Album");
-    fs::write(album_dir.join("Second.mp3"), []).expect("audio");
-    let manifest = store
-        .with_store(|store| store.load_local_manifest(&local.server.id))
-        .expect("manifest");
-    let warm = LocalProvider::from_roots_with_manifest_cache(
-        vec![root.clone()],
-        local.server.clone(),
-        manifest,
-    )
-    .expect("warm local provider");
-    assert!(warm.manifest_scan().library_changed);
-    let runtime = Runtime::new().expect("runtime");
-
-    let outcome = runtime
-        .block_on(sync_local_provider_outcome(&store, &local.server.id, &warm))
-        .expect("changed local sync");
-
-    assert!(!outcome.delta.is_empty());
-    assert!(outcome.post_sync_work);
-    let _cleanup = fs::remove_dir_all(root);
-}
-#[test]
-pub(in crate::controller) fn startup_cached_local_delta_uses_status_delta() {
-    let (store, local, root, _generation) = seed_cached_local_source("local-delta-snapshot");
-    let album_dir = root.join("Artist").join("Album");
-    fs::write(album_dir.join("Second.mp3"), []).expect("audio");
-    let (controller, events) = controller_from_store_for_test(store);
-
-    controller.start_sync(local);
-
-    let status = wait_for_sync_status_without_snapshot(&events, "Cached library ready");
-    assert!(!status.delta.tracks.added.is_empty());
-    assert_eq!(status.counts.tracks, 2);
-    let _cleanup = fs::remove_dir_all(root);
+        assert_eq!(outcome.delta.is_empty(), !changed, "{label}");
+        assert_eq!(outcome.post_sync_work, changed, "{label}");
+        let _cleanup = fs::remove_dir_all(root);
+    }
 }
 
 #[test]

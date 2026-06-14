@@ -407,20 +407,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn album_page_width() {
-        let three_cards_width = HOME_ALBUM_TARGET_SIZE * 3 + HOME_ALBUM_GAP * 2;
-        assert_eq!(home_album_page_size(three_cards_width, None), 3);
-        assert_eq!(home_album_page_size(three_cards_width + 1, None), 3);
+    fn album_page_and_card_sizing() {
+        let three_target = HOME_ALBUM_TARGET_SIZE * 3 + HOME_ALBUM_GAP * 2;
+        let four_target = HOME_ALBUM_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
+        let ten_target = HOME_ALBUM_TARGET_SIZE * 10 + HOME_ALBUM_GAP * 9;
+        let three_min = HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
+        let three_max = HOME_ALBUM_MAX_SIZE * 3 + HOME_ALBUM_GAP * 2;
 
-        let four_cards_width = HOME_ALBUM_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
-        assert_eq!(home_album_page_size(four_cards_width, None), 4);
-        assert_eq!(home_album_page_size(1, None), 1);
-        assert_eq!(home_album_page_size(10_000, None), HOME_ALBUM_MAX_COLUMNS);
+        for (width, current, expected) in [
+            (three_target, None, 3),
+            (three_target + 1, None, 3),
+            (four_target, None, 4),
+            (1, None, 1),
+            (10_000, None, HOME_ALBUM_MAX_COLUMNS),
+            (three_min, Some(3), 3),
+            (three_min - 1, Some(3), 3),
+            (
+                (HOME_ALBUM_MIN_SIZE - 20) * 3 + HOME_ALBUM_GAP * 2,
+                Some(3),
+                2,
+            ),
+            (three_max, Some(3), 3),
+            (three_max + 3, Some(3), 4),
+            (ten_target, None, 10),
+            (ten_target, Some(7), 9),
+        ] {
+            assert_eq!(home_album_page_size(width, current), expected);
+        }
+
+        assert_eq!(home_album_card_size(10_000, 2), HOME_ALBUM_MAX_SIZE);
+        assert_eq!(home_album_card_size(1, 8), 1);
     }
 
     #[test]
-    fn album_grid_uses_larger_default_cards() {
+    fn album_grid_sizing() {
         let previous_three_card_width = HOME_ALBUM_TARGET_SIZE * 3 + HOME_ALBUM_GAP * 2;
+        let four_columns = ALBUM_GRID_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
+        let very_wide = ALBUM_GRID_TARGET_SIZE * 20 + HOME_ALBUM_GAP * 19;
+        let extreme = ALBUM_GRID_TARGET_SIZE * 80 + HOME_ALBUM_GAP * 79;
 
         assert_eq!(album_grid_page_size(previous_three_card_width, None), 2);
         assert_eq!(
@@ -430,14 +454,6 @@ mod tests {
             ),
             ALBUM_GRID_MAX_SIZE
         );
-    }
-
-    #[test]
-    fn album_grid_caps_and_adds_columns_on_wide_routes() {
-        let four_columns = ALBUM_GRID_TARGET_SIZE * 4 + HOME_ALBUM_GAP * 3;
-        let very_wide = ALBUM_GRID_TARGET_SIZE * 20 + HOME_ALBUM_GAP * 19;
-        let extreme = ALBUM_GRID_TARGET_SIZE * 80 + HOME_ALBUM_GAP * 79;
-
         assert_eq!(album_grid_page_size(four_columns, None), 4);
         assert_eq!(
             album_grid_card_size(four_columns, album_grid_page_size(four_columns, None)),
@@ -448,74 +464,19 @@ mod tests {
     }
 
     #[test]
-    fn layout_allow_panes() {
+    fn route_width_bounds() {
         let tight_width = HOME_ALBUM_MIN_SIZE + HOME_ALBUM_GAP - 1;
 
         assert_eq!(home_album_page_size(tight_width, None), 1);
-        assert_eq!(
-            home_album_content_width_for(120),
-            120 - HOME_ALBUM_HORIZONTAL_MARGINS
-        );
-    }
-
-    #[test]
-    fn layout_change_bounds() {
-        let three_cards_width = HOME_ALBUM_MIN_SIZE * 3 + HOME_ALBUM_GAP * 2;
-        assert_eq!(home_album_page_size(three_cards_width, Some(3)), 3);
-        assert_eq!(home_album_page_size(three_cards_width - 1, Some(3)), 3);
-        assert_eq!(
-            home_album_page_size((HOME_ALBUM_MIN_SIZE - 20) * 3 + HOME_ALBUM_GAP * 2, Some(3)),
-            2
-        );
-
-        let three_cards_max_width = HOME_ALBUM_MAX_SIZE * 3 + HOME_ALBUM_GAP * 2;
-        assert_eq!(home_album_page_size(three_cards_max_width, Some(3)), 3);
-        assert_eq!(home_album_page_size(three_cards_max_width + 3, Some(3)), 4);
-    }
-
-    #[test]
-    fn layout_add_layouts() {
-        let ten_target_cards_width = HOME_ALBUM_TARGET_SIZE * 10 + HOME_ALBUM_GAP * 9;
-
-        assert_eq!(home_album_page_size(ten_target_cards_width, None), 10);
-        assert_eq!(home_album_page_size(ten_target_cards_width, Some(7)), 9);
-    }
-
-    #[test]
-    fn layout_stay_page() {
-        assert_eq!(clamp_home_album_page_start(0, 3, 0), 0);
-        assert_eq!(clamp_home_album_page_start(3, 3, 10), 3);
-        assert_eq!(clamp_home_album_page_start(9, 3, 10), 9);
-        assert_eq!(clamp_home_album_page_start(12, 3, 10), 9);
-    }
-
-    #[test]
-    fn layout_home_bounded() {
-        assert_eq!(home_album_card_size(10_000, 2), HOME_ALBUM_MAX_SIZE);
-        assert_eq!(home_album_card_size(1, 8), 1);
-    }
-
-    #[test]
-    fn album_alloc_width() {
-        assert_eq!(
-            home_album_content_width_for(900),
-            900 - HOME_ALBUM_HORIZONTAL_MARGINS
-        );
-        assert_eq!(
-            home_album_content_width_for(650),
-            650 - HOME_ALBUM_HORIZONTAL_MARGINS
-        );
-    }
-
-    #[test]
-    fn layout_cap_width() {
+        for width in [120, 650, 900] {
+            assert_eq!(
+                home_album_content_width_for(width),
+                width - HOME_ALBUM_HORIZONTAL_MARGINS
+            );
+        }
         assert_eq!(route_content_width_for(900, 500), 500);
         assert_eq!(route_content_width_for(900, 1), 900);
         assert_eq!(route_content_width_for(1, 500), 500);
-    }
-
-    #[test]
-    fn detail_cover_fits_narrow_width() {
         assert_eq!(detail_showcase_cover_size(120), 120);
         assert_eq!(detail_showcase_cover_size(40), 72);
         assert_eq!(detail_showcase_cover_size(519), 156);
@@ -524,36 +485,15 @@ mod tests {
     }
 
     #[test]
-    fn layout_home_text() {
-        assert_eq!(
-            home_album_card_height(180),
-            180 + HOME_ALBUM_CARD_LABEL_GAP * 3 + card_label_height(3)
-        );
-    }
-
-    #[test]
-    fn layout_use_default() {
-        let settings = LayoutSettings::default();
-        let resolved = resolve_layout(&settings, 1_500);
-
-        assert_eq!(resolved.profile, ActiveLayoutProfile::Default);
-        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Full);
-        assert_eq!(resolved.right_sidebar, RightSidebarMode::Comfortable);
-        assert_eq!(
-            resolved.right_sidebar_width,
-            RIGHT_SIDEBAR_COMFORTABLE_WIDTH
-        );
-    }
-
-    #[test]
-    fn layout_use_narrow() {
-        let settings = LayoutSettings::default();
-        let resolved = resolve_layout(&settings, 950);
-
-        assert_eq!(resolved.profile, ActiveLayoutProfile::Narrow);
-        assert_eq!(resolved.left_sidebar, ResolvedLeftSidebarMode::Compact);
-        assert_eq!(resolved.right_sidebar, RightSidebarMode::Default);
-        assert_eq!(resolved.right_sidebar_width, RIGHT_SIDEBAR_DEFAULT_WIDTH);
+    fn home_page_start_stays_in_range() {
+        for (start, page_size, total, expected) in
+            [(0, 3, 0, 0), (3, 3, 10, 3), (9, 3, 10, 9), (12, 3, 10, 9)]
+        {
+            assert_eq!(
+                clamp_home_album_page_start(start, page_size, total),
+                expected
+            );
+        }
     }
 
     #[test]

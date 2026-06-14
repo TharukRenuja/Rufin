@@ -7,8 +7,6 @@ mod tiles;
 mod warming;
 
 use size_helpers::*;
-#[cfg(test)]
-pub(in crate::ui) use tiles::collection_cover_decode_extent;
 pub(in crate::ui) use tiles::{cover_artwork_id_for_key, cover_request_id_for_key};
 
 #[derive(Clone)]

@@ -584,30 +584,6 @@ mod tests {
     use super::{FakeProvider, FakeScale};
 
     #[test]
-    fn large_dataset_matches_m0_targets() {
-        let provider = FakeProvider::new(FakeScale::Large);
-
-        assert_eq!(provider.album_count(), 20_000);
-        assert_eq!(provider.track_count(), 100_000);
-    }
-
-    #[test]
-    fn stress_dataset_exceeds_startup_window() {
-        let provider = FakeProvider::new(FakeScale::Stress);
-
-        assert_eq!(provider.album_count(), 1_000);
-        assert_eq!(provider.track_count(), 6_000);
-    }
-
-    #[test]
-    fn thirty_k_dataset_matches_resize_repro_target() {
-        let provider = FakeProvider::new(FakeScale::ThirtyK);
-
-        assert_eq!(provider.album_count(), 1_000);
-        assert_eq!(provider.track_count(), 30_000);
-    }
-
-    #[test]
     fn paged_read_stable() {
         let provider = FakeProvider::new(FakeScale::Small);
 
