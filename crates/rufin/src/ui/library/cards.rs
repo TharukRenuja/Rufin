@@ -316,7 +316,7 @@ pub(in crate::ui) fn append_album_items(model: &gio::ListStore, rows: Vec<AlbumD
         .collect::<Vec<_>>();
     model.splice(model.n_items(), 0, &additions);
 }
-pub(in crate::ui) const COLLECTION_GRID_CARD_GAP: i32 = 6;
+pub(in crate::ui) const COLLECTION_GRID_CARD_GAP: i32 = 2;
 pub(in crate::ui) const COLLECTION_GRID_TITLE_LINES: i32 = 1;
 pub(in crate::ui) const COLLECTION_GRID_FIELD_LINES: i32 = 1;
 const COLLECTION_GRID_LABEL_LINE_HEIGHT: i32 = 20;
@@ -386,14 +386,28 @@ pub(in crate::ui) fn center_label_with_label(
     (clip.upcast(), label)
 }
 pub(in crate::ui) fn center_grid_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
+    grid_title(text, css_class, width, 0.5, gtk::Justification::Center)
+}
+
+pub(in crate::ui) fn left_grid_title(text: &str, css_class: &str, width: i32) -> gtk::Widget {
+    grid_title(text, css_class, width, 0.0, gtk::Justification::Left)
+}
+
+fn grid_title(
+    text: &str,
+    css_class: &str,
+    width: i32,
+    xalign: f32,
+    justify: gtk::Justification,
+) -> gtk::Widget {
     let width = width.max(1);
     let height = collection_grid_label_height(COLLECTION_GRID_TITLE_LINES);
     let label = gtk::Label::new(Some(text));
     if !css_class.is_empty() {
         label.add_css_class(css_class);
     }
-    label.set_xalign(0.5);
-    label.set_justify(gtk::Justification::Center);
+    label.set_xalign(xalign);
+    label.set_justify(justify);
     label.set_wrap(false);
     label.set_single_line_mode(true);
     label.set_lines(COLLECTION_GRID_TITLE_LINES);
@@ -1010,8 +1024,8 @@ mod tests {
         let title_only = collection_grid_card_height(180, 0);
         let with_fields = collection_grid_card_height(180, 2);
 
-        assert_eq!(title_only, 206);
-        assert_eq!(with_fields, 258);
+        assert_eq!(title_only, 202);
+        assert_eq!(with_fields, 246);
         assert_eq!(
             with_fields - title_only,
             2 * (COLLECTION_GRID_LABEL_LINE_HEIGHT + COLLECTION_GRID_CARD_GAP)

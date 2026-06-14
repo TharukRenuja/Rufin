@@ -14,13 +14,12 @@ use super::layout::{
 };
 use super::{
     GRID_COVER_SIZE, HomeSectionState, PLAY_LATER_ICON, PLAY_NEXT_ICON, PlaylistEntryListState,
-    Shell, THUMB_COVER_SIZE, add_card_label_link, add_link_hover, album_artist_route,
-    favorite_button_is_active, favorite_icon_button, icon_button, install_album_context_menu,
-    install_track_context_menu, loaded_tracks_window_play_activation,
-    playlist_entry_play_activation, playlist_play_source_key, present_album_context_menu,
-    present_playlist_context_menu, present_smart_playlist_context_menu, present_track_context_menu,
-    selected_music_folder_id, set_favorite_button_active, smart_playlist_play_source_key,
-    stable_seed, track_artist_route,
+    Shell, THUMB_COVER_SIZE, add_card_label_link, album_artist_route, favorite_button_is_active,
+    favorite_icon_button, icon_button, install_album_context_menu, install_track_context_menu,
+    loaded_tracks_window_play_activation, playlist_entry_play_activation, playlist_play_source_key,
+    present_album_context_menu, present_playlist_context_menu, present_smart_playlist_context_menu,
+    present_track_context_menu, selected_music_folder_id, set_favorite_button_active,
+    smart_playlist_play_source_key, stable_seed, track_artist_route,
 };
 use crate::controller::AppController;
 
@@ -161,7 +160,13 @@ fn album_card_widget_with_size(
 
     let title = single_line_card_label(&album.title, size, &["album-title"]);
     let title_clip = label_clip(&title, size);
-    add_link_hover(&title_clip, &title, &album.title);
+    add_card_label_link(
+        shell,
+        &title_clip,
+        &title,
+        &album.title,
+        Some(Route::AlbumDetail(album.id.clone())),
+    );
 
     let artist = single_line_card_label(&album.artist, size, &["artist-label"]);
     let artist_clip = label_clip(&artist, size);
@@ -268,7 +273,13 @@ fn track_card_widget_with_size(shell: &Rc<Shell>, track: &Track, size: i32) -> g
 
     let title = single_line_card_label(&track.title, size, &["album-title"]);
     let title_clip = clipped_card_label_with_lines(&title, size, 1);
-    add_link_hover(&title_clip, &title, &track.title);
+    add_card_label_link(
+        shell,
+        &title_clip,
+        &title,
+        &track.title,
+        Some(Route::AlbumDetail(track.album_id.clone())),
+    );
 
     let artist = single_line_card_label(&track.artist, size, &["artist-label"]);
     let artist_clip = clipped_card_label_with_lines(&artist, size, 1);

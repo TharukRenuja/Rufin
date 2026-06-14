@@ -249,8 +249,8 @@ fn collection_grid_extent_uses_field_slots() {
     settings.grid_fields = vec![LibraryField::AlbumCount, LibraryField::SongCount];
     let with_fields = super::collection_grid_item_extent(180, &settings);
 
-    assert_eq!(title_only, 206);
-    assert_eq!(with_fields, 258);
+    assert_eq!(title_only, 202);
+    assert_eq!(with_fields, 246);
 }
 
 #[test]

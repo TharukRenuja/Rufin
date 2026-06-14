@@ -7,12 +7,11 @@ use domain::{Album, Genre, HomeBlockKind, HomeSection, HomeSectionKind, Route, f
 use crate::controller::LibrarySnapshot;
 use crate::i18n::tr;
 
-use super::cards::{render_home_album_page, render_home_track_page};
+use super::cards::{album_cover_tile, render_home_album_page, render_home_track_page};
 use super::{
-    GRID_COVER_SIZE, HOME_ALBUM_GAP, PLAY_LATER_ICON, PLAY_NEXT_ICON, PRIMARY_ROUTE_MARGIN_END,
-    PRIMARY_ROUTE_MARGIN_START, Shell, add_album_seed_gradient_class, add_card_label_link,
-    add_widget_click, album_artist_route, configure_fill_width_clip, icon_button,
-    mark_route_scroll_owner,
+    HOME_ALBUM_GAP, PRIMARY_ROUTE_MARGIN_END, PRIMARY_ROUTE_MARGIN_START, Shell,
+    add_album_seed_gradient_class, add_card_label_link, album_artist_route,
+    configure_fill_width_clip, icon_button, mark_route_scroll_owner,
 };
 
 pub(super) fn showcase_album(library: &LibrarySnapshot, seed: u64) -> Option<Album> {
@@ -136,19 +135,8 @@ impl Shell {
         add_album_seed_gradient_class(&body, album.color_seed);
         body.set_hexpand(true);
         body.set_valign(gtk::Align::Start);
-        let cover = self.cover_tile_for(
-            album.image_ref.as_ref(),
-            album.color_seed,
-            196,
-            GRID_COVER_SIZE,
-        );
+        let cover = album_cover_tile(self, &album, 196, Some(&self.controller));
         cover.add_css_class("home-showcase-cover");
-        cover.set_cursor_from_name(Some("pointer"));
-        let shell = Rc::clone(self);
-        let album_id = album.id.clone();
-        add_widget_click(&cover, move || {
-            shell.navigate(Route::AlbumDetail(album_id.clone()));
-        });
         let facts = gtk::Label::new(Some(&home_showcase_facts(&album)));
         facts.add_css_class("muted");
         facts.add_css_class("home-showcase-facts");
@@ -189,41 +177,6 @@ impl Shell {
         );
         metadata.append(&artist);
         metadata.append(&facts);
-
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        actions.add_css_class("home-showcase-actions");
-        let play = icon_button("media-playback-start-symbolic", "Play album");
-        play.add_css_class("home-showcase-action-button");
-        play.add_css_class("home-showcase-play-button");
-        let controller = self.controller.clone();
-        let album_id = album.id.clone();
-        play.connect_clicked(move |_| controller.play_album_now(album_id.clone()));
-        actions.append(&play);
-
-        let play_next = icon_button(PLAY_NEXT_ICON, "Play next");
-        play_next.add_css_class("home-showcase-action-button");
-        let controller = self.controller.clone();
-        let album_id = album.id.clone();
-        play_next.connect_clicked(move |_| {
-            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
-                for track in tracks.iter().rev() {
-                    controller.play_next(track.clone());
-                }
-            }
-        });
-        actions.append(&play_next);
-
-        let play_last = icon_button(PLAY_LATER_ICON, "Play Later");
-        play_last.add_css_class("home-showcase-action-button");
-        let controller = self.controller.clone();
-        let album_id = album.id.clone();
-        play_last.connect_clicked(move |_| {
-            if let Ok(Some((_, tracks))) = controller.cached_album_detail(&album_id) {
-                controller.play_last(tracks);
-            }
-        });
-        actions.append(&play_last);
-        metadata.append(&actions);
 
         body.append(&metadata);
         section.append(&body);
