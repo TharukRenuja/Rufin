@@ -37,7 +37,7 @@ impl Shell {
             self.fullscreen_player.root.set_sensitive(false);
             self.fullscreen_player.root.set_visible(false);
         } else {
-            self.root_stack.set_visible_child(&self.app_root);
+            self.root_stack.set_visible_child(&self.app_root_overlay);
             self.app_content_stack.set_visible_child_name("main");
             let fullscreen_visible = self.state.fullscreen_player_visible.get();
             if self.fullscreen_player.animation_tick.borrow().is_none() {

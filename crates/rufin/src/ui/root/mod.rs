@@ -436,6 +436,7 @@ pub(in crate::ui) struct Shell {
     window: adw::ApplicationWindow,
     toast_overlay: adw::ToastOverlay,
     root_stack: gtk::Stack,
+    app_root_overlay: gtk::Overlay,
     app_root: gtk::Box,
     app_content_stack: gtk::Stack,
     login_host: gtk::Box,
@@ -732,7 +733,12 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
 
     root_stack.add_named(&login_host, Some("login"));
     root_stack.add_named(&startup_loading_host, Some("startup-loading"));
-    root_stack.add_named(&app_root, Some("app"));
+    let app_root_overlay = gtk::Overlay::new();
+    app_root_overlay.set_hexpand(true);
+    app_root_overlay.set_vexpand(true);
+    app_root_overlay.set_child(Some(&app_root));
+
+    root_stack.add_named(&app_root_overlay, Some("app"));
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.set_child(Some(&root_stack));
     window.set_content(Some(&toast_overlay));
@@ -744,6 +750,7 @@ pub fn build(app: &adw::Application, _options: AppOptions) {
         window,
         toast_overlay,
         root_stack,
+        app_root_overlay,
         app_root,
         app_content_stack,
         login_host,

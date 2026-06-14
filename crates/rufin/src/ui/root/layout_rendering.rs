@@ -946,6 +946,71 @@ pub(in crate::ui) fn detail_action_row() -> gtk::Box {
     row.set_halign(gtk::Align::Center);
     row
 }
+pub(in crate::ui) fn detail_cover_button(
+    shell: &Rc<Shell>,
+    image_ref: Option<&ImageRef>,
+    seed: u32,
+    size: i32,
+    fetch_size: u32,
+    cover_class: &str,
+) -> gtk::Button {
+    shell.prime_cached_cover(image_ref, fetch_size, size);
+    let cover = shell.cover_tile_for(image_ref, seed, size, fetch_size);
+    cover.add_css_class("detail-showcase-cover");
+    cover.add_css_class(cover_class);
+
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.add_css_class("detail-cover-button");
+    button.set_halign(gtk::Align::Start);
+    button.set_valign(gtk::Align::Start);
+    button.set_cursor_from_name(Some("pointer"));
+    button.set_child(Some(&cover));
+
+    let shell = Rc::clone(shell);
+    let image_ref = image_ref.cloned();
+    button.connect_clicked(move |_| {
+        shell.present_full_artwork(image_ref.as_ref(), seed);
+    });
+    button
+}
+impl Shell {
+    fn present_full_artwork(self: &Rc<Self>, image_ref: Option<&ImageRef>, seed: u32) {
+        let size = full_artwork_size(self.window.width(), self.window.height());
+        let fetch_size = cover_fetch_size_for_display(size);
+        let tile = ArtworkTile::new_sized(size, size, seed);
+        let cover = tile.widget();
+        self.bind_cover_tile_for_dimensions(
+            &tile,
+            image_ref,
+            seed,
+            GRID_COVER_SIZE as i32,
+            GRID_COVER_SIZE,
+        );
+        self.bind_cover_tile_for_dimensions(&tile, image_ref, seed, size, fetch_size);
+        cover.add_css_class("full-artwork-cover");
+        cover.set_halign(gtk::Align::Center);
+        cover.set_valign(gtk::Align::Center);
+
+        let root = gtk::Overlay::new();
+        root.add_css_class("full-artwork-window");
+        root.set_hexpand(true);
+        root.set_vexpand(true);
+        root.set_child(Some(&cover));
+
+        self.app_root_overlay.add_overlay(&root);
+        self.app_root_overlay.set_measure_overlay(&root, false);
+
+        let overlay = self.app_root_overlay.clone();
+        let root_for_close = root.clone();
+        add_widget_click(root.upcast_ref(), move || {
+            overlay.remove_overlay(&root_for_close)
+        });
+    }
+}
+fn full_artwork_size(width: i32, height: i32) -> i32 {
+    (width.min(height) - 80).clamp(240, 720)
+}
 pub(in crate::ui) fn detail_showcase_frame(header: gtk::Widget) -> gtk::Widget {
     header.set_hexpand(true);
     header.set_halign(gtk::Align::Fill);
@@ -1216,6 +1281,13 @@ pub(in crate::ui) fn install_css() {
 #[cfg(test)]
 mod external_link_tests {
     use super::*;
+
+    #[test]
+    fn full_artwork_size_fits_window() {
+        assert_eq!(full_artwork_size(1440, 900), 720);
+        assert_eq!(full_artwork_size(640, 480), 400);
+        assert_eq!(full_artwork_size(300, 260), 240);
+    }
 
     #[test]
     fn lastfm_urls_escape_path_segments() {
