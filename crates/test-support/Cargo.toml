@@ -4,14 +4,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description.workspace = true
+repository.workspace = true
+readme.workspace = true
+publish.workspace = true
 
 [dependencies]
-async-trait = "0.1.89"
-domain = { path = "../domain" }
-source = { path = "../source" }
+async-trait.workspace = true
+domain.workspace = true
+source.workspace = true
 
 [dev-dependencies]
-futures-executor = "0.3.32"
+futures-executor.workspace = true
 
 [lints]
 workspace = true

@@ -18,13 +18,63 @@ version = "0.7.3"
 edition = "2024"
 license = "GPL-3.0-or-later"
 rust-version = "1.95"
+description = "A native GTK4/libadwaita music client for servers and local folders."
+repository = "https://github.com/screwys/Rufin"
+readme = "README.md"
+publish = false
+
+[workspace.dependencies]
+adw = { package = "libadwaita", version = "0.9.1" }
+async-trait = "0.1.89"
+base64 = "0.22.1"
+clap = "4.6.1"
+directories = "6.0.0"
+domain = { path = "crates/domain" }
+futures-executor = "0.3.32"
+gdk-pixbuf = "0.22.0"
+getrandom = "0.4.0"
+gettext-rs = "0.7.7"
+gstreamer = "0.25.2"
+gstreamer-audio = "0.25.2"
+gstreamer-play = "0.25.0"
+gtk = { package = "gtk4", version = "0.11.3" }
+ksni = "0.3.4"
+library = { path = "crates/library" }
+lofty = "0.24.0"
+md5 = "0.8.0"
+mpris-server = "0.10.0"
+oo7 = "0.6.0"
+percent-encoding = "2.3.2"
+playback = { path = "crates/playback" }
+reqwest = "0.13.3"
+rusqlite = "0.40.1"
+rustfft = "6.2.0"
+secrets = { path = "crates/secrets" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+source = { path = "crates/source" }
+source-jellyfin = { path = "crates/source-jellyfin" }
+source-local = { path = "crates/source-local" }
+source-subsonic = { path = "crates/source-subsonic" }
+tempfile = "3.23.0"
+test_support = { package = "test-support", path = "crates/test-support" }
+thiserror = "2.0.18"
+tokio = "1.52.3"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.23"
+url = "2.5.7"
+walkdir = "2.5.0"
+wiremock = "0.6.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+dead_code = "deny"
+warnings = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
+unimplemented = "deny"
 unwrap_used = "deny"
 
 [profile.dev]
