@@ -8,11 +8,11 @@ fn lyrics_event(track_id: &TrackId, lyrics: Option<Lyrics>) -> ControllerEvent {
 }
 
 impl AppController {
-    pub fn request_lyrics_for_current(&self) {
-        self.lyrics_cache(true);
+    pub fn request_track_lyrics(&self, track_id: TrackId) {
+        self.lyrics_cache_for_track(track_id, true);
     }
-    pub fn request_server_lyrics_for_current(&self) {
-        self.lyrics_search(true, JellyfinLyricsSearch::ServerOnly);
+    pub fn request_track_server_lyrics(&self, track_id: TrackId) {
+        self.lyrics_search_for_track(track_id, true, JellyfinLyricsSearch::ServerOnly);
     }
     pub fn refresh_lyrics_for_current(&self) {
         self.lyrics_cache(false);
@@ -38,17 +38,46 @@ impl AppController {
         let settings = load_settings_from_store(&self.store);
         self.lyrics_search(use_cache, lyrics_search_for_settings(&settings));
     }
+    fn lyrics_cache_for_track(&self, track_id: TrackId, use_cache: bool) {
+        let settings = load_settings_from_store(&self.store);
+        self.lyrics_search_for_track(track_id, use_cache, lyrics_search_for_settings(&settings));
+    }
     pub(in crate::controller) fn lyrics_search(
         &self,
         use_cache: bool,
         search: JellyfinLyricsSearch,
     ) {
-        let settings = load_settings_from_store(&self.store);
-        let external_providers = settings.external_lyrics_providers.clone();
         let Some((server_id, entry, _position)) = self.current_playback_entry() else {
             debug!("lyrics request skipped because the queue has no current track");
             return;
         };
+        self.lyrics_search_entry(use_cache, search, server_id, entry);
+    }
+    fn lyrics_search_for_track(
+        &self,
+        track_id: TrackId,
+        use_cache: bool,
+        search: JellyfinLyricsSearch,
+    ) {
+        let Some((server_id, entry, _position)) = self.current_playback_entry() else {
+            debug!("lyrics request skipped because the queue has no current track");
+            return;
+        };
+        if entry.track_id != track_id {
+            debug!(track_id = %track_id, "skipped stale lyrics request");
+            return;
+        }
+        self.lyrics_search_entry(use_cache, search, server_id, entry);
+    }
+    fn lyrics_search_entry(
+        &self,
+        use_cache: bool,
+        search: JellyfinLyricsSearch,
+        server_id: ServerId,
+        entry: QueueEntry,
+    ) {
+        let settings = load_settings_from_store(&self.store);
+        let external_providers = settings.external_lyrics_providers.clone();
         if let Some(lyrics) = local_sidecar_lyrics(&self.store, &server_id, &entry.track_id) {
             debug!(track_id = %entry.track_id, "loaded lyrics from local sidecar");
             let _saved = self

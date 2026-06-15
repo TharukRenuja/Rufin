@@ -78,6 +78,7 @@ impl AppController {
         self.cancel_waveform_warm();
         let request_generation =
             next_playback_request_generation(&self.playback_request_generation);
+        self.commit_current_playback_start(&server_id, &entry, position_seconds);
         let waveform_enabled = self.load_settings().seekbar_waveform_enabled;
         let controller = self.clone();
         let store = self.store.clone();
@@ -117,10 +118,14 @@ impl AppController {
                         &server_id,
                         &entry,
                     ) {
+                        controller.report_playback(PlaybackReportKind::Stopped, true);
+                        controller.clear_playback_activity();
                         if let Ok(mut snapshot) = playback_snapshot.lock() {
+                            snapshot.state = PlaybackState::Stopped;
                             snapshot.buffering_percent = None;
                             snapshot.last_error = Some(error.clone());
                         }
+                        controller.emit_playback_snapshot();
                         let _sent = events.send(ControllerEvent::Error(error));
                     }
                     return;
@@ -159,14 +164,27 @@ impl AppController {
                 .map_err(|_| "playback lock was poisoned".to_string())
                 .and_then(|mut playback| playback.send(command).map_err(|error| error.to_string()))
             {
+                controller.report_playback(PlaybackReportKind::Stopped, true);
+                controller.clear_playback_activity();
                 if let Ok(mut snapshot) = playback_snapshot.lock() {
+                    snapshot.state = PlaybackState::Stopped;
                     snapshot.buffering_percent = None;
                     snapshot.last_error = Some(error.clone());
                 }
+                controller.emit_playback_snapshot();
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
-            controller.commit_current_playback_start(&server_id, &entry, position_seconds);
+            if !request_generation_match(
+                &playback_request_generation,
+                request_generation,
+                &queue,
+                &server_id,
+                &entry,
+            ) {
+                return;
+            }
+            controller.accept_current_playback_start(&server_id, &entry, position_seconds);
             info!(
                 track_id = %entry.track_id.as_str(),
                 elapsed_ms = resolve_started.elapsed().as_millis(),
@@ -219,8 +237,15 @@ impl AppController {
                 )),
             );
         });
-        self.start_playback_activity(server_id, entry, position_seconds);
         self.emit_playback_snapshot();
+    }
+    fn accept_current_playback_start(
+        &self,
+        server_id: &ServerId,
+        entry: &QueueEntry,
+        position_seconds: u32,
+    ) {
+        self.start_playback_activity(server_id, entry, position_seconds);
         self.report_playback(PlaybackReportKind::Started, false);
     }
     fn current_playback_start_matches(

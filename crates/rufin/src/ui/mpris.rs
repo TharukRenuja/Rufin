@@ -52,15 +52,15 @@ impl Shell {
     }
 
     fn mpris_metadata_update(&self, snapshot: &PlaybackSnapshot) -> Option<Metadata> {
-        let key = mpris_metadata_key(snapshot);
-        if self.state.mpris_metadata_key.borrow().as_deref() == Some(key.as_str()) {
-            return None;
-        }
-        *self.state.mpris_metadata_key.borrow_mut() = Some(key);
         let art_url = snapshot
             .current
             .as_ref()
             .and_then(|entry| self.current_art_url(entry));
+        let key = mpris_metadata_key(snapshot, art_url.as_deref());
+        if self.state.mpris_metadata_key.borrow().as_deref() == Some(key.as_str()) {
+            return None;
+        }
+        *self.state.mpris_metadata_key.borrow_mut() = Some(key);
         Some(self.mpris_metadata(snapshot, art_url))
     }
 
@@ -81,7 +81,7 @@ impl Shell {
     }
 
     fn current_art_url(&self, entry: &QueueEntry) -> Option<String> {
-        let artwork = self.current_playback_artwork_path(entry, THUMB_COVER_SIZE)?;
+        let artwork = self.current_playback_cached_artwork_path(entry, THUMB_COVER_SIZE)?;
         glib::filename_to_uri(artwork.path, None)
             .ok()
             .map(|uri| uri.to_string())
@@ -169,7 +169,7 @@ fn mpris_track_id(track_id: &str) -> MprisTrackId {
         .unwrap_or(MprisTrackId::NO_TRACK)
 }
 
-fn mpris_metadata_key(snapshot: &PlaybackSnapshot) -> String {
+fn mpris_metadata_key(snapshot: &PlaybackSnapshot, art_url: Option<&str>) -> String {
     let Some(entry) = snapshot.current.as_ref() else {
         return "none".to_string();
     };
@@ -179,12 +179,47 @@ fn mpris_metadata_key(snapshot: &PlaybackSnapshot) -> String {
         .map(|image| format!("{}:{}", image.item_id, image.tag.as_deref().unwrap_or("")))
         .unwrap_or_default();
     format!(
-        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
         entry.track_id.as_str(),
         entry.title,
         entry.artist,
         entry.album,
         entry.duration_seconds,
         image,
+        art_url.unwrap_or_default(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use domain::{ImageRef, QueueEntryId, TrackId};
+
+    #[test]
+    fn mpris_key_changes_when_art_url_arrives() {
+        let snapshot = PlaybackSnapshot {
+            current: Some(QueueEntry {
+                id: QueueEntryId::new("queue-entry"),
+                track_id: TrackId::new("track-one"),
+                album_id: None,
+                title: "Track".to_string(),
+                artist: "Artist".to_string(),
+                artist_id: None,
+                album: "Album".to_string(),
+                year: 0,
+                duration_seconds: 180,
+                favorite: false,
+                image_ref: Some(ImageRef::new("image-one", Some("tag-one".to_string()))),
+                local_path: None,
+                source_format: None,
+                origin: None,
+            }),
+            ..PlaybackSnapshot::default()
+        };
+
+        assert_ne!(
+            mpris_metadata_key(&snapshot, None),
+            mpris_metadata_key(&snapshot, Some("file:///tmp/cover.png"))
+        );
+    }
 }

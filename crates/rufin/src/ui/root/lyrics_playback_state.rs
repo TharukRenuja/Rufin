@@ -1,7 +1,7 @@
 use super::*;
 
 impl Shell {
-    pub(in crate::ui) fn notify_now_playing(&self, snapshot: &PlaybackSnapshot) {
+    pub(in crate::ui) fn notify_now_playing(self: &Rc<Self>, snapshot: &PlaybackSnapshot) {
         let settings = self.state.settings.borrow().clone();
         if !settings.notifications_enabled || settings.private_mode {
             return;
@@ -15,16 +15,49 @@ impl Shell {
         let Some(entry) = snapshot.current.as_ref() else {
             return;
         };
-        let notification = gio::Notification::new(&entry.title);
-        notification.set_body(Some(&format!("{} - {}", entry.artist, entry.album)));
-        if let Some(artwork) = self.current_playback_artwork_path(entry, THUMB_COVER_SIZE)
-            && let Some(bytes) = notification_icon_path(&artwork.path)
-        {
-            let bytes = glib::Bytes::from_owned(bytes);
-            notification.set_icon(&gio::BytesIcon::new(&bytes));
-        }
-        self.application
-            .send_notification(Some("now-playing"), &notification);
+        let title = entry.title.clone();
+        let body = format!("{} - {}", entry.artist, entry.album);
+        let track_id = entry.track_id.clone();
+        let artwork_path = self
+            .current_playback_cached_artwork_path(entry, THUMB_COVER_SIZE)
+            .map(|artwork| artwork.path);
+        let shell = Rc::clone(self);
+        glib::spawn_future_local(async move {
+            let icon_bytes = match artwork_path {
+                Some(path) => gtk::gio::spawn_blocking(move || notification_icon_path(&path))
+                    .await
+                    .ok()
+                    .flatten(),
+                None => None,
+            };
+            let settings = shell.state.settings.borrow();
+            if !settings.notifications_enabled || settings.private_mode {
+                return;
+            }
+            drop(settings);
+            let still_current = {
+                let player = shell.state.player.borrow();
+                matches!(
+                    player.state,
+                    PlaybackState::Playing | PlaybackState::Buffering
+                ) && player
+                    .current
+                    .as_ref()
+                    .is_some_and(|current| current.track_id == track_id)
+            };
+            if !still_current {
+                return;
+            }
+            let notification = gio::Notification::new(&title);
+            notification.set_body(Some(&body));
+            if let Some(bytes) = icon_bytes {
+                let bytes = glib::Bytes::from_owned(bytes);
+                notification.set_icon(&gio::BytesIcon::new(&bytes));
+            }
+            shell
+                .application
+                .send_notification(Some("now-playing"), &notification);
+        });
     }
     pub(in crate::ui) fn update_lyrics_highlight(self: &Rc<Self>) {
         self.cancel_scheduled_lyrics_highlight();
@@ -96,6 +129,7 @@ impl Shell {
         let Some(request) = request else {
             return;
         };
+        let request_track_id = track_id.clone();
         if !self
             .state
             .lyrics_auto_search_attempted
@@ -104,10 +138,13 @@ impl Shell {
         {
             return;
         }
-        match request {
-            AutoLyricsRequest::Default => self.controller.request_lyrics_for_current(),
-            AutoLyricsRequest::ServerOnly => self.controller.request_server_lyrics_for_current(),
-        }
+        let controller = self.controller.clone();
+        std::thread::spawn(move || match request {
+            AutoLyricsRequest::Default => controller.request_track_lyrics(request_track_id),
+            AutoLyricsRequest::ServerOnly => {
+                controller.request_track_server_lyrics(request_track_id);
+            }
+        });
     }
     pub(in crate::ui) fn suppress_auto_lyrics_for_current(self: &Rc<Self>) {
         let Some(track_id) = current_playback_track_id(&self.state.player.borrow()) else {

@@ -936,14 +936,15 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.apply_favorite_changed(item_id, favorite, *snapshot);
                 }
                 ControllerEvent::Queue(queue) => {
+                    let next_queue = *queue;
                     let waits_for_source_snapshot = {
                         let library = shell.state.library.borrow();
                         queue_source_waits_for_snapshot(
-                            queue.as_ref().as_ref(),
+                            next_queue.as_ref(),
                             library.server.as_ref().map(|server| &server.id),
                         )
                     };
-                    *shell.state.queue.borrow_mut() = *queue;
+                    *shell.state.queue.borrow_mut() = next_queue;
                     if waits_for_source_snapshot {
                         shell.state.source_switch_preparing.set(true);
                         shell.state.startup_route_render_pending.set(false);
@@ -976,6 +977,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                         &next_snapshot,
                         previous_track != next_track,
                     );
+                    shell.update_bottom_player();
                     shell.sync_auto_dj(auto_dj_enabled);
                     if shell.state.source_switch_preparing.get() {
                         if previous_track != next_track {
@@ -999,12 +1001,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                             .lyrics_pane
                             .clear_follow_scroll_pause();
                         shell.cancel_scheduled_lyrics_highlight();
-                        shell.schedule_queue_panel_render();
                         shell.render_lyrics_panel();
-                        shell.request_auto_lyrics_if_needed();
                         shell.notify_now_playing(&next_snapshot);
                     }
-                    shell.update_bottom_player();
                     match fullscreen_refresh {
                         FullscreenPlaybackRefresh::Static => shell.update_fullscreen_player(),
                         FullscreenPlaybackRefresh::Visualizer => {

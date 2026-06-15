@@ -5,6 +5,10 @@ impl AppController {
     pub(in crate::controller) fn auto_dj_topup(&self) -> bool {
         match self.auto_dj_top_up() {
             Ok(topped_up) => topped_up,
+            Err(error) if auto_dj_error_is_transient(&error) => {
+                debug!(%error, "skipped Auto DJ top-up while store is busy");
+                false
+            }
             Err(error) => {
                 let _sent = self.events.send(ControllerEvent::Error(error));
                 false
@@ -60,6 +64,9 @@ impl AppController {
                     );
                 }
                 Ok(false) => {}
+                Err(error) if auto_dj_error_is_transient(&error) => {
+                    debug!(%error, "skipped Auto DJ top-up while store is busy");
+                }
                 Err(error) => {
                     let _sent = events.send(ControllerEvent::Error(error));
                 }
@@ -72,6 +79,7 @@ impl AppController {
 struct AutoDjQueueState {
     server_id: ServerId,
     current: QueueEntry,
+    queued_entries: HashSet<(QueueEntryId, TrackId)>,
     queued_track_ids: HashSet<TrackId>,
     remaining: usize,
 }
@@ -142,9 +150,15 @@ fn auto_dj_state(queue: &Arc<Mutex<Option<QueueEngine>>>) -> Option<AutoDjQueueS
             .iter()
             .map(|entry| entry.track_id.clone())
             .collect::<HashSet<_>>();
+        let queued_entries = queue
+            .entries()
+            .iter()
+            .map(|entry| (entry.id.clone(), entry.track_id.clone()))
+            .collect::<HashSet<_>>();
         Some(AutoDjQueueState {
             server_id: queue.server_id().clone(),
             current,
+            queued_entries,
             queued_track_ids: queued,
             remaining: queue.remaining_after_current(),
         })
@@ -166,13 +180,12 @@ fn append_auto_dj(
     let Some(current) = queue.current() else {
         return Ok(false);
     };
-    if queue.server_id() != &state.server_id
-        || current.id != state.current.id
-        || current.track_id != state.current.track_id
-    {
+    if queue.server_id() != &state.server_id || !same_auto_dj_queue(queue, state) {
         return Ok(false);
     }
-    if queue.remaining_after_current() >= refill_threshold {
+    let current_matches_trigger =
+        current.id == state.current.id && current.track_id == state.current.track_id;
+    if current_matches_trigger && queue.remaining_after_current() >= refill_threshold {
         return Ok(false);
     }
     let queued_track_ids = queue
@@ -191,4 +204,71 @@ fn append_auto_dj(
         queue.append(track);
     }
     Ok(true)
+}
+
+fn same_auto_dj_queue(queue: &QueueEngine, state: &AutoDjQueueState) -> bool {
+    if queue.entries().len() != state.queued_entries.len() {
+        return false;
+    }
+    queue.entries().iter().all(|entry| {
+        state
+            .queued_entries
+            .contains(&(entry.id.clone(), entry.track_id.clone()))
+    })
+}
+
+fn auto_dj_error_is_transient(error: &str) -> bool {
+    error.contains("database is locked") || error.contains("database table is locked")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::controller::root::test_support::library_track;
+
+    #[test]
+    fn auto_dj_append_allows_moved_cursor() {
+        let server_id = ServerId::fake(1);
+        let first = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
+        let second = library_track(2, None, AlbumId::fake(1), "Artist", &[]);
+        let third = library_track(3, None, AlbumId::fake(1), "Artist", &[]);
+        let mut engine = QueueEngine::new(server_id);
+        engine.play_now(&first);
+        engine.append(&second);
+        let queue = Arc::new(Mutex::new(Some(engine)));
+        let state = auto_dj_state(&queue).expect("auto dj state");
+
+        queue
+            .lock()
+            .expect("queue")
+            .as_mut()
+            .expect("engine")
+            .next_track();
+
+        assert!(append_auto_dj(&queue, &state, 2, std::slice::from_ref(&third)).expect("append"));
+        let queue = queue.lock().expect("queue");
+        let queue = queue.as_ref().expect("queue");
+        assert_eq!(queue.entries().len(), 3);
+        assert_eq!(queue.entries()[2].track_id, third.id);
+    }
+
+    #[test]
+    fn auto_dj_append_rejects_replaced_queue() {
+        let server_id = ServerId::fake(1);
+        let first = library_track(1, None, AlbumId::fake(1), "Artist", &[]);
+        let second = library_track(2, None, AlbumId::fake(1), "Artist", &[]);
+        let third = library_track(3, None, AlbumId::fake(1), "Artist", &[]);
+        let replacement = library_track(4, None, AlbumId::fake(1), "Artist", &[]);
+        let mut engine = QueueEngine::new(server_id.clone());
+        engine.play_now(&first);
+        engine.append(&second);
+        let queue = Arc::new(Mutex::new(Some(engine)));
+        let state = auto_dj_state(&queue).expect("auto dj state");
+        let mut engine = QueueEngine::new(server_id);
+        engine.play_now(&replacement);
+        engine.append(&second);
+        *queue.lock().expect("queue") = Some(engine);
+
+        assert!(!append_auto_dj(&queue, &state, 2, &[third]).expect("append"));
+    }
 }

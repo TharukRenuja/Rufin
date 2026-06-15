@@ -503,6 +503,19 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     transition_group.add(&skip_same_album_crossfade_row);
 
+    let audio_fade_row = adw::SwitchRow::builder()
+        .title(tr("Audio fade on play/pause"))
+        .subtitle(tr("Fade audio when playback is paused or resumed"))
+        .active(settings.audio_fade_on_status_change)
+        .build();
+    let audio_fade_shell = Rc::clone(shell);
+    audio_fade_row.connect_active_notify(move |row| {
+        audio_fade_shell.update_playback_settings(|settings| {
+            settings.audio_fade_on_status_change = row.is_active();
+        });
+    });
+    transition_group.add(&audio_fade_row);
+
     let refill_row = adw::ActionRow::builder()
         .title(tr("Auto DJ refill threshold"))
         .subtitle(tr("Add tracks when fewer than this many remain"))
@@ -674,9 +687,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
                     settings.equalizer.sanitize();
                 }
                 settings.equalizer.bands = bands.clone();
-                let preset = equalizer_selected_preset(&settings.equalizer);
-                settings.equalizer.selected_preset = preset.clone();
-                settings.equalizer.preset_overrides.insert(preset, bands);
+                settings.equalizer.selected_preset = "Custom".to_string();
             });
             update_guard.set(true);
             update_preset.set_selected(equalizer_preset_position(&equalizer_selected_preset(
@@ -721,10 +732,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         let Some(preset) = equalizer_preset_name_at(selected) else {
             return;
         };
-        let bands = {
-            let settings = preset_shell.state.settings.borrow();
-            equalizer_preset_bands(&settings.playback.equalizer, &preset)
-        };
+        let bands = equalizer_preset_bands(&preset);
         preset_reset_guard.set(true);
         preset_switch.set_active(true);
         for (scale, gain) in preset_scales.borrow().iter().zip(bands.iter()) {
@@ -764,8 +772,6 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         reset_shell.update_playback_settings(|settings| {
             settings.equalizer.selected_preset = preset;
             settings.equalizer.bands = bands;
-            let preset = settings.equalizer.selected_preset.clone();
-            settings.equalizer.preset_overrides.remove(&preset);
             settings.equalizer.sanitize();
         });
     });

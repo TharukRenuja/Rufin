@@ -16,6 +16,7 @@ const VISUALIZER_FFT_SIZE: usize = 2_048;
 const VISUALIZER_MIN_EMIT_INTERVAL: Duration = Duration::from_millis(33);
 const VISUALIZER_NOISE_FLOOR_DB: f32 = -72.0;
 const VISUALIZER_CEILING_DB: f32 = -6.0;
+const STATUS_FADE_DURATION: Duration = Duration::from_millis(300);
 
 pub struct LazyGStreamerPlaybackBackend {
     inner: Option<Box<dyn PlaybackBackend>>,
@@ -232,6 +233,52 @@ impl SharedPlaybackState {
         }
     }
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum StatusFadeTarget {
+    Pause,
+    Playing,
+}
+#[derive(Clone, Copy, Debug)]
+pub(super) struct StatusFade {
+    slot: Slot,
+    target: StatusFadeTarget,
+    started_at: Instant,
+    duration: Duration,
+    start_volume: f64,
+    end_volume: f64,
+    muted: bool,
+}
+impl StatusFade {
+    pub(super) fn new(
+        slot: Slot,
+        target: StatusFadeTarget,
+        start_volume: f64,
+        end_volume: f64,
+        muted: bool,
+        now: Instant,
+    ) -> Self {
+        Self {
+            slot,
+            target,
+            started_at: now,
+            duration: STATUS_FADE_DURATION,
+            start_volume: start_volume.clamp(0.0, 1.0),
+            end_volume: end_volume.clamp(0.0, 1.0),
+            muted,
+        }
+    }
+
+    pub(super) fn volume_at(&self, now: Instant) -> f64 {
+        let progress = (now.saturating_duration_since(self.started_at).as_secs_f64()
+            / self.duration.as_secs_f64())
+        .clamp(0.0, 1.0);
+        self.start_volume + (self.end_volume - self.start_volume) * progress
+    }
+
+    fn is_finished(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.started_at) >= self.duration
+    }
+}
 #[derive(Clone)]
 struct VisualizerTap {
     slot: Slot,
@@ -302,6 +349,7 @@ pub(super) struct PlayerPipeline {
     bus: gst::Bus,
     _about_to_finish_id: glib::SignalHandlerId,
     audio_sink_config: Option<AudioSinkConfig>,
+    equalizer: Option<gst::Element>,
     visualizer_pad: Option<gst::Pad>,
     visualizer_probe: Option<gst::PadProbeId>,
 }
@@ -309,19 +357,18 @@ pub(super) struct PlayerPipeline {
 struct AudioSinkConfig {
     replay_gain: ReplayGainMode,
     audio_output: Option<String>,
-    equalizer: EqualizerSettings,
 }
 impl AudioSinkConfig {
     fn new(settings: &PlaybackSettings) -> Self {
         Self {
             replay_gain: settings.replay_gain,
             audio_output: settings.audio_output.clone(),
-            equalizer: settings.equalizer.clone(),
         }
     }
 }
 struct AudioSink {
     root: gst::Element,
+    equalizer: Option<gst::Element>,
     visualizer_pad: Option<gst::Pad>,
 }
 #[derive(Debug, PartialEq)]
@@ -354,6 +401,7 @@ impl PlayerPipeline {
             bus,
             _about_to_finish_id: about_to_finish_id,
             audio_sink_config: None,
+            equalizer: None,
             visualizer_pad: None,
             visualizer_probe: None,
         })
@@ -362,14 +410,23 @@ impl PlayerPipeline {
     fn configure_audio(&mut self, settings: &PlaybackSettings) -> Result<(), String> {
         let config = AudioSinkConfig::new(settings);
         if self.audio_sink_config.as_ref() == Some(&config) {
+            self.apply_equalizer(&settings.equalizer);
             return Ok(());
         }
         self.clear_visualizer_tap();
         let sink = build_audio_sink(settings)?;
         self.pipeline.set_property("audio-sink", &sink.root);
+        self.equalizer = sink.equalizer;
         self.visualizer_pad = sink.visualizer_pad;
         self.audio_sink_config = Some(config);
+        self.apply_equalizer(&settings.equalizer);
         Ok(())
+    }
+
+    fn apply_equalizer(&self, settings: &EqualizerSettings) {
+        if let Some(equalizer) = self.equalizer.as_ref() {
+            configure_equalizer(equalizer, settings);
+        }
     }
 
     fn set_visualizer_tap(&mut self, tap: Option<VisualizerTap>) {
@@ -481,6 +538,7 @@ pub(super) struct GstEngine {
     pub(super) last_position_tick: Instant,
     pub(super) state: PlaybackState,
     pub(super) pending_seek: Option<PendingSeek>,
+    pub(super) status_fade: Option<StatusFade>,
     pub(super) play_command_started_at: Option<Instant>,
 }
 impl GstEngine {
@@ -498,6 +556,7 @@ impl GstEngine {
             last_position_tick: Instant::now(),
             state: PlaybackState::Stopped,
             pending_seek: None,
+            status_fade: None,
             play_command_started_at: None,
         })
     }
@@ -529,6 +588,7 @@ impl GstEngine {
             } => self.play_prepared(item, next, start_position_seconds, settings),
             PlaybackCommand::PrepareNext(next) => self.prepare_next(next),
             PlaybackCommand::UpdateSettings(mut settings) => {
+                self.cancel_status_fade();
                 settings.sanitize();
                 (|| -> Result<(), String> {
                     let visualizer_enabled = self.visualizer_enabled();
@@ -548,23 +608,10 @@ impl GstEngine {
                 })()
             }
             PlaybackCommand::SetVisualizerEnabled(enabled) => self.set_visualizer_enabled(enabled),
-            PlaybackCommand::Resume => {
-                self.pending_seek = None;
-                self.active_pipeline()
-                    .set_state(gst::State::Playing)
-                    .map(|_| {
-                        self.push_state(PlaybackState::Playing);
-                    })
-            }
-            PlaybackCommand::Pause => {
-                self.pending_seek = None;
-                self.active_pipeline()
-                    .set_state(gst::State::Paused)
-                    .map(|_| {
-                        self.push_state(PlaybackState::Paused);
-                    })
-            }
+            PlaybackCommand::Resume => self.start_status_resume(),
+            PlaybackCommand::Pause => self.start_status_pause(),
             PlaybackCommand::Stop => {
+                self.cancel_status_fade();
                 self.pending_seek = None;
                 self.primary.stop();
                 self.secondary.stop();
@@ -586,12 +633,14 @@ impl GstEngine {
             PlaybackCommand::Seek(seconds) => self.start_seek(u64::from(seconds) * 1_000),
             PlaybackCommand::SeekMillis(millis) => self.start_seek(millis),
             PlaybackCommand::SetVolume(volume) => {
+                self.cancel_status_fade();
                 let volume = volume.clamp(0.0, 1.0);
                 let muted = self.set_volume(volume);
                 push_event(&self.events, PlaybackEvent::VolumeChanged { volume, muted });
                 Ok(())
             }
             PlaybackCommand::SetMuted(muted) => {
+                self.cancel_status_fade();
                 let volume = self.set_muted(muted);
                 push_event(&self.events, PlaybackEvent::VolumeChanged { volume, muted });
                 Ok(())
@@ -629,6 +678,7 @@ impl GstEngine {
     ) -> Result<(), String> {
         let command_started_at = Instant::now();
         self.play_command_started_at = Some(command_started_at);
+        self.cancel_status_fade();
         self.pending_seek = None;
         settings.sanitize();
         self.secondary.stop();
@@ -721,6 +771,7 @@ impl GstEngine {
     }
 
     fn start_seek(&mut self, millis: u64) -> Result<(), String> {
+        self.cancel_status_fade();
         self.finish_crossfade_for_seek();
         self.cancel_gapless_preload_for_seek()?;
         if millis == 0 {
@@ -1117,7 +1168,120 @@ impl GstEngine {
         }
     }
 
+    fn start_status_pause(&mut self) -> Result<(), String> {
+        self.cancel_status_fade();
+        self.pending_seek = None;
+        let (volume, muted, enabled) = self.status_fade_settings();
+        if !enabled || muted || volume <= 0.0 {
+            return self
+                .active_pipeline()
+                .set_state(gst::State::Paused)
+                .map(|_| {
+                    self.push_state(PlaybackState::Paused);
+                });
+        }
+        let slot = self.active_slot();
+        self.status_fade = Some(StatusFade::new(
+            slot,
+            StatusFadeTarget::Pause,
+            volume,
+            0.0,
+            muted,
+            Instant::now(),
+        ));
+        self.pipeline_for_slot(slot)
+            .set_output_volume(volume, muted);
+        Ok(())
+    }
+
+    fn start_status_resume(&mut self) -> Result<(), String> {
+        self.cancel_status_fade();
+        self.pending_seek = None;
+        let (volume, muted, enabled) = self.status_fade_settings();
+        if !enabled || muted || volume <= 0.0 {
+            return self
+                .active_pipeline()
+                .set_state(gst::State::Playing)
+                .map(|_| {
+                    self.push_state(PlaybackState::Playing);
+                });
+        }
+        let slot = self.active_slot();
+        self.pipeline_for_slot(slot).set_output_volume(0.0, muted);
+        self.pipeline_for_slot(slot)
+            .set_state(gst::State::Playing)
+            .map(|_| {
+                self.push_state(PlaybackState::Playing);
+                self.status_fade = Some(StatusFade::new(
+                    slot,
+                    StatusFadeTarget::Playing,
+                    0.0,
+                    volume,
+                    muted,
+                    Instant::now(),
+                ));
+            })
+    }
+
+    fn update_status_fade(&mut self) {
+        let Some(fade) = self.status_fade else {
+            return;
+        };
+        let now = Instant::now();
+        self.pipeline_for_slot(fade.slot)
+            .set_output_volume(fade.volume_at(now), fade.muted);
+        if !fade.is_finished(now) {
+            return;
+        }
+
+        self.status_fade = None;
+        match fade.target {
+            StatusFadeTarget::Pause => {
+                if let Err(error) = self
+                    .pipeline_for_slot(fade.slot)
+                    .set_state(gst::State::Paused)
+                {
+                    push_event(&self.events, PlaybackEvent::Error(error));
+                    return;
+                }
+                self.push_state(PlaybackState::Paused);
+                let (volume, muted) = self.output_state();
+                self.pipeline_for_slot(fade.slot)
+                    .set_output_volume(volume, muted);
+            }
+            StatusFadeTarget::Playing => {
+                let (volume, muted) = self.output_state();
+                self.pipeline_for_slot(fade.slot)
+                    .set_output_volume(volume, muted);
+            }
+        }
+    }
+
+    fn cancel_status_fade(&mut self) {
+        if self.status_fade.take().is_some() {
+            let (volume, muted) = self.output_state();
+            self.active_pipeline().set_output_volume(volume, muted);
+        }
+    }
+
+    fn status_fade_settings(&self) -> (f64, bool, bool) {
+        self.shared
+            .lock()
+            .map(|shared| {
+                (
+                    shared.volume,
+                    shared.muted,
+                    shared.settings.audio_fade_on_status_change,
+                )
+            })
+            .unwrap_or((1.0, false, true))
+    }
+
     fn tick(&mut self) {
+        self.update_status_fade();
+        if self.status_fade.is_some() {
+            return;
+        }
         self.maybe_start_crossfade();
         self.update_crossfade();
 
@@ -1386,8 +1550,12 @@ impl GstEngine {
         };
         if changed {
             self.visualizer.next_generation();
-            self.sync_visualizer_taps(enabled);
             push_event(&self.events, PlaybackEvent::Visualizer(Vec::new()));
+        }
+        if enabled {
+            self.sync_visualizer_taps(true);
+        } else if changed {
+            self.sync_visualizer_taps(false);
         }
         Ok(())
     }
@@ -1683,13 +1851,19 @@ fn configure_playbin_for_audio(pipeline: &gst::Element) {
 }
 fn build_audio_sink(settings: &PlaybackSettings) -> Result<AudioSink, String> {
     let has_replay_gain = settings.replay_gain != ReplayGainMode::Off;
-    let has_equalizer = settings.equalizer.enabled;
 
     let bin = gst::Bin::new();
     let convert_in = make_element("audioconvert", "rufin-audio-convert-in")?;
     let convert_out = make_element("audioconvert", "rufin-audio-convert-out")?;
     let sink = make_audio_output(settings.audio_output.as_deref())?;
     let mut elements = vec![convert_in.clone()];
+
+    let equalizer = optional_element("equalizer-nbands", "rufin-equalizer");
+    if let Some(equalizer) = equalizer.as_ref() {
+        equalizer.set_property("num-bands", (EQUALIZER_BAND_COUNT + 2) as u32);
+        configure_equalizer(equalizer, &settings.equalizer);
+        elements.push(equalizer.clone());
+    }
 
     if has_replay_gain && let Some(rgvolume) = optional_element("rgvolume", "rufin-replaygain") {
         if settings.replay_gain == ReplayGainMode::Album {
@@ -1699,27 +1873,6 @@ fn build_audio_sink(settings: &PlaybackSettings) -> Result<AudioSink, String> {
         if let Some(rglimiter) = optional_element("rglimiter", "rufin-replaygain-limiter") {
             elements.push(rglimiter);
         }
-    }
-
-    if has_equalizer
-        && let Some(equalizer) = optional_element("equalizer-nbands", "rufin-equalizer")
-    {
-        equalizer.set_property("num-bands", (EQUALIZER_BAND_COUNT + 2) as u32);
-        set_equalizer_band(&equalizer, 0, EQUALIZER_DUMMY_LOW_FREQUENCY, 0.0, 0.0);
-        set_equalizer_band(
-            &equalizer,
-            EQUALIZER_BAND_COUNT + 1,
-            EQUALIZER_DUMMY_HIGH_FREQUENCY,
-            0.0,
-            0.0,
-        );
-        let mut previous = 0.0;
-        for (index, frequency) in CLASSIC_EQUALIZER_FREQUENCIES.iter().copied().enumerate() {
-            let gain = settings.equalizer.bands.get(index).copied().unwrap_or(0.0);
-            set_equalizer_band(&equalizer, index + 1, frequency, frequency - previous, gain);
-            previous = frequency;
-        }
-        elements.push(equalizer);
     }
 
     let visualizer_pad = convert_out.static_pad("src");
@@ -1742,6 +1895,7 @@ fn build_audio_sink(settings: &PlaybackSettings) -> Result<AudioSink, String> {
         .map_err(|error| error.to_string())?;
     Ok(AudioSink {
         root: bin.upcast(),
+        equalizer,
         visualizer_pad,
     })
 }
@@ -1983,6 +2137,26 @@ fn set_equalizer_band(
         band.set_property("gain", gain);
     }
 }
+fn configure_equalizer(equalizer: &gst::Element, settings: &EqualizerSettings) {
+    set_equalizer_band(equalizer, 0, EQUALIZER_DUMMY_LOW_FREQUENCY, 0.0, 0.0);
+    set_equalizer_band(
+        equalizer,
+        EQUALIZER_BAND_COUNT + 1,
+        EQUALIZER_DUMMY_HIGH_FREQUENCY,
+        0.0,
+        0.0,
+    );
+    let mut previous = 0.0;
+    for (index, frequency) in CLASSIC_EQUALIZER_FREQUENCIES.iter().copied().enumerate() {
+        let gain = if settings.enabled {
+            settings.bands.get(index).copied().unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        set_equalizer_band(equalizer, index + 1, frequency, frequency - previous, gain);
+        previous = frequency;
+    }
+}
 fn make_audio_output(selected: Option<&str>) -> Result<gst::Element, String> {
     if let Some(selected) = selected
         && gst::ElementFactory::find(selected).is_some()
@@ -2081,6 +2255,16 @@ mod tests {
     }
 
     #[test]
+    fn audio_sink_config_ignores_equalizer_changes() {
+        let previous = PlaybackSettings::default();
+        let mut next = previous.clone();
+        next.equalizer.enabled = true;
+        next.equalizer.bands = vec![4.0; EQUALIZER_BAND_COUNT];
+
+        assert_eq!(AudioSinkConfig::new(&previous), AudioSinkConfig::new(&next));
+    }
+
+    #[test]
     fn equalizer_band_helper_configures_child_band() {
         gst::init().expect("initialize GStreamer");
         let Some(equalizer) = optional_element("equalizer-nbands", "test-equalizer") else {
@@ -2095,6 +2279,33 @@ mod tests {
         assert_eq!(band.property::<f64>("freq"), 60.0);
         assert_eq!(band.property::<f64>("bandwidth"), 60.0);
         assert_eq!(band.property::<f64>("gain"), 8.0);
+    }
+
+    #[test]
+    fn equalizer_update_applies_live_gain_and_disable() {
+        gst::init().expect("initialize GStreamer");
+        let Some(equalizer) = optional_element("equalizer-nbands", "test-live-equalizer") else {
+            return;
+        };
+        equalizer.set_property("num-bands", (EQUALIZER_BAND_COUNT + 2) as u32);
+        let mut settings = EqualizerSettings {
+            enabled: true,
+            bands: vec![5.0; EQUALIZER_BAND_COUNT],
+            ..EqualizerSettings::default()
+        };
+        configure_equalizer(&equalizer, &settings);
+        assert_eq!(equalizer_band_gain(&equalizer, 1), Some(5.0));
+
+        settings.enabled = false;
+        configure_equalizer(&equalizer, &settings);
+        assert_eq!(equalizer_band_gain(&equalizer, 1), Some(0.0));
+    }
+
+    fn equalizer_band_gain(equalizer: &gst::Element, index: usize) -> Option<f64> {
+        equalizer
+            .dynamic_cast_ref::<gst::ChildProxy>()?
+            .child_by_index(index as u32)
+            .map(|band| band.property::<f64>("gain"))
     }
 
     #[test]

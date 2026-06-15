@@ -971,10 +971,6 @@ scale.volume-slider trough {
   border-radius: 7px;
 }
 
-.queue-row:focus {
-  box-shadow: inset 0 0 0 2px @accent_color;
-}
-
 .queue-link {
   padding: 0;
 }
@@ -989,8 +985,8 @@ scale.volume-slider trough {
   padding: 0;
 }
 
-.queue-row-current {
-  background: color-mix(in srgb, @accent_bg_color 10%, transparent);
+.queue-row-current .queue-title {
+  color: @error_color;
 }
 
 .queue-header {
@@ -998,7 +994,8 @@ scale.volume-slider trough {
   border-bottom: 1px solid color-mix(in srgb, @borders 78%, transparent);
 }
 
-.queue-list row {
+.queue-list row,
+listview.queue-list row {
   padding: 0;
   background: transparent;
 }

@@ -26,6 +26,19 @@ impl AppController {
         if already_saved {
             return;
         }
+        if self.store.uses_disk_storage() {
+            if let Ok(mut last) = self.last_progress_snapshot.lock() {
+                *last = Some((server_id.clone(), bucket));
+            }
+            persist_queue_progress_async(
+                self.store.clone(),
+                server_id,
+                current.id,
+                current.track_id,
+                seconds,
+            );
+            return;
+        }
         let saved = self
             .store
             .with_store(|store| {
@@ -105,4 +118,20 @@ impl AppController {
             report,
         );
     }
+}
+
+fn persist_queue_progress_async(
+    store: StoreHandle,
+    server_id: ServerId,
+    entry_id: QueueEntryId,
+    track_id: TrackId,
+    seconds: u32,
+) {
+    thread::spawn(move || {
+        if let Err(error) = store.with_store(|store| {
+            store.save_queue_progress(&server_id, &entry_id, &track_id, seconds)
+        }) {
+            debug!(%error, "failed to persist playback progress");
+        }
+    });
 }

@@ -1039,8 +1039,8 @@ msgstr "Kraasimine Last.fm-i"
 
 #: crates/rufin/src/i18n.rs:633
 #: crates/rufin/src/ui/preferences/root/mod.rs:318
-msgid "MusicBrainz with Last.fm fallback"
-msgstr "MusicBrainz ja Last.fm on varuavariandiks"
+msgid "MusicBrainz + Last.fm"
+msgstr "MusicBrainz + Last.fm"
 
 #: crates/rufin/src/i18n.rs:634
 #: crates/rufin/src/ui/preferences/root/mod.rs:344
