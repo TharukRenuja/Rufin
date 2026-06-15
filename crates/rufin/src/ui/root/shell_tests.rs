@@ -13,16 +13,17 @@ use super::startup_reveal::{
     startup_stall_delay_ms, take_pending_warm,
 };
 use super::{
-    AutoLyricsRequest, LocalSourceCacheGateAction, LocalSourceCacheGateInput,
-    PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision, album_play_activation,
-    auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
+    AutoLyricsRequest, LibrarySyncToastState, LocalSourceCacheGateAction,
+    LocalSourceCacheGateInput, PlaylistEntryListState, PlaylistEntrySort, SnapshotRenderDecision,
+    album_play_activation, auto_lyrics_request_for_settings, auto_lyrics_skip_action_enabled,
     cover::record_cover_path_lookup_request, current_playback_track_id,
-    home_visible_sections::changed_visible_home_section_kinds, local_source_cache_gate_action,
-    local_source_snapshot_is_syncing, lyrics_result_subtitle, lyrics_result_subtitle_markup,
-    lyrics_result_title_markup, lyrics_search_response_matches_query,
-    lyrics_search_result_has_content, playlist_detail_compact_for_width, playlist_drop_index,
-    playlist_entries_for_state, playlist_entry_play_activation, playlist_route_margin,
-    playlist_sort_width, preferences_login_status_toast_message, queue_source_waits_for_snapshot,
+    home_visible_sections::changed_visible_home_section_kinds, library_sync_toast_message,
+    library_sync_toast_state, local_source_cache_gate_action, local_source_snapshot_is_syncing,
+    lyrics_result_subtitle, lyrics_result_subtitle_markup, lyrics_result_title_markup,
+    lyrics_search_response_matches_query, lyrics_search_result_has_content,
+    playlist_detail_compact_for_width, playlist_drop_index, playlist_entries_for_state,
+    playlist_entry_play_activation, playlist_route_margin, playlist_sort_width,
+    preferences_login_status_toast_message, queue_source_waits_for_snapshot,
     seekbar_target_seconds, snapshot_event_outcome,
 };
 use crate::controller::{
@@ -1571,11 +1572,11 @@ pub(in crate::ui) fn shell_use_statuses() {
     );
     assert_eq!(
         preferences_login_status_toast_message("Syncing Jellyfin library…"),
-        Some("Syncing Jellyfin library…")
+        None
     );
     assert_eq!(
         preferences_login_status_toast_message("Library sync complete"),
-        Some("Library sync complete")
+        None
     );
     assert_eq!(
         preferences_login_status_toast_message("Cached library ready"),
@@ -1589,6 +1590,45 @@ pub(in crate::ui) fn shell_use_statuses() {
         preferences_login_status_toast_message("No changes to save."),
         Some("No changes to save.")
     );
+    assert_eq!(
+        library_sync_toast_state("Syncing Jellyfin library…"),
+        Some(LibrarySyncToastState::Progress)
+    );
+    assert_eq!(
+        library_sync_toast_state(
+            "Caching library… This may take some time. Cached albums page 2 for Test (Jellyfin), 500/2500 fetched, 500 cached (3s)"
+        ),
+        Some(LibrarySyncToastState::Progress)
+    );
+    assert_eq!(
+        library_sync_toast_state("Caching library artwork…"),
+        Some(LibrarySyncToastState::Progress)
+    );
+    assert_eq!(
+        library_sync_toast_state("Library sync complete"),
+        Some(LibrarySyncToastState::Complete)
+    );
+    assert_eq!(
+        library_sync_toast_state("Cached library ready"),
+        Some(LibrarySyncToastState::Clear)
+    );
+    assert_eq!(
+        library_sync_toast_message("Caching library… This may take some time."),
+        "Caching library… This may take some time."
+    );
+    assert_eq!(
+        library_sync_toast_message(
+            "Caching library… This may take some time. Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
+        ),
+        "Cached tracks page 4/6 for Test (Jellyfin), 2,000/2,567 fetched, 2,000 cached (24s)"
+    );
+    assert_eq!(
+        library_sync_toast_message(
+            "Caching local library… This may take some time. Reading track metadata for Local, 25/2,567 tracks processed (12s)"
+        ),
+        "Reading track metadata for Local, 25/2,567 tracks processed (12s)"
+    );
+    assert_eq!(library_sync_toast_state("Sync already running."), None);
 }
 #[test]
 pub(in crate::ui) fn shell_ignore_field() {

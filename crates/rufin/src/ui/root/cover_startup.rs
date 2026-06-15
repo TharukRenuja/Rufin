@@ -163,12 +163,8 @@ pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Opt
     let status = status.trim();
     let server_check = status.starts_with("Checking ") && status.ends_with(" server…");
     let server_saved = status.starts_with("Server settings saved.");
-    let sync_started = status.starts_with("Syncing ") && status.ends_with(" library…");
-    let sync_finished = status == LIBRARY_SYNC_COMPLETE_STATUS;
     if server_check
         || server_saved
-        || sync_started
-        || sync_finished
         || status == "No changes to save."
         || status == "Sync already running."
     {
@@ -177,6 +173,49 @@ pub(in crate::ui) fn preferences_login_status_toast_message(status: &str) -> Opt
         None
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum LibrarySyncToastState {
+    Progress,
+    Complete,
+    Clear,
+}
+
+pub(in crate::ui) fn library_sync_toast_state(status: &str) -> Option<LibrarySyncToastState> {
+    let status = status.trim();
+    if status == LIBRARY_SYNC_COMPLETE_STATUS {
+        return Some(LibrarySyncToastState::Complete);
+    }
+    if status == "Cached library ready" {
+        return Some(LibrarySyncToastState::Clear);
+    }
+    if status.starts_with("Syncing ") && status.ends_with(" library…") {
+        return Some(LibrarySyncToastState::Progress);
+    }
+    if status.starts_with("Caching library…")
+        || status.starts_with("Caching local library…")
+        || status == "Caching library artwork…"
+    {
+        return Some(LibrarySyncToastState::Progress);
+    }
+    None
+}
+
+pub(in crate::ui) fn library_sync_toast_message(status: &str) -> &str {
+    let status = status.trim();
+    for prefix in [
+        "Caching library… This may take some time. ",
+        "Caching local library… This may take some time. ",
+    ] {
+        if let Some(message) = status.strip_prefix(prefix)
+            && !message.trim().is_empty()
+        {
+            return message.trim();
+        }
+    }
+    status
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum SnapshotRenderDecision {
     SourceChanged,
@@ -774,7 +813,11 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let sync_status = status.sync_status.clone();
                     let delta_empty = status.delta.is_empty();
                     let last_error = status.last_error.clone();
-                    let toast_message = preferences_login_status_toast_message(&status.sync_status)
+                    let sync_toast_state = library_sync_toast_state(&status.sync_status);
+                    let toast_message = sync_toast_state
+                        .is_none()
+                        .then(|| preferences_login_status_toast_message(&status.sync_status))
+                        .flatten()
                         .map(str::to_string);
                     let delta = status.delta.clone();
                     let tracks_changed = delta.reset.is_some() || !delta.tracks.is_empty();
@@ -799,7 +842,10 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     let selector_ms = selector_started.elapsed().as_millis() as u64;
                     if let Some(error) = last_error {
                         warn!(%error, "library sync update reported an error");
+                        shell.dismiss_library_sync_toast();
                         shell.show_preferences_toast(&error);
+                    } else if let Some(sync_toast_state) = sync_toast_state {
+                        shell.update_library_sync_toast(sync_toast_state, &sync_status);
                     } else if let Some(message) = toast_message {
                         shell.show_preferences_toast(&message);
                     }
@@ -1105,7 +1151,9 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                     shell.refresh_add_server_dialog();
                 }
                 ControllerEvent::LoginStatus(status) => {
-                    if let Some(message) = preferences_login_status_toast_message(&status) {
+                    if let Some(sync_toast_state) = library_sync_toast_state(&status) {
+                        shell.update_library_sync_toast(sync_toast_state, &status);
+                    } else if let Some(message) = preferences_login_status_toast_message(&status) {
                         shell.show_preferences_toast(message);
                     }
                     let sync_complete = login_status_marks_sync_complete(&status);
@@ -1141,6 +1189,7 @@ pub(in crate::ui) fn install_event_pump(shell: &Rc<Shell>, receiver: Receiver<Co
                 }
                 ControllerEvent::Error(error) => {
                     warn!(%error, "controller error");
+                    shell.dismiss_library_sync_toast();
                     shell.show_preferences_toast(&error);
                     shell.state.first_run_connection_pending.set(false);
                     shell.state.first_run_connection_ready.set(false);
@@ -1188,6 +1237,61 @@ struct VisibleCoverWindow {
 impl Shell {
     pub(in crate::ui) fn show_preferences_toast(&self, message: &str) {
         self.toast_overlay.add_toast(adw::Toast::new(message));
+    }
+
+    pub(in crate::ui) fn update_library_sync_toast(
+        self: &Rc<Self>,
+        state: LibrarySyncToastState,
+        message: &str,
+    ) {
+        match state {
+            LibrarySyncToastState::Progress => self.show_or_update_library_sync_toast(message),
+            LibrarySyncToastState::Complete | LibrarySyncToastState::Clear => {
+                self.dismiss_library_sync_toast()
+            }
+        }
+    }
+
+    fn show_or_update_library_sync_toast(self: &Rc<Self>, status: &str) {
+        if status.trim().starts_with("Syncing ") {
+            self.state.library_sync_toast_suppressed.set(false);
+        } else if self.state.library_sync_toast_suppressed.get() {
+            return;
+        }
+
+        let message = library_sync_toast_message(status);
+        if let Some(toast) = self.state.library_sync_toast.borrow().as_ref() {
+            toast.set_title(message);
+            toast.set_timeout(0);
+            return;
+        }
+
+        let toast = adw::Toast::new(message);
+        toast.set_timeout(0);
+        let weak_shell = Rc::downgrade(self);
+        let toast_for_signal = toast.clone();
+        toast.connect_dismissed(move |_| {
+            let Some(shell) = weak_shell.upgrade() else {
+                return;
+            };
+            let mut active = shell.state.library_sync_toast.borrow_mut();
+            if active
+                .as_ref()
+                .is_some_and(|toast| toast == &toast_for_signal)
+            {
+                active.take();
+                shell.state.library_sync_toast_suppressed.set(true);
+            }
+        });
+        self.toast_overlay.add_toast(toast.clone());
+        *self.state.library_sync_toast.borrow_mut() = Some(toast);
+    }
+
+    pub(in crate::ui) fn dismiss_library_sync_toast(&self) {
+        let toast = self.state.library_sync_toast.borrow_mut().take();
+        if let Some(toast) = toast {
+            toast.dismiss();
+        }
     }
 
     pub(in crate::ui) fn prime_route_visible_cover_window(self: &Rc<Self>, route: &Route) -> usize {

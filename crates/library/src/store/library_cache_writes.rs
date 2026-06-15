@@ -268,6 +268,7 @@ impl Store {
             repair_linked_genres(connection, server_id, generation)?;
             refresh_genre_counts_on_connection(connection, server_id)?;
             self.bind_album_fallback_image_refs(server_id)?;
+            self.bind_album_artist_fallback_image_refs(server_id)?;
             self.bind_album_external_identity_image_refs(server_id)?;
             self.bind_track_album_fallback_image_refs(server_id)?;
             self.bind_artist_fallback_image_refs(server_id, false)?;
@@ -368,6 +369,7 @@ impl Store {
         self.write_batch(|_| {
             let mut changed = 0;
             changed += self.bind_album_fallback_image_refs(server_id)?;
+            changed += self.bind_album_artist_fallback_image_refs(server_id)?;
             changed += self.bind_album_external_identity_image_refs(server_id)?;
             changed += self.bind_track_album_fallback_image_refs(server_id)?;
             changed += self.bind_artist_fallback_image_refs(server_id, false)?;
@@ -814,6 +816,7 @@ impl Store {
             repair_linked_artists(connection, server_id, generation)?;
             repair_linked_genres(connection, server_id, generation)?;
             self.bind_album_fallback_image_refs(server_id)?;
+            self.bind_album_artist_fallback_image_refs(server_id)?;
             self.bind_album_external_identity_image_refs(server_id)?;
             self.bind_track_album_fallback_image_refs(server_id)?;
             self.bind_artist_fallback_image_refs(server_id, false)?;
