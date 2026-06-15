@@ -433,6 +433,13 @@ pub(in crate::ui) fn connect_layout_resize(shell: &Rc<Shell>) {
             resize_shell.update_layout();
             resize_shell.queue_responsive_route_render();
         });
+    let resize_shell = Rc::clone(shell);
+    shell
+        .window
+        .connect_notify_local(Some("height"), move |_, _| {
+            resize_shell.update_layout();
+            resize_shell.queue_responsive_route_render();
+        });
 
     let window = shell.window.clone();
     let resize_shell = Rc::clone(shell);
@@ -440,6 +447,11 @@ pub(in crate::ui) fn connect_layout_resize(shell: &Rc<Shell>) {
         if let Some(surface) = window.surface() {
             let surface_resize_shell = Rc::clone(&resize_shell);
             surface.connect_width_notify(move |_| {
+                surface_resize_shell.update_layout();
+                surface_resize_shell.queue_responsive_route_render();
+            });
+            let surface_resize_shell = Rc::clone(&resize_shell);
+            surface.connect_height_notify(move |_| {
                 surface_resize_shell.update_layout();
                 surface_resize_shell.queue_responsive_route_render();
             });

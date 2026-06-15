@@ -210,6 +210,7 @@ impl Shell {
                 grid.set_size_request(size, size);
                 grid.set_width_request(size);
                 grid.set_height_request(size);
+                grid.set_overflow(gtk::Overflow::Hidden);
                 grid.set_row_homogeneous(true);
                 grid.set_column_homogeneous(true);
                 grid.set_hexpand(false);

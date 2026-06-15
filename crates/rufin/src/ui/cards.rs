@@ -201,6 +201,7 @@ pub(super) fn album_cover_tile(
     album_button.add_css_class("album-cover-button");
     album_button.add_css_class("flat");
     constrain_cover_widget(&album_button, size);
+    clip_cover(&album_button);
     album_button.set_child(Some(&shell.cover_tile_for(
         album.image_ref.as_ref(),
         album.color_seed,
@@ -323,6 +324,7 @@ pub(super) fn track_play_tile(
     cover_button.add_css_class("album-cover-button");
     cover_button.add_css_class("flat");
     constrain_cover_widget(&cover_button, size);
+    clip_cover(&cover_button);
     cover_button.set_child(Some(&shell.cover_tile_for(
         track.image_ref.as_ref(),
         stable_seed(track.id.as_str()),
@@ -406,6 +408,7 @@ pub(super) fn playlist_cover_tile(
     playlist_button.add_css_class("album-cover-button");
     playlist_button.add_css_class("flat");
     constrain_cover_widget(&playlist_button, size);
+    clip_cover(&playlist_button);
     let artwork = crate::cover_art_policy::selected_playlist_artwork(
         playlist,
         &shell.state.settings.borrow(),
@@ -489,6 +492,7 @@ pub(super) fn smart_playlist_cover_tile(
     playlist_button.add_css_class("album-cover-button");
     playlist_button.add_css_class("flat");
     constrain_cover_widget(&playlist_button, size);
+    clip_cover(&playlist_button);
     let artwork = crate::cover_art_policy::selected_smart_playlist_artwork(playlist);
     playlist_button.set_child(Some(&shell.cover_group_tile_for_artwork(
         &artwork,
@@ -582,6 +586,7 @@ fn label_clip(label: &gtk::Label, size: i32) -> gtk::Widget {
 
 pub(super) fn cover_overlay(size: i32) -> gtk::Overlay {
     let overlay = gtk::Overlay::new();
+    overlay.add_css_class("cover-frame");
     constrain_cover_widget(&overlay, size);
     overlay
 }
@@ -750,6 +755,10 @@ pub(super) fn constrain_cover_widget(widget: &impl IsA<gtk::Widget>, size: i32) 
     widget.set_size_request(size, size);
     widget.set_hexpand(false);
     widget.set_halign(gtk::Align::Start);
+}
+
+pub(super) fn clip_cover(widget: &impl IsA<gtk::Widget>) {
+    widget.set_overflow(gtk::Overflow::Hidden);
 }
 
 fn nonzero_usize(value: usize) -> Option<usize> {

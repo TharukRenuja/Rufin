@@ -6,8 +6,18 @@ use domain::{EQUALIZER_BAND_COUNT, EqualizerSettings};
 use gtk::glib;
 use gtk::prelude::*;
 
+use crate::i18n::tr;
+
 const EQUALIZER_FALLBACK_COMMIT_DELAY_MS: u64 = 1_200;
+const EQUALIZER_PRESET_MENU_HEIGHT: i32 = 160;
+const EQUALIZER_SURFACE_SCROLL_FACTOR: f64 = 2.5;
 const CUSTOM_PRESET: &str = "Custom";
+
+pub(in crate::ui) struct EqualizerPresetDropdown {
+    pub(in crate::ui) button: gtk::MenuButton,
+    pub(in crate::ui) popover: gtk::Popover,
+    pub(in crate::ui) buttons: Vec<(gtk::Button, String)>,
+}
 
 pub(in crate::ui) fn equalizer_band_title(index: usize) -> String {
     const BANDS: [&str; EQUALIZER_BAND_COUNT] = [
@@ -111,6 +121,54 @@ pub(in crate::ui) fn equalizer_preset_bands(name: &str) -> Vec<f64> {
     equalizer_default_preset_bands(name)
 }
 
+pub(in crate::ui) fn equalizer_preset_button_label(button: &gtk::MenuButton, preset: &str) {
+    button.set_label(&tr(preset));
+}
+
+pub(in crate::ui) fn build_equalizer_preset_dropdown(
+    menu_css_class: Option<&str>,
+) -> EqualizerPresetDropdown {
+    let button = gtk::MenuButton::new();
+    equalizer_preset_button_label(&button, CUSTOM_PRESET);
+    button.set_valign(gtk::Align::Center);
+
+    let popover = gtk::Popover::new();
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroller.set_propagate_natural_width(true);
+    scroller.set_propagate_natural_height(false);
+    scroller.set_min_content_width(180);
+    scroller.set_min_content_height(EQUALIZER_PRESET_MENU_HEIGHT);
+    scroller.set_max_content_height(EQUALIZER_PRESET_MENU_HEIGHT);
+    scroller.set_height_request(EQUALIZER_PRESET_MENU_HEIGHT);
+
+    let menu = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    menu.add_css_class("equalizer-preset-menu");
+    if let Some(css_class) = menu_css_class {
+        menu.add_css_class(css_class);
+    }
+
+    let mut buttons = Vec::new();
+    for name in equalizer_preset_names() {
+        let item = gtk::Button::with_label(&tr(name));
+        item.set_halign(gtk::Align::Fill);
+        item.set_valign(gtk::Align::Center);
+        item.add_css_class("flat");
+        menu.append(&item);
+        buttons.push((item, name.to_string()));
+    }
+
+    scroller.set_child(Some(&menu));
+    popover.set_child(Some(&scroller));
+    button.set_popover(Some(&popover));
+
+    EqualizerPresetDropdown {
+        button,
+        popover,
+        buttons,
+    }
+}
+
 pub(in crate::ui) fn connect_equalizer_scale_commit(
     scale: &gtk::Scale,
     guard: Rc<Cell<bool>>,
@@ -182,6 +240,51 @@ pub(in crate::ui) fn connect_equalizer_scale_commit(
         glib::Propagation::Proceed
     });
     scale.add_controller(controller);
+}
+
+pub(in crate::ui) fn install_equalizer_scroll(scale: &gtk::Scale) {
+    let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let scale_weak = scale.downgrade();
+    controller.connect_scroll(move |controller, _, dy| {
+        if dy == 0.0 {
+            return gtk::glib::Propagation::Proceed;
+        }
+
+        let Some(scale) = scale_weak.upgrade() else {
+            return gtk::glib::Propagation::Stop;
+        };
+        let scale_widget = scale.upcast::<gtk::Widget>();
+        scroll_parent_vertically(&scale_widget, dy, controller.unit());
+        gtk::glib::Propagation::Stop
+    });
+    scale.add_controller(controller);
+}
+
+fn scroll_parent_vertically(widget: &gtk::Widget, dy: f64, unit: gtk::gdk::ScrollUnit) {
+    let Some(scroller) = nearest_parent_scroller(widget) else {
+        return;
+    };
+    let adjustment = scroller.vadjustment();
+    let page_size = adjustment.page_size();
+    let multiplier = match unit {
+        gtk::gdk::ScrollUnit::Surface => EQUALIZER_SURFACE_SCROLL_FACTOR,
+        _ => page_size.powf(2.0 / 3.0),
+    };
+    let max_value = (adjustment.upper() - page_size).max(adjustment.lower());
+    let value = (adjustment.value() + dy * multiplier).clamp(adjustment.lower(), max_value);
+    adjustment.set_value(value);
+}
+
+fn nearest_parent_scroller(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
+    let mut parent = widget.parent();
+    while let Some(widget) = parent {
+        if let Ok(scroller) = widget.clone().downcast::<gtk::ScrolledWindow>() {
+            return Some(scroller);
+        }
+        parent = widget.parent();
+    }
+    None
 }
 
 #[cfg(test)]

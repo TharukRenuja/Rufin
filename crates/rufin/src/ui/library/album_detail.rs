@@ -508,6 +508,7 @@ pub(in crate::ui) fn album_detail_cover_tile(
     cover_button.add_css_class("flat");
     cover_button.add_css_class("album-cover-button");
     cards::constrain_cover_widget(&cover_button, cover_size);
+    cards::clip_cover(&cover_button);
     cover_button.set_child(Some(&shell.cover_tile_for(
         album.image_ref.as_ref(),
         album.color_seed,

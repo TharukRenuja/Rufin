@@ -209,6 +209,7 @@ impl Shell {
         let body = gtk::Box::new(gtk::Orientation::Horizontal, DETAIL_HEADER_SPACING);
         body.set_hexpand(true);
         body.set_halign(gtk::Align::Fill);
+        body.set_width_request(1);
 
         let image_ref = super::library::artist_cover_image_ref(self, artist);
         let cover_fetch_size = cover_fetch_size_for_display(cover_size);
@@ -232,6 +233,7 @@ impl Shell {
         summary.set_justify(gtk::Justification::Left);
         summary.set_wrap(true);
         summary.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        summary.set_width_request(1);
         summary.set_width_chars(1);
         summary.set_max_width_chars(32);
         let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -248,9 +250,11 @@ impl Shell {
         metadata.set_hexpand(true);
         metadata.set_valign(gtk::Align::Start);
         metadata.set_halign(gtk::Align::Fill);
+        metadata.set_width_request(1);
         let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);
+        text_stack.set_width_request(1);
         let kind = gtk::Label::new(Some(&tr("Artist")));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
@@ -264,6 +268,7 @@ impl Shell {
         title.set_halign(gtk::Align::Fill);
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        title.set_width_request(1);
         title.set_width_chars(1);
         title.set_max_width_chars(32);
         fit_detail_text(&title, &artist.name);
@@ -329,9 +334,10 @@ impl Shell {
         });
         actions.append(&favorite);
 
-        let links = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let links = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         links.add_css_class("detail-showcase-link-row");
         links.set_halign(gtk::Align::Start);
+        links.set_width_request(1);
 
         let discography = detail_link_button("media-optical-symbolic", "Discography");
         let shell = Rc::clone(self);

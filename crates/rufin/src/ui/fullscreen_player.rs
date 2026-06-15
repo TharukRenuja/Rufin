@@ -7,13 +7,14 @@ use adw::prelude::*;
 use domain::{EQUALIZER_BAND_COUNT, EqualizerSettings, QueueEntry};
 use gtk::glib;
 use playback::PlaybackState;
+use tracing::debug;
 
 use crate::i18n::tr;
 use crate::lyrics::LyricsPane;
 use crate::ui::{
-    connect_equalizer_scale_commit, cover_fetch_size_for_display, equalizer_band_label_parts,
-    equalizer_band_title, equalizer_default_preset_bands, equalizer_preset_bands,
-    equalizer_preset_names, equalizer_selected_preset,
+    build_equalizer_preset_dropdown, connect_equalizer_scale_commit, cover_fetch_size_for_display,
+    equalizer_band_label_parts, equalizer_band_title, equalizer_default_preset_bands,
+    equalizer_preset_bands, equalizer_selected_preset, install_equalizer_scroll,
 };
 
 use super::{
@@ -31,7 +32,7 @@ const FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE: i32 = 320;
 const FULLSCREEN_PLAYER_MIN_COVER_SIZE: i32 = 140;
 const FULLSCREEN_PLAYER_MAX_COVER_SIZE: i32 = 320;
 const FULLSCREEN_PLAYER_HORIZONTAL_MARGIN: i32 = 64;
-const FULLSCREEN_PLAYER_VERTICAL_RESERVED: i32 = 360;
+const FULLSCREEN_PLAYER_VERTICAL_RESERVED: i32 = 430;
 const FULLSCREEN_ICON_SIZE: i32 = 18;
 const FULLSCREEN_VISUALIZER_BANDS: usize = 320;
 const FULLSCREEN_VISUALIZER_MIN_RATIO: f64 = 20.0 / 24_000.0;
@@ -40,7 +41,17 @@ const FULLSCREEN_VISUALIZER_EMA_WEIGHT: f64 = 0.72;
 const FULLSCREEN_VISUALIZER_MIN_COLUMNS: usize = 64;
 const FULLSCREEN_VISUALIZER_MAX_COLUMNS: usize = 128;
 const FULLSCREEN_VISUALIZER_TOP_GAP: f64 = 50.0;
-const FULLSCREEN_EQUALIZER_SCALE_HEIGHT: i32 = 196;
+const FULLSCREEN_EQUALIZER_MIN_SCALE_HEIGHT: i32 = 124;
+const FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT: i32 = 286;
+const FULLSCREEN_EQUALIZER_LEVEL_WIDTH: i32 = 42;
+const FULLSCREEN_EQUALIZER_ROW_GAP: i32 = 12;
+const FULLSCREEN_EQUALIZER_MIN_BAND_WIDTH: i32 = 12;
+const FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH: i32 = 44;
+const FULLSCREEN_EQUALIZER_MIN_BAND_GAP: i32 = 2;
+const FULLSCREEN_EQUALIZER_MAX_BAND_GAP: i32 = 10;
+const FULLSCREEN_EQUALIZER_LABEL_HEIGHT: i32 = 50;
+const FULLSCREEN_EQUALIZER_MIN_FIT_INSET: i32 = 24;
+const FULLSCREEN_EQUALIZER_MAX_FIT_INSET: i32 = 96;
 
 pub(super) struct FullscreenPlayerParts {
     pub(super) root: gtk::Box,
@@ -51,7 +62,7 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) title: gtk::Label,
     pub(super) artist: gtk::Label,
     pub(super) album: gtk::Label,
-    pub(super) meta: gtk::Label,
+    pub(super) meta: gtk::FlowBox,
     pub(super) stack: adw::ViewStack,
     pub(super) lyrics_pane: LyricsPane,
     pub(super) queue_panel: gtk::Box,
@@ -66,6 +77,12 @@ pub(super) struct FullscreenPlayerParts {
     pub(super) equalizer_preset_button: gtk::MenuButton,
     pub(super) equalizer_preset_popover: gtk::Popover,
     pub(super) equalizer_preset_buttons: Vec<(gtk::Button, String)>,
+    pub(super) equalizer_band_row: gtk::Box,
+    pub(super) equalizer_graph: gtk::Box,
+    pub(super) equalizer_bands: gtk::Box,
+    pub(super) equalizer_band_widgets: Vec<gtk::Box>,
+    pub(super) equalizer_left_levels: gtk::Box,
+    pub(super) equalizer_right_levels: gtk::Box,
     pub(super) equalizer_syncing: Rc<Cell<bool>>,
 }
 
@@ -77,6 +94,12 @@ struct EqualizerPanel {
     preset_button: gtk::MenuButton,
     preset_popover: gtk::Popover,
     preset_buttons: Vec<(gtk::Button, String)>,
+    band_row: gtk::Box,
+    graph: gtk::Box,
+    bands: gtk::Box,
+    band_widgets: Vec<gtk::Box>,
+    left_levels: gtk::Box,
+    right_levels: gtk::Box,
     syncing: Rc<Cell<bool>>,
 }
 
@@ -109,9 +132,10 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
 
     let hero = gtk::Box::new(gtk::Orientation::Horizontal, 18);
     hero.add_css_class("fullscreen-player-hero");
-    hero.set_halign(gtk::Align::Center);
+    hero.set_halign(gtk::Align::Fill);
     hero.set_valign(gtk::Align::Center);
     hero.set_hexpand(true);
+    hero.set_width_request(1);
 
     let cover = ArtworkTile::new(FULLSCREEN_PLAYER_DEFAULT_COVER_SIZE, 42);
     cover.area.add_css_class("fullscreen-player-cover");
@@ -120,15 +144,16 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
 
     let details = gtk::Box::new(gtk::Orientation::Vertical, 5);
     details.add_css_class("fullscreen-player-details");
-    details.set_halign(gtk::Align::Start);
+    details.set_hexpand(true);
+    details.set_width_request(1);
+    details.set_halign(gtk::Align::Fill);
     details.set_valign(gtk::Align::Center);
 
     let title = fullscreen_player_label("fullscreen-player-title");
     let artist = fullscreen_player_label("fullscreen-player-artist");
     let album = fullscreen_player_label("fullscreen-player-album");
-    let meta = fullscreen_player_label("fullscreen-player-meta");
-    meta.add_css_class("muted");
-    for label in [&title, &artist, &album, &meta] {
+    let meta = fullscreen_player_meta_row();
+    for label in [&title, &artist, &album] {
         label.set_halign(gtk::Align::Start);
         label.set_xalign(0.0);
         label.set_justify(gtk::Justification::Left);
@@ -206,6 +231,12 @@ pub(super) fn build_fullscreen_player() -> FullscreenPlayerParts {
         equalizer_preset_button: equalizer.preset_button,
         equalizer_preset_popover: equalizer.preset_popover,
         equalizer_preset_buttons: equalizer.preset_buttons,
+        equalizer_band_row: equalizer.band_row,
+        equalizer_graph: equalizer.graph,
+        equalizer_bands: equalizer.bands,
+        equalizer_band_widgets: equalizer.band_widgets,
+        equalizer_left_levels: equalizer.left_levels,
+        equalizer_right_levels: equalizer.right_levels,
         equalizer_syncing: equalizer.syncing,
     }
 }
@@ -581,83 +612,118 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
     let root = gtk::ScrolledWindow::new();
     root.add_css_class("fullscreen-player-pane");
     root.add_css_class("fullscreen-player-equalizer-scroller");
-    root.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    root.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
     root.set_hexpand(true);
     root.set_vexpand(true);
+    root.set_min_content_width(0);
+    root.set_propagate_natural_width(false);
     root.set_propagate_natural_height(false);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
     content.add_css_class("fullscreen-player-equalizer");
     content.set_hexpand(true);
     content.set_vexpand(true);
+    content.set_width_request(1);
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let header = gtk::FlowBox::new();
+    header.add_css_class("fullscreen-player-equalizer-header");
+    header.set_column_spacing(10);
+    header.set_row_spacing(6);
     header.set_halign(gtk::Align::Center);
     header.set_valign(gtk::Align::Center);
+    header.set_selection_mode(gtk::SelectionMode::None);
+    header.set_max_children_per_line(3);
 
+    let enabled_group = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    enabled_group.set_valign(gtk::Align::Center);
     let enabled = gtk::Switch::new();
     enabled.set_valign(gtk::Align::Center);
     let enabled_label = gtk::Label::new(Some(&tr("Enable equalizer")));
     enabled_label.set_valign(gtk::Align::Center);
-    header.append(&enabled_label);
-    header.append(&enabled);
+    enabled_group.append(&enabled_label);
+    enabled_group.append(&enabled);
+    header.insert(&enabled_group, -1);
 
-    let preset_button = gtk::MenuButton::new();
-    preset_button.set_label(&tr("Preset"));
-    preset_button.set_valign(gtk::Align::Center);
-    let preset_popover = gtk::Popover::new();
-    let preset_menu = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    preset_menu.add_css_class("fullscreen-player-equalizer-preset-menu");
-    let mut preset_buttons = Vec::new();
-    for name in equalizer_preset_names() {
-        let button = gtk::Button::with_label(&tr(name));
-        button.set_halign(gtk::Align::Fill);
-        button.set_valign(gtk::Align::Center);
-        button.add_css_class("flat");
-        preset_menu.append(&button);
-        preset_buttons.push((button, name.to_string()));
-    }
-    preset_popover.set_child(Some(&preset_menu));
-    preset_button.set_popover(Some(&preset_popover));
-    header.append(&preset_button);
+    let preset_dropdown =
+        build_equalizer_preset_dropdown(Some("fullscreen-player-equalizer-preset-menu"));
+    let preset_button = preset_dropdown.button;
+    let preset_popover = preset_dropdown.popover;
+    let preset_buttons = preset_dropdown.buttons;
+    header.insert(&preset_button, -1);
 
     let reset_button = gtk::Button::with_label(&tr("Reset"));
     reset_button.add_css_class("destructive-action");
-    header.append(&reset_button);
+    header.insert(&reset_button, -1);
     content.append(&header);
 
-    let band_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    band_row.set_halign(gtk::Align::Center);
-    band_row.set_valign(gtk::Align::Center);
+    let band_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    band_row.set_halign(gtk::Align::Fill);
+    band_row.set_valign(gtk::Align::Fill);
+    band_row.set_hexpand(true);
     band_row.set_vexpand(true);
-    band_row.set_size_request(-1, 240);
-    band_row.append(&fullscreen_equalizer_level_labels());
+    band_row.set_width_request(1);
+    band_row.set_height_request(240);
+    band_row.set_margin_bottom(6);
+
+    let graph = gtk::Box::new(gtk::Orientation::Horizontal, FULLSCREEN_EQUALIZER_ROW_GAP);
+    graph.set_halign(gtk::Align::Center);
+    graph.set_valign(gtk::Align::Center);
+    graph.set_hexpand(false);
+    graph.set_width_request(1);
+    let left_levels = fullscreen_equalizer_level_labels(0.0);
+    graph.append(&left_levels);
 
     let bands = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     bands.add_css_class("fullscreen-player-equalizer-bands");
     bands.set_halign(gtk::Align::Center);
     bands.set_valign(gtk::Align::Center);
+    bands.set_hexpand(false);
     let mut scales = Vec::with_capacity(EQUALIZER_BAND_COUNT);
+    let mut band_widgets = Vec::with_capacity(EQUALIZER_BAND_COUNT);
     for index in 0..EQUALIZER_BAND_COUNT {
         let band = gtk::Box::new(gtk::Orientation::Vertical, 6);
         band.set_halign(gtk::Align::Center);
         band.set_valign(gtk::Align::Center);
+        band.set_width_request(FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH);
         let scale = gtk::Scale::with_range(gtk::Orientation::Vertical, -12.0, 12.0, 0.5);
+        scale.add_css_class("fullscreen-player-equalizer-scale");
         scale.set_inverted(true);
         scale.set_value(0.0);
         scale.set_draw_value(false);
-        scale.set_size_request(36, FULLSCREEN_EQUALIZER_SCALE_HEIGHT);
+        scale.set_size_request(
+            FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH,
+            FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT,
+        );
         scale.set_valign(gtk::Align::Center);
         scale.set_tooltip_text(Some(&equalizer_band_title(index)));
+        install_equalizer_scroll(&scale);
         band.append(&scale);
         band.append(&fullscreen_equalizer_band_label(index));
         bands.append(&band);
+        band_widgets.push(band);
         scales.push(scale);
     }
-    band_row.append(&bands);
-    band_row.append(&fullscreen_equalizer_level_labels());
+    graph.append(&bands);
+    let right_levels = fullscreen_equalizer_level_labels(1.0);
+    graph.append(&right_levels);
+    let left_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    left_spacer.set_hexpand(true);
+    let right_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    right_spacer.set_hexpand(true);
+    band_row.append(&left_spacer);
+    band_row.append(&graph);
+    band_row.append(&right_spacer);
     content.append(&band_row);
     root.set_child(Some(&content));
+    connect_fullscreen_equalizer_resize(
+        &band_row,
+        &graph,
+        &bands,
+        &band_widgets,
+        &scales,
+        &left_levels,
+        &right_levels,
+    );
 
     EqualizerPanel {
         root,
@@ -667,15 +733,204 @@ fn build_fullscreen_equalizer_panel() -> EqualizerPanel {
         preset_button,
         preset_popover,
         preset_buttons,
+        band_row,
+        graph,
+        bands,
+        band_widgets,
+        left_levels,
+        right_levels,
         syncing: Rc::new(Cell::new(false)),
     }
 }
 
-fn fullscreen_equalizer_level_labels() -> gtk::Widget {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EqualizerFit {
+    band_width: i32,
+    band_gap: i32,
+    scale_height: i32,
+    show_right_levels: bool,
+}
+
+fn fullscreen_equalizer_fit(row_width: i32, row_height: i32) -> EqualizerFit {
+    let fit_inset = fullscreen_equalizer_fit_inset(row_width);
+    let row_width = row_width.saturating_sub(fit_inset);
+    let show_right_levels = true;
+    let side_width = fullscreen_equalizer_total_width(0, 0, show_right_levels);
+    let available = row_width.saturating_sub(side_width);
+    let band_gaps = EQUALIZER_BAND_COUNT.saturating_sub(1) as i32;
+    let full_width = FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH * EQUALIZER_BAND_COUNT as i32
+        + FULLSCREEN_EQUALIZER_MAX_BAND_GAP * band_gaps;
+    let band_gap = if available >= full_width {
+        FULLSCREEN_EQUALIZER_MAX_BAND_GAP
+    } else {
+        ((available - FULLSCREEN_EQUALIZER_MIN_BAND_WIDTH * EQUALIZER_BAND_COUNT as i32)
+            / band_gaps.max(1))
+        .clamp(
+            FULLSCREEN_EQUALIZER_MIN_BAND_GAP,
+            FULLSCREEN_EQUALIZER_MAX_BAND_GAP,
+        )
+    };
+    let band_width = ((available - band_gap * band_gaps) / EQUALIZER_BAND_COUNT as i32).clamp(
+        FULLSCREEN_EQUALIZER_MIN_BAND_WIDTH,
+        FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH,
+    );
+    let scale_height = fullscreen_equalizer_scale_height(row_width, row_height, available);
+
+    EqualizerFit {
+        band_width,
+        band_gap,
+        scale_height,
+        show_right_levels,
+    }
+}
+
+fn fullscreen_equalizer_fit_inset(row_width: i32) -> i32 {
+    (row_width / 8).clamp(
+        FULLSCREEN_EQUALIZER_MIN_FIT_INSET,
+        FULLSCREEN_EQUALIZER_MAX_FIT_INSET,
+    )
+}
+
+fn fullscreen_equalizer_scale_height(row_width: i32, row_height: i32, available: i32) -> i32 {
+    let width_budget = row_width.min(available.max(1));
+    let width_height = (width_budget * FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT / 560).clamp(
+        FULLSCREEN_EQUALIZER_MIN_SCALE_HEIGHT,
+        FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT,
+    );
+    let height_height = if row_height > 0 {
+        row_height
+            .saturating_sub(FULLSCREEN_EQUALIZER_LABEL_HEIGHT)
+            .clamp(
+                FULLSCREEN_EQUALIZER_MIN_SCALE_HEIGHT,
+                FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT,
+            )
+    } else {
+        FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT
+    };
+    width_height.min(height_height)
+}
+
+fn fullscreen_equalizer_total_width(
+    band_width: i32,
+    band_gap: i32,
+    show_right_levels: bool,
+) -> i32 {
+    let side_width = if show_right_levels {
+        FULLSCREEN_EQUALIZER_LEVEL_WIDTH * 2 + FULLSCREEN_EQUALIZER_ROW_GAP * 2
+    } else {
+        FULLSCREEN_EQUALIZER_LEVEL_WIDTH + FULLSCREEN_EQUALIZER_ROW_GAP
+    };
+    side_width
+        + band_width * EQUALIZER_BAND_COUNT as i32
+        + band_gap * EQUALIZER_BAND_COUNT.saturating_sub(1) as i32
+}
+
+fn apply_fullscreen_equalizer_fit(
+    row_width: i32,
+    row_height: i32,
+    graph: &gtk::Box,
+    bands: &gtk::Box,
+    band_widgets: &[gtk::Box],
+    scales: &[gtk::Scale],
+    levels: (&gtk::Box, &gtk::Box),
+) {
+    if row_width <= 0 {
+        return;
+    }
+
+    let fit = fullscreen_equalizer_fit(row_width, row_height);
+    let band_area_width = fit.band_width * EQUALIZER_BAND_COUNT as i32
+        + fit.band_gap * EQUALIZER_BAND_COUNT.saturating_sub(1) as i32;
+    let graph_width =
+        fullscreen_equalizer_total_width(fit.band_width, fit.band_gap, fit.show_right_levels);
+    graph.set_width_request(graph_width);
+    bands.set_spacing(fit.band_gap);
+    bands.set_width_request(band_area_width);
+    let (left_levels, right_levels) = levels;
+    left_levels.set_height_request(fit.scale_height);
+    right_levels.set_visible(fit.show_right_levels);
+    right_levels.set_height_request(fit.scale_height);
+    for (band, scale) in band_widgets.iter().zip(scales.iter()) {
+        band.set_width_request(fit.band_width);
+        scale.set_size_request(fit.band_width, fit.scale_height);
+    }
+}
+
+fn connect_fullscreen_equalizer_resize(
+    row: &gtk::Box,
+    graph: &gtk::Box,
+    bands: &gtk::Box,
+    band_widgets: &[gtk::Box],
+    scales: &[gtk::Scale],
+    left_levels: &gtk::Box,
+    right_levels: &gtk::Box,
+) {
+    let resize_graph = graph.clone();
+    let resize_bands = bands.clone();
+    let resize_band_widgets = band_widgets.to_vec();
+    let resize_scales = scales.to_vec();
+    let resize_left_levels = left_levels.clone();
+    let resize_right_levels = right_levels.clone();
+    row.connect_notify_local(Some("width"), move |row, _| {
+        apply_fullscreen_equalizer_fit(
+            row.width(),
+            row.height(),
+            &resize_graph,
+            &resize_bands,
+            &resize_band_widgets,
+            &resize_scales,
+            (&resize_left_levels, &resize_right_levels),
+        );
+    });
+
+    let resize_graph = graph.clone();
+    let resize_bands = bands.clone();
+    let resize_band_widgets = band_widgets.to_vec();
+    let resize_scales = scales.to_vec();
+    let resize_left_levels = left_levels.clone();
+    let resize_right_levels = right_levels.clone();
+    row.connect_notify_local(Some("height"), move |row, _| {
+        apply_fullscreen_equalizer_fit(
+            row.width(),
+            row.height(),
+            &resize_graph,
+            &resize_bands,
+            &resize_band_widgets,
+            &resize_scales,
+            (&resize_left_levels, &resize_right_levels),
+        );
+    });
+
+    let resize_graph = graph.clone();
+    let resize_bands = bands.clone();
+    let resize_band_widgets = band_widgets.to_vec();
+    let resize_scales = scales.to_vec();
+    let resize_left_levels = left_levels.clone();
+    let resize_right_levels = right_levels.clone();
+    row.add_tick_callback(move |row, _| {
+        if row.width() > 0 {
+            apply_fullscreen_equalizer_fit(
+                row.width(),
+                row.height(),
+                &resize_graph,
+                &resize_bands,
+                &resize_band_widgets,
+                &resize_scales,
+                (&resize_left_levels, &resize_right_levels),
+            );
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
+fn fullscreen_equalizer_level_labels(xalign: f32) -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
     column.add_css_class("fullscreen-player-equalizer-levels");
-    column.set_height_request(FULLSCREEN_EQUALIZER_SCALE_HEIGHT);
-    column.set_valign(gtk::Align::Center);
+    column.set_width_request(FULLSCREEN_EQUALIZER_LEVEL_WIDTH);
+    column.set_height_request(FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT);
+    column.set_valign(gtk::Align::Start);
     for (index, value) in ["12 dB", "6 dB", "0 dB", "-6 dB", "-12 dB"]
         .iter()
         .enumerate()
@@ -688,10 +943,10 @@ fn fullscreen_equalizer_level_labels() -> gtk::Widget {
         let label = gtk::Label::new(Some(value));
         label.add_css_class("muted");
         label.add_css_class("fullscreen-player-equalizer-level-label");
-        label.set_xalign(1.0);
+        label.set_xalign(xalign);
         column.append(&label);
     }
-    column.upcast()
+    column
 }
 
 fn fullscreen_equalizer_band_label(index: usize) -> gtk::Widget {
@@ -730,33 +985,6 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
     });
     shell.window.add_controller(key);
 
-    let resize_shell = Rc::clone(shell);
-    shell
-        .window
-        .connect_notify_local(Some("width"), move |_, _| {
-            resize_shell.refresh_fullscreen_player_layout();
-        });
-    let resize_shell = Rc::clone(shell);
-    shell
-        .window
-        .connect_notify_local(Some("height"), move |_, _| {
-            resize_shell.refresh_fullscreen_player_layout();
-        });
-    let resize_shell = Rc::clone(shell);
-    shell
-        .fullscreen_player
-        .root
-        .connect_notify_local(Some("width"), move |_, _| {
-            resize_shell.refresh_fullscreen_player_layout();
-        });
-    let resize_shell = Rc::clone(shell);
-    shell
-        .fullscreen_player
-        .root
-        .connect_notify_local(Some("height"), move |_, _| {
-            resize_shell.refresh_fullscreen_player_layout();
-        });
-
     let queue_tab_shell = Rc::clone(shell);
     shell
         .fullscreen_player
@@ -768,6 +996,12 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
             match stack.visible_child_name().as_deref() {
                 Some("queue") => queue_tab_shell.schedule_queue_panel_render(),
                 Some("lyrics") => queue_tab_shell.refresh_fullscreen_lyrics_position(),
+                Some("equalizer") => {
+                    let equalizer_shell = Rc::clone(&queue_tab_shell);
+                    glib::idle_add_local_once(move || {
+                        equalizer_shell.refresh_fullscreen_player_layout();
+                    });
+                }
                 _ => {}
             }
             queue_tab_shell.sync_fullscreen_visualizer_state();
@@ -849,7 +1083,30 @@ impl Shell {
         self.animate_fullscreen_player(true);
         let player = self.state.player.borrow().clone();
         self.update_fullscreen_player_text_fast(&player);
+        let text_shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            if text_shell.state.fullscreen_player_visible.get() {
+                let player = text_shell.state.player.borrow().clone();
+                text_shell.update_fullscreen_player_text(&player);
+            }
+        });
+        self.apply_fullscreen_responsive_layout();
         self.update_fullscreen_player_cover_fast(&player);
+        let resize_shell = Rc::clone(self);
+        glib::idle_add_local_once(move || {
+            if resize_shell.state.fullscreen_player_visible.get() {
+                resize_shell.refresh_fullscreen_player_layout();
+            }
+        });
+        let resize_shell = Rc::clone(self);
+        glib::timeout_add_local_once(
+            Duration::from_millis(u64::from(FULLSCREEN_PLAYER_OPEN_TRANSITION_MS) + 40),
+            move || {
+                if resize_shell.state.fullscreen_player_visible.get() {
+                    resize_shell.refresh_fullscreen_player_layout();
+                }
+            },
+        );
         let cover_shell = Rc::clone(self);
         glib::timeout_add_local_once(
             Duration::from_millis(FULLSCREEN_PLAYER_DEFERRED_COVER_MS),
@@ -913,24 +1170,74 @@ impl Shell {
         }
         let player = self.state.player.borrow().clone();
         self.update_fullscreen_player_text(&player);
+        self.apply_fullscreen_responsive_layout();
         self.update_fullscreen_player_cover(&player);
         self.sync_fullscreen_equalizer_controls(&self.state.settings.borrow().playback.equalizer);
         self.sync_fullscreen_visualizer_state();
     }
 
-    fn refresh_fullscreen_player_layout(self: &Rc<Self>) {
+    pub(in crate::ui) fn refresh_fullscreen_player_layout(self: &Rc<Self>) {
         if !self.state.fullscreen_player_visible.get() {
             return;
         }
-        self.update_fullscreen_player();
-        self.schedule_queue_panel_render();
-        let refresh_shell = Rc::clone(self);
-        glib::idle_add_local_once(move || {
-            if refresh_shell.state.fullscreen_player_visible.get() {
-                refresh_shell.update_fullscreen_player();
-                refresh_shell.schedule_queue_panel_render();
-            }
-        });
+        self.apply_fullscreen_responsive_layout();
+    }
+
+    fn apply_fullscreen_responsive_layout(&self) {
+        let cover_size = self.fullscreen_player_cover_size();
+        self.fullscreen_player.cover.set_square_size(cover_size);
+        let equalizer_width = self.apply_fullscreen_equalizer_fit();
+        self.log_fullscreen_layout(cover_size, equalizer_width);
+    }
+
+    fn apply_fullscreen_equalizer_fit(&self) -> i32 {
+        let width = positive_min([
+            self.fullscreen_player.equalizer_band_row.width(),
+            self.fullscreen_player.root.width(),
+            self.app_content_stack.width(),
+            self.window.width(),
+        ]);
+        apply_fullscreen_equalizer_fit(
+            width,
+            self.fullscreen_player.equalizer_band_row.height(),
+            &self.fullscreen_player.equalizer_graph,
+            &self.fullscreen_player.equalizer_bands,
+            &self.fullscreen_player.equalizer_band_widgets,
+            &self.fullscreen_player.equalizer_scales,
+            (
+                &self.fullscreen_player.equalizer_left_levels,
+                &self.fullscreen_player.equalizer_right_levels,
+            ),
+        );
+        width
+    }
+
+    fn log_fullscreen_layout(&self, cover_size: i32, equalizer_width: i32) {
+        if std::env::var_os("RUFIN_DEBUG_LAYOUT").is_none() {
+            return;
+        }
+
+        let (surface_width, surface_height) = self
+            .window
+            .surface()
+            .map(|surface| (surface.width(), surface.height()))
+            .unwrap_or((0, 0));
+        debug!(
+            cover_size,
+            equalizer_width,
+            window_width = self.window.width(),
+            window_height = self.window.height(),
+            surface_width,
+            surface_height,
+            root_width = self.fullscreen_player.root.width(),
+            root_height = self.fullscreen_player.root.height(),
+            app_content_width = self.app_content_stack.width(),
+            app_content_height = self.app_content_stack.height(),
+            band_row_width = self.fullscreen_player.equalizer_band_row.width(),
+            bands_width = self.fullscreen_player.equalizer_bands.width(),
+            right_levels_visible = self.fullscreen_player.equalizer_right_levels.is_visible(),
+            "fullscreen layout snapshot"
+        );
     }
 
     pub(super) fn sync_fullscreen_equalizer_controls(&self, equalizer: &EqualizerSettings) {
@@ -1291,23 +1598,24 @@ impl Shell {
                 .as_ref()
                 .is_some_and(|entry| !entry.album.is_empty()),
         );
-        let meta = if allow_source_lookup {
-            self.fullscreen_player_meta_text(player)
+        let parts = if allow_source_lookup {
+            self.fullscreen_player_meta_parts(player)
         } else {
-            fullscreen_player_fast_meta_text(player.current.as_ref())
+            fullscreen_player_fast_meta_parts(player.current.as_ref())
         };
-        self.fullscreen_player.meta.set_text(&meta);
-        self.fullscreen_player
-            .meta
-            .set_visible(player.current.is_some());
+        update_fullscreen_meta_row(&self.fullscreen_player.meta, &parts);
+        self.fullscreen_player.meta.set_visible(!parts.is_empty());
     }
 
-    fn fullscreen_player_meta_text(&self, player: &crate::controller::PlaybackSnapshot) -> String {
+    fn fullscreen_player_meta_parts(
+        &self,
+        player: &crate::controller::PlaybackSnapshot,
+    ) -> Vec<String> {
         let source_label = player
             .current
             .as_ref()
             .and_then(|entry| self.current_track_source_label(entry));
-        fullscreen_player_meta_text(player.current.as_ref(), source_label.as_deref())
+        fullscreen_player_entry_meta_parts(player.current.as_ref(), source_label.as_deref())
     }
 
     fn current_track_source_label(&self, entry: &QueueEntry) -> Option<String> {
@@ -1359,9 +1667,11 @@ impl Shell {
     }
 
     fn fullscreen_player_cover_size(&self) -> i32 {
-        let width = self.window.width().max(1);
-        let fallback_height = (self.window.height() - BOTTOM_PLAYER_HEIGHT).max(1);
-        let height = fallback_height.max(1);
+        let width = positive_min([self.app_content_stack.width(), self.window.width()]);
+        let height = positive_min([
+            self.app_content_stack.height(),
+            self.window.height().saturating_sub(BOTTOM_PLAYER_HEIGHT),
+        ]);
         fullscreen_artwork_size_for(width, height)
     }
 
@@ -1441,28 +1751,69 @@ impl Shell {
     }
 }
 
+fn positive_min(values: impl IntoIterator<Item = i32>) -> i32 {
+    values
+        .into_iter()
+        .filter(|value| *value > 0)
+        .min()
+        .unwrap_or(1)
+}
+
 fn fullscreen_player_label(css_class: &str) -> gtk::Label {
     let label = gtk::Label::new(None);
     label.add_css_class(css_class);
     label.set_xalign(0.5);
     label.set_justify(gtk::Justification::Center);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    label.set_lines(2);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::None);
     label.set_width_chars(1);
     label.set_max_width_chars(48);
-    label.set_halign(gtk::Align::Center);
+    label.set_width_request(1);
+    label.set_halign(gtk::Align::Fill);
     label
 }
 
-fn fullscreen_player_meta_text(entry: Option<&QueueEntry>, source_label: Option<&str>) -> String {
+fn fullscreen_player_meta_row() -> gtk::FlowBox {
+    let row = gtk::FlowBox::new();
+    row.add_css_class("fullscreen-player-meta-row");
+    row.set_column_spacing(4);
+    row.set_row_spacing(4);
+    row.set_selection_mode(gtk::SelectionMode::None);
+    row.set_max_children_per_line(4);
+    row.set_halign(gtk::Align::Start);
+    row.set_valign(gtk::Align::Center);
+    row
+}
+
+fn update_fullscreen_meta_row(row: &gtk::FlowBox, parts: &[String]) {
+    while let Some(child) = row.first_child() {
+        row.remove(&child);
+    }
+
+    for part in parts {
+        let label = gtk::Label::new(Some(part));
+        label.add_css_class("album-detail-genre-pill");
+        label.add_css_class("fullscreen-player-meta-pill");
+        label.set_xalign(0.5);
+        row.insert(&label, -1);
+    }
+}
+
+fn fullscreen_player_entry_meta_parts(
+    entry: Option<&QueueEntry>,
+    source_label: Option<&str>,
+) -> Vec<String> {
     let Some(entry) = entry else {
-        return String::new();
+        return Vec::new();
     };
     fullscreen_player_meta_parts(entry.year, source_label)
 }
 
-fn fullscreen_player_fast_meta_text(entry: Option<&QueueEntry>) -> String {
+fn fullscreen_player_fast_meta_parts(entry: Option<&QueueEntry>) -> Vec<String> {
     let source_label = entry.and_then(queue_entry_source_label);
-    fullscreen_player_meta_text(entry, source_label.as_deref())
+    fullscreen_player_entry_meta_parts(entry, source_label.as_deref())
 }
 
 fn queue_entry_source_label(entry: &QueueEntry) -> Option<String> {
@@ -1478,7 +1829,7 @@ fn queue_entry_source_label(entry: &QueueEntry) -> Option<String> {
         })
 }
 
-fn fullscreen_player_meta_parts(year: u16, source_label: Option<&str>) -> String {
+fn fullscreen_player_meta_parts(year: u16, source_label: Option<&str>) -> Vec<String> {
     let mut parts = Vec::new();
     if let Some(source) = source_label
         .map(str::trim)
@@ -1489,7 +1840,7 @@ fn fullscreen_player_meta_parts(year: u16, source_label: Option<&str>) -> String
     if year > 0 {
         parts.push(year.to_string());
     }
-    parts.join(" - ")
+    parts
 }
 
 fn audio_source_label_from_path(path: &str) -> Option<String> {
@@ -1548,14 +1899,15 @@ mod tests {
 
     #[test]
     fn fullscreen_use_width() {
-        assert_eq!(fullscreen_artwork_size_for(900, 560), 200);
+        assert_eq!(fullscreen_artwork_size_for(900, 560), 140);
+        assert_eq!(fullscreen_artwork_size_for(900, 700), 270);
     }
 
     #[test]
     fn fullscreen_use_duration() {
         assert_eq!(
             super::fullscreen_player_meta_parts(2013, Some("FLAC")),
-            "FLAC - 2013"
+            vec!["FLAC".to_string(), "2013".to_string()]
         );
     }
 
@@ -1564,21 +1916,21 @@ mod tests {
         let mut entry = queue_entry();
         entry.source_format = Some("audio/mpeg".to_string());
         assert_eq!(
-            super::fullscreen_player_fast_meta_text(Some(&entry)),
-            "MP3 - 2026"
+            super::fullscreen_player_fast_meta_parts(Some(&entry)),
+            vec!["MP3".to_string(), "2026".to_string()]
         );
 
         entry.source_format = None;
         entry.local_path = Some("/music/album/track.flac?token=redacted".to_string());
         assert_eq!(
-            super::fullscreen_player_fast_meta_text(Some(&entry)),
-            "FLAC - 2026"
+            super::fullscreen_player_fast_meta_parts(Some(&entry)),
+            vec!["FLAC".to_string(), "2026".to_string()]
         );
 
         entry.local_path = None;
         assert_eq!(
-            super::fullscreen_player_fast_meta_text(Some(&entry)),
-            "2026"
+            super::fullscreen_player_fast_meta_parts(Some(&entry)),
+            vec!["2026".to_string()]
         );
     }
 
@@ -1621,6 +1973,40 @@ mod tests {
             assert_eq!(bands.len(), EQUALIZER_BAND_COUNT);
             assert!(bands.iter().all(|gain| (-12.0..=12.0).contains(gain)));
         }
+    }
+
+    #[test]
+    fn fullscreen_equalizer_fit_compacts_to_width() {
+        let fit = super::fullscreen_equalizer_fit(550, 240);
+        let total = super::fullscreen_equalizer_total_width(
+            fit.band_width,
+            fit.band_gap,
+            fit.show_right_levels,
+        );
+
+        assert!(total <= 550 - super::fullscreen_equalizer_fit_inset(550));
+        assert!(fit.band_width < super::FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH);
+        assert!(fit.scale_height < super::FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT);
+        assert!(fit.show_right_levels);
+    }
+
+    #[test]
+    fn fullscreen_equalizer_fit_uses_full_controls_when_wide() {
+        let fit = super::fullscreen_equalizer_fit(800, 360);
+
+        assert_eq!(fit.band_width, super::FULLSCREEN_EQUALIZER_MAX_BAND_WIDTH);
+        assert_eq!(fit.band_gap, super::FULLSCREEN_EQUALIZER_MAX_BAND_GAP);
+        assert_eq!(
+            fit.scale_height,
+            super::FULLSCREEN_EQUALIZER_MAX_SCALE_HEIGHT
+        );
+        assert!(fit.show_right_levels);
+    }
+
+    #[test]
+    fn fullscreen_resize_prefers_allocated_bounds() {
+        assert_eq!(super::positive_min([0, 420, 900]), 420);
+        assert_eq!(super::positive_min([900, 420, 760]), 420);
     }
 
     fn queue_entry() -> QueueEntry {
