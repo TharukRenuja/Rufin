@@ -38,6 +38,16 @@ pub fn lyrics_cache_key(server_id: &ServerId, track_id: &str) -> String {
 pub(super) const COLLECTION_COVER_GENRE: &str = "genre";
 pub(super) const COLLECTION_COVER_PLAYLIST: &str = "playlist";
 pub(super) const COLLECTION_COVER_SMART_PLAYLIST: &str = "smart_playlist";
+pub(super) const IMAGE_ORIGIN_EXTERNAL: &str = "external";
+pub(super) const IMAGE_ORIGIN_SOURCE: &str = "source";
+pub(super) const IMAGE_ORIGIN_UNKNOWN: &str = "unknown";
+pub(super) fn image_origin_for_source_ref(image_ref: Option<&ImageRef>) -> &'static str {
+    match image_ref {
+        Some(image_ref) if image_ref.item_id.starts_with("external:") => IMAGE_ORIGIN_EXTERNAL,
+        Some(_) => IMAGE_ORIGIN_SOURCE,
+        None => IMAGE_ORIGIN_UNKNOWN,
+    }
+}
 pub(super) fn saved_server_from_row(row: &Row<'_>) -> rusqlite::Result<SavedServer> {
     Ok(SavedServer {
         server: ServerIdentity {
@@ -296,6 +306,7 @@ pub(super) fn artist_fallback_image_refs_sql(
                         ON a.artist_id = w.artist_id
                     WHERE a.server_id = ?
                       AND a.image_item_id IS NOT NULL
+                      AND a.image_origin IN ('source', 'unknown', 'external')
                     UNION ALL
                     SELECT w.artist_id, a.image_item_id, a.image_tag,
                            1 AS priority, a.year, a.title
@@ -306,6 +317,7 @@ pub(super) fn artist_fallback_image_refs_sql(
                         ON a.server_id = aal.server_id AND a.album_id = aal.album_id
                     WHERE aal.server_id = ?
                       AND a.image_item_id IS NOT NULL
+                      AND a.image_origin IN ('source', 'unknown', 'external')
                     UNION ALL
                     SELECT w.artist_id, a.image_item_id, a.image_tag,
                            2 AS priority, a.year, a.title
@@ -316,6 +328,7 @@ pub(super) fn artist_fallback_image_refs_sql(
                         ON a.server_id = t.server_id AND a.album_id = t.album_id
                     WHERE t.server_id = ?
                       AND a.image_item_id IS NOT NULL
+                      AND a.image_origin IN ('source', 'unknown', 'external')
                     UNION ALL
                     SELECT w.artist_id, a.image_item_id, a.image_tag,
                            3 AS priority, a.year, a.title
@@ -326,6 +339,7 @@ pub(super) fn artist_fallback_image_refs_sql(
                         ON a.server_id = tal.server_id AND a.album_id = tal.album_id
                     WHERE tal.server_id = ?
                       AND a.image_item_id IS NOT NULL
+                      AND a.image_origin IN ('source', 'unknown', 'external')
                     UNION ALL
                     SELECT w.artist_id, t.image_item_id, t.image_tag,
                            4 AS priority, t.year, t.title
@@ -334,6 +348,7 @@ pub(super) fn artist_fallback_image_refs_sql(
                         ON t.artist_id = w.artist_id
                     WHERE t.server_id = ?
                       AND t.image_item_id IS NOT NULL
+                      AND t.image_origin IN ('source', 'unknown', 'external')
                     UNION ALL
                     SELECT w.artist_id, t.image_item_id, t.image_tag,
                            5 AS priority, t.year, t.title
@@ -344,6 +359,7 @@ pub(super) fn artist_fallback_image_refs_sql(
                         ON t.server_id = tal.server_id AND t.track_id = tal.track_id
                     WHERE tal.server_id = ?
                       AND t.image_item_id IS NOT NULL
+                      AND t.image_origin IN ('source', 'unknown', 'external')
                     UNION ALL
                     SELECT w.artist_id, a.image_item_id, a.image_tag,
                            6 AS priority, a.year, a.title
@@ -358,6 +374,7 @@ pub(super) fn artist_fallback_image_refs_sql(
                         ON a.server_id = aal.server_id AND a.album_id = aal.album_id
                     WHERE aa.server_id = ?
                       AND a.image_item_id IS NOT NULL
+                      AND a.image_origin IN ('source', 'unknown', 'external')
                  )
             SELECT artist_id, image_item_id, image_tag
             FROM candidates
@@ -376,8 +393,9 @@ pub(super) fn artist_fallback_image_refs_sql(
                 FROM wanted w
                 JOIN albums a
                     ON a.artist_id = w.artist_id
-                WHERE a.server_id = ?
-                  AND a.image_item_id IS NOT NULL
+              WHERE a.server_id = ?
+                AND a.image_item_id IS NOT NULL
+                AND a.image_origin IN ('source', 'unknown', 'external')
                 UNION ALL
                 SELECT w.artist_id, a.image_item_id, a.image_tag,
                        1 AS priority, a.year, a.title
@@ -386,8 +404,9 @@ pub(super) fn artist_fallback_image_refs_sql(
                     ON t.artist_id = w.artist_id
                 JOIN albums a
                     ON a.server_id = t.server_id AND a.album_id = t.album_id
-                WHERE t.server_id = ?
-                  AND a.image_item_id IS NOT NULL
+              WHERE t.server_id = ?
+                AND a.image_item_id IS NOT NULL
+                AND a.image_origin IN ('source', 'unknown', 'external')
                 UNION ALL
                 SELECT w.artist_id, a.image_item_id, a.image_tag,
                        2 AS priority, a.year, a.title
@@ -396,8 +415,9 @@ pub(super) fn artist_fallback_image_refs_sql(
                     ON tal.artist_id = w.artist_id
                 JOIN albums a
                     ON a.server_id = tal.server_id AND a.album_id = tal.album_id
-                WHERE tal.server_id = ?
-                  AND a.image_item_id IS NOT NULL
+              WHERE tal.server_id = ?
+                AND a.image_item_id IS NOT NULL
+                AND a.image_origin IN ('source', 'unknown', 'external')
                 UNION ALL
                 SELECT w.artist_id, a.image_item_id, a.image_tag,
                        3 AS priority, a.year, a.title
@@ -406,16 +426,18 @@ pub(super) fn artist_fallback_image_refs_sql(
                     ON aal.artist_id = w.artist_id
                 JOIN albums a
                     ON a.server_id = aal.server_id AND a.album_id = aal.album_id
-                WHERE aal.server_id = ?
-                  AND a.image_item_id IS NOT NULL
+              WHERE aal.server_id = ?
+                AND a.image_item_id IS NOT NULL
+                AND a.image_origin IN ('source', 'unknown', 'external')
                 UNION ALL
                 SELECT w.artist_id, t.image_item_id, t.image_tag,
                        4 AS priority, t.year, t.title
                 FROM wanted w
                 JOIN tracks t
                     ON t.artist_id = w.artist_id
-                WHERE t.server_id = ?
-                  AND t.image_item_id IS NOT NULL
+              WHERE t.server_id = ?
+                AND t.image_item_id IS NOT NULL
+                AND t.image_origin IN ('source', 'unknown', 'external')
                 UNION ALL
                 SELECT w.artist_id, t.image_item_id, t.image_tag,
                        5 AS priority, t.year, t.title
@@ -424,8 +446,9 @@ pub(super) fn artist_fallback_image_refs_sql(
                     ON tal.artist_id = w.artist_id
                 JOIN tracks t
                     ON t.server_id = tal.server_id AND t.track_id = tal.track_id
-                WHERE tal.server_id = ?
-                  AND t.image_item_id IS NOT NULL
+              WHERE tal.server_id = ?
+                AND t.image_item_id IS NOT NULL
+                AND t.image_origin IN ('source', 'unknown', 'external')
              )
         SELECT artist_id, image_item_id, image_tag
         FROM candidates
@@ -1266,6 +1289,12 @@ fn merge_album_artist_alias(
                   AND alias.artist_id = ?3
                   AND alias.image_item_id IS NOT NULL
             ), image_tag),
+            image_origin = COALESCE((
+                SELECT image_origin FROM album_artists alias
+                WHERE alias.server_id = album_artists.server_id
+                  AND alias.artist_id = ?3
+                  AND alias.image_item_id IS NOT NULL
+            ), image_origin),
             sync_generation = ?4
         WHERE server_id = ?1
           AND artist_id = ?2

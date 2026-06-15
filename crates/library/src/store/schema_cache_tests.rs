@@ -14,7 +14,7 @@ use domain::{
 #[test]
 fn current_schema_initializes_empty_database() {
     let store = Store::open_memory().expect("open store");
-    assert_eq!(store.schema_version().expect("schema version"), 17);
+    assert_eq!(store.schema_version().expect("schema version"), 18);
     for column in [
         "release_types_json",
         "is_compilation",
@@ -75,6 +75,21 @@ fn current_schema_initializes_empty_database() {
             .expect("column lookup"),
         "playlists.top_genres_json should exist"
     );
+    for table in [
+        "albums",
+        "tracks",
+        "artists",
+        "album_artists",
+        "genres",
+        "playlists",
+    ] {
+        assert!(
+            store
+                .table_has_column(table, "image_origin")
+                .expect("column lookup"),
+            "{table}.image_origin should exist"
+        );
+    }
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -288,6 +303,29 @@ fn entity_link_count(
         .expect("count entity links")
 }
 
+fn selected_image_origin(
+    store: &Store,
+    server_id: &ServerId,
+    table: &str,
+    id_column: &str,
+    id: &str,
+) -> String {
+    store
+        .connection
+        .query_row(
+            &format!(
+                "
+                SELECT image_origin
+                FROM {table}
+                WHERE server_id = ?1 AND {id_column} = ?2
+                "
+            ),
+            rusqlite::params![server_id.as_str(), id],
+            |row| row.get(0),
+        )
+        .expect("selected image origin")
+}
+
 #[test]
 fn file_store_reset() {
     let path = std::env::temp_dir().join(format!(
@@ -330,7 +368,7 @@ fn file_store_reset() {
         .expect("seed old schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 17);
+    assert_eq!(store.schema_version().expect("schema version"), 18);
     assert!(store.foreign_keys_enabled().expect("foreign keys"));
     assert!(store.fts5_available().expect("fts5 table"));
     assert!(
@@ -382,7 +420,7 @@ fn user_version_ten() {
         .expect("seed incomplete schema");
     drop(connection);
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 17);
+    assert_eq!(store.schema_version().expect("schema version"), 18);
     assert!(store.table_exists("tracks").expect("table lookup"));
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
@@ -408,7 +446,7 @@ fn schema_reopen_servers() {
     }
 
     let store = Store::open(&path).expect("reopen store");
-    assert_eq!(store.schema_version().expect("schema version"), 17);
+    assert_eq!(store.schema_version().expect("schema version"), 18);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -451,7 +489,7 @@ fn schema_upgrade_servers() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 17);
+    assert_eq!(store.schema_version().expect("schema version"), 18);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -539,7 +577,7 @@ fn schema_v13_local_manifest_without_identity_columns_migrates() {
     drop(connection);
 
     let store = Store::open(&path).expect("open upgraded store");
-    assert_eq!(store.schema_version().expect("schema version"), 17);
+    assert_eq!(store.schema_version().expect("schema version"), 18);
     assert_eq!(
         store.list_servers().expect("list servers"),
         vec![saved.clone()]
@@ -575,12 +613,12 @@ fn future_user_version() {
     }
     let connection = rusqlite::Connection::open(&path).expect("open future connection");
     connection
-        .pragma_update(None, "user_version", 18)
+        .pragma_update(None, "user_version", 19)
         .expect("set future schema version");
     drop(connection);
 
     let store = Store::open(&path).expect("open reset store");
-    assert_eq!(store.schema_version().expect("schema version"), 17);
+    assert_eq!(store.schema_version().expect("schema version"), 18);
     assert!(store.list_servers().expect("list servers").is_empty());
     drop(store);
     let _cleanup = fs::remove_file(&path);
@@ -3904,6 +3942,151 @@ fn schema_track_missing() {
     assert_eq!(detail.0.image_ref, Some(fallback_image));
     assert_eq!(detail.1, vec![first_track, second_track]);
 }
+
+#[test]
+fn selected_image_origin_marks_source_fallback_and_external_refs() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+
+    let source_album = album(1);
+    let track_image = image_ref("track-source-cover", "track-source-tag");
+    let mut source_track = track(1, &source_album);
+    source_track.image_ref = Some(track_image);
+    let mut external_album = album(2);
+    external_album.musicbrainz_release_group_id =
+        Some("441f9fa7-4c22-4b0f-a363-ba6fa6b04ded".to_string());
+
+    store
+        .upsert_albums(
+            &saved.server.id,
+            &[source_album.clone(), external_album.clone()],
+            generation,
+        )
+        .expect("upsert albums");
+    store
+        .upsert_tracks(&saved.server.id, &[source_track.clone()], generation)
+        .expect("upsert tracks");
+
+    assert_eq!(
+        selected_image_origin(
+            &store,
+            &saved.server.id,
+            "tracks",
+            "track_id",
+            source_track.id.as_str(),
+        ),
+        "source"
+    );
+
+    store
+        .complete_sync(&saved.server.id, generation)
+        .expect("complete sync");
+
+    assert_eq!(
+        selected_image_origin(
+            &store,
+            &saved.server.id,
+            "albums",
+            "album_id",
+            source_album.id.as_str(),
+        ),
+        "fallback"
+    );
+    assert_eq!(
+        selected_image_origin(
+            &store,
+            &saved.server.id,
+            "albums",
+            "album_id",
+            external_album.id.as_str(),
+        ),
+        "external"
+    );
+}
+
+#[test]
+fn fallback_image_origin_does_not_seed_album_or_artist_fallbacks() {
+    let store = Store::open_memory().expect("open store");
+    let saved = saved_server();
+    store.save_server(&saved).expect("save server");
+    let generation = store.begin_sync(&saved.server.id).expect("begin sync");
+
+    let album = album(1);
+    let artist = artist(1, None);
+    let track = track(1, &album);
+    store
+        .upsert_artists(
+            &saved.server.id,
+            std::slice::from_ref(&artist),
+            false,
+            generation,
+        )
+        .expect("upsert artist");
+    store
+        .upsert_albums(&saved.server.id, std::slice::from_ref(&album), generation)
+        .expect("upsert album");
+    store
+        .upsert_tracks(&saved.server.id, std::slice::from_ref(&track), generation)
+        .expect("upsert track");
+    store
+        .connection
+        .execute(
+            "
+            UPDATE tracks
+            SET image_item_id = 'derived-track-cover',
+                image_tag = 'derived-track-tag',
+                image_origin = 'fallback'
+            WHERE server_id = ?1 AND track_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), track.id.as_str()],
+        )
+        .expect("mark derived track image");
+
+    store
+        .refresh_library_counts(&saved.server.id)
+        .expect("refresh counts");
+
+    let album_image: Option<String> = store
+        .connection
+        .query_row(
+            "
+            SELECT image_item_id
+            FROM albums
+            WHERE server_id = ?1 AND album_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), album.id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("album image");
+    let artist_image: Option<String> = store
+        .connection
+        .query_row(
+            "
+            SELECT image_item_id
+            FROM artists
+            WHERE server_id = ?1 AND artist_id = ?2
+            ",
+            rusqlite::params![saved.server.id.as_str(), artist.id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("artist image");
+
+    assert_eq!(album_image, None);
+    assert_eq!(artist_image, None);
+    assert_eq!(
+        selected_image_origin(
+            &store,
+            &saved.server.id,
+            "albums",
+            "album_id",
+            album.id.as_str(),
+        ),
+        "unknown"
+    );
+}
+
 #[test]
 fn paged_read_return() {
     let store = Store::open_memory().expect("open store");

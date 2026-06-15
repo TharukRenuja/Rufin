@@ -30,6 +30,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         from_version: 16,
         run: migrate_to_playlist_top_genres_schema,
     },
+    SchemaMigration {
+        from_version: 17,
+        run: migrate_to_image_origin_schema,
+    },
 ];
 const SCHEMA_VERSION_10_TABLES: &[&str] = &[
     "queue_snapshots",
@@ -267,6 +271,14 @@ const ENTITY_IDENTITY_COLUMNS: &[(&str, &str)] = &[
     ("content_cache_entries", "variant"),
 ];
 const PLAYLIST_TOP_GENRES_COLUMNS: &[(&str, &str)] = &[("playlists", "top_genres_json")];
+const IMAGE_ORIGIN_COLUMNS: &[(&str, &str)] = &[
+    ("albums", "image_origin"),
+    ("tracks", "image_origin"),
+    ("artists", "image_origin"),
+    ("album_artists", "image_origin"),
+    ("genres", "image_origin"),
+    ("playlists", "image_origin"),
+];
 
 struct SchemaMigration {
     from_version: i64,
@@ -384,6 +396,9 @@ fn migrate_to_entity_identity_schema(store: &Store) -> StoreResult<()> {
 }
 fn migrate_to_playlist_top_genres_schema(store: &Store) -> StoreResult<()> {
     store.ensure_column("playlists", "top_genres_json", "TEXT NOT NULL DEFAULT '[]'")
+}
+fn migrate_to_image_origin_schema(store: &Store) -> StoreResult<()> {
+    store.ensure_image_origin_columns()
 }
 
 impl Store {
@@ -508,6 +523,8 @@ impl Store {
                     .schema_has_required_parts(ENTITY_IDENTITY_TABLES, ENTITY_IDENTITY_COLUMNS)?),
             17 => Ok(self.schema_is_complete_for_version(16)?
                 && self.schema_has_required_parts(&[], PLAYLIST_TOP_GENRES_COLUMNS)?),
+            18 => Ok(self.schema_is_complete_for_version(17)?
+                && self.schema_has_required_parts(&[], IMAGE_ORIGIN_COLUMNS)?),
             _ => Ok(false),
         }
     }
@@ -698,6 +715,7 @@ impl Store {
                 color_seed INTEGER NOT NULL,
                 image_item_id TEXT,
                 image_tag TEXT,
+                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 release_types_json TEXT NOT NULL DEFAULT '[]',
                 is_compilation INTEGER,
                 musicbrainz_album_id TEXT,
@@ -725,6 +743,7 @@ impl Store {
                 track_number INTEGER NOT NULL,
                 image_item_id TEXT,
                 image_tag TEXT,
+                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 local_path TEXT,
                 source_format TEXT,
                 comment TEXT,
@@ -744,6 +763,7 @@ impl Store {
                 user_rating INTEGER,
                 image_item_id TEXT,
                 image_tag TEXT,
+                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, artist_id)
             );
@@ -759,6 +779,7 @@ impl Store {
                 user_rating INTEGER,
                 image_item_id TEXT,
                 image_tag TEXT,
+                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, artist_id)
             );
@@ -770,6 +791,7 @@ impl Store {
                 track_count INTEGER NOT NULL,
                 image_item_id TEXT,
                 image_tag TEXT,
+                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, genre_id)
             );
@@ -782,6 +804,7 @@ impl Store {
                 top_genres_json TEXT NOT NULL DEFAULT '[]',
                 image_item_id TEXT,
                 image_tag TEXT,
+                image_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external')),
                 sync_generation INTEGER NOT NULL,
                 PRIMARY KEY (server_id, playlist_id)
             );
@@ -964,6 +987,7 @@ impl Store {
         self.ensure_column("albums", "musicbrainz_album_id", "TEXT")?;
         self.ensure_column("albums", "musicbrainz_release_group_id", "TEXT")?;
         self.ensure_column("playlists", "top_genres_json", "TEXT NOT NULL DEFAULT '[]'")?;
+        self.ensure_image_origin_columns()?;
         self.create_entity_identity_schema()?;
         self.connection
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -1288,6 +1312,16 @@ impl Store {
             self.connection.execute(
                 &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
                 [],
+            )?;
+        }
+        Ok(())
+    }
+    fn ensure_image_origin_columns(&self) -> StoreResult<()> {
+        for (table, _) in IMAGE_ORIGIN_COLUMNS {
+            self.ensure_column(
+                table,
+                "image_origin",
+                "TEXT NOT NULL DEFAULT 'unknown' CHECK (image_origin IN ('unknown', 'source', 'fallback', 'external'))",
             )?;
         }
         Ok(())
