@@ -1,8 +1,9 @@
 use super::*;
 use crate::ui::{
-    connect_equalizer_scale_commit, equalizer_band_title, equalizer_default_preset_bands,
-    equalizer_preset_bands, equalizer_preset_name_at, equalizer_preset_names,
-    equalizer_preset_position, equalizer_selected_preset,
+    build_equalizer_preset_dropdown, connect_equalizer_scale_commit, equalizer_band_title,
+    equalizer_default_preset_bands, equalizer_preset_bands, equalizer_preset_button_label,
+    equalizer_preset_name_at, equalizer_preset_position, equalizer_selected_preset,
+    install_equalizer_scroll,
 };
 
 pub(in crate::ui) fn scrobbling_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
@@ -650,17 +651,18 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     });
     equalizer_group.add(&equalizer_row);
 
-    let preset_names = equalizer_preset_names();
-    let preset_titles = preset_names.iter().map(|name| tr(name)).collect::<Vec<_>>();
-    let preset_refs = preset_titles.iter().map(String::as_str).collect::<Vec<_>>();
-    let preset_options = gtk::StringList::new(&preset_refs);
     let selected_preset =
         equalizer_preset_position(&equalizer_selected_preset(&settings.equalizer));
-    let preset_row = adw::ComboRow::builder()
-        .title(tr("Preset"))
-        .model(&preset_options)
-        .selected(selected_preset)
-        .build();
+    let selected_preset = Rc::new(Cell::new(selected_preset));
+    let preset_dropdown = build_equalizer_preset_dropdown(None);
+    let preset_button = preset_dropdown.button;
+    equalizer_preset_button_label(
+        &preset_button,
+        &equalizer_selected_preset(&settings.equalizer),
+    );
+    let preset_row = adw::ActionRow::builder().title(tr("Preset")).build();
+    preset_row.add_suffix(&preset_button);
+    preset_row.set_activatable_widget(Some(&preset_button));
     let preset_shell = Rc::clone(shell);
     let preset_switch = equalizer_row.clone();
     let preset_reset_guard = Rc::clone(&resetting_equalizer);
@@ -673,7 +675,8 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let equalizer_drag_active = Rc::new(Cell::new(false));
     let equalizer_commit: Rc<dyn Fn()> = {
         let band_shell = Rc::clone(shell);
-        let update_preset = preset_row.clone();
+        let update_preset = preset_button.clone();
+        let update_selected_preset = Rc::clone(&selected_preset);
         let update_guard = Rc::clone(&resetting_equalizer);
         let update_scales = Rc::clone(&band_scales);
         Rc::new(move || {
@@ -689,10 +692,11 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
                 settings.equalizer.bands = bands.clone();
                 settings.equalizer.selected_preset = "Custom".to_string();
             });
+            let preset =
+                equalizer_selected_preset(&band_shell.state.settings.borrow().playback.equalizer);
             update_guard.set(true);
-            update_preset.set_selected(equalizer_preset_position(&equalizer_selected_preset(
-                &band_shell.state.settings.borrow().playback.equalizer,
-            )));
+            update_selected_preset.set(equalizer_preset_position(&preset));
+            equalizer_preset_button_label(&update_preset, &preset);
             update_guard.set(false);
         })
     };
@@ -706,7 +710,7 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         scale.set_digits(1);
         scale.set_width_request(220);
         scale.set_valign(gtk::Align::Center);
-        install_eq_scroll(&scale);
+        install_equalizer_scroll(&scale);
         connect_equalizer_scale_commit(
             &scale,
             Rc::clone(&resetting_equalizer),
@@ -720,32 +724,37 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
         band_scales.borrow_mut().push(scale);
     }
 
-    let preset_scales = Rc::clone(&band_scales);
-    preset_row.connect_selected_notify(move |row| {
-        if preset_reset_guard.get() {
-            return;
-        }
-        let selected = row.selected();
-        if selected == gtk::INVALID_LIST_POSITION {
-            return;
-        }
-        let Some(preset) = equalizer_preset_name_at(selected) else {
-            return;
-        };
-        let bands = equalizer_preset_bands(&preset);
-        preset_reset_guard.set(true);
-        preset_switch.set_active(true);
-        for (scale, gain) in preset_scales.borrow().iter().zip(bands.iter()) {
-            scale.set_value(*gain);
-        }
-        preset_reset_guard.set(false);
-        preset_shell.update_playback_settings(|settings| {
-            settings.equalizer.enabled = true;
-            settings.equalizer.selected_preset = preset;
-            settings.equalizer.bands = bands;
-            settings.equalizer.sanitize();
+    let preset_popover = preset_dropdown.popover.clone();
+    for (button, preset) in preset_dropdown.buttons {
+        let preset_scales = Rc::clone(&band_scales);
+        let preset_shell = Rc::clone(&preset_shell);
+        let preset_switch = preset_switch.clone();
+        let preset_reset_guard = Rc::clone(&preset_reset_guard);
+        let selected_preset = Rc::clone(&selected_preset);
+        let preset_button = preset_button.clone();
+        let preset_popover = preset_popover.clone();
+        button.connect_clicked(move |_| {
+            if preset_reset_guard.get() {
+                return;
+            }
+            let bands = equalizer_preset_bands(&preset);
+            preset_reset_guard.set(true);
+            preset_switch.set_active(true);
+            selected_preset.set(equalizer_preset_position(&preset));
+            equalizer_preset_button_label(&preset_button, &preset);
+            for (scale, gain) in preset_scales.borrow().iter().zip(bands.iter()) {
+                scale.set_value(*gain);
+            }
+            preset_reset_guard.set(false);
+            preset_popover.popdown();
+            preset_shell.update_playback_settings(|settings| {
+                settings.equalizer.enabled = true;
+                settings.equalizer.selected_preset = preset.clone();
+                settings.equalizer.bands = bands;
+                settings.equalizer.sanitize();
+            });
         });
-    });
+    }
 
     let reset_row = adw::ActionRow::builder()
         .title(tr("Reset equalizer"))
@@ -755,16 +764,18 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     reset_button.set_valign(gtk::Align::Center);
     reset_button.add_css_class("destructive-action");
     let reset_shell = Rc::clone(shell);
-    let reset_preset = preset_row.clone();
+    let reset_preset = preset_button.clone();
+    let reset_selected_preset = Rc::clone(&selected_preset);
     let reset_scales = Rc::clone(&band_scales);
     let reset_guard = Rc::clone(&resetting_equalizer);
     reset_button.connect_clicked(move |_| {
-        let preset = equalizer_preset_name_at(reset_preset.selected()).unwrap_or_else(|| {
+        let preset = equalizer_preset_name_at(reset_selected_preset.get()).unwrap_or_else(|| {
             equalizer_selected_preset(&reset_shell.state.settings.borrow().playback.equalizer)
         });
         let bands = equalizer_default_preset_bands(&preset);
         reset_guard.set(true);
-        reset_preset.set_selected(equalizer_preset_position(&preset));
+        reset_selected_preset.set(equalizer_preset_position(&preset));
+        equalizer_preset_button_label(&reset_preset, &preset);
         for (scale, gain) in reset_scales.borrow().iter().zip(bands.iter()) {
             scale.set_value(*gain);
         }
@@ -781,54 +792,6 @@ pub(in crate::ui) fn playback_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     page.add(&equalizer_group);
 
     page
-}
-pub(in crate::ui) fn install_eq_scroll(scale: &gtk::Scale) {
-    let controller = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
-    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let scale_weak = scale.downgrade();
-    controller.connect_scroll(move |controller, _, dy| {
-        if dy == 0.0 {
-            return gtk::glib::Propagation::Proceed;
-        }
-
-        let Some(scale) = scale_weak.upgrade() else {
-            return gtk::glib::Propagation::Stop;
-        };
-        let scale_widget = scale.upcast::<gtk::Widget>();
-        scroll_nearest_parent_vertically(&scale_widget, dy, controller.unit());
-        gtk::glib::Propagation::Stop
-    });
-    scale.add_controller(controller);
-}
-pub(in crate::ui) fn scroll_nearest_parent_vertically(
-    widget: &gtk::Widget,
-    dy: f64,
-    unit: gtk::gdk::ScrollUnit,
-) {
-    let Some(scroller) = nearest_parent_scrolled_window(widget) else {
-        return;
-    };
-    let adjustment = scroller.vadjustment();
-    let page_size = adjustment.page_size();
-    let multiplier = match unit {
-        gtk::gdk::ScrollUnit::Surface => SURFACE_SCROLL_FACTOR,
-        _ => page_size.powf(2.0 / 3.0),
-    };
-    let max_value = (adjustment.upper() - page_size).max(adjustment.lower());
-    let value = (adjustment.value() + dy * multiplier).clamp(adjustment.lower(), max_value);
-    adjustment.set_value(value);
-}
-pub(in crate::ui) fn nearest_parent_scrolled_window(
-    widget: &gtk::Widget,
-) -> Option<gtk::ScrolledWindow> {
-    let mut parent = widget.parent();
-    while let Some(widget) = parent {
-        if let Ok(scroller) = widget.clone().downcast::<gtk::ScrolledWindow>() {
-            return Some(scroller);
-        }
-        parent = widget.parent();
-    }
-    None
 }
 pub(in crate::ui) fn layout_page(shell: &Rc<Shell>) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()

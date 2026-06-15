@@ -1269,6 +1269,7 @@ fn full_artwork_size(width: i32, height: i32) -> i32 {
 pub(in crate::ui) fn detail_showcase_frame(header: gtk::Widget) -> gtk::Widget {
     header.set_hexpand(true);
     header.set_halign(gtk::Align::Fill);
+    header.set_width_request(1);
     header
 }
 
@@ -1513,9 +1514,15 @@ pub(in crate::ui) fn detail_link_button(icon_name: &str, label: &str) -> gtk::Bu
     let button = gtk::Button::new();
     button.add_css_class("flat");
     button.add_css_class("detail-showcase-link-button");
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    button.set_width_request(1);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    content.set_width_request(1);
     content.append(&gtk::Image::from_icon_name(icon_name));
-    content.append(&gtk::Label::new(Some(&tr(label))));
+    let label = gtk::Label::new(Some(&tr(label)));
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_chars(1);
+    label.set_max_width_chars(18);
+    content.append(&label);
     button.set_child(Some(&content));
     button
 }

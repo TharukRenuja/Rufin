@@ -736,6 +736,7 @@ pub(in crate::ui) fn genre_cover_tile(shell: &Rc<Shell>, genre: &Genre, size: i3
     genre_button.add_css_class("album-cover-button");
     genre_button.add_css_class("flat");
     cards::constrain_cover_widget(&genre_button, size);
+    cards::clip_cover(&genre_button);
     let artwork = crate::cover_art_policy::selected_genre_artwork(genre);
     genre_button.set_child(Some(&shell.cover_group_tile_for_artwork(
         &artwork,
@@ -1013,6 +1014,7 @@ pub(in crate::ui) fn artist_cover_tile(
     artist_button.add_css_class("album-cover-button");
     artist_button.add_css_class("flat");
     cards::constrain_cover_widget(&artist_button, size);
+    cards::clip_cover(&artist_button);
     let image_ref = artist_cover_image_ref(shell, artist);
     artist_button.set_child(Some(&shell.cover_tile_for(
         image_ref.as_ref(),

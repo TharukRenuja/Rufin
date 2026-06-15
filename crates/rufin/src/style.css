@@ -430,6 +430,11 @@ menubutton.server-selector > button:hover {
   color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
 }
 
+.cover-frame {
+  border-radius: 12px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
 .home-showcase-cover {
   box-shadow:
     0 16px 34px rgba(0, 0, 0, 0.28),
@@ -785,6 +790,10 @@ scale.volume-slider trough {
   min-height: 18px;
 }
 
+.icon-button.player-mute-button {
+  min-width: 24px;
+}
+
 .icon-button.cover-play-button {
   min-width: 54px;
   min-height: 54px;
@@ -818,7 +827,7 @@ scale.volume-slider trough {
   color: @window_fg_color;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, @window_fg_color 10%, transparent),
-    0 18px 44px rgba(0, 0, 0, 0.18);
+    0 6px 16px rgba(0, 0, 0, 0.18);
 }
 
 .playlist-detail-showcase {
@@ -960,7 +969,7 @@ scale.volume-slider trough {
 
 .detail-showcase-link-button {
   min-height: 30px;
-  padding: 4px 8px;
+  padding: 4px 4px;
   color: color-mix(in srgb, @window_fg_color 95%, @window_bg_color);
   background: transparent;
   box-shadow: none;
@@ -1132,12 +1141,17 @@ listview.queue-list row {
 
 .fullscreen-player-hero {
   margin: 2px 24px 0;
+  min-width: 0;
 }
 
 .fullscreen-player-cover {
   box-shadow:
     0 18px 42px rgba(0, 0, 0, 0.26),
     inset 0 0 0 1px color-mix(in srgb, @window_fg_color 12%, transparent);
+}
+
+.fullscreen-player-details {
+  min-width: 0;
 }
 
 .full-artwork-window {
@@ -1159,9 +1173,16 @@ listview.queue-list row {
   font-weight: 500;
 }
 
-.fullscreen-player-album,
-.fullscreen-player-meta {
+.fullscreen-player-album {
   font-size: 14px;
+}
+
+.fullscreen-player-meta-row {
+  padding: 2px 0 0;
+}
+
+.fullscreen-player-meta-pill {
+  font-size: 12px;
 }
 
 .fullscreen-player-tab-bar {
@@ -1187,15 +1208,30 @@ listview.queue-list row {
 }
 
 .fullscreen-player-equalizer {
-  padding-bottom: 10px;
+  padding-bottom: 34px;
 }
 
+.equalizer-preset-menu,
 .fullscreen-player-equalizer-preset-menu {
   padding: 6px;
 }
 
 .fullscreen-player-equalizer-bands {
   min-height: 0;
+}
+
+scale.fullscreen-player-equalizer-scale {
+  min-width: 0;
+  padding: 0;
+}
+
+scale.fullscreen-player-equalizer-scale slider {
+  min-width: 14px;
+  min-height: 14px;
+}
+
+scale.fullscreen-player-equalizer-scale trough {
+  min-width: 3px;
 }
 
 .fullscreen-player-equalizer-band-label {

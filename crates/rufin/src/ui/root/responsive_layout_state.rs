@@ -98,6 +98,9 @@ impl Shell {
         self.update_right_panel_button();
         self.update_lyrics_panel_button();
         self.apply_bottom_player_width(self.layout_width());
+        if self.state.fullscreen_player_visible.get() {
+            self.refresh_fullscreen_player_layout();
+        }
 
         let changed = previous_left != resolved.left_sidebar
             || previous_right != resolved.right_sidebar

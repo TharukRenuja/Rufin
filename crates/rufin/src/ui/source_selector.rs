@@ -48,6 +48,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
     normal_button.add_css_class("flat");
     normal_button.set_always_show_arrow(false);
     normal_button.set_can_shrink(true);
+    normal_button.set_direction(gtk::ArrowType::Up);
     normal_button.set_margin_start(8);
     normal_button.set_margin_end(8);
     normal_button.set_margin_bottom(4);
@@ -82,6 +83,7 @@ pub(super) fn build_server_selector() -> ServerSelector {
     compact_button.add_css_class("server-selector");
     compact_button.set_always_show_arrow(false);
     compact_button.set_can_shrink(true);
+    compact_button.set_direction(gtk::ArrowType::Up);
     compact_button.set_size_request(COMPACT_SELECTOR_BUTTON_WIDTH, -1);
     let compact_content = gtk::Box::new(gtk::Orientation::Vertical, 4);
     compact_content.set_halign(gtk::Align::Center);
@@ -221,6 +223,7 @@ fn server_selection_popover(
     anchor_width: i32,
 ) -> gtk::Popover {
     let popover = gtk::Popover::new();
+    popover.set_position(gtk::PositionType::Top);
     popover.set_offset(
         selector_popover_x_offset(anchor_width, SERVER_SELECTOR_POPOVER_WIDTH),
         0,

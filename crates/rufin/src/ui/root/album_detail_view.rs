@@ -51,6 +51,7 @@ impl Shell {
         let body = gtk::Box::new(gtk::Orientation::Horizontal, DETAIL_HEADER_SPACING);
         body.set_hexpand(true);
         body.set_halign(gtk::Align::Fill);
+        body.set_width_request(1);
         let cover_fetch_size = cover_fetch_size_for_display(cover_size);
         let cover = detail_cover_button(
             self,
@@ -74,6 +75,7 @@ impl Shell {
         facts.set_justify(gtk::Justification::Left);
         facts.set_wrap(true);
         facts.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        facts.set_width_request(1);
         facts.set_width_chars(1);
         facts.set_max_width_chars(32);
         let cover_column = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -96,9 +98,11 @@ impl Shell {
         metadata.set_hexpand(true);
         metadata.set_valign(gtk::Align::Start);
         metadata.set_halign(gtk::Align::Fill);
+        metadata.set_width_request(1);
         let text_stack = gtk::Box::new(gtk::Orientation::Vertical, 8);
         text_stack.set_hexpand(true);
         text_stack.set_halign(gtk::Align::Fill);
+        text_stack.set_width_request(1);
         let kind = gtk::Label::new(Some(&tr(album_release_kind_label(&album))));
         kind.add_css_class("eyebrow");
         kind.set_xalign(0.0);
@@ -107,6 +111,7 @@ impl Shell {
         let kind_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         kind_row.add_css_class("album-detail-kind-row");
         kind_row.set_halign(gtk::Align::Start);
+        kind_row.set_width_request(1);
         kind_row.append(&kind);
         if let Some(genre_links) = self.album_genre_links(&album) {
             kind_row.append(&genre_links);
@@ -119,6 +124,7 @@ impl Shell {
         title.set_halign(gtk::Align::Fill);
         title.set_wrap(true);
         title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        title.set_width_request(1);
         title.set_width_chars(1);
         title.set_max_width_chars(32);
         fit_detail_text(&title, &album.title);
@@ -128,6 +134,7 @@ impl Shell {
         artist.set_halign(gtk::Align::Start);
         artist.set_wrap(true);
         artist.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        artist.set_width_request(1);
         artist.set_width_chars(1);
         artist.set_max_width_chars(32);
         fit_detail_text(&artist, &album.artist);

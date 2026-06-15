@@ -34,7 +34,6 @@ mod reorder_tests;
 
 const PREFERENCES_DIALOG_WIDTH: i32 = 700;
 const PREFERENCES_DIALOG_HEIGHT: i32 = 640;
-const SURFACE_SCROLL_FACTOR: f64 = 2.5;
 const LASTFM_API_CREATE_URL: &str = "https://www.last.fm/api/account/create";
 const LISTENBRAINZ_TOKEN_URL: &str = "https://listenbrainz.org/settings/";
 const SCROBBLING_ICON_NAME: &str = "io.github.screwys.Rufin.scrobbling-symbolic";
