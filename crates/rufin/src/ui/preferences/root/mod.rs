@@ -409,7 +409,7 @@ fn general_page(shell: &Rc<Shell>, dialog: &adw::Dialog) -> adw::PreferencesPage
         tr("None"),
         tr("Last.fm"),
         tr("MusicBrainz"),
-        tr("MusicBrainz with Last.fm fallback"),
+        tr("MusicBrainz + Last.fm"),
     ];
     let link_refs = link_titles.iter().map(String::as_str).collect::<Vec<_>>();
     let link_options = gtk::StringList::new(&link_refs);

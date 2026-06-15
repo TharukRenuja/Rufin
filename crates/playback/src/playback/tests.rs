@@ -2,8 +2,9 @@ use super::{
     AboutToFinishAction, CrossfadeState, FakePlaybackBackend, GstEngine, PendingSeek,
     PlaybackBackend, PlaybackCommand, PlaybackEvent, PlaybackState, PlaybackTrack, PlayerPipeline,
     PreparedPlaybackItem, SEEK_SETTLE_WINDOW, STARTUP_SEEK_SETTLE_WINDOW, SharedPlaybackState,
-    Slot, StreamDescriptor, VisualizerAnalyzer, about_to_finish_action, cancel_crossfade_next,
-    cancel_gapless_pending, same_album_crossfade_is_skipped,
+    Slot, StatusFade, StatusFadeTarget, StreamDescriptor, VisualizerAnalyzer,
+    about_to_finish_action, cancel_crossfade_next, cancel_gapless_pending,
+    same_album_crossfade_is_skipped,
 };
 use domain::{AlbumId, PlaybackSettings, PlaybackTransitionMode, TrackId};
 use std::collections::VecDeque;
@@ -499,6 +500,16 @@ fn playback_track_pipeline() {
     assert!(shared.crossfade.is_none());
     assert!(shared.gapless_pending.is_none());
 }
+#[test]
+fn status_fade_volume_progress() {
+    let now = Instant::now();
+    let fade = StatusFade::new(Slot::Primary, StatusFadeTarget::Pause, 0.8, 0.0, false, now);
+
+    assert_eq!(fade.volume_at(now), 0.8);
+    let middle = fade.volume_at(now + Duration::from_millis(150));
+    assert!(middle > 0.35 && middle < 0.45);
+    assert_eq!(fade.volume_at(now + Duration::from_millis(300)), 0.0);
+}
 fn track(number: u32) -> PlaybackTrack {
     track_on_album(number, 1)
 }
@@ -536,6 +547,7 @@ fn test_engine_with_pending_seek(target_millis: u64) -> GstEngine {
             PlaybackState::Buffering,
             Instant::now(),
         )),
+        status_fade: None,
         play_command_started_at: None,
     }
 }

@@ -2106,6 +2106,10 @@ pub(in crate::controller) fn prepare_next_stream_from_handles(
             Ok(prepared) => prepared,
             Err(error) => {
                 clear_matching_next_preload(&next_preload, &ticket);
+                if preload_error_is_transient(&error) {
+                    debug!(%error, "skipped next playback preload while store is busy");
+                    return;
+                }
                 let _sent = events.send(ControllerEvent::Error(error));
                 return;
             }
@@ -2144,4 +2148,8 @@ pub(in crate::controller) fn next_preload_request_from_queue(
             stream_quality: playback_settings.stream_quality,
         })
     })
+}
+
+fn preload_error_is_transient(error: &str) -> bool {
+    error.contains("database is locked") || error.contains("database table is locked")
 }

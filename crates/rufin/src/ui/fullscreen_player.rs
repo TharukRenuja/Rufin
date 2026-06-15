@@ -826,10 +826,7 @@ pub(super) fn connect_fullscreen_player_controls(shell: &Rc<Shell>) {
         let preset_shell = Rc::clone(shell);
         let preset_name = name.clone();
         button.connect_clicked(move |_| {
-            let bands = {
-                let settings = preset_shell.state.settings.borrow();
-                equalizer_preset_bands(&settings.playback.equalizer, &preset_name)
-            };
+            let bands = equalizer_preset_bands(&preset_name);
             preset_shell
                 .fullscreen_player
                 .equalizer_preset_button
@@ -989,17 +986,12 @@ impl Shell {
         equalizer.enabled = enabled;
         equalizer.selected_preset = preset.clone();
         equalizer.bands = bands.clone();
-        equalizer.preset_overrides.remove(&preset);
         equalizer.sanitize();
         self.sync_fullscreen_equalizer_controls(&equalizer);
         self.update_playback_settings(|settings| {
             settings.equalizer.enabled = enabled;
             settings.equalizer.selected_preset = preset;
             settings.equalizer.bands = bands;
-            settings
-                .equalizer
-                .preset_overrides
-                .remove(&settings.equalizer.selected_preset);
             settings.equalizer.sanitize();
         });
     }
@@ -1016,9 +1008,7 @@ impl Shell {
                 settings.equalizer.sanitize();
             }
             settings.equalizer.bands = bands.clone();
-            let preset = equalizer_selected_preset(&settings.equalizer);
-            settings.equalizer.selected_preset = preset.clone();
-            settings.equalizer.preset_overrides.insert(preset, bands);
+            settings.equalizer.selected_preset = "Custom".to_string();
         });
     }
 

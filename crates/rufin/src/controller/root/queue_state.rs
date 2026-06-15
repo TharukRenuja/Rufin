@@ -67,7 +67,7 @@ impl AppController {
             .store
             .with_store(|store| store.save_queue_snapshot(snapshot))
         {
-            let _sent = self.events.send(ControllerEvent::Error(error));
+            handle_queue_persist_error(&self.events, error);
         }
     }
     pub(in crate::controller) fn queue_snapshot(&self) -> Option<QueueSnapshot> {
@@ -233,7 +233,7 @@ pub(in crate::controller) fn defer_queue_snapshot(
             return;
         }
         if let Err(error) = store.with_store(|store| store.save_queue_snapshot(&snapshot)) {
-            let _sent = events.send(ControllerEvent::Error(error));
+            handle_queue_persist_error(&events, error);
         }
     });
 }
@@ -257,7 +257,35 @@ pub(in crate::controller) fn defer_current_queue_snapshot(
         if let Some(snapshot) = snapshot
             && let Err(error) = store.with_store(|store| store.save_queue_snapshot(&snapshot))
         {
-            let _sent = events.send(ControllerEvent::Error(error));
+            handle_queue_persist_error(&events, error);
         }
     });
+}
+
+fn handle_queue_persist_error(events: &Sender<ControllerEvent>, error: String) {
+    if queue_persist_error_is_transient(&error) {
+        debug!(%error, "skipped queue persistence while store is busy");
+        return;
+    }
+    let _sent = events.send(ControllerEvent::Error(error));
+}
+
+fn queue_persist_error_is_transient(error: &str) -> bool {
+    error.contains("database is locked") || error.contains("database table is locked")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queue_persist_transient_error() {
+        assert!(queue_persist_error_is_transient(
+            "sqlite failed: database is locked"
+        ));
+        assert!(queue_persist_error_is_transient(
+            "sqlite failed: database table is locked"
+        ));
+        assert!(!queue_persist_error_is_transient("sqlite failed: disk I/O"));
+    }
 }

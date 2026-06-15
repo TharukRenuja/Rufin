@@ -1,15 +1,16 @@
 use super::*;
 
 impl Shell {
-    pub(in crate::ui) fn current_playback_artwork_path(
+    pub(in crate::ui) fn current_playback_cached_artwork_path(
         &self,
         entry: &QueueEntry,
         preferred_size: u32,
     ) -> Option<PlaybackArtworkPath> {
         let server_id = self.current_playback_server_id()?;
         let image_ref = entry.image_ref.as_ref()?;
+        let cache = self.state.cover_path_cache.borrow();
         playback_artwork_path_from_lookup(&server_id, image_ref, preferred_size, |key| {
-            self.controller.cached_cover_path_for_key(key)
+            cache.get(key).cloned()
         })
     }
 

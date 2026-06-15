@@ -107,12 +107,8 @@ pub(in crate::ui) fn equalizer_default_preset_bands(name: &str) -> Vec<f64> {
         .unwrap_or_else(|| vec![0.0; EQUALIZER_BAND_COUNT])
 }
 
-pub(in crate::ui) fn equalizer_preset_bands(equalizer: &EqualizerSettings, name: &str) -> Vec<f64> {
-    equalizer
-        .preset_overrides
-        .get(name)
-        .cloned()
-        .unwrap_or_else(|| equalizer_default_preset_bands(name))
+pub(in crate::ui) fn equalizer_preset_bands(name: &str) -> Vec<f64> {
+    equalizer_default_preset_bands(name)
 }
 
 pub(in crate::ui) fn connect_equalizer_scale_commit(

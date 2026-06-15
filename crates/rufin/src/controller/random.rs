@@ -8,6 +8,7 @@ use crate::cover_art_policy;
 use super::{
     AppController, ControllerEvent, SNAPSHOT_TRACK_LIMIT, load_settings_for_saved,
     provider_for_saved,
+    root::{scrub_selected_track_image_refs, track_album_refs_with_settings},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,7 +73,9 @@ impl AppController {
                 )
                 .map_err(|error| error.to_string())?
         };
+        scrub_selected_track_image_refs(&saved, &settings, &mut tracks);
         cover_art_policy::bind_tracks(&mut tracks, &settings);
+        track_album_refs_with_settings(&self.store, &saved, &settings, &mut tracks, &[])?;
         if !tracks.is_empty() {
             self.store
                 .with_store(|store| store.upsert_tracks(&saved.server.id, &tracks, 0))?;

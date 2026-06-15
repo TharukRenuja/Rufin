@@ -99,19 +99,7 @@ impl AppController {
             Some(activity.clone())
         };
         if let Some(activity) = skip {
-            match self.store.with_store(|store| {
-                store.increment_track_skip_count(&activity.server_id, &activity.track_id)
-            }) {
-                Ok(()) => self.emit_activity_delta(activity.track_id),
-                Err(error) => {
-                    warn!(
-                        %error,
-                        server_id = %activity.server_id,
-                        track_id = %activity.track_id,
-                        "failed to update local skip count"
-                    );
-                }
-            }
+            self.record_local_skip(activity);
         }
     }
 
@@ -133,41 +121,93 @@ impl AppController {
     }
 
     fn record_local_play(&self, activity: PlaybackActivityEntry) {
-        let result = self.store.with_store(|store| {
-            let Some(saved) = store.active_server()? else {
-                return Ok(false);
-            };
-            if saved.server.id != activity.server_id || saved.server.provider != LOCAL_PROVIDER_ID {
-                return Ok(false);
-            }
-            store.record_local_track_played(
-                &activity.server_id,
-                &activity.track_id,
-                &activity.session_key,
-            )
-        });
-        match result {
-            Ok(true) => self.emit_activity_delta(activity.track_id),
-            Ok(false) => {}
-            Err(error) => {
-                warn!(
-                    %error,
-                    server_id = %activity.server_id,
-                    track_id = %activity.track_id,
-                    entry_id = activity.entry_id.as_str(),
-                    "failed to update local play count"
-                );
-            }
+        if self.store.uses_disk_storage() {
+            let store = self.store.clone();
+            let events = self.events.clone();
+            thread::spawn(move || record_local_play_now(store, events, activity));
+        } else {
+            record_local_play_now(self.store.clone(), self.events.clone(), activity);
         }
     }
 
-    fn emit_activity_delta(&self, track_id: TrackId) {
-        let mut delta = LibraryDelta::default();
-        delta.tracks.stats.push(track_id);
-        let _sent = self
-            .events
-            .send(ControllerEvent::LibraryDelta(Box::new(delta)));
+    fn record_local_skip(&self, activity: PlaybackActivityEntry) {
+        if self.store.uses_disk_storage() {
+            let store = self.store.clone();
+            let events = self.events.clone();
+            thread::spawn(move || record_local_skip_now(store, events, activity));
+        } else {
+            record_local_skip_now(self.store.clone(), self.events.clone(), activity);
+        }
     }
+}
+
+fn record_local_play_now(
+    store: StoreHandle,
+    events: Sender<ControllerEvent>,
+    activity: PlaybackActivityEntry,
+) {
+    let result = store.with_store(|store| {
+        let Some(saved) = store.saved_server(&activity.server_id)? else {
+            return Ok(false);
+        };
+        if saved.server.provider != LOCAL_PROVIDER_ID {
+            return Ok(false);
+        }
+        store.record_local_track_played(
+            &activity.server_id,
+            &activity.track_id,
+            &activity.session_key,
+        )
+    });
+    match result {
+        Ok(true) => emit_activity_delta(&events, activity.track_id),
+        Ok(false) => {}
+        Err(error) if playback_activity_error_is_transient(&error) => {
+            debug!(%error, "skipped playback activity update while store is busy");
+        }
+        Err(error) => {
+            warn!(
+                %error,
+                server_id = %activity.server_id,
+                track_id = %activity.track_id,
+                entry_id = activity.entry_id.as_str(),
+                "failed to update local play count"
+            );
+        }
+    }
+}
+
+fn record_local_skip_now(
+    store: StoreHandle,
+    events: Sender<ControllerEvent>,
+    activity: PlaybackActivityEntry,
+) {
+    match store.with_store(|store| {
+        store.increment_track_skip_count(&activity.server_id, &activity.track_id)
+    }) {
+        Ok(()) => emit_activity_delta(&events, activity.track_id),
+        Err(error) if playback_activity_error_is_transient(&error) => {
+            debug!(%error, "skipped playback activity update while store is busy");
+        }
+        Err(error) => {
+            warn!(
+                %error,
+                server_id = %activity.server_id,
+                track_id = %activity.track_id,
+                "failed to update local skip count"
+            );
+        }
+    }
+}
+
+fn emit_activity_delta(events: &Sender<ControllerEvent>, track_id: TrackId) {
+    let mut delta = LibraryDelta::default();
+    delta.tracks.stats.push(track_id);
+    let _sent = events.send(ControllerEvent::LibraryDelta(Box::new(delta)));
+}
+
+fn playback_activity_error_is_transient(error: &str) -> bool {
+    error.contains("database is locked") || error.contains("database table is locked")
 }
 
 fn play_threshold_seconds(duration_seconds: u32) -> u32 {
@@ -258,7 +298,7 @@ mod tests {
         let second = snapshot.tracks[1].clone();
         controller.play_tracks_now(vec![first.clone(), second]);
         let _queue = wait_for_queue(&events).expect("queue");
-        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Buffering);
+        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
 
         controller.next_track();
         let delta = wait_for_activity_delta(&events);
@@ -281,7 +321,7 @@ mod tests {
         let seek_seconds = play_threshold_seconds(first.duration_seconds);
         controller.play_tracks_now(vec![first.clone(), second]);
         let _queue = wait_for_queue(&events).expect("queue");
-        let _playback = wait_for_playback_track_position(&controller, &events, &first.id, 0);
+        let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
 
         controller.seek_millis(u64::from(seek_seconds) * 1_000);
         let _playback = wait_for_playback_track_position(

@@ -662,7 +662,7 @@ fn catalog_strings_for_extraction() {
     let _ = tr("Scrobbling");
     let _ = tr("Last.fm");
     let _ = tr("Last.fm scrobbling");
-    let _ = tr("MusicBrainz with Last.fm fallback");
+    let _ = tr("MusicBrainz + Last.fm");
     let _ = tr("Use listening activity");
     let _ = tr("Set the Discord activity type to Listening");
     let _ = tr("API keys");

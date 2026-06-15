@@ -95,9 +95,10 @@ pub(in crate::controller) fn lyrics_remove_entry() {
 pub(in crate::controller) fn lyrics_emit_event() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
-    controller.play_now(snapshot.tracks[0].clone());
+    let track = snapshot.tracks[0].clone();
+    controller.play_now(track.clone());
     let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
-    controller.request_lyrics_for_current();
+    controller.request_track_lyrics(track.id);
     assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
@@ -119,7 +120,7 @@ pub(in crate::controller) fn lyrics_local_lookup() {
         .expect("seed local queue");
     let (controller, events) = controller_from_store_for_test(store);
 
-    controller.request_lyrics_for_current();
+    controller.request_track_lyrics(track.id);
 
     assert!(
         events
@@ -164,7 +165,7 @@ pub(in crate::controller) fn lyrics_ignore_remote() {
         .server
         .id;
     let remote_lyrics = Lyrics {
-        track_id: track.id,
+        track_id: track.id.clone(),
         source: LyricsSource::Remote,
         external_provider: None,
         lines: vec![LyricLine {
@@ -176,7 +177,7 @@ pub(in crate::controller) fn lyrics_ignore_remote() {
         .store
         .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
         .expect("save remote lyrics");
-    controller.request_server_lyrics_for_current();
+    controller.request_track_server_lyrics(track.id);
     assert!(wait_for_lyrics(&events).is_none());
 }
 #[test]
@@ -207,7 +208,7 @@ pub(in crate::controller) fn lyrics_remove_cache() {
         .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
         .expect("save remote lyrics");
 
-    controller.request_lyrics_for_current();
+    controller.request_track_lyrics(track.id.clone());
     assert_eq!(wait_for_lyrics(&events), Some(remote_lyrics));
     controller.clear_remote_lyrics_for_current();
 
@@ -254,7 +255,7 @@ pub(in crate::controller) fn lyrics_drop_cached_netease_placeholder() {
         .with_store(|store| store.save_lyrics(&server_id, &remote_lyrics))
         .expect("save remote lyrics");
 
-    controller.request_lyrics_for_current();
+    controller.request_track_lyrics(track.id.clone());
 
     assert!(wait_for_lyrics(&events).is_none());
     assert_eq!(
@@ -294,7 +295,7 @@ pub(in crate::controller) fn lyrics_preserve_cache() {
         .expect("save server lyrics");
 
     controller.clear_remote_lyrics_for_current();
-    controller.request_lyrics_for_current();
+    controller.request_track_lyrics(track.id.clone());
 
     assert_eq!(wait_for_lyrics(&events), Some(server_lyrics));
 }
@@ -335,8 +336,43 @@ pub(in crate::controller) fn lyrics_emit_current() {
         })
         .expect("seed restored state");
     let (controller, events) = controller_from_store_for_test(store);
-    controller.request_lyrics_for_current();
+    controller.request_track_lyrics(track.id.clone());
     assert_eq!(wait_for_lyrics(&events), Some(lyrics));
+}
+#[test]
+pub(in crate::controller) fn lyrics_skip_stale_track_request() {
+    let store = StoreHandle::open_memory().expect("memory store");
+    let saved = SavedServer {
+        server: ServerIdentity {
+            id: ServerId::new("jellyfin:server:lyrics"),
+            provider: "jellyfin".to_string(),
+            name: "Lyrics Server".to_string(),
+            base_url: "https://music.example".to_string(),
+        },
+        user_id: "user".to_string(),
+        username: "demo".to_string(),
+        trust_invalid_cert: false,
+    };
+    let track = restored_track();
+    let mut queue = QueueEngine::new(saved.server.id.clone());
+    queue.play_now(&track);
+    store
+        .with_store(|store| {
+            store.save_server(&saved)?;
+            store.set_active_server(&saved.server.id)?;
+            store.save_queue_snapshot(&queue.snapshot())?;
+            Ok(())
+        })
+        .expect("seed restored state");
+    let (controller, events) = controller_from_store_for_test(store);
+
+    controller.request_track_lyrics(TrackId::new("jellyfin:track:stale-lyrics"));
+
+    assert!(
+        events
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err()
+    );
 }
 #[test]
 pub(in crate::controller) fn lyrics_search_preference() {

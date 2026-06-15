@@ -1093,7 +1093,7 @@ msgstr ""
 
 #: crates/rufin/src/i18n.rs:633 crates/rufin/src/ui/preferences/root/mod.rs:318
 #: crates/rufin/src/i18n.rs:665
-msgid "MusicBrainz with Last.fm fallback"
+msgid "MusicBrainz + Last.fm"
 msgstr ""
 
 #: crates/rufin/src/i18n.rs:634 crates/rufin/src/ui/preferences/root/mod.rs:344
@@ -1403,6 +1403,14 @@ msgstr ""
 #: crates/rufin/src/ui/preferences/root/general.rs:490
 #: crates/rufin/src/i18n.rs:723
 msgid "Keep album transitions gapless when possible"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/general.rs:507
+msgid "Audio fade on play/pause"
+msgstr ""
+
+#: crates/rufin/src/ui/preferences/root/general.rs:508
+msgid "Fade audio when playback is paused or resumed"
 msgstr ""
 
 #: crates/rufin/src/i18n.rs:692

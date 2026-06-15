@@ -64,6 +64,50 @@ impl PlaybackBackend for RejectingPlaybackBackend {
     }
 }
 
+struct BlockingPlaybackBackend {
+    commands: Arc<Mutex<Vec<PlaybackCommand>>>,
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+    events: Vec<PlaybackEvent>,
+}
+
+impl BlockingPlaybackBackend {
+    fn new(
+        commands: Arc<Mutex<Vec<PlaybackCommand>>>,
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) -> Self {
+        Self {
+            commands,
+            entered,
+            release,
+            events: Vec::new(),
+        }
+    }
+}
+
+impl PlaybackBackend for BlockingPlaybackBackend {
+    fn send(&mut self, command: PlaybackCommand) -> Result<(), playback::PlaybackError> {
+        if matches!(
+            command,
+            PlaybackCommand::Play { .. } | PlaybackCommand::PlayPrepared { .. }
+        ) {
+            let _sent = self.entered.send(());
+            self.release
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|_| playback::PlaybackError::Backend("start gate timed out".into()))?;
+            self.events
+                .push(PlaybackEvent::StateChanged(PlaybackState::Playing));
+        }
+        self.commands.lock().expect("commands").push(command);
+        Ok(())
+    }
+
+    fn drain_events(&mut self) -> Vec<PlaybackEvent> {
+        std::mem::take(&mut self.events)
+    }
+}
+
 fn wait_for_queue_matching(
     events: &Receiver<ControllerEvent>,
     mut matches: impl FnMut(&QueueSnapshot) -> bool,
@@ -715,7 +759,58 @@ pub(in crate::controller) fn playback_duplicate_current_start_ignored() {
 }
 
 #[test]
-pub(in crate::controller) fn rejected_start_keeps_committed_playback_current() {
+pub(in crate::controller) fn playback_current_commits_before_backend_accepts_start() {
+    let (controller, events, snapshot, _queue, _player) =
+        AppController::bootstrap_with_fake(FakeScale::Small);
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    *controller.playback.lock().expect("playback") =
+        Box::new(RecordingPlaybackBackend::new(Arc::clone(&commands)));
+    let first = snapshot.tracks[0].clone();
+    let second = snapshot.tracks[1].clone();
+    controller.play_tracks_now(vec![first, second.clone()]);
+    let _queue = wait_for_queue(&events).expect("queue");
+    let _playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+
+    let blocked_commands = Arc::new(Mutex::new(Vec::new()));
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    *controller.playback.lock().expect("playback") = Box::new(BlockingPlaybackBackend::new(
+        Arc::clone(&blocked_commands),
+        entered_tx,
+        release_rx,
+    ));
+    let second_entry = controller
+        .queue_snapshot()
+        .expect("queue")
+        .entries
+        .iter()
+        .find(|entry| entry.track_id == second.id)
+        .expect("second entry")
+        .id
+        .clone();
+
+    controller.activate_queue_entry(second_entry);
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("backend start entered");
+
+    let playback = controller
+        .playback_snapshot
+        .lock()
+        .expect("playback snapshot")
+        .clone();
+    assert_eq!(playback.state, PlaybackState::Buffering);
+    assert_eq!(playback.current.expect("current").track_id, second.id);
+    assert!(blocked_commands.lock().expect("commands").is_empty());
+
+    release_tx.send(()).expect("release backend");
+    let _command = wait_for_recorded_command(&blocked_commands, |command| {
+        matches!(command, PlaybackCommand::PlayPrepared { .. })
+    });
+}
+
+#[test]
+pub(in crate::controller) fn rejected_start_commits_attempted_playback_current() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let commands = Arc::new(Mutex::new(Vec::new()));
@@ -745,14 +840,11 @@ pub(in crate::controller) fn rejected_start_keeps_committed_playback_current() {
     let _rejected = wait_for_recorded_command(&commands, |command| {
         matches!(command, PlaybackCommand::PlayPrepared { .. })
     });
+    let playback = wait_for_playback_matching(&controller, &events, |playback| {
+        playback.state == PlaybackState::Stopped && playback.last_error.is_some()
+    });
 
-    let playback = controller
-        .playback_snapshot
-        .lock()
-        .expect("playback snapshot")
-        .clone();
-    assert_eq!(playback.state, PlaybackState::Playing);
-    assert_eq!(playback.current.expect("current").track_id, first.id);
+    assert_eq!(playback.current.expect("current").track_id, second.id);
 }
 
 #[test]
@@ -802,8 +894,8 @@ pub(in crate::controller) fn stale_desired_queue_current_does_not_receive_playba
         .lock()
         .expect("playback snapshot")
         .clone();
-    assert_eq!(playback.current.expect("current").track_id, first.id);
-    assert_eq!(playback.position_seconds, 42);
+    assert_eq!(playback.current.expect("current").track_id, second.id);
+    assert_eq!(playback.position_seconds, 0);
     let queue = controller.queue_snapshot().expect("queue");
     assert_eq!(queue.current_index, Some(1));
     assert_eq!(
@@ -1377,6 +1469,33 @@ pub(in crate::controller) fn random_play_now() {
     let (controller, events, snapshot, _queue, _player) =
         AppController::bootstrap_with_fake(FakeScale::Small);
     let expected = random_track_ids(&snapshot.tracks, 3);
+    let first_id = expected.first().expect("random track");
+    let first_album_id = snapshot
+        .tracks
+        .iter()
+        .find(|track| &track.id == first_id)
+        .expect("first random track")
+        .album_id
+        .clone();
+    let expected_first_ref = snapshot
+        .albums
+        .iter()
+        .find(|album| album.id == first_album_id)
+        .and_then(|album| album.image_ref.clone())
+        .expect("album image ref");
+    let saved = controller
+        .store
+        .with_store(|store| store.active_server())
+        .expect("active server")
+        .expect("saved server");
+    let mut tracks_without_track_art = snapshot.tracks.clone();
+    for track in &mut tracks_without_track_art {
+        track.image_ref = None;
+    }
+    controller
+        .store
+        .with_store(|store| store.upsert_tracks(&saved.server.id, &tracks_without_track_art, 0))
+        .expect("strip track image refs");
     controller.play_random_tracks(random_request(RandomPlayAction::PlayNow, 3));
     let queue = wait_for_queue(&events).expect("random queue");
     assert_eq!(queue.current_index, Some(0));
@@ -1387,6 +1506,21 @@ pub(in crate::controller) fn random_play_now() {
             .map(|entry| entry.track_id.clone())
             .collect::<Vec<_>>(),
         expected
+    );
+    assert_eq!(
+        queue
+            .entries
+            .first()
+            .and_then(|entry| entry.image_ref.as_ref()),
+        Some(&expected_first_ref)
+    );
+    let playback = wait_for_playback_state(&controller, &events, PlaybackState::Playing);
+    assert_eq!(
+        playback
+            .current
+            .as_ref()
+            .and_then(|entry| entry.image_ref.as_ref()),
+        Some(&expected_first_ref)
     );
 }
 #[test]

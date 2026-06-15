@@ -1185,10 +1185,14 @@ pub(super) fn connect_player_controls(shell: &Rc<Shell>) {
         let Some(entry) = title_shell.state.player.borrow().current.clone() else {
             return;
         };
-        title_shell.navigate(Route::Search {
-            query: entry.title,
-            kind: SearchKind::Tracks,
-        });
+        if let Some(album_id) = entry.album_id {
+            title_shell.navigate(Route::AlbumDetail(album_id));
+        } else if !entry.album.trim().is_empty() {
+            title_shell.navigate(Route::Search {
+                query: entry.album,
+                kind: SearchKind::Albums,
+            });
+        }
     });
 
     let artist_shell = Rc::clone(shell);

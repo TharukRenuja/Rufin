@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 use crate::domain::{HomeBlockKind, HomeSectionKind};
 
@@ -287,8 +286,6 @@ pub struct EqualizerSettings {
     pub selected_preset: String,
     #[serde(default = "default_equalizer_bands")]
     pub bands: Vec<f64>,
-    #[serde(default)]
-    pub preset_overrides: BTreeMap<String, Vec<f64>>,
 }
 impl Default for EqualizerSettings {
     fn default() -> Self {
@@ -296,7 +293,6 @@ impl Default for EqualizerSettings {
             enabled: false,
             selected_preset: "Flat".to_string(),
             bands: default_equalizer_bands(),
-            preset_overrides: BTreeMap::new(),
         }
     }
 }
@@ -306,11 +302,6 @@ impl EqualizerSettings {
             self.selected_preset = default_equalizer_selected_preset();
         }
         sanitize_equalizer_bands(&mut self.bands);
-        self.preset_overrides
-            .retain(|name, _| !name.trim().is_empty());
-        for bands in self.preset_overrides.values_mut() {
-            sanitize_equalizer_bands(bands);
-        }
     }
 }
 
@@ -333,6 +324,8 @@ pub struct PlaybackSettings {
     pub crossfade_seconds: u8,
     #[serde(default)]
     pub skip_same_album_crossfade: bool,
+    #[serde(default = "default_true")]
+    pub audio_fade_on_status_change: bool,
     #[serde(default)]
     pub replay_gain: ReplayGainMode,
     #[serde(default)]
@@ -352,6 +345,7 @@ impl Default for PlaybackSettings {
             transition_mode: PlaybackTransitionMode::Default,
             crossfade_seconds: default_crossfade_seconds(),
             skip_same_album_crossfade: false,
+            audio_fade_on_status_change: true,
             replay_gain: ReplayGainMode::Off,
             stream_quality: StreamQuality::Original,
             audio_output: None,
